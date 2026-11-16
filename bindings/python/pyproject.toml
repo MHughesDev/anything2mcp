@@ -1,0 +1,19 @@
+[build-system]
+requires = ["flit_core==4.2.0"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "web2mcp"
+version = "0.0.1"
+description = "Placeholder for Web2MCP: turn any existing app into safe, deterministic MCP tools. Nothing is usable yet."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Repository = "https://github.com/MHughesDev/web2mcp"
