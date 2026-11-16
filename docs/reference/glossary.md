@@ -19,6 +19,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Driver | The code that carries out steps in one mode |
 | Effect class | `read`, `write`, or `irreversible` |
 | Engine | The Web2MCP process. On one machine, one per user |
+| Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
 | Environment | A named instance of a target, such as test or production |
 | Evidence | Everything recorded about a run: events, step trace, artifacts |
 | Failure class | The category of a stop, which alone decides what happens next |
@@ -37,6 +38,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Operation | One business action with typed inputs and outputs, defined once |
 | Owner | The person a user session belongs to |
 | Pipeline | Operations in order over a source, with checkpoints |
+| Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
 | Plan | The compiled, hashed form of a target version that the engine runs |
 | Policy set | The versioned rules the policy engine evaluates |
 | Principal | Anyone or anything that calls Web2MCP |
@@ -47,7 +49,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Quarantine | The wait after a lost lease before the run's records may be touched |
 | Read-back | Reading a value from the application after writing it |
 | Reconcile | Reading doubtful records back to learn whether their writes landed |
-| Record | One item in the application that a run reads or writes, identified by a key |
+| Record | One item in the application that a run reads or writes, identified by a key. A ledger row is a commit point, which usually carries one record but can carry several, or part of one |
 | Review summary | The risk-ordered list a person sees before publishing or importing a version |
 | Run | One call of an operation or pipeline, identified by a `run_id` |
 | Runner | The part that executes steps and holds live sessions |

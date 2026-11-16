@@ -6,7 +6,7 @@ Every run moves through a fixed set of states, and a ledger written before each 
 
 Reads skip preview and approval. Writes cannot reach Running without an approved diff, and a stopped run re-enters Running only after reconciliation.
 
-**The ledger** is a small local database with a simple state machine. Each record a run touches has one row:
+**The ledger** is a small local database with a simple state machine. Each commit point a run makes, which is one save in the application, has one row:
 
 | State | Meaning | On resume |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ Each row also holds the record key, the intended and observed values, the attemp
 
 **Records with no natural key** cannot be reconciled safely unless the operation declares another way to find them; [section 50](50-record-identity-and-dependent-records.md) defines those ways. A pipeline that creates them must store its own key in the app, such as a source id in a reference field; otherwise the create is classed `irreversible`, needs per-run approval, and is never resumed automatically.
 
-**Run identity.** A run is identified by tool version, input hash, and approval. Calling the same tool with the same inputs while a run exists returns that run instead of starting another.
+**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished gets that run back instead of starting another.
 
 [Section 42](42-run-ledger-design.md) gives the full design: every state, the rules that must always hold, and the exact resume procedure. It adds the record state `unchanged` and a third outcome on resume, for a record that matches neither the intended values nor the values seen before the write.
 

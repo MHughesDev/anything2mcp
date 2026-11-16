@@ -19,7 +19,7 @@ One running system serves many agents and applications at the same time. A sched
 | Priority | Interactive before batch | A person's request jumps a nightly pipeline |
 | Per-caller quota | Configurable | Stops one agent from starving others |
 
-**Duplicate calls.** A run is identified by operation version, input hash, and approval. If two agents send the same call, the second gets the first run's id instead of a second run.
+**Duplicate calls.** An unfinished run is identified by its caller, tool version, and input hash ([section 42](42-run-ledger-design.md)). If the same caller sends the same call twice, the second gets the first run's id instead of a second run. Two different callers get two runs, and the record locks keep them off the same record.
 
 **Desktop limits.** A desktop app usually has one window and one input focus, so desktop runs on one app are always serialized.
 

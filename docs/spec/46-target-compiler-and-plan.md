@@ -14,7 +14,7 @@ Target files are written for people and agents to read. The engine never reads t
 | --- | --- | --- | --- |
 | 1 | Parse | Reads every YAML file, keeping the file, line, and column of each value | Malformed YAML |
 | 2 | Validate | Checks each file against its JSON Schema and the target's schema version | Unknown or missing fields |
-| 3 | Resolve | Links operations to screens, endpoints, and field types; pipelines to operations; sources to mappings | A name that does not exist; a name defined twice |
+| 3 | Resolve | Links operations to screens, endpoints, and field types; pipelines to operations and sources; placeholders to inputs | A name that does not exist; a name defined twice |
 | 4 | Type-check | Checks every expression against the input and output schemas and field types | A type error in any expression |
 | 5 | Analyze | Works out each operation's commit points, each pipeline's effect class, and each operation's permission manifest | A write with no key that is not marked irreversible; a declared effect lower than the derived one |
 | 6 | Lint | Applies the rules below | Any rule marked error |
@@ -24,7 +24,7 @@ Target files are written for people and agents to read. The engine never reads t
 
 All problems from stages 2 to 8 are reported together, each with a code, a plain sentence, the place, and a suggested fix, and as JSON for agents.
 
-**Commit points are counted, not assumed.** The ledger keeps one row per save in the application ([section 42](42-run-ledger-design.md)). The compiler counts the saves in each write binding: confirmed actions in a UI binding, write requests in an HTTP binding. An operation whose bindings disagree on the count, or whose count differs from what its author declared, does not compile.
+**Commit points are counted, not assumed.** The ledger keeps one row per save in the application ([section 42](42-run-ledger-design.md)). The compiler counts the saves in each write binding: actions marked `commits` in a UI binding, write requests in an HTTP binding. An operation whose bindings disagree on the count, or whose count differs from what its author declared, does not compile.
 
 **Every write can be found again.** A write operation must declare an identity strategy that is possible in each of its bindings ([section 50](50-record-identity-and-dependent-records.md)). Steps that use another step's result must not form a cycle.
 

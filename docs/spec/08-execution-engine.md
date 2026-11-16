@@ -1,15 +1,15 @@
 # 8. Execution engine
 
-Every step of every run follows the same eight-part loop, whatever the mode. Drivers fill in how each part is done.
+Every operation call in every run goes through the same eight-part engine loop, whatever the mode. Drivers fill in how each part is done. A pipeline step calls its operation once, or once per row. A write repeats parts 4 to 8 for each commit point; a read skips parts 4 and 7.
 
 1. **Guard.** Session valid, surface healthy, no edge block, policy allows the call.
 2. **Choose.** Pick the binding by the mode rules and record why.
 3. **Prepare.** Get what the driver needs from the session keeper: a page, a cookie jar, or a fresh token.
-4. **Intend.** For a write, record the intended values in the ledger before acting.
+4. **Intend.** For a write, take the record lock, make the freshness check, then record the intended values in the ledger before acting ([section 42](42-run-ledger-design.md)).
 5. **Act.** The driver performs the step.
 6. **Confirm.** Wait for the declared confirmation: a response, a status, an element, or an upstream tool result.
 7. **Read back.** Re-read the value through the binding's read-back rule and compare after normalization.
-8. **Record.** Mark the step verified, with raw and normalized values as evidence.
+8. **Record.** Mark the commit point verified, with raw and normalized values as evidence, and release the record lock. For a read, store the result.
 
 What each driver does in the Act and Read back parts:
 
@@ -39,4 +39,4 @@ Every failure falls into one class, and the class alone decides what happens:
 | `input` | Inputs or a source file fail validation | Reject before anything runs; return every problem at once |
 | `busy` | Queue full, record locked, no runner available | No run is started, or the run waits; return a retry time |
 | `policy` | Undeclared target, over a limit, stale approval, caller lacks the role | Stop before acting |
-| `stale` | A record no longer matches what the preview saw, or matches neither value on resume | Stop for that record; a new preview and approval are needed |
+| `stale` | A record no longer matches what the preview saw, matches neither value on resume, or the application refuses the version sent with the write | Stop the run at that record; a new preview and approval are needed |

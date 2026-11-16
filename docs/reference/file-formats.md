@@ -110,7 +110,7 @@ Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time
 | --- | --- |
 | `locate` (required) | Ordered list of locators |
 | `confirm` (required) | The condition that shows the action took effect |
-| `commits` | True when the action saves in the application; counted as a commit point |
+| `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 46](../spec/46-target-compiler-and-plan.md)); an action without it is not a save |
 
 ### Locators
 
@@ -164,10 +164,10 @@ There is no condition that waits for a length of time or for the network to go q
 
 | Field | Meaning |
 | --- | --- |
-| `operation` (required) | The tool name: `{target}_{module}_{object}_{verb}` |
+| `operation` (required) | The tool name: `{target}_{module}_{object}_{verb}`. The module part is left out when the target declares no `modules`. The verb in the name is a plain word for callers; it need not be one of the built-in verbs a binding uses |
 | `effect` (required) | `read`, `write`, or `irreversible` |
 | `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 50](../spec/50-record-identity-and-dependent-records.md)); required for `write` |
-| `key` | Short form of `identity: natural` naming the input or inputs |
+| `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
 | `outputs` (required) | A schema, usually a reference to an endpoint's response |
@@ -188,6 +188,10 @@ There is no condition that waits for a length of time or for the network to go q
 
 A lookup used by `identity: find` may declare a `settle` time for applications whose searches lag behind their writes. `read_back` names an endpoint, a screen field, or an upstream tool, and may say `prefer: response` to use the save response when it carries the stored values.
 
+**Placeholders.** A placeholder in an endpoint's `path` or a screen's `reach` address takes the operation input of the same name. `path_params` is needed only to rename or compute one. A placeholder that matches no input and has no entry does not compile.
+
+**`read_back` is also the record's lookup.** For `natural` and `composite` identity it is the only declared way to read the record, so the preview, the freshness check, and reconcile all use it as well as the check after a write ([spec section 42](../spec/42-run-ledger-design.md)). It must therefore work on its own before any write, reached from the identity inputs alone, and it must report a record that does not exist as absent, not as a failure. `prefer: response` applies only straight after a save; the other three reads always go to the application.
+
 ## `pipelines/*.yaml`
 
 | Field | Meaning |
@@ -195,10 +199,10 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | `pipeline` (required) | The tool name, for its outcome |
 | `effect` | Derived by the compiler; may be declared higher |
 | `inputs` | As for operations |
-| `source` | `reader`, `template`, and `mapping` |
+| `source` | `template`: the name and version of a file under `sources/`, which names the reader and the mapping. A pipeline with a source has a reserved input named `source`, of type `file`, that carries the file to read; a source whose reader is `operation` has none |
 | `limits` (required for writes) | `max_records`, and optional time and rate limits |
 | `steps` (required) | Ordered list of steps (below) |
-| `success` (required) | Conditions for `completed`, such as `all_records_verified` |
+| `success` (required) | Conditions for `completed`, such as `all_records_verified`. A record found `unchanged` counts as verified |
 | `headroom` | Minimum session time left before starting |
 
 **Step.**
@@ -206,9 +210,9 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | Field | Meaning |
 | --- | --- |
 | `id`, `operation` (required) | A name and the operation to call |
-| `with` | Map of the operation's inputs to expressions |
+| `with` | Map of the operation's inputs to expressions. Inputs are passed only here; nothing is passed by matching names |
 | `for_each` | An expression giving the rows to repeat over, in order |
-| `checkpoint` | `per_record` or `per_step` |
+| `checkpoint` | `per_record` or `per_step`: where a snapshot is taken as evidence ([spec section 47](../spec/47-traces-and-evidence.md)). It does not decide where a write can resume; the ledger makes every commit point a resume point whatever this says |
 | `when` | An expression; the step is skipped when false |
 | `expect` | An expression that must be true of the result, or the run stops |
 
@@ -222,7 +226,7 @@ A step can only stop on failure. There is no continue-on-error.
 | `reader` (required) | `xlsx`, `csv`, `json`, or `operation` |
 | `fingerprint` (required) | What identifies this template version |
 | `locate` | Named ranges or header text that find the data |
-| `mapping` (required) | Map of operation input to a source column or an expression |
+| `mapping` (required) | Map of row field name to a source column or an expression. Each row the source yields has these fields; a pipeline step passes them to an operation's inputs through `with`, so a source never names an operation |
 | `rows` | An expression filtering which rows are records |
 | `missing` | Which text values, if any, count as empty |
 
@@ -252,3 +256,13 @@ Expressions are CEL. They always terminate and never convert types silently.
 | `env` | The environment's name and kind |
 
 Host functions, the starting library: `to_inches`, `to_feet_inches`, `to_unit`, `parse_decimal`, `round_to`, `parse_date`, `format_date`, `trim`, `lower`, `upper`, `code_for`, `label_for`, `coalesce`. Each is tested, documented by `web2mcp docs`, and versioned with the engine. Anything not expressible this way is a reviewed plug-in, not a script.
+
+## Open points
+
+Found by walking the sheet-entry pipeline through these formats on 2026-11-16. Each is settled in the slice named, not before.
+
+- **A record that does not exist yet, in a `ui` binding.** The formats cannot yet say how a screen shows that a record is absent, or how an `upsert` reaches the create form when the update form is a different one. Hypothesis H-23; slice 3.8.
+- **The kind of record.** A record key is built from identity inputs only, so two operations on the same record share a lock only if they declare the same inputs in the same order. Hypothesis H-24; slice 3.8.
+- **The fields of `identity`.** Only the strategy names and the `key` short form are fixed. The long form for `stamped` and `find` is written with the first operation that needs one; slice 3.8.
+- **The type of a bare column in a mapping.** The compiler type-checks `with` against the operation's inputs, so every row field needs a type before any file is read; slice 3.9.
+- **Whether `checkpoint` is still needed.** Since the ledger keeps one row per commit point, it only places snapshots. A candidate for removal in a review round with the lens "less".

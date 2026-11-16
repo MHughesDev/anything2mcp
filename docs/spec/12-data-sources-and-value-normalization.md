@@ -11,7 +11,7 @@ Input is read and validated in full before the browser opens, and every comparis
 
 **Template fingerprint.** A hash of sheet names, named ranges and their targets, header text, merged ranges, and dropdown lists. A workbook whose fingerprint has no known template version is rejected with a list of differences.
 
-**Mapping.** A reviewed file maps source columns to operation inputs, with CEL for conditions and tested host functions for conversions such as feet-and-inches parsing. Decimals travel as strings or whole numbers of the smallest unit, never as floats.
+**Mapping.** The reviewed source file maps source columns to named row fields, with CEL for conditions and tested host functions for conversions such as feet-and-inches parsing. A pipeline step passes row fields to an operation's inputs with `with`, so a source never names an operation. Decimals travel as strings or whole numbers of the smallest unit, never as floats.
 
 **Normalization rules** applied to both sides before comparison:
 

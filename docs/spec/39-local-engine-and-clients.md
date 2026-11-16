@@ -29,7 +29,7 @@ The stdio proxy and the SDK bridge are the same binary. Keeping the channel code
 2. **Start on demand.** If nothing answers, the client takes a lock file, starts the engine detached, and waits for it to report ready. A second client arriving at the same moment waits on the lock instead of starting a second engine.
 3. **Version check.** Client and engine exchange versions. After an upgrade, a newer client asks the older engine to finish its runs and restart; if runs are still active, the client reports that instead of interrupting them.
 4. **Idle stop.** With no runs, no captures, and no clients for a set time (30 minutes by default), the engine saves session state to the vault and exits. The session keeper holds the engine open for a session that would not survive a restart, up to its keep-alive window ([section 44](44-session-keeper.md)). The next command starts it again and sessions resume from the vault.
-5. **Crash.** Runs in flight are marked interrupted in the ledger. The next start reconciles before any resumed write, as in [section 10](10-runs-ledger-and-resume.md).
+5. **Crash.** Runs in flight are left `running` in the ledger under a lease nobody holds. The next start sets each to `stopped` with the class `possible_commit` and the code `runner_lost`, and reconciles before any resumed write, as in [section 42](42-run-ledger-design.md).
 
 `web2mcp engine status`, `start`, `stop`, and `logs` expose this to people. Nobody needs them in normal use.
 

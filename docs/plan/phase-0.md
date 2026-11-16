@@ -33,8 +33,8 @@ The order of work is the slice order in [core first](core-first.md); the groups 
 | A3 | Create the Cargo workspace with the crates from spec section 29 as empty crates with their dependency edges | `cargo build` and `cargo test` pass; the layering in the technical reference is enforced by a check |
 | A4 | Add CI for Windows, macOS, and Linux: format, lint, build, test | A pull request shows three green jobs |
 | A5 | Add dependency auditing and license checking to CI | A disallowed license fails the build |
-| A7 | Add `SECURITY.md` with how to report a vulnerability, `CONTRIBUTING.md`, and a notices file for third-party licenses | The files exist and the owner has agreed their content |
 | A6 | Run `tools/docs_audit.py` in CI | A documentation contradiction or broken link fails the build |
+| A7 | Add `SECURITY.md` with how to report a vulnerability, `CONTRIBUTING.md`, and a notices file for third-party licenses | The files exist and the owner has agreed their content |
 
 ### B. Core types and file schemas
 

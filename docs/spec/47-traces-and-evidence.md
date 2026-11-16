@@ -105,6 +105,6 @@ Restricted fields are masked in all of it. The agent proposes a file change; it 
 
 ## Open points
 
-- The exact step-trace schema, fixed in Phase 1 with the first driver.
+- The exact step-trace schema, fixed in Phase 1 with the first driver. Its unit is not settled: the glossary's step is one driver instruction, such as `locate` or `set`, yet the record above has one locator and the timings of a whole pass of the engine loop. Slice 1.2 chooses between a record per step and a record per pass, before the signature is defined over it.
 - How well screenshot masking works on pages that move while being captured.
 - Whether `full` capture should ever be allowed on a production write.

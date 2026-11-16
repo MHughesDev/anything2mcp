@@ -43,7 +43,7 @@ Web2MCP therefore builds the same guarantee from three parts it controls:
 | `needs_input` | A declared decision point is waiting for a person | Input or cancel |
 | `needs_login` | The session expired and could not renew itself | Sign-in |
 | `stopped` | Halted with a failure class; can be resumed | Resume or cancel |
-| `completed` | Every record verified | Final |
+| `completed` | Every record verified or unchanged | Final |
 | `failed` | Halted and cannot be resumed | Final |
 | `cancelled` | Stopped at a person's or caller's request | Final |
 
@@ -68,13 +68,24 @@ These are written as tests, and a change that breaks one cannot merge.
 
 1. **Intent before action.** A record reaches `acted` only if its `intent` was durably stored before the write was sent.
 2. **Proof before verified.** A record reaches `verified` only with a value read from the application that equals the intended value after normalization, and a link to that evidence.
-3. **Approval bound to the diff.** A write run enters `running` only with an approval whose diff hash (defined in [steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md)) equals the run's, that is unexpired and unused. Marking it used and changing the run's state happen in one transaction.
+3. **Approval bound to the diff.** A write run first enters `running` only with an approval whose diff hash (defined in [steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md)) equals the run's, that is unexpired and unused. Marking it used and changing the run's state happen in one transaction. A resumed run is the same run: it continues under the approval it has already used and writes only what that diff holds, with rule 5 and the freshness check guarding each record.
 4. **One writer per run.** Only the holder of the run's current lease number may change its records. Anything carrying an older number is refused.
 5. **Reconcile after any doubt.** After a lease is lost or an engine stops, no record of that run is written until it has been read back.
-6. **One run per identical call.** At most one unfinished run exists for the same caller, tool version, and input hash. A second identical call returns the first run.
+6. **One run per identical call.** At most one unfinished run exists for the same caller, tool version, and input hash. A second identical call returns the first run. For a file input the hash covers the file's content, not its path.
 7. **One lock per record.** At most one run holds the lock for a record key in a target and environment.
 8. **Final means final.** A run in a final state never changes again.
 9. **History is append-only.** Events are never updated or deleted, except by the retention job, which removes whole runs.
+
+## The preview, step by step
+
+A write run builds its diff while it is `validating`, before anyone is asked to approve. Sections 18, 45, and 50 each describe a part of this; here is the order.
+
+1. Validate the inputs and read the whole source ([section 12](12-data-sources-and-value-normalization.md)). A file is read once and stored as a blob ([section 51](51-defending-against-a-manipulated-agent.md)).
+2. Apply the record limit and quotas ([section 45](45-policy-engine.md)).
+3. Run the read steps that come before the first write step, checking each `expect`. A failure here ends the run before anyone is asked to approve. Read steps after the first write step run only in the write phase.
+4. For each record the write steps would touch: evaluate its inputs, look the record up by its identity strategy, and class it `create`, `update`, or `unchanged` ([section 50](50-record-identity-and-dependent-records.md)). For `natural` and `composite` identity the lookup is the read-back rule of the binding that will write the record, used on its own. The values found are kept as the values seen before the write.
+5. Build the diff, hash it, and store both on the run.
+6. If the diff holds nothing to create or update and the tool has no other effect, such as an upload, no approval is needed: the run writes nothing, runs its remaining read steps, and ends `completed`. This is what makes a second run of the same sheet change nothing. Otherwise the policy engine is asked whether the write may proceed without a person, and the run waits at `needs_approval` if not.
 
 ## The write path, step by step
 
@@ -152,3 +163,13 @@ Migrations are numbered, forward-only, and run against both databases in CI. Ide
 ## Speed targets
 
 Storing an intent: under 2 ms locally and under 5 ms to a control plane on the same network. Ledger overhead on a read: under 1 ms. Both are targets until measured in Phase 3.
+
+## Open points
+
+Found by walking the sheet-entry pipeline through this section on 2026-11-16. Each is to be settled before slices 3.5 and 3.7, with the owner where the answer changes what a caller sees.
+
+- **Leading read steps in the write phase.** Approval can take minutes. Whether the read steps that ran in the preview run again before the first write, and what happens when an `expect` that held then fails now, is not stated. The safe answer is to run them again and stop.
+- **What a write step's inputs may depend on.** A proposed value has to be known at the preview to be approved. A write step whose `with` uses the result of a read step that runs after an earlier write cannot be previewed. The compiler should refuse it, and no rule says so yet. An earlier write step's assigned key is the one case section 50 already covers.
+- **Which run state each failure class leads to.** `stopped` can be resumed and `failed` cannot, but no table says which class ends where. A run stopped as `stale` cannot succeed by resuming, since its approved diff no longer describes the application, yet while it stays unfinished rule 6 hands it back to an identical call. A run stopped as `drift` is pinned to the plan that drifted.
+- **Locks when a run stops.** Only a lost lease is covered. A stopped or cancelled run with a record in `intent` or `acted` still has a record in doubt; whether its lock is held, quarantined, or released is not stated.
+- **Who resumes after the engine dies.** The caller, with `run.resume`, or the engine by itself at its next start. The safe answer is the caller.
