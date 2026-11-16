@@ -78,6 +78,25 @@ A third pass looked for places where the design was weaker than it should be, no
 | Only Phase 0 had a task list | Draft task lists for Phases [1](phase-1.md), [2](phase-2.md), and [3](phase-3.md), each to be revised as the phase before it ends |
 | Phase 1 was to be proven on a real application before sign-in existed | That test moved to Phase 2 |
 
+A fourth pass, on 2026-11-16, walked one pipeline through every section it touches: a spreadsheet of line items entered into an order, the design's own running example. It asked where two steps do not connect.
+
+| Where the steps did not connect | Fix |
+| --- | --- |
+| The worked example in section 7 could not run as written: the pipeline passed no inputs to its operations, the screen had no way to reach one line item, the save was not marked as a commit point, and the key left out the order | The example now connects end to end and agrees with the file format reference |
+| A source's mapping was a named thing in one place, an inline map of operation inputs in another, and a set of row fields in a third | One reading: a source file maps columns to row fields, and a pipeline step passes them to inputs with `with` |
+| Nothing said how a sheet reaches a pipeline | A pipeline with a source has a reserved `source` input of type `file` |
+| The compiler counted "confirmed actions" as saves; the file formats count actions marked `commits` | The formats' rule, in both places |
+| The preview had no procedure, though the write path and resume each have one | "The preview, step by step" in section 42, assembled from sections 18, 45, and 50 |
+| Nothing said that a run with nothing to change needs no approval, though the walkthrough depends on it | Stated in section 42; `completed` now covers records found unchanged |
+| Ledger rule 3, read literally, forbade resume, because the approval was already used | The rule now covers a run's first entry to `running`; a resumed run continues under the same approval |
+| Sections 10 and 11 still identified a run by its approval, and section 11 gave one caller another caller's run | Both now follow ledger rule 6 |
+| `version_conflict` sat under `rejected`, whose response is to return the application's message, when it means someone else changed the record | Moved under `stale` |
+| "Step" meant three things: a pipeline step, a pass of the engine loop, and one driver instruction | The glossary now names the engine loop and the pipeline step; "step" alone is the driver instruction |
+| A crashed run was "marked interrupted", which is not a run state | `stopped`, with `possible_commit` and `runner_lost` |
+| The record lock and the freshness check had no place in the engine loop | Both are in part 4, and the lock is released in part 8 |
+
+The same pass found gaps it could not close on paper. They are listed as open points in [section 42](../spec/42-run-ledger-design.md), [section 47](../spec/47-traces-and-evidence.md), the [file format reference](../reference/file-formats.md), and the [technical reference](../reference/technical-reference.md), and three became hypotheses H-23 to H-25.
+
 ## Requirement coverage
 
 Every requirement the owner stated, and where the design meets it.
@@ -114,7 +133,7 @@ Every requirement the owner stated, and where the design meets it.
 | 0. Foundations and spikes | Complete | Brief 1 | The browser engine spike finds no good base |
 | 1. Solo read path | Complete | Briefs 2, 3, 11, 26, 28 | Waiting and acting reliably through the DevTools protocol |
 | 2. Sessions | Complete | Briefs 4, 5, 6, 30 | The organization's sign-in rules refuse an automated browser |
-| 3. Writes | Complete, except the per-platform presence prompt | Briefs 7, 8, 12, 21, 27, 31 | Approval on a machine where the agent has a shell |
+| 3. Writes | Complete, except the per-platform presence prompt and the open points in section 42 and the file format reference | Briefs 7, 8, 12, 21, 27, 31 | Approval on a machine where the agent has a shell |
 | 4. HTTP modes and mining | Core complete | Brief 9 | Applications that compute or sign in the browser |
 | 5. Authoring and ease | Complete | Briefs 10, 29 | An agent with no prior knowledge not finishing in the target time |
 | 6. Server | Core complete; admin console screens not designed | Briefs 13, 14, 15, 16 | Hosted agents' protocol support differs from the specification |
@@ -180,8 +199,8 @@ Things only the owner can do.
 ## Keeping it ready, and making it better
 
 - Build slowly and core first, by the [working method](working-method.md) and the slice order in [core first](core-first.md).
-- Test the design's bets as they come up; the [hypothesis register](../hypotheses/README.md) lists 22 of them, all open.
-- Run a design review round at the end of each phase with one of the [lenses](design-review-lenses.md). Lenses 6, 7, and 8 were planned and not yet run.
+- Test the design's bets as they come up; the [hypothesis register](../hypotheses/README.md) lists 25 of them, all open.
+- Run a design review round at the end of each phase with one of the [lenses](design-review-lenses.md). Lens 6 was run on 2026-11-16; lenses 7 and 8 were planned and not yet run.
 
 - Run `python3 tools/docs_audit.py` after every documentation change; it must report no findings.
 - When code and a section disagree, change one of them in the same commit.

@@ -46,6 +46,8 @@ pub trait Driver: Send + Sync {
 
 Rules for every driver: no retries inside `act`; every failure maps to exactly one failure class; no secret ever appears in `ActOutcome`, `Values`, or `Failure`.
 
+Two things in the sketch do not yet match the rest of the design, and slice 1.1 settles both with a decision record, since this is a public interface. First, [steps, snapshots, and diffs](steps-snapshots-and-diffs.md) makes confirm and read-back lists of steps, which `act` could carry out, while the sketch gives read-back a method of its own taking a rule. Second, `read_back` also serves the preview and reconcile ([file formats](file-formats.md)), so its result must be able to say that a record is absent.
+
 ## Verbs by mode
 
 | Verb | `ui` | `page_http` | `http` | `api` | `site_tools` | `mcp` | `desktop` |
@@ -169,10 +171,10 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
 | `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status` |
-| `rejected` | `app_validation_error`, `version_conflict` |
+| `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
-| `stale` | `changed_since_preview` |
+| `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
 | `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `storage_full`, `engine_degraded` |
 

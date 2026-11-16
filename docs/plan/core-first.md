@@ -47,7 +47,7 @@ The desktop spike in the Phase 0 task list can wait until just before Phase 8. I
 | 1.4 | The local engine: one process, two clients | Two commands at once share one browser | H-06, H-21 |
 | 1.5 | The action registry and the MCP face | An MCP client calls the same read; a hand-written face fails CI | H-13 in part |
 | 1.6 | The rest of the read verbs, locators, and conditions | The Phase 1 cases of the test application pass | H-02, H-03 |
-| 1.7 | Measure every budget; hold a design review round | Numbers, and a revised design where they disagree with it | H-20 |
+| 1.7 | Measure every budget; hold a design review round | Numbers, and a revised design where they disagree with it | H-20, H-25 |
 
 ### Phase 2
 
@@ -72,7 +72,7 @@ The desktop spike in the Phase 0 task list can wait until just before Phase 8. I
 | 3.5 | Preview, the diff, and its hash | The same hash on three operating systems | None |
 | 3.6 | The approval surface replaces the stub | A person approves; a script cannot | H-12 |
 | 3.7 | Stop and resume | Killed at a random step, resumed, no duplicate | H-15 |
-| 3.8 | Identity strategies and dependent records | A header and its lines, created once | H-09 |
+| 3.8 | Identity strategies and dependent records | A header and its lines, created once | H-09, H-23, H-24 |
 | 3.9 | Sources and a full pipeline | A spreadsheet entered, then run again with nothing changed | None |
 | 3.10 | Engine faults and the first manipulation tests; a design review round | Each fault leaves no duplicate and no unverified record | None |
 

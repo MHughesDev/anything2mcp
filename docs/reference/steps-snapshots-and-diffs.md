@@ -6,7 +6,7 @@ Three internal formats that several parts of the system share: the steps a compi
 
 The compiler lowers each binding's verb into a fixed list of steps ([spec section 46](../spec/46-target-compiler-and-plan.md)). A driver knows only how to carry out its own step kinds. Fixed in Phase 1 for `ui`, Phase 4 for the HTTP kinds, Phase 8 for the rest.
 
-**Engine steps**, the same in every mode, are the eight-part loop of [spec section 8](../spec/08-execution-engine.md): `guard`, `choose`, `prepare`, `intend`, `act`, `confirm`, `read_back`, `record`. The driver steps below are what `act`, `confirm`, and `read_back` expand into.
+**The engine loop**, the same in every mode, has the eight parts of [spec section 8](../spec/08-execution-engine.md): `guard`, `choose`, `prepare`, `intend`, `act`, `confirm`, `read_back`, `record`. These are parts of a loop, not steps. The steps below are what the parts `act`, `confirm`, and `read_back` expand into, and "step" alone always means one of these.
 
 | Driver | Step | Does |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ A diff is what a preview produces, what a person approves, and what an approval 
 Consequences:
 
 - The same proposal against the same current values always has the same hash, on any machine.
-- If any current value has changed when the run starts, the hash differs and the approval no longer applies.
+- If a record's current values have changed by the time it is written, it no longer matches the approved diff, and the run stops at that record as `stale` ([spec section 42](../spec/42-run-ledger-design.md)). The comparison is made record by record against the values the preview stored, not by hashing the whole diff again.
 - A field labelled restricted enters the hash as a hash of its value, and is shown to the approver only if policy lets that approver see it.
 
 **What the approver sees.** Counts first; then records that change, with current and proposed values side by side; unchanged records collapsed; anything the tool will do besides writing fields, such as an upload, stated in words.
