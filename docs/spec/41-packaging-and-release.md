@@ -10,7 +10,7 @@ Every install route delivers the same Rust binary. The pip and npm packages add 
 | Command | `web2mcp` | Decided |
 | Python package and import | `web2mcp` | Not held yet; a pending trusted publisher is configured, and the first release secures the name |
 | Rust crates | `web2mcp` for the binary and library facade, `w2m-*` for the parts | `web2mcp` is held by a placeholder release; the `w2m-*` names are unchecked |
-| npm package | `w2mcp` | `web2mcp` is taken on npm; `w2mcp` is registered to the owner, with its first version awaiting approval |
+| npm package | `w2mcp` | `web2mcp` is taken on npm; `w2mcp` is held by a placeholder release |
 | MCP tool prefix | `w2m_` | Decided |
 | Container image | `web2mcp` under the repository's registry namespace | Decided |
 

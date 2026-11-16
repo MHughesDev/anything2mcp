@@ -7,7 +7,7 @@ Where each package name stands and how releases will authenticate. Recorded on 2
 | Registry | Name | Status | What remains |
 | --- | --- | --- | --- |
 | crates.io | `web2mcp` | **Held.** A placeholder, version 0.0.1, is published | Publish the real crate as a later version |
-| npm | `w2mcp` | **Held, with a step pending.** The name is registered to the owner's account. Version 0.0.1 was submitted and is waiting in npm's staging area | The owner approves or rejects the staged version on npmjs.com, which needs two-factor sign-in |
+| npm | `w2mcp` | **Held.** A placeholder, version 0.0.1, is published | Publish the real package as a later version |
 | PyPI | `web2mcp` | **Not held yet.** A pending trusted publisher is configured, which does not reserve the name | Publish a first release from the workflow below; only that secures the name |
 
 The placeholders contain a description, the Apache-2.0 license, and a link to this repository. They were built outside this repository and are not part of it.
