@@ -36,7 +36,7 @@ The repository has its first code: a Cargo workspace of 23 empty crates that is 
 - Building the test application made hypothesis H-23 concrete. Like many real applications it has no form at the address of a line item that does not exist, and a different address for the empty form. The screen model in spec section 7 cannot reach the second.
 - The form was driven once by hand in a real browser, by role and label: an update, a second save with the new version, a validation message, and a create all behaved, and the control interface showed three writes. Nothing automated covers the page's script yet.
 - axum, tokio, serde, and reqwest compiled and ran first time on Linux, and the licence check passes. Proof that a licence is really checked: with MIT taken off the list, the check failed.
-- CI with the first outside crates, first run, wall time per job: not known yet. The first run on pull request 4 had not finished when this line was written.
+- CI with the first outside crates, first run, wall time per job: on the run that was merged, Linux 37 s, macOS 76 s, Windows 91 s, the licence check 44 s, the audit 11 s.
 - The placeholder package was built twice from one commit and the files were identical, byte for byte, once file times were taken from the commit. It installed into a clean environment and imported. That is local proof of the build half only.
 
 ## Changed in the design
