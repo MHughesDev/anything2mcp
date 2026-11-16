@@ -6,7 +6,7 @@ Web2MCP latches onto software you can already reach (a web app, a backend API, a
 
 ## Status
 
-**Design stage. No code yet.** This repository currently holds the system design, the decisions behind it, and the research it rests on. Implementation starts at Phase 0 of the build plan.
+**Phase 0. Nothing usable yet.** The repository holds the system design, the decisions behind it, the research it rests on, and a Cargo workspace of empty crates that is built and tested on Windows, macOS, and Linux. The `web2mcp` binary only reports its version.
 
 ## Where to start
 
@@ -34,4 +34,4 @@ Web2MCP is designed to operate openly: it identifies itself as automation, respe
 
 ## License
 
-Apache-2.0 is the chosen license; the license file is added in Phase 0.
+Apache-2.0. See [LICENSE](LICENSE).

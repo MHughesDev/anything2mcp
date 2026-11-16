@@ -9,7 +9,7 @@ web2mcp/
     w2m-core/             # shared types: targets, operations, bindings, effects, failure classes
     w2m-files/            # schemas, loader, linter, plan compiler
     w2m-expr/             # CEL evaluation; host functions for units, numbers, dates
-    w2m-engine/           # step loop, mode selection, read-back, normalization
+    w2m-engine/           # engine loop, mode selection, read-back, normalization
     w2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
     w2m-policy/           # grants, effect classes, approvals, limits
     w2m-sched/            # queues, record locks, quotas, runner dispatch

@@ -1,0 +1,11 @@
+[package]
+name = "w2m-browser"
+description = "The DevTools-protocol browser engine: locate, act, wait, and network."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

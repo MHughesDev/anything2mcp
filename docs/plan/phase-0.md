@@ -30,7 +30,7 @@ The order of work is the slice order in [core first](core-first.md); the groups 
 | --- | --- | --- |
 | A1 | Secure the PyPI name: create `.github/workflows/release.yml` and publish a placeholder `web2mcp` release through the pending trusted publisher. Check each `w2m-*` crate name. The crates.io and npm names are already held; see [publishing setup](publishing-setup.md) | `pip install web2mcp` installs the placeholder; a refused crate name has a recorded replacement |
 | A2 | Add `LICENSE` (Apache-2.0), `.gitignore`, `rust-toolchain.toml`, `rustfmt.toml`, lint settings | `cargo fmt --check` and `cargo clippy` run clean on an empty workspace |
-| A3 | Create the Cargo workspace with the crates from spec section 29 as empty crates with their dependency edges | `cargo build` and `cargo test` pass; the layering in the technical reference is enforced by a check |
+| A3 | Create the Cargo workspace with the crates from spec section 29 as empty crates. A crate declares a dependency only when code needs it ([decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md)) | `cargo build` and `cargo test` pass; the layering in the technical reference is enforced by `tools/docs_audit.py` |
 | A4 | Add CI for Windows, macOS, and Linux: format, lint, build, test | A pull request shows three green jobs |
 | A5 | Add dependency auditing and license checking to CI | A disallowed license fails the build |
 | A6 | Run `tools/docs_audit.py` in CI | A documentation contradiction or broken link fails the build |

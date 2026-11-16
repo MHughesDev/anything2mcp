@@ -8,7 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
-| 2026-11-16 | [Lens 6 and a plan for slice 0.1](2026-11-16-lens-6-and-slice-0-1-plan.md) | One pipeline walked through the design; its joins fixed; slice 0.1 planned, not started |
+| 2026-11-16 | [Lens 6, then slice 0.1](2026-11-16-lens-6-and-slice-0-1.md) | One pipeline walked through the design and its joins fixed; the workspace skeleton and CI built |
 | 2026-11-15 | [Design handoff](2026-11-15-design-handoff.md) | The design is complete and audited; no code exists; Phase 0 is next |
 
 ## What an entry contains

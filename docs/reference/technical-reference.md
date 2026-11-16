@@ -4,7 +4,7 @@ This file holds the engineering detail behind the [system design](../spec/README
 
 ## Crate layering
 
-Crates depend only downward, which keeps build times short and the core small.
+Crates depend only downward, which keeps build times short and the core small. A crate may depend on crates in lower layers only, never on one in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge ([decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md)).
 
 | Layer | Crates | May depend on |
 | --- | --- | --- |
