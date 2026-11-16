@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+/target/
+.web2mcp/
+.DS_Store

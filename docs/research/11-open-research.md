@@ -1,0 +1,103 @@
+# Open research
+
+Research that was planned but not completed. Each item is a ready brief: hand it to a research agent, write the result up as a new file in this folder, then update the spec section it feeds and remove the item from this list.
+
+Run an item before the build phase that depends on it. The phase numbers refer to the [build plan](../spec/36-build-plan.md).
+
+| # | Topic | Needed before | Feeds spec section |
+| --- | --- | --- | --- |
+| 1 | Browser engine base | Phase 0 | 17 |
+| 2 | MCP features and dual-revision serving | Phase 1 | 21, 22 |
+| 3 | Locators and hard widgets on the DevTools protocol | Phase 1 | 13, technical reference |
+| 4 | Session persistence and Entra session rules | Phase 2 | 15, 16 |
+| 5 | Vault design per operating system | Phase 2 | 15, 19 |
+| 6 | Web sign-in methods and auto-detection | Phase 2 | 15 |
+| 7 | Durable execution and idempotency | Phase 3 | 10 |
+| 8 | Human approval patterns | Phase 3 | 18 |
+| 9 | Network channel practice and endpoint inference | Phase 4 | 6, 26 |
+| 10 | AI discovery turned into deterministic steps | Phase 5 | 26 |
+| 11 | File-format prior art | Phase 1 | 7 |
+| 12 | Testing against third-party apps | Phase 3 | 27 |
+| 13 | Local and remote MCP transport security | Phase 6 | 19, 22 |
+| 14 | Prompt injection and MCP-specific threats | Phase 6 | 18, 19 |
+| 15 | Enterprise governance of agent tools | Phase 6 | 20 |
+| 16 | Hosted-agent compatibility, hands-on | Phase 6 | 24 |
+| 17 | Remote sign-in to a server-hosted browser | Phase 7 | 16 |
+| 18 | Deployment and scaling patterns | Phase 7 | 23 |
+| 19 | Desktop accessibility automation | Phase 8 | 6 |
+| 20 | Selector repair and drift | Phase 9 | 28 |
+| 21 | Lessons from RPA products | Phase 3 | 8, 10, 31 |
+| 22 | Reproducibility and observability | Phase 9 | 28, 29 |
+| 23 | Vendor APIs and terms of use | Before the first real target | 34 |
+| 24 | WebMCP standard status | Phase 8 | 6 |
+| 25 | Gap-review components | The phase each lands in | 32 |
+| 26 | Local channel on three operating systems | Phase 1 | 39 |
+| 27 | Operating-system user-presence checks | Phase 3 | 18, 39 |
+| 28 | Wheel and npm packaging, verified hands-on | Phase 1 | 41 |
+| 29 | Command-line design for agents | Phase 5 | 40 |
+| 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
+| 31 | Cedar spike | Phase 3 | 45 |
+
+## Briefs
+
+**1. Browser engine base.** Compare chromiumoxide, Skyvern's Rustwright core, ferrous-browser, and writing a DevTools-protocol client from scratch. Judge on: event-driven waits, accessibility-tree access, network capture and in-page fetch, launching installed Chrome or Edge with an engine-owned data directory, stability over long sessions, license, maintenance, and Windows, macOS, and Linux support. Produce a recommendation and a spike plan.
+
+**2. MCP features and dual-revision serving.** In the 2026-07-28 specification, confirm tool annotations, output schemas, resources and resource links, the Tasks extension lifecycle, Multi Round-Trip Requests, and list caching. Find out whether the `rmcp` crate can serve 2026-07-28 and 2025-11-25 clients from one server, and how.
+
+**3. Locators and hard widgets.** Best practice for locating and acting on elements through the DevTools protocol and the accessibility tree without Playwright: actionability checks, shadow DOM, iframes, virtualized grids, custom dropdowns, date pickers, rich-text editors, file uploads, and single-page navigation.
+
+**4. Session persistence and Entra session rules.** (Partly answered by [note 14](14-sessions-and-policy-engines.md).) How cookies, localStorage, IndexedDB, and sessionStorage persist in Chromium profiles; where MSAL-based apps keep tokens; what controls Entra session length (sign-in frequency, persistent browser session, refresh-token lifetime, continuous access evaluation); what Token Protection and device-compliance rules do to a session used from a server; what Microsoft recommends for automation identities; what to ask IT to approve.
+
+**5. Vault design per operating system.** (Partly answered by [note 15](15-traces-and-key-stores.md); the design is in spec section 48.) Windows DPAPI and Credential Manager, macOS Keychain, Linux Secret Service; Rust crates for each; envelope encryption of profile directories; how Chromium encrypts cookies on each OS, including app-bound encryption on Windows, and whether a copied profile still works; options on servers and in containers; keeping secrets out of logs and traces.
+
+**6. Web sign-in methods and auto-detection.** For OIDC and SAML redirects, pop-up sign-in, form login, HTTP Basic and Digest, NTLM and Kerberos, client certificates, and passkeys: what Chromium supports under automation, the pitfalls, and how to detect each method from a URL and detect expiry mid-run.
+
+**7. Durable execution and idempotency.** (Partly answered by [note 13](13-ledger-leases-and-runner-links.md); check the design in spec section 42 against primary sources.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
+
+**8. Human approval patterns.** MCP elicitation and client support; approval pages; Teams, Slack, and email approvals; binding an approval to a content hash with expiry and single use; tiering and batching to avoid fatigue; what to record for audit; how LangGraph, the OpenAI Agents SDK, Temporal, GitHub environments, and Terraform handle it.
+
+**9. Network channel practice and endpoint inference.** Capturing traffic through the DevTools protocol; tools that derive API descriptions from captures (mitmproxy2swagger, HAR-to-OpenAPI, Integuru); anti-forgery tokens, GraphQL, WebSockets, and server-rendered pages; schema validation of undocumented responses; the stability and terms risks of calling internal endpoints.
+
+**10. AI discovery turned into deterministic steps.** How Stagehand, workflow-use, Skyvern, AgentQL, and Pomerado convert a model's decision into a stored step and re-validate it later; their reported limits; how to keep exploration strictly read-only on a live system.
+
+**11. File-format prior art.** Lessons from Chrome DevTools Recorder JSON, browser-to-mcp's YAML, Robot Framework, Maestro, the OpenAPI Arazzo workflow specification, and GitHub Actions: versioning, expressions, loops, reuse, linting, and the trap of logic creeping into YAML.
+
+**12. Testing against third-party apps.** Safe testing of write workflows without a test environment; recorded fixtures as a mock target; contract tests for locators and response shapes; flakiness thresholds; fault injection; canary frequency and alerting.
+
+**13. Local and remote MCP transport security.** Risks of localhost HTTP servers (DNS rebinding, any local page connecting) and the recommended mitigations; what the MCP authorization specification requires end to end; sharing one server among many clients.
+
+**14. Prompt injection and MCP-specific threats.** Indirect injection through application text returned in tool results; tool poisoning, shadowing, and confused-deputy problems; guidance from the MCP security pages and OWASP; which mitigations fit a deterministic server.
+
+**15. Enterprise governance of agent tools.** (The decision engine is covered by [note 14](14-sessions-and-policy-engines.md).) Per-user and per-group tool visibility with Entra groups and app roles; admin consent; allowlists; audit suitable for compliance; data-loss-prevention hooks; how Microsoft, Anthropic, and OpenAI recommend governing MCP tools.
+
+**16. Hosted-agent compatibility, hands-on.** Connect a test server to Copilot Studio and record: MCP revision spoken, elicitation, Tasks, resources, limits on tools, payload, and duration, and whether calls carry the end user's identity. Repeat for other hosted agent platforms in use.
+
+**17. Remote sign-in to a server-hosted browser.** How Browserbase Live View, Steel, Browserless, and noVNC-style viewers stream a server-side browser to a remote user securely; whether passkeys and platform authenticators can work remotely; push MFA; session storage per user; the risks of a server holding many users' sessions.
+
+**18. Deployment and scaling patterns.** (Job queues and worker links are partly answered by [note 13](13-ledger-leases-and-runner-links.md).) Control plane and worker splits; Postgres-based job queues; browser workers in containers; Windows desktop workers; Kubernetes versus Compose versus a plain service; upgrades without downtime.
+
+**19. Desktop accessibility automation.** The state of UI Automation, the macOS Accessibility API, and AT-SPI from Rust; `xa11y` maturity; Java Access Bridge and SAP GUI scripting; whether desktop automation can run in a service session or needs an interactive one; how stable element identifiers are.
+
+**20. Selector repair and drift.** Healenium and similar tools; LLM-based locator repair; fallback locators and element fingerprints; the failure mode where healing picks the wrong element; how mature systems keep repair safe.
+
+**21. Lessons from RPA products.** UiPath's object repository, selectors, queues, and exception-handling framework; Power Automate Desktop; the documented causes of bot failure and maintenance cost; how RPA vendors now combine agents with deterministic bots.
+
+**22. Reproducibility and observability.** (Trace conventions are partly answered by [note 15](15-traces-and-key-stores.md).) Pinning a Chromium build without Playwright's installer; environment factors that cause drift; trace and screenshot storage and redaction; OpenTelemetry conventions for MCP tool calls; tamper-evident audit logs.
+
+**23. Vendor APIs and terms of use.** For the first real target, chosen privately by the owner: what its published API covers and omits; rate limits; whether it offers its own MCP server; what its terms say about automated access. In general: what typical SaaS terms say about automating a licensed user's own account. Not legal advice. Keep the application's name out of the repository.
+
+**24. WebMCP standard status.** The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
+
+**25. Gap-review components.** For each component in [spec section 32](../spec/32-components-added-by-the-gap-review.md), find prior art and pitfalls before designing it in detail: environments, triggers, mid-run input, undo, read caching, data classification, identity isolation, single-session apps, tool versioning, authorization records, usage metering, updates, and target packs.
+
+**26. Local channel on three operating systems.** Rust crates for Unix domain sockets and Windows named pipes behind one interface; serving HTTP over them with the chosen web framework; reading the connecting user's identity on each system; directory and access-list permissions; starting a detached background process and guarding it with a lock file; how comparable tools (language servers, container and database daemons) handle version skew and idle shutdown.
+
+**27. Operating-system user-presence checks.** What Windows Hello, macOS Touch ID and password prompts, and Linux polkit offer to a background process running as the user; whether each can be called from Rust; behavior on machines with no biometric hardware, over remote desktop, and on headless servers; what a program running as the same user can and cannot bypass.
+
+**28. Wheel and npm packaging, verified hands-on.** Build a maturin `bin` wheel that also carries a pure-Python package and confirm the command and the import both work; the platform tags to publish; a launcher plus platform packages on npm, tested with optional dependencies switched off and with install scripts disabled; what `dist` covers; current registry rules for short-lived publishing credentials and build provenance.
+
+**29. Command-line design for agents.** How current coding agents discover and use commands; output formats that cost the least context; evidence on `--json` conventions, exit codes, and paging; how guidance files and skills are loaded by the main agents today; measured comparisons of commands and MCP tools for the same task.
+
+**30. Sign-in in engine-owned profiles, and device-bound sessions.** On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
+
+**31. Cedar spike.** Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Web2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.
