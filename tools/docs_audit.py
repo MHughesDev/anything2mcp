@@ -156,10 +156,14 @@ def main():
         r"optional in-process bindings": "in-process bindings are deferred (decision 0025)",
         r"browser context(s)? seeded": "runs share a live session in tabs (decision 0032)",
         r"npm install -g web2mcp": "the npm package is w2mcp (decision 0022)",
+        r"input hash, and approval": "a run is identified by caller, tool version, and input hash (spec 42, rule 6)",
+        r"marked interrupted": "a crashed run is `stopped`; interrupted is not a run state (spec 42)",
+        r"confirmed actions in a UI binding": "commit points are actions marked `commits` (file formats)",
+        r"[Ee]ngine steps": "the engine loop has parts; a step is one driver instruction (glossary)",
     }
     for pat, why in replaced.items():
         for k, v in md.items():
-            if k.startswith(("docs/decisions/", "docs/research/", "docs/plan/readiness")):
+            if k.startswith(("docs/decisions/", "docs/research/", "docs/plan/readiness", "docs/journal/")):
                 continue
             for i, line in enumerate(v.splitlines(), 1):
                 if re.search(pat, line) and "withdrawn" not in line and "arlier" not in line:
