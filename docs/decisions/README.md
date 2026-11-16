@@ -50,3 +50,4 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 | 0042 | [Design for an agent that has been steered](0042-design-for-an-agent-that-has-been-steered.md) | Accepted (design decision) |
 | 0043 | [The engine fails closed, with three health states](0043-the-engine-fails-closed-with-three-health-states.md) | Accepted (design decision) |
 | 0044 | [A published version becomes current in stages](0044-a-published-version-becomes-current-in-stages.md) | Accepted (design decision) |
+| 0045 | [The workspace starts with every crate, and the audit enforces the layering](0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md) | Accepted (design decision) |
