@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Check the documentation set for broken links and contradictions.
+"""Check the documentation set for broken links and contradictions, and the crates against it.
 
 Usage, from the repository root:
 
     python3 tools/docs_audit.py                 # check; exit 1 on any finding
     python3 tools/docs_audit.py --write-sources # also regenerate docs/references/sources.md
+    python3 tools/docs_audit.py --root DIR      # check another copy of the repository
 
-Standard library only. Run it after any change under docs/, AGENTS.md, or README.md.
+Standard library only; Python 3.11 or newer. Run it after any change under docs/, AGENTS.md,
+README.md, or any crate's Cargo.toml. tools/test_docs_audit.py proves it fails when it should.
 """
 import re
 import sys
+import tomllib
 from collections import defaultdict
 from pathlib import Path
 
-repo = Path(__file__).resolve().parent.parent
+repo = (Path(sys.argv[sys.argv.index("--root") + 1]).resolve() if "--root" in sys.argv
+        else Path(__file__).resolve().parent.parent)
 docs = repo / "docs"
 LINK = re.compile(r"\[([^\]]+)\]\((<[^>]+>|[^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)")
 
@@ -25,6 +29,17 @@ def load():
 
 def links(text):
     return [(label, target.strip("<>")) for label, target in LINK.findall(text)]
+
+
+def internal_dependencies(manifest):
+    """Names of every package a crate manifest depends on, in any dependency table."""
+    tables = [manifest] + list(manifest.get("target", {}).values())
+    names = set()
+    for table in tables:
+        for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+            for key, spec in table.get(kind, {}).items():
+                names.add(spec.get("package", key) if isinstance(spec, dict) else key)
+    return names
 
 
 def write_sources(md):
@@ -239,9 +254,40 @@ def main():
             if f"H-{h}" not in ids and h != "00" and h != "NN":
                 note("hypotheses", f"{k}: refers to H-{h}, which is not in the register")
 
+    # 13. Crates on disk match the layering table, and depend only on lower layers.
+    layer = {}
+    for m in re.finditer(r"^\| (\d+)\. [^|]+\|([^|]+)\|", layer_text, re.M):
+        for c in re.findall(r"`([a-z0-9-]+)`", m.group(2)):
+            layer[c] = int(m.group(1))
+    on_disk = {}
+    crates_dir = repo / "crates"
+    for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
+        folder = manifest_path.parent.name
+        try:
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as e:
+            note("layering", f"crates/{folder}/Cargo.toml cannot be parsed: {e}")
+            continue
+        name = manifest.get("package", {}).get("name")
+        if name != folder:
+            note("layering", f"crates/{folder} holds a package named {name}; the two must match")
+        on_disk[folder] = internal_dependencies(manifest)
+    if crates_dir.is_dir():
+        for c in sorted(set(on_disk) - set(layer)):
+            note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")
+        for c in sorted(set(layer) - set(on_disk)):
+            note("layering", f"{c} is in the layering table but crates/{c} does not exist")
+    for c, deps in sorted(on_disk.items()):
+        for d in sorted(deps):
+            if d in layer and c in layer and layer[d] >= layer[c]:
+                note("layering", f"{c} (layer {layer[c]}) depends on {d} (layer {layer[d]}); "
+                                 "a crate may depend only on lower layers")
+            elif d not in layer and (d.startswith("w2m-") or d == "web2mcp"):
+                note("layering", f"{c} depends on {d}, which is not in the layering table")
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
-          f"{len(actions)} actions, {len(briefs)} open research briefs")
+          f"{len(actions)} actions, {len(briefs)} open research briefs, {len(on_disk)} crates")
     for kind in found:
         print(f"\n[{kind}] {len(found[kind])}")
         for msg in found[kind]:
