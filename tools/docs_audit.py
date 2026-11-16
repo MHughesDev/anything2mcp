@@ -285,6 +285,21 @@ def main():
             elif d not in layer and (d.startswith("w2m-") or d == "web2mcp"):
                 note("layering", f"{c} depends on {d}, which is not in the layering table")
 
+    # 14. One version number, and one licence text, wherever they are carried.
+    workspace_file, pip_file = repo / "Cargo.toml", repo / "bindings" / "python" / "pyproject.toml"
+    if workspace_file.is_file() and pip_file.is_file():
+        try:
+            crate_version = tomllib.loads(workspace_file.read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+            pip_version = tomllib.loads(pip_file.read_text(encoding="utf-8"))["project"]["version"]
+            if crate_version != pip_version:
+                note("release", f"the workspace is version {crate_version} and the pip package is {pip_version}; "
+                                "every package carries the same version")
+        except (tomllib.TOMLDecodeError, KeyError) as e:
+            note("release", f"cannot read a version from Cargo.toml or bindings/python/pyproject.toml: {e!r}")
+        licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
+        if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
+            note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
           f"{len(actions)} actions, {len(briefs)} open research briefs, {len(on_disk)} crates")
