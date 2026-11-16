@@ -8,15 +8,15 @@ Every install route delivers the same Rust binary. The pip and npm packages add 
 | --- | --- | --- |
 | Project and repository | Web2MCP | Decided |
 | Command | `web2mcp` | Decided |
-| Python package and import | `web2mcp` | No published package found on PyPI; to be reserved |
-| Rust crates | `web2mcp` for the binary and library facade, `w2m-*` for the parts | No crate named `web2mcp` found on crates.io; to be reserved |
-| npm package | `w2mcp` | `web2mcp` is taken on npm; `w2mcp` was free |
+| Python package and import | `web2mcp` | Not held yet; a pending trusted publisher is configured, and the first release secures the name |
+| Rust crates | `web2mcp` for the binary and library facade, `w2m-*` for the parts | `web2mcp` is held by a placeholder release; the `w2m-*` names are unchecked |
+| npm package | `w2mcp` | `web2mcp` is taken on npm; `w2mcp` is registered to the owner, with its first version awaiting approval |
 | MCP tool prefix | `w2m_` | Decided |
 | Container image | `web2mcp` under the repository's registry namespace | Decided |
 
 "Found" means that `pip`, `npm`, and `cargo` returned nothing for the name. A registry can still refuse a name that is reserved or too close to an existing one, so the reservation upload is the real test.
 
-**Reserve the names first.** Another project's documentation already tells people to `pip install web2mcp`, although nothing is published under that name. Until a placeholder release is uploaded to PyPI, crates.io, and npm, any of the three names can be lost. This needs the owner's registry accounts and is task A1 of [Phase 0](../plan/phase-0.md).
+**Reserve the names first.** Another project's documentation already tells people to `pip install web2mcp`, although nothing is published under that name. The crates.io and npm names are now held. The PyPI name is not: it can still be lost until a first release is published from the release workflow, which is task A1 of [Phase 0](../plan/phase-0.md). [Publishing setup](../plan/publishing-setup.md) records the state of each registry and how releases authenticate.
 
 ## The pip package
 

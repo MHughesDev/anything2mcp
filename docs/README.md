@@ -11,7 +11,7 @@ Everything known about Web2MCP before the first line of code: the design, the re
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 44 |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 15 |
 | [references/](references/sources.md) | Every source URL cited, by document; generated | 1 |
-| [plan/](plan/readiness.md) | The [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), and the [test application plan](plan/test-application.md) | 7 |
+| [plan/](plan/readiness.md) | The [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 8 |
 | assets/ | Diagrams used by the spec | 3 |
 
 ## Reading paths

@@ -47,7 +47,7 @@ Do not read the whole spec into context at once. Open the sections a task touche
 - Changing or reversing any decision in `docs/decisions/`.
 - Changing the published package names: `web2mcp` on pip and crates.io, `w2mcp` on npm.
 - Adding a dependency with a license other than MIT, Apache-2.0, BSD, ISC, or similar permissive terms.
-- Touching any real application, account, or credential.
+- Touching any real application, account, or credential. Never ask for a registry token to be pasted into a conversation; see [docs/plan/publishing-setup.md](docs/plan/publishing-setup.md).
 - Cutting scope from a phase's exit criteria.
 - Making the repository public.
 

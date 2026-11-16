@@ -168,7 +168,9 @@ These are named in the specification and left for the phase that builds them. A 
 
 Things only the owner can do.
 
-- [ ] Reserve the package names: `web2mcp` on PyPI and crates.io, `w2mcp` on npm.
+- [x] Hold `web2mcp` on crates.io.
+- [ ] Approve the staged first version of `w2mcp` on npm.
+- [ ] Secure `web2mcp` on PyPI by publishing a first release from the release workflow; see [publishing setup](publishing-setup.md).
 - [ ] Decide whether the repository is private. Real target files never go in it either way.
 - [ ] Choose where real target files will live.
 - [ ] Name the MCP clients that matter most, for the Phase 0 spike.

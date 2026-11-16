@@ -23,7 +23,7 @@ Work the groups in order. Groups D, E, and F are spikes: time-boxed experiments 
 
 | # | Task | Done when |
 | --- | --- | --- |
-| A1 | Reserve the chosen names with placeholder releases: `web2mcp` on PyPI and crates.io, `w2mcp` on npm; check each `w2m-*` crate name. Needs the owner's registry accounts | The owner confirms each reservation, or a refused name has a recorded replacement |
+| A1 | Secure the PyPI name: create `.github/workflows/release.yml` and publish a placeholder `web2mcp` release through the pending trusted publisher. Check each `w2m-*` crate name. The crates.io and npm names are already held; see [publishing setup](publishing-setup.md) | `pip install web2mcp` installs the placeholder; a refused crate name has a recorded replacement |
 | A2 | Add `LICENSE` (Apache-2.0), `.gitignore`, `rust-toolchain.toml`, `rustfmt.toml`, lint settings | `cargo fmt --check` and `cargo clippy` run clean on an empty workspace |
 | A3 | Create the Cargo workspace with the crates from spec section 29 as empty crates with their dependency edges | `cargo build` and `cargo test` pass; the layering in the technical reference is enforced by a check |
 | A4 | Add CI for Windows, macOS, and Linux: format, lint, build, test | A pull request shows three green jobs |
