@@ -9,16 +9,18 @@ Everything known about Web2MCP before the first line of code: the design, the re
 | [spec/](spec/README.md) | The system design, one section per file | 52 sections |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), [settings examples](reference/settings-example.md), and a [walkthrough](reference/walkthrough.md) | 8 |
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 44 |
+| [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 22 open |
+| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 1 |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 15 |
 | [references/](references/sources.md) | Every source URL cited, by document; generated | 1 |
-| [plan/](plan/readiness.md) | The [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 8 |
+| [plan/](plan/readiness.md) | The [working method](plan/working-method.md), the [core-first slice order](plan/core-first.md), the [design review lenses](plan/design-review-lenses.md), the [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 11 |
 | assets/ | Diagrams used by the spec | 3 |
 
 ## Reading paths
 
 **Thirty minutes, to understand the system.** Spec sections [1](spec/01-summary.md), [4](spec/04-system-overview.md), [5](spec/05-core-concepts.md), [6](spec/06-modes-and-drivers.md), [23](spec/23-deployment-configurations.md), then [33](spec/33-requirements-audit.md) for what is and is not covered.
 
-**To build.** [AGENTS.md](../AGENTS.md), the [readiness report](plan/readiness.md), [decisions](decisions/README.md), the [phase map](plan/phase-map.md), [Phase 0](plan/phase-0.md), then the sections for the phase in hand.
+**To build.** [AGENTS.md](../AGENTS.md), the newest [journal](journal/README.md) entry, the [working method](plan/working-method.md), [core first](plan/core-first.md), the [readiness report](plan/readiness.md), [decisions](decisions/README.md), the [phase map](plan/phase-map.md), [Phase 0](plan/phase-0.md), then the sections for the phase in hand.
 
 **To judge the design.** [Requirements audit](spec/33-requirements-audit.md), [security model](spec/19-security-model.md), [prior art](spec/35-prior-art.md), [open questions](spec/37-decisions-and-open-questions.md), and the status table in [research](research/README.md).
 
@@ -40,3 +42,5 @@ The notes on [what remains unresearched](research/11-open-research.md) and the [
 - A change in behavior means a change here, in the same commit as the code.
 - A change of mind means a new decision record, never an edit to an old one.
 - New research gets its own file in `research/`, and the brief it answers is removed from the open list.
+- A tested hypothesis gets a result file in `hypotheses/` and its status updated in the register.
+- Every session ends with a journal entry.

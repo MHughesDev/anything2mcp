@@ -208,6 +208,33 @@ def main():
         if re.search(r"\b(three|five) identity modes\b", v):
             note("sets", f"{k}: an identity-mode count other than four")
 
+    # 12. Skills, journal, and hypotheses are well formed and indexed.
+    for k, v in md.items():
+        if k.startswith(".claude/skills/") and k.endswith("SKILL.md"):
+            head = v.split("---")
+            if not v.startswith("---") or len(head) < 3 or "name:" not in head[1] or "description:" not in head[1]:
+                note("skills", f"{k}: needs frontmatter with name and description on the first lines")
+            m = re.search(r"^name: (.+)$", head[1] if len(head) > 1 else "", re.M)
+            if m and m.group(1).strip() != Path(k).parent.name:
+                note("skills", f"{k}: name does not match its folder")
+    journal = md.get("docs/journal/README.md", "")
+    for k in md:
+        if re.match(r"docs/journal/\d{4}-", k) and Path(k).name not in journal:
+            note("journal", f"{k} is not listed in docs/journal/README.md")
+    register = md.get("docs/hypotheses/README.md", "")
+    ids = re.findall(r"^\| (H-\d+) \|", register, re.M)
+    if len(ids) != len(set(ids)):
+        note("hypotheses", "a hypothesis number is used twice in the register")
+    for row in re.findall(r"^\| (H-\d+) \|.*\| ([a-z]+) \|$", register, re.M):
+        if row[1] not in ("open", "supported", "refuted", "changed"):
+            note("hypotheses", f"{row[0]} has an unknown status: {row[1]}")
+        if row[1] != "open" and not any(k.startswith(f"docs/hypotheses/{row[0]}-") for k in md):
+            note("hypotheses", f"{row[0]} is marked {row[1]} but has no result file")
+    for k, v in md.items():
+        for h in set(re.findall(r"\bH-(\d+)\b", v)):
+            if f"H-{h}" not in ids and h != "00" and h != "NN":
+                note("hypotheses", f"{k}: refers to H-{h}, which is not in the register")
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
           f"{len(actions)} actions, {len(briefs)} open research briefs")

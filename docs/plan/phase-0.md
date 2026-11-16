@@ -9,15 +9,20 @@ Phase 0 turns an empty repository into a workspace that builds, tests, and measu
 Paste this into a coding agent opened at the repository root:
 
 ```text
-Read AGENTS.md, then docs/plan/readiness.md, docs/decisions/README.md, docs/plan/phase-map.md, and docs/plan/phase-0.md.
-We are starting Phase 0. Before writing code, give me a short plan for task group A
-(repository scaffold) and tell me anything in the docs that looks wrong, risky, or
-underspecified for Phase 0. Wait for my go-ahead before creating files.
+Run the start-session skill. Read AGENTS.md, the newest entry in docs/journal/,
+docs/plan/working-method.md, and docs/plan/core-first.md.
+
+We build slowly and core first. Before any code, run one design review round with
+lens 6 or 7 from docs/plan/design-review-lenses.md and show me what you find.
+Then give me a short plan for slice 0.1 from docs/plan/core-first.md: what it is,
+an alternative you considered, and how it will be proven. Tell me anything in the
+docs that looks wrong, risky, or underspecified. Wait for my go-ahead before
+creating files.
 ```
 
 ## Task groups
 
-Work the groups in order. Groups D, E, and F are spikes: time-boxed experiments in a `spikes/` folder that end in a decision record, not in production code.
+The order of work is the slice order in [core first](core-first.md); the groups below list everything Phase 0 contains. Work the groups in order where the slice order does not say otherwise. Groups D, E, and F are spikes: time-boxed experiments in a `spikes/` folder that end in a decision record, not in production code.
 
 ### A. Repository scaffold
 

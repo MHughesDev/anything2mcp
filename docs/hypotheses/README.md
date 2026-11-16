@@ -1,0 +1,43 @@
+# Hypotheses
+
+The design is a set of bets. This register lists the ones that matter most: what the design assumes, what else could be true, and how to find out. Testing these, and adding to them, is how the design gets better as the system is built.
+
+## How to use the register
+
+- **Before a slice,** find the hypotheses it can test. [Core first](../plan/core-first.md) names them per slice.
+- **While working,** add a hypothesis whenever something in the documents is assumed and not known, or a different design looks plausible.
+- **After a test,** write the result as a file in this folder named for the hypothesis, such as `H-01-result.md`, using the [template](TEMPLATE.md). Set the status here. If a decision changes, add a decision record.
+- A hypothesis is never deleted. A refuted one is the most useful kind.
+
+**Status:** `open`, `supported`, `refuted`, or `changed` when the test led to a different design.
+
+## Register
+
+| # | The design assumes | The alternative | How to test | Bears on | Status |
+| --- | --- | --- | --- | --- | --- |
+| H-01 | A Rust engine speaking the DevTools protocol directly can pass the conformance suite and be lighter and faster than a Playwright sidecar | A Playwright sidecar behind the same driver interface is good enough and far less work | Phase 0 spike: the conformance suite's first groups against each candidate, with effort, time, and memory recorded | Decision 0004 | open |
+| H-02 | Locating by role and accessible name, with label and text as fallbacks, finds nearly every field without selectors | Real pages need structural selectors often enough that they should be first-class | Count how many fields in the test application's cases need a selector | Section 13, file formats | open |
+| H-03 | Waiting on in-page observers and protocol events is reliably faster than short-interval polling | Polling is simpler and the difference does not matter | Measure both on the late-element and re-render cases | Section 9, section 17 | open |
+| H-04 | Several runs can share one signed-in browser in separate tabs without interfering | Runs need isolated contexts with copied state | Run parallel reads and a write on one session in the test application; look for cross-talk | Decision 0032 | open |
+| H-05 | A new browser profile owned by the engine signs in silently through the device's account on a managed machine | The first sign-in is always interactive, and some organizations refuse it entirely | Research brief 30, then the first real application | Section 44, risk 2 | open |
+| H-06 | One engine per user, started on demand and found through a socket or pipe, is reliable on three operating systems | Stale sockets, lock races, and service restrictions make it fragile | Start-race, crash, and stale-file tests on each system | Decision 0024 | open |
+| H-07 | Long polling gives a runner its work within 20 ms | A streaming connection is needed for interactive use | Measure dispatch time in Phase 7 | Decision 0028 | open |
+| H-08 | Storing several intents ahead speeds HTTP pipelines without making resume costly | The saving is small and one intent at a time is simpler | Measure throughput and resume cost at window sizes 1, 4, and 8 | Section 42 | open |
+| H-09 | Stamping a token or looking a record up covers most creates in real applications | Many applications offer neither, and more strategies are needed | Classify the create operations of the first real application | Decision 0041 | open |
+| H-10 | Comparing request shapes in shadow catches logic the application's front end performs | It misses logic that only shows in certain data | Test-application case 22, with varied inputs | Decision 0007 | open |
+| H-11 | Cedar fits the size and speed budgets and expresses all seven policy questions cleanly | A small in-house matcher is enough and lighter | Research brief 31 | Decision 0033 | open |
+| H-12 | A diff page followed by the operating system's own prompt is quick for a person and cannot be driven by an agent with a shell | No usable prompt exists on some system, or people find it too slow | Research brief 27; time a person approving; try to script it | Decisions 0026, 0039 | open |
+| H-13 | Commands and files let a coding agent build a tool with less context and more success than MCP tools | With tool search in the client, the two are equal | Run the Phase 5 usability task both ways and compare | Decision 0023 | open |
+| H-14 | Compiling target files into a plan is worth its complexity | Validating once and keeping the parsed files in memory is as fast and much simpler | Measure call overhead both ways in slice 1.3 | Decision 0036 | open |
+| H-15 | A synchronous commit per intent meets 2 ms on ordinary disks | It needs batching, which changes the resume guarantees | Measure on each operating system | Section 42 | open |
+| H-16 | The trace signature is identical across runs and operating systems | Hidden sources of variation make it unstable | Five runs on each system in slice 1.2 | Decision 0037, section 27 | open |
+| H-17 | A review summary ordered by risk makes a person catch a harmful change in a target | People approve without reading it | Plant harmful changes and see whether a reviewer notices | Decision 0042 | open |
+| H-18 | An agent with no prior knowledge reaches a first tool in ten minutes with the guidance file, `status`, and `docs` | It needs more guidance, or fewer steps | The Phase 5 usability gate | Section 25 | open |
+| H-19 | Seven modes is the right division | `site_tools` and `mcp` are one driver; `page_http` is a variant of `http` | Revisit when the second and third drivers are built | Decision 0005 | open |
+| H-20 | The speed budgets in section 9 can be met | Some are off by an order of magnitude | Measure in slice 1.7 | Section 9 | open |
+| H-21 | Keeping the control plane and runner as separate parts costs nothing on one machine | The indirection is measurable and should be bypassed locally | Measure the in-memory link in slice 1.4 | Decision 0008 | open |
+| H-22 | The file formats can describe a real application without escape hatches for nearly every operation | Real operations need logic the formats cannot express | Write the first real target and count what did not fit | Decision 0014, file formats | open |
+
+## Adding a hypothesis
+
+Give it the next number. State what the design assumes as a sentence that could be false, name a real alternative, and say how to test it with something that produces a number or a clear yes or no. A doubt with no test is a note for the journal, not a hypothesis.

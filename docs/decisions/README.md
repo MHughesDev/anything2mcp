@@ -2,6 +2,8 @@
 
 One file per decision: the context, what was decided, what follows from it, what was rejected, and what would reopen it. Add a new numbered file for every decision that changes the design; never rewrite an old one. To reverse a decision, add a new record that supersedes it and mark the old one superseded.
 
+A record's status is one of: **Accepted**, in force; **Proposed**, written by an agent or anyone else for the owner to accept or decline, and not to be built on until accepted or supported by a tested hypothesis; **Superseded**, replaced by a later record that names it. Proposing a change to any decision is welcome. Changing an accepted one needs the owner.
+
 | # | Decision | Status |
 | --- | --- | --- |
 | 0001 | [Name: Web2MCP](0001-name-web2mcp.md) | Accepted (owner decision) |

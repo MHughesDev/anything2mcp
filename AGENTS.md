@@ -1,13 +1,24 @@
 # Instructions for AI agents building Web2MCP
 
-You are building Web2MCP from an empty repository. The design is already written. Your job is to implement it phase by phase, keep it honest, and keep the documents true as you learn.
+You are building Web2MCP from an empty repository. A full design is written, and none of it has yet met running code. Your job is to build the core slowly, one small proven slice at a time, to test the design's bets as you go, and to keep making the design better. You are a designer of this system as well as its builder.
 
 ## What Web2MCP is
 
 A self-hosted system that latches onto existing applications and exposes them to AI agents as deterministic, verified MCP tools. Rust core, one binary. It reaches applications through seven modes (interface, in-page HTTP, direct HTTP, API descriptions, site tools, an app's own MCP server, desktop accessibility), and runs on one laptop or as a company server.
 
+## How this project grows
+
+- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. [docs/plan/core-first.md](docs/plan/core-first.md) gives the order. One slice per session is a good pace.
+- **Every slice tests the design.** The design is a set of bets, listed in [docs/hypotheses/README.md](docs/hypotheses/README.md). Before building, name an alternative to the documented design. After building, write down what the work showed.
+- **Keep improving the design.** Question the documents. When something is ambiguous, fix it. When evidence shows a section is wrong, correct it and record the decision. When a different design looks better, propose it. [docs/plan/working-method.md](docs/plan/working-method.md) says how each kind of change is made.
+- **Review the whole design regularly,** one lens at a time, with [docs/plan/design-review-lenses.md](docs/plan/design-review-lenses.md).
+- **The repository is your memory.** Start every session with the newest entry in [docs/journal/](docs/journal/README.md) and end every session by writing one.
+
+Six skills in `.claude/skills/` carry these procedures: `start-session`, `end-session`, `build-slice`, `test-hypothesis`, `design-review`, and `research-brief`. Use them.
+
 ## Read these first, in this order
 
+0. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md)
 1. [docs/plan/readiness.md](docs/plan/readiness.md): what is ready, the risks, and what is deliberately not designed yet
 2. [docs/spec/01-summary.md](docs/spec/01-summary.md), [02](docs/spec/02-requirements-and-guarantees.md), [03](docs/spec/03-design-principles.md), [04](docs/spec/04-system-overview.md), [05](docs/spec/05-core-concepts.md)
 3. [docs/decisions/README.md](docs/decisions/README.md): the decisions already made
@@ -32,19 +43,20 @@ Do not read the whole spec into context at once. Open the sections a task touche
 
 ## How to work
 
-- **One phase at a time.** Each phase in the build plan ends with an exit test. Do not start the next phase until the exit test passes and the owner has seen the result.
-- **Start each phase with a plan.** List the crates you will touch, the interfaces you will add, and the tests that prove the exit criteria. Get the owner's agreement before large structural work.
+- **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the build plan ends with an exit test; do not start the next phase until it passes and the owner has seen the result.
+- **Start each slice with a plan.** State the slice, the hypotheses it tests, an alternative you considered, the crates and interfaces involved, and the tests that will prove it. Get the owner's go-ahead before creating files.
 - **Run the research first.** Before a phase, check [docs/research/11-open-research.md](docs/research/11-open-research.md) for briefs marked as needed before it. Run them, write each up as a new file in `docs/research/`, and update the spec sections they feed.
 - **Verify before you depend.** Many crate names in the docs are unverified. Before adding a dependency, confirm it exists, is maintained, is licensed compatibly with Apache-2.0, and supports Windows, macOS, and Linux. Record the choice.
-- **Treat unresearched sections as proposals.** [docs/research/README.md](docs/research/README.md) lists the spec sections that rest on design judgment. If implementation shows a better design, propose it; do not silently diverge.
-- **Decisions get records.** Any choice that changes the design, picks between real alternatives, or reverses an earlier decision gets a new numbered file in `docs/decisions/`. Never rewrite an old record; supersede it.
+- **Treat the whole design as open to evidence.** [docs/research/README.md](docs/research/README.md) lists the spec sections that rest on judgment alone, but any section can be wrong. If implementation shows a better design, say so and propose it; never silently diverge and never silently conform to something you believe is wrong.
+- **Decisions get records.** Any choice that changes the design, picks between real alternatives, or reverses an earlier decision gets a new numbered file in `docs/decisions/`. Never rewrite an old record; supersede it. A change you want but have not been given is a record with status Proposed.
 - **Keep the docs true.** When code and spec disagree, fix one of them in the same change. A spec edit that changes behavior needs a decision record. After any documentation change run `python3 tools/docs_audit.py`; it must report no findings.
 - **Small, reviewable changes.** One concern per commit. Every commit builds and passes tests.
+- **Spikes are thrown away.** Experiments live in `spikes/`, answer one question, and are never promoted into the product; real code is written fresh.
 - **Say what you did not do.** When you stop, report what is finished, what is stubbed, what failed, and what you could not verify.
 
 ## Ask the owner before
 
-- Changing or reversing any decision in `docs/decisions/`.
+- Changing or reversing any accepted decision in `docs/decisions/`. Proposing a change is always welcome; making one needs the owner.
 - Changing the published package names: `web2mcp` on pip and crates.io, `w2mcp` on npm.
 - Adding a dependency with a license other than MIT, Apache-2.0, BSD, ISC, or similar permissive terms.
 - Touching any real application, account, or credential. Never ask for a registry token to be pasted into a conversation; see [docs/plan/publishing-setup.md](docs/plan/publishing-setup.md).
@@ -99,6 +111,10 @@ Do not read the whole spec into context at once. Open the sections a task touche
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
 | `docs/references/` | Every source URL cited |
-| `docs/plan/` | Readiness report, phase map, task lists for Phases 0 to 3, the test application plan |
+| `docs/plan/` | Working method, core-first slice order, design review lenses, readiness report, phase map, task lists for Phases 0 to 3, the test application plan, publishing setup |
+| `docs/hypotheses/` | The register of design bets and the results of testing them |
+| `docs/journal/` | One entry per session; read the newest first |
+| `.claude/skills/` | Procedures for starting and ending a session, building a slice, testing a hypothesis, reviewing the design, and running research |
+| `spikes/` | Throwaway experiments; never part of the product |
 | `docs/assets/` | Diagrams |
 | `tools/docs_audit.py` | Checks the documentation for broken links and contradictions |

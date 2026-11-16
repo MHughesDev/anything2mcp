@@ -177,7 +177,11 @@ Things only the owner can do.
 - [ ] Confirm a Windows machine is available, or that CI is the only Windows environment.
 - [ ] For the first real application: get agreement from its owner and from IT before any use on real work.
 
-## Keeping it ready
+## Keeping it ready, and making it better
+
+- Build slowly and core first, by the [working method](working-method.md) and the slice order in [core first](core-first.md).
+- Test the design's bets as they come up; the [hypothesis register](../hypotheses/README.md) lists 22 of them, all open.
+- Run a design review round at the end of each phase with one of the [lenses](design-review-lenses.md). Lenses 6, 7, and 8 were planned and not yet run.
 
 - Run `python3 tools/docs_audit.py` after every documentation change; it must report no findings.
 - When code and a section disagree, change one of them in the same commit.
