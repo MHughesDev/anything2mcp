@@ -30,6 +30,19 @@ There is no official Playwright client for Rust. The options found:
 - Per-platform crates also exist: `uiautomation` for Windows UI Automation, `atspi` for AT-SPI2 on Linux, and `accessibility-sys` for macOS. [lib.rs accessibility](https://lib.rs/accessibility)
 - AccessKit is for applications that expose an accessibility tree, not for driving other applications. It is not a fit for the desktop driver. [AccessKit](https://github.com/AccessKit/accesskit)
 
+## Verified by use
+
+Added to `Cargo.toml` in slice 0.3, on 2026-11-16, for the test application. Each was looked up on crates.io on the day, and builds and passes tests in CI on Windows, macOS, and Linux.
+
+| Crate | Version | Licence | Used for | Note |
+| --- | --- | --- | --- | --- |
+| `tokio` | 1.54.1 | MIT | Async runtime | Features `macros`, `net`, `rt-multi-thread`, `sync`, `time` |
+| `axum` | 0.8.9 | MIT | HTTP server | Default features off; `http1`, `json`, `tokio` |
+| `serde`, `serde_json` | 1.0.229, 1.0.154 | MIT or Apache-2.0 | Serialization | |
+| `reqwest` | 0.13.5 | MIT or Apache-2.0 | HTTP client in the test harness | Default features off, so no TLS yet. The product's choice of TLS is still to make |
+
+The whole dependency tree is checked by `cargo-deny` in CI against `deny.toml`. The licences in it are MIT, Apache-2.0, BSD-3-Clause, and Unicode-3.0, the last through the Unicode data crates that `reqwest` brings in by way of `url`.
+
 ## Candidates from general knowledge (unverified)
 
 Confirm each crate's current name, maintenance, license, and platform support before use.

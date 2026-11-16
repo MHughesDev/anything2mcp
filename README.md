@@ -6,7 +6,7 @@ Web2MCP latches onto software you can already reach (a web app, a backend API, a
 
 ## Status
 
-**Phase 0. Nothing usable yet.** The repository holds the system design, the decisions behind it, the research it rests on, and a Cargo workspace of empty crates that is built and tested on Windows, macOS, and Linux. The `web2mcp` binary only reports its version.
+**Phase 0. Nothing usable yet.** The repository holds the system design, the decisions behind it, the research it rests on, a Cargo workspace of empty crates, and the built-in test application the product will be proven against, all built and tested on Windows, macOS, and Linux. The `web2mcp` binary only reports its version.
 
 ## Where to start
 
