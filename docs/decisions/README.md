@@ -6,7 +6,7 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 
 | # | Decision | Status |
 | --- | --- | --- |
-| 0001 | [Name: Web2MCP](0001-name-web2mcp.md) | Accepted (owner decision) |
+| 0001 | [Name: Web2MCP](0001-name-web2mcp.md) | Superseded by 0048 |
 | 0002 | [Rust first, other languages where they fit](0002-rust-first-other-languages-where-they-fit.md) | Accepted (owner decision) |
 | 0003 | [No AI at run time](0003-no-ai-at-run-time.md) | Accepted (design decision) |
 | 0004 | [Rust browser engine on the DevTools protocol](0004-rust-browser-engine-on-the-devtools-protocol.md) | Accepted (design decision) |
@@ -53,3 +53,4 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 | 0045 | [The workspace starts with every crate, and the audit enforces the layering](0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md) | Accepted (design decision) |
 | 0046 | [The pip name is held by a placeholder, published only when a version tag is pushed](0046-the-pip-name-is-held-by-a-placeholder-published-on-a-version-tag.md) | Accepted (design decision) |
 | 0047 | [The test application is a small server in the workspace, and the licence list is closed](0047-the-test-application-is-a-small-server-in-the-workspace-with-a-closed-licence-list.md) | Accepted (design decision) |
+| 0048 | [The product becomes Anything2MCP, a universal runtime built on the same core](0048-the-product-becomes-anything2mcp.md) | Accepted (owner decision) |

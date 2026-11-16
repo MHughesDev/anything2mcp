@@ -8,12 +8,12 @@ Everything known about Web2MCP before the first line of code: the design, the re
 | --- | --- | --- |
 | [spec/](spec/README.md) | The system design, one section per file | 52 sections |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), [settings examples](reference/settings-example.md), and a [walkthrough](reference/walkthrough.md) | 8 |
-| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 47 |
-| [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 25 open |
-| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 2 |
+| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 48 |
+| [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 28 open |
+| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 3 |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 15 |
 | [references/](references/sources.md) | Every source URL cited, by document; generated | 1 |
-| [plan/](plan/readiness.md) | The [working method](plan/working-method.md), the [core-first slice order](plan/core-first.md), the [design review lenses](plan/design-review-lenses.md), the [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 11 |
+| [plan/](plan/readiness.md) | The [long-term plan for Anything2MCP](plan/anything2mcp-master-plan.md), the [working method](plan/working-method.md), the [core-first slice order](plan/core-first.md), the [design review lenses](plan/design-review-lenses.md), the [readiness report](plan/readiness.md), the [phase map](plan/phase-map.md), task lists for Phases [0](plan/phase-0.md), [1](plan/phase-1.md), [2](plan/phase-2.md), and [3](plan/phase-3.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 12 |
 | assets/ | Diagrams used by the spec | 3 |
 
 ## Reading paths

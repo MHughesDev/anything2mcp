@@ -1,6 +1,6 @@
 # 0001. Name: Web2MCP
 
-**Status:** Accepted. Decided by the project owner.
+**Status:** Superseded by [0048](0048-the-product-becomes-anything2mcp.md) on 2026-11-16. Was: Accepted. Decided by the project owner.
 
 **Date:** 2026-11-15
 
