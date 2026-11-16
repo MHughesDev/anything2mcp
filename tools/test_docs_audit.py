@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".web2mcp")
+SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".web2mcp", "dist", ".venv")
 
 
 class AuditCatches(unittest.TestCase):
@@ -84,6 +84,19 @@ class AuditCatches(unittest.TestCase):
         text = manifest.read_text(encoding="utf-8")
         manifest.write_text(text.replace('name = "w2m-core"', 'name = "w2m-kernel"'), encoding="utf-8")
         self.assert_finding("layering", "crates/w2m-core holds a package named w2m-kernel")
+
+    def test_a_pip_package_on_another_version_is_refused(self):
+        project = self.root / "bindings" / "python" / "pyproject.toml"
+        text = project.read_text(encoding="utf-8")
+        changed = text.replace('version = "', 'version = "9.', 1)
+        self.assertNotEqual(text, changed)
+        project.write_text(changed, encoding="utf-8")
+        self.assert_finding("release", "every package carries the same version")
+
+    def test_a_changed_copy_of_the_licence_is_refused(self):
+        copy = self.root / "bindings" / "python" / "LICENSE"
+        copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")
+        self.assert_finding("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
 
     def test_a_broken_link_is_refused(self):
         page = self.root / "docs" / "README.md"
