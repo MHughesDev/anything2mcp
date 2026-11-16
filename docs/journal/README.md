@@ -8,7 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
-| 2026-11-16 | [Lens 6, slice 0.1, and slice 0.2 up to the publish](2026-11-16-lens-6-and-slice-0-1.md) | One pipeline walked through the design and its joins fixed; the workspace skeleton and CI built; the release workflow ready, nothing published |
+| 2026-11-16 | [Lens 6, then slices 0.1, 0.2 up to the publish, and 0.3](2026-11-16-lens-6-and-slice-0-1.md) | One pipeline walked through the design and its joins fixed; the workspace and CI built; the release workflow ready and nothing published; the test application built |
 | 2026-11-15 | [Design handoff](2026-11-15-design-handoff.md) | The design is complete and audited; no code exists; Phase 0 is next |
 
 ## What an entry contains

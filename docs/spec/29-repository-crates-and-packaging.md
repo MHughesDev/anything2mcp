@@ -35,7 +35,7 @@ web2mcp/
   web/console/            # admin console, approval page, sign-in page (TypeScript)
   plugins/                # plug-in protocol and examples
   profiles/               # platform profiles and detection rules, as data files
-  targets/                # the imaginary `example` target and the built-in test application
+  targets/                # the imaginary `example` target; the built-in test application in example-app/
   bench/                  # performance suite and budgets
   docs/                   # user guide, format reference, AGENTS.md
   xtask/                  # build, release, and code-generation tasks

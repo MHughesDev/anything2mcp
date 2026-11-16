@@ -1,0 +1,22 @@
+# What CI allows into the dependency tree. AGENTS.md: a dependency under any
+# licence that is not permissive needs the owner first, so the list below is
+# closed, and a new licence fails the build until it is added here on purpose.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[advisories]
+yanked = "deny"

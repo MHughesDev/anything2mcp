@@ -74,6 +74,18 @@ The interface driver is the riskiest piece of engineering, and the design keeps 
 
 Results are kept as a table per implementation and operating system. The Phase 0 spike fills in the first rows for each candidate base; choosing a base means comparing those tables.
 
+## What is built
+
+As of slice 0.3, on 2026-11-16: cases 1 to 4, in `targets/example-app/`. Its [README](../../targets/example-app/README.md) lists every address, the rules a write must pass, the control interface, and the seed data.
+
+- **The control interface** has Reset, Inspect, Count writes, and Set a fault. Set a mode is not built; the first case that needs it is case 13.
+- **Faults** so far are a delay and a status. Dropping a connection after a commit arrives with case 17.
+- **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
+- **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
+- **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.
+- The form was driven once by hand in a real browser, located by role and label: an update, a second save, a validation message, and a create all behaved. No automated test covers the page's script yet; the first one comes with the interface driver.
+- The product's crates may use the application in their tests only. `tools/docs_audit.py` refuses it as an ordinary dependency.
+
 ## What Phase 0 delivers
 
 Cases 1 to 4, the control interface, the test harness that asks the application for ground truth, and the conformance suite's launching, locating, and waiting groups run against each spike candidate.
