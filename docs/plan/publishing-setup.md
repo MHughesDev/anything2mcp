@@ -32,4 +32,5 @@ The design calls for short-lived credentials issued to the release pipeline, nev
 
 - The registry tokens used to publish the placeholders were single-purpose and should be revoked by the owner. They are not needed again once trusted publishing is in place.
 - If a token is ever needed for a release step, it belongs in the repository's GitHub Actions secrets, entered by the owner. It never goes in a file, a commit, a document, or a chat with an agent.
+- The agreed secret names are `CARGO_REGISTRY_TOKEN` for crates.io and `NPM_TOKEN` for npm. A workflow reads them by those names. Whether the owner has added them can be seen in the repository's settings, not from these documents; a workflow must fail with a clear message when one it needs is missing.
 - An agent building this project must not ask for a registry token to be pasted into the conversation. It prepares the release and the owner runs or approves the publishing step.
