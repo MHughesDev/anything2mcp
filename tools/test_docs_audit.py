@@ -69,6 +69,18 @@ class AuditCatches(unittest.TestCase):
         code, out = self.audit()
         self.assertEqual(code, 0, out)
 
+    def test_the_test_application_in_a_product_crate_is_refused(self):
+        self.depend("w2m-engine", "example-app")
+        self.assert_finding("layering", "w2m-engine depends on example-app outside its tests")
+
+    def test_the_test_application_in_a_crate_s_tests_is_allowed(self):
+        manifest = self.root / "crates" / "w2m-engine" / "Cargo.toml"
+        text = manifest.read_text(encoding="utf-8")
+        text += '\n[dev-dependencies]\nexample-app = { path = "../../targets/example-app" }\n'
+        manifest.write_text(text, encoding="utf-8")
+        code, out = self.audit()
+        self.assertEqual(code, 0, out)
+
     def test_a_crate_missing_from_the_table_is_refused(self):
         extra = self.root / "crates" / "w2m-extra"
         extra.mkdir()

@@ -31,12 +31,12 @@ def links(text):
     return [(label, target.strip("<>")) for label, target in LINK.findall(text)]
 
 
-def internal_dependencies(manifest):
-    """Names of every package a crate manifest depends on, in any dependency table."""
+def internal_dependencies(manifest, kinds=("dependencies", "dev-dependencies", "build-dependencies")):
+    """Names of every package a crate manifest depends on, in the given dependency tables."""
     tables = [manifest] + list(manifest.get("target", {}).values())
     names = set()
     for table in tables:
-        for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+        for kind in kinds:
             for key, spec in table.get(kind, {}).items():
                 names.add(spec.get("package", key) if isinstance(spec, dict) else key)
     return names
@@ -272,6 +272,9 @@ def main():
         if name != folder:
             note("layering", f"crates/{folder} holds a package named {name}; the two must match")
         on_disk[folder] = internal_dependencies(manifest)
+        if "example-app" in internal_dependencies(manifest, ("dependencies", "build-dependencies")):
+            note("layering", f"{folder} depends on example-app outside its tests; "
+                             "the test application is test equipment and may only be a dev-dependency")
     if crates_dir.is_dir():
         for c in sorted(set(on_disk) - set(layer)):
             note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")

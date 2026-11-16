@@ -42,6 +42,20 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  dependencies:
+    name: Licences and advisories of dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v2.1.1, which runs cargo-deny 0.20.2 against deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        with:
+          command: check
+
   documents:
     name: Documents and crate layering
     runs-on: ubuntu-latest
