@@ -30,7 +30,7 @@ Slice 0.3 builds the first cases of the test application that every later test d
 ## Consequences
 
 - The product's planned web stack is proven to build and run on three operating systems before the product uses it.
-- The dependency tree goes from nothing to about a hundred crates, most of them from `reqwest`. CI takes longer; the first numbers are in the journal.
+- The dependency tree goes from nothing to about a hundred crates, most of them from `reqwest`. CI takes longer; the runs on pull request 4 show by how much.
 - A new advisory against a dependency fails CI on an unrelated change. That is intended: someone has to look.
 - The pages' script has no automated test until the interface driver exists. It was driven once by hand in a browser.
 - The application's shape for a record that does not exist, a separate address for the empty form, makes hypothesis H-23 concrete.
