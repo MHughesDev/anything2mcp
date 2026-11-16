@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Every crate shares these. The version is a placeholder until the release
+# workflow sets it in one place (docs/spec/41-packaging-and-release.md).
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/MHughesDev/web2mcp"
+publish = false
+
+# AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
+# in library code outside tests. clippy.toml allows both inside tests.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

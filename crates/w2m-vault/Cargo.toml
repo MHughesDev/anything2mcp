@@ -1,0 +1,11 @@
+[package]
+name = "w2m-vault"
+description = "Envelope encryption, key-store back ends, and the redactor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
