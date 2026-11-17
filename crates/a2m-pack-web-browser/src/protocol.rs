@@ -619,10 +619,11 @@ pub(crate) struct NodeDescription {
 impl NodeDescription {
     /// The value of one attribute, when the node has it.
     pub(crate) fn attribute(&self, name: &str) -> Option<&str> {
-        self.attributes.chunks_exact(2).find_map(|pair| match pair {
-            [found, value] if found.eq_ignore_ascii_case(name) => Some(value.as_str()),
-            _ => None,
-        })
+        let (pairs, _) = self.attributes.as_chunks::<2>();
+        pairs
+            .iter()
+            .find(|[found, _]| found.eq_ignore_ascii_case(name))
+            .map(|[_, value]| value.as_str())
     }
 }
 

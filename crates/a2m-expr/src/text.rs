@@ -83,13 +83,22 @@ mod tests {
         assert_eq!(fold("STRASSE"), fold("Stra\u{df}e"));
         assert_ne!(lower("STRASSE"), lower("Stra\u{df}e"));
         // A final sigma and one in the middle of a word.
-        assert_eq!(fold("\u{39F}\u{394}\u{39F}\u{3A3}"), fold("\u{3BF}\u{3B4}\u{3BF}\u{3C3}"));
+        assert_eq!(
+            fold("\u{39F}\u{394}\u{39F}\u{3A3}"),
+            fold("\u{3BF}\u{3B4}\u{3BF}\u{3C3}")
+        );
         // A ligature, a composed letter, and one written in two parts.
         assert_eq!(fold("\u{FB01}t"), "fit");
         assert_eq!(fold("CAFE\u{301}"), fold("caf\u{e9}"));
         // Different texts stay different, and folding twice changes nothing.
         assert_ne!(fold("order"), fold("orders"));
-        for text in ["Stra\u{df}e", "\u{130}stanbul", "\u{39F}\u{394}\u{39F}\u{3A3}", "\u{FB01}t", "a\u{345}"] {
+        for text in [
+            "Stra\u{df}e",
+            "\u{130}stanbul",
+            "\u{39F}\u{394}\u{39F}\u{3A3}",
+            "\u{FB01}t",
+            "a\u{345}",
+        ] {
             assert_eq!(fold(&fold(text)), fold(text), "{text}");
         }
     }

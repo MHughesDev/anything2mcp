@@ -258,6 +258,7 @@ Every failure of a call is the dispatcher's, rendered. This crate adds four, non
 | A cancelled request is sent nothing more, and others are still answered | A test that holds a call open, cancels it through the proxy, and waits for the endpoint to see the stream close |
 | The door offers no way to approve | A test over the tools of both toolsets, names an agent might try, and the registry |
 | A list costs one dispatch for each page of published tools, and a call by a published tool's own name costs one | Tests that count what the endpoint handed the dispatcher |
+| A list is whole when the result size cap is smaller than a page | A test with a cap that one tool fits under and the page does not: the same list, in more dispatches |
 | The project folder is what the mount stated, and nothing a caller writes | A test with the folder stated, not stated, and written as an argument |
 | A person is told once that a run waits, also when the call's progress was followed; the answer carries the link and the next call | The progress test: a write that rests, the same call again, and the approvals the person surface counted |
 | A progress note holds nothing a system said | The same test: every note is one of this crate's sentences, and none holds a value the test application answered with |

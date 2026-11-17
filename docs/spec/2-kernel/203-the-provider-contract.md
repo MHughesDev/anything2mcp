@@ -55,7 +55,7 @@ One declaration per provider. It is data: the runtime can read it without loadin
 | Reads | The file kinds and finding kinds of other packs it reads as data |
 | Actions | The actions it adds, each with its effect |
 | Effects | What it may do: start which programs, read and write which file roots, reach which network destinations, hold a session, change a device. [Section 213](213-effects-hazards-and-consent.md) |
-| Requirements | Outside programs and runtimes it needs: how each is detected, which digests are known, and what to tell a person who lacks one |
+| Requirements | Outside programs and runtimes it needs: how each is detected, which digests are known, and what to tell a person who lacks one. Known digests are checked when availability is reported and again at every start |
 | Platforms | The operating systems and architectures it supports |
 | Evidence | The highest level its findings may claim, and the sources it can vouch for |
 

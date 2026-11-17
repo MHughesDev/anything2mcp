@@ -43,6 +43,8 @@ pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
 pub const LEASE_TOO_SHORT: FailureCode = FailureCode::fixed("lease_too_short");
 /// What a run was called with is missing from the store or cannot be read.
 pub const RUN_CALL_UNREADABLE: FailureCode = FailureCode::fixed("run_call_unreadable");
+/// The in-process runner loop was handed a job that is not a run's.
+pub const SYSTEM_JOB_NOT_CARRIED: FailureCode = FailureCode::fixed("system_job_not_carried");
 /// A protected setting is set to a value this build cannot put in force.
 pub const SETTING_NOT_IN_FORCE: FailureCode = FailureCode::fixed("setting_not_in_force");
 /// A published tool changed between the decision about a call and the call.

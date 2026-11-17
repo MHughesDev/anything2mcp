@@ -457,6 +457,13 @@ impl ApprovalDesk {
         let counts = diff.counts();
         let shown = |value: &a2m_core::Value| {
             let text = self.redact.redact(&render::line(value));
+            // A value that was masked, here or when the engine stored it,
+            // is shown as masked and as nothing else: whatever stands
+            // beside the mark is no part of the value a person is asked
+            // about, and is never shown as if it were.
+            if text.contains(a2m_core::REDACTED) {
+                return (a2m_core::REDACTED.to_owned(), false);
+            }
             let cut = text.chars().count() > PREVIEW_VALUE_CHARS;
             let text = if cut {
                 text.chars().take(PREVIEW_VALUE_CHARS).collect()

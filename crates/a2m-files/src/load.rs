@@ -383,8 +383,8 @@ fn walk(
             // A folder is read once, where it is. A link to a folder would
             // have it read again under another name, and a link to a folder
             // above itself would have it read without end.
-            let linked = fs::symlink_metadata(&on_disk)
-                .map_or(true, |found| found.file_type().is_symlink());
+            let linked =
+                fs::symlink_metadata(&on_disk).map_or(true, |found| found.file_type().is_symlink());
             if linked || !seen.insert(real) {
                 problems.push(Diagnostic::error(
                     kernel(codes::PATH_OUTSIDE_TARGET),

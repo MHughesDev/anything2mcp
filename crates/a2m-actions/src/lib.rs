@@ -79,6 +79,7 @@ extern crate self as a2m_actions;
     reason = "tests; the helpers they share do not carry the test attribute"
 )]
 mod tests {
+    mod audit;
     mod kernel;
     mod runs;
     mod second;

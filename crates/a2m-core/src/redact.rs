@@ -304,7 +304,10 @@ mod tests {
         // A date is found as it is written and as eight digits.
         let day = Value::Date(Date::new(1990, 1, 31).unwrap());
         assert_eq!(Knows("19900131").redact_value(&day), Value::from(REDACTED));
-        assert_eq!(Knows("1990-01-31").redact_value(&day), Value::from(REDACTED));
+        assert_eq!(
+            Knows("1990-01-31").redact_value(&day),
+            Value::from(REDACTED)
+        );
         assert_eq!(Knows("19900201").redact_value(&day), day);
         assert_eq!(NoSecrets.redact_value(&Value::Int(4821)), Value::Int(4821));
     }
@@ -322,7 +325,8 @@ mod tests {
         assert_eq!(clean.get("[redacted][redacted]"), Some(&Value::Int(3)));
         assert_eq!(clean.get("a [redacted]"), Some(&Value::Int(1)));
         // Two names that redact alike: the second is numbered.
-        let alike = Knows("x").redact_values(&Values::new().with("ax", 1i64).with("a[redacted]", 2i64));
+        let alike =
+            Knows("x").redact_values(&Values::new().with("ax", 1i64).with("a[redacted]", 2i64));
         assert_eq!(alike.len(), 2);
         assert_eq!(alike.get("a[redacted]"), Some(&Value::Int(2)));
         assert_eq!(alike.get("a[redacted] (2)"), Some(&Value::Int(1)));

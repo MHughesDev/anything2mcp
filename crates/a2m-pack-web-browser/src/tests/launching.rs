@@ -226,3 +226,67 @@ fn a_shared_cell_gives_every_caller_the_first_caller_s_browsers() {
     assert!(Arc::ptr_eq(&first.shared, &cell.get().unwrap().shared));
     assert!(other.observer().is_some());
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_folder_is_private_to_the_engine_s_user_however_it_was_left() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |folder: &Path| std::fs::metadata(folder).unwrap().permissions().mode() & 0o777;
+    let stand = Stand::with_browser("private");
+    let profiles = stand.folder.0.join("profiles");
+
+    // A folder the engine makes: the process's mask would leave it open
+    // to every user of the machine.
+    let clerk = profile("clerk");
+    stand.open(&clerk).await;
+    assert_eq!(mode(&profiles.join(clerk.place())), 0o700);
+
+    // A folder left open by an earlier version, or by a person: it is
+    // closed before the browser is started on it.
+    let auditor = profile("auditor");
+    let left_open = profiles.join(auditor.place());
+    std::fs::create_dir_all(&left_open).unwrap();
+    std::fs::set_permissions(&left_open, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stand.open(&auditor).await;
+    assert_eq!(mode(&left_open), 0o700);
+
+    // What the browser itself writes there is its owner's alone too,
+    // apart from files that hold nothing of a session.
+    let mut open_to_others = Vec::new();
+    let mut folders = vec![profiles.join(clerk.place())];
+    while let Some(folder) = folders.pop() {
+        // The browser is running: a file can be gone again, and some
+        // entries are links that lead nowhere.
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let Ok(found) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if found.is_symlink() {
+                continue;
+            }
+            if found.permissions().mode() & 0o077 != 0 {
+                open_to_others.push(entry.file_name().to_string_lossy().into_owned());
+            }
+            if found.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    for name in &open_to_others {
+        assert!(
+            ![
+                "Cookies",
+                "Login Data",
+                "Local State",
+                "Preferences",
+                "Web Data",
+                "History"
+            ]
+            .iter()
+            .any(|kept| name.starts_with(kept)),
+            "{open_to_others:?}"
+        );
+    }
+    stand.end().await;
+}

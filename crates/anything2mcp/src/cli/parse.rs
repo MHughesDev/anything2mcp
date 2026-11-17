@@ -757,3 +757,95 @@ pub(crate) fn command_line(tree: &Tree, action: &str, input: &Json) -> Option<St
     }
     Some(line)
 }
+
+#[cfg(test)]
+mod tests {
+    use a2m_actions::{ActionRegistry, SHORTCUTS};
+    use serde_json::json;
+
+    use super::{Parsed, Tree};
+
+    fn words(text: &[&str]) -> Vec<String> {
+        text.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_flag_for_standard_input_is_not_sent_and_names_the_field_it_fills() {
+        let tree = Tree::of(&ActionRegistry::kernel_only());
+        let parsed = tree
+            .parse(&words(&["secret", "set", "example_name", "--stdin"]))
+            .unwrap();
+        let Parsed::Invoke(_, steps, None) = parsed else {
+            panic!("{parsed:?}");
+        };
+        assert_eq!(steps[0].action, "secret.set");
+        assert_eq!(steps[0].input, json!({"name": "example_name"}));
+        assert_eq!(steps[0].stdin_for.as_deref(), Some("value"));
+
+        // Without the flag nothing is read, and the value is sent as given.
+        let parsed = tree
+            .parse(&words(&["secret", "set", "example_name", "--value", "v"]))
+            .unwrap();
+        let Parsed::Invoke(_, steps, None) = parsed else {
+            panic!("{parsed:?}");
+        };
+        assert_eq!(
+            steps[0].input,
+            json!({"name": "example_name", "value": "v"})
+        );
+        assert_eq!(steps[0].stdin_for, None);
+
+        // Both: refused by the names of the two arguments, never by what
+        // was given.
+        let given = "example-value-given-as-an-argument";
+        let refused = tree
+            .parse(&words(&[
+                "secret",
+                "set",
+                "example_name",
+                "--value",
+                given,
+                "--stdin",
+            ]))
+            .unwrap_err();
+        assert_eq!(refused.code().as_str(), "schema_invalid");
+        assert!(refused.message().contains("--stdin"));
+        assert!(refused.message().contains("--value"));
+        assert!(!refused.message().contains(given));
+        assert!(!refused.next_step().contains(given));
+    }
+
+    #[test]
+    fn a_shortcut_gives_the_steps_this_build_has_and_says_where_it_stops() {
+        let registry = ActionRegistry::kernel_only();
+        let tree = Tree::of(&registry);
+        for shortcut in SHORTCUTS
+            .iter()
+            .filter(|shortcut| !shortcut.steps.is_empty())
+        {
+            let run = shortcut.on(&registry);
+            // The shortcut's own argument, when its steps take one.
+            let takes = shortcut.steps.iter().any(|step| step.argument.is_some());
+            let line = if takes {
+                words(&[shortcut.word, "example"])
+            } else {
+                words(&[shortcut.word])
+            };
+            let parsed = tree.parse(&line).unwrap();
+            let Parsed::Invoke(_, steps, stop) = parsed else {
+                panic!("{parsed:?}");
+            };
+            // Never a step that is not built, and never one after it.
+            let actions: Vec<&str> = steps.iter().map(|step| step.action.as_str()).collect();
+            let built: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
+            assert_eq!(actions, built, "{}", shortcut.word);
+            assert_eq!(
+                stop.as_ref().map(|stop| stop.before),
+                run.stops_before,
+                "{}",
+                shortcut.word
+            );
+            assert_eq!(stop.map(|stop| stop.note), run.note, "{}", shortcut.word);
+        }
+    }
+}

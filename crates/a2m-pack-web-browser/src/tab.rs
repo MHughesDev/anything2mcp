@@ -170,9 +170,9 @@ fn under(prefix: &str, address: &str) -> bool {
     }
     let (marked, asked) = (path_of(prefix), path_of(address));
     asked == marked
-        || asked.strip_prefix(marked).is_some_and(|below| {
-            marked.ends_with('/') || below.starts_with('/')
-        })
+        || asked
+            .strip_prefix(marked)
+            .is_some_and(|below| marked.ends_with('/') || below.starts_with('/'))
 }
 
 pub(crate) enum Posture {
@@ -511,7 +511,10 @@ impl fmt::Debug for PageRequest {
             .field("method", &self.method)
             .field("address", &without_query(self.address.as_str()))
             .field("headers", &names)
-            .field("body_characters", &self.body.as_ref().map(|body| body.chars().count()))
+            .field(
+                "body_characters",
+                &self.body.as_ref().map(|body| body.chars().count()),
+            )
             .finish()
     }
 }
@@ -606,7 +609,10 @@ impl Moves {
     /// first one, since the `goto` began, that the page did not ask for,
     /// and every redirect of it.
     fn mover(&mut self, paused: &RequestPaused) -> Mover {
-        let loader = paused.network_id.as_deref().filter(|loader| !loader.is_empty());
+        let loader = paused
+            .network_id
+            .as_deref()
+            .filter(|loader| !loader.is_empty());
         let follows = paused.redirected_request_id.as_deref();
         let of_goto = (follows.is_some() && follows == self.goto_request.as_deref())
             || (loader.is_some() && loader == self.goto_loader.as_deref());
@@ -699,6 +705,14 @@ enum On<'a> {
     Element(&'a str),
 }
 
+/// A text of the page or of the browser, as far as it may leave the crate
+/// in a message: every known secret replaced, and only then cut. Cut
+/// first, a secret that the cut divides would leave its first part behind
+/// (decision 0143).
+pub(crate) fn shown(redact: &dyn Redact, text: &str) -> String {
+    cut(&redact.redact(text))
+}
+
 fn cut(text: &str) -> String {
     const SHOWN: usize = 200;
     let clean: String = text
@@ -737,7 +751,7 @@ fn is_password(node: &NodeDescription) -> bool {
 
 impl Page {
     fn shown(&self, text: &str) -> String {
-        self.redact.redact(&cut(text))
+        shown(self.redact.as_ref(), text)
     }
 
     /// The tab's moves, also after a panic elsewhere poisoned the lock:
@@ -856,11 +870,16 @@ impl Page {
                     details.text,
                     evaluated.result.description.as_deref().unwrap_or_default()
                 );
-                if let Some((_, after)) = text.split_once(OUTSIDE_ORIGINS) {
+                if text.contains(OUTSIDE_ORIGINS) {
                     // The helper found the page on an origin the tab was
-                    // not opened for, and did nothing.
-                    let origin = after.split_whitespace().next().unwrap_or_default();
-                    Err(self.outside(origin).into())
+                    // not opened for, and did nothing. The whole text is
+                    // redacted before the origin is taken out of it.
+                    let whole = self.redact.redact(&text);
+                    let origin = whole
+                        .split_once(OUTSIDE_ORIGINS)
+                        .and_then(|(_, after)| after.split_whitespace().next())
+                        .unwrap_or_default();
+                    Err(BrowserError::ForeignOrigin(cut(origin)).into())
                 } else if text.contains(PASSWORD_REFUSED) {
                     Err(BrowserError::PasswordField.into())
                 } else if text.contains("__a2m") {
@@ -1236,7 +1255,10 @@ impl Page {
         // node that is a password input at either moment is masked, and
         // so is one the browser can no longer describe.
         for node in &tree.nodes {
-            let valued = node.value.as_ref().is_some_and(|value| !value.text().is_empty());
+            let valued = node
+                .value
+                .as_ref()
+                .is_some_and(|value| !value.text().is_empty());
             let Some(number) = node.backend_dom_node_id.filter(|_| valued) else {
                 continue;
             };
@@ -1580,12 +1602,12 @@ impl Page {
             .headers
             .into_iter()
             .filter(|(name, _)| !credential_header(name))
-            .map(|(name, value)| (name, self.redact.redact(&value)))
+            .map(|(name, value)| (self.redact.redact(&name), self.redact.redact(&value)))
             .collect();
         headers.sort();
         Ok(PageResponse {
             status,
-            address: self.redact.redact(without_query(&answer.address)),
+            address: without_query(&self.redact.redact(&answer.address)).to_owned(),
             headers,
             body: self.redact.redact(&answer.body),
         })
@@ -1709,7 +1731,8 @@ impl Page {
     pub(crate) fn block(&self, method: &str, address: &str) {
         let shape = RequestShape {
             method: method.to_owned(),
-            address: self.redact.redact(&cut(without_query(address))),
+            // Redacted whole, then cut at the query, then to length.
+            address: cut(without_query(&self.redact.redact(address))),
         };
         if let Ok(mut blocked) = self.blocked.lock() {
             // A page that keeps trying must not fill the engine's memory.
@@ -1763,6 +1786,11 @@ impl Page {
             Err(ClientError::Protocol { code, .. }) => code == METHOD_NOT_FOUND,
             Err(_) => false,
         };
+        // The report of a refused socket is an event of the child's own
+        // scripts, which the browser sends only once they are switched on.
+        let _ = client
+            .call(Some(session), &RuntimeEnable {}, deadline)
+            .await;
         let _ = client
             .call(
                 Some(session),
@@ -2020,14 +2048,19 @@ impl Page {
         }
         self.browser.tabs.fetch_sub(1, Ordering::SeqCst);
         self.browser.pages().remove(&self.target);
+        // The tab's own page first, then the windows it opened that are
+        // still there: with the page gone, nothing drives them.
+        let mut closing = vec![self.target.clone()];
+        closing.extend(self.browser.windows_of(&self.target));
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let client = self.client.clone();
-            let target = self.target.clone();
             let deadline = Deadline::after(self.call_deadline);
             runtime.spawn(async move {
-                let _ = client
-                    .call(None, &CloseTarget { target_id: &target }, deadline)
-                    .await;
+                for target in closing {
+                    let _ = client
+                        .call(None, &CloseTarget { target_id: &target }, deadline)
+                        .await;
+                }
             });
         }
     }
@@ -2130,19 +2163,20 @@ fn fetch_documents() -> FetchEnable<'static> {
 /// The browser is told, when it starts, to attach every new page before it
 /// runs. A page with no opener is let run when it is one the engine made,
 /// and never otherwise. A page with an opener is a window some page
-/// opened, also when the page asked for a window with no opener (measured,
-/// decision 0143): every request
-/// of it is ended before it leaves the browser, it is let run only so that
-/// the page that opened it is not left waiting, and it is closed; the tab
-/// that opened it reports it. A window is never let run without that lock:
-/// its first request leaves the browser at once (measured, decision 0143).
+/// opened, also when the page asked for a window with no opener. Before
+/// it runs, every request of it is set to be ended in the browser and
+/// sockets are refused in it; then it is let run, because the page that
+/// opened it waits until it does. The tab that opened it reports it at
+/// once, and again with the address of the first page it asks for. That
+/// request is ended, and only then is the window closed: a window closed
+/// while its first request was on its way let one in eight through
+/// (measured, decision 0143). A window that asks for nothing stays, locked,
+/// until the tab that opened it goes.
 pub(crate) async fn watch_windows(
     browser: Weak<BrowserInner>,
     mut events: mpsc::UnboundedReceiver<Event>,
     call_deadline: Duration,
 ) {
-    // The session of each window not yet reported, with what opened it.
-    let mut unreported: BTreeMap<String, String> = BTreeMap::new();
     while let Some(event) = events.recv().await {
         let Some(browser) = browser.upgrade() else {
             return;
@@ -2165,30 +2199,64 @@ pub(crate) async fn watch_windows(
                     }
                     continue;
                 };
-                unreported.insert(session_id.clone(), opener);
-                let locked = client
-                    .call(Some(&session_id), &fetch_everything(), deadline)
+                let session = Some(session_id.as_str());
+                let close = CloseTarget {
+                    target_id: &target_info.target_id,
+                };
+                browser.report(&opener, POPUP, "");
+                if client
+                    .call(session, &fetch_everything(), deadline)
                     .await
-                    .is_ok();
-                if locked {
-                    let _ = client
-                        .call(Some(&session_id), &RunIfWaiting {}, deadline)
-                        .await;
+                    .is_err()
+                {
+                    // It cannot be locked, so it is not let run.
+                    let _ = client.call(None, &close, deadline).await;
+                    continue;
                 }
+                browser.windows().insert(
+                    session_id.clone(),
+                    crate::browsers::Window {
+                        opener,
+                        target: target_info.target_id.clone(),
+                        asked: false,
+                    },
+                );
+                let refuse = Evaluate {
+                    expression: REFUSE_SOCKETS,
+                    context_id: None,
+                    return_by_value: true,
+                    await_promise: false,
+                };
+                // On every document it would load, in the empty one it
+                // has now, and again once it runs, since a window that
+                // waits may have no script context to take it.
+                let _ = client.call(session, &PageEnable {}, deadline).await;
                 let _ = client
                     .call(
-                        None,
-                        &CloseTarget {
-                            target_id: &target_info.target_id,
+                        session,
+                        &AddScriptOnNewDocument {
+                            source: REFUSE_SOCKETS,
+                            world_name: None,
                         },
                         deadline,
                     )
                     .await;
+                let _ = client.call(session, &refuse, deadline).await;
+                let _ = client.call(session, &RunIfWaiting {}, deadline).await;
+                let _ = client.call(session, &refuse, deadline).await;
             }
             EventKind::RequestPaused(paused) => {
                 let session = event.session.as_deref();
-                if let Some(opener) = session.and_then(|session| unreported.remove(session)) {
-                    browser.report(&opener, POPUP, &paused.request.url);
+                // The first page a window asks for is reported, and the
+                // window is closed once that request has been ended.
+                let first = session.and_then(|session| {
+                    let mut windows = browser.windows();
+                    let window = windows.get_mut(session)?;
+                    (!std::mem::replace(&mut window.asked, true))
+                        .then(|| (window.opener.clone(), window.target.clone()))
+                });
+                if let Some((opener, _)) = &first {
+                    browser.report(opener, POPUP, &paused.request.url);
                 }
                 let _ = client
                     .call(
@@ -2200,30 +2268,18 @@ pub(crate) async fn watch_windows(
                         deadline,
                     )
                     .await;
+                if let Some((_, target)) = &first {
+                    let _ = client
+                        .call(None, &CloseTarget { target_id: target }, deadline)
+                        .await;
+                }
             }
             EventKind::Detached(detached) => {
-                // It was closed before it asked for anything.
-                if let Some(opener) = unreported.remove(&detached.session_id) {
-                    browser.report(&opener, POPUP, "");
-                }
+                browser.windows().remove(&detached.session_id);
             }
             _ => {}
         }
     }
-}
-
-async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
-    while let Some(event) = events.recv().await {
-        page.heard(event).await;
-    }
-    // The subscription ended: the tab was released, or the link closed.
-    page.status.send_if_modified(|status| {
-        let open = *status != Status::Gone && *status != Status::Crashed;
-        if open {
-            *status = Status::Gone;
-        }
-        open
-    });
 }
 
 /// Opens a tab on `about:blank` in the browser, in the posture given, for
@@ -2242,7 +2298,7 @@ pub(crate) async fn open_page(
         ClientError::Closed { dispatch, .. } => BrowserError::Disconnected { dispatch },
         ClientError::Timeout { dispatch } => BrowserError::Timeout { dispatch },
         ClientError::Protocol { message, .. } => {
-            BrowserError::Unexpected(shared.redact.redact(&cut(&message)))
+            BrowserError::Unexpected(shown(shared.redact.as_ref(), &message))
         }
         ClientError::Shape { method } => {
             BrowserError::Unexpected(format!("the reply of {method} has another shape"))
@@ -2457,7 +2513,10 @@ async fn prepare(
 /// sends no input to the page, so each of its errors says `NotSent`.
 pub trait Look {
     /// Sends the tab to an address and waits until its document has been
-    /// parsed, which the browser reports as an event.
+    /// parsed, which the browser reports as an event. An address on an
+    /// origin the tab was not opened for is refused before the browser
+    /// hears of it, and a redirect to one is ended in the browser: both
+    /// are [`BrowserError::ForeignOrigin`].
     fn goto(
         &self,
         address: &Address,
@@ -2466,7 +2525,9 @@ pub trait Look {
 
     /// The one rendered element the query matches, now. It does not wait:
     /// wait for [`Primitive::Visible`] first where the element may be
-    /// late.
+    /// late. This, and every method below, looks only at a page of an
+    /// origin the tab was opened for: on any other page it is
+    /// [`BrowserError::ForeignOrigin`].
     fn locate(
         &self,
         query: &Query,
@@ -2563,14 +2624,15 @@ macro_rules! looks {
     };
 }
 
-/// A tab that may act. Closed when dropped.
+/// A tab that may act, on the origins it was opened for. Closed when
+/// dropped.
 pub struct ActTab {
     pub(crate) page: Arc<Page>,
 }
 
 /// A tab that can read and cannot act: it has no method that acts, and the
-/// browser fails every request of its page that could change the system.
-/// Closed when dropped.
+/// browser fails every request of its page that could change the system
+/// and every move of the tab that its page starts. Closed when dropped.
 pub struct ObserveTab {
     pub(crate) page: Arc<Page>,
 }
@@ -2591,7 +2653,10 @@ impl ActTab {
     /// # Errors
     ///
     /// [`BrowserError::NotActionable`] and [`BrowserError::NotFound`]
-    /// before anything was sent. Every other error says through
+    /// before anything was sent, and [`BrowserError::ForeignOrigin`] when
+    /// the page is of an origin the tab was not opened for: the origin is
+    /// checked in the same call as the element, after it was located and
+    /// before any input is sent. Every other error says through
     /// [`BrowserError::dispatch`] whether input reached the page.
     pub async fn input(
         &self,
@@ -2603,12 +2668,15 @@ impl ActTab {
     }
 
     /// Sends one request from inside the page, with the page's own
-    /// session, once.
+    /// session, once, to an address on one of the tab's origins. A
+    /// redirect is not followed.
     ///
     /// # Errors
     ///
-    /// [`BrowserError::RequestFailed`] when the page could not complete
-    /// it; whether it was sent is then not known.
+    /// [`BrowserError::ForeignOrigin`] for an address on another origin;
+    /// nothing was sent. [`BrowserError::RequestFailed`] when the page
+    /// could not complete it, or the answer was a redirect; whether it was
+    /// sent is then not known.
     pub async fn fetch(
         &self,
         request: &PageRequest,
@@ -2665,5 +2733,127 @@ impl ObserveTab {
     #[must_use]
     pub fn blocked(&self) -> Vec<RequestShape> {
         self.page.take_blocked()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::PausedRequest;
+
+    fn held(
+        address: &str,
+        number: &str,
+        loader: Option<&str>,
+        follows: Option<&str>,
+    ) -> RequestPaused {
+        RequestPaused {
+            request_id: number.to_owned(),
+            request: PausedRequest {
+                url: address.to_owned(),
+                method: "GET".to_owned(),
+            },
+            frame_id: "frame".to_owned(),
+            resource_type: "Document".to_owned(),
+            network_id: loader.map(str::to_owned),
+            redirected_request_id: follows.map(str::to_owned),
+        }
+    }
+
+    const ASKED: &str = "https://app.example.com/orders";
+    const BY_PAGE: &str = "https://app.example.com/orders/A-100/delete";
+
+    #[test]
+    fn the_goto_s_request_is_the_first_the_page_did_not_ask_for_and_its_redirects() {
+        // With no `goto` under way, every move is the page's.
+        let mut moves = Moves::default();
+        assert_eq!(
+            moves.mover(&held(ASKED, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+
+        // A `goto` begins. The page announces a move of its own first, and
+        // its request comes before the `goto`'s: it is still the page's.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.asked(&format!("{BY_PAGE}#now"));
+        moves.started(BY_PAGE, "L1", "differentDocument");
+        moves.started(ASKED, "L2", "differentDocument");
+        assert_eq!(
+            moves.mover(&held(BY_PAGE, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+        assert_eq!(
+            moves.mover(&held(ASKED, "2.0", Some("L2"), None)),
+            Mover::Goto
+        );
+        // A redirect of the `goto` is the `goto`'s, by its loader or by
+        // the request it follows; a redirect of the page's move is not.
+        let hop = "https://app.example.com/orders/";
+        assert_eq!(
+            moves.mover(&held(hop, "2.1", Some("L2"), Some("2.0"))),
+            Mover::Goto
+        );
+        assert_eq!(
+            moves.mover(&held(hop, "2.2", None, Some("2.1"))),
+            Mover::Goto
+        );
+        assert_eq!(
+            moves.mover(&held(hop, "1.1", Some("L1"), Some("1.0"))),
+            Mover::Page
+        );
+        // Only one move is the `goto`'s: a second that nobody announced is
+        // not let through on its account.
+        assert_eq!(
+            moves.mover(&held(ASKED, "3.0", Some("L3"), None)),
+            Mover::Page
+        );
+
+        // The browser's word of where a move started can be missing: the
+        // page's announcement alone still marks its request.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.asked(BY_PAGE);
+        assert_eq!(moves.mover(&held(BY_PAGE, "1.0", None, None)), Mover::Page);
+        assert_eq!(moves.mover(&held(ASKED, "2.0", None, None)), Mover::Goto);
+
+        // A move through the tab's history is never the `goto`'s.
+        let mut moves = Moves {
+            going: true,
+            ..Moves::default()
+        };
+        moves.started(ASKED, "L1", "historyDifferentDocument");
+        assert_eq!(
+            moves.mover(&held(ASKED, "1.0", Some("L1"), None)),
+            Mover::Page
+        );
+
+        // What the page asks for is remembered up to a bound.
+        let mut moves = Moves::default();
+        for number in 0..1000 {
+            moves.asked(&format!("{ASKED}/{number}"));
+            moves.started(
+                &format!("{ASKED}/x{number}"),
+                &format!("L{number}"),
+                "restore",
+            );
+        }
+        assert_eq!(
+            (moves.asked.len(), moves.by_page.len()),
+            (Moves::KEPT, Moves::KEPT)
+        );
+    }
+
+    #[test]
+    fn the_helper_carries_the_tab_s_origins_and_as_it_stands_refuses_everything() {
+        assert_eq!(HELPER.matches(HELPER_ORIGINS).count(), 1);
+        let origins = Origins::of([&Address::new("https://app.example.com/orders").unwrap()]);
+        let helper = helper_for(&origins);
+        assert!(helper.contains(r#"const ALLOWED = ["https://app.example.com"];"#));
+        assert!(helper_for(&Origins::default()).contains("const ALLOWED = [];"));
     }
 }

@@ -18,8 +18,12 @@
 //! names its manifest declares.
 //!
 //! What a driver for the pack meets in a plan: a `fetch` step reads and may
-//! report a record absent; a `send` step writes, and commits when its call's
-//! effect is `write`. Each step refers to its call by name in the pack
+//! report a record absent; a `send` step writes, and always commits. The
+//! pack states both once, for the kind of step, and the compiler holds
+//! every lowered step to it: a `send` can never be lowered under an
+//! operation that declares `read`, whatever its call's file says, and a
+//! `fetch` of a call whose effect is `write` does not compile. The verb
+//! `upsert` is a write by what it does. Each step refers to its call by name in the pack
 //! section of the kind `call`, whose payload is a JSON map from the call's
 //! name to its `path`, its `effect`, its `surface`, and, where the call has
 //! one, `accept`, the index of an expression. A step's arguments are the
@@ -29,9 +33,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use a2m_core::{
-    ControlName, FailsAs, Failure, FailureClass, FailureCode, FileKindName, Finding, FindingKind,
-    IdentityStrategy, LintCode, Mode, PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind,
-    ValueType, Verb,
+    ControlName, EffectClass, FailsAs, Failure, FailureClass, FailureCode, FileKindName, Finding,
+    FindingKind, IdentityStrategy, LintCode, Mode, PackPayload, PackRef, Step, StepArg, StepKind,
+    SurfaceKind, ValueType, Verb,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, Stage};
@@ -41,7 +45,7 @@ use crate::load::TargetRoot;
 use crate::register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
     DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, ProgramField,
-    SurfaceKindSpec,
+    StepCommits, SurfaceKindSpec,
 };
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
@@ -190,6 +194,13 @@ impl FileKind for CallKind {
             .collect()
     }
 
+    /// A call whose effect is not `read` describes a write. One whose
+    /// effect is an open question is not known to read, and is not drafted
+    /// as if it did.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.text("effect") == Some("write")
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],
@@ -307,6 +318,16 @@ impl StandLowering {
                 }
             }
         }
+        if kind == "fetch" && entry.text("effect") == Some("write") {
+            problems.push(problem(
+                "fetch_of_a_write",
+                Stage::Lower,
+                &call.at,
+                format!("The call `{name}` writes, and it is named where a call is only read."),
+                "Name a call whose effect is `read` here; a call that writes is the `call` of an `upsert` binding.",
+            ));
+            return None;
+        }
         let section = cx.section_index(&call_kind(), &surface_kind())?;
         Some(Step {
             kind: name!(StepKind, kind),
@@ -320,7 +341,10 @@ impl StandLowering {
                 class: FailureClass::Drift,
                 code: FailureCode::fixed("reply_changed"),
             },
-            commits: kind == "send" && entry.text("effect") == Some("write"),
+            // By the kind of step alone: what the call's file says of its
+            // effect is data a target's author wrote, and never decides
+            // whether an intent is recorded.
+            commits: kind == "send",
             lookup: kind == "fetch",
             idempotent: false,
             when: None,
@@ -348,6 +372,22 @@ impl Lowering for StandLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if kind.as_str() == "send" {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        if binding.verb.as_str() == "read" {
+            EffectClass::Read
+        } else {
+            EffectClass::Write
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

@@ -56,6 +56,22 @@ async fn refused(blocked: impl Fn() -> Vec<RequestShape>, word: &str) -> Vec<Req
     }
 }
 
+/// The same, until one refusal carries `word` for exactly `address`.
+async fn refused_at(
+    blocked: impl Fn() -> Vec<RequestShape>,
+    word: &str,
+    address: &str,
+) -> Vec<RequestShape> {
+    let mut seen = Vec::new();
+    while !seen
+        .iter()
+        .any(|one: &RequestShape| one.method == word && one.address == address)
+    {
+        seen.extend(refused(&blocked, word).await);
+    }
+    seen
+}
+
 async fn observing(stand: &Stand, app: &TestApp, identity: &str) -> ObserveTab {
     must(
         stand
@@ -93,18 +109,49 @@ async fn a_page_cannot_move_a_tab_that_only_observes_and_goto_leaves_no_origin_i
     // with a beacon. The tab says what it refused, and the page the caller
     // sent it to is still the page it shows.
     for (page, word, aimed, title) in [
-        ("script", "NAVIGATION", app.url(&format!("{WRITE}/script")), "Order archive"),
-        ("meta", "NAVIGATION", app.url(&format!("{WRITE}/meta")), "Order summary"),
-        ("form", "NAVIGATION", app.url(&format!("{WRITE}/form")), "Order search"),
-        ("elsewhere", "NAVIGATION", elsewhere.clone(), "Order partners"),
-        ("form-post", "POST", app.url(&format!("{WRITE}/form-post")), "Order renewal"),
-        ("beacon", "POST", app.url(&format!("{WRITE}/beacon")), "Order statistics"),
+        (
+            "script",
+            "NAVIGATION",
+            app.url(&format!("{WRITE}/script")),
+            "Order archive",
+        ),
+        (
+            "meta",
+            "NAVIGATION",
+            app.url(&format!("{WRITE}/meta")),
+            "Order summary",
+        ),
+        (
+            "form",
+            "NAVIGATION",
+            app.url(&format!("{WRITE}/form")),
+            "Order search",
+        ),
+        (
+            "elsewhere",
+            "NAVIGATION",
+            elsewhere.clone(),
+            "Order partners",
+        ),
+        (
+            "form-post",
+            "POST",
+            app.url(&format!("{WRITE}/form-post")),
+            "Order renewal",
+        ),
+        (
+            "beacon",
+            "POST",
+            app.url(&format!("{WRITE}/beacon")),
+            "Order statistics",
+        ),
     ] {
         let sent_to = app.url(&format!("/escapes/{page}"));
         must(tab.goto(&at(&sent_to), soon()).await);
         let seen = refused(|| tab.blocked(), word).await;
         assert!(
-            seen.iter().any(|one| one.method == word && one.address == aimed),
+            seen.iter()
+                .any(|one| one.method == word && one.address == aimed),
             "{page}: {seen:?}"
         );
         must(
@@ -123,11 +170,17 @@ async fn a_page_cannot_move_a_tab_that_only_observes_and_goto_leaves_no_origin_i
     // A `goto` is held to the tab's origins too: before it starts, and at
     // every redirect on its way.
     let origin = other(&app, "");
-    outside(&tab.goto(&at(&elsewhere), soon()).await.unwrap_err(), &origin);
+    outside(
+        &tab.goto(&at(&elsewhere), soon()).await.unwrap_err(),
+        &origin,
+    );
     let redirected = tab.goto(&at(&app.url("/escapes/redirect")), soon()).await;
     outside(&redirected.unwrap_err(), &origin);
     // The tab is where it was, and still reads.
-    must(tab.locate(&Query::role("heading", "Order statistics"), soon()).await);
+    must(
+        tab.locate(&Query::role("heading", "Order statistics"), soon())
+            .await,
+    );
 
     drop(tab);
     stand.end().await;
@@ -177,7 +230,11 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
     let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
     let links = at(&app.url("/escapes/links"));
     must(acting.goto(&links, soon()).await);
-    let download = must(acting.locate(&Query::role("link", "Export the orders"), soon()).await);
+    let download = must(
+        acting
+            .locate(&Query::role("link", "Export the orders"), soon())
+            .await,
+    );
     must(acting.input(&download, &Input::Click, soon()).await);
     let seen = refused(|| acting.blocked(), "DOWNLOAD").await;
     assert_eq!(
@@ -187,18 +244,22 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
             address: app.url(&format!("/escapes/download/{link_export}")),
         }]
     );
-    let window = must(acting.locate(&Query::role("link", "Open the packing list"), soon()).await);
-    must(acting.input(&window, &Input::Click, soon()).await);
-    let seen = refused(|| acting.blocked(), "POPUP").await;
-    assert_eq!(
-        seen,
-        [RequestShape {
-            method: "POPUP".to_owned(),
-            address: app.url(&format!("{WRITE}/window")),
-        }]
+    let window = must(
+        acting
+            .locate(&Query::role("link", "Open the packing list"), soon())
+            .await,
     );
+    must(acting.input(&window, &Input::Click, soon()).await);
+    // Reported when it opens, and again with the page it asked for.
+    let asked = app.url(&format!("{WRITE}/window"));
+    let seen = refused_at(|| acting.blocked(), "POPUP", &asked).await;
+    assert!(seen.iter().all(|one| one.method == "POPUP"), "{seen:?}");
     // The tab is where it was, and no other page is left open.
-    must(acting.locate(&Query::role("heading", "Order documents"), soon()).await);
+    must(
+        acting
+            .locate(&Query::role("heading", "Order documents"), soon())
+            .await,
+    );
     assert_eq!(stand.browsers.list()[0].tabs, 1);
     drop(acting);
 
@@ -206,7 +267,10 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
     // page that has a person's gesture to open a window with.
     let tab = observing(&stand, &app, "clerk").await;
     let file = tab
-        .goto(&at(&app.url(&format!("/escapes/download/{export}"))), soon())
+        .goto(
+            &at(&app.url(&format!("/escapes/download/{export}"))),
+            soon(),
+        )
         .await;
     assert!(matches!(file, Err(BrowserError::NotLoaded(_))), "{file:?}");
     let seen = refused(|| tab.blocked(), "DOWNLOAD").await;
@@ -214,15 +278,32 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
     must(tab.goto(&at(&app.url("/escapes/quiet")), soon()).await);
     let open = format!("window.open('{WRITE}/opened') ? 'opened' : 'not opened'");
     must(tab.page.as_the_page_with_a_gesture(&open, soon()).await);
-    let seen = refused(|| tab.blocked(), "POPUP").await;
-    assert_eq!(
-        seen,
-        [RequestShape {
-            method: "POPUP".to_owned(),
-            address: app.url(&format!("{WRITE}/opened")),
-        }]
+    let asked = app.url(&format!("{WRITE}/opened"));
+    let seen = refused_at(|| tab.blocked(), "POPUP", &asked).await;
+    assert!(seen.iter().all(|one| one.method == "POPUP"), "{seen:?}");
+    // A window that asks for no page gives its opener no way out either:
+    // no socket through it, and no page it is sent to afterwards.
+    let through_a_window = format!(
+        "(() => {{ const opened = window.open(); if (!opened) return 'not opened'; \
+         let socket = 'made'; \
+         try {{ new opened.WebSocket('ws://' + location.host + '{WRITE}/window-socket'); }} \
+         catch (error) {{ socket = 'refused'; }} \
+         opened.location.href = '{WRITE}/sent-later'; return socket; }})()"
     );
-    must(tab.locate(&Query::role("heading", "Order notes"), soon()).await);
+    assert_eq!(
+        must(
+            tab.page
+                .as_the_page_with_a_gesture(&through_a_window, soon())
+                .await
+        ),
+        "refused"
+    );
+    let later = app.url(&format!("{WRITE}/sent-later"));
+    refused_at(|| tab.blocked(), "POPUP", &later).await;
+    must(
+        tab.locate(&Query::role("heading", "Order notes"), soon())
+            .await,
+    );
     drop(tab);
 
     // Closing the browser lets it finish whatever it had begun to write.
@@ -284,7 +365,10 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
     must(acting.goto(&quiet, soon()).await);
     let register = "navigator.serviceWorker.register('/escapes/service-worker.js', {scope: '/escapes/'})\
         .then(() => navigator.serviceWorker.ready).then(() => 'ready')";
-    assert_eq!(must(acting.page.as_the_page(register, soon()).await), "ready");
+    assert_eq!(
+        must(acting.page.as_the_page(register, soon()).await),
+        "ready"
+    );
     assert_eq!(
         must(acting.page.as_the_page(poke, soon()).await),
         "post sent, socket made"
@@ -360,11 +444,18 @@ async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
         }]
     );
     must(
-        tab.input(&description, &Input::Fill("Kept on its origin".to_owned()), soon())
-            .await,
+        tab.input(
+            &description,
+            &Input::Fill("Kept on its origin".to_owned()),
+            soon(),
+        )
+        .await,
     );
     assert_eq!(
-        must(tab.read(&description, &crate::ReadWhat::Value, soon()).await),
+        must(
+            tab.read(&description, &crate::ReadWhat::Value, soon())
+                .await
+        ),
         crate::RawValue::Text("Kept on its origin".to_owned())
     );
 
@@ -376,11 +467,25 @@ async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
         headers: Vec::new(),
         body: None,
     };
-    outside(&tab.fetch(&request(moved), soon()).await.unwrap_err(), &origin);
-    let followed = tab.fetch(&request(app.url("/escapes/redirect")), soon()).await;
-    assert!(matches!(followed, Err(BrowserError::RequestFailed(_))), "{followed:?}");
-    let inside = must(tab.fetch(&request(app.url("/api/orders?status=draft")), soon()).await);
-    assert_eq!((inside.status, inside.address), (200, app.url("/api/orders")));
+    outside(
+        &tab.fetch(&request(moved), soon()).await.unwrap_err(),
+        &origin,
+    );
+    let followed = tab
+        .fetch(&request(app.url("/escapes/redirect")), soon())
+        .await;
+    assert!(
+        matches!(followed, Err(BrowserError::RequestFailed(_))),
+        "{followed:?}"
+    );
+    let inside = must(
+        tab.fetch(&request(app.url("/api/orders?status=draft")), soon())
+            .await,
+    );
+    assert_eq!(
+        (inside.status, inside.address),
+        (200, app.url("/api/orders"))
+    );
 
     // And if a page of another origin is in the tab all the same, nothing
     // is located, waited for, or shown there. A test puts one there the
@@ -391,7 +496,11 @@ async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
     assert!(landed.is_err(), "{landed:?}");
     if must(tab.page.as_the_page("location.protocol", soon()).await) != "data:" {
         // The browser did not go there at all. An empty page stands in.
-        must(tab.page.as_the_page("location.href = 'about:blank'; 'left'", soon()).await);
+        must(
+            tab.page
+                .as_the_page("location.href = 'about:blank'; 'left'", soon())
+                .await,
+        );
     }
     let here = must(tab.page.as_the_page("location.protocol", soon()).await);
     assert!(here == "data:" || here == nowhere, "{here}");
@@ -403,9 +512,13 @@ async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
     outside(&snapshot.unwrap_err(), &here);
     // The element found on the form is of a page that is gone.
     assert_eq!(
-        tab.input(&description, &Input::Fill("Typed elsewhere".to_owned()), soon())
-            .await
-            .unwrap_err(),
+        tab.input(
+            &description,
+            &Input::Fill("Typed elsewhere".to_owned()),
+            soon()
+        )
+        .await
+        .unwrap_err(),
         BrowserError::NotFound
     );
 
@@ -450,8 +563,16 @@ fn a_request_marked_safe_is_matched_by_origin_and_path_not_by_how_its_text_begin
     assert!(whole.allows("POST", "https://app.example.com/anything"));
     assert!(!whole.allows("POST", "https://app.example.com.other.example/anything"));
     // What is no address, or carries a query, marks nothing.
-    for nothing in ["", "/api/search", "app.example.com", "https://app.example.com/api?x=1"] {
-        assert!(!safe(nothing).allows("POST", "https://app.example.com/api?x=1"), "{nothing}");
+    for nothing in [
+        "",
+        "/api/search",
+        "app.example.com",
+        "https://app.example.com/api?x=1",
+    ] {
+        assert!(
+            !safe(nothing).allows("POST", "https://app.example.com/api?x=1"),
+            "{nothing}"
+        );
     }
     // A read needs no mark.
     assert!(SafeRequests::default().allows("GET", "https://app.example.com/"));
@@ -472,14 +593,24 @@ fn what_is_typed_and_what_a_request_carries_is_never_printed() {
     let request = PageRequest {
         method: "POST".to_owned(),
         address: at("https://app.example.com/api/session?ticket=example-token-in-query"),
-        headers: vec![("x-example-key".to_owned(), "example-key-in-header".to_owned())],
+        headers: vec![(
+            "x-example-key".to_owned(),
+            "example-key-in-header".to_owned(),
+        )],
         body: Some("password=secret-for-tests-body".to_owned()),
     };
     let printed = format!("{request:?}");
-    for hidden in ["example-token-in-query", "example-key-in-header", "secret-for-tests-body"] {
+    for hidden in [
+        "example-token-in-query",
+        "example-key-in-header",
+        "secret-for-tests-body",
+    ] {
         assert!(!printed.contains(hidden), "{printed}");
     }
-    assert!(printed.contains("x-example-key") && printed.contains("/api/session"), "{printed}");
+    assert!(
+        printed.contains("x-example-key") && printed.contains("/api/session"),
+        "{printed}"
+    );
 }
 
 #[test]

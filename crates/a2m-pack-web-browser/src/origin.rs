@@ -150,15 +150,27 @@ mod tests {
     #[test]
     fn an_origin_is_written_as_the_browser_writes_it() {
         for (address, origin) in [
-            ("https://app.example.com/orders?x=1#top", "https://app.example.com"),
+            (
+                "https://app.example.com/orders?x=1#top",
+                "https://app.example.com",
+            ),
             ("https://APP.Example.com:443/", "https://app.example.com"),
             ("http://app.example.com:80", "http://app.example.com"),
             ("http://127.0.0.1:8080/a", "http://127.0.0.1:8080"),
-            ("https://app.example.com:8443", "https://app.example.com:8443"),
+            (
+                "https://app.example.com:8443",
+                "https://app.example.com:8443",
+            ),
             ("http://[::1]:8080/a", "http://[::1]:8080"),
             ("http://[::1]/a", "http://[::1]"),
-            ("https://someone:word@app.example.com/", "https://app.example.com"),
-            ("blob:https://app.example.com/1b2c", "https://app.example.com"),
+            (
+                "https://someone:word@app.example.com/",
+                "https://app.example.com",
+            ),
+            (
+                "blob:https://app.example.com/1b2c",
+                "https://app.example.com",
+            ),
         ] {
             assert_eq!(origin_of(address).as_deref(), Some(origin), "{address}");
         }
@@ -177,7 +189,10 @@ mod tests {
         assert_eq!(path_of("https://app.example.com"), "/");
         assert_eq!(path_of("https://app.example.com/a/b?c=/d#e"), "/a/b");
         assert_eq!(shown_origin("data:text/html,secret"), "data:");
-        assert_eq!(shown_origin("https://app.example.com/x?token=1"), "https://app.example.com");
+        assert_eq!(
+            shown_origin("https://app.example.com/x?token=1"),
+            "https://app.example.com"
+        );
     }
 
     #[test]
@@ -207,6 +222,10 @@ mod tests {
         assert!(!origins.allows_reported("data:text/html,x"));
         assert!(!origins.allows_reported("about:blank"));
         assert!(!Origins::default().allows(&address("https://app.example.com/")));
-        assert!(origins.with_data_pages().allows_reported("data:text/html,x"));
+        assert!(
+            origins
+                .with_data_pages()
+                .allows_reported("data:text/html,x")
+        );
     }
 }

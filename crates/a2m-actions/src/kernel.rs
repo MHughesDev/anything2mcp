@@ -919,9 +919,14 @@ impl Kernel {
 /// How many plans read from the store are kept in memory.
 pub(crate) const PLANS_KEPT: usize = 64;
 
-/// The shortest lease the in-process runner works under: three of the
-/// engine's default step limits and a heartbeat.
-const IN_PROCESS_LEASE_FLOOR: std::time::Duration = std::time::Duration::from_secs(100);
+/// The shortest lease the in-process runner works under. The engine sends
+/// a save only when the lease leaves time for the whole binding, each step
+/// at its time limit, and a step that states none counts as the engine's
+/// default of thirty seconds. Ten minutes leaves room, between two
+/// heartbeats, for a binding of nineteen such steps, or for one step at the
+/// longest limit a target may declare by default. A tool that needs more
+/// stops with `busy`/`lease_too_short`, which names the setting to raise.
+const IN_PROCESS_LEASE_FLOOR: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn seconds(count: i64) -> std::time::Duration {
     std::time::Duration::from_secs(u64::try_from(count).unwrap_or(0))

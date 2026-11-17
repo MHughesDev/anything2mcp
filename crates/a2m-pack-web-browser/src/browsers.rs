@@ -23,7 +23,8 @@ use crate::launch;
 use crate::origin::Origins;
 use crate::protocol::{CloseBrowser, GetVersion, SetAutoAttach, SetDownloadBehavior, TargetFilter};
 use crate::tab::{
-    ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, watch_windows,
+    ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
+    watch_windows,
 };
 
 /// The named root that holds the browsers' data directories. The manifest
@@ -217,6 +218,19 @@ pub(crate) struct BrowserInner {
     /// browser itself refuses can be reported by the tab it concerns.
     pages: Mutex<BTreeMap<String, Weak<Page>>>,
     held: Mutex<Held>,
+    /// The windows pages have opened that are still there, by session.
+    windows: Mutex<BTreeMap<String, Window>>,
+}
+
+/// A window a page opened. It is kept locked, and closed once the first
+/// page it asks for has been refused, or when the tab that opened it goes.
+pub(crate) struct Window {
+    /// The browser's name for what opened it.
+    pub(crate) opener: String,
+    /// The browser's name for the window itself.
+    pub(crate) target: String,
+    /// Whether it has asked for a page yet.
+    pub(crate) asked: bool,
 }
 
 /// The new pages the browser holds before they run. Only the session the
@@ -237,6 +251,22 @@ impl BrowserInner {
         self.pages
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn windows(&self) -> MutexGuard<'_, BTreeMap<String, Window>> {
+        self.windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The windows a tab opened that are still there, by the browser's
+    /// name for each, for the tab to close as it goes.
+    pub(crate) fn windows_of(&self, opener: &str) -> Vec<String> {
+        self.windows()
+            .values()
+            .filter(|window| window.opener == opener)
+            .map(|window| window.target.clone())
+            .collect()
     }
 
     fn held(&self) -> MutexGuard<'_, Held> {
@@ -377,17 +407,10 @@ fn unanswered(error: &ClientError, waited: Duration, redact: &dyn Redact) -> Str
             },
             written(dispatch)
         ),
-        ClientError::Protocol { code, message } => {
-            let shown: String = message
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(200)
-                .collect();
-            format!(
-                "it refused the first request over its pipe with the code {code}: {}",
-                redact.redact(&shown)
-            )
-        }
+        ClientError::Protocol { code, message } => format!(
+            "it refused the first request over its pipe with the code {code}: {}",
+            shown(redact, message)
+        ),
         ClientError::Shape { method } => {
             format!("its answer to {method} over its pipe has another shape")
         }
@@ -654,6 +677,7 @@ impl Browsers {
             runs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
             held: Mutex::new(Held::default()),
+            windows: Mutex::new(BTreeMap::new()),
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine

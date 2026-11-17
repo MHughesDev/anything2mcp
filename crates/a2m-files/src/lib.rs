@@ -41,11 +41,13 @@ pub use doc::{Doc, Entry, Located, Place, RelPath};
 pub use draft::{
     DRAFT_LEVEL, DraftContext, DraftDoc, DraftReport, DraftValue, Drafter, OpenQuestion,
 };
-pub use load::{SourceFile, Sources, TargetRoot, load, load_files};
+pub use load::{
+    LARGEST_RECORDED_FILE, LARGEST_TARGET_FILE, SourceFile, Sources, TargetRoot, load, load_files,
+};
 pub use register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
     DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, ProgramField,
-    SurfaceKindSpec,
+    StepCommits, SurfaceKindSpec,
 };
 pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{

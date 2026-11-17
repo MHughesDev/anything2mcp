@@ -40,6 +40,12 @@ pub(super) struct Surface {
     pub(super) approvals: Mutex<Vec<ApprovalAsk>>,
     pub(super) presence_asked: AtomicU32,
     pub(super) person_present: Mutex<bool>,
+    /// When set, the proof handed back is one kept from this long ago, in
+    /// milliseconds, as a surface that reuses an earlier prompt's would be.
+    pub(super) proof_age_ms: Mutex<i64>,
+    /// When set, the proof handed back is this person's and not the
+    /// caller's.
+    pub(super) proof_of: Mutex<Option<a2m_core::PrincipalId>>,
     clock: Arc<dyn Clock>,
 }
 
@@ -82,11 +88,10 @@ impl PersonSurface for Surface {
         Box::pin(async move {
             self.presence_asked.fetch_add(1, Ordering::SeqCst);
             if *self.person_present.lock().unwrap() {
-                Ok(PresenceProof::new(
-                    PresenceCheck::OsPrompt,
-                    ask.principal,
-                    self.clock.now(),
-                ))
+                let age = *self.proof_age_ms.lock().unwrap();
+                let at = Timestamp::from_unix_millis(self.clock.now().as_unix_millis() - age);
+                let of = self.proof_of.lock().unwrap().unwrap_or(ask.principal);
+                Ok(PresenceProof::new(PresenceCheck::OsPrompt, of, at))
             } else {
                 Err(Failure::new(
                     FailureClass::Policy,
@@ -143,6 +148,8 @@ fn unreachable_store() -> Failure {
 
 pub(super) struct World {
     pub(super) app: TestApp,
+    /// The clock the kernel was opened with, to move by hand.
+    pub(super) clock: Arc<ManualClock>,
     pub(super) kernel: Kernel,
     pub(super) surface: Arc<Surface>,
     pub(super) caller: Caller,
@@ -152,10 +159,12 @@ pub(super) struct World {
     pub(super) hooks: Arc<engine::Hooks>,
 }
 
-struct Options {
+pub(super) struct Options {
     place: StorePlace,
     key_store: Arc<dyn KeyStore>,
     block_store: bool,
+    /// The settings the kernel is opened with.
+    pub(super) settings: Settings,
 }
 
 impl Default for Options {
@@ -164,11 +173,26 @@ impl Default for Options {
             place: StorePlace::Memory,
             key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
             block_store: false,
+            settings: Settings::defaults(),
         }
     }
 }
 
-async fn world(options: Options) -> World {
+impl Options {
+    /// The defaults, with a user's settings file holding `text`.
+    pub(super) fn with_user_settings(text: &str) -> Self {
+        Self {
+            settings: Settings::load(&a2m_actions::Sources {
+                user: Some(a2m_actions::settings::SourceFile::new("settings.toml", text)),
+                ..a2m_actions::Sources::none()
+            })
+            .unwrap(),
+            ..Self::default()
+        }
+    }
+}
+
+pub(super) async fn world(options: Options) -> World {
     let app = TestApp::start().await.unwrap();
     let folder = Folder::new("actions");
     let paths = Paths::under(folder.path());
@@ -177,10 +201,10 @@ async fn world(options: Options) -> World {
         std::fs::create_dir_all(&paths.data).unwrap();
         std::fs::write(&paths.store, b"not a folder").unwrap();
     }
-    let clock: Arc<dyn Clock> =
-        Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    let manual = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+    let clock: Arc<dyn Clock> = Arc::clone(&manual) as Arc<dyn Clock>;
     let prepared = Kernel::prepare(KernelParts {
-        settings: Settings::defaults(),
+        settings: options.settings,
         paths,
         place: options.place,
         key_store: options.key_store,
@@ -207,6 +231,8 @@ async fn world(options: Options) -> World {
         approvals: Mutex::new(Vec::new()),
         presence_asked: AtomicU32::new(0),
         person_present: Mutex::new(true),
+        proof_age_ms: Mutex::new(0),
+        proof_of: Mutex::new(None),
         clock,
     });
     let kernel = Kernel::open(
@@ -227,6 +253,7 @@ async fn world(options: Options) -> World {
     let caller = Caller::new(principal, FrontDoor::Mcp, true);
     World {
         app,
+        clock: manual,
         kernel,
         surface,
         caller,
@@ -240,6 +267,39 @@ impl World {
     /// target published.
     pub(super) async fn ready() -> Self {
         let world = world(Options::default()).await;
+        assert_eq!(
+            world.kernel.health().state,
+            HealthState::Ok,
+            "{:?}",
+            world.kernel.health()
+        );
+        world.kernel.start_runner_loop(4).await.unwrap();
+        world
+            .kernel
+            .publish_plan(&engine::plan(&world.app.url("")))
+            .await
+            .unwrap();
+        world
+    }
+
+    /// The time by the kernel's clock.
+    pub(super) fn now(&self) -> Timestamp {
+        Clock::now(self.clock.as_ref())
+    }
+
+    /// A folder under the test's own that is a project: it holds a
+    /// project file.
+    pub(super) fn project(&self, name: &str) -> std::path::PathBuf {
+        let project = self.folder.path().join(name);
+        std::fs::create_dir_all(project.join("sources")).unwrap();
+        std::fs::write(project.join("anything2mcp.toml"), "").unwrap();
+        project
+    }
+
+    /// A healthy kernel opened with `options`, with the runner loop
+    /// started and the `example` target published.
+    pub(super) async fn ready_with(options: Options) -> Self {
+        let world = world(options).await;
         assert_eq!(
             world.kernel.health().state,
             HealthState::Ok,

@@ -583,7 +583,10 @@ mod tests {
             assert!(Format::new(pattern, shape).is_ok(), "{pattern}");
         }
         let format = Format::new("YYYYMMD", Shape::Date).unwrap();
-        assert_eq!(date_from_text("2026111", &format).unwrap(), date(2026, 11, 1));
+        assert_eq!(
+            date_from_text("2026111", &format).unwrap(),
+            date(2026, 11, 1)
+        );
         assert_eq!(text_from_date(date(2026, 1, 11), &format), "20260111");
     }
 

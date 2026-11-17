@@ -47,9 +47,11 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     plan.pipelines[0].source = plan.pipelines[1].source.clone();
     assert!(plan.pipelines[0].source.is_some());
     world.kernel.publish_plan(&plan).await.unwrap();
-    let project = world.folder.path().join("project");
+    let project = world.project("project");
     std::fs::create_dir_all(project.join("sheets")).unwrap();
-    let file = project.join("sheets").join("items.csv");
+    std::fs::write(project.join("sheets").join("items.csv"), b"Code\n").unwrap();
+    std::fs::write(project.join("sources").join(".hidden.csv"), b"Code\n").unwrap();
+    let file = project.join("sources").join("items.csv");
     std::fs::write(
         &file,
         sheet(&[
@@ -78,7 +80,7 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     let sheet_call = json!({
         "tool": ORDER_FILL,
         "input": fill,
-        "source_file": "sheets/items.csv",
+        "source_file": "sources/items.csv",
     });
 
     // What the dispatcher refuses before any run exists.
@@ -87,13 +89,13 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     assert_eq!(error_of(&none), invalid);
     assert!(none.error.unwrap().fix.contains("source_file"));
     let not_wanted = call(
-        json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "source_file": "sheets/items.csv"}),
+        json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "source_file": "sources/items.csv"}),
         true,
     )
     .await;
     assert_eq!(error_of(&not_wanted), invalid);
     let both = call(
-        json!({"tool": ORDER_FILL, "source_file": "sheets/items.csv", "source_rows": [{"Code": "L-1"}]}),
+        json!({"tool": ORDER_FILL, "source_file": "sources/items.csv", "source_rows": [{"Code": "L-1"}]}),
         true,
     )
     .await;
@@ -114,9 +116,18 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
         (FailureClass::Input, "path_not_allowed".to_owned())
     );
     let outside = std::env::temp_dir().join("a2m-outside.csv");
+    // Nor from anywhere in the project but its `sources` folder: not
+    // another folder of it, not its project file, not its target files,
+    // not a hidden file, and not a folder.
     for escaping in [
         "../outside.csv".to_owned(),
+        "sources/../sheets/items.csv".to_owned(),
         outside.to_string_lossy().into_owned(),
+        "sheets/items.csv".to_owned(),
+        "anything2mcp.toml".to_owned(),
+        "targets/example/target.yaml".to_owned(),
+        "sources/.hidden.csv".to_owned(),
+        "sources".to_owned(),
     ] {
         let mut input = sheet_call.clone();
         input["source_file"] = json!(escaping);
@@ -128,7 +139,7 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
         );
     }
     let mut missing = sheet_call.clone();
-    missing["source_file"] = json!("sheets/nothing.csv");
+    missing["source_file"] = json!("sources/nothing.csv");
     assert_eq!(
         error_of(&call(missing, true).await),
         (FailureClass::Input, "file_unavailable".to_owned())
@@ -542,9 +553,8 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
 impl World {
     /// A project folder under the test's own folder, holding one sheet.
     fn project_with_sheet(&self, rows: &[(&str, &str, &str, &str)]) -> std::path::PathBuf {
-        let project = self.folder.path().join("project");
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(project.join("sheet.csv"), sheet(rows)).unwrap();
+        let project = self.project("project");
+        std::fs::write(project.join("sources").join("sheet.csv"), sheet(rows)).unwrap();
         project
     }
 
@@ -579,7 +589,7 @@ async fn a_sheet_is_entered_row_by_row_from_a_file_of_the_project() {
                 json!({
                     "tool": SHEET_ENTER,
                     "input": {"order_id": "A-102"},
-                    "source_file": "sheet.csv",
+                    "source_file": "sources/sheet.csv",
                 }),
                 world.caller.clone(),
             )
@@ -668,7 +678,7 @@ async fn lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_i
                 json!({
                     "tool": KIT_ENTER,
                     "input": {"order_id": "A-102", "title": "Table kit"},
-                    "source_file": "sheet.csv",
+                    "source_file": "sources/sheet.csv",
                 }),
                 world.caller.clone(),
             )
@@ -715,8 +725,10 @@ async fn lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_i
 async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
     let world = World::ready().await;
     let home = world.folder.path().to_path_buf();
-    let good = home.join("project");
-    std::fs::create_dir_all(&good).unwrap();
+    let good = world.project("project");
+    // The same kind of folder with no project file in it.
+    let bare = home.join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
     let lint = |folder: Option<ProjectFolder>| {
         world.kernel.dispatch(
             Request::new(
@@ -754,6 +766,7 @@ async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
         (paths.store.clone(), "engine's own"),
         (paths.config.clone(), "engine's own"),
         (home.clone(), "engine's own"),
+        (bare.clone(), "no project file"),
         (std::path::PathBuf::from("project"), "not a full path"),
         (home.join("nothing-here"), "no such folder"),
     ] {

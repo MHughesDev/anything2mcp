@@ -84,6 +84,8 @@ pub struct World {
     pub app: TestApp,
     pub kernel: Kernel,
     pub surface: Arc<Surface>,
+    /// What a test can make the test pack's driver do.
+    pub hooks: Arc<engine::Hooks>,
     /// The engine's home. A folder beside the engine's own, under it, is a
     /// project folder a test may state.
     pub folder: Folder,
@@ -91,15 +93,20 @@ pub struct World {
 
 impl World {
     /// A healthy kernel with the `example` target published. With
-    /// `runner`, runs are carried out; without, a run stays queued, which
-    /// is how a test holds a call open.
+    /// `runner`, runs are carried out; without, no runner is enrolled, and
+    /// the scheduler refuses work.
     pub async fn open(runner: bool) -> Self {
+        Self::with_settings(runner, Settings::defaults()).await
+    }
+
+    /// The same, with the installation's settings as given.
+    pub async fn with_settings(runner: bool, settings: Settings) -> Self {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("mcp");
         let clock: Arc<dyn Clock> =
             Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
         let prepared = Kernel::prepare(KernelParts {
-            settings: Settings::defaults(),
+            settings,
             paths: Paths::under(folder.path()),
             place: StorePlace::Memory,
             key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
@@ -111,8 +118,9 @@ impl World {
         let host =
             prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
+        let hooks = Arc::new(engine::Hooks::default());
         builder.add_pack(&AppPack {
-            hooks: Arc::new(engine::Hooks::default()),
+            hooks: Arc::clone(&hooks),
             discoverer: Arc::new(engine::WritingDiscoverer::default()),
         });
         let (registry, problems) = builder.build();
@@ -141,6 +149,7 @@ impl World {
             app,
             kernel,
             surface,
+            hooks,
             folder,
         }
     }

@@ -950,7 +950,10 @@ fn a_choice_read_back_never_stands_for_two_choices() {
     };
     let refusal = ambiguous.normalizer().unwrap_err();
     assert_eq!(refusal.code, EXPRESSION_INVALID);
-    assert!(refusal.to_string().contains("label of another choice"), "{refusal}");
+    assert!(
+        refusal.to_string().contains("label of another choice"),
+        "{refusal}"
+    );
 
     // A plan the compiler did not make cannot carry the list either: the
     // text is canonical, and the load checks the rule again.

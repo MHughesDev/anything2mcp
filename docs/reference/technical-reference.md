@@ -372,7 +372,7 @@ Inside the data directory: `store/` for the database with `blobs/` for evidence 
 | `POST /api/v1/pipelines/{name}/runs` | Start a pipeline |
 | `GET /api/v1/runs/{id}` | Run status and result |
 | `POST /api/v1/runs/{id}/resume`, `/cancel` | Resume or cancel |
-| `GET /api/v1/runs/{id}/events` | Server-sent event stream |
+| `GET /api/v1/runs/{id}/events` | A run's events after a sequence number: one page as JSON, or a server-sent event stream that ends when the run settles. Not an action; only the caller that started the run reads them |
 | `GET /api/v1/sessions` | Session status for the caller |
 | `POST /api/v1/actions/{noun}.{verb}` | Run an authoring or admin action from the registry |
 | `GET /api/v1/openapi.json` | The generated API description |

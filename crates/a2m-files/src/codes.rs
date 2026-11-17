@@ -72,7 +72,6 @@ kernel_codes! {
     WRITE_PIPELINE_WITHOUT_LIMIT = "write_pipeline_without_limit": "A pipeline that writes declares a record limit.",
     CREDENTIAL_IN_FILE = "credential_in_file": "No file holds a credential; credentials are vault references.",
     CREDENTIAL_SUSPECTED = "credential_suspected": "A value under a key that names a token, a cookie, an authorization, or a PIN is a name, an expression, or a vault reference.",
-    DRAFT_WITH_VERSION = "draft_with_version": "A draft is compiled as version 0.0.0, so that its plan cannot pass for a published one.",
     PROBE_INVALID = "probe_invalid": "A sign-in's probe is a read that can be made as the file gives it, and no surface is signed in to twice.",
     OPERATION_WITHOUT_TEST = "operation_without_test": "Every operation and pipeline has an offline test.",
     FIXTURE_NOT_SCRUBBED = "fixture_not_scrubbed": "A fixture a test names exists and carries the scrubbed marker.",

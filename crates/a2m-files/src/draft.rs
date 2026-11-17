@@ -6,20 +6,30 @@
 //! stands where the system did not state a value, the refusal to draft a
 //! write, and the lint and compile of what was written. Which finding gives
 //! which file is each pack's drafting rule.
+//!
+//! A draft is written to a regular file inside the target folder and
+//! nowhere else. Every folder on the way is looked at without following a
+//! link, and a link is never written through: not a linked folder, not a
+//! link where the file would be, not one that leads nowhere. A new draft is
+//! made with create-new, which fails where anything already has the name.
+//! An unchanged draft of the drafter's own is replaced by renaming a new
+//! file over it, so no file that exists is ever opened for writing.
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{self, Write as _};
+use std::path::Path;
 
 use a2m_core::{Digest, EvidenceLevel, Failure, FailureClass, Finding, TargetName};
 
 use crate::compile::{DRAFT_VERSION, compile};
 use crate::diag::{DRAFT_CONFLICT, Diagnostics, PATH_NOT_ALLOWED, TARGET_UNREADABLE};
 use crate::doc::RelPath;
-use crate::kernel::{KERNEL_FILES, KERNEL_FOLDER_KINDS, OPERATION};
+use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FILES, KERNEL_FOLDER_KINDS, OPERATION};
 use crate::load::{Sources, TargetRoot, load};
 use crate::register::{CompileMode, CompilerSet};
 use crate::schema::OPEN_QUESTION;
-use crate::yaml::normalize_text;
+use crate::yaml::{self, normalize_text};
 
 /// The level a draft that compiles and passes lint is at. The drafter gives
 /// no other.
@@ -72,16 +82,6 @@ impl DraftValue {
             Self::List(items) => items.iter().for_each(|item| item.questions(out)),
             Self::Map(pairs) => pairs.iter().for_each(|(_, value)| value.questions(out)),
             _ => {}
-        }
-    }
-
-    fn get(&self, key: &str) -> Option<&Self> {
-        match self {
-            Self::Map(pairs) => pairs
-                .iter()
-                .find(|(name, _)| name == key)
-                .map(|(_, value)| value),
-            _ => None,
         }
     }
 }
@@ -204,6 +204,22 @@ impl<'a> Drafter<'a> {
                     continue;
                 }
                 covered = true;
+                // A pack drafts its own kinds, a read operation, or a
+                // source, and nothing else. Registration refuses the rest
+                // where it can see it; a kind registered after its rule is
+                // seen here.
+                let own = KERNEL_FILE_KINDS.contains(&file_kind.as_str())
+                    || self.set.owns_kind(&rule.pack, file_kind);
+                if !(own && self.set.may_draft(&rule.pack, file_kind)) {
+                    return Err(failure(
+                        PATH_NOT_ALLOWED,
+                        format!(
+                            "A drafting rule of `{}` writes `{file_kind}` files, which are not its own and are not operations or sources.",
+                            rule.pack
+                        ),
+                        "Correct the provider's drafting rule.",
+                    ));
+                }
                 for doc in rule.item.draft(finding, &cx)? {
                     let folder = KERNEL_FOLDER_KINDS
                         .iter()
@@ -232,13 +248,8 @@ impl<'a> Drafter<'a> {
                             "Correct the provider's drafting rule.",
                         ));
                     }
-                    let writes = file_kind.as_str() == OPERATION
-                        && doc.body.get("effect") != Some(&DraftValue::text("read"));
-                    if writes {
-                        report.refused.push((
-                            doc.path,
-                            "the drafter drafts read operations only; a write is written by the developer".to_owned(),
-                        ));
+                    if let Some(why) = self.drafts_a_write(file_kind.as_str(), &doc) {
+                        report.refused.push((doc.path, why.to_owned()));
                         continue;
                     }
                     let entry = files.entry(doc.path).or_default();
@@ -255,23 +266,26 @@ impl<'a> Drafter<'a> {
 
         for (path, (docs, from)) in files {
             let text = render(&docs, &from);
-            let on_disk = path.under(self.root.path());
-            if let Ok(present) = fs::read_to_string(&on_disk)
-                && !is_untouched_draft(&present)
-            {
-                report.conflicts.push(path);
-                continue;
-            }
-            let written = on_disk
-                .parent()
-                .map_or(Ok(()), fs::create_dir_all)
-                .and_then(|()| fs::write(&on_disk, text.as_bytes()));
-            if written.is_err() {
-                return Err(failure(
-                    TARGET_UNREADABLE,
-                    format!("The draft `{path}` could not be written into the target folder."),
-                    "Check that the target folder exists and may be written by this user.",
-                ));
+            match place(self.root.path(), &path, &text) {
+                Ok(Placed::Written) => {}
+                Ok(Placed::Conflict) => {
+                    report.conflicts.push(path);
+                    continue;
+                }
+                Ok(Placed::Link) => {
+                    report.refused.push((
+                        path,
+                        "the path leads through a link; a draft is written only to a regular file inside the target folder".to_owned(),
+                    ));
+                    continue;
+                }
+                Err(_) => {
+                    return Err(failure(
+                        TARGET_UNREADABLE,
+                        format!("The draft `{path}` could not be written into the target folder."),
+                        "Check that the target folder exists and may be written by this user.",
+                    ));
+                }
             }
             let mut questions = Vec::new();
             docs.iter().for_each(|doc| doc.questions(&mut questions));
@@ -306,6 +320,118 @@ impl<'a> Drafter<'a> {
         }
         Ok(report)
     }
+}
+
+impl Drafter<'_> {
+    /// Why a drafted document is one the drafter never writes, when it is:
+    /// an operation whose effect is not plainly `read`, or a document of a
+    /// pack's kind that its file kind says describes a write. The document
+    /// is judged as it will be read back: written out and parsed.
+    fn drafts_a_write(&self, file_kind: &str, doc: &DraftDoc) -> Option<&'static str> {
+        const NOT_READABLE: &str = "the draft is not one YAML document this compiler reads, so it cannot be seen to read only";
+        let text = render(std::slice::from_ref(&doc.body), &[]);
+        let parsed = match yaml::parse(&doc.path, &text) {
+            Ok(parsed) => parsed,
+            Err(_) => return Some(NOT_READABLE),
+        };
+        let [parsed] = parsed.as_slice() else {
+            return Some(NOT_READABLE);
+        };
+        if file_kind == OPERATION {
+            return (parsed.text("effect") != Some("read")).then_some(
+                "the drafter drafts read operations only; a write is written by the developer",
+            );
+        }
+        self.set
+            .file_kinds
+            .iter()
+            .any(|((name, _), kind)| name.as_str() == file_kind && kind.item.writes(parsed))
+            .then_some(
+                "the drafter drafts nothing that writes; an entry that writes is written by the developer",
+            )
+    }
+}
+
+/// What became of one draft.
+enum Placed {
+    /// It is in its file.
+    Written,
+    /// Something is there that is not an unchanged draft: a file a person
+    /// wrote or changed, or a folder.
+    Conflict,
+    /// A link stands on the way or in the file's place.
+    Link,
+}
+
+/// Puts `text` in the file at `path` inside `root`, without ever following
+/// a link below `root` and without opening any file that exists for
+/// writing.
+fn place(root: &Path, path: &RelPath, text: &str) -> io::Result<Placed> {
+    fs::create_dir_all(root)?;
+    let parts: Vec<&str> = path.parts().collect();
+    let Some((name, folders)) = parts.split_last() else {
+        return Ok(Placed::Conflict);
+    };
+    let mut folder = root.to_path_buf();
+    for part in folders {
+        folder.push(part);
+        match fs::symlink_metadata(&folder) {
+            Ok(found) if found.file_type().is_symlink() => return Ok(Placed::Link),
+            Ok(found) if found.is_dir() => {}
+            Ok(_) => return Ok(Placed::Conflict),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(&folder)?,
+            Err(error) => return Err(error),
+        }
+    }
+    let file = folder.join(name);
+    match fs::symlink_metadata(&file) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match write_new(&file, text) {
+                // Something took the name in between: it is not ours.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(Placed::Conflict),
+                written => written.map(|()| Placed::Written),
+            }
+        }
+        Err(error) => Err(error),
+        Ok(found) if found.file_type().is_symlink() => Ok(Placed::Link),
+        Ok(found) if found.is_file() => {
+            let untouched =
+                || fs::read_to_string(&file).is_ok_and(|present| is_untouched_draft(&present));
+            if !untouched() {
+                return Ok(Placed::Conflict);
+            }
+            // A name that starts with a dot is passed over by the loader.
+            let beside = folder.join(format!(".{name}.drafting"));
+            match fs::remove_file(&beside) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+            write_new(&beside, text)?;
+            // Looked at again as late as can be: a file changed since the
+            // first look is the developer's.
+            let replaced = if untouched() {
+                fs::rename(&beside, &file).map(|()| Placed::Written)
+            } else {
+                Ok(Placed::Conflict)
+            };
+            if !matches!(replaced, Ok(Placed::Written)) {
+                let _ = fs::remove_file(&beside);
+            }
+            replaced
+        }
+        Ok(_) => Ok(Placed::Conflict),
+    }
+}
+
+/// Writes `text` to a file that must not exist yet, under any form: a link
+/// in its place, even one that leads nowhere, makes this fail.
+fn write_new(file: &Path, text: &str) -> io::Result<()> {
+    let mut created = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(file)?;
+    created.write_all(text.as_bytes())?;
+    created.sync_all()
 }
 
 impl DraftReport {

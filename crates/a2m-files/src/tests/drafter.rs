@@ -212,3 +212,193 @@ fn a_write_is_never_drafted_and_a_draft_stays_in_its_kinds_folder() {
     );
     std::fs::remove_dir_all(&folder).unwrap();
 }
+
+/// A rule that drafts whatever file kind it is made for, from a finding of
+/// its own kind.
+struct Drafts(&'static str, &'static str);
+
+impl DraftingRule for Drafts {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new(self.0).unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new(self.1).unwrap()
+    }
+    fn draft(&self, _: &Finding, _: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        Ok(Vec::new())
+    }
+}
+
+#[test]
+fn a_write_is_never_drafted_in_any_file_kind_and_a_pack_drafts_only_its_own_kinds() {
+    // A pack's own kind: an entry that writes is refused, one that reads is
+    // drafted. The pack says which is which, through its file kind.
+    let folder = scratch("write-kind");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    let report = Drafter::new(&set, &root)
+        .draft(&[
+            finding("stand_call", "order_cancel /orders/cancel write"),
+            finding("stand_call", "order_list /orders read"),
+        ])
+        .unwrap();
+    assert_eq!(
+        report
+            .written
+            .iter()
+            .map(RelPath::as_str)
+            .collect::<Vec<_>>(),
+        ["calls/order_list.yaml"]
+    );
+    assert_eq!(report.refused.len(), 1);
+    assert_eq!(report.refused[0].0.as_str(), "calls/order_cancel.yaml");
+    assert!(report.refused[0].1.contains("nothing that writes"));
+    assert!(!folder.join("calls").join("order_cancel.yaml").exists());
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    // The kernel's kinds: a read operation and a source may be drafted; a
+    // pipeline, the target, the sign-in, the types, a test, and a fixture
+    // may not, by any pack.
+    for kind in ["pipeline", "target", "auth", "types", "test", "fixture"] {
+        let mut builder = CompilerSet::builder();
+        register_stand(&mut builder).unwrap();
+        let failure = builder
+            .drafting_rule("seer", Arc::new(Drafts("seen", kind)))
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(failure.code().as_str(), "registration_conflict", "{kind}");
+    }
+    for kind in ["operation", "source"] {
+        let mut builder = CompilerSet::builder();
+        builder
+            .drafting_rule("seer", Arc::new(Drafts("seen", kind)))
+            .unwrap();
+    }
+    // Another pack's kind is refused when the rule is registered after the
+    // kind, and when it is drafted if the kind came after the rule.
+    let mut builder = CompilerSet::builder();
+    register_stand(&mut builder).unwrap();
+    let failure = builder
+        .drafting_rule("seer", Arc::new(Drafts("seen", "call")))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(failure.code().as_str(), "registration_conflict");
+    let mut builder = CompilerSet::builder();
+    builder
+        .drafting_rule("seer", Arc::new(Drafts("seen", "call")))
+        .unwrap();
+    crate::testing::register_part(&mut builder, crate::testing::PACK, "surface_kind").unwrap();
+    crate::testing::register_part(&mut builder, crate::testing::PACK, "file_kind").unwrap();
+    let set = builder.build();
+    let folder = scratch("other-kind");
+    let failure = Drafter::new(&set, &TargetRoot::new(&folder))
+        .draft(&[finding("seen", "x")])
+        .unwrap_err();
+    assert_eq!(failure.code().as_str(), "path_not_allowed");
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn a_file_that_cannot_be_read_as_a_draft_is_not_overwritten() {
+    let folder = scratch("unreadable");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    // Bytes that are not text stood where the draft goes: once they were
+    // taken for no file at all, and written over.
+    let file = folder.join("calls").join("order_list.yaml");
+    std::fs::write(&file, [0xff, 0xfe, 0x00, 0x41]).unwrap();
+    let report = Drafter::new(&set, &root)
+        .draft(&[finding("stand_call", "order_list /orders read")])
+        .unwrap();
+    assert!(report.written.is_empty());
+    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(std::fs::read(&file).unwrap(), [0xff, 0xfe, 0x00, 0x41]);
+    // A folder where the file goes is a conflict too, not a failure.
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let report = Drafter::new(&set, &root)
+        .draft(&[finding("stand_call", "order_list /orders read")])
+        .unwrap();
+    assert_eq!(report.conflicts.len(), 1);
+    // Nothing is left beside a draft that was replaced.
+    std::fs::remove_dir(&file).unwrap();
+    for _ in 0..2 {
+        let report = Drafter::new(&set, &root)
+            .draft(&[finding("stand_call", "order_list /orders read")])
+            .unwrap();
+        assert_eq!(report.written.len(), 1);
+    }
+    let names: Vec<String> = std::fs::read_dir(folder.join("calls"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!names.iter().any(|name| name.starts_with('.')), "{names:?}");
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// Each of these once put a draft outside the target folder.
+#[cfg(unix)]
+#[test]
+fn a_draft_is_never_written_through_a_link() {
+    use std::os::unix::fs::symlink;
+
+    let set = set();
+    let stated = finding("stand_call", "order_list /orders read");
+    let refused = |report: &crate::DraftReport| {
+        assert!(report.written.is_empty(), "{report:?}");
+        assert_eq!(report.refused.len(), 1, "{report:?}");
+        assert_eq!(report.refused[0].0.as_str(), "calls/order_list.yaml");
+        assert!(report.refused[0].1.contains("link"), "{report:?}");
+    };
+
+    // The kind's folder is a link to a folder outside the target.
+    let folder = scratch("link-folder");
+    let outside = folder.with_extension("outside");
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::rename(folder.join("calls"), outside.join("calls")).unwrap();
+    symlink(outside.join("calls"), folder.join("calls")).unwrap();
+    let report = Drafter::new(&set, &TargetRoot::new(&folder))
+        .draft(std::slice::from_ref(&stated))
+        .unwrap();
+    refused(&report);
+    assert!(!outside.join("calls").join("order_list.yaml").exists());
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    // The file is a link that leads nowhere yet: writing through it would
+    // make the file it names.
+    let folder = scratch("link-dangling");
+    let named = outside.join("made_outside.yaml");
+    symlink(&named, folder.join("calls").join("order_list.yaml")).unwrap();
+    let report = Drafter::new(&set, &TargetRoot::new(&folder))
+        .draft(std::slice::from_ref(&stated))
+        .unwrap();
+    refused(&report);
+    assert!(!named.exists());
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    // The file is a link to an unchanged draft outside: it is not rewritten.
+    let folder = scratch("link-draft");
+    Drafter::new(&set, &TargetRoot::new(&folder))
+        .draft(std::slice::from_ref(&stated))
+        .unwrap();
+    let inside = folder.join("calls").join("order_list.yaml");
+    let kept = outside.join("kept.yaml");
+    std::fs::rename(&inside, &kept).unwrap();
+    let before = std::fs::read(&kept).unwrap();
+    symlink(&kept, &inside).unwrap();
+    let other = finding("stand_call", "order_list /orders/all read");
+    let report = Drafter::new(&set, &TargetRoot::new(&folder))
+        .draft(&[other])
+        .unwrap();
+    refused(&report);
+    assert_eq!(std::fs::read(&kept).unwrap(), before);
+    assert!(
+        std::fs::symlink_metadata(&inside)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
+}

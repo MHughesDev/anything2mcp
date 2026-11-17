@@ -57,8 +57,7 @@ impl<'a> Attributes<'a> {
             let equals = rest.find('=').ok_or(BROKEN)?;
             let name = rest.get(..equals).ok_or(BROKEN)?.trim_end();
             if name.is_empty()
-                || name
-                    .contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
+                || name.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
             {
                 return Err(BROKEN);
             }
@@ -450,7 +449,11 @@ mod tests {
         assert!(!flag(b"<row hidden=\"0\"/>").unwrap());
         assert!(!flag(b"<row hidden=\"false\"/>").unwrap());
         assert!(!flag(b"<row/>").unwrap());
-        for part in [&b"<row hidden=\"yes\"/>"[..], b"<row hidden=\"\"/>", b"<row hidden=\"TRUE\"/>"] {
+        for part in [
+            &b"<row hidden=\"yes\"/>"[..],
+            b"<row hidden=\"\"/>",
+            b"<row hidden=\"TRUE\"/>",
+        ] {
             assert_eq!(flag(part).unwrap_err().code(), &SOURCE_MALFORMED);
         }
     }

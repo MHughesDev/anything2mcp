@@ -22,7 +22,7 @@ use std::time::Duration;
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
     Digest, Failure, FailureClass, Identity, Mode, Plan, RunState, SurfaceIndex, SurfaceName,
-    Values,
+    ToolRuns, Values,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
@@ -364,12 +364,26 @@ impl Control for InProcessControl {
                 .tool(&self.run.tool_name)
                 .and_then(|tool| tool.module.clone())
                 .unwrap_or_else(|| "main".to_owned());
+            // The tool's hazard, from the plan: a hazard forbids writing
+            // without a person, so the question must carry it. A tool the
+            // plan does not hold is asked about with no record count, and
+            // no pre-approval rule covers a run of unknown size.
+            let hazard = self.plan.tool(&self.run.tool_name).and_then(|tool| {
+                match tool.runs {
+                    ToolRuns::Operation(index) => {
+                        self.plan.operation(index).map(|found| found.hazard)
+                    }
+                    ToolRuns::Pipeline(index) => self.plan.pipeline(index).map(|found| found.hazard),
+                }
+            });
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
+            context.hazard = hazard.unwrap_or(a2m_core::Hazard::None);
             context.toolset = self.caller.toolset.clone();
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
-            let request = a2m_policy::Request {
+            let known = hazard.is_some();
+            let mut request = a2m_policy::Request {
                 principal: self.caller.principal.clone(),
                 question: Question::WriteWithoutPerson,
                 resource: Resource::Tool(ToolRef {
@@ -390,6 +404,13 @@ impl Control for InProcessControl {
                 .kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
+                    // How many records the run would write, as the ledger
+                    // holds them: a pre-approval rule covers a run only up
+                    // to its own record count.
+                    if known {
+                        let records = tx.ledger().records(run)?.len();
+                        request.context.records = u32::try_from(records).ok();
+                    }
                     let decision = policy.decide(tx, &request);
                     // A pre-approval begins a write only where the
                     // installation lets one: with `policy.pre_approval` off

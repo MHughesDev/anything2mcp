@@ -328,36 +328,7 @@ impl Kernel {
         let store = self.store()?.clone();
         let sched = self.sched()?.clone();
         let installation = self.installation()?;
-        let vault = self.inner.vault.clone().ok_or_else(|| {
-            codes::busy(
-                codes::ENGINE_DEGRADED,
-                "The vault is not open, so nothing can be sealed or verified.",
-                "Call `doctor.run` for the fix.",
-            )
-        })?;
-        if self.inner.runner.engine.get().is_none() {
-            let engine = Engine::new(EngineDeps {
-                registry: Arc::new(self.providers().clone()),
-                redact: self.redact(),
-                keyed: vault.keyed_digest().await?,
-                clock: Arc::clone(&self.inner.clock),
-                settings: EngineSettings {
-                    transient_retries: self
-                        .settings()
-                        .int("engine.retries.transient")
-                        .and_then(|count| u32::try_from(count).ok())
-                        .unwrap_or(2),
-                    freshness_window: Duration::from_secs(
-                        self.settings()
-                            .int("policy.preview_freshness_seconds")
-                            .and_then(|seconds| u64::try_from(seconds).ok())
-                            .unwrap_or(60),
-                    ),
-                    ..EngineSettings::default()
-                },
-            });
-            let _ = self.inner.runner.engine.set(Arc::new(engine));
-        }
+        self.engine().await?;
         let runner = store
             .write(Durability::Synced, |tx| match fact(tx, "runner")? {
                 Some(text) => Ok(text.parse::<RunnerId>()?),
@@ -434,6 +405,89 @@ impl Kernel {
             kernel: self.clone(),
             runner,
         })
+    }
+
+    /// The engine, made once from the provider registry, the redactor, the
+    /// vault's keyed digest, and the settings. The runner loop runs jobs
+    /// through it, and whoever submits a job asks it what the job's tool
+    /// must hold alone.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the vault is not open.
+    pub(crate) async fn engine(&self) -> Result<Arc<Engine>, Failure> {
+        if let Some(engine) = self.inner.runner.engine.get() {
+            return Ok(Arc::clone(engine));
+        }
+        let vault = self.inner.vault.clone().ok_or_else(|| {
+            codes::busy(
+                codes::ENGINE_DEGRADED,
+                "The vault is not open, so nothing can be sealed or verified.",
+                "Call `doctor.run` for the fix.",
+            )
+        })?;
+        let engine = Engine::new(EngineDeps {
+            registry: Arc::new(self.providers().clone()),
+            redact: self.redact(),
+            keyed: vault.keyed_digest().await?,
+            clock: Arc::clone(&self.inner.clock),
+            settings: EngineSettings {
+                transient_retries: self
+                    .settings()
+                    .int("engine.retries.transient")
+                    .and_then(|count| u32::try_from(count).ok())
+                    .unwrap_or(2),
+                freshness_window: Duration::from_secs(
+                    self.settings()
+                        .int("policy.preview_freshness_seconds")
+                        .and_then(|seconds| u64::try_from(seconds).ok())
+                        .unwrap_or(60),
+                ),
+                ..EngineSettings::default()
+            },
+        });
+        Ok(Arc::clone(
+            self.inner.runner.engine.get_or_init(|| Arc::new(engine)),
+        ))
+    }
+
+    /// What a job of `tool` must hold alone for as long as it is leased:
+    /// one key for every surface a write of the tool may be made on, of
+    /// the kind the write's mode declares (one run at a time on one file,
+    /// one link, one surface). A read holds nothing. The scheduler takes
+    /// all of a job's keys in the transaction that leases it, or none, so
+    /// two jobs never wait for each other; the keys are sorted all the
+    /// same, which is the scheduler's order.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the engine cannot be made; the
+    /// scheduler's refusal of a key.
+    pub(crate) async fn held_alone(
+        &self,
+        row_workspace: a2m_core::WorkspaceId,
+        plan: &a2m_core::Plan,
+        tool: &a2m_core::OperationName,
+        environment: &a2m_core::Environment,
+        writes: bool,
+    ) -> Result<Vec<a2m_sched::ResourceKey>, Failure> {
+        if !writes {
+            return Ok(Vec::new());
+        }
+        let engine = self.engine().await?;
+        let mut keys = Vec::new();
+        for need in engine.exclusive_needs(plan, tool) {
+            keys.push(a2m_sched::ResourceKey::held_alone(
+                need.kind.as_str(),
+                row_workspace,
+                &plan.header.target,
+                environment,
+                need.surface.as_str(),
+            )?);
+        }
+        keys.sort();
+        keys.dedup();
+        Ok(keys)
     }
 
     pub(crate) async fn stop_runner_loop(&self) {
@@ -621,19 +675,26 @@ impl Kernel {
 
     async fn run_claimed(&self, lease: &JobLease, terms: RunnerTerms) -> Result<JobEnd, Failure> {
         let Some(fence) = lease.fence() else {
-            // A system job. The keeper's work runs on its own worker in one
-            // process, so nothing is queued for it here.
-            return Ok(JobEnd::Done);
+            // A system job. In one process nothing queues one: the keeper's
+            // work, a sign-out and a forget included, is a call on the
+            // keeper's own worker that is waited for to its answer, so
+            // none can be lost on the way. A system job that reaches this
+            // loop all the same is work it cannot carry out, and it is
+            // never answered as done.
+            let failure = codes::busy(
+                codes::SYSTEM_JOB_NOT_CARRIED,
+                "This runner carries out jobs of runs only, and was handed a job of another kind.",
+                "Report this; it is a fault in the engine.",
+            );
+            return Ok(JobEnd::Stopped {
+                class: failure.class(),
+                code: failure.code().clone(),
+                in_doubt: false,
+            });
         };
         let store = self.store()?;
         let sched = self.sched()?.clone();
-        let engine = self.inner.runner.engine.get().cloned().ok_or_else(|| {
-            codes::busy(
-                codes::ENGINE_DEGRADED,
-                "The engine is not started.",
-                "Start the runner loop.",
-            )
-        })?;
+        let engine = self.engine().await?;
         let run = fence.run;
         let (row, call) = store
             .read(move |tx| {

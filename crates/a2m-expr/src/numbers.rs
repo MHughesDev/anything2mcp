@@ -159,7 +159,10 @@ const SYMBOLS: [(char, &[&str]); 23] = [
             "NAD", "SBD", "SRD", "TTD", "XCD",
         ],
     ),
-    ('\u{A3}', &["GBP", "EGP", "FKP", "GIP", "LBP", "SHP", "SSP", "SYP"]),
+    (
+        '\u{A3}',
+        &["GBP", "EGP", "FKP", "GIP", "LBP", "SHP", "SSP", "SYP"],
+    ),
     ('\u{A5}', &["JPY", "CNY"]),
     ('\u{E3F}', &["THB"]),
     ('\u{20A1}', &["CRC"]),

@@ -1344,7 +1344,9 @@ impl Plan {
                     && operation.identity.strategy != IdentityStrategy::None);
             for binding in &operation.bindings {
                 let commits = |steps: &[Step]| steps.iter().filter(|step| step.commits).count();
-                if commits(&binding.confirm) + commits(&binding.read_back) + commits(&binding.lookup)
+                if commits(&binding.confirm)
+                    + commits(&binding.read_back)
+                    + commits(&binding.lookup)
                     > 0
                 {
                     return unsafe_plan(position, "commits in a step that does not do the work");
@@ -2257,10 +2259,14 @@ mod tests {
             assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE, "{path}");
             assert!(failure.message().contains("steps through"), "{failure}");
         }
-        assert!(DeclaredProgram::is_direct_path("/opt/example/tool.v2/..tool"));
+        assert!(DeclaredProgram::is_direct_path(
+            "/opt/example/tool.v2/..tool"
+        ));
         let share = "\\\\server\\share\\example-tool.exe";
         assert!(DeclaredProgram::is_share_path(share));
-        assert!(!DeclaredProgram::is_share_path("/opt/example/bin/example-tool"));
+        assert!(!DeclaredProgram::is_share_path(
+            "/opt/example/bin/example-tool"
+        ));
         let mut plan = sample();
         plan.surfaces[0].programs[0].path = share.to_owned();
         plan.encode().unwrap();

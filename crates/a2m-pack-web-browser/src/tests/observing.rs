@@ -63,7 +63,12 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     let observer = stand.browsers.observer();
     let tab = must(
         observer
-            .observing_tab(&clerk, &environment(), &SafeRequests::default(), &origins(&app))
+            .observing_tab(
+                &clerk,
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
             .await,
     );
     assert_eq!(stand.supervisor.list().len(), 1);
@@ -135,7 +140,11 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
             address_prefix: app.url(ITEM),
         }],
     };
-    let tab = must(observer.observing_tab(&clerk, &environment(), &safe, &origins(&app)).await);
+    let tab = must(
+        observer
+            .observing_tab(&clerk, &environment(), &safe, &origins(&app))
+            .await,
+    );
     must(tab.goto(&form, soon()).await);
     assert_eq!(
         must(tab.page.as_the_page(&put(&app), soon()).await),

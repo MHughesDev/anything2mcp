@@ -3,12 +3,12 @@
 //! reading a run asks nobody anything.
 
 use a2m_actions::{ExitClass, PresenceProof, Response};
-use a2m_core::{FailureClass, RunId, Timestamp};
+use a2m_core::{FailureClass, RunId};
 use a2m_policy::{Channel, PresenceCheck};
 use serde_json::{Value as Json, json};
 
 use super::kernel::World;
-use super::kernel::engine::{ITEM_UPSERT, ORDER_GET, START};
+use super::kernel::engine::{ITEM_UPSERT, ORDER_GET};
 
 pub(super) fn item(code: &str) -> Json {
     json!({
@@ -50,11 +50,8 @@ impl World {
         let desk = self.surface.desk();
         let waiting = desk.waiting(run).await.unwrap();
         let person = self.caller.principal.principal().clone();
-        let proof = PresenceProof::new(
-            PresenceCheck::OsPrompt,
-            person.id,
-            Timestamp::from_unix_millis(START),
-        );
+        // The proof is of now, by the clock the kernel was opened with.
+        let proof = PresenceProof::new(PresenceCheck::OsPrompt, person.id, self.now());
         desk.approve(run, waiting.diff_hash, person, Channel::LocalPrompt, proof)
             .await
             .unwrap();
@@ -180,16 +177,49 @@ async fn reading_a_run_asks_nobody_and_an_approved_run_says_so() {
 async fn the_desk_shows_the_change_a_waiting_run_would_make_and_no_other() {
     let world = World::ready().await;
     let desk = world.surface.desk();
-    // A value the vault released as a secret is in the write.
+    let (run, id) = world.rest_a_write("L-420").await;
+    // A second write rests with another description, and that text is then
+    // registered as a secret: the stored diff holds it, and the desk masks
+    // it on the way out.
+    let mut masked = item("L-422");
+    masked["description"] = json!("Masked rail");
+    let rested = world
+        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": masked.clone()}))
+        .await;
+    assert_eq!(status(&rested), "needs_approval", "{rested:?}");
+    let masked_id: RunId = rested.result.unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
     let stored = world
         .call(
             "secret.set",
-            json!({"name": "example_password", "value": "New rail"}),
+            json!({"name": "example_password", "value": "Masked rail"}),
         )
         .await;
     assert!(stored.ok, "{:?}", stored.error);
+    let shown = desk.preview(masked_id, 0).await.unwrap();
+    let description = shown.records[0]
+        .fields
+        .iter()
+        .find(|field| field.name == "description")
+        .unwrap();
+    // Masked, plainly, and nothing beside the mark.
+    assert_eq!(description.proposed, a2m_core::REDACTED);
+    assert!(!description.cut);
+    desk.decline(masked_id, None, a2m_policy::Channel::LocalPrompt)
+        .await
+        .unwrap();
+    // A write that carries a registered secret is not made at all: the
+    // engine refuses it before a diff exists, so no desk is asked.
+    masked["code"] = json!("L-423");
+    let refused = world
+        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": masked}))
+        .await;
+    assert_eq!(status(&refused), "rejected", "{refused:?}");
+    assert_eq!(refused.error.unwrap().code, "input_invalid");
 
-    let (run, id) = world.rest_a_write("L-420").await;
     let waiting = desk.waiting(id).await.unwrap();
     let preview = desk.preview(id, 0).await.unwrap();
     // The page shows the diff whose hash it will approve.
@@ -217,8 +247,7 @@ async fn the_desk_shows_the_change_a_waiting_run_would_make_and_no_other() {
     assert_eq!(field("quantity").proposed, "3");
     assert_eq!(field("length_in").proposed, "150.5");
     assert!(field("quantity").changes && !field("quantity").cut);
-    // Redacted like everything that leaves.
-    assert_eq!(field("description").proposed, a2m_core::REDACTED);
+    assert_eq!(field("description").proposed, "New rail");
     // Past the end there is nothing, and it says so.
     let past = desk.preview(id, 5).await.unwrap();
     assert!(past.records.is_empty() && past.complete());

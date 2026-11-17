@@ -26,6 +26,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `GET /api/openapi.json` | Case 30: an OpenAPI 3.1 description of the JSON interface, written by hand and held to the routes by a test |
 | `/secure/...` | Cases 13 to 15 and 29: signing in, below |
 | `/traps/...` | Case 32: pages that write by themselves, below |
+| `/escapes/...` | Case 32, continued: pages that try to get out of a tab that only observes, below |
 | `/edge/elsewhere`, `/edge/blocked`, `/edge/limited` | Cases 34 and 23: a redirect to the other loopback host name (`localhost` when asked as `127.0.0.1`), a 403 page as a protective edge would send, and a 429 with `Retry-After: 30` |
 
 Rules a line-item write must pass: the order is a draft; the description is not empty; the quantity is 1 to 9999; the length is a number of inches that is a whole number of sixteenths. An update must carry a version, and a create must carry none: a version left out of an update, or sent with a create, is refused as invalid with 422, like any other field. A version that is present but is not the stored one is a conflict, refused with 409. A refused write stores nothing.
@@ -58,6 +59,21 @@ Each sends its write to `/traps/write/{name}`, which counts it under that name; 
 | `/traps/worker` | It starts the worker `/traps/worker.js`, which posts to `worker` |
 | `/traps/socket` | It opens a WebSocket to `socket`; the opening handshake is the write, and the upgrade is then refused |
 | `/traps/links` | Two links that write when followed with `GET`: one looks like an action by its address (`orders/A-100/delete`), one by its name ("Delete order A-102", at `tool-2`) |
+
+## Pages that try to get out
+
+Each aims at `/traps/write/escapes/{what}`, so the same counts show that none arrived. "The other name" is this application under the other loopback host name, which to a browser is another origin and another site.
+
+| Page | What it tries |
+| --- | --- |
+| `/escapes/quiet` | Nothing: a page for a test's own script |
+| `/escapes/script`, `/escapes/meta`, `/escapes/form` | Once loaded, it moves itself with `GET`: by script, by a refresh tag, by submitting a form |
+| `/escapes/form-post`, `/escapes/beacon` | It submits a form with `POST`; it sends a beacon |
+| `/escapes/elsewhere`, `/escapes/redirect` | Its script moves it to the other name; its answer redirects there |
+| `/escapes/download/{name}` | The answer is a file to save under that name |
+| `/escapes/links` | A link that opens a new window, and a link to a download |
+| `/escapes/frame` | It embeds `/escapes/inner` from the other name, which opens a WebSocket and sends a `POST` in its first document and in a second one it moves itself to |
+| `/escapes/service-worker.js`, `/escapes/shared-worker.js` | Workers that, sent a message, send a `POST` and open a WebSocket, and answer with what became of each |
 
 ## The control interface
 

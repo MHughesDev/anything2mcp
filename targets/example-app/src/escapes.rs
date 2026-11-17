@@ -92,7 +92,9 @@ async fn script() -> Html<String> {
 async fn meta() -> Html<String> {
     page(
         "Order summary",
-        &format!("<meta http-equiv=\"refresh\" content=\"0;url={WRITE}/meta\">\n<p>One moment.</p>"),
+        &format!(
+            "<meta http-equiv=\"refresh\" content=\"0;url={WRITE}/meta\">\n<p>One moment.</p>"
+        ),
     )
 }
 

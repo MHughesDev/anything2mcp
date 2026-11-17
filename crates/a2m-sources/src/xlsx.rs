@@ -777,9 +777,7 @@ fn read_sheet(
                             .parse::<usize>()
                             .ok()
                             .and_then(|index| context.styles.get(index))
-                            .ok_or_else(|| {
-                                malformed("a cell names a style the workbook lacks")
-                            })?,
+                            .ok_or_else(|| malformed("a cell names a style the workbook lacks"))?,
                     ),
                 };
                 let kind = attributes.get("t");

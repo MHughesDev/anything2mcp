@@ -230,7 +230,9 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     let stand = Stand::with_browser("killed");
     let clerk = profile("clerk");
     let browser = stand.open(&clerk).await;
-    let tab = Arc::new(must(browser.acting_tab(&environment(), &origins(&app)).await));
+    let tab = Arc::new(must(
+        browser.acting_tab(&environment(), &origins(&app)).await,
+    ));
     must(
         tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
             .await,

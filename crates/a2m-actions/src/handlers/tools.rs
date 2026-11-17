@@ -12,7 +12,7 @@ use a2m_policy::{Context, ModuleName, PrincipalKind, Question, Resource, ToolRef
 use a2m_provider::{Access, EntryKind, RootName, Roots};
 use a2m_sched::{
     Admitted, CancelOutcome, Enqueue, HealthState as SchedHealth, JobKind, JobRequirements,
-    Priority, Scheduler, SessionLimits, Submission,
+    Priority, ResourceKey, Scheduler, SessionLimits, Submission,
 };
 use a2m_vault::OwnerRef;
 use serde_json::{Value as Json, json};
@@ -399,7 +399,7 @@ struct HeldWork<'a> {
     run: Option<RunId>,
 }
 
-fn requirements(run: &RunRow, kind: JobKind) -> JobRequirements {
+fn requirements(run: &RunRow, kind: JobKind, exclusive: Vec<ResourceKey>) -> JobRequirements {
     JobRequirements {
         kind,
         target: run.target.clone(),
@@ -412,7 +412,7 @@ fn requirements(run: &RunRow, kind: JobKind) -> JobRequirements {
             reads: 4,
             writes: 1,
         },
-        exclusive: Vec::new(),
+        exclusive,
         max_step: Duration::from_secs(30),
         writes: run.effect != EffectClass::Read,
     }
@@ -553,6 +553,15 @@ handler!(
             .await?;
         let work_target = run.target.clone();
         let work_environment = environment.clone();
+        let exclusive = kernel
+            .held_alone(
+                principal.workspace,
+                &found.plan,
+                &name,
+                &environment,
+                effect != EffectClass::Read,
+            )
+            .await?;
         let admitted = kernel
             .sched()?
             .submit(Submission {
@@ -568,7 +577,7 @@ handler!(
                         reads: 4,
                         writes: 1,
                     },
-                    exclusive: Vec::new(),
+                    exclusive,
                     max_step: Duration::from_secs(30),
                     writes: effect != EffectClass::Read,
                 },
@@ -1055,6 +1064,21 @@ handler!(
         // the caller that started the run are left as they were kept: a
         // resume never changes whose run it is, or what its caller was.
         kernel.may_resume(&call, &row).await?;
+        // What the run's tool holds alone, as when the run was made. A run
+        // whose plan cannot be read is not queued: its job would be handed
+        // out without what it must hold.
+        let plan = kernel
+            .plan_by_hash(&row.target, &row.target_version)
+            .await?;
+        let exclusive = kernel
+            .held_alone(
+                row.workspace,
+                &plan,
+                &row.tool_name,
+                &row.environment,
+                row.effect != EffectClass::Read,
+            )
+            .await?;
         let give_up = tokio::time::Instant::now() + wait_of(&call);
         let mut row = row;
         // Twice at most: a job for the run may be waiting or leased already,
@@ -1067,7 +1091,7 @@ handler!(
                 .sched()?
                 .enqueue(Enqueue {
                     run,
-                    job: requirements(&row, JobKind::Execute),
+                    job: requirements(&row, JobKind::Execute, exclusive.clone()),
                     priority: Priority::Interactive,
                     health: sched_health(kernel),
                     queue_wait: None,

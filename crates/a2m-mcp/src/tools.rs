@@ -297,7 +297,11 @@ impl Core {
             let Some(page) = result["tools"].as_array() else {
                 // The page was larger than the result size cap, so it holds
                 // no tools. Half as many are asked for; a single tool that
-                // is too large to list is left to the search tool.
+                // is too large to list is left to the search tool. Any
+                // other answer without tools ends the list.
+                if result["truncated"] != true {
+                    break;
+                }
                 if size > 1 {
                     size /= 2;
                 } else {

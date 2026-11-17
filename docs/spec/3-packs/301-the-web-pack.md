@@ -290,10 +290,11 @@ In an observing tab:
 | What could change the system | What happens |
 | --- | --- |
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
-| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child takes its own before it runs or is not let run; service workers are bypassed ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md)) |
+| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child, a frame in another process or a service worker, takes its own before it runs or is not let run ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md), [decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
-| A beacon, a form submission, a download | Failed by the same interception, or refused |
-| Navigation | Only to an address the caller passes, or a plain link as above |
+| A beacon, a form submitted with POST | Failed by the same interception |
+| A download, a window the page opens | Refused in the browser: no file is written, and the window is closed before it fetches anything. Each is reported as a limitation |
+| Navigation | Only to an address the caller passes, on an origin the tab was opened for, or a plain link as above. A move the page starts itself, with any method, is ended before its request leaves the browser |
 
 ### The watch tab and the explore tab
 

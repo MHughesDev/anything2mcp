@@ -359,8 +359,13 @@ async fn the_proxy_copies_what_the_endpoint_answers_byte_for_byte() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancelled_line_closes_that_requests_stream_and_other_requests_are_still_answered() {
-    // No runner: the run stays queued, so the call stays open.
-    let world = World::open(false).await;
+    // The driver never gets ready, so the run stays in hand and the call
+    // stays open.
+    let world = World::ready().await;
+    world
+        .hooks
+        .prepare_hangs
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let service = world.service("use", McpSettings::local());
     let mut stopped = service.cancellations();
     let mut stdio = Stdio::start(service);
@@ -374,10 +379,13 @@ async fn a_cancelled_line_closes_that_requests_stream_and_other_requests_are_sti
         }),
     );
     stdio.write(slow.to_string().as_bytes()).await;
-    // The call is under way once its first progress arrives.
-    let note = stdio.message().await;
-    assert_eq!(note["method"], "notifications/progress");
-    assert_eq!(note["params"]["progressToken"], "p");
+    // The call is under way once its first progress arrives, and its run
+    // once a note says what the run does.
+    for _ in 0..2 {
+        let note = stdio.message().await;
+        assert_eq!(note["method"], "notifications/progress");
+        assert_eq!(note["params"]["progressToken"], "p");
+    }
 
     let cancel = json!({
         "jsonrpc": "2.0",
@@ -892,14 +900,4 @@ async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_r
     assert_eq!(notes.len(), 2, "{notes:?}");
     assert!(answer["result"]["structuredContent"]["run_id"].is_string());
     assert_eq!(service.dispatched(), before + 1);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn zz_debug_no_runner_wait_zero() {
-    let world = World::open(false).await;
-    let http = Http::new(world.service("use", McpSettings::local()));
-    let asked = call(1, "a2m_tool_call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "wait_seconds": 0}));
-    let reply = tokio::time::timeout(std::time::Duration::from_secs(10), http.post(&asked)).await;
-    eprintln!("DBG {:?}", reply.map(|r| r.messages));
-    panic!("debug");
 }

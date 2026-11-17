@@ -26,7 +26,9 @@ use crate::kernel::{
     self as k, ALL_RECORDS_VERIFIED, BINDING_KEYS, FIXTURE_MARKER, SCHEMA_VERSION, SURFACE_KEYS,
 };
 use crate::load::{SourceFile, Sources};
-use crate::register::{CompileMode, CompilerSet, Lowered, Possible, SurfaceKindSpec};
+use crate::register::{
+    CompileMode, CompilerSet, Lowered, Lowering, Possible, StepCommits, SurfaceKindSpec,
+};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -414,6 +416,7 @@ impl<'a> Compiler<'a> {
         self.describe();
         self.tests();
         self.lint();
+        self.hide_credentials();
 
         let (errors, warnings) = self.take_problems().split();
         if !errors.is_empty() {
@@ -471,7 +474,7 @@ impl<'a> Compiler<'a> {
                 Stage::Emit,
                 &Place::start_of(&RelPath::target_file()),
                 format!("The plan does not hold together: {}", failure.message()),
-                "A registered lowering or file kind returned a reference to something the plan does not hold; correct the pack.",
+                "A registered lowering or file kind returned a reference to something the plan does not hold, or steps that break a rule of a write; correct the pack.",
             ))),
         }
     }
@@ -869,6 +872,26 @@ impl<'a> Compiler<'a> {
     ) -> Option<DeclaredProgram> {
         let text = path.as_text().unwrap_or_default();
         if DeclaredProgram::is_absolute_path(text) {
+            if !DeclaredProgram::is_direct_path(text) {
+                self.error(
+                    codes::PROGRAM_INVALID,
+                    Stage::Validate,
+                    &path.at,
+                    "The path of a program steps through `.` or `..`, so the file it names is not the one it reads as.".to_owned(),
+                    "Write the path of the program itself, with no `.` or `..` in it.".to_owned(),
+                );
+                return None;
+            }
+            if DeclaredProgram::is_share_path(text) && digest.is_none() {
+                self.error(
+                    codes::PROGRAM_INVALID,
+                    Stage::Validate,
+                    &path.at,
+                    "A program on a network share is declared with no digest, so nothing holds the file another machine serves to the bytes that were reviewed.".to_owned(),
+                    "State the SHA-256 digest of the program beside its path, or install the program on the machine that runs it.".to_owned(),
+                );
+                return None;
+            }
             return Some(DeclaredProgram {
                 path: text.to_owned(),
                 digest,
@@ -2072,6 +2095,39 @@ impl<'a> Compiler<'a> {
         let env = type_env(&[("input", input_type(&info.inputs)), ("env", env_type())]);
         let mut bindings = Vec::new();
         let mut fine = true;
+        // Whatever a pack marks, a write saves at least once and a read
+        // saves nothing: the count is what puts an intent in the ledger.
+        if writes != (declared_commits > 0) {
+            let at = doc
+                .get("commit_points")
+                .map_or(&doc.at, |declared| &declared.at)
+                .clone();
+            let (message, fix) = if writes {
+                (
+                    format!(
+                        "The operation declares the effect `{}` and no commit point; a write saves at least once, and each save is recorded before it is made.",
+                        info.effect
+                    ),
+                    "Write `commit_points:` with the number of times the system saves, at least 1; or declare `effect: read` if nothing is saved.",
+                )
+            } else {
+                (
+                    format!(
+                        "The operation declares the effect `read` and {declared_commits} commit points; a read saves nothing."
+                    ),
+                    "Remove `commit_points`, or declare `effect: write` with a key and a read-back.",
+                )
+            };
+            self.error(
+                codes::COMMIT_POINTS_DIFFER,
+                Stage::Analyze,
+                &at,
+                message,
+                fix.to_owned(),
+            );
+            fine = false;
+        }
+        fine &= self.scope(doc);
         for (position, binding) in doc
             .get("bindings")
             .map(Located::items)
@@ -2209,6 +2265,7 @@ impl<'a> Compiler<'a> {
                 );
                 fine = false;
             }
+            let least = lowering.least_effect(&resolved);
             let lowered = {
                 let cx = LowerContext {
                     model: &self.model,
@@ -2227,14 +2284,13 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             };
-            match self.analyze(
-                info,
-                binding,
-                &mode,
-                lowering.step_kinds(),
-                &lowered,
-                declared_commits,
-            ) {
+            let by = LoweredBy {
+                lowering: lowering.as_ref(),
+                pack: &registered.pack,
+                verb: &verb,
+                least,
+            };
+            match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
                 Some(surface) => bindings.push(BindingPlan {
                     mode,
                     verb,
@@ -2310,15 +2366,47 @@ impl<'a> Compiler<'a> {
         info: &OpInfo,
         binding: &Located<Doc>,
         mode: &Mode,
-        step_kinds: &[a2m_core::StepKind],
+        by: &LoweredBy<'_>,
         lowered: &Lowered,
         declared_commits: u32,
     ) -> Option<SurfaceIndex> {
         let mut fine = true;
-        let surface = self
+        let step_kinds = by.lowering.step_kinds();
+        let found = self
             .model
             .surface(lowered.surface.as_str())
-            .map(|surface| surface.index);
+            .map(|surface| (surface.index, surface.kind.clone()));
+        let surface = found.as_ref().map(|(index, _)| *index);
+        // A lowering acts on a surface of a kind its own pack serves: its
+        // steps are run by its pack's driver, which knows no other kind.
+        if let Some((_, kind)) = &found
+            && let Some(owner) = self.set.surface_kinds.get(kind)
+            && owner.pack != by.pack
+        {
+            self.error(
+                codes::SURFACE_OF_ANOTHER_PACK,
+                Stage::Lower,
+                &binding.at,
+                format!("The lowering of this `{mode}` binding, from the pack `{}`, names the surface `{}` of the kind `{kind}`, which the pack `{}` registered.", by.pack, lowered.surface, owner.pack),
+                "Bind the operation to a surface of a kind the mode's own pack serves, or correct the pack.".to_owned(),
+            );
+            fine = false;
+        }
+        if by.least > info.effect {
+            let at = info
+                .doc
+                .get("effect")
+                .map_or(&info.doc.at, |effect| &effect.at)
+                .clone();
+            self.error(
+                codes::EFFECT_LOWER_THAN_DERIVED,
+                Stage::Analyze,
+                &at,
+                format!("The operation declares the effect `{}`, and its `{mode}` binding with the verb `{}` is `{}` by what it does.", info.effect, by.verb, by.least),
+                format!("Declare `effect: {}`, or bind the operation to something that does less.", by.least),
+            );
+            fine = false;
+        }
         if surface.is_none() {
             self.error(
                 codes::LOWERING_INVALID,
@@ -2344,6 +2432,24 @@ impl<'a> Compiler<'a> {
                         &binding.at,
                         format!("The lowering of this `{mode}` binding gave a step of kind `{}`, which it did not declare.", step.kind),
                         "Correct the pack: a lowering declares every step kind its steps may carry.".to_owned(),
+                    );
+                    fine = false;
+                }
+                let stated = by.lowering.commits(&step.kind);
+                if (stated == StepCommits::Never && step.commits)
+                    || (stated == StepCommits::Always && !step.commits)
+                {
+                    let (marked, declared) = if step.commits {
+                        ("is marked as a save", "never saves")
+                    } else {
+                        ("is not marked as a save", "always saves")
+                    };
+                    self.error(
+                        codes::LOWERING_INVALID,
+                        Stage::Lower,
+                        &binding.at,
+                        format!("A `{list}` step of kind `{}` of this `{mode}` binding {marked}, and its pack declares that a step of that kind {declared}.", step.kind),
+                        "Correct the pack: whether a kind of step saves is stated once for the kind, and every lowered step agrees with it.".to_owned(),
                     );
                     fine = false;
                 }
@@ -2405,6 +2511,81 @@ impl<'a> Compiler<'a> {
             fine = false;
         }
         if fine { surface } else { None }
+    }
+
+    /// The Scope rule for one operation's `permissions`: each destination is
+    /// one exact address, each upload and download one name, and each is
+    /// listed once. True when all hold.
+    fn scope(&mut self, doc: &Located<Doc>) -> bool {
+        let mut fine = true;
+        let Some(permissions) = doc.get("permissions") else {
+            return true;
+        };
+        for key in ["uploads", "downloads", "destinations"] {
+            let mut seen: Vec<&str> = Vec::new();
+            for item in permissions.get(key).map(Located::items).unwrap_or_default() {
+                let Some(text) = item.as_text() else {
+                    continue;
+                };
+                let problem = if seen.contains(&text) {
+                    Some("it is listed twice")
+                } else if key == "destinations" {
+                    destination_problem(text)
+                } else if is_permission_name(text) {
+                    None
+                } else {
+                    Some("it is not one name of letters, digits, underscores, and hyphens")
+                };
+                seen.push(text);
+                if let Some(problem) = problem {
+                    let (what, fix) = if key == "destinations" {
+                        (
+                            "destination",
+                            "Write one exact address: a host name such as `files.example.com`, with a port or a scheme and `://` before it where needed, and nothing after it.",
+                        )
+                    } else {
+                        (
+                            "upload or download",
+                            "Write the name of the input or of the allowed root, such as `order_sheet`.",
+                        )
+                    };
+                    self.error(
+                        codes::SCOPE_INVALID,
+                        Stage::Lint,
+                        &item.at,
+                        format!("This {what} is not one the operation may declare: {problem}."),
+                        fix.to_owned(),
+                    );
+                    fine = false;
+                }
+            }
+        }
+        fine
+    }
+
+    /// Takes out of every diagnostic the values the credential lint knows:
+    /// a diagnostic at such a value's place never quotes it, and a value
+    /// that does not read as a name is quoted nowhere.
+    fn hide_credentials(&mut self) {
+        let mut found = Vec::new();
+        for file in &self.sources.files {
+            for doc in &file.docs {
+                credentials(None, doc, &mut found);
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        for problem in &mut self.problems {
+            for suspect in &found {
+                let here = problem.at == suspect.at;
+                if !here && !suspect.everywhere {
+                    continue;
+                }
+                problem.message = without(&problem.message, &suspect.value, here);
+                problem.fix = without(&problem.fix, &suspect.value, here);
+            }
+        }
     }
 
     // ---- sources/ ----
@@ -3582,14 +3763,30 @@ impl<'a> Compiler<'a> {
                 credentials(None, doc, &mut found);
             }
         }
-        for (at, what) in found {
-            self.error(
-                codes::CREDENTIAL_IN_FILE,
-                Stage::Lint,
-                &at,
-                format!("This value looks like a credential: {what}."),
-                "Store the value in the vault and refer to it as `vault://...`; no file holds a secret.".to_owned(),
-            );
+        for suspect in found {
+            let Some(what) = suspect.what else {
+                continue;
+            };
+            if suspect.certain {
+                self.error(
+                    codes::CREDENTIAL_IN_FILE,
+                    Stage::Lint,
+                    &suspect.at,
+                    format!("This value looks like a credential: {what}."),
+                    "Store the value in the vault and refer to it as `vault://...`; no file holds a secret.".to_owned(),
+                );
+            } else {
+                self.problems.push(
+                    Diagnostic::error(
+                        kernel(codes::CREDENTIAL_SUSPECTED),
+                        Stage::Lint,
+                        &suspect.at,
+                        format!("This value may be a credential: {what}."),
+                        "If it is a secret, store it in the vault and refer to it as `vault://...`. If it is the name of a token, a cookie, or a header, write it as a lowercase name.",
+                    )
+                    .as_warning(),
+                );
+            }
         }
         // The rules packs registered.
         let set = self.set;
@@ -3615,41 +3812,170 @@ impl<'a> Compiler<'a> {
     }
 }
 
-/// Finds values that look like credentials: a key whose name says so with a
-/// value that is not a vault reference, and text in the shape of a token.
-fn credentials(key: Option<&str>, doc: &Located<Doc>, found: &mut Vec<(Place, &'static str)>) {
+/// What a lowering said of itself, for the analysis of one binding.
+struct LoweredBy<'a> {
+    lowering: &'a dyn Lowering,
+    /// The pack that registered it.
+    pack: &'a str,
+    verb: &'a Verb,
+    /// The least effect the binding can have, by the lowering's word.
+    least: EffectClass,
+}
+
+/// What stands in a diagnostic where a value the credential lint knows was
+/// quoted.
+const NOT_SHOWN: &str = "[not shown]";
+
+/// One value the credential lint knows.
+struct Suspect {
+    at: Place,
+    /// The value, as the file wrote it.
+    value: String,
+    /// What makes it look like a credential, when the lint reports it. A
+    /// value that is only kept out of diagnostics has none.
+    what: Option<&'static str>,
+    /// An error; otherwise a warning under its own code.
+    certain: bool,
+    /// Whether the value is taken out of every diagnostic, not only those
+    /// at its own place: true unless it reads as a name or is very short.
+    everywhere: bool,
+}
+
+/// `text` without `value`: whole, and as a diagnostic cuts it. `quoted_too`
+/// also takes out a short value where it stands between backticks.
+fn without(text: &str, value: &str, quoted_too: bool) -> String {
+    let cut: String = value.chars().take(64).collect();
+    let mut out = text.to_owned();
+    for form in [value, cut.as_str()] {
+        if form.chars().count() >= 4 {
+            out = out.replace(form, NOT_SHOWN);
+        } else if quoted_too && !form.is_empty() {
+            out = out.replace(&format!("`{form}`"), &format!("`{NOT_SHOWN}`"));
+        }
+    }
+    out
+}
+
+/// How a key names what it holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyNames {
+    /// A secret, plainly: a password, a private key, an access token.
+    Secret,
+    /// What is often a secret and sometimes the name of one: a token, a
+    /// cookie, an authorization, a PIN.
+    PerhapsSecret,
+}
+
+/// What the name of a key says of its value, when it says anything. `exact`
+/// is true when the whole key is the word, which is all a number is judged
+/// by: `pin: 4821` is a secret, and `token_ttl_ms: 60000` is not.
+fn key_names(key: &str) -> Option<(KeyNames, bool)> {
+    const SECRET: [&str; 15] = [
+        "password",
+        "passwd",
+        "passphrase",
+        "secret",
+        "api_key",
+        "apikey",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "id_token",
+        "session_token",
+        "bearer_token",
+        "client_secret",
+        "secret_key",
+    ];
+    const PERHAPS: [&str; 7] = [
+        "token",
+        "tokens",
+        "cookie",
+        "cookies",
+        "authorization",
+        "pin",
+        "bearer",
+    ];
+    let key = key.to_ascii_lowercase().replace('-', "_");
+    if SECRET.iter().any(|word| key.contains(word)) {
+        return Some((KeyNames::Secret, SECRET.contains(&key.as_str())));
+    }
+    key.split(['_', '.'])
+        .any(|part| PERHAPS.contains(&part))
+        .then(|| (KeyNames::PerhapsSecret, PERHAPS.contains(&key.as_str())))
+}
+
+/// What makes `text` a credential by its shape alone, under any key.
+fn credential_shape(text: &str) -> Option<&'static str> {
+    if text.starts_with("-----BEGIN ") {
+        return Some("it is key material");
+    }
+    let header = "it is an authorization header's value";
+    if (text.starts_with("Bearer ") || text.starts_with("Basic ")) && text.len() >= 20 {
+        return Some(header);
+    }
+    // The same in any letter case, and with the scheme `Token`: one scheme
+    // and one word that is not plain lowercase prose.
+    if let Some((scheme, word)) = text.split_once(' ')
+        && ["bearer", "basic", "token"].contains(&scheme.to_ascii_lowercase().as_str())
+        && word.chars().count() >= 16
+        && !word.contains(char::is_whitespace)
+        && !word.chars().all(|c| c.is_ascii_lowercase())
+    {
+        return Some(header);
+    }
+    (text.starts_with("eyJ") && text.matches('.').count() == 2 && text.len() >= 40)
+        .then_some("it has the shape of a signed token")
+}
+
+/// Finds the values the credential lint knows: a value under a key whose
+/// name says it is a secret, or may be one, that is not a vault reference;
+/// and text in the shape of a token, under any key. Each is reported by the
+/// lint or only kept out of diagnostics, as its `what` says.
+fn credentials(key: Option<&str>, doc: &Located<Doc>, found: &mut Vec<Suspect>) {
+    let named = key.and_then(key_names);
     match &doc.value {
         Doc::Text(text) => {
             let vaulted = text.starts_with("vault://");
-            let secret_key = key.is_some_and(|key| {
-                let key = key.to_ascii_lowercase();
-                [
-                    "password",
-                    "passwd",
-                    "secret",
-                    "api_key",
-                    "apikey",
-                    "private_key",
-                    "access_token",
-                    "client_secret",
-                ]
-                .iter()
-                .any(|word| key.contains(word))
-            });
-            if secret_key && !vaulted && text.chars().count() >= 4 {
-                found.push((
-                    doc.at.clone(),
-                    "its key names a secret and its value is not a vault reference",
-                ));
-            } else if text.starts_with("-----BEGIN ") {
-                found.push((doc.at.clone(), "it is key material"));
-            } else if (text.starts_with("Bearer ") || text.starts_with("Basic "))
-                && text.len() >= 20
-            {
-                found.push((doc.at.clone(), "it is an authorization header's value"));
-            } else if text.starts_with("eyJ") && text.matches('.').count() == 2 && text.len() >= 40
-            {
-                found.push((doc.at.clone(), "it has the shape of a signed token"));
+            let reads_as_name = crate::schema::is_dotted_name(text);
+            let long_enough = text.chars().count() >= 4;
+            let (what, certain) = match (named, credential_shape(text)) {
+                _ if vaulted => (None, false),
+                (Some((KeyNames::Secret, _)), _) if long_enough => (
+                    Some("its key names a secret and its value is not a vault reference"),
+                    true,
+                ),
+                (_, Some(shape)) => (Some(shape), true),
+                (Some((KeyNames::PerhapsSecret, _)), None) if long_enough && !reads_as_name => (
+                    Some(
+                        "its key names a token, a cookie, an authorization, or a PIN, and its value is neither a name nor a vault reference",
+                    ),
+                    false,
+                ),
+                _ => (None, false),
+            };
+            if !vaulted && (named.is_some() || what.is_some()) {
+                found.push(Suspect {
+                    at: doc.at.clone(),
+                    value: text.clone(),
+                    what,
+                    certain,
+                    everywhere: long_enough && (!reads_as_name || what.is_some()),
+                });
+            }
+        }
+        // A secret written as a number, under a key that is the word itself.
+        Doc::Int(number) => {
+            if let Some((_, true)) = named {
+                found.push(Suspect {
+                    at: doc.at.clone(),
+                    value: number.to_string(),
+                    what: Some(
+                        "its key names a secret and its value is a number, not a vault reference",
+                    ),
+                    certain: false,
+                    everywhere: false,
+                });
             }
         }
         Doc::List(items) => {
@@ -3664,6 +3990,96 @@ fn credentials(key: Option<&str>, doc: &Located<Doc>, found: &mut Vec<(Place, &'
         }
         _ => {}
     }
+}
+
+/// Whether `text` is one name an upload or a download may be declared by.
+fn is_permission_name(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+/// What is wrong with `text` as a destination an operation declares, when
+/// something is. A destination is one exact address: a host name or an
+/// address literal, with an optional port, and an optional scheme and
+/// `://` before it. Nothing in it may stand for more than one address, and
+/// nothing may follow it.
+fn destination_problem(text: &str) -> Option<&'static str> {
+    if text.is_empty() || text.len() > 253 {
+        return Some("it is empty or longer than an address");
+    }
+    if !text.is_ascii() || text.bytes().any(|byte| byte <= b' ' || byte == 0x7f) {
+        return Some("it holds a space or a character outside plain ASCII");
+    }
+    if text.contains('*') {
+        return Some("it holds a wildcard, and a destination is one exact address");
+    }
+    let rest = match text.split_once("://") {
+        Some((scheme, rest)) => {
+            let well_formed = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+            if !well_formed {
+                return Some("what stands before `://` is not a scheme");
+            }
+            rest
+        }
+        None => text,
+    };
+    if rest.contains('@') {
+        return Some("it holds user information");
+    }
+    if rest.contains(['/', '?', '#', '\\', '%']) {
+        return Some("it holds a path, a query, or a range of addresses after the address");
+    }
+    let (host, port) = if let Some(bracketed) = rest.strip_prefix('[') {
+        let Some((host, after)) = bracketed.split_once(']') else {
+            return Some("its bracket is not closed");
+        };
+        let well_formed = !host.is_empty()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.'));
+        if !well_formed {
+            return Some("what stands between its brackets is not an address");
+        }
+        match after.strip_prefix(':') {
+            Some(port) => (host, Some(port)),
+            None if after.is_empty() => (host, None),
+            None => return Some("something follows its closing bracket"),
+        }
+    } else {
+        match rest.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (rest, None),
+        }
+    };
+    if let Some(port) = port
+        && !(port.bytes().all(|byte| byte.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|port| port > 0))
+    {
+        return Some("its port is not a number from 1 to 65535");
+    }
+    let labels_hold = host.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':')
+    });
+    if host.is_empty() || !labels_hold {
+        return Some("its host is not a host name or an address");
+    }
+    // The address that means every address.
+    let digits_only: String = host.chars().filter(|c| !matches!(c, '.' | ':')).collect();
+    if digits_only.chars().all(|c| c == '0') {
+        return Some("it is the address that stands for every address");
+    }
+    None
 }
 
 fn review_of(plan: &Plan) -> ReviewSummary {

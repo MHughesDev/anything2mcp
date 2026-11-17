@@ -892,7 +892,12 @@ fn a_workbook_whose_attributes_break_the_format_is_refused_not_read_by_default()
     let good = Book::new(&stock_sheet(&stock_row(2, "EX-1", "5", "45000")));
     let def = {
         let bytes = good.bytes();
-        let spec = spec("xlsx", &input(&bytes), Locate::Sheet("Stock".to_owned()), fields);
+        let spec = spec(
+            "xlsx",
+            &input(&bytes),
+            Locate::Sheet("Stock".to_owned()),
+            fields,
+        );
         let def = target.load("xlsx", &spec, vec![], None);
         assert_eq!(sources.read(&def, &bytes, &LIMITS).unwrap().rows.len(), 1);
         def

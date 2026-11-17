@@ -41,6 +41,7 @@ Every word that arrives with a pack is a registered name in the same way: a surf
 | `archetype` | One of the seven |
 | `verbs` | The verbs the mode can carry out; the [verbs by mode](../../reference/technical-reference.md#verbs-by-mode) table collects them |
 | `steps` | The step kinds its lowerings may emit |
+| `commit_steps` | The step kinds that always save. A step of such a kind that is not marked as the commit point is refused before the driver sees it. May be left out |
 | `rank` | Its default place in binding order when an operation states none. Lower is tried first |
 | `intent_window` | How many intents may be stored ahead of acting, by default ([section 208](208-runs-the-ledger-and-resume.md)) |
 | `session_reads`, `session_writes` | Parallel reads and writes per session, by default ([section 211](211-concurrency.md)) |
