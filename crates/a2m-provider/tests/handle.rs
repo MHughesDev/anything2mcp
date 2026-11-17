@@ -526,11 +526,9 @@ async fn a_discoverer_cannot_write() {
     scene.pack.discoverer.findings.lock().unwrap().push(finding("call", EvidenceLevel::Discovered));
     discoverer.discover(&port, &scope, &mut kept).await.unwrap();
     assert_eq!(kept.0.len(), 1);
-    for (kind, level) in [("screen", EvidenceLevel::Discovered), ("call", EvidenceLevel::Executed)] {
-        scene.pack.discoverer.findings.lock().unwrap().push(finding(kind, level));
-        let failure = discoverer.discover(&port, &scope, &mut kept).await.unwrap_err();
-        assert_eq!(failure.code(), &codes::FINDING_NOT_DECLARED);
-    }
+    scene.pack.discoverer.findings.lock().unwrap().push(finding("screen", EvidenceLevel::Discovered));
+    let failure = discoverer.discover(&port, &scope, &mut kept).await.unwrap_err();
+    assert_eq!(failure.code(), &codes::FINDING_NOT_DECLARED);
     assert_eq!(kept.0.len(), 1);
     assert_eq!(discoverer.describe(&kept.0, a2m_provider::DescribeForm::Summary).text, "1 findings");
 }

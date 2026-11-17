@@ -497,3 +497,22 @@ impl Pack for TestPack {
 pub fn failure(class: FailureClass, code: &'static str) -> Failure {
     Failure::new(class, FailureCode::fixed(code), "It stopped.", "Look.")
 }
+
+/// A finding of the kind and level given, observed on the live system.
+pub fn finding(kind: &str, level: a2m_core::EvidenceLevel) -> Finding {
+    Finding::about(
+        a2m_core::Subject::Address(a2m_core::Address::new("https://example.test", "/orders").unwrap()),
+        a2m_core::FindingKind::new(kind).unwrap(),
+        "GET /orders",
+        a2m_core::Source::LiveSystem,
+        a2m_core::ProducedBy {
+            provider: "alpha".to_owned(),
+            version: "0.1.0".to_owned(),
+            component: None,
+        },
+        Timestamp::from_unix_millis(1_800_000_000_000),
+    )
+    .level(level)
+    .build()
+    .unwrap()
+}
