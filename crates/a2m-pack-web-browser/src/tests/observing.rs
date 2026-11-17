@@ -339,7 +339,7 @@ async fn an_observing_tab_reads_from_inside_its_page_with_get_alone_and_its_guar
     let root = crate::PagePath::fill("/", &BTreeMap::new()).unwrap();
     assert!(matches!(
         tab.read_from_page(&root, soon()).await,
-        Err(BrowserError::RequestFailed(_))
+        Err(BrowserError::Redirected)
     ));
     let now = seen().await;
     assert_eq!(now[before.len()..], ["GET /".to_owned()], "{now:?}");
@@ -424,8 +424,11 @@ async fn a_read_from_inside_the_page_longer_than_the_limit_is_refused_whole() {
     // the browser, and no names are made of it; the tab goes on.
     tab.record_exchanges();
     must(
-        tab.goto(&Address::new(&app.url("/orders/A-100/totals")).unwrap(), soon())
-            .await,
+        tab.goto(
+            &Address::new(&app.url("/orders/A-100/totals")).unwrap(),
+            soon(),
+        )
+        .await,
     );
     let loaded = crate::Primitive::Text(
         css("#state"),

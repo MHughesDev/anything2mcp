@@ -28,8 +28,8 @@ use a2m_core::{
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
     ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
-    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, path_by_structure,
-    plain_segment,
+    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, looks_like_an_action,
+    path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -367,6 +367,17 @@ pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
             format!("A request of the page did not complete, at {what}."),
             again,
         ),
+        // The application answered, with a redirect a read follows nowhere:
+        // a session that has expired is often answered so. It is not a lost
+        // connection, and the read is not run again on its own.
+        BrowserError::Redirected => fail(
+            FailureClass::UnknownVariant,
+            codes::UNEXPECTED_STATUS,
+            format!(
+                "The answer to {what} was a redirect, which a read from inside the page does not follow."
+            ),
+            "Look at where the application sends the read; if the session has expired, sign in again before the tool is run.",
+        ),
         BrowserError::UnexpectedDialog { .. } => fail(
             FailureClass::UnknownVariant,
             codes::UNEXPECTED_DIALOG,
@@ -445,6 +456,15 @@ pub(crate) fn segment(name: &str, value: Option<&Value>) -> Result<String, StepF
     if !plain_segment(&text) {
         return Err(refused(
             "it holds a character that is not a letter, a digit, `-`, `.`, `_`, or `~`",
+        ));
+    }
+    // A key that is a word of an action could reach a sibling route that
+    // acts on a visit, as `/orders/purge` beside `/orders/{order_id}`: the
+    // drivers hold a key to the list discovery holds every address to
+    // (decision 0195).
+    if looks_like_an_action(&text) {
+        return Err(refused(
+            "it holds a word that names an action, and an address that may act on a visit is never asked for",
         ));
     }
     Ok(text)
@@ -1017,7 +1037,11 @@ impl Session {
             let (element, locator) = self
                 .find(&what, &field.locate, field.fingerprint.as_ref(), deadline)
                 .await?;
-            let value = match self.tab().read(&element, &field.read.what(), deadline).await {
+            let value = match self
+                .tab()
+                .read(&element, &field.read.what(), deadline)
+                .await
+            {
                 Ok(RawValue::Text(text)) => Value::Text(text),
                 Ok(RawValue::Flag(flag)) => Value::Bool(flag),
                 Ok(RawValue::Absent) => {
@@ -1849,7 +1873,10 @@ mod tests {
         }
         // A step that says is taken at its word.
         let mut said = goto("list");
-        said.payload = a2m_core::PackPayload::encode(&GotoStep { tab: TabKind::Observe }).unwrap();
+        said.payload = a2m_core::PackPayload::encode(&GotoStep {
+            tab: TabKind::Observe,
+        })
+        .unwrap();
         assert!(matches!(tab_for(&said, &gotos), Ok(TabKind::Observe)));
     }
 

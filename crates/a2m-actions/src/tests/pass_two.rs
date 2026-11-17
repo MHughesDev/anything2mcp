@@ -554,3 +554,39 @@ async fn slot_written(world: &World, length: &str) -> RunId {
     assert_eq!(status(&done), "completed", "{done:?}");
     id
 }
+
+/// Two projects, one kernel: a discovery and a provider action asked in the
+/// second project resolve that project's folder, never the first's
+/// (decision 0196, section 7 of the work list).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_discovery_and_a_provider_action_resolve_the_project_of_their_own_call() {
+    let world = World::ready().await;
+    let (one, two) = (world.project("one"), world.project("two"));
+    let canonical = |path: &std::path::Path| std::fs::canonicalize(path).unwrap();
+    let in_project = |action: &str, input: Json, project: &std::path::Path| {
+        world.kernel.dispatch(
+            Request::new(action, input, world.caller.clone()).in_project(project),
+        )
+    };
+    for project in [&one, &two, &one] {
+        let found = in_project("example_files.folder", json!({}), project).await;
+        assert!(found.ok, "{:?}", found.error);
+        assert_eq!(
+            found.result.unwrap()["folder"],
+            canonical(project).to_string_lossy().as_ref()
+        );
+    }
+    // Without a project, the root is refused, by name.
+    let none = world
+        .kernel
+        .dispatch(Request::new("example_files.folder", json!({}), world.caller.clone()))
+        .await;
+    assert!(!none.ok);
+    assert_eq!(none.error.unwrap().code, "project_folder_missing");
+
+    let discovered = in_project("discover.run", json!({"target": "example"}), &two).await;
+    assert!(discovered.ok, "{:?}", discovered.error);
+    let seen = world.discoverer.projects.lock().unwrap().clone();
+    assert_eq!(seen.last().cloned().flatten(), Some(canonical(&two)), "{seen:?}");
+    world.kernel.close(CloseReason::Asked).await;
+}

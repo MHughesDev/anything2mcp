@@ -382,7 +382,9 @@ async fn a_stored_failure_keeps_what_the_system_said_apart() {
         .unwrap();
     for read in [run_failure.unwrap(), record_failure.unwrap()] {
         assert_eq!(read, why);
-        assert_eq!(read.said(), Some("field `total` must be at most 10"));
+        // Stored and handed back raw, a control character too: a door
+        // escapes it once where it shows it (decision 0193).
+        assert_eq!(read.said(), Some("field `total` must be at most 10\u{7}"));
         assert_eq!(read.message(), "It stopped.");
         assert_eq!(read.next_step(), "Look.");
     }

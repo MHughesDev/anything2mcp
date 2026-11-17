@@ -157,6 +157,8 @@ pub(super) struct World {
     /// What the test pack's driver saw, and the faults it can be told to
     /// make.
     pub(super) hooks: Arc<engine::Hooks>,
+    /// The test pack's discoverer, and what each discovery handed it.
+    pub(super) discoverer: Arc<engine::WritingDiscoverer>,
 }
 
 pub(super) struct Options {
@@ -236,14 +238,12 @@ pub(super) async fn world(options: Options) -> World {
     let host = prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
     let hooks = Arc::new(engine::Hooks::default());
+    let discoverer = Arc::new(engine::WritingDiscoverer::default());
     builder.add_pack(&AppPack {
         hooks: Arc::clone(&hooks),
-        discoverer: Arc::new(engine::WritingDiscoverer {
-            results: Mutex::new(Vec::new()),
-            hangs: std::sync::atomic::AtomicBool::new(false),
-            panics: std::sync::atomic::AtomicBool::new(false),
-        }),
+        discoverer: Arc::clone(&discoverer),
     });
+    builder.add_pack(&ProjectPack);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     let surface = Arc::new(Surface {
@@ -279,6 +279,7 @@ pub(super) async fn world(options: Options) -> World {
         caller,
         folder,
         hooks,
+        discoverer,
     }
 }
 
@@ -844,8 +845,10 @@ async fn a_planted_secret_appears_in_no_result() {
 async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     let world = World::ready().await;
     let listed = world.ok("provider.list", json!({})).await;
-    assert_eq!(listed["providers"][0]["name"], "example_json");
-    assert_eq!(listed["providers"][0]["availability"], "ready");
+    // Listed in order of name: the pack of a provider action first.
+    assert_eq!(listed["providers"][0]["name"], "example_files");
+    assert_eq!(listed["providers"][1]["name"], "example_json");
+    assert_eq!(listed["providers"][1]["availability"], "ready");
     let described = world
         .ok("provider.describe", json!({"provider": "example_json"}))
         .await;
@@ -966,4 +969,76 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     );
 
     world.kernel.close(CloseReason::Asked).await;
+}
+
+// ---- a provider action that reads its project root ----
+
+const PROJECT_MANIFEST: &str = r#"manifest_format = 1
+contract = 1
+
+[provider]
+name = "example_files"
+version = "0.1.0"
+publisher = "Example"
+kind = "pack"
+
+[[actions]]
+name = "example_files.folder"
+effect = "read"
+"#;
+
+/// A pack whose one action names the folder its project root resolves to
+/// for the call (decision 0196): a root bound to no folder, resolved in the
+/// call's own checked project folder.
+struct ProjectPack;
+
+impl a2m_provider::Pack for ProjectPack {
+    fn manifest(&self) -> &'static str {
+        PROJECT_MANIFEST
+    }
+
+    fn register(
+        &self,
+        _cx: &a2m_provider::PackContext,
+        to: &mut a2m_provider::Registrar<'_>,
+    ) -> Result<(), a2m_core::Failure> {
+        to.action(Arc::new(FolderAction {
+            schema: a2m_files::JsonSchema::any(),
+        }))
+    }
+}
+
+struct FolderAction {
+    schema: a2m_files::JsonSchema,
+}
+
+impl a2m_provider::ProviderAction for FolderAction {
+    fn name(&self) -> a2m_provider::ActionName {
+        a2m_provider::ActionName::new("example_files.folder").unwrap()
+    }
+
+    fn input_schema(&self) -> &a2m_files::JsonSchema {
+        &self.schema
+    }
+
+    fn output_schema(&self) -> &a2m_files::JsonSchema {
+        &self.schema
+    }
+
+    fn handle<'a>(
+        &'a self,
+        _input: &'a a2m_core::Values,
+        cx: &'a a2m_provider::ActionContext<'a>,
+    ) -> a2m_provider::BoxFuture<'a, Result<a2m_core::Values, a2m_core::Failure>> {
+        Box::pin(async move {
+            let mut roots = Roots::none();
+            let name = a2m_provider::RootName::new("project").unwrap();
+            roots.add_project(name.clone(), a2m_provider::Access::Read)?;
+            let folder = roots.folder_in(&name, a2m_provider::Access::Read, cx.paths)?;
+            Ok(a2m_core::Values::new().with(
+                "folder",
+                folder.as_path().to_string_lossy().into_owned().as_str(),
+            ))
+        })
+    }
 }

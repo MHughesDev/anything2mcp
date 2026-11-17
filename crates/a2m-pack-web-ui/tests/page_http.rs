@@ -4,9 +4,11 @@
 //! compared with what the application's control interface says it holds,
 //! and what the application saw is asked of it.
 //!
-//! The finding is the one the web pack's discoverers give for the page
-//! that asks for an order's totals by itself, over two orders: a test of
-//! `a2m-pack-web-probe` holds that discovery gives exactly it.
+//! The findings are the ones the web pack's discoverers give for the pages
+//! that ask for an order's totals by themselves, over two orders: one asks
+//! with nothing a read from inside the page would not send, and one with a
+//! query and headers its script set (decision 0195). A test of
+//! `a2m-pack-web-probe` holds that discovery gives exactly them.
 
 #![allow(
     clippy::unwrap_used,
@@ -71,14 +73,20 @@ fn finding(origin: &str, kind: &str, file: &str) -> Finding {
 }
 
 /// The `exchange` finding of the page of an order's totals, matched over
-/// two orders.
+/// two orders: its request carries a query and headers its script set.
 fn totals_exchange(origin: &str) -> Finding {
     finding(origin, "exchange", "order_totals_exchange.json")
 }
 
-/// The same finding with one part of what it found changed.
+/// The `exchange` finding of the page of an order's summary, matched over
+/// two orders: its request is the totals with nothing more.
+fn summary_exchange(origin: &str) -> Finding {
+    finding(origin, "exchange", "order_summary_exchange.json")
+}
+
+/// The summary's finding with one part of what it found changed.
 fn changed(origin: &str, change: impl Fn(&mut serde_json::Value)) -> Finding {
-    let base = totals_exchange(origin);
+    let base = summary_exchange(origin);
     let mut found: serde_json::Value = serde_json::from_str(base.found()).unwrap();
     change(&mut found);
     let Subject::Address(address) = base.subject() else {
@@ -248,7 +256,7 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     let stand = Stand::new("page-http", Arc::new(NoSecrets));
     let folder = new_target("page-http", &origin);
     let findings = [
-        totals_exchange(&origin),
+        summary_exchange(&origin),
         finding(&origin, "screen", "orders_screen.json"),
     ];
     let report = draft(&stand, &folder, &findings);
@@ -276,7 +284,7 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     for wanted in [
         "method: \"GET\"",
         "path: \"/api/orders/{order_id}/totals\"",
-        "page: \"/orders/{order_id}/totals\"",
+        "page: \"/orders/{order_id}/summary\"",
         "effect: \"read\"",
     ] {
         assert!(entry.contains(wanted), "{wanted}: {entry}");
@@ -333,7 +341,7 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
         let seen = app.seen().await.unwrap();
         let wanted = format!("GET /api/orders/{order}/totals");
         assert!(
-            seen[before..].contains(&format!("GET /orders/{order}/totals")),
+            seen[before..].contains(&format!("GET /orders/{order}/summary")),
             "{seen:?}"
         );
         assert!(
@@ -431,6 +439,202 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     scene.stand.end().await;
 }
 
+/// A page request and a read over it written by hand, as the drafting rule
+/// once drafted them from a request whose query or headers it dropped: the
+/// read asks for the total length of an order with nothing more.
+fn lengths_read(page: &str) -> (String, &'static str) {
+    (
+        format!(
+            "endpoint: api_orders_lengths\nsurface: app\nmethod: GET\n\
+             path: \"/api/orders/{{order_id}}/lengths\"\npage: \"{page}\"\neffect: read\n\
+             response_schema:\n  type: object\n  required: [order_id, total_length]\n\
+             \x20 properties:\n    order_id: {{type: string}}\n    total_length: {{type: string}}\n"
+        ),
+        "operation: example_api_orders_lengths_get\neffect: read\nkey: order_id\n\
+         inputs: {order_id: {type: text}}\noutputs: {total_length: {type: untrusted_text}}\n\
+         bindings:\n  - {mode: page_http, verb: read, endpoint: api_orders_lengths}\n\
+         description: Reads the total length of an order.\n",
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no_read() {
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let stand = Stand::new("page-http-unmade", Arc::new(NoSecrets));
+
+    // First, why: a read that leaves out what the page sent is answered
+    // with another variant of the same shape. The page asks for the total
+    // length in centimetres, by a query or by a header its script sets;
+    // the read, which sends neither, is answered in inches, its shape is
+    // the same, and nothing stops it.
+    let stored = app.stored_order("A-100").await.unwrap().unwrap();
+    let sixteenths: u64 = stored
+        .items
+        .values()
+        .map(|item| u64::from(item.quantity) * u64::from(item.length_sixteenths))
+        .sum();
+    let inches = format_length_in(u32::try_from(sixteenths).unwrap());
+    let centimetres = (sixteenths * 254 / 1600).to_string();
+    assert_ne!(inches, centimetres);
+    for page in [
+        "/orders/{order_id}/lengths-by-query",
+        "/orders/{order_id}/lengths-by-header",
+    ] {
+        let folder = new_target("page-http-lengths", &origin);
+        std::fs::create_dir_all(folder.path().join("page_requests")).unwrap();
+        std::fs::create_dir_all(folder.path().join("operations")).unwrap();
+        let (entry, read) = lengths_read(page);
+        std::fs::write(folder.path().join("page_requests/lengths.yaml"), entry).unwrap();
+        std::fs::write(folder.path().join("operations/lengths.yaml"), read).unwrap();
+        let lengths = Stand::new("page-http-lengths", Arc::new(NoSecrets));
+        let plan = compile_drafts(
+            &lengths,
+            &folder,
+            &DraftReport::default(),
+            "",
+            str::to_owned,
+        )
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+        let scene = Scene::over(lengths, plan, &origin);
+        let key = Values::new().with("order_id", "A-100");
+        let ran = look_in(
+            &scene,
+            &page_http_mode(),
+            "example_api_orders_lengths_get",
+            &key,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            ran.values.get("total_length"),
+            Some(&Value::from(inches.clone())),
+            "{page}"
+        );
+        scene.stand.end().await;
+    }
+
+    // An answer that is a redirect is the application's, as a session that
+    // expired answers: it stops as an answer no entry declares, never as a
+    // lost connection to be tried again.
+    {
+        let folder = new_target("page-http-redirect", &origin);
+        std::fs::create_dir_all(folder.path().join("page_requests")).unwrap();
+        std::fs::create_dir_all(folder.path().join("operations")).unwrap();
+        std::fs::write(
+            folder.path().join("page_requests/start.yaml"),
+            "endpoint: start\nsurface: app\nmethod: GET\npath: \"/\"\npage: \"/orders\"\n\
+             effect: read\nresponse_schema:\n  type: object\n  required: [order_id]\n\
+             \x20 properties:\n    order_id: {type: string}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.path().join("operations/start.yaml"),
+            "operation: example_start_get\neffect: read\ninputs: {}\n\
+             outputs: {order_id: {type: untrusted_text}}\n\
+             bindings:\n  - {mode: page_http, verb: read, endpoint: start}\n\
+             description: Reads the start page.\n",
+        )
+        .unwrap();
+        let redirected = Stand::new("page-http-redirect", Arc::new(NoSecrets));
+        let plan = compile_drafts(
+            &redirected,
+            &folder,
+            &DraftReport::default(),
+            "",
+            str::to_owned,
+        )
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+        let scene = Scene::over(redirected, plan, &origin);
+        let stopped = look_in(
+            &scene,
+            &page_http_mode(),
+            "example_start_get",
+            &Values::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            class_and_code(&stopped),
+            (FailureClass::UnknownVariant, "unexpected_status"),
+            "{stopped}"
+        );
+        scene.stand.end().await;
+    }
+
+    // So the rule drafts none. The page of an order's totals sends a query
+    // and headers its script set: the entry is drafted with a question that
+    // names them, by names alone, and no read is drafted over it.
+    let folder = new_target("page-http-unmade", &origin);
+    let report = draft(&stand, &folder, &[totals_exchange(&origin)]);
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        ["page_requests/api_orders_totals.yaml"],
+        "{report:?}"
+    );
+    assert_eq!(report.open_questions.len(), 1, "{report:?}");
+    let question = &report.open_questions[0];
+    let quoting = question.quoting.as_ref().unwrap();
+    assert_eq!(
+        quoting.words(),
+        [
+            "/api/orders/{order_id}/totals",
+            "lang, view",
+            "accept, x-csrf-token"
+        ]
+    );
+    assert!(
+        !quoting.sentence().contains("x-csrf"),
+        "{}",
+        quoting.sentence()
+    );
+    let everything = bytes_below(folder.path());
+    for secret in PAGE_SECRETS.iter().chain(&["summary", "=en"]) {
+        assert!(!holds(&everything, secret), "{secret}");
+    }
+
+    // Each part alone is enough, and a finding that does not say what the
+    // page sent is taken as not able to be made again.
+    let cases: Vec<(&str, Finding)> = vec![
+        (
+            "a query",
+            changed(&origin, |found| {
+                found["query"] = serde_json::json!({"unit": "unknown"})
+            }),
+        ),
+        (
+            "a bare entry of a query",
+            changed(&origin, |found| found["query_left_out"] = true.into()),
+        ),
+        (
+            "a header the script set",
+            changed(&origin, |found| {
+                found["set_headers"] = serde_json::json!(["x-unit"])
+            }),
+        ),
+        (
+            "a finding that does not say",
+            changed(&origin, |found| {
+                found.as_object_mut().unwrap().remove("set_headers");
+            }),
+        ),
+    ];
+    for (why, one) in cases {
+        let folder = new_target("page-http-unmade-case", &origin);
+        let report = draft(&stand, &folder, &[one]);
+        let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+        assert_eq!(
+            written,
+            ["page_requests/api_orders_totals.yaml"],
+            "{why}: {report:?}"
+        );
+        assert_eq!(report.open_questions.len(), 1, "{why}: {report:?}");
+    }
+    assert!(app.writes().await.unwrap().is_empty());
+    stand.end().await;
+}
+
 #[test]
 fn nothing_is_drafted_for_a_request_that_could_write_is_not_json_or_went_elsewhere() {
     let origin = "http://127.0.0.1:4010";
@@ -450,7 +654,7 @@ fn nothing_is_drafted_for_a_request_that_could_write_is_not_json_or_went_elsewhe
                 found.as_object_mut().unwrap().remove("made_by");
             }),
         ),
-        ("another origin", totals_exchange("http://127.0.0.2:4010")),
+        ("another origin", summary_exchange("http://127.0.0.2:4010")),
     ];
     for (why, one) in cases {
         let folder = new_target("page-http-never", origin);
@@ -464,7 +668,7 @@ fn a_page_http_binding_on_an_operation_that_writes_is_refused_by_name() {
     let origin = "http://127.0.0.1:4010";
     let stand = Stand::new("page-http-writes", Arc::new(NoSecrets));
     let folder = new_target("page-http-writes", origin);
-    let report = draft(&stand, &folder, &[totals_exchange(origin)]);
+    let report = draft(&stand, &folder, &[summary_exchange(origin)]);
     let path = "operations/api_orders_totals_request.yaml";
     // An operation declared to write, through a read of the page: refused
     // by this pack's own name.
@@ -520,7 +724,7 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
     let origin = app.url("");
     let stand = Stand::new("page-http-measured", Arc::new(NoSecrets));
     let folder = new_target("page-http-measured", &origin);
-    let report = draft(&stand, &folder, &[totals_exchange(&origin)]);
+    let report = draft(&stand, &folder, &[summary_exchange(&origin)]);
     std::fs::create_dir_all(folder.path().join("screens")).unwrap();
     std::fs::write(
         folder.path().join("screens/order_totals_page.yaml"),

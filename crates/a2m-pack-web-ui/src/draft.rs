@@ -52,6 +52,23 @@ const FORMAT: &str = "1";
 /// The longest name a screen or an operation may have.
 const LONGEST: usize = 64;
 
+/// The longest of a page's own words a draft holds as a locator's name or
+/// a table's heading, in characters, and the longest path it holds.
+const LONGEST_WORDS: usize = 64;
+const LONGEST_PATH: usize = 160;
+
+/// Whether a page's own words may stand in a drafted screen as a locator's
+/// name or a heading: at most [`LONGEST_WORDS`] characters, with no control
+/// character and none that can hide or reorder text (decision 0195). Words
+/// that cannot are not drafted; a question quotes them through the
+/// kernel's quoting, which cleans and bounds them.
+fn plain_words(text: &str) -> bool {
+    text.chars().count() <= LONGEST_WORDS
+        && !text
+            .chars()
+            .any(|c| c.is_control() || a2m_core::said_hides(c))
+}
+
 /// The roles of an element that marks out a part of a page, and so can
 /// be a table's section, when the page has one such element of that role
 /// and name.
@@ -238,6 +255,9 @@ fn reach_of(finding: &Finding) -> Option<(&str, Vec<String>, String)> {
         return None;
     };
     let path = address.path();
+    if path.chars().count() > LONGEST_PATH {
+        return None;
+    }
     let segments = crate::screens::parse_reach(path).ok()?;
     let mut holes = Vec::new();
     let mut words = Vec::new();
@@ -381,6 +401,9 @@ fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
         if one.role != "term" || shared.iter().any(|known| known == label) {
             continue;
         }
+        if !plain_words(label) {
+            continue;
+        }
         if named("term", label) > 1 || named("definition", label) > 1 {
             shared.push(label.to_owned());
             continue;
@@ -450,6 +473,9 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     };
     let mut drafted: Vec<String> = Vec::new();
     for table in tables(&elements) {
+        if !plain_words(&table.name) || !table.headers.iter().all(|heading| plain_words(heading)) {
+            continue;
+        }
         let words = snake(&table.name);
         let name = if page.is_empty() {
             words
@@ -496,9 +522,10 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             continue;
         }
         let locate = if table.shared {
-            cx.open_question(&format!(
-                "The page `{path}` shows more than one table named as this one, so neither can be located by its role and name alone. Which does this screen read, and what tells it apart?"
-            ))
+            cx.open_question_quoting(
+                "The page quoted first shows more than one table with the name quoted second, so neither can be located by its role and name alone. Which does this screen read, and what tells it apart?",
+                &[path, &table.name],
+            )
         } else {
             DraftValue::List(vec![locator("table", &table.name)])
         };
@@ -683,9 +710,19 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         .iter()
         .filter(|label| is_name(&snake(label), LONGEST))
         .map(|label| {
-            let question = cx.open_question(&format!(
-                "{seen} shows more than one value labelled `{label}`, so none of them can be located by its label alone. Which does this field read, and what tells it apart?"
-            ));
+            // The label is the page's own words: quoted apart from the
+            // product's sentence, cleaned, and bounded (decision 0195).
+            let question = cx.open_question_quoting(
+                &format!(
+                    "{} shows more than one value with the label quoted second, so none of them can be located by its label alone. Which does this field read, and what tells it apart?",
+                    if holes.is_empty() {
+                        "The page quoted first"
+                    } else {
+                        "The pages quoted first"
+                    }
+                ),
+                &[path, label],
+            );
             let section = elements
                 .iter()
                 .position(|one| one.role == "term" && one.name.as_deref() == Some(label))

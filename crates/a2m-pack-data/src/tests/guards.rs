@@ -181,6 +181,59 @@ async fn a_read_that_attaches_a_file_an_input_names_is_refused_unsent() {
     run.release().await;
 }
 
+/// The embedded dialect holds the refusal of decision 0184 as the server's
+/// does (`a_comment_the_server_ends_at_a_carriage_return_is_refused_before_it_is_sent`):
+/// the bundled store reads a form feed and a carriage return as space and
+/// runs such a statement, and the driver refuses every control character
+/// but a line feed and a tab in a plan's statement, before it is sent.
+#[tokio::test]
+async fn a_control_character_in_an_embedded_statement_is_refused_unsent() {
+    let db = TestDb::start().unwrap();
+    let mut conn = Sqlite
+        .open(&StoreAt::File(db.path().to_path_buf()), Access::ReadOnly)
+        .unwrap();
+    let read = conn
+        .as_mut()
+        .run(
+            "SELECT customer_id\u{c}FROM customers WHERE customer_id <> ?\r",
+            &[Bound::Text("none".to_owned())],
+            &limits(),
+        )
+        .unwrap();
+    assert_eq!(read.rows.len(), 3);
+    for text in [
+        "SELECT customer_id\u{c}FROM customers WHERE customer_id = ?",
+        "SELECT customer_id FROM customers --\r\nWHERE customer_id = ?",
+        "SELECT customer_id\u{b}FROM customers WHERE customer_id = ?",
+        "SELECT customer_id FROM customers WHERE customer_id = ?\0",
+        "SELECT customer_id FROM customers WHERE customer_id = ? AND name <> 'a\r'",
+        "SELECT customer_id FROM customers WHERE customer_id = ? \u{1b}",
+    ] {
+        let mut scene = Scene::new();
+        scene.alter("customer_by_key", |statement| {
+            statement.text = text.to_owned();
+        });
+        let mut run = scene.prepare(Posture::Live).await;
+        let refused = run
+            .steps(
+                &scene.binding("example_customer_get").act,
+                &inputs(&[("customer_id", "C-1")]),
+                None,
+            )
+            .await;
+        assert_eq!(
+            failed(refused),
+            (
+                FailureClass::Policy,
+                codes::STATEMENT_NOT_ALLOWED,
+                Sent::NotSent
+            ),
+            "{text:?}"
+        );
+        run.release().await;
+    }
+}
+
 #[tokio::test]
 async fn a_read_that_returns_no_column_or_is_not_one_select_is_refused_unsent() {
     for text in [

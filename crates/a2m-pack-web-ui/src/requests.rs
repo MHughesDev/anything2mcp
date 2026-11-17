@@ -166,7 +166,20 @@ impl RequestKind {
 fn entry(doc: &Located<Doc>, surface: &str, problems: &mut Diagnostics) -> Option<PageRequest> {
     let mut path_of = |key: &str| {
         let written = doc.get(key)?;
-        match parse_reach(written.as_text()?) {
+        let text = written.as_text()?;
+        if a2m_pack_web_browser::looks_like_an_action(text) {
+            problems.push(problem(
+                "request_path_invalid",
+                Stage::Resolve,
+                &written.at,
+                format!(
+                    "The `{key}` of a page request holds a word that names an action, and a read never asks for an address that may act on a visit (decision 0195)."
+                ),
+                "Read the record from an address that only shows it.",
+            ));
+            return None;
+        }
+        match parse_reach(text) {
             Ok(path) => Some(path),
             Err(why) => {
                 problems.push(problem(

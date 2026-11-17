@@ -171,6 +171,10 @@ pub enum BrowserError {
     /// A request sent from inside the page did not complete. Whether it was
     /// sent is not known.
     RequestFailed(String),
+    /// A request sent from inside the page was answered with a redirect,
+    /// which it does not follow: the application answered, and where it
+    /// sent the request is not looked at (decision 0195).
+    Redirected,
     /// The browser, or the helper in the page, answered in a shape no rule
     /// covers.
     Unexpected(String),
@@ -191,7 +195,7 @@ impl BrowserError {
             | Self::UnexpectedDialog { dispatch } => *dispatch,
             Self::RequestFailed(_) => Dispatch::Unknown,
             // The browser answered, so the request reached it.
-            Self::Unexpected(_) | Self::TooLarge { .. } => Dispatch::Sent,
+            Self::Unexpected(_) | Self::TooLarge { .. } | Self::Redirected => Dispatch::Sent,
             Self::NotFound
             | Self::Ambiguous { .. }
             | Self::NotActionable(_)
@@ -308,6 +312,9 @@ impl fmt::Display for BrowserError {
             Self::RequestFailed(why) => {
                 write!(f, "a request from the page did not complete: {why}")
             }
+            Self::Redirected => f.write_str(
+                "a request from the page was answered with a redirect, which it does not follow",
+            ),
             Self::Unexpected(what) => write!(f, "an answer no rule covers: {what}"),
             Self::LaunchFailed(reason) => match reason {
                 LaunchReason::NotInstalled => f.write_str("no browser is installed"),

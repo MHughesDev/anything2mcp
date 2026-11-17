@@ -1063,6 +1063,8 @@ pub struct WritingDiscoverer {
     pub hangs: AtomicBool,
     /// The discoverer panics after its first finding.
     pub panics: AtomicBool,
+    /// The project folder each discovery's scope was handed.
+    pub projects: Mutex<Vec<Option<PathBuf>>>,
 }
 
 impl Discoverer for WritingDiscoverer {
@@ -1081,6 +1083,12 @@ impl Discoverer for WritingDiscoverer {
         out: &'a mut dyn FindingSink,
     ) -> BoxFuture<'a, Result<DiscoveryReport, Failure>> {
         Box::pin(async move {
+            self.projects.lock().unwrap().push(
+                scope
+                    .paths
+                    .project()
+                    .map(|project| project.as_path().to_path_buf()),
+            );
             // One finding, as a discoverer of a live system makes it.
             let finding = Finding::about(
                 Subject::Address(Address::new("http://example.invalid", "/api/orders").unwrap()),
@@ -2654,11 +2662,7 @@ impl Scene {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("scene");
         let hooks = Arc::new(Hooks::default());
-        let discoverer = Arc::new(WritingDiscoverer {
-            results: Mutex::new(Vec::new()),
-            hangs: AtomicBool::new(false),
-            panics: AtomicBool::new(false),
-        });
+        let discoverer = Arc::new(WritingDiscoverer::default());
         let logs = folder.path().join("logs");
         std::fs::create_dir_all(&logs).unwrap();
         let (store, vault) = open_store(&folder).await;

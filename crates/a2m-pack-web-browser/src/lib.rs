@@ -52,9 +52,9 @@ pub use origin::Origins;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use structure::{
-    LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART, MOST_NAMES,
-    PLACEHOLDER, is_plain_name, is_plain_segment_word, names_are_structure, path_by_structure,
-    query_names,
+    ACTION_WORDS, LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART,
+    MOST_NAMES, PLACEHOLDER, is_plain_name, is_plain_segment_word, looks_like_an_action,
+    names_are_structure, path_by_structure, query_names,
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,

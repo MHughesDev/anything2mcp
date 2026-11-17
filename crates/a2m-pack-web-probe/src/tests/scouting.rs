@@ -841,7 +841,10 @@ async fn a_token_in_a_pages_address_or_a_bare_entry_of_its_query_reaches_no_find
             _ => None,
         })
         .collect();
-    assert!(paths.contains(&"/invitations/{value}".to_owned()), "{paths:?}");
+    assert!(
+        paths.contains(&"/invitations/{value}".to_owned()),
+        "{paths:?}"
+    );
     assert!(
         paths.contains(&"/api/invitations/{value}/check".to_owned()),
         "{paths:?}"

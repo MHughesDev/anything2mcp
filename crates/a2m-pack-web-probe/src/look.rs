@@ -43,55 +43,10 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 /// How long a page is waited for to show the focus's ready text.
 const READY_WAIT: Duration = Duration::from_secs(10);
 
-/// Words that make a link look like an action. A link whose address or
-/// name holds one is not followed. Data: the list is a start, and what
-/// "looks like an action" means is an open point of the design.
-pub const ACTION_WORDS: &[&str] = &[
-    "activate",
-    "approve",
-    "archive",
-    "cancel",
-    "confirm",
-    "deactivate",
-    "delete",
-    "destroy",
-    "disable",
-    "enable",
-    "logoff",
-    "logout",
-    "pay",
-    "purge",
-    "reject",
-    "remove",
-    "reset",
-    "revoke",
-    "send",
-    "signoff",
-    "signout",
-    "submit",
-    "unsubscribe",
-];
-
-/// Whether an address or a name looks like an action by [`ACTION_WORDS`].
-/// It is cut into words at everything that is not a letter; `sign-out`
-/// and `log out` count as `signout` and `logout`.
-#[must_use]
-pub fn looks_like_an_action(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let words: Vec<&str> = lower
-        .split(|c: char| !c.is_alphabetic())
-        .filter(|word| !word.is_empty())
-        .collect();
-    words.iter().enumerate().any(|(at, word)| {
-        ACTION_WORDS.contains(word)
-            || words.get(at + 1).is_some_and(|next| {
-                matches!(
-                    (*word, *next),
-                    ("sign" | "log", "out" | "off") | ("check", "out")
-                )
-            })
-    })
-}
+/// The words that make an address or a link look like an action, and the
+/// check, are the web pack's base's, so that the drivers hold a key and a
+/// page request to the same list (decision 0195).
+pub use a2m_pack_web_browser::{ACTION_WORDS, looks_like_an_action};
 
 /// An address, taken apart. It holds no value of a query: only the names,
 /// each with the type of its value, and only those that are plain names; and

@@ -1855,9 +1855,7 @@ impl Page {
         };
         let answer: Answer = Self::answer(evaluated)?;
         if answer.redirected {
-            return Err(BrowserError::RequestFailed(
-                "the answer was a redirect, and a read from the page follows none".to_owned(),
-            ));
+            return Err(BrowserError::Redirected);
         }
         let Some(status) = answer.status else {
             return Err(if answer.too_large {
@@ -3311,8 +3309,9 @@ impl ObserveTab {
     /// [`BrowserError::ForeignOrigin`] when the page is on an origin the
     /// tab was not opened for; nothing was sent.
     /// [`BrowserError::TooLarge`] for an answer longer than the limit.
+    /// [`BrowserError::Redirected`] when the answer was a redirect.
     /// [`BrowserError::RequestFailed`] when the page could not complete
-    /// the read, or the answer was a redirect. A read changes nothing, so
+    /// the read. A read changes nothing, so
     /// whether it was sent matters to no one: every error is `NotSent` or
     /// as the base reports it.
     pub async fn read_from_page(

@@ -1133,9 +1133,12 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
         page.contains("Surface desk (stand) leads to https://test.example.com in test;"),
         "{page}"
     );
-    assert_eq!(ask.publish.surfaces.len(), 1);
+    assert_eq!(ask.surfaces.len(), 1);
+    assert_eq!(ask.surfaces[0].name, "desk");
+    assert_eq!(ask.surfaces[0].kind, "stand");
+    assert_eq!(ask.surfaces[0].address, "https://test.example.com");
     assert_eq!(
-        ask.publish.surfaces[0].addresses[0],
+        ask.surfaces[0].addresses[0],
         ("test".to_owned(), "https://test.example.com".to_owned())
     );
     assert!(

@@ -315,6 +315,7 @@ What a reader can see is therefore the store's own schema and an empty temporary
 | Server store: an owner and a superuser are refused before anything runs; off the loopback address nothing is sent; a wrong password is refused and not shown | `src/tests/server.rs` |
 | Server store: one session's runs share one connection, and a run that failed closes it | `src/tests/server.rs` |
 | Server store: a kept connection never serves a surface published again to another database, and one whose `search_path` a trigger moved writes nothing; each database is asked | `src/tests/server.rs`: `a_kept_connection_never_serves_a_surface_that_now_leads_to_another_database`, `a_kept_connection_whose_search_path_was_changed_writes_nothing` |
+| Embedded store: a statement with a control character but a line feed and a tab is refused unsent, although the bundled store reads a form feed and a carriage return as space and would run it | `src/tests/guards.rs`, `a_control_character_in_an_embedded_statement_is_refused_unsent` |
 | Server store: a comment the server ends at a carriage return is refused unsent; a role that may read the server's files is refused; a commit whose answer never comes is in doubt at the deadline | `src/tests/server.rs` |
 | Embedded store: a file replaced at the store's name after `prepare` is never written | `src/tests/guards.rs`, on Unix |
 | The server dialect refuses escape and dollar quotes, `SET` outside an update, and the words and functions that reach outside a read | `src/shape.rs` |

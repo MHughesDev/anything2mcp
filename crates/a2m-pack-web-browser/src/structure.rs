@@ -113,6 +113,58 @@ pub fn names_are_structure<'a>(mut names: impl ExactSizeIterator<Item = &'a Stri
     names.len() <= MOST_NAMES && names.all(|name| is_plain_name(name))
 }
 
+/// Words that make an address or a link look like an action. Discovery
+/// follows no link and visits no address that holds one, and the drivers
+/// send no request whose key, or whose page request's path, holds one: a
+/// GET to such an address may act. Data: the list is a start, and what
+/// "looks like an action" means is an open point of the design.
+pub const ACTION_WORDS: &[&str] = &[
+    "activate",
+    "approve",
+    "archive",
+    "cancel",
+    "confirm",
+    "deactivate",
+    "delete",
+    "destroy",
+    "disable",
+    "enable",
+    "logoff",
+    "logout",
+    "pay",
+    "purge",
+    "reject",
+    "remove",
+    "reset",
+    "revoke",
+    "send",
+    "signoff",
+    "signout",
+    "submit",
+    "unsubscribe",
+];
+
+/// Whether an address or a name looks like an action by [`ACTION_WORDS`].
+/// It is cut into words at everything that is not a letter; `sign-out`
+/// and `log out` count as `signout` and `logout`.
+#[must_use]
+pub fn looks_like_an_action(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.iter().enumerate().any(|(at, word)| {
+        ACTION_WORDS.contains(word)
+            || words.get(at + 1).is_some_and(|next| {
+                matches!(
+                    (*word, *next),
+                    ("sign" | "log", "out" | "off") | ("check", "out")
+                )
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
