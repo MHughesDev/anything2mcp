@@ -1062,12 +1062,8 @@ impl State {
         if done.is_err() {
             return AckEnd::Answer(done);
         }
-        let after = |k: &FaultKind| {
-            matches!(
-                k,
-                FaultKind::AckThenDrop | FaultKind::AckThenRefuse { .. }
-            )
-        };
+        let after =
+            |k: &FaultKind| matches!(k, FaultKind::AckThenDrop | FaultKind::AckThenRefuse { .. });
         match self.take_fault(Some(connection), Some(Op::Ack), channel.as_deref(), after) {
             Some(FaultKind::AckThenDrop) => AckEnd::Drop,
             Some(FaultKind::AckThenRefuse { code }) => AckEnd::Answer(Err(Refusal::new(

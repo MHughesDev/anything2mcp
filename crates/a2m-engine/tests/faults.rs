@@ -18,11 +18,14 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, FailureCode, Mode, OperationName, RecordState, RunState};
+use a2m_core::{
+    BindingStatus, FailsAs, FailureClass, FailureCode, Mode, OperationName, Plan, RecordState,
+    RunState, Value,
+};
 use a2m_engine::{Directive, JobKind, JobOutcome, KernelHealth, codes};
 use common::{
-    FIRST_MODE, ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, SLOT_ADD, Scene, approved, at,
-    completed, failed_as, item, slot,
+    FIRST_MODE, ITEM_UPSERT, KIT_ENTER, ORDER_FILL, ORDER_GET, SECOND_MODE, SLOT_ADD, Scene,
+    approved, at, completed, failed_as, item, sheet, slot, step, waits,
 };
 
 fn rail() -> a2m_core::Values {
@@ -41,6 +44,256 @@ async fn impatient(tool: &str) -> Scene {
         |settings| settings.control_timeout = Duration::from_millis(40),
     )
     .await
+}
+
+// ---- a write that was sent is in doubt until it is verified ----
+
+/// Gives the binding that writes a line item a step that confirms the
+/// save, or a step after the save: a read of the record that was written.
+fn checks_after_the_save(plan: &mut Plan, as_confirm: bool) {
+    let binding = &mut plan.operations[2].bindings[0];
+    let mut check = step("check_item", &[], false, false);
+    check.args = binding.read_back[0].args.clone();
+    if as_confirm {
+        binding.confirm.push(check);
+    } else {
+        binding.act.push(check);
+    }
+}
+
+/// The run stopped with its write in doubt: the test application holds the
+/// write, the ledger does not call it verified, and the record's lock is
+/// kept for reconcile.
+async fn in_doubt_with_its_lock_kept(scene: &Scene, outcome: &JobOutcome, why: &str) {
+    assert_eq!(
+        failed_as(outcome),
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned()),
+        "{why}"
+    );
+    assert_eq!(
+        scene.app.write_count("A-102", "L-300").await.unwrap(),
+        1,
+        "{why}"
+    );
+    assert_eq!(scene.run_row().await.state, RunState::Stopped, "{why}");
+    let records = scene.records().await;
+    assert_eq!(records.len(), 1, "{why}");
+    assert_ne!(records[0].state, RecordState::Verified, "{why}");
+    if let Some((class, _)) = &records[0].failure {
+        assert_eq!(*class, FailureClass::PossibleCommit, "{why}");
+    }
+    let locks = scene.locks().await;
+    assert_eq!(locks.len(), 1, "the lock was released: {why}");
+    assert!(locks[0].quarantined, "{why}");
+}
+
+/// A resume reads the record first, finds the write landed, and writes
+/// nothing.
+async fn resumed_as_landed(scene: &Scene, why: &str) {
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert!(completed(&outcome), "{why}: {outcome:?}");
+    assert_eq!(scene.hooks.count("settle:Verified"), 1, "{why}");
+    assert_eq!(scene.hooks.count("put_item"), 1, "{why}");
+    assert_eq!(
+        scene.app.write_count("A-102", "L-300").await.unwrap(),
+        1,
+        "{why}"
+    );
+    assert_eq!(scene.record_states().await, [RecordState::Verified]);
+}
+
+/// The three classes that would settle a record as not written, each with
+/// a code the test pack declares, as the packs declare theirs for steps
+/// that read.
+const SETTLING: [(FailureClass, &str); 3] = [
+    (FailureClass::Policy, "example_too_large"),
+    (FailureClass::Input, "example_bad_shape"),
+    (FailureClass::Stale, "example_gone"),
+];
+
+#[tokio::test]
+async fn a_confirm_that_fails_after_the_save_was_sent_leaves_the_write_in_doubt() {
+    for (class, code) in SETTLING {
+        let why = format!("a confirm step that fails as {class}/{code}");
+        let scene = Scene::new(ITEM_UPSERT, |plan| checks_after_the_save(plan, true)).await;
+        approved(&scene, ITEM_UPSERT, &rail()).await;
+        *scene.hooks.fails_after.lock().unwrap() = Some(("check_item".to_owned(), class, code));
+        let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+        in_doubt_with_its_lock_kept(&scene, &outcome, &why).await;
+        // The failure names what it stands in for.
+        let message = outcome.failure().unwrap().message().to_owned();
+        assert!(message.contains(&format!("{class}/{code}")), "{message}");
+        resumed_as_landed(&scene, &why).await;
+    }
+}
+
+#[tokio::test]
+async fn a_read_back_that_fails_after_the_save_was_sent_leaves_the_write_in_doubt() {
+    for (class, code) in SETTLING {
+        let why = format!("a read-back step that fails as {class}/{code}");
+        let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+        approved(&scene, ITEM_UPSERT, &rail()).await;
+        // The read that follows the save fails; the reads before it do not.
+        let hooks = scene.hooks.clone();
+        scene.hooks.on_step(move |kind| {
+            if kind == "put_item" {
+                *hooks.fails_after.lock().unwrap() = Some(("get_item".to_owned(), class, code));
+            }
+        });
+        let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+        in_doubt_with_its_lock_kept(&scene, &outcome, &why).await;
+        resumed_as_landed(&scene, &why).await;
+    }
+}
+
+#[tokio::test]
+async fn a_step_after_the_save_that_fails_leaves_the_write_in_doubt() {
+    for (class, code) in SETTLING {
+        let why = format!("an act step after the save that fails as {class}/{code}");
+        let scene = Scene::new(ITEM_UPSERT, |plan| checks_after_the_save(plan, false)).await;
+        approved(&scene, ITEM_UPSERT, &rail()).await;
+        *scene.hooks.fails_after.lock().unwrap() = Some(("check_item".to_owned(), class, code));
+        let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+        in_doubt_with_its_lock_kept(&scene, &outcome, &why).await;
+        resumed_as_landed(&scene, &why).await;
+    }
+}
+
+#[tokio::test]
+async fn a_save_whose_answer_the_driver_does_not_accept_is_in_doubt_and_not_refused() {
+    // The save reached the application, which took it; the driver then
+    // fails the step as answered, with a class that says "not allowed" or
+    // "bad input": a redirect it may not follow, an answer too large or of
+    // the wrong shape. That is no refusal by the application.
+    for (class, code) in [SETTLING[0], SETTLING[1]] {
+        let why = format!("a save answered and failed as {class}/{code}");
+        let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+        approved(&scene, ITEM_UPSERT, &rail()).await;
+        *scene.hooks.fails_after.lock().unwrap() = Some(("put_item".to_owned(), class, code));
+        let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+        in_doubt_with_its_lock_kept(&scene, &outcome, &why).await;
+        resumed_as_landed(&scene, &why).await;
+    }
+}
+
+#[tokio::test]
+async fn the_applications_own_refusal_in_a_confirm_step_stands_and_the_record_is_still_read() {
+    // The application answers the confirmation with a refusal. The class
+    // stands, so the caller is told what the system said; the record is
+    // not settled by it: its lock is kept and a resume reads it first.
+    let scene = Scene::new(ITEM_UPSERT, |plan| checks_after_the_save(plan, true)).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    *scene.hooks.fails_after.lock().unwrap() = Some((
+        "check_item".to_owned(),
+        FailureClass::Rejected,
+        "example_refused",
+    ));
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Rejected, "example_refused".to_owned())
+    );
+    assert_eq!(scene.run_row().await.state, RunState::Stopped);
+    let locks = scene.locks().await;
+    assert_eq!(locks.len(), 1);
+    assert!(locks[0].quarantined);
+    resumed_as_landed(&scene, "a confirm step the application refused").await;
+}
+
+#[tokio::test]
+async fn a_binding_that_saves_twice_is_refused_when_it_is_chosen_and_sends_nothing() {
+    // A line under a new header is planned before its binding can be
+    // chosen. When its turn comes the first binding may not act, and the
+    // one that is chosen instead saves twice in one call.
+    let scene = Scene::new(KIT_ENTER, |plan| {
+        let bindings = &mut plan.operations[2].bindings;
+        let mut twice = bindings[0].clone();
+        twice.mode = Mode::new(SECOND_MODE).unwrap();
+        twice.act.push(twice.act[0].clone());
+        bindings[0].status = BindingStatus::Retired;
+        bindings.push(twice);
+    })
+    .await;
+    *scene.source.lock().unwrap() = Some(std::sync::Arc::new(sheet(&[("LEG", "Leg", "4", "28")])));
+    let input = a2m_core::Values::new()
+        .with("order_id", "A-102")
+        .with("title", "Table kit");
+    approved(&scene, KIT_ENTER, &input).await;
+    let outcome = scene.work(JobKind::Execute, KIT_ENTER, input).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Busy, "job_kind_not_built".to_owned())
+    );
+    // The header was written and verified. Nothing was sent for the line:
+    // no intent, no save, and the application holds the header alone.
+    assert_eq!(
+        scene.record_states().await,
+        [RecordState::Verified, RecordState::Planned]
+    );
+    assert_eq!(scene.hooks.count("put_item"), 0);
+    assert_eq!(scene.hooks.count("intend"), 1);
+    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn outputs_that_cannot_be_stored_with_the_save_stop_the_job_and_are_read_again() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    // The evidence store refuses one piece once the write has been sent:
+    // the record's outputs.
+    scene
+        .control
+        .faults
+        .evidence_full
+        .store(1, Ordering::SeqCst);
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Busy, "evidence_not_stored".to_owned())
+    );
+    // The ledger says the write was sent, and holds no outputs for it.
+    let records = scene.records().await;
+    assert_eq!(records[0].state, RecordState::Acted);
+    assert!(records[0].outputs.is_none());
+
+    // Resumed: the record is read, found as intended, read once more for
+    // its outputs, and not written again.
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.hooks.count("put_item"), 1);
+    assert_eq!(scene.last_result().get("version"), Some(&Value::from(1_i64)));
+}
+
+#[tokio::test]
+async fn a_record_that_failed_with_the_code_of_a_blocked_child_is_read_when_it_had_an_intent() {
+    // A provider may give one of its own failures the name the engine
+    // uses for a record that waited for its parent. Here the save reached
+    // the application and was then failed under that name.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        plan.operations[2].bindings[0].act[0].fails_as = FailsAs {
+            class: FailureClass::Busy,
+            code: FailureCode::fixed("blocked_by_parent"),
+        };
+    })
+    .await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    *scene.hooks.fails_after.lock().unwrap() = Some((
+        "put_item".to_owned(),
+        FailureClass::Busy,
+        "blocked_by_parent",
+    ));
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Busy, "blocked_by_parent".to_owned())
+    );
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // On resume the record is read like every record in doubt, and is not
+    // sent back to `planned` unread and written a second time.
+    resumed_as_landed(&scene, "a failure named `blocked_by_parent`").await;
 }
 
 // ---- the database cannot commit ----
@@ -379,6 +632,91 @@ async fn a_lease_that_is_ending_stops_the_job_before_its_commit_point() {
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert!(completed(&outcome), "{outcome:?}");
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_lease_that_runs_out_while_the_record_waits_sends_no_save() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    // Policy asks for the freshness read, which comes after the lock. The
+    // heartbeats have stopped, and the lease ends while the job waits and
+    // reads: it had time enough when the record was begun.
+    scene.conditions.lock().unwrap().strict_freshness = true;
+    scene
+        .lease
+        .renew(tokio::time::Instant::now() + Duration::from_secs(3600));
+    let lease = scene.lease.clone();
+    scene.hooks.on_step(move |kind| {
+        if kind == "get_item" {
+            lease.renew(tokio::time::Instant::now());
+        }
+    });
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(outcome, JobOutcome::LeaseEnding);
+    // No intent was stored and nothing was sent.
+    assert_eq!(scene.hooks.count("intend"), 0);
+    assert_eq!(scene.hooks.count("put_item"), 0);
+    assert_eq!(scene.record_states().await, [RecordState::Planned]);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_lease_that_runs_out_after_the_intent_stops_the_job_at_the_commit_point() {
+    let scene = Scene::new(SLOT_ADD, |_| {}).await;
+    let input = slot("A-102", 4, "12");
+    approved(&scene, SLOT_ADD, &input).await;
+    scene
+        .lease
+        .renew(tokio::time::Instant::now() + Duration::from_secs(3600));
+    // The lease ends during the step before the save, after the intent
+    // was stored.
+    let lease = scene.lease.clone();
+    scene.hooks.on_step(move |kind| {
+        if kind == "reserve_code" {
+            lease.renew(tokio::time::Instant::now());
+        }
+    });
+    let outcome = scene.work(JobKind::Execute, SLOT_ADD, input.clone()).await;
+    assert_eq!(outcome, JobOutcome::LeaseEnding);
+    assert_eq!(scene.hooks.count("add_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+    // The intent stands, so the next lease reads the record before it
+    // writes: nothing landed, and the record is written once.
+    assert_eq!(scene.record_states().await, [RecordState::Intent]);
+    scene
+        .lease
+        .renew(tokio::time::Instant::now() + Duration::from_secs(3600));
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Execute, SLOT_ADD, input).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.hooks.count("settle:Planned"), 1);
+    assert_eq!(scene.hooks.count("add_item"), 1);
+    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_step_with_no_time_limit_of_its_own_is_counted_at_the_default_limit() {
+    // Every step of the binding takes the default limit, thirty seconds.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        let binding = &mut plan.operations[2].bindings[0];
+        for step in binding.act.iter_mut().chain(&mut binding.read_back) {
+            step.timeout_ms = 0;
+        }
+    })
+    .await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    // The lease has less left than one such step may take.
+    scene
+        .lease
+        .renew(tokio::time::Instant::now() + Duration::from_secs(10));
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(outcome, JobOutcome::LeaseEnding);
+    assert_eq!(scene.hooks.count("put_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+    assert!(waits(&JobOutcome::Rests {
+        state: RunState::NeedsApproval,
+        failure: None
+    }));
 }
 
 // ---- invariants of the design ----

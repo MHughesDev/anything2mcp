@@ -21,14 +21,12 @@ mod process;
 mod render;
 
 use std::collections::BTreeMap;
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use a2m_actions::{
-    Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes, command_faces,
-};
+use a2m_actions::{Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::ClientLabel;
 use a2m_telemetry::SystemClock;
@@ -36,7 +34,8 @@ use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
-use parse::{Globals, Parsed, Step, Tree};
+use parse::{Globals, Parsed, Step, Stop, Tree};
+use serde_json::Value as Json;
 pub use process::READY_LINE;
 
 /// The name of the file that marks a project folder.
@@ -106,7 +105,7 @@ fn shown(text: &str) -> String {
 
 /// The command tree of this build.
 fn tree() -> Result<Tree, Failure> {
-    Ok(Tree::new(command_faces(&action_registry()?)))
+    Ok(Tree::of(&action_registry()?))
 }
 
 /// The usage line of every action command of this build, in catalog order.
@@ -175,22 +174,98 @@ fn stopped(tree: &Tree, action: &str, failure: &Failure, exit: ExitClass, json: 
     render::render(&render::refused(action, failure, exit), tree, json)
 }
 
+/// What a shortcut that stops early ends with, once the steps it could
+/// carry out have succeeded: the failure that names the step it stopped
+/// before, with the shortcut's own note. That step was never begun. When
+/// an earlier step did not succeed, its own answer stands.
+fn after_steps(finished: Finished, stop: Option<&Stop>, tree: &Tree, json: bool) -> Finished {
+    match stop {
+        Some(stop) if finished.code == 0 => stopped(
+            tree,
+            stop.before,
+            &Failure::new(
+                FailureClass::Input,
+                codes::ACTION_NOT_BUILT,
+                stop.note.clone(),
+                format!(
+                    "Run the steps that are built by their own commands. `{PROGRAM} --help` lists the commands."
+                ),
+            ),
+            ExitClass::Failed,
+            json,
+        ),
+        _ => finished,
+    }
+}
+
+fn stdin_unreadable() -> Failure {
+    // Nothing of what was read is in the message, and nothing of the
+    // system's own error, which could quote it.
+    Failure::new(
+        FailureClass::Input,
+        codes::SCHEMA_INVALID,
+        "Standard input could not be read as text.",
+        "Give the value on standard input as UTF-8 text, such as `printf %s \"$VALUE\" | anything2mcp ...`.",
+    )
+}
+
+/// Standard input to its end, as text, without one line ending at its
+/// end. What is read is returned and written nowhere.
+fn read_stdin() -> Result<String, Failure> {
+    let mut input = std::io::stdin().lock();
+    if input.is_terminal() {
+        // A person types the value. The terminal shows what is typed;
+        // this program repeats none of it.
+        let mut error = std::io::stderr().lock();
+        let _ = writeln!(
+            error,
+            "{PROGRAM}: type the value, then end the input (Ctrl-D; on Windows, Ctrl-Z and Enter). The terminal shows what you type."
+        );
+    }
+    let mut text = String::new();
+    input
+        .read_to_string(&mut text)
+        .map_err(|_| stdin_unreadable())?;
+    if text.ends_with('\n') {
+        text.pop();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+    }
+    Ok(text)
+}
+
+/// Fills, for each step whose command asked for it, the field that
+/// standard input fills: read to its end, off the async threads. The flag
+/// that asked for it is not part of the input.
+async fn take_stdin(steps: &mut [Step]) -> Result<(), Failure> {
+    for step in steps {
+        let Some(field) = step.stdin_for.take() else {
+            continue;
+        };
+        let text = tokio::task::spawn_blocking(read_stdin)
+            .await
+            .map_err(|_| stdin_unreadable())??;
+        if let Json::Object(input) = &mut step.input {
+            input.insert(field, Json::String(text));
+        }
+    }
+    Ok(())
+}
+
 /// Runs one command line on an engine that is already open, as a person at
 /// a terminal or as an agent. For a host that keeps one engine for several
 /// commands, and for tests.
 pub async fn run_on(engine: &Engine, args: &[String], json: bool, is_agent: bool) -> Finished {
-    let tree = Tree::new(command_faces(engine.kernel().actions()));
+    let tree = Tree::of(engine.kernel().actions());
     match tree.parse(args) {
-        Ok(Parsed::Invoke(globals, steps)) => {
-            run_steps(
-                engine,
-                &tree,
-                &globals,
-                steps,
-                json || globals.json,
-                is_agent,
-            )
-            .await
+        Ok(Parsed::Invoke(globals, mut steps, stop)) => {
+            let json = json || globals.json;
+            if let Err(failure) = take_stdin(&mut steps).await {
+                return stopped(&tree, "", &failure, ExitClass::Malformed, json);
+            }
+            let finished = run_steps(engine, &tree, &globals, steps, json, is_agent).await;
+            after_steps(finished, stop.as_ref(), &tree, json)
         }
         Ok(other) => without_engine(&tree, other, json),
         Err(failure) => stopped(&tree, "", &failure, ExitClass::Malformed, json),
@@ -251,17 +326,11 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     let tree = match tree() {
         Ok(tree) => tree,
         Err(failure) => {
-            return stopped(
-                &Tree::new(Vec::new()),
-                "",
-                &failure,
-                ExitClass::Failed,
-                json,
-            );
+            return stopped(&Tree::empty(), "", &failure, ExitClass::Failed, json);
         }
     };
-    let (globals, steps) = match tree.parse(args) {
-        Ok(Parsed::Invoke(globals, steps)) => (globals, steps),
+    let (globals, mut steps, stop) = match tree.parse(args) {
+        Ok(Parsed::Invoke(globals, steps, stop)) => (globals, steps, stop),
         Ok(Parsed::Process(globals, word, rest)) => {
             return process::run(&tree, &globals, word, &rest, host, json || globals.json).await;
         }
@@ -273,6 +342,9 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         .first()
         .map(|step| step.action.clone())
         .unwrap_or_default();
+    if let Err(failure) = take_stdin(&mut steps).await {
+        return stopped(&tree, &action, &failure, ExitClass::Malformed, json);
+    }
     let env = Env {
         os: OsFamily::current(),
         vars: host.environment.clone(),
@@ -298,7 +370,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
             );
         }
         Ok(client::Found::Engine(link)) => {
-            return client::run_steps(
+            let finished = client::run_steps(
                 &link,
                 &tree,
                 &globals,
@@ -308,6 +380,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
                 project.as_deref(),
             )
             .await;
+            return after_steps(finished, stop.as_ref(), &tree, json);
         }
         // No engine runs, and nothing starts one on demand yet: the
         // command runs the engine inside its own process.
@@ -340,7 +413,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     )
     .await;
     engine.close().await;
-    finished
+    after_steps(finished, stop.as_ref(), &tree, json)
 }
 
 /// Runs the command line with the arguments that follow the program name,

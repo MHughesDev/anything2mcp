@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Failure, FailureClass, Finding, Hazard, OperationName, RunState, Step,
+    EffectClass, Failure, FailureClass, Finding, Hazard, OperationName, Redact, RunState, Step,
     SurfaceIndex,
 };
 use a2m_provider::{
@@ -71,8 +71,10 @@ const MOST_FINDINGS: usize = 10_000;
 /// Where a discoverer's findings go. It keeps them up to the size its
 /// manifest declares and up to a fixed count; what comes after is counted
 /// and not kept, so a discoverer that floods cannot grow the engine's
-/// memory without bound.
-struct Collected {
+/// memory without bound. A finding that still holds a registered secret is
+/// not kept either: nothing of it leaves the engine.
+struct Collected<'r> {
+    redact: &'r dyn Redact,
     kept: Vec<Finding>,
     /// The bytes the kept findings take, as they are stored.
     bytes: u64,
@@ -80,25 +82,36 @@ struct Collected {
     most_bytes: u64,
     /// How many findings came after the bound and were not kept.
     over: u64,
+    /// How many findings held a registered secret and were not kept.
+    withheld: u64,
 }
 
-impl Collected {
-    fn new(most_bytes: u64) -> Self {
+impl<'r> Collected<'r> {
+    fn new(redact: &'r dyn Redact, most_bytes: u64) -> Self {
         Self {
+            redact,
             kept: Vec::new(),
             bytes: 0,
             most_bytes,
             over: 0,
+            withheld: 0,
         }
     }
 }
 
-impl FindingSink for Collected {
+impl FindingSink for Collected<'_> {
     fn found(&mut self, finding: Finding) -> Result<(), Failure> {
-        // A finding whose size cannot be told is counted as too large.
-        let size = serde_json::to_vec(&finding).map_or(u64::MAX, |bytes| {
-            u64::try_from(bytes.len()).unwrap_or(u64::MAX)
-        });
+        // A finding that cannot be written out cannot be measured or
+        // checked: it is counted as not kept.
+        let Ok(text) = serde_json::to_string(&finding) else {
+            self.over = self.over.saturating_add(1);
+            return Ok(());
+        };
+        if self.redact.contains_secret(&text) {
+            self.withheld = self.withheld.saturating_add(1);
+            return Ok(());
+        }
+        let size = u64::try_from(text.len()).unwrap_or(u64::MAX);
         let fits = self.kept.len() < MOST_FINDINGS
             && self
                 .bytes
@@ -227,7 +240,7 @@ impl Engine {
                 redact: self.deps.redact.as_ref(),
                 focus: &job.input,
             };
-            let mut sink = Collected::new(declared.bounds.bytes);
+            let mut sink = Collected::new(self.deps.redact.as_ref(), declared.bounds.bytes);
             // A discoverer is a provider's code: it is held to the time its
             // manifest declares, and a panic in it ends it and not the job.
             // Every step it asks for only reads, so its future may be
@@ -259,6 +272,7 @@ impl Engine {
                     }
                     report.dropped = report.dropped.saturating_add(sink.over);
                 }
+                report.dropped = report.dropped.saturating_add(sink.withheld);
                 report
             });
             let sent = control

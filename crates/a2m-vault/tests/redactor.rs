@@ -489,3 +489,121 @@ fn a_secret_equal_to_a_form_of_another_is_registered_whole() {
     redactor.register(&Secret::new("first+second"));
     assert_eq!(redactor.health().registered, 2);
 }
+
+/// `text` in pieces of `size` characters.
+fn pieces(text: &str, size: usize) -> Vec<String> {
+    let characters: Vec<char> = text.chars().collect();
+    characters
+        .chunks(size)
+        .map(|piece| piece.iter().collect())
+        .collect()
+}
+
+/// What a stream lets out for `pieces`, joined.
+fn streamed(redactor: &Redactor, pieces: &[String]) -> String {
+    let mut stream = redactor.stream();
+    let mut out = String::new();
+    for piece in pieces {
+        out.push_str(&stream.push(piece));
+    }
+    out.push_str(&stream.finish());
+    out
+}
+
+/// Audit finding V-2, a secret split across two pieces. `redact` keeps
+/// nothing between two calls, so a text that arrives in pieces goes through
+/// a stream, and the stream masks what `redact` masks in the whole text,
+/// wherever the pieces were divided.
+#[test]
+fn a_secret_split_across_the_pieces_of_a_stream_is_masked() {
+    let redactor = redactor(&[SECRET, TOKEN, "4f8a0c2e9b7d1a3f"]);
+
+    // Each piece redacted on its own lets both halves through.
+    let text = format!("before {TOKEN} after");
+    let (first, second) = text.split_at(text.len() / 2);
+    let piecewise = format!("{}{}", redactor.redact(first), redactor.redact(second));
+    assert!(piecewise.contains(TOKEN));
+
+    let filler = "Words with a %41, a \\u0041 and an &amp; in them.";
+    let mut forms = encoded_forms();
+    let long = format!("start {SECRET} middle {TOKEN} end");
+    forms.extend([
+        ("another secret", TOKEN.to_owned()),
+        ("two that touch", format!("{TOKEN}{SECRET}")),
+        ("hexadecimal, another case", "4F8A0C2E9B7D1A3F".to_owned()),
+        (
+            "written out in hexadecimal",
+            TOKEN.bytes().map(|byte| format!("{byte:02x}")).collect(),
+        ),
+        (
+            "character references",
+            SECRET.replace('"', "&quot;").replace('/', "&#47;"),
+        ),
+        (
+            "base64 in lines",
+            wrapped(&base64(long.as_bytes(), false, true), 20, "\r\n "),
+        ),
+        (
+            "base64 in lines, in json",
+            wrapped(&base64(long.as_bytes(), true, false), 16, "\\n"),
+        ),
+    ]);
+    for (name, form) in &forms {
+        let text = format!("{filler}<{form}>\n{filler}");
+        let whole = redactor.redact(&text);
+        assert!(!redactor.contains_secret(&whole), "{name}");
+        let characters = text.chars().count();
+        // Divided in two at every place, and into pieces of every small
+        // size and some larger ones.
+        let in_two = (1..characters).map(|at| {
+            let (first, second): (String, String) = (
+                text.chars().take(at).collect(),
+                text.chars().skip(at).collect(),
+            );
+            vec![first, second]
+        });
+        let in_many = [1, 2, 3, 5, 7, 11, 64, 300]
+            .into_iter()
+            .map(|size| pieces(&text, size));
+        for divided in in_two.chain(in_many) {
+            let joined = streamed(&redactor, &divided);
+            assert!(!redactor.contains_secret(&joined), "{name}: {joined}");
+            assert_eq!(joined, whole, "{name}, first piece {:?}", divided[0]);
+        }
+    }
+}
+
+#[test]
+fn a_stream_lets_text_out_as_it_goes_and_changes_nothing_without_a_secret() {
+    // With nothing registered, every piece comes straight back.
+    let empty = Redactor::new();
+    let mut stream = empty.stream();
+    assert_eq!(stream.push("one piece"), "one piece");
+    assert_eq!(stream.finish(), "");
+
+    // With a secret registered the stream runs behind by about the longest
+    // form and no more, and what it lets out is the text.
+    let redactor = redactor(&[TOKEN]);
+    let line = "A line of a program's output, with nothing secret in it at all.\n";
+    let mut stream = redactor.stream();
+    let mut out = String::new();
+    for _ in 0..200 {
+        out.push_str(&stream.push(line));
+    }
+    let given = line.len() * 200;
+    let behind = given - out.len();
+    assert!(behind <= 4 * TOKEN.len() + 100, "{behind}");
+    out.push_str(&stream.finish());
+    assert_eq!(out, line.repeat(200));
+
+    // A secret registered while the stream runs is masked in what follows.
+    let late = "late-secret-for-tests-0123456789";
+    let mut stream = redactor.stream();
+    let mut out = stream.push("nothing yet; ");
+    redactor.register(&Secret::new(late));
+    out.push_str(&stream.push("then late-secret-for-"));
+    out.push_str(&stream.push("tests-0123456789 at the end"));
+    out.push_str(&stream.finish());
+    assert_eq!(out, format!("nothing yet; then {REDACTED} at the end"));
+    assert!(!format!("{:?}", redactor.stream()).contains("late"));
+}

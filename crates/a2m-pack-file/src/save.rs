@@ -281,13 +281,26 @@ fn replace(
     let prepared = match carry(&file, &old) {
         Ok(true) => file
             .write_all(&job.bytes)
-            .and_then(|()| file.sync_all())
             .map_err(|error| {
                 if full(error.kind()) {
                     storage_full()
                 } else {
                     StepFailure::not_sent(unavailable("could not be written beside the old one"))
                 }
+            })
+            // Writing can take bits off a file. They are set again, and the
+            // file is looked at once more, before it is flushed.
+            .and_then(|()| match carry(&file, &old) {
+                Ok(true) => file.sync_all().map_err(|error| {
+                    if full(error.kind()) {
+                        storage_full()
+                    } else {
+                        StepFailure::not_sent(unavailable(
+                            "could not be flushed to disk beside the old one",
+                        ))
+                    }
+                }),
+                Ok(false) | Err(_) => Err(not_kept()),
             }),
         Ok(false) | Err(_) => Err(not_kept()),
     };

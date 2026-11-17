@@ -722,7 +722,9 @@ impl StreamDriver {
             .link()?
             .subscribe(&entry.address, subscription, from, input.deadline)
             .await
-            .map_err(|error| wire_failure(&*self.redact, &error, "open the runtime's subscription"))?;
+            .map_err(|error| {
+                wire_failure(&*self.redact, &error, "open the runtime's subscription")
+            })?;
         let position = position_value(opened.position);
         run.open.insert(
             name,

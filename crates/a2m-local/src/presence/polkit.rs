@@ -316,6 +316,10 @@ impl PresencePrompt for PolkitPrompt {
                 Ok(authority) => authority,
                 Err(why) => return PromptAnswer::NotAvailable(why),
             };
+            // At or after the deadline nothing is raised.
+            if Instant::now() >= deadline {
+                return PromptAnswer::Dismissed;
+            }
             let id = format!(
                 "anything2mcp-presence-{}",
                 self.asked.fetch_add(1, Ordering::SeqCst)

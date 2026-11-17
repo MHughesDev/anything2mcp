@@ -33,7 +33,7 @@ pub use names::{
     SealContext, SealedKind,
 };
 pub use records::{KeyRecord, KeyRecords, MemoryKeyRecords, key_record_conflict};
-pub use redactor::{Redactor, RedactorHealth};
+pub use redactor::{RedactStream, Redactor, RedactorHealth};
 pub use sealed::Sealed;
 pub use store::{
     BoxFuture, KeyStore, MemoryKeyStore, OsKeyStore, PassphraseKeyStore, PassphraseRoute,

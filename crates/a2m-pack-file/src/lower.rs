@@ -31,6 +31,8 @@ pub const BINDING_INVALID: LintCode = LintCode::fixed("file.binding_invalid");
 pub const STANDS_UNDECLARED: LintCode = LintCode::fixed("file.stands_undeclared");
 /// A write to a file beneath an application.
 pub const BENEATH_APPLICATION: LintCode = LintCode::fixed("file.beneath_application");
+/// A write to a file whose document does not say whether it may be open.
+pub const OPEN_UNDECLARED: LintCode = LintCode::fixed("file.open_undeclared");
 /// A write to a file that may be open, with no lock signal.
 pub const OPEN_WITHOUT_SIGNAL: LintCode = LintCode::fixed("file.open_without_signal");
 /// A write to a format with no patch editor.
@@ -626,17 +628,38 @@ pub fn lint_rules() -> Vec<WriteRule> {
             summary: "A write to a file beneath an application is irreversible and has the owner's word in the authorization record.",
             check: |write, view| {
                 stands(write)?.get("beneath")?;
+                // The reference to the record, and not the key alone.
                 let authorized = view
                     .sources()
                     .file("target.yaml")
                     .and_then(|file| file.docs.first())
-                    .is_some_and(|target| target.get("authorization").is_some());
+                    .and_then(|target| target.text("authorization"))
+                    .is_some_and(|reference| !reference.trim().is_empty());
                 (write.operation.effect() != EffectClass::Irreversible || !authorized).then(|| {
                     (
                         "This binding writes a file that stands beneath an application.".to_owned(),
                         "Declare the operation `effect: irreversible`, and name the authorization record under `authorization` in `target.yaml`.",
                     )
                 })
+            },
+        },
+        WriteRule {
+            code: OPEN_UNDECLARED,
+            summary: "A binding that writes a file names a document that says whether an application may hold the file open.",
+            check: |write, _| {
+                // Absent is "not said", never "no": on most systems the pack
+                // cannot see that a program has the file open.
+                write
+                    .document
+                    .get("may_be_open")
+                    .and_then(Located::as_bool)
+                    .is_none()
+                    .then(|| {
+                        (
+                            "This binding writes a file, and its document does not say whether an application may hold the file open.".to_owned(),
+                            "Add `may_be_open: false` to the document when no application opens the file, or `may_be_open: true` with a `lock_signal`.",
+                        )
+                    })
             },
         },
         WriteRule {

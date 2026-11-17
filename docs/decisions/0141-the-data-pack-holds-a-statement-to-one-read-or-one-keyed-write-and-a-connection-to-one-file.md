@@ -19,9 +19,9 @@
 | A1 | A name in double quotes that is no column was read by the engine as a text. A mistyped key column in a record made `WHERE "typo" = ?` compare a text with the bound value | Confirmed: `SELECT "no_such_column" FROM customers` returned the text three times | Decision 3 |
 | A2 | A read could create a temporary table, end its own transaction with `COMMIT`, and read the path of the store's file from `pragma_database_list` into a result | Confirmed at the connection | Decisions 1 to 3 |
 | A3 | Several statements in one text were refused, but named `drift` | Confirmed | Named `policy`, `statement_not_allowed` |
-| A4 | `commit` took the count that the plan's `expect_rows` step stated, and a transaction took any number of statements, of which only the last was counted. A plan the compiler did not make could commit rows that were never counted | Confirmed by reading; the compiler never makes such a plan | Decision 6 |
-| A5 | A guarded statement that also took a field named `version` bound the guard and the field to the same argument, so the guard compared the new value of the field | Confirmed by reading | The compiler refuses it |
-| A6 | The driver ran a statement declared for another surface when a step named it | Confirmed by reading; the compiler never lowers one | The driver refuses it |
+| A4 | `commit` took the count that the plan's `expect_rows` step stated, and a transaction took any number of statements, of which only the last was counted. A plan the compiler did not make could commit rows that were never counted | Confirmed: with the check taken out, its test commits; the compiler never makes such a plan | Decision 6 |
+| A5 | A guarded statement that also took a field named `version` bound the guard and the field to the same argument, so the guard compared the new value of the field | Confirmed: with the check taken out, such a file compiles | The compiler refuses it |
+| A6 | The driver ran a statement declared for another surface when a step named it | Confirmed: with the check taken out, the statement runs; the compiler never lowers one | The driver refuses it |
 | A7 | Opening the writing connection was not held to the step's time, and the catalog query read every name before cutting | Confirmed by reading | Held to the deadline; the query asks for one name more than it keeps |
 | A8 | The message of `connection_lost` said "nothing was written", which a step after a commit in doubt cannot know | Confirmed | It says the step sent nothing |
 

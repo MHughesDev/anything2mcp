@@ -94,6 +94,33 @@ pub(crate) fn spell(
     }))
 }
 
+/// How the text of a field begins, when a spreadsheet program that opens
+/// the file would not keep it as the text it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Leads {
+    /// With `=`, `+`, `-`, or `@`, in either width, after any spaces: such
+    /// a program runs the text as a formula. Quoting the field changes
+    /// nothing: the quotes are gone before the program looks.
+    Sign,
+    /// With a tab or a line break, which such a program drops before it
+    /// looks at what follows.
+    Control,
+}
+
+/// Whether text written into delimited text would be run, and not kept, by
+/// a spreadsheet program that opens the file.
+pub(crate) fn leads_as_formula(text: &str) -> Option<Leads> {
+    if text.starts_with(['\t', '\r', '\n']) {
+        return Some(Leads::Control);
+    }
+    let first = text.trim_start().chars().next()?;
+    matches!(
+        first,
+        '=' | '+' | '-' | '@' | '\u{FF1D}' | '\u{FF0B}' | '\u{FF0D}' | '\u{FF20}'
+    )
+    .then_some(Leads::Sign)
+}
+
 /// One field of delimited text. It is quoted when it was quoted before, or
 /// when its text would otherwise end the field or the row.
 pub(crate) fn csv_field(text: &str, quoted_before: bool, delimiter: u8) -> Vec<u8> {
@@ -483,6 +510,19 @@ mod tests {
         assert_eq!(csv_field("a;b", false, b','), b"a;b");
         assert_eq!(csv_field("say \"hi\"", false, b','), b"\"say \"\"hi\"\"\"");
         assert_eq!(csv_field("two\nlines", false, b';'), b"\"two\nlines\"");
+    }
+
+    #[test]
+    fn text_that_a_spreadsheet_program_would_run_is_told_from_text() {
+        for text in ["=1+1", "+1", "-1", "@name", "  =1+1", "\u{FF1D}1", "\u{FF20}x"] {
+            assert_eq!(leads_as_formula(text), Some(Leads::Sign), "{text:?}");
+        }
+        for text in ["\t=1+1", "\rtext", "\ntext"] {
+            assert_eq!(leads_as_formula(text), Some(Leads::Control), "{text:?}");
+        }
+        for text in ["", "1+1=2", "a-b", "name@example", "EX-1002", " plain"] {
+            assert_eq!(leads_as_formula(text), None, "{text:?}");
+        }
     }
 
     #[test]

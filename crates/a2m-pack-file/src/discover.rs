@@ -252,7 +252,7 @@ impl LayoutDiscoverer {
             delimiter: delimiter.map(str::to_owned),
             line_ending: None,
             layout: Layout::default(),
-            may_be_open: false,
+            may_be_open: None,
             lock_sibling: None,
             records: std::collections::BTreeMap::new(),
         };
@@ -317,6 +317,19 @@ impl LayoutDiscoverer {
     }
 }
 
+/// The bytes of a file the kernel handed to discovery, read through the
+/// path's own check and never changed. Nothing for a file that is missing,
+/// larger than `most`, or not a regular file. Blocking.
+fn read_handed(path: &CheckedPath, most: u64) -> Option<Vec<u8>> {
+    path.size().ok()?;
+    std::fs::symlink_metadata(path.as_path())
+        .ok()?
+        .file_type()
+        .is_file()
+        .then(|| path.read(most).ok())
+        .flatten()
+}
+
 impl Discoverer for LayoutDiscoverer {
     fn name(&self) -> DiscovererName {
         self.name.clone()
@@ -351,10 +364,10 @@ impl Discoverer for LayoutDiscoverer {
                 }
                 let most = left.min(self.limits.max_bytes);
                 let reading = path.clone();
-                let read = tokio::task::spawn_blocking(move || open::read_file(&reading, most))
+                let read = tokio::task::spawn_blocking(move || read_handed(&reading, most))
                     .await
                     .ok()
-                    .and_then(Result::ok);
+                    .flatten();
                 let Some(bytes) = read else {
                     // Missing, too large for what is left, or not a regular
                     // file: seen, and no finding made of it.
@@ -480,26 +493,35 @@ impl DraftingRule for DocumentFromLayout {
     /// table the file states. The file states no key and no type of a
     /// column, so each is an open question and never a guess. Nothing is
     /// drafted for a write.
+    ///
+    /// An open question is the pack's own words and holds no text from the
+    /// file: a header or a file name written as an instruction would reach
+    /// the developer's agent as part of a question. It names a record kind
+    /// and a field by their place in the draft, where the file's own text
+    /// stands as data.
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
         let found: LayoutFound = serde_json::from_str(finding.found())
             .map_err(|_| invalid("a `file_layout` finding does not hold a layout"))?;
         let texts = |items: &[String]| {
             DraftValue::List(items.iter().map(|item| DraftValue::text(item)).collect())
         };
-        let record = |place: (&str, DraftValue), headers: &[String], json: bool| {
+        let mut kinds = 0_usize;
+        let mut record = |place: (&str, DraftValue), headers: &[String], json: bool| {
+            kinds += 1;
+            let kind = kinds;
             let mut taken = BTreeSet::new();
             let fields = headers
                 .iter()
                 .filter(|header| !header.is_empty())
-                .map(|header| {
+                .zip(1_usize..)
+                .map(|(header, number)| {
                     let place = if json {
                         ("path", texts(std::slice::from_ref(header)))
                     } else {
                         ("header", DraftValue::text(header))
                     };
                     let question = cx.open_question(&format!(
-                        "Which field type do the values under `{header}` in `{}` have?",
-                        found.file
+                        "Which field type do the values of field {number} of record kind {kind} of this draft have?"
                     ));
                     (
                         name_from(header, &mut taken),
@@ -512,8 +534,7 @@ impl DraftingRule for DocumentFromLayout {
                 (
                     "key",
                     cx.open_question(&format!(
-                        "Which fields identify one record of `{}`?",
-                        found.file
+                        "Which fields identify one record of record kind {kind} of this draft?"
                     )),
                 ),
                 ("fields", DraftValue::Map(fields)),

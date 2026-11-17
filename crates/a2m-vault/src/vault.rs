@@ -162,6 +162,12 @@ impl Vault {
         self.redactor.register(secret);
     }
 
+    /// Registers a secret whose form is case-insensitive, so that it is
+    /// masked in any letter case. See [`Redactor::register_folded`].
+    pub fn register_folded(&self, secret: &Secret) {
+        self.redactor.register_folded(secret);
+    }
+
     /// The redactor, handed to everything that emits text.
     #[must_use]
     pub fn redactor(&self) -> Arc<Redactor> {

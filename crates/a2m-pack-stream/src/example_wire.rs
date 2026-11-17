@@ -560,7 +560,10 @@ impl Link for ExampleLink {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, reason = "a test stops when its helper cannot work")]
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test stops when its helper cannot work"
+    )]
 
     use tokio::net::TcpListener;
 
@@ -603,7 +606,10 @@ mod tests {
             .browse("example.orders.events", None, 5, deadline)
             .await
             .unwrap_err();
-        assert_eq!((look.kind, look.sent), (WireErrorKind::Unexpected, Sent::Unknown));
+        assert_eq!(
+            (look.kind, look.sent),
+            (WireErrorKind::Unexpected, Sent::Unknown)
+        );
         let refused = link.acknowledge("s-1", "d-1", deadline).await.unwrap_err();
         assert_eq!(
             (refused.kind, refused.sent),

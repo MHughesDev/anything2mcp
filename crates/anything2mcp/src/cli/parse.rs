@@ -9,7 +9,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use a2m_actions::{CommandArg, CommandFace, PROCESS_COMMANDS, PROGRAM, SHORTCUTS, Shortcut, codes};
+use a2m_actions::{
+    ActionRegistry, CommandArg, CommandFace, PROCESS_COMMANDS, PROGRAM, SHORTCUTS, Shortcut,
+    ShortcutRun, ShortcutStep, codes, command_faces,
+};
 use a2m_core::{Failure, FailureClass};
 
 use super::shown;
@@ -57,6 +60,20 @@ pub(crate) struct Globals {
 pub(crate) struct Step {
     pub(crate) action: String,
     pub(crate) input: Json,
+    /// The input field that standard input fills before the action is
+    /// sent, when the command gave the flag whose face says so. The flag
+    /// itself is not part of the input.
+    pub(crate) stdin_for: Option<String>,
+}
+
+/// Where a shortcut stops on this build: before the first of its actions
+/// that is not built. It never begins that step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Stop {
+    /// The action it stops before.
+    pub(crate) before: &'static str,
+    /// What to say: what was done, and what was not.
+    pub(crate) note: String,
 }
 
 /// What a command line asks for.
@@ -67,8 +84,10 @@ pub(crate) enum Parsed {
     /// Help text.
     Help(String),
     /// Actions to dispatch in turn; the first that is not a success ends
-    /// the sequence. One for an action command, several for a shortcut.
-    Invoke(Globals, Vec<Step>),
+    /// the sequence. One for an action command, several for a shortcut. A
+    /// shortcut that cannot do all of its steps on this build says where
+    /// it stops.
+    Invoke(Globals, Vec<Step>, Option<Stop>),
     /// A process command, with the words that follow it.
     Process(Globals, &'static str, Vec<String>),
     /// A shortcut with no action beneath it.
@@ -79,6 +98,8 @@ pub(crate) enum Parsed {
 #[derive(Debug, Clone)]
 pub(crate) struct Tree {
     faces: Vec<CommandFace>,
+    /// What each shortcut does on this build, by its word.
+    runs: BTreeMap<&'static str, ShortcutRun>,
 }
 
 fn malformed(message: impl Into<String>, fix: impl Into<String>) -> Failure {
@@ -111,9 +132,25 @@ fn nearest<'a>(wrong: &str, known: impl Iterator<Item = &'a str>) -> Vec<&'a str
 }
 
 impl Tree {
-    /// The tree of these command faces.
-    pub(crate) fn new(faces: Vec<CommandFace>) -> Self {
-        Self { faces }
+    /// The tree of a registry: its command faces, and what each shortcut
+    /// does with the actions the registry holds.
+    pub(crate) fn of(registry: &ActionRegistry) -> Self {
+        Self {
+            faces: command_faces(registry),
+            runs: SHORTCUTS
+                .iter()
+                .map(|shortcut| (shortcut.word, shortcut.on(registry)))
+                .collect(),
+        }
+    }
+
+    /// A tree with no command, for a failure met before a registry could
+    /// be built.
+    pub(crate) fn empty() -> Self {
+        Self {
+            faces: Vec::new(),
+            runs: BTreeMap::new(),
+        }
     }
 
     /// Every command face, in catalog order.
@@ -165,13 +202,15 @@ impl Tree {
             if help {
                 return Ok(Parsed::Help(help_action(face)));
             }
-            let input = parse_args(face, &face.args, None, &rest[2..])?;
+            let (input, stdin_for) = parse_args(face, &face.args, None, &rest[2..])?;
             return Ok(Parsed::Invoke(
                 globals,
                 vec![Step {
                     action: face.action.clone(),
                     input,
+                    stdin_for,
                 }],
+                None,
             ));
         }
         if let Some(shortcut) = SHORTCUTS.iter().find(|shortcut| shortcut.word == first) {
@@ -181,9 +220,22 @@ impl Tree {
             if shortcut.steps.is_empty() {
                 return Ok(Parsed::EmptyShortcut(globals, shortcut.word));
             }
+            // The steps this build can carry out: those before the first
+            // action that is not built.
+            let (steps, stop) = match self.runs.get(shortcut.word) {
+                Some(run) => (
+                    run.steps.as_slice(),
+                    run.stops_before.map(|before| Stop {
+                        before,
+                        note: run.note.clone().unwrap_or_default(),
+                    }),
+                ),
+                None => (shortcut.steps, None),
+            };
             return Ok(Parsed::Invoke(
                 globals,
-                self.shortcut_steps(shortcut, &rest[1..])?,
+                self.shortcut_steps(shortcut, steps, &rest[1..])?,
+                stop,
             ));
         }
         if let Some(word) = PROCESS_COMMANDS.iter().find(|word| *word == first) {
@@ -228,10 +280,15 @@ impl Tree {
     /// The actions of a shortcut, each with the shortcut's own argument in
     /// the field its step names. A shortcut of one action also takes that
     /// action's flags.
-    fn shortcut_steps(&self, shortcut: &Shortcut, rest: &[String]) -> Result<Vec<Step>, Failure> {
+    fn shortcut_steps(
+        &self,
+        shortcut: &Shortcut,
+        run: &[ShortcutStep],
+        rest: &[String],
+    ) -> Result<Vec<Step>, Failure> {
         let single = shortcut.steps.len() == 1;
         let mut steps = Vec::new();
-        for step in shortcut.steps {
+        for step in run {
             let Some(face) = self.face_of(step.action) else {
                 return Err(malformed(
                     format!(
@@ -241,7 +298,7 @@ impl Tree {
                     format!("Run `{PROGRAM} --help` for the commands."),
                 ));
             };
-            let input = if single {
+            let (input, stdin_for) = if single {
                 parse_args(face, &face.args, step.argument, rest)?
             } else {
                 // Several actions share one argument and nothing else.
@@ -269,11 +326,12 @@ impl Tree {
                         ));
                     }
                 }
-                Json::Object(input)
+                (Json::Object(input), None)
             };
             steps.push(Step {
                 action: face.action.clone(),
                 input,
+                stdin_for,
             });
         }
         Ok(steps)
@@ -325,11 +383,18 @@ impl Tree {
             return out;
         }
         out.push_str("\nIt runs, in order, stopping at the first that does not succeed:\n");
-        for step in shortcut.steps {
+        let built = self
+            .runs
+            .get(shortcut.word)
+            .map_or(shortcut.steps.len(), |run| run.steps.len());
+        for (at, step) in shortcut.steps.iter().enumerate() {
             let usage = self
                 .face_of(step.action)
                 .map_or_else(|| step.action.to_owned(), |face| face.usage.clone());
             out.push_str(&format!("  {usage}\n"));
+            if at == built {
+                out.push_str("      Not built yet: the shortcut stops before this step.\n");
+            }
         }
         out
     }
@@ -512,12 +577,16 @@ fn shown_name(arg: &CommandArg) -> String {
 /// Parses a command's own arguments against its face into the action's
 /// input. `shortcut_field` is the field a shortcut's bare argument fills,
 /// when it is not the face's own positional field.
+///
+/// A flag whose face names a field for standard input is not put into the
+/// input: the field is returned beside it, for the caller to fill from
+/// standard input.
 fn parse_args(
     face: &CommandFace,
     args: &[CommandArg],
     shortcut_field: Option<&str>,
     rest: &[String],
-) -> Result<Json, Failure> {
+) -> Result<(Json, Option<String>), Failure> {
     let usage = || format!("Usage: {}", face.usage);
     let by_flag: BTreeMap<&str, &CommandArg> = args
         .iter()
@@ -529,6 +598,7 @@ fn parse_args(
         .find(|arg| arg.positional)
         .or_else(|| shortcut_field.and_then(|field| args.iter().find(|arg| arg.field == field)));
     let mut input = Map::new();
+    let mut from_stdin: Option<&CommandArg> = None;
     let mut given_positional = false;
     let mut literal = false;
     let mut at = 0;
@@ -597,6 +667,16 @@ fn parse_args(
                 value_of(arg, written)?
             }
         };
+        if arg.stdin_for.is_some() {
+            // The flag says where the value comes from, and is not sent.
+            if from_stdin.is_some() {
+                return Err(malformed(format!("`{name}` was given twice."), usage()));
+            }
+            if value == Json::Bool(true) {
+                from_stdin = Some(arg);
+            }
+            continue;
+        }
         if arg.ty == "list" {
             let list = input
                 .entry(arg.field.clone())
@@ -608,10 +688,26 @@ fn parse_args(
             return Err(malformed(format!("`{name}` was given twice."), usage()));
         }
     }
-    if let Some(missing) = args
-        .iter()
-        .find(|arg| arg.required && !input.contains_key(&arg.field))
+    let stdin_for = from_stdin.and_then(|arg| arg.stdin_for.clone());
+    if let (Some(flag), Some(field)) = (from_stdin, &stdin_for)
+        && input.contains_key(field)
     {
+        // Never the value itself: only the names of the two arguments.
+        let other = args
+            .iter()
+            .find(|arg| arg.field == *field)
+            .map_or_else(|| field.clone(), shown_name);
+        return Err(malformed(
+            format!(
+                "`{}` reads `{field}` from standard input, and `{other}` was given as well.",
+                flag.flag
+            ),
+            format!("Give `{}` or `{other}`, not both.", flag.flag),
+        ));
+    }
+    if let Some(missing) = args.iter().find(|arg| {
+        arg.required && !input.contains_key(&arg.field) && stdin_for.as_ref() != Some(&arg.field)
+    }) {
         return Err(malformed(
             format!(
                 "`{} {}` needs {}.",
@@ -622,7 +718,7 @@ fn parse_args(
             usage(),
         ));
     }
-    Ok(Json::Object(input))
+    Ok((Json::Object(input), stdin_for))
 }
 
 /// The command line that asks for `action` with `input`, for the `next`

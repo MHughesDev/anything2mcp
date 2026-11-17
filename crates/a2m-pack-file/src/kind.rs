@@ -11,6 +11,7 @@ use crate::model::{
     DOCUMENT_KIND, DocumentSpec, FieldSpec, Format, Layout, PlaceSpec, RecordSpec, SECTION_FORMAT,
     SURFACE_KIND, Section,
 };
+use crate::place::is_one_name;
 
 /// A document that states something the pack cannot carry out.
 pub const DOCUMENT_INVALID: LintCode = LintCode::fixed("file.document_invalid");
@@ -31,6 +32,7 @@ fn field_schema() -> JsonSchema {
         .required("type", JsonSchema::field_type())
         .optional("writable", JsonSchema::bool())
         .optional("formula", JsonSchema::bool())
+        .optional("may_begin_formula", JsonSchema::bool())
 }
 
 fn record_schema() -> JsonSchema {
@@ -110,16 +112,6 @@ impl Default for DocumentKind {
 
 fn invalid(at: &Located<Doc>, message: impl Into<String>, fix: &str) -> Diagnostic {
     Diagnostic::error(DOCUMENT_INVALID, Stage::Lower, &at.at, message, fix)
-}
-
-/// Whether the text is one file name: no folder, no step out, no drive, no
-/// placeholder.
-fn is_one_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains(['/', '\\', ':', '{', '}', '*', '?'])
-        && !name.chars().any(char::is_control)
 }
 
 fn texts(doc: Option<&Located<Doc>>) -> Option<Vec<String>> {
@@ -209,6 +201,15 @@ fn record_of(
         let path = texts(field.get("path")).unwrap_or_default();
         let formula = field.get("formula").and_then(Located::as_bool) == Some(true);
         let writable = field.get("writable").and_then(Located::as_bool) == Some(true);
+        let may_begin_formula =
+            field.get("may_begin_formula").and_then(Located::as_bool) == Some(true);
+        if may_begin_formula && format != Format::Delimited {
+            problems.push(invalid(
+                field,
+                "`may_begin_formula` is about delimited text, which a spreadsheet program opens as cells.",
+                "Remove `may_begin_formula`.",
+            ));
+        }
         if columns && (header.is_none() || !path.is_empty()) {
             problems.push(invalid(
                 field,
@@ -250,6 +251,7 @@ fn record_of(
             field_type: u32::try_from(field_type.index.get()).unwrap_or(u32::MAX),
             writable,
             formula,
+            may_begin_formula,
         });
     }
     if fields.is_empty() {
@@ -392,7 +394,7 @@ fn document_of(
             headers: list("headers"),
             keys: list("keys"),
         },
-        may_be_open: doc.get("may_be_open").and_then(Located::as_bool) == Some(true),
+        may_be_open: doc.get("may_be_open").and_then(Located::as_bool),
         lock_sibling,
         records,
     })

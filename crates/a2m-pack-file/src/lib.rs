@@ -26,6 +26,7 @@ mod kind;
 mod lower;
 mod model;
 mod open;
+mod place;
 mod save;
 
 use std::sync::Arc;
@@ -38,7 +39,8 @@ pub use discover::{FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFou
 pub use driver::FileLimits;
 pub use kind::{DOCUMENT_INVALID, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
-    BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_WITHOUT_SIGNAL, STANDS_UNDECLARED,
+    BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_UNDECLARED, OPEN_WITHOUT_SIGNAL,
+    STANDS_UNDECLARED,
 };
 pub use model::{
     BEFORE_DIGEST, DEFAULT_ROOT, DOCUMENT_KIND, FILE_DIGEST, Format, INTENDED_DIGEST, MODE, PACK,

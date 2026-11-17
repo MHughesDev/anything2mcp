@@ -61,6 +61,11 @@ level = "error"
 summary = "A write to a file beneath an application is irreversible and has the owner's word in the authorization record."
 
 [[lint_rules]]
+code = "file.open_undeclared"
+level = "error"
+summary = "A binding that writes a file names a document that says whether an application may hold the file open."
+
+[[lint_rules]]
 code = "file.open_without_signal"
 level = "error"
 summary = "A binding that writes a file an application may hold open declares the sign that it does."
@@ -137,6 +142,12 @@ code = "changed_since_preview"
 [[failure_codes]]
 class = "input"
 code = "payload_unreadable"
+
+# Text that a spreadsheet program would run as a formula, on its way into
+# delimited text.
+[[failure_codes]]
+class = "input"
+code = "value_begins_formula"
 
 # A key or a field value the field type's own rule refuses, as the
 # expression library reports it.

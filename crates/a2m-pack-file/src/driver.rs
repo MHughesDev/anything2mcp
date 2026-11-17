@@ -3,9 +3,10 @@
 //! `set` builds the new bytes and proves nothing else changed; `save`
 //! replaces the file in one step; `read` gives the values found.
 //!
-//! The driver resolves no path. The surface's folder and every file in it
-//! come from the roots the pack was handed when it registered, through the
-//! one check that makes a `CheckedPath`.
+//! The driver resolves no path. The surface's folder comes from the roots
+//! the pack was handed when it registered, through the one check that makes
+//! a `CheckedPath`; a file is one name in that folder, and is the regular
+//! file under that name itself, never what a link at the name points to.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,21 +16,22 @@ use a2m_core::{
 };
 use a2m_expr::Normalizer;
 use a2m_provider::{
-    Access, BoxFuture, CheckedPath, Cleanup, Driver, DriverHealth, Observed, PrepareContext,
-    Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, BoxFuture, Cleanup, Driver, DriverHealth, Observed, PrepareContext, Prepared, RootName,
+    Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
-use crate::edit::{self, Meant, Patch};
+use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
-    BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST, Format,
-    INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec, TRUNCATED, field_arg,
-    key_arg,
+    BEFORE_DIGEST, Change, DEFAULT_ROOT, DOCUMENT_KIND, DocumentSpec, Expect, FILE_DIGEST,
+    FieldSpec, Format, INTENDED_DIGEST, PACK, ROWS, RecordSpec, SURFACE_KIND, Section, StepSpec,
+    TRUNCATED, field_arg, key_arg,
 };
 use crate::open::{self, Content, OpenFile, RowAt, Table};
-use crate::save::{self, SaveJob};
+use crate::place::{Folder, Named};
+use crate::save::{self, Made, SaveJob};
 
 /// What the pack may read: the limits of `packs.file`.
 #[derive(Debug, Clone, Copy)]
@@ -106,7 +108,7 @@ struct Found {
 /// The file a binding is working on.
 struct Current {
     document: String,
-    path: CheckedPath,
+    path: Named,
     open: OpenFile,
     found: Option<Found>,
     /// The new bytes, once `set` has built and checked them.
@@ -117,11 +119,12 @@ struct Current {
 
 /// What `prepare` acquired.
 struct State {
-    folder: CheckedPath,
+    folder: Folder,
     documents: BTreeMap<String, Loaded>,
     run: String,
     current: Option<Current>,
-    temporary: Vec<CheckedPath>,
+    /// Temporary files this driver made and may not have removed.
+    temporary: Vec<Made>,
 }
 
 /// The fields a `file` surface adds beside its folder.
@@ -291,9 +294,10 @@ fn delimiter_of(spec: &DocumentSpec) -> u8 {
         .unwrap_or(b',')
 }
 
-/// The token of a temporary file's name: sixteen characters from the
-/// digest of the record's idempotency token, so that the name is fixed for
-/// the record and holds nothing a path could misread.
+/// The token in a temporary file's name: sixteen characters from the
+/// digest of the record's idempotency token, so that the name says which
+/// record it was for and holds nothing a path could misread. The name is
+/// not made of the token alone: see `save`.
 fn token(stamp: &str) -> String {
     Digest::of(stamp.as_bytes())
         .to_string()
@@ -303,7 +307,7 @@ fn token(stamp: &str) -> String {
 }
 
 impl FileDriver {
-    fn folder(&self, surface: &SurfaceRef) -> Result<CheckedPath, StepFailure> {
+    fn folder(&self, surface: &SurfaceRef) -> Result<Folder, StepFailure> {
         let payload = &surface.surface.payload;
         let fields: SurfaceFields = if payload.is_none() {
             SurfaceFields::default()
@@ -324,9 +328,14 @@ impl FileDriver {
         };
         // A root the pack may write gives a folder it may write; a root it
         // may only read gives one it may only read.
-        under(Access::Write)
+        let folder = under(Access::Write)
             .or_else(|_| under(Access::Read))
-            .map_err(StepFailure::not_sent)
+            .map_err(StepFailure::not_sent)?;
+        let root = self
+            .roots
+            .folder(&root, Access::Read)
+            .map_err(StepFailure::not_sent)?;
+        Ok(Folder::new(folder, &root))
     }
 
     async fn open(
@@ -340,23 +349,28 @@ impl FileDriver {
             .documents
             .get(document)
             .ok_or_else(|| plan_unreadable("a step names a document the surface does not have"))?;
-        let path = state
-            .folder
-            .join(&loaded.spec.file)
-            .map_err(StepFailure::not_sent)?;
-        if for_write
-            && let Some(sibling) = &loaded.spec.lock_sibling
-            && state
-                .folder
-                .join(sibling)
-                .map_err(StepFailure::not_sent)?
-                .exists()
-        {
-            return Err(StepFailure::not_sent(open::locked()));
+        if for_write {
+            // What the compiler refuses, the driver refuses too.
+            may_be_written(&loaded.spec)?;
         }
         let max_bytes = self.limits.max_bytes;
-        let reading = path.clone();
-        let bytes = tokio::task::spawn_blocking(move || open::read_file(&reading, max_bytes))
+        let folder = state.folder.clone();
+        let name = loaded.spec.file.clone();
+        let sibling = loaded.spec.lock_sibling.clone().filter(|_| for_write);
+        let read = move || {
+            let path = folder.file(&name)?;
+            if for_write {
+                folder.reached_by_no_link()?;
+            }
+            if let Some(sibling) = sibling
+                && folder.holds(&sibling)?
+            {
+                return Err(StepFailure::not_sent(open::locked()));
+            }
+            let bytes = open::read_file(&path, max_bytes)?;
+            Ok((path, bytes))
+        };
+        let (path, bytes) = tokio::task::spawn_blocking(read)
             .await
             .map_err(|_| StepFailure::not_sent(open::unavailable("could not be read")))??;
         let opened = open::parse(bytes, &loaded.spec, &self.limits.parse)?;
@@ -375,6 +389,22 @@ impl FileDriver {
             for_reconcile: Values::new().with(FILE_DIGEST, digest.to_string()),
             ..Observed::default()
         })
+    }
+}
+
+/// Whether a write to the document's file may begin: the document says
+/// whether an application may hold the file open, and, where one may, names
+/// the sign that it does. A plan that lacks either was not compiled by this
+/// pack's rules, and its write is refused here as it is there.
+fn may_be_written(spec: &DocumentSpec) -> Result<(), StepFailure> {
+    match (spec.may_be_open, &spec.lock_sibling) {
+        (None, _) => Err(plan_unreadable(
+            "a write to a document that does not say whether an application may hold its file open",
+        )),
+        (Some(true), None) => Err(plan_unreadable(
+            "a write to a document whose file may be held open, with no lock signal declared",
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -519,6 +549,41 @@ fn intended_values(
     Ok(values)
 }
 
+/// Refuses text that a spreadsheet program would run as a formula when a
+/// person opens the delimited file. The value is never changed to make it
+/// safe: what is read back must be what was written. A field whose document
+/// says `may_begin_formula: true` may begin with a sign; nothing may begin
+/// with a tab or a line break. The message names the field and never the
+/// value.
+fn formula_guard(field: &FieldSpec, value: &Value, text: &str) -> Result<(), StepFailure> {
+    // A number is spelled by the pack itself: digits, a mark, and a sign.
+    if matches!(value, Value::Int(_) | Value::Decimal(_)) {
+        return Ok(());
+    }
+    let refused = |how: &str, next: &str| {
+        Err(StepFailure::not_sent(codes::failure(
+            codes::VALUE_BEGINS_FORMULA,
+            format!(
+                "The value for the field `{}` begins with {how}, so a spreadsheet program that opens the file would not keep it as text. Nothing was written.",
+                field.name
+            ),
+            next,
+        )))
+    };
+    match edit::leads_as_formula(text) {
+        None => Ok(()),
+        Some(Leads::Sign) if field.may_begin_formula => Ok(()),
+        Some(Leads::Sign) => refused(
+            "`=`, `+`, `-`, or `@`",
+            "Give a value that begins otherwise. If the column is free text that may begin so, and no spreadsheet program opens the file, mark the field `may_begin_formula: true` in the document.",
+        ),
+        Some(Leads::Control) => refused(
+            "a tab or a line break",
+            "Give a value that begins with neither.",
+        ),
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one change after another, each a few lines; the order is the algorithm
 fn set(
     loaded: &Loaded,
@@ -589,6 +654,7 @@ fn set(
                         cells.push((line, *column));
                     }
                     let text = edit::spell(intended, &typing.plan)?.unwrap_or_default();
+                    formula_guard(field, intended, &text)?;
                     edit::csv_field(&text, existing.first() == Some(&b'"'), delimiter)
                 };
                 patches.push(Patch::over(span, literal));
@@ -665,6 +731,7 @@ fn set(
                             table.columns.get(*position),
                             edit::spell(value, &typing.plan)?,
                         ) {
+                            formula_guard(field, value, &text)?;
                             texts.push((*column, text));
                         }
                     }
@@ -755,7 +822,8 @@ impl FileDriver {
         let (Some(bytes), Some(intended)) = (current.pending.take(), current.intended) else {
             return Err(out_of_order("a save with nothing set"));
         };
-        if current.path.access() != Access::Write {
+        may_be_written(&loaded.spec)?;
+        if current.path.folder().access() != Access::Write {
             return Err(StepFailure::not_sent(Failure::new(
                 FailureClass::Policy,
                 a2m_provider::codes::EFFECT_NOT_DECLARED,
@@ -764,19 +832,11 @@ impl FileDriver {
             )));
         }
         let stamp = input.stamp.unwrap_or(&state.run);
-        let temporary = state
-            .folder
-            .join(&format!("{}.a2m-{}.tmp", loaded.spec.file, token(stamp)))
-            .map_err(StepFailure::not_sent)?;
-        let lock_signal = match &loaded.spec.lock_sibling {
-            Some(sibling) => Some(state.folder.join(sibling).map_err(StepFailure::not_sent)?),
-            None => None,
-        };
-        state.temporary.push(temporary.clone());
         let job = SaveJob {
             target: current.path.clone(),
-            temporary,
-            lock_signal,
+            name: loaded.spec.file.clone(),
+            token: token(stamp),
+            lock_signal: loaded.spec.lock_sibling.clone(),
             bytes,
             before: current.open.digest,
             intended,
@@ -784,13 +844,15 @@ impl FileDriver {
         };
         // The replace is never left half asked: the work runs to its end on
         // its own thread, and a lost answer is a write whose fate is unknown.
-        tokio::task::spawn_blocking(move || save::save(&job))
+        let saved = tokio::task::spawn_blocking(move || save::save(&job))
             .await
             .map_err(|_| {
                 StepFailure::unknown(open::unavailable(
                     "was being replaced when the work stopped",
                 ))
-            })??;
+            })?;
+        state.temporary.extend(saved.left);
+        saved.outcome?;
         current.saved = true;
         Ok(Observed::default())
     }
@@ -801,7 +863,7 @@ impl FileDriver {
             return Err(out_of_order("a confirm with nothing saved"));
         };
         let (path, max_bytes) = (current.path.clone(), self.limits.max_bytes);
-        let now = tokio::task::spawn_blocking(move || save::digest_at(&path, max_bytes))
+        let now = tokio::task::spawn_blocking(move || path.digest(max_bytes))
             .await
             .ok()
             .flatten();
@@ -925,13 +987,13 @@ impl Driver for FileDriver {
 
     fn release<'a>(&'a self, prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
         Box::pin(async move {
-            // Only what this driver made: the temporary files it named.
+            // Only what this driver made: a temporary file is removed when
+            // what is at its name is still, by its identity, the file a
+            // save of this driver made.
             if let Ok(state) = prepared.into_state::<State>() {
                 let _ = tokio::task::spawn_blocking(move || {
                     for temporary in &state.temporary {
-                        if temporary.exists() {
-                            let _ = std::fs::remove_file(temporary.as_path());
-                        }
+                        temporary.remove();
                     }
                 })
                 .await;

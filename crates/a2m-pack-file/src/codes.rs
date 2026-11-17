@@ -34,6 +34,9 @@ pub const FILE_LOCKED: FailureCode = FailureCode::fixed("file_locked");
 pub const STORAGE_FULL: FailureCode = FailureCode::fixed("storage_full");
 /// The file changed between the read and the replace.
 pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
+/// A value for delimited text begins with a character that makes a
+/// spreadsheet program run the text as a formula.
+pub const VALUE_BEGINS_FORMULA: FailureCode = FailureCode::fixed("value_begins_formula");
 /// The plan's section for this pack does not decode.
 pub const PAYLOAD_UNREADABLE: FailureCode = FailureCode::PAYLOAD_UNREADABLE;
 
@@ -55,6 +58,7 @@ pub const ALL: &[(FailureClass, FailureCode)] = &[
     (FailureClass::Busy, STORAGE_FULL),
     (FailureClass::Stale, CHANGED_SINCE_PREVIEW),
     (FailureClass::Input, PAYLOAD_UNREADABLE),
+    (FailureClass::Input, VALUE_BEGINS_FORMULA),
 ];
 
 fn class_of(code: &FailureCode) -> FailureClass {

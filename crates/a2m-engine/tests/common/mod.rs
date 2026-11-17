@@ -35,8 +35,8 @@ use a2m_engine::{
 };
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, Whitespace};
 use a2m_ledger::{
-    Acted, ActedToken, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld, NewBlob,
-    NewRun, Opened, Owner, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
+    Acted, ActedToken, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld, LockRow,
+    NewBlob, NewRun, Opened, Owner, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
     RetentionClass, RunRow, Settled, Store, StoreConfig, ToolKind, WriteClearance,
 };
 use a2m_provider::{
@@ -135,7 +135,7 @@ kind = "pack"
 name = "app_json"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
 rank = 40
 session_reads = 4
 
@@ -143,7 +143,7 @@ session_reads = 4
 name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
 rank = 50
 session_reads = 4
 
@@ -192,6 +192,22 @@ code = "example_unexpected"
 class = "possible_commit"
 code = "ambiguous_match"
 
+[[failure_codes]]
+class = "policy"
+code = "example_too_large"
+
+[[failure_codes]]
+class = "input"
+code = "example_bad_shape"
+
+[[failure_codes]]
+class = "stale"
+code = "example_gone"
+
+[[failure_codes]]
+class = "busy"
+code = "example_busy"
+
 [effects]
 network = "surfaces"
 sessions = ["json_app"]
@@ -231,6 +247,9 @@ pub struct Hooks {
     pub prepare_hangs: AtomicBool,
     /// The next lookups find nothing, this many times, whatever is stored.
     pub lookup_lags: AtomicU32,
+    /// The next step of this kind is carried out, and then fails with this
+    /// class and code, as a failure the system answered with.
+    pub fails_after: Mutex<Option<(String, FailureClass, &'static str)>>,
 }
 
 /// What one step was given.
@@ -287,10 +306,28 @@ impl Hooks {
 struct AppState {
     base: String,
     http: reqwest::Client,
-    /// The pack's half of "cannot write": outside a posture that may
-    /// write, the driver sends nothing that changes the system, whatever
-    /// the step says of itself.
-    read_only: bool,
+    /// The posture the context was prepared in.
+    posture: Posture,
+}
+
+impl AppState {
+    /// The pack's half of "cannot write". Live, the driver sends what a
+    /// step asks for. Where a declared test record may be written, it
+    /// sends a step that changes the system only when the step is the one
+    /// that commits, which the handle has checked against the intent
+    /// token of that record; a step that changes the system and says it
+    /// commits nothing is refused there too. Anywhere else it sends
+    /// nothing that changes the system, whatever the step says of itself.
+    fn refuses(&self, step: &Step) -> bool {
+        match self.posture {
+            Posture::Live => false,
+            Posture::Sandbox { test_records: true } => !step.commits,
+            Posture::Sandbox {
+                test_records: false,
+            }
+            | Posture::Discovery => true,
+        }
+    }
 }
 
 fn read_only() -> StepFailure {
@@ -434,10 +471,7 @@ impl Driver for AppDriver {
             Ok(Prepared::new(AppState {
                 base: cx.surface.surface.address.clone(),
                 http: reqwest::Client::new(),
-                read_only: !matches!(
-                    cx.posture,
-                    Posture::Live | Posture::Sandbox { test_records: true }
-                ),
+                posture: cx.posture,
             }))
         })
     }
@@ -494,7 +528,18 @@ impl Driver for AppDriver {
                 .state::<AppState>()
                 .ok_or_else(|| StepFailure::not_sent(unavailable("The driver lost its state.")))?;
             let args = input.args;
-            match step.kind.as_str() {
+            let fails_after = {
+                let mut planted = hooks.fails_after.lock().unwrap();
+                if planted
+                    .as_ref()
+                    .is_some_and(|(kind, _, _)| kind == step.kind.as_str())
+                {
+                    planted.take()
+                } else {
+                    None
+                }
+            };
+            let done = match step.kind.as_str() {
                 "get_order" => {
                     let order = text(args, "order_id")?;
                     let (status, body) = self.get(state, &format!("/api/orders/{order}")).await?;
@@ -524,6 +569,24 @@ impl Driver for AppDriver {
                         ..Observed::default()
                     }))
                 }
+                // A confirmation: the record is there after the save. It
+                // is no lookup, so a record that is not there is the
+                // system's own answer that it took nothing.
+                "check_item" => {
+                    let order = text(args, "order_id")?;
+                    let item = text(args, "item_code")?;
+                    let path = format!("/api/orders/{order}/items/{item}");
+                    let (status, _) = self.get(state, &path).await?;
+                    if status == 200 {
+                        Ok(StepOutcome::Done(Observed::default()))
+                    } else {
+                        Err(StepFailure::answered(failure(
+                            FailureClass::Rejected,
+                            "example_refused",
+                            "The application does not hold the line item.",
+                        )))
+                    }
+                }
                 "get_item" => {
                     let order = text(args, "order_id")?;
                     let item = text(args, "item_code")?;
@@ -543,7 +606,7 @@ impl Driver for AppDriver {
                     }
                 }
                 "put_item" => {
-                    if state.read_only {
+                    if state.refuses(step) {
                         return Err(read_only());
                     }
                     if hooks.fail_unsent.swap(false, Ordering::SeqCst) {
@@ -624,7 +687,7 @@ impl Driver for AppDriver {
                 // description of its own, the record's stamp is written
                 // into that field.
                 "add_item" => {
-                    if state.read_only {
+                    if state.refuses(step) {
                         return Err(read_only());
                     }
                     let order = text(args, "order_id")?;
@@ -729,6 +792,16 @@ impl Driver for AppDriver {
                     "example_unexpected",
                     "The driver has no such step.",
                 ))),
+            };
+            match (done, fails_after) {
+                // The step was carried out, and the driver did not accept
+                // what came back.
+                (Ok(_), Some((_, class, code))) => Err(StepFailure::answered(failure(
+                    class,
+                    code,
+                    "The driver did not accept the answer to a step it had sent.",
+                ))),
+                (done, _) => done,
             }
         })
     }
@@ -786,7 +859,17 @@ impl Discoverer for WritingDiscoverer {
             .level(EvidenceLevel::Discovered)
             .build()
             .unwrap();
-            out.found(finding)?;
+            out.found(finding.clone())?;
+            // A discoverer that floods: as many more findings as the
+            // job's focus asks for.
+            let flood = scope
+                .focus
+                .get("flood")
+                .and_then(Value::as_int)
+                .unwrap_or(0);
+            for _ in 0..flood {
+                out.found(finding.clone())?;
+            }
             if self.hangs.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
@@ -868,7 +951,7 @@ pub struct PlanBuilder {
     plan: Plan,
 }
 
-fn expr(plan: &mut Plan, source: &str, result: ValueType) -> ExprIndex {
+pub fn expr(plan: &mut Plan, source: &str, result: ValueType) -> ExprIndex {
     plan.expressions.push(PlanExpr {
         source: source.to_owned(),
         result,
@@ -1685,6 +1768,8 @@ pub struct StoreControl {
     pub sent: AtomicBool,
     /// What was recorded before each record's commit point.
     pub before_commit: Mutex<Vec<(RecordRef, BlobRef)>>,
+    /// Every piece of evidence the engine handed over, as it was given.
+    pub evidence_given: Mutex<Vec<Vec<u8>>>,
 }
 
 impl StoreControl {
@@ -2046,6 +2131,7 @@ impl Control for StoreControl {
                     "The evidence store is full.",
                 ));
             }
+            self.evidence_given.lock().unwrap().push(blob.bytes.clone());
             self.store
                 .blobs()
                 .put(NewBlob {
@@ -2081,6 +2167,8 @@ pub struct Scene {
     pub source: Mutex<Option<Arc<Vec<u8>>>>,
     /// The environment the next jobs name; the target's default when none.
     pub environment: Mutex<Option<Environment>>,
+    /// The vault whose redactor the engine and the registry were given.
+    pub vault: Arc<Vault>,
     runs: AtomicU64,
     _folder: Folder,
 }
@@ -2212,6 +2300,7 @@ impl Scene {
             modes: Mutex::new(Vec::new()),
             sent: AtomicBool::new(false),
             before_commit: Mutex::new(Vec::new()),
+            evidence_given: Mutex::new(Vec::new()),
         });
         Self {
             app,
@@ -2227,6 +2316,7 @@ impl Scene {
             clock,
             source: Mutex::new(None),
             environment: Mutex::new(None),
+            vault,
             runs: AtomicU64::new(0),
             _folder: folder,
         }
@@ -2301,6 +2391,16 @@ impl Scene {
         self.control
             .store
             .read(move |tx| tx.ledger().records(run))
+            .await
+            .unwrap()
+    }
+
+    /// The record locks the run holds, as the ledger has them.
+    pub async fn locks(&self) -> Vec<LockRow> {
+        let run = self.run();
+        self.control
+            .store
+            .read(move |tx| tx.ledger().locks(run))
             .await
             .unwrap()
     }
@@ -2427,7 +2527,12 @@ impl Scene {
 
     /// Runs a discovery job on a surface of the plan.
     pub async fn discover(&self, surface: &str) -> JobOutcome {
-        let mut job = self.job(JobKind::Discover, ORDER_GET, Values::new()).await;
+        self.discover_with(surface, Values::new()).await
+    }
+
+    /// Runs a discovery job with a focus: what the job's input carries.
+    pub async fn discover_with(&self, surface: &str, focus: Values) -> JobOutcome {
+        let mut job = self.job(JobKind::Discover, ORDER_GET, focus).await;
         job.tool = ToolRef::Surface(SurfaceName::new(surface).unwrap());
         self.engine.run_job(&job, self.control.as_ref()).await
     }

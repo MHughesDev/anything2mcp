@@ -23,7 +23,7 @@ use a2m_actions::{
     BoxFuture, BuiltInToolset, Caller, CloseReason, ErrorBody, ExitClass, FrontDoor, Kernel, PersonSurface,
     REST_PREFIX, Request, Response, Settings, codes,
 };
-use a2m_api::{ApiSettings, EXIT_CLASS_HEADER, ProjectFolder};
+use a2m_api::{ApiSettings, EXIT_CLASS_HEADER};
 use a2m_core::{Failure, FailureClass, Version};
 use a2m_local::{
     Channel, ChannelControl, ClientLabel, IdleHolds, IdlePolicy, LocalSurface, OsUser, Peer,
@@ -175,7 +175,10 @@ async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -
     let named = text(request.headers(), wire::PROJECT_HEADER).map(wire::decode_path);
     let project = match named {
         None => None,
-        Some(Some(folder)) => Some(ProjectFolder(folder)),
+        // The one type both doors read (decision 0132): the REST router and
+        // each MCP endpoint behind this layer hand it to the dispatcher,
+        // which checks the folder before any handler sees it.
+        Some(Some(folder)) => Some(a2m_actions::ProjectFolder::new(folder)),
         Some(None) => {
             return render(&refused(
                 "",
