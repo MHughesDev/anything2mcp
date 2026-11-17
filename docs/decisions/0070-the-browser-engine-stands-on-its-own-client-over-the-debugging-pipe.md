@@ -48,7 +48,7 @@ Never a search of the path, never an environment variable outside the settings l
 | | Our own client | The best existing crate, `chromiumoxide` |
 | --- | --- | --- |
 | The pipe | Yes | No: a loopback port and a WebSocket |
-| Our code for the protocol and the launch | 153 lines and 95 lines | None |
+| Our code for the protocol and the launch | 166 lines and 163 lines | None |
 | Crates added | 7 | 44 |
 | Build time added | 3 s | 111 s |
 | Start to first value; a read on a warm page | 0.35 to 0.40 s; 0.2 ms | The same |

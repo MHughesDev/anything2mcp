@@ -14,7 +14,7 @@ What does the browser engine stand on?
 
 ## Answer
 
-(a). A client of our own is 153 lines, adds seven small crates, and is as fast as the best existing crate, because the browser is the cost. No existing crate that passes the product's rules can use the pipe on all three operating systems. Each one that came close either listens on a loopback port, hides that it is automation by default, sends usage data by default, downloads a browser by itself, or carries a licence the closed list refuses. What an existing crate would save is the part that is small. The hard part, locating by meaning and waiting on events, none of them does the way the design needs, so it is ours to write whichever base is chosen.
+(a). A client of our own is 166 lines, adds seven small crates, and is as fast as the best existing crate, because the browser is the cost. No existing crate that passes the product's rules can use the pipe on all three operating systems. Each one that came close either listens on a loopback port, hides that it is automation by default, sends usage data by default, downloads a browser by itself, or carries a licence the closed list refuses. What an existing crate would save is the part that is small. The hard part, locating by meaning and waiting on events, none of them does the way the design needs, so it is ours to write whichever base is chosen.
 
 ## The candidates
 
@@ -45,13 +45,13 @@ How each fact was established:
 
 ## What was measured
 
-Three programs do the same steps against the test application's form for one line item: start the browser with a data directory the program owns, connect, open the page, wait for a named condition, read one field, read it 200 more times, take an accessibility-tree snapshot, intercept the save the page sends and fail it, close, and then start again and kill the browser while a call is pending. The spike's README lists the steps. Three runs each, interleaved, on four cores shared with other builds, so the times carry noise of tens of milliseconds.
+Three programs do the same steps against the test application's form for one line item: start the browser with a data directory the program owns, connect, open the page, wait for a named condition, read one field, read it 200 more times, take an accessibility-tree snapshot, intercept the save the page sends and fail it, close, and then start again and kill the browser while a call is pending. The spike's README lists the steps. Three runs each, interleaved, on four cores shared with other builds, so the times carry noise of tens of milliseconds. Lines are lines of code after formatting, without comments and blank lines.
 
 | Measure | (a) Our own client, pipe | (b) `chromiumoxide`, port | (c) `thirtyfour`, driver program |
 | --- | --- | --- | --- |
-| Our code: protocol client | 153 lines | 0 | 0 |
-| Our code: starting the browser with the pipe | 37 lines for POSIX, 58 for Windows | 0 | 0 |
-| Our code: the steps | About 175 lines, plus 80 for three extra measurements | 110 lines | 52 lines, and it stops at step 3 |
+| Our code: protocol client | 166 lines | 0 | 0 |
+| Our code: starting the browser with the pipe | 163 lines: 60 for POSIX, both ways; 66 for Windows; the rest shared | 0 | 0 |
+| Our code: the steps | 265 lines, plus 93 for three extra measurements | 170 lines | 69 lines, and it stops at step 3 |
 | Crates added | 7 | 44 | 30 |
 | Clean release build, beyond the harness's 21 s | 3 s | 111 s, of which its generated protocol types take 55 s and the crate itself 45 s | 13 s |
 | Start of the browser program to the first field value | 345, 359, 400 ms | 311, 351, 364 ms | Not reached |
