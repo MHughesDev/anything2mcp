@@ -24,7 +24,7 @@ Encryption is layered, so that most keys never need to leave the machine and rot
 
 - Data is encrypted with a standard authenticated cipher from a vetted Rust library. Anything2MCP writes no cryptography of its own.
 - Each ciphertext is bound to what it is: its identifier, owner, and kind are authenticated with it, so one encrypted item cannot be swapped for another.
-- The specific library and cipher are chosen in Phase 2 and recorded as a decision.
+- The cipher is XChaCha20-Poly1305, from the RustCrypto libraries ([decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md)).
 
 **The vault seals and opens, and stores nothing itself.** Sealing returns a sealed item, and the caller keeps it: the ledger keeps blobs and ledger values, and the session keeper keeps saved session state and credentials through the ledger. The data key travels inside the sealed item, wrapped. The wrapped workspace and owner keys must persist, and the vault sits below the store, so the vault defines a small interface for keeping them, `KeyRecords`, which the store implements over a table of its own ([`a2m-vault`](../../architecture/crates/a2m-vault.md)). A key record is inserted once and replaced only by rotation, never overwritten by accident.
 
@@ -58,7 +58,7 @@ A session signed in as a person may be used only by that person or an agent acti
 
 ## Naming without revealing
 
-Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The key is per workspace and is kept by the vault. The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and telemetry can ask for one without depending on each other or on the vault.
+Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The vault keeps one digest key per installation, wrapped by the root, and derives each workspace's key from it, so nothing can be matched across workspaces ([decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md)). The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and telemetry can ask for one without depending on each other or on the vault.
 
 ## Rotation
 
@@ -89,7 +89,6 @@ Both are worth doing for high-assurance deployments and neither blocks the first
 
 ## Open points
 
-- The cipher and library, and whether locking secret memory is practical on each operating system.
+- Whether locking secret memory is practical on each operating system. It is not done: keys and plain items are wiped when dropped.
 - How the Windows credential store behaves for a service running under its own account.
 - Research brief 5 covers these.
-- Whether the keyed digest is part of the redactor's interface in `a2m-core` or a second interface beside it.

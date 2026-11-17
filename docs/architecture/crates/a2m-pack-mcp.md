@@ -133,7 +133,7 @@ What the kernel gives this crate:
 | 1 | A driver, no retries inside | `McpDriver` |
 | 2 | Read-back for every write | The mapped read tool; without one, `irreversible` |
 | 3 | Each identity strategy | `natural`: the read tool by key. `stamped`: a field the tool accepts and its read or list tool returns. `find`: a list or search tool with `settle`. `composite` where the read tool takes a parent and a child key. `none`: `irreversible` |
-| 4 | A test stand | A small MCP server to be added under `targets/`, over the example data, with the control interface: inspect, count writes, change a tool's definition, announce a list change, drop the connection after a commit, return text with instructions aimed at an agent |
+| 4 | A test stand | A small MCP server at `targets/example-mcp`, over the example data, with the control interface: inspect, count writes, change a tool's definition, announce a list change, drop the connection after a commit, return text with instructions aimed at an agent |
 | 5 | A discoverer | `mcp_tools`. Listing tools is a read the protocol defines; it never calls one |
 | 6 | Failures mapped | Below |
 | 7 | Effects and hazards | Starts a process: the mapped program, by path and digest. Network: the mapped server address. Holds a session. The upstream's own effects are `declared`. Hazards come from operations |
@@ -183,7 +183,7 @@ What the kernel gives this crate:
 
 ## Build order
 
-1. The test stand, with its control interface.
+1. Done: the test stand, with its control interface, at `targets/example-mcp`.
 2. Package 8.2: the mapping schema, `McpDriver` for reads against a local stand program, change detection.
 3. Writes with read-back, and the fault cases.
 4. `mcp_tools` and its drafting rule; `upstream_mcp` for a remote stand.

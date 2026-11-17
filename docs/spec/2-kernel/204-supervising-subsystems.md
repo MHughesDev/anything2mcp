@@ -11,7 +11,7 @@ The runtime starts, talks to, and stops many things it did not write: browsers, 
 | Time limits, cancellation, and cleanup | Report cleanup as done when it could not be confirmed |
 | How many of each may run | Fetch a program. It starts what is installed |
 
-It is the only way anything starts a process. A pack's driver, and the plug-in host, are each given a supervisor scoped to what they may start: the programs the provider's manifest declares, each with its digest, and, where the manifest allows it, the programs a published plan names with their digests. A request to start anything else is refused as `effect_not_declared`, and no caller's input can choose a program ([section 213](213-effects-hazards-and-consent.md)).
+It is the only way anything starts a process. A pack's driver, and the plug-in host, are each given a supervisor scoped to what they may start: the programs the provider's manifest declares, each with its digest, and, where the manifest allows it, the programs a published plan names with their digests. The plan names them for each surface: the pack that registers a surface kind says which of a surface's fields hold a program's absolute path and its digest, the compiler copies what a target states there into the plan and refuses a path that is not absolute, and the engine hands that list to the supervisor without reading it. A request to start anything else is refused as `effect_not_declared`, and no caller's input can choose a program ([section 213](213-effects-hazards-and-consent.md)).
 
 ## Starting something
 
@@ -21,7 +21,7 @@ It is the only way anything starts a process. A pack's driver, and the plug-in h
 4. **Start it in a group the runtime can end as a whole.** A process group on POSIX systems; a job object on Windows, set to end with its owner.
 5. **Shake hands before any work.** The subsystem must return the run identifier, its own version, the limits it will honor, and, where it is attached to something, the identity of that thing. A subsystem attached to a different file, page, or document than expected is refused.
 
-Steps 1 to 4 hold for everything started. Step 5 holds for a subsystem that speaks the shared framing: a plug-in or a bridge. Two kinds of link cannot shake hands.
+Steps 1 to 4 hold for everything started. Step 5 holds for a subsystem that speaks the shared framing: a plug-in or a bridge. The handshake, the framing, and the request queue of a framed link are not built yet; the two links below are ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Two kinds of link cannot shake hands.
 
 | Link | Identified and owned by | What the supervisor still does |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ These are not sessions. A session is a signed-in state and belongs to the sessio
 
 ## Stopping something
 
-- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's owner mark. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete.
+- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's owner mark. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete. As built, a child is started in its own process group (a job object on Windows), and the supervisor signals a group only while its leader is unreaped, so the signal reaches nothing it did not start ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Ownership records in the store, which would let a restarted engine find leftovers, are not built yet.
 - Incomplete cleanup is a state, not a log line. It names what remains, it blocks new starts of that kind until it is retried, and `doctor.run` shows it.
 - The process list comes from the operating system through fixed system paths, so that nothing on a caller's search path can hide or replace it.
 - On shutdown every caller that asks joins the same cleanup. Anything that failed to stop stays owned and is retried.

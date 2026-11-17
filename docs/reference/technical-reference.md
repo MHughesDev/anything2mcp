@@ -19,7 +19,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | 7. Actions | `a2m-actions` | Layers 1 to 6 |
 | 8. Roles | `a2m-runner`, `a2m-mcp`, `a2m-api`, `a2m-local` | Layers 1 to 7 |
 | 9. Pack bases | `a2m-pack-web-browser` | Layers 1 to 5 |
-| 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop` | Layers 1 to 5, and the base of its own pack |
+| 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device` | Layers 1 to 5, and the base of its own pack |
 | 11. Product | `anything2mcp` | Everything |
 
 Three rules follow from the table, and the audit states each one by name when it is broken:
@@ -48,19 +48,40 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `Source` | Five; each has the strongest level a finding from it can have | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 | `LimitationCode` | Eight | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 | `UnknownReason` | Four | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
+| `Availability` | Eight; the default is `unknown`, which is never `ready` | [Spec section 203](../spec/2-kernel/203-the-provider-contract.md) |
+| `SubsystemState`, `SubsystemMove` | Four and three | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
+| `DoctorState` | Seven; the default is `unknown` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
+| `IdentityStrategy` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
+| `FieldBase`, `Sensitivity`, `EnvironmentKind`, `TestKind`, `Checkpoint` | Ten, three in order, two, two, two | [File formats](file-formats.md) |
+| `SignInMode`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
+| `CaptureLevel` | Three, each including the one before | [Spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) |
+| `ApproveWrites` | Three, ordered from least to most strict | [Spec section 226](../spec/2-kernel/226-configuration.md) |
+| `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
+| `DigestPurpose` | Three: `blob_name`, `restricted_value`, `record_key` | [Decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
 
-Two words are checked names and not enums, because their values arrive with packs and crates ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)):
+Some words are checked names and not enums, because their values arrive with packs, crates, and target files ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md), [decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)):
 
 | Type | Shape | Who supplies the values |
 | --- | --- | --- |
 | `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its archetype |
 | `FailureCode` | The same shape; at most 64 characters | Each crate names the codes it can produce; a code never changes once released |
+| `SurfaceKind`, `StepKind`, `Verb`, `FileKindName`, `FindingKind`, `ControlName` | The same shape; at most 32 characters | A provider registers each one it brings. A step kind is a name within its mode |
+| `AuthProviderName` | The same shape; at most 32 characters | The auth providers handed to the session keeper |
+| `CredentialRef` | `vault://` and one to four parts joined by `/`, each of lowercase letters, digits, `_`, `-`, and `.`. A refusal never shows what was written | The target's `auth.yaml`; the vault resolves it |
+| `LintCode` | An owner and a rule, each of that shape, joined by one dot; at most 64 characters | `kernel`, or the provider that registers the rule |
+| `TargetName`, `SurfaceName`, `Environment` | The same shape; at most 32 characters | The target's files |
+| `OperationName`, `AccountName` | The same shape; at most 64 characters | The target's files, and the settings. The compiler checks the parts of a tool name |
 
-Three more complete the crate:
+These complete the crate ([decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), [decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md)); the [crate's design](../architecture/crates/a2m-core.md) has every signature:
 
 - **`Failure`** is a class, a code, a plain sentence, and a next step. The sentence and the next step are shown to callers and must never contain a secret. A name that is not one of a vocabulary's values, or is badly formed, becomes a failure of class `input` with the code `schema_invalid`, and its next step lists the values that would have been accepted.
 - **`Finding`** is what discovery returns. It is made only through its builder, which refuses a level above `discovered`, above what the source supports, or above the weakest finding it was derived from. What is not stated takes the weakest value. Its identifier is a `Digest` of its content, so the same observation has the same identifier everywhere, and a stored finding is checked against its identifier when it is read. Its `Subject` is one of six kinds; an address subject carries no credentials, query, or fragment.
-- **`Secret`** wraps a value that must never be shown. Printing it gives `[redacted]`. It cannot be serialized or copied, and the build fails if it ever can. The value is reached only through a method named `expose`, so that every use can be found.
+- **`Secret`** wraps a value that must never be shown. Printing it gives `[redacted]`. It cannot be serialized or copied, and the build fails if it ever can. The value is reached only through a method named `expose`, so that every use can be found. Its bytes are overwritten with zeros when it is dropped ([decision 0122](../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
+- **A checked name is declared with one macro,** `checked_name!`, which any crate may use for a name of its own. Each such type has `fixed`, which makes a name written in the source and fails the build when the name is badly formed.
+- **`Value`** is what a field holds: nothing, true or false, a whole number, text, a decimal, a moment, a date, a length of time, a list, or a record. It is never a float and never a secret, and kinds are never converted. **`Values`** holds named values sorted by name, so the same values have the same bytes and the same digest whoever built them. **`ValueType`** describes a value's type, for the expression checker and the plan alike. **`Decimal`** is exact to 28 significant digits: a result that does not fit is refused, never rounded, and a division takes places and a rounding mode. **`RecordKey`** is one or more plain values in declared order.
+- **Identifiers** are 16 bytes, ordered by the moment they were made, written as a one-letter prefix, an underscore, and 32 hexadecimal characters: `RunId` (`r_`), `JobId`, `SessionId`, `ApprovalId`, `DecisionId`, `WorkspaceId`, `PrincipalId`, `RunnerId`. The crate reads no clock and no random source; whoever makes one brings both. **`Identity`** is a person or a named account, never a credential.
+- **`Plan`** is the compiled plan as data, with `encode`, `decode`, `check`, and `show`. It carries everything the run time needs from a target's files: beside the surfaces, field types, operations, pipelines, tools, and tests, the target's own facts, each environment's test records and approval rule, and how each group of surfaces is signed in to, with credentials as references only ([decision 0121](../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)). It is encoded as canonical JSON after one line that names the format; the hash is the digest of all the bytes, and `decode` checks it before it reads anything. A pack's own data is a `PackPayload`, held as canonical JSON text that the kernel never parses.
+- **`Redact`** and **`KeyedDigest`** are the two interfaces the vault implements. `Redact` turns text into text with every registered secret removed, and redacts a whole failure or a set of values in one call. A keyed digest is separate for each workspace and each purpose, and has one construction, HMAC-SHA-256.
 
 ## Driver interface
 
@@ -104,7 +125,7 @@ Both are the web pack's knowledge and live in its section: [widget drivers](../s
 
 ## Auth provider interface
 
-Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider.
+Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider. A provider also states what it needs and can do (a person, a silent renewal, a light prompt, state that can move, and whether a successful exchange confirms the credential) and checks an `auth.yaml` entry without signing in. The traits as built are in the [crate design](../architecture/crates/a2m-auth.md).
 
 A provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system. A provider that needs a person's consent in a browser, and is not in the web pack, gives the person a link to open in their own browser; nothing drives that browser.
 
@@ -120,9 +141,26 @@ A provider lives in `a2m-auth` when it only holds or exchanges a credential. It 
 | `api_key`, `bearer_static` | Interfaces with fixed keys | `a2m-auth` |
 | `oauth_client_credentials`, `oauth_authorization_code` | Interfaces with OAuth | `a2m-auth` |
 | `upstream_mcp` | Authorization to a system's own MCP server | `a2m-pack-mcp` |
-| `totp` | One-time codes for dedicated accounts, where IT allows | `a2m-auth` |
+| `totp` | One-time codes for dedicated accounts, where IT allows. A function another provider calls, not a provider of sessions | `a2m-auth` |
 
 Further packs bring their own where a credential is bound to their kind of connection: the data pack brings a database password provider.
+
+## Vault interface
+
+The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the interface in full. The main types:
+
+- **`Vault`** seals a plain item into a **`Sealed`** envelope under a **`SealContext`**, and opens it again only under the same context. The caller stores the envelope.
+- **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it.
+- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`Generation`**. `a2m-ledger` implements it.
+- **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`.
+
+## Telemetry interface
+
+The design of [`a2m-telemetry`](../architecture/crates/a2m-telemetry.md) gives the interface in full. The main types:
+
+- **`TraceBuilder`** takes one **`StepRecord`** per step, redacts it, and ends as a **`FinishedTrace`**: the bytes and the trace signature. A trace that still holds a secret ends as a **`TraceRefused`**.
+- **`Telemetry`**, made by `start` from **`TelemetrySettings`**, is the handle for spans, metrics, and the engine's own logs.
+- **`Clock`** is how time is given, so that a test can fix it.
 
 ## Data model
 
@@ -168,18 +206,18 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 
 | Class | Example codes |
 | --- | --- |
-| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `limit_exceeded`, `surface_not_declared` |
-| `input` | `lint_failed`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range` |
+| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled` |
+| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch` |
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
 | `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `storage_full`, `engine_degraded` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable` |
 
 ## Command line
 
@@ -247,7 +285,7 @@ A plug-in is a separate process that exchanges messages over standard input and 
 
 ## Benchmark matrix
 
-Each cell is measured in CI against the built-in test application and compared with the previous release.
+Each cell is measured in CI against the built-in test application and compared with the previous release. The harness in `bench/` writes one JSON result per run (its schema is named "a2m-bench-result", version 1) and has two commands, `run` and `compare`.
 
 | Scenario | Modes measured | Metric |
 | --- | --- | --- |

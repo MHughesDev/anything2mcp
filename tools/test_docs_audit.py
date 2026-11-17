@@ -12,11 +12,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".anything2mcp", "dist", ".venv")
+SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".anything2mcp", "dist", ".venv", "venv", "node_modules")
 
 
 class AuditCatches(unittest.TestCase):
@@ -34,14 +35,17 @@ class AuditCatches(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8")
         return run.returncode, run.stdout + run.stderr
 
-    def depend(self, crate, on):
+    def depend(self, crate, on, table="dependencies"):
         manifest = self.root / "crates" / crate / "Cargo.toml"
         text = manifest.read_text(encoding="utf-8")
+        if on in tomllib.loads(text).get(table, {}):
+            return
         line = f'{on} = {{ path = "../{on}" }}\n'
-        if "[dependencies]\n" in text:
-            text = text.replace("[dependencies]\n", "[dependencies]\n" + line, 1)
+        head = f"[{table}]\n"
+        if head in text:
+            text = text.replace(head, head + line, 1)
         else:
-            text += "\n[dependencies]\n" + line
+            text += "\n" + head + line
         manifest.write_text(text, encoding="utf-8")
 
     def assert_finding(self, kind, *words):
@@ -117,13 +121,13 @@ class AuditCatches(unittest.TestCase):
 
     def test_the_test_application_in_a_product_crate_is_refused(self):
         self.depend("a2m-engine", "example-app")
-        self.assert_finding("layering", "a2m-engine depends on example-app outside its tests")
+        self.depend("a2m-ledger", "example-db")
+        self.assert_finding("layering", "a2m-engine depends on example-app outside its tests",
+                            "a2m-ledger depends on example-db outside its tests")
 
     def test_the_test_application_in_a_crate_s_tests_is_allowed(self):
-        manifest = self.root / "crates" / "a2m-engine" / "Cargo.toml"
-        text = manifest.read_text(encoding="utf-8")
-        text += '\n[dev-dependencies]\nexample-app = { path = "../../targets/example-app" }\n'
-        manifest.write_text(text, encoding="utf-8")
+        self.depend("a2m-engine", "example-app", table="dev-dependencies")
+        self.depend("a2m-engine", "example-db", table="dev-dependencies")
         code, out = self.audit()
         self.assertEqual(code, 0, out)
 

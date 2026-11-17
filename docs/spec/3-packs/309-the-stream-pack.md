@@ -202,14 +202,14 @@ Codes not already in the technical reference are proposed.
 
 ## The test stand
 
-A small broker in the test application family ([test application](../../plan/test-application.md)), written in Rust, speaking the protocol the first slice chooses, on a local port. It holds one channel of each shape.
+A small broker in the test application family ([test application](../../plan/test-application.md)), written in Rust, on a local port. It exists at `targets/example-broker` ([README](../../../targets/example-broker/README.md)). It speaks a small line-delimited JSON protocol of its own, because this section names no first protocol; that open point stays open for the pack. It holds four channels: retained, log, queue, and a plain topic that keeps nothing.
 
 | Control call | Reports or does |
 | --- | --- |
 | Reset, Inspect | Restore known contents; return every message a channel holds, with position, key, and headers |
 | Received | Every message published, by which connection, in order, with a digest of its body |
 | Delivered | Every delivery: to which subscription, whether acknowledged, how many times |
-| Faults | Store and then drop the acknowledgement; delay; refuse; deliver twice; expire retention; refuse a repeated token or accept it |
+| Faults | Store and then drop the acknowledgement; delay; refuse; deliver twice; expire retention; refuse a repeated token or accept it; an unexpected reply; a consumer that never acknowledges; a renamed field; a drop before the message is stored |
 
 A test that a publish happened once asks Received, never the pack's own read.
 

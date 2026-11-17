@@ -111,7 +111,7 @@ The keeper is one component with two halves. Its decisions are made in the contr
 | `expired` | Ended and could not be renewed | Return `needs_login` |
 | `revoked` | Ended on purpose | Return `needs_login`; nothing is retried |
 
-No transition outside this table is allowed; a table-driven test over every pair of states holds it.
+No transition outside this table is allowed; a table-driven test over every pair of states holds it. The legal moves between the states are listed in the [crate design](../../architecture/crates/a2m-auth.md). A session whose provider works from a stored credential alone is signed in by the first call that asks, within the attempt limit; a provider that needs a person is never started by a call ([decision 0085](../../decisions/0085-the-session-keepers-interface-as-building-it-settled-it.md)).
 
 ## Three clocks, only two of which can be extended
 
@@ -145,7 +145,7 @@ The keeper climbs a ladder and never repeats a rung:
 
 **One renewal at a time.** Only the keeper renews, and only once per session however many runs noticed the expiry ([decision 0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md)). Two simultaneous refreshes with a rotating refresh token invalidate each other; a single renewer makes that impossible. A renewal starts only when the keeper moves the session's row from `valid` or `suspect` to `renewing` by a compare-and-set on its epoch, in one transaction. The one caller that wins submits the work; everyone else waits on the outcome. This holds across processes, because the row is in the store. Runs that hit an expired session wait for the one renewal, then retry once if they are reads or idempotent writes. Nothing else is retried.
 
-**No loops, no lockouts.** A stored credential is tried at most `attempt_limit` times, 1 by default. If it is refused, the session goes to `needs_person` and an alert is raised. Repeated automatic attempts are how service accounts get locked out.
+**No loops, no lockouts.** A stored credential is tried at most `attempt_limit` times, 1 by default, counted until the other side confirms it: a successful exchange, or a passed probe. If it is refused, the session goes to `needs_person` and an alert is raised. Repeated automatic attempts are how service accounts get locked out.
 
 ## Asking a person
 
@@ -241,5 +241,4 @@ A first sign-in in the engine's browser may therefore be needed even on a device
 - Where the authorization response of `oauth_authorization_code` is received on a server, where no loopback address reaches the person's browser. The console's address is the likely answer.
 - The details of each operating system's sign-in broker come from general knowledge and must be verified per platform in the phase that builds them, Phase 7.
 - How the states, the clocks, and the keep-alive window apply to a session with no identity, such as an open link on a fieldbus, beyond the empty lease and the one-run-at-a-time rule.
-- Whether `SignInSurface`, the interface through which a pack's provider opens a sign-in on the home runner, is a type of `a2m-auth` or of `a2m-provider`.
-- The shape of the auth file's provider settings for each neutral provider.
+- Whether a failed attempt to reach the identity service during a silent renewal may be retried once later, instead of costing a person's session a new sign-in.

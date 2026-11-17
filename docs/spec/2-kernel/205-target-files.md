@@ -34,9 +34,9 @@ A surface's `kind` is a surface kind its pack registers; a binding's `mode` is a
 schema_version: 1
 target: example
 surfaces:
-  web: {kind: web, origin: "https://app.example.com", profile: auto}
+  web: {kind: web, origin: "https://app.example.com", profile: auto, viewport: [1440, 900]}
   api: {kind: http, base: "https://api.example.com", same_session_as: web}
-environment: {locale: en-US, timezone: UTC, viewport: [1440, 900]}
+environment: {locale: en-US, timezone: UTC}
 ```
 
 **Operation with two bindings.** Inputs, outputs, effect, and key are defined once; each binding says how one mode does it. A line item is unique by its order and its code together, so both inputs form the key ([section 209](209-record-identity-and-dependent-records.md)). A placeholder in a path or a `reach` address takes the input of the same name.
@@ -50,7 +50,7 @@ inputs:
   item_code: {type: string, description: "Item code, such as L-101"}
   length:    {type: length_ft_in}
 outputs:
-  line_item: {schema: "#/endpoints/line_item_get/response"}
+  length: {type: length_ft_in}
 bindings:
   - mode: http
     status: shadow
@@ -92,10 +92,11 @@ request_schema: schemas/line_item_put.request.json
 response_schema: schemas/line_item_put.response.json
 ```
 
-**Pipeline** names operations only, never screens, endpoints, or modes. The source file names the reader and maps the sheet's columns to row fields; each step passes values to its operation's inputs with `with`:
+**Pipeline** names operations only, never screens, endpoints, or modes. The source file names the reader, lists the sheet's columns, and gives each row field a field type and the column or expression it comes from; each step passes values to its operation's inputs with `with`:
 
 ```yaml
 pipeline: example_order_sheet_enter
+description: Enters every row of an order sheet as a line item of one draft order.
 effect: write
 inputs:
   order_id: {type: string, description: "Order the sheet belongs to"}
@@ -108,7 +109,7 @@ steps:
      with: {order_id: input.order_id, item_code: row.code, length: row.length},
      checkpoint: per_record}
   - {id: totals, operation: example_order_totals_get, with: {order_id: input.order_id}}
-success: ["all_records_verified"]
+success: [all_records_verified]
 ```
 
 The sheet itself arrives as the pipeline's reserved `source` input, a `file` ([file format reference](../../reference/file-formats.md)).

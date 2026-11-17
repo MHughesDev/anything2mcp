@@ -9,9 +9,9 @@ The base of the web pack: a browser engine that speaks the DevTools protocol to 
 | Side | Pack: web |
 | Layer | 9, Pack bases |
 | May depend on | Layers 1 to 5 |
-| Depends on | `a2m-core` for `Failure`, `Secret`, `Redact`, `Digest`; `a2m-telemetry` for spans; `a2m-provider` for the pack context: the scoped supervisor, checked paths, the redactor, telemetry. Outside: `tokio`, `serde_json`, and the base library chosen by slice 0.4, an outside crate, to be verified |
-| Built in | Slice 0.4 chooses the base. Slice 1.1 builds launch, one tab, one locate, one read. Slice 1.6 the rest of locating and waiting. Package 2.3 the visible window. Package 4.2 in-page requests. Package 8.5 the hard cases |
-| Carries out | Spec sections [302](../../spec/3-packs/302-the-web-pack-browser-engine.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (profiles and tabs), [204](../../spec/2-kernel/204-supervising-subsystems.md) (for the browser), [225](../../spec/2-kernel/225-performance.md) (the browser budgets); decisions [0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md), [0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md), [0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md) |
+| Depends on | `a2m-core` for `Failure`, `Secret`, `Redact`, `Digest`; `a2m-telemetry` for spans; `a2m-provider` for the pack context: the scoped supervisor, checked paths, the redactor, telemetry. Outside: `tokio`, `serde`, and `serde_json`, and nothing else. The base is a DevTools-protocol client of the crate's own ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)); there is no outside base library |
+| Built in | Slice 0.4 chose the base. Slice 1.1 builds launch, one tab, one locate, one read. Slice 1.6 the rest of locating and waiting. Package 2.3 the visible window. Package 4.2 in-page requests. Package 8.5 the hard cases |
+| Carries out | Spec sections [302](../../spec/3-packs/302-the-web-pack-browser-engine.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (profiles and tabs), [204](../../spec/2-kernel/204-supervising-subsystems.md) (for the browser), [225](../../spec/2-kernel/225-performance.md) (the browser budgets); decisions [0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md), [0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md), [0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md) |
 
 ## Owns
 
@@ -31,7 +31,7 @@ It must never: start a process except through its scoped supervisor; connect to 
 
 ## Interface
 
-A sketch. The base library is behind this interface and does not appear in it: no type from it is public, so that slice 0.4 can choose, and a later decision can change, without touching the crates above (hypotheses H-01 to H-03).
+A sketch. The base is behind this interface and does not appear in it: no type of the protocol client is public, so that a later decision can change the base without touching the crates above (hypotheses H-01 to H-03).
 
 ```rust
 /// One per engine process. Built by the product crate and handed to both web pack crates,
@@ -126,8 +126,10 @@ From the kernel: `a2m-provider` hands a pack a `PackContext` at registration, ho
 
 Contracts that the signatures do not show:
 
-- **The base library stays inside.** A private trait inside the crate is the only place that speaks the protocol. The conformance suite runs against the public interface above, so two bases can be compared by the same tests.
-- **The DevTools connection is a pipe, and a foreign link.** The browser is started with its protocol on an inherited pipe, not a port, as section 204 asks. The protocol is fixed by someone else, so there is no handshake of ours in it: the supervisor's ownership of the process rests on the program's digest, the version the browser reports over the pipe, and the owner mark on the launch. A browser whose reported version or digest does not match what was launched is closed. A base that cannot use a pipe is marked down in the spike.
+- **The base stays inside.** It is the crate's own protocol client: one reader task, one writer, requests matched to replies by number, one session per tab on the one connection. A private trait inside the crate is the only place that speaks the protocol, and one private module holds a typed request and reply for each command used; nothing outside it sees untyped JSON. The conformance suite runs against the public interface above, so two bases can be compared by the same tests.
+- **The DevTools connection is a pipe, and a foreign link.** The browser is started with its protocol on an inherited pipe, not a port, as section 204 asks. The protocol is fixed by someone else, so there is no handshake of ours in it: the supervisor's ownership of the process rests on the program's digest, the version the browser reports over the pipe, and the owner mark on the launch. A browser whose reported version or digest does not match what was launched is closed. A message is JSON ended by a NUL byte; one that is too large, is not a protocol message, or answers no request closes the link, and every pending request fails saying whether it had been written. Handing the pipe to the child is the supervisor's: on Linux and macOS the two ends are placed on file descriptors 3 and 4; on Windows two inherited handles are named by value in `--remote-debugging-io-pipes`. This crate states which, as data, and never starts the process itself.
+- **A browser is found, never fetched.** A program named in settings, then one installed by `browser.install`, then a fixed list of known places per operating system. No search path, and no download at first use or during a run. Only the program is used; its own profile is never named.
+- **The launch arguments are a fixed list.** It never holds `--no-sandbox` or a flag that hides automation.
 - **A data directory is a checked path.** It is made by `a2m-provider`'s check against the profile root, links followed, before this crate sees it. This crate builds no path from a string.
 - **An element is valid for one page generation.** A navigation or a re-render that removes the node makes it stale, and using it is `NotFound`, never a silent re-query.
 - **The helper runs in an isolated world.** The injected script that locates, checks, and observes cannot be read or changed by the page's own scripts.
@@ -197,12 +199,13 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 | An ambiguous query fails; it never picks the first | Conformance group "Locating" |
 | No cookie, token, or password leaves the crate in an exchange or an error | The planted-secret test of package 2.1, run against captured exchanges |
 | A crash during an act reports whether input was sent | A fault test that kills the browser after dispatch |
-| The browser budgets of section 225 hold | Benchmarks: a warm tab under 100 ms; a cold start under 1 s |
+| The browser budgets of section 225 hold | Benchmarks: a warm tab under 100 ms; a cold start under 1 s. The spike measured 26 to 33 ms and 0.35 to 0.40 s on Linux, headless |
+| The launch arguments never hold `--no-sandbox` or a flag that hides automation | A test over the fixed list |
 
 ## Build order
 
-1. Slice 0.4, in `spikes/`, not here: each candidate base against launching, locating, and waiting. A decision record.
-2. Slice 1.1: `Browsers::new`, `open`, one `ActTab`, `locate` by role and name, `read`. Pipe connection, ownership by digest, version, and owner mark.
+1. Done: slice 0.4, in `spikes/browser-base/`, not here: each candidate base against launching, reading, waiting, intercepting, and a killed browser. [Decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [research note 17](../../research/17-browser-engine-base.md).
+2. Slice 1.1: the protocol client over two byte streams, tested against a scripted peer with no browser. Then `Browsers::new`, `open`, one `ActTab`, `locate` by role and name, `read`. Pipe connection, ownership by digest, version, and owner mark. The first browser test on Windows proves the Windows handoff or refutes it.
 3. Slice 1.6: every `By`, frames and shadow scopes, every `Primitive`, `tree` for snapshots, recycling.
 4. Package 2.3: `Visibility::Window`, `export_state`, `import_state`.
 5. Slice 3.3: `check` and `input`, with `Dispatch` reported.
@@ -212,7 +215,12 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 
 ## Open points
 
-- The base library: chromiumoxide, Rustwright's core, or a new protocol client. Slice 0.4; whether it supports a pipe connection is one of its criteria.
+- The Windows handoff of the pipe has only been compiled, never run: whether the browser accepts the blocking client ends of two named pipes, or needs two anonymous pipes read and written on threads of their own. The first browser test on Windows settles it. Decision 0070 says what follows if neither works.
+- The first browser version that takes `--remote-debugging-io-pipes` is not known, so the minimum browser version is not set.
+- The fixed list of places where a browser is installed, on Windows and Linux, has not been collected from a primary source.
+- A locate through the protocol's accessibility query took 16.7 ms in the spike, one rendering frame, against 0.2 ms for the helper. Whether the query is used as the check on every locate, or only where the helper cannot see, is for slice 1.6 and research brief 3.
+- No session longer than a few seconds has been run, and no memory figure taken. The recycling rule and hypothesis H-01 both need them.
+- Whether the browser's sandbox starts on the hosted Linux build machine as it is.
 - Fetching and pinning a Chromium build without another project's installer ([research note 09](../../research/09-rust-building-blocks.md)). The `browser.install` action needs it.
 - Whether a GET that a page treats as an action can be recognized at this level, or only by the probe's rules above. [Section 402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) leaves it to Phase 4.
 - Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser on a copy of the profile. Copying a profile is what decision 0032 avoids.

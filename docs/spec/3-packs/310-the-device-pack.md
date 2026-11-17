@@ -219,7 +219,7 @@ All are `enforced`.
 | The image | A file input, stored as a blob, its digest recorded. It must be an image the device's maker issued for that model. The target may list the digests it accepts; one not listed stops with `input` |
 | Approval | A person, every run, shown the current and the proposed version, the image's digest, whether the device checks its signature, and what cannot be undone |
 | Act and confirm | The mechanism, and nothing else. The device accepts the image and checks it |
-| Read back | After a declared restart window: identify again, and compare the version and digest the device reports |
+| Read back | After a declared restart window: identify again, and compare the version and the device's own checksum of its image. A device reports a checksum of its own kind, not the digest recorded above: the simulated device reports a CRC-32 |
 | If it does not come back | `possible_commit`, `device_not_returned`. The run stops, a person is alerted, and the declared recovery route is shown. Nothing is retried |
 
 The pack never builds, patches, or signs an image, and never checks a signature in the device's place.
@@ -264,11 +264,13 @@ None of these needs a kernel change beyond the identity precondition above. They
 | `possible_commit` | `no_confirmation`, `device_not_returned` | A write frame was sent and no clear acknowledgement came; an update did not come back |
 | `mismatch` | `read_back_differs`, `sensor_out_of_tolerance` | The register or the declared sensor disagrees |
 
+A device may also answer that it is busy. On a read that is `transient`. On a write it is never retried, like every write in this pack.
+
 Codes not already in the technical reference are proposed.
 
 ## The test stand
 
-A device pack is proven first against an emulated device. Here that is a simulated device in software, in the test application family, speaking the chosen protocol on a local port. No real hardware runs in CI. It holds registers, a small simulated process (a pump whose measured speed follows its setpoint with a lag), and an update mechanism with two slots.
+A device pack is proven first against an emulated device. Here that is a simulated device in software, in the test application family, on a local port. It exists at `targets/example-device` ([README](../../../targets/example-device/README.md)) and speaks a subset of the Modbus application protocol over TCP. No real hardware runs in CI. It holds registers, a small simulated process (a pump whose measured speed follows its setpoint with a lag), and an update mechanism with two slots.
 
 | Control call | Reports or does |
 | --- | --- |
@@ -281,7 +283,7 @@ Against the simulator, read-back is exact, a snapshot undoes anything, and groun
 
 ## What it needs from outside
 
-Each an outside crate to be verified: a client for the chosen fieldbus protocol, asynchronous on Tokio, under a licence on the closed list, on all three operating systems; for serial links later, access to serial ports on all three. No outside program is started.
+Each an outside crate to be verified: a client for the chosen fieldbus protocol, asynchronous on Tokio, under a licence on the closed list, on all three operating systems; for serial links later, access to serial ports on all three. The test stand's frames proved small enough to write by hand, so a client crate may not be needed. No outside program is started.
 
 ## The entry bar
 
@@ -310,7 +312,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 ## Open points
 
-- Which protocol first. A register protocol framed over a network link is the likely start: it needs no serial hardware, and its simulator is small. A management protocol over a network, through a request pack, is the safest start of all.
+- Which protocol first. Settled for the test stand: it speaks a subset of the Modbus application protocol over TCP, a register protocol framed over a network link, which needs no serial hardware. A management protocol over a network, through a request pack, is the safest start of all.
 - Whether emulators for whole devices, beyond a protocol-level test stand, are worth the weight.
 - Whether a second person is required, not optional, for `physical`, at least in a production environment.
 - How fast a person is alerted when a device does not come back, and through which channel.

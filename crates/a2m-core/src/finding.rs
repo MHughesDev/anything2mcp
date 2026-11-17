@@ -8,7 +8,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::digest::{Digest, Hasher};
+use crate::digest::{Digest, FieldHasher};
 use crate::evidence::{Coverage, EvidenceLevel};
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::name::{InvalidName, check_name};
@@ -311,7 +311,7 @@ impl Subject {
     }
 
     /// Adds this subject to the content a finding's identifier is made from.
-    fn hash_into(&self, hasher: &mut Hasher) {
+    fn hash_into(&self, hasher: &mut FieldHasher) {
         hasher.field("subject", self.tag().as_bytes());
         match self {
             Self::File {
@@ -536,7 +536,7 @@ fn identifier(
     coverage: Coverage,
     limitations: &[Limitation],
 ) -> Digest {
-    let mut hasher = Hasher::new();
+    let mut hasher = FieldHasher::new();
     hasher.field("anything2mcp", b"finding 1");
     subject.hash_into(&mut hasher);
     hasher.field("kind", kind.as_str().as_bytes());

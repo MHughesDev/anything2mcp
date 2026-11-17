@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). This is a design draft: names and types are to be settled when the first migration is written in Phase 3, and any change after that is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger` and the first two of `a2m-policy` are built; their definitions in force are the migration files in `crates/a2m-ledger/migrations/`, and where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -23,7 +23,7 @@ Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on
 | `attempt` | int | Increases on each resume |
 | `lease_epoch` | bigint | Increases on each lease; the fencing number |
 | `diff_hash`, `diff_ref` | text, ref | Set when the preview is built |
-| `approval_id` | id | The approval that was used |
+| `approval_id`, `decision_id` | id, id | The approval that was used, or the recorded decision that let the run write without a person |
 | `counts` | json | Planned, unchanged, verified, failed |
 | `result_ref`, `trace_ref` | ref, ref | Result and trace |
 | `created_at`, `started_at`, `finished_at` | ts | Timings |
@@ -51,13 +51,13 @@ Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id,
 | `state` | enum | `planned`, `unchanged`, `intent`, `acted`, `verified`, `failed` |
 | `intended_hash`, `intended_ref` | text, ref | What should be stored |
 | `before_ref` | ref | Values seen before the write; used by undo and by resume |
-| `after_ref` | ref | Values read back |
+| `after_ref`, `read_back_hash` | ref, text | Values read back, and their digest; a record is `verified` only when the digest equals `intended_hash` |
 | `idempotency_token` | text | Stable for the run and key; sent where the application accepts one; the stamp for `stamped` identity |
 | `assigned_key` | text | The identifier the application assigned, stored as soon as it is known |
 | `outputs_ref` | ref | The record's result, for later steps that depend on it |
 | `skip_reason` | text | Such as `blocked_by_parent` |
 | `binding_mode` | enum | Mode that performed the write |
-| `intent_epoch` | bigint | Lease number under which the intent was stored |
+| `intent_epoch`, `intent_seq` | bigint, bigint | Lease number under which the intent was stored, and the number of its intent event |
 | `attempts` | int | Write attempts |
 | `failure_class`, `failure_code` | enum, text | When failed |
 | `evidence_ref` | ref | Trace fragment for this record |
@@ -72,11 +72,11 @@ Indexes: on `(run_id, state)`; on `record_key_hash`.
 | `run_id`, `seq` | id, bigint | Primary key; `seq` has no gaps within a run |
 | `epoch` | bigint | Lease number of the writer |
 | `at` | ts | Database time |
-| `kind` | enum | `state_changed`, `step_started`, `binding_chosen`, `intent`, `acted`, `verified`, `failed`, `reconcile_read`, `approval_bound`, `lease_granted`, `lease_lost`, `need`, `late_evidence` |
+| `kind` | enum | `state_changed`, `step_started`, `binding_chosen`, `intent`, `acted`, `verified`, `failed`, `reconcile_read`, `approval_bound`, `lease_granted`, `lease_lost`, `need`, `late_evidence`, `planned`, `diff_stored`, `lock` |
 | `payload` | json | Small; large data goes in a blob |
 | `evidence_ref` | ref | Optional |
 
-Append-only. An insert carrying an `epoch` lower than the run's current `lease_epoch` is refused, except for `late_evidence`.
+Append-only. An insert carrying an `epoch` other than the run's current `lease_epoch` is refused, except for `late_evidence`.
 
 ## approvals
 
@@ -105,31 +105,49 @@ Append-only. An insert carrying an `epoch` lower than the run's current `lease_e
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | id | Primary key |
-| `run_id` | id | Null for system jobs |
-| `kind` | enum | `preview`, `execute`, `reconcile`, `verify_after_loss`, `canary`, `session_keepalive` |
-| `requirements` | json | Target, environment, modes, operating system, identity, session |
-| `home_runner_id` | id | The runner holding the live session, when there is one |
-| `priority`, `available_at` | int, ts | Ordering |
+| `seq` | bigint | Order of arrival |
+| `run_id` | id | Null for system jobs. At most one job of a run is `pending` or `leased` |
+| `workspace_id`, `principal_id` | id, id | Whose job; the caller, for its cap and its turn |
+| `kind` | enum | `preview`, `execute`, `try`, `discover`, `reconcile`, `verify_after_loss`, `canary`, `session_keepalive` |
+| `target`, `environment` | text, text | The queue the job waits in |
+| `requirements` | json | Target, environment, modes, operating system, the person it acts as, session and its limits, exclusive resources, longest step |
+| `session_key`, `home_runner_id` | id, id | The live session the job needs, and the runner holding it, when there is one |
+| `writes` | bool | Whether the job may write |
+| `priority`, `available_at`, `queue_until` | int, ts, ts | Ordering, the moment from which it may be handed out, and its queue limit |
 | `state` | enum | `pending`, `leased`, `done`, `lost`, `dead` |
-| `epoch` | bigint | Lease number given to the runner |
-| `runner_id`, `lease_until`, `heartbeat_at` | id, ts, ts | Current lease |
+| `epoch` | bigint | Lease number given to the runner; it only grows |
+| `runner_id`, `lease_mode`, `lease_until`, `heartbeat_at` | id, text, ts, ts | Current lease, and the mode whose slot it took |
 | `attempts` | int | Dispatch attempts |
+| `directive` | enum | `continue` or `cancel`: what the next heartbeat tells the runner |
+| `end_state`, `end_class`, `end_code` | text, text, text | The run's state when the job ended, and the failure it ended with |
+| `created_at`, `finished_at` | ts, ts | |
 
-Indexes: on `(state, priority, available_at)` where the state is `pending`; on `(runner_id, state)`.
+Indexes: on `(priority, seq)` where the state is `pending`; on `(runner_id, state)`; on `(session_key)` where the state is `leased`; unique on `(run_id)` where the state is `pending` or `leased`. A job that has ended never changes.
 
 ## runners
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | id | Primary key |
-| `kind` | enum | `server`, `desktop`, `user_device` |
 | `owner_principal_id` | id | Set for user-device runners |
 | `workspace_id` | id | Scope |
-| `capabilities` | json | Operating system, modes, slots, targets |
-| `version`, `protocol_version` | text, int | For compatibility |
+| `capabilities` | json | Operating system, modes, targets |
+| `protocol_version` | int | For compatibility |
 | `state` | enum | `enrolled`, `online`, `draining`, `offline`, `revoked` |
-| `public_key`, `cert_expires_at` | text, ts | Identity |
 | `last_seen_at` | ts | Liveness |
+
+The runner's kind, version, public key, and certificate expiry arrive with the runner link and are not columns yet.
+
+## resource_holds, caller_turns, scheduler_holds, budgets
+
+The scheduler's other tables ([`a2m-sched`](../architecture/crates/a2m-sched.md)).
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `resource_holds` | `resource_key` (primary key), `job_id`, `acquired_at` | Who holds each exclusive resource: one holder for one key |
+| `caller_turns` | `workspace_id`, `principal_id` (primary key), `served` | The number of the dispatch that last gave this caller a job; the lowest goes first |
+| `scheduler_holds` | `scope`, `workspace_id`, `name` (primary key), `held_at` | Scopes no job is handed out for: `everything`, `workspace`, `target`, `caller` |
+| `budgets` | `budget_key` (primary key), `capacity`, `refill`, `per_ms`, `level`, `updated_at` | Token buckets. `level` is in requests times `per_ms`, so no fraction is lost |
 
 ## sessions
 
@@ -149,13 +167,16 @@ Indexes: on `(state, priority, available_at)` where the state is `pending`; on `
 | `epoch` | bigint | Increases when the session moves or is replaced |
 | `expires_at`, `checked_at` | ts | Health |
 
+As built by migration `0006`, which `a2m-auth` owns: the table also has `workspace_id`, `provider`, `profile`, `state_since`, `signed_in_at`, `stored_attempts`, and `wants`; saved state is a row of `session_state` and not a `vault_ref` column; `survives_restart`, `exclusive`, and `learned` are not columns yet. The same migration makes `session_events` (the timeline), `session_state` (sealed saved state), and `session_credentials` (stored credentials, sealed).
+
 ## blobs
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `hash` | text | Primary key; the keyed digest of the plain data |
-| `kind` | enum | `values`, `diff`, `snapshot`, `trace`, `screenshot`, `input`, `result` |
-| `size`, `location` | int, text | Inline, file, or object-storage key |
+| `workspace_id`, `owner_kind`, `owner_id` | id, enum, text | The workspace whose digest key named it, and the owner it is sealed for |
+| `kind` | enum | `values`, `diff`, `snapshot`, `trace`, `screenshot`, `input`, `result`, `exchange`, `window_tree` |
+| `size`, `location`, `sealed` | int, text, bytes | Inline, file, or object-storage key; the sealed bytes when inline |
 | `key_ref` | text | Which vault key encrypts it |
 | `retention_class`, `created_at` | enum, ts | Retention |
 

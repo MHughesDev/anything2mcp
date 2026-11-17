@@ -262,7 +262,7 @@ Locale settings change only what people are shown. They never change how a value
 
 ## Per-pack configuration
 
-Each pack brings its own group, `packs.<pack>`, under its own name. Its manifest names a settings schema, `[settings] schema = "schemas/settings.json"`, under the same rules as the kernel's: every key typed, defaulted, documented, scoped, with protected keys and their safer direction marked. The kernel's loader validates the group against that schema without knowing what it means, generates its documentation and `config.show` output the same way, and hands the pack the validated group through the registry. A group for a pack that is not installed is an unknown key. A pack setting may be a ceiling or a choice of how; it can never widen what a target declares or what the guardrails forbid.
+Each pack brings its own group, `packs.<pack>`, under its own name. Its manifest declares its settings, one `[[settings]]` entry for each key ([decision 0089](../../decisions/0089-the-provider-contract-as-building-it-settled-it.md)), under the same rules as the kernel's: every key typed, defaulted, documented, scoped, with protected keys and their safer direction marked. The kernel's loader validates the group against that schema without knowing what it means, generates its documentation and `config.show` output the same way, and hands the pack the validated group through the registry. A group for a pack that is not installed is an unknown key. A pack setting may be a ceiling or a choice of how; it can never widen what a target declares or what the guardrails forbid.
 
 The web pack's group, as the worked example ([section 301](../3-packs/301-the-web-pack.md), [section 302](../3-packs/302-the-web-pack-browser-engine.md)):
 

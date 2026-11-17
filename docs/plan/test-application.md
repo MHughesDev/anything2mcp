@@ -84,7 +84,16 @@ As of slice 0.3, on 2026-11-16: cases 1 to 4, in `targets/example-app/`. Its [RE
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.
 - The form was driven once by hand in a real browser, located by role and label: an update, a second save, a validation message, and a create all behaved. No automated test covers the page's script yet; the first one comes with the interface driver.
-- The product's crates may use the application in their tests only. `tools/docs_audit.py` refuses it as an ordinary dependency.
+- The product's crates may use the application in their tests only. `tools/docs_audit.py` refuses it, and every other crate under `targets/`, as an ordinary dependency.
+
+As of 2026-11-17 the stands for the other kinds of system are built too. Each follows the principles above, and its README lists its cases, its control interface, and its faults.
+
+- **The command-line stand**, `targets/example-cli/`: its [README](../../targets/example-cli/README.md).
+- **The database stand**, `targets/example-db/`: its [README](../../targets/example-db/README.md).
+- **The file stand**, `targets/example-files/`: its [README](../../targets/example-files/README.md).
+- **The broker**, `targets/example-broker/`: its [README](../../targets/example-broker/README.md).
+- **The simulated device**, `targets/example-device/`: its [README](../../targets/example-device/README.md).
+- **The MCP stand**, `targets/example-mcp/`: its [README](../../targets/example-mcp/README.md).
 
 ## What Phase 0 delivers
 

@@ -18,7 +18,7 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 | --- | --- |
 | Identity | Run, attempt, step, step kind, record, operation, plan hash, engine and driver versions |
 | Choice | Binding mode and the reason it was chosen |
-| Timing | Queue, prepare, act, confirm, and read-back durations |
+| Timing | How long the step took; on the first record of a pass, how long the pass queued and prepared. The act, confirm, and read-back times of a pass are the sums of their steps |
 | Locating | For a mode that locates elements, which locator matched, at which position in the list, and the fingerprint score |
 | Acting | What the driver did: in the web pack, the widget-driver rung used; for HTTP, the method, path template, status, and sizes |
 | Values | For each field: the intended value, the value read back, the normalized forms, and whether they matched, each held as its sensitivity label allows |
@@ -29,7 +29,7 @@ Request and response bodies are not in the step trace. They are artifacts, captu
 
 ## The trace signature
 
-Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, and the values the plan declares volatile are left out. Records enter in step order; within a record, fields in a fixed order; values in a canonical text form. The signature is SHA-256 over those bytes, and the store records it on the run.
+Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, the plan's hash, and the values the plan declares volatile are left out. Each record gives one SHA-256 digest over its parts, in a fixed order, with values in their canonical form; a value that is not public enters as its keyed digest. The signature chains those digests in step order and closes with their count, and the store records it on the run. Each record's digest is written in its line, so two traces that differ show where ([decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the exact rule is in the [crate design](../../architecture/crates/a2m-telemetry.md)).
 
 - The **determinism gate** passes when five runs on the same input have the same signature ([section 403](../4-building-tools/403-testing-and-publish-gates.md); hypothesis H-16).
 - The **binding-equivalence gate** compares normalized results across bindings and, for an HTTP binding against a UI binding, the shape of the request each produced.
@@ -51,12 +51,12 @@ The plan and policy decide a run's level; `a2m-telemetry` applies it. Screenshot
 
 Redaction happens on the runner, at capture, before anything is written or sent. Every text field passes the redactor when it is recorded, so nothing unredacted is held even in memory longer than the call. The redactor is the vault's ([section 216](216-the-vault-and-its-keys.md)).
 
-1. **Registered secrets.** Every secret the vault releases is registered with the redactor, which masks exact matches anywhere in text.
+1. **Registered secrets.** Every secret the vault releases is registered with the redactor, which masks exact matches anywhere in text, and the same secret where it was percent-encoded, JSON-escaped, or base64-encoded on the way.
 2. **Headers and cookies.** In an exchange, only headers on a fixed allowlist are kept. Cookie and authorization values are always dropped, whatever the level.
-3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a digest, never as a value. One labelled `internal` is kept at `standard` and above. Policy may also say a labelled field is masked or left out.
+3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a keyed digest, never as a value. One labelled `internal` is kept at `standard` and above, and as a keyed digest at `minimal`. A record's key is kept only as a keyed digest. Policy may also say a labelled field is masked or left out.
 4. **Free text.** Length-limited and stripped of markup and hidden characters.
 5. **Images are masked by the pack that took them.** Only the pack knows where the password inputs and labelled fields were on its screen. It paints over them, and sends with the image a report of what it masked. An image that arrives without that report is dropped, and a limitation is recorded. The kernel never paints over an image.
-6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
+6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
 
 A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, artifact, span, metric, or log line.
 
@@ -129,9 +129,7 @@ When a canary or a run reports `drift`:
 
 ## Open points
 
-- **The unit of a record.** The glossary's step is one driver instruction, yet the record above has one locator and the timings of a whole pass of the engine loop. The proposal is one record per step, with the binding choice on the first record of each pass and timings per step. Roadmap package 1.2 decides before the signature is defined over it, and fixes the exact schema with the first driver.
-- How a restricted value enters the signature. A plain digest of a short value can be reversed by guessing; a keyed digest differs between installations. The proposal is a keyed digest, with the determinism gate comparing within one installation.
-- Whether the check on the way out is a method of the redactor in `a2m-core`, proposed as `contains_secret`. Until then it is a comparison of the redacted text with the original.
-- The allowlist of headers, written once and shared by every pack that records exchanges.
+- A signature compares within one workspace whenever a run has a record key or a value that is not public, because both enter as keyed digests. Whether the test sandbox runs under a fixed, public key, so that a test's expected signature is the same on every machine, is for the slice that builds the test runner.
+- Which of a driver's details must be the same in two runs, and so enter the signature, is each pack's choice; the HTTP pack makes it first.
 - How well a pack's masking of a screenshot works on screens that move while being captured.
 - Whether `full` capture should ever be allowed on a production write.

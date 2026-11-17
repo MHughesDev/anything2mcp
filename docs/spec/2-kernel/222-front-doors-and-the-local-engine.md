@@ -24,7 +24,7 @@ The MCP face is `a2m-mcp` and the REST face is `a2m-api` ([crate designs](../../
 | 2026-07-28 | Stateless. No handshake and no session header ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)). Every request carries everything |
 | 2025-11-25 | Kept for older clients for as long as the Rust SDK supports both. The initialize exchange is answered from settings. No session identifier is issued, which that revision allows, so the server stays stateless |
 
-The official Rust SDK, `rmcp`, provides stdio and Streamable HTTP server transports, OAuth support, and elicitation ([docs.rs](https://docs.rs/crate/rmcp)). Whether one `rmcp` server can serve both revisions is the question of roadmap package 0.5 and brief 2. If it cannot, the older revision is dropped before statefulness is added. The difference between revisions is kept inside `a2m-mcp`.
+The official Rust SDK, `rmcp`, provides stdio and Streamable HTTP server transports, OAuth support, and elicitation ([docs.rs](https://docs.rs/crate/rmcp)). One `rmcp` service serves both revisions with no session for either; the spike of roadmap package 0.5 ran it, and the server stands on that crate behind a seam of its own ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)). A request that names a revision in its metadata is served under it; `initialize` selects 2025-11-25; an unserved revision is refused with the list of those served. The difference between revisions is kept inside `a2m-mcp`.
 
 - **Explicit handles.** Because the protocol has no sessions, all continuity is carried by `run_id`, which matches the ledger's design exactly.
 - **One endpoint per toolset.** A toolset's list is the same for every caller connected to it; rights are checked at call time, and a refused call is a clear `policy` result. What each toolset lists, the names, descriptions, schemas, annotations, and results agents see, are in [section 221](221-the-tool-surface-agents-see.md).
@@ -172,7 +172,6 @@ Conformance is tested against the protocol with at least two unrelated clients. 
 
 - Which Rust crates provide the socket, the named pipe, the peer-identity checks, and the locks on all three operating systems: brief 26; hypothesis H-06.
 - Which user-presence checks can be raised from a background process on each operating system, and from Rust: brief 27; hypothesis H-12.
-- Whether `rmcp` can serve both revisions from one service: roadmap package 0.5 and brief 2.
 - How a client is told of a changed tool list with no session, if at all.
 - How a drained engine is restarted by the newer client. Most likely the client starts the new engine after the old one has released the engine lock.
 - Whether the hardened Workstation service, under its own account, needs the channel's access rule widened to name one other user, and how that is kept from becoming a hole.

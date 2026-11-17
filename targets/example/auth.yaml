@@ -1,0 +1,11 @@
+auth:
+  - surfaces: [desk]
+    mode: managed_session
+    provider: form_login
+    probe: example_order_get
+    probe_inputs: {order_id: "SO-1001"}
+    settings: {sign_in_path: "/login"}
+    timeouts: {idle_ms: 1800000}
+    credentials:
+      password: "vault://example/service/password"
+    attempt_limit: 1

@@ -52,11 +52,11 @@ Reads stop after step 6 and go straight to step 10.
 
 ### The decision core
 
-Authorization decisions are evaluated with Cedar, an open-source policy language whose engine is a Rust crate ([decision 0033](../../decisions/0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md)). Its semantics are the first two properties above: a request is denied unless a permit applies, and a single matching forbid denies it. Its documentation describes forbid policies as guardrails that permit policies cannot cross ([research note 14](../../research/14-sessions-and-policy-engines.md)). Using it means the hardest part, the meaning of overlapping rules, is specified and tested by someone else.
+Authorization decisions are evaluated by `a2m-policy`'s own evaluator ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which supersedes the choice of Cedar in decision 0033). Its semantics are the first two properties above: a request is denied unless a permit applies, and a single matching forbid denies it. The forbids are the built-in guardrails, written as functions over the typed request and consulted before any permit. The permits are data: roles, grants, label and option rules, and pre-approval rules. A property test over generated requests holds the two semantics.
 
-**One caution, handled.** Cedar skips a policy whose evaluation raises an error, and a skipped forbid would fail open. So every policy is validated against its schema before the policy set can be published, which rules out the type errors that cause skips, and any evaluation error reported with a decision turns it into a denial with the code `policy_evaluation_failed`.
+**An error is a denial.** No rule can be skipped. The only thing that can fail while deciding is the condition of a pre-approval rule, an expression of `a2m-expr`. It is checked when the set is compiled, and one that still fails when it runs turns the decision into a denial with the code `policy_evaluation_failed`.
 
-Whether Cedar's licence, size, and speed fit is settled by brief 31 before Phase 3 builds the decision core. If it does not fit, the fallback is a small in-house matcher with the same two semantics, behind the same interface, and nothing outside `a2m-policy` changes.
+Brief 31 measured Cedar before the decision core was built: its tree carries a licence expression outside the closed list, 107 crates, and 5.5 MB of binary. Decision 0082 has the numbers. Nothing outside `a2m-policy` sees the evaluator, so a policy language can still be put behind the same interface.
 
 ### The questions
 
@@ -110,7 +110,7 @@ A lower layer is compiled as a further restriction. A target file, toolset, or w
 - A session signed in as a person is used only by that person or an agent acting for them, as [section 215](215-sessions-and-the-session-keeper.md) defines. No role, including administrator, can run as someone else. A delegation from a person to an agent counts only while it is unrevoked and unexpired, and only for the toolset it names.
 - The hazard rules of section 213: any hazard other than `none` forbids writing without a person; `device_function` and `physical` forbid a standing approval.
 
-**Grants, not a language, for everyday use.** Administrators write grants in the console or a file with `grant.add`: a principal, a scope (target, module, or name pattern), a highest effect class, and an identity mode. Each grant compiles to a permit policy. Roles are bundles of grants. Administrators who want more can write policies directly, and anyone can see the compiled form.
+**Grants, not a language, for everyday use.** Administrators write grants in the console or a file with `grant.add`: a principal, a scope (target, module, or name pattern), a highest effect class, and an identity mode. Each grant is one permit. Roles are bundles of grants. A pre-approval rule may carry a condition in the expression language; nothing else is written in a language.
 
 ### Policy is a versioned, tested artifact
 
@@ -134,12 +134,14 @@ A lower layer is compiled as a further restriction. A target file, toolset, or w
 | `identity_not_allowed` | The run may not act as the identity, including every attempt to use another person's session |
 | `effect_too_high` | A grant exists, with a lower highest effect class |
 | `approval_missing` | A write reaches the write phase with no usable approval |
-| `approval_stale` | The approval is expired, used, or for another diff |
+| `approval_stale` | The approval is expired, used, revoked, or for another diff |
+| `approval_refused` | The approver is not a person, may not approve this run, or the run is not waiting for approval |
 | `limit_exceeded` | Records per run or a quota |
 | `kill_switch_on` | A kill switch covers the request |
-| `policy_evaluation_failed` | Cedar reported an error, or no valid set is loaded |
+| `policy_evaluation_failed` | An error while deciding, or no valid set is loaded |
+| `presence_required` | A set that loosens a protected setting, or the release of a kill switch on one machine, with no user-presence check |
 
-A candidate set that fails validation, or a lower layer that widens a higher one, is refused with `input`, `schema_invalid`.
+A candidate set that fails validation, or a lower layer that widens a higher one, is refused with `input`, `schema_invalid`; one that fails its own test table, with `input`, `policy_tests_failed`.
 
 ### Where facts about people come from
 
@@ -149,7 +151,7 @@ A candidate set that fails validation, or a lower layer that widens a higher one
 
 ### On one machine
 
-The local engine uses the same policy engine with a built-in policy set: the operating-system user holds every role, writes need approval, and the guardrails apply, including that an agent cannot approve. A person can tighten this set but not loosen the guardrails. The approval rules and record limits are protected settings, so publishing a tighter local set needs the operating system's user-presence check, and a looser one cannot be compiled.
+The local engine uses the same policy engine with a built-in policy set: the operating-system user holds every role, writes need approval, and the guardrails apply, including that an agent cannot approve. A person can tighten this set but not loosen the guardrails. The approval rules and record limits are protected settings, so publishing a looser local set needs the operating system's user-presence check; a tighter one needs none ([section 226](226-configuration.md), [decision 0083](../../decisions/0083-the-policy-engines-interface-as-building-it-settled-it.md)).
 
 ## Approvals
 
@@ -187,9 +189,9 @@ These are counts and switches, not authorization rules, and are handled by a lim
 | Request budget | Surface | By the control plane, granted to runners in batches |
 | Quota | Caller, per period | When a call is accepted |
 | Parallelism | Session, target, system | By the scheduler ([section 211](211-concurrency.md)) |
-| Kill switch | Target, workspace, whole system | Checked first on every decision; reaches runners with the next heartbeat |
+| Kill switch | Operation, target, workspace, whole system | Checked first on every decision about work on a system; reaches runners with the next heartbeat |
 
-A kill switch is set with `killswitch.set`. It stops new work at once: the scheduler stops handing out jobs it covers and tells runners. Runs in flight stop at their next commit point and stay resumable.
+A kill switch is set with `killswitch.set`. It does not stop administration or approving, so it can always be released. It stops new work at once: the scheduler stops handing out jobs it covers and tells runners. Runs in flight stop at their next commit point and stay resumable.
 
 ## Content from the system, and published versions
 
@@ -204,8 +206,8 @@ A decision on a warm cache: under 100 microseconds. Loading a new policy version
 ## Open points
 
 - **Whether decisions on reads may be sampled.** Decision 0034 allows reads' decisions to be sampled or summarized to save space; the properties above say every decision is recorded. Until this is settled, every decision is stored in full.
-- Cedar's binary size and decision time in practice, and whether its partial evaluation is stable enough to list the tools a caller may use without asking tool by tool. Brief 31; hypothesis H-11.
-- Whether to expose the policy language to administrators at all in the first release, or only grants.
+- Whether asking tool by tool is fast enough to list the tools a caller may use over a large catalog. One decision of the core takes about 0.07 microseconds; the two reads of the store beside it are not measured. Hypothesis H-11.
+- Whether administrators ever need a policy language. Today they write roles, grants, and pre-approval rules, whose conditions are expressions (decision 0082).
 - The exact claims to rely on for groups and roles from each identity provider.
 - The shape of the presence proof the local approval surface hands in, once brief 27 says which prompts each operating system offers.
 - Consent records are kept by `a2m-policy`, because only the decider should ask whether one exists; whether they belong with the scout instead is open.

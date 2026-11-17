@@ -1,0 +1,18 @@
+[package]
+name = "example-broker"
+description = "Test stand: a small local broker with a queue and a topic, and a control interface."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# The line protocol needs buffered reads and writes on a socket.
+tokio = { workspace = true, features = ["io-util"] }
+
+[lints]
+workspace = true

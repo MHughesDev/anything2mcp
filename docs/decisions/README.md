@@ -42,7 +42,7 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0030 | [Where session secrets live](0030-where-session-secrets-live.md) | Accepted (design decision) |
 | 0031 | [The browser always runs with a profile the engine owns](0031-the-browser-always-runs-with-a-profile-the-engine-owns.md) | Accepted (design decision) |
 | 0032 | [One live session per identity, shared by tabs, with a single renewer](0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md) | Accepted (design decision) |
-| 0033 | [Policy decisions use Cedar, with grants compiled to it](0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md) | Accepted (design decision) |
+| 0033 | [Policy decisions use Cedar, with grants compiled to it](0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md) | Superseded by 0082 |
 | 0034 | [Policy is a versioned, tested artifact, and every decision is recorded](0034-policy-is-a-versioned-tested-artifact-and-every-decision-is-recorded.md) | Accepted (design decision) |
 | 0035 | [A user's session is used only by that user and agents acting for them](0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) | Accepted (owner decision) |
 | 0036 | [Target files are compiled into a hashed plan before anything runs](0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) | Accepted (design decision) |
@@ -76,3 +76,32 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0064 | [Five further packs are designed before they are built](0064-five-further-packs-are-designed-before-they-are-built.md) | Accepted (design decision) |
 | 0065 | [The specification is rebuilt in parts, and the first design is archived](0065-the-specification-is-rebuilt-in-parts-and-the-first-design-is-archived.md) | Accepted (design decision) |
 | 0066 | [Configuration in layers that may only tighten, and a bar that is measured](0066-configuration-in-layers-that-may-only-tighten-and-a-bar-that-is-measured.md) | Accepted (design decision) |
+| 0067 | [The kernel is built layer by layer, in parallel, and the first driver through the loop is the HTTP pack's](0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md) | Accepted (design decision) |
+| 0068 | [Values, names, and identifiers, as the core crate settles them](0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) | Accepted (design decision) |
+| 0069 | [The plan is canonical JSON, hashed whole, and keyed digests are per workspace](0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) | Accepted (design decision) |
+| 0072 | [Expressions are a CEL subset, on the engine's own parser, checker, and evaluator](0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md) | Accepted (design decision) |
+| 0076 | [One trace record per step, and a signature chained over record digests](0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md) | Accepted (design decision) |
+| 0077 | [Logs through the `tracing` crate with our own subscriber, and spans through a handle](0077-logs-through-the-tracing-crate-with-our-own-subscriber-and-spans-through-a-handle.md) | Accepted (design decision) |
+| 0071 | [The MCP server stands on the official SDK behind a seam, and serves two revisions](0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md) | Accepted (design decision) |
+| 0074 | [The vault's cipher, key stores, and other outside crates](0074-the-vaults-cipher-key-stores-and-other-outside-crates.md) | Accepted (design decision) |
+| 0075 | [The vault's interface, as building it settled it](0075-the-vaults-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0070 | [The browser engine stands on its own client, over the debugging pipe](0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md) | Accepted (design decision) |
+| 0073 | [Decimals use operators, division is a function, and how a field type normalizes](0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md) | Accepted (design decision) |
+| 0078 | [Target files are read by an event parser into our own located tree, and checked by our own schema subset](0078-target-files-are-read-by-an-event-parser-into-our-own-located-tree-and-checked-by-our-own-schema-subset.md) | Accepted (design decision) |
+| 0079 | [The compiler's registration points, and the file formats, as the code settles them](0079-the-compilers-registration-points-and-the-file-formats-as-the-code-settles-them.md) | Accepted (design decision) |
+| 0080 | [The store is one SQLite file, and a crate reaches its own tables through the transaction](0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md) | Accepted (design decision) |
+| 0081 | [What the ledger holds as data: the token, doubt, locks, and rule 3](0081-what-the-ledger-holds-as-data-the-token-doubt-locks-and-rule-three.md) | Accepted (design decision) |
+| 0082 | [The decision core is the policy crate's own evaluator](0082-the-decision-core-is-the-policy-crates-own-evaluator.md) | Accepted (design decision) |
+| 0083 | [The policy engine's interface, as building it settled it](0083-the-policy-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0086 | [The source readers are our own, over one outside crate that inflates](0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md) | Accepted (design decision) |
+| 0087 | [The source readers' interface, as building it settled it](0087-the-source-readers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0084 | [The session keeper's outside crates, and TLS for identity services](0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md) | Accepted (design decision) |
+| 0085 | [The session keeper's interface, as building it settled it](0085-the-session-keepers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0093 | [The scheduler's interface, as building it settled it](0093-the-schedulers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0088 | [The provider contract's outside crates: a TOML parser, a descriptor helper, safe process calls, and the Windows calls](0088-the-provider-contracts-outside-crates.md) | Accepted (design decision) |
+| 0089 | [The provider contract as building it settled it](0089-the-provider-contract-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0090 | [The supervisor ends a group only while its leader is unreaped, and its links are started by three calls](0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) | Accepted (design decision) |
+| 0121 | [The plan carries what the run time needs from target files](0121-the-plan-carries-what-the-run-time-needs-from-target-files.md) | Accepted (design decision) |
+| 0122 | [Small things the core crate gives its builders, and a secret is wiped when dropped](0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) | Accepted (design decision) |
+| 0123 | [The Linux Secret Service back end is left out until its store crate stands on maintained crates](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md) | Accepted (design decision) |
+| 0124 | [The plan declares a surface's programs, and a schema checks run-time values](0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md) | Accepted (design decision) |

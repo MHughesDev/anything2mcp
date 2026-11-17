@@ -58,6 +58,24 @@ impl FailureCode {
     /// A finding claims more than its source, its parents, or its content allow.
     pub const FINDING_INVALID: Self = Self::fixed("finding_invalid");
 
+    /// A decimal, a date, a key part, or a moment cannot be represented.
+    pub const VALUE_OUT_OF_RANGE: Self = Self::fixed("value_out_of_range");
+
+    /// A plan's bytes do not match the hash it was published with.
+    pub const PLAN_HASH_MISMATCH: Self = Self::fixed("plan_hash_mismatch");
+
+    /// A plan's format is not one this engine loads.
+    pub const PLAN_FORMAT_UNSUPPORTED: Self = Self::fixed("plan_format_unsupported");
+
+    /// A plan's bytes match its hash and are not a well-formed plan.
+    pub const PLAN_UNREADABLE: Self = Self::fixed("plan_unreadable");
+
+    /// A payload in a plan does not decode as the type its reader expects.
+    pub const PAYLOAD_UNREADABLE: Self = Self::fixed("payload_unreadable");
+
+    /// Data holds something the plan's encoding cannot carry, such as a float.
+    pub const PAYLOAD_NOT_ENCODABLE: Self = Self::fixed("payload_not_encodable");
+
     /// Makes a code from a name written in the source.
     ///
     /// # Panics
@@ -208,10 +226,7 @@ impl From<InvalidDigest> for Failure {
 
 impl From<InvalidName> for Failure {
     fn from(error: InvalidName) -> Self {
-        let next_step = format!(
-            "Write the {} name in lowercase, such as `page_http`.",
-            error.kind()
-        );
+        let next_step = error.next_step();
         Self::new(
             FailureClass::Input,
             FailureCode::SCHEMA_INVALID,

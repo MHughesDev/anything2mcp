@@ -61,11 +61,11 @@ An operation file is the kernel's, and each of its bindings is checked by the pa
 | HTTP | `http`, `api` | Designed in `a2m-pack-http`; Phase 4 |
 | MCP | `mcp` | Designed in `a2m-pack-mcp`; Phase 4 |
 | Desktop | `desktop` | Designed in `a2m-pack-desktop`; Phase 8 |
-| Command | `cli`, proposed | Designed in [section 306](../3-packs/306-the-command-pack.md); the second pack to be built, to test the boundary (Stage D) |
-| Data | `sql`, proposed | Designed in [section 307](../3-packs/307-the-data-pack.md) |
-| File | `file`, proposed | Designed in [section 308](../3-packs/308-the-file-pack.md) |
-| Stream | `stream`, proposed | Designed in [section 309](../3-packs/309-the-stream-pack.md) |
-| Device | `device`, proposed | Designed in [section 310](../3-packs/310-the-device-pack.md) |
+| Command | `cli`, proposed | Designed in [section 306](../3-packs/306-the-command-pack.md); its crate is `a2m-pack-command`; the second pack to be built, to test the boundary (Stage D) |
+| Data | `sql`, proposed | Designed in [section 307](../3-packs/307-the-data-pack.md); its crate is `a2m-pack-data` |
+| File | `file`, proposed | Designed in [section 308](../3-packs/308-the-file-pack.md); its crate is `a2m-pack-file` |
+| Stream | `stream`, proposed | Designed in [section 309](../3-packs/309-the-stream-pack.md); its crate is `a2m-pack-stream` |
+| Device | `device`, proposed | Designed in [section 310](../3-packs/310-the-device-pack.md); its crate is `a2m-pack-device` |
 
 A proposed mode becomes real by its own decision record when its pack is built. The crate designs are in [the architecture](../../architecture/README.md); [section 106](../1-product/106-what-it-latches-onto.md) catalogs the kinds of system still without a pack.
 

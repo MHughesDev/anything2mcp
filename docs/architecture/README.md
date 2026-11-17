@@ -22,7 +22,7 @@ Most of what is described here is not built yet. The Rust in this folder is a sk
   │ 1 Types        a2m-core                                                                    │
   └──────────────▲────────────────────────────────────────────────────────────────────────────┘
                  │ registers through the contract, and is called back
-  Packs       web (browser, ui, probe) · http · mcp · desktop · then command, data, file, stream, device
+  Packs       web (browser, ui, probe) · http · mcp · desktop · command · data · file · stream · device
                  │
   Systems     whatever already exists and offers a surface the user is entitled to use
 ```
@@ -43,7 +43,7 @@ The binding table is in the [technical reference](../reference/technical-referen
 | 6. Engine | `a2m-engine`, `a2m-sched` | Carrying out a plan, and deciding when and where it may be carried out. Neither depends on the other; a role joins them |
 | 7. Actions | `a2m-actions` | Every way into the kernel, defined once |
 | 8. Roles | `a2m-local`, `a2m-mcp`, `a2m-api`, `a2m-runner` | The shapes a process can take |
-| 9, 10. Packs | `a2m-pack-*` | Knowledge of one kind of system. They implement the contract and are called back |
+| 9, 10. Packs | `a2m-pack-*` | Knowledge of one kind of system: the web, HTTP, MCP, and desktop packs, and the command, data, file, stream, and device packs, each with its own crates. They implement the contract and are called back |
 | 11. Product | `anything2mcp` | Names the packs, and nothing else |
 
 ## Who defines, who implements, who wires
@@ -56,8 +56,8 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | The `Plan` and its steps, as data, with the check of a plan's hash | `a2m-core` | Produced only by the compiler in `a2m-files` | `a2m-engine`, `a2m-provider`, packs | Not applicable |
 | `Redact`: text in, text with every registered secret removed; and a keyed digest for naming things without revealing them | `a2m-core` | `a2m-vault` | `a2m-telemetry`, `a2m-ledger`, every front door | `a2m-actions` |
 | Expressions: compile once, evaluate many times; host functions for units, numbers, dates | `a2m-expr` | `a2m-expr` | `a2m-files` to type-check; `a2m-engine`, `a2m-sources`, `a2m-policy` to evaluate | Not applicable |
-| Sealing and opening; key-store back ends | `a2m-vault` | `a2m-vault`; an outside key service through a back end that a plug-in may supply | `a2m-ledger`, `a2m-auth` | `a2m-actions` |
-| `KeyRecords`: where the vault's wrapped keys are kept | `a2m-vault` | `a2m-ledger` | `a2m-vault` | `a2m-actions` |
+| Sealing and opening, as methods of the `Vault` itself, with no trait between; key-store back ends | `a2m-vault` | `a2m-vault`; an outside key service through a back end that a plug-in may supply | `a2m-ledger`, which is handed the vault whole through `Store::attach`; `a2m-auth`, which is handed the same vault | `a2m-actions` |
+| `KeyRecords`: where the vault's wrapped keys are kept, one row per key and generation | `a2m-vault` | `a2m-ledger`, which gives it out through `Store::key_records` and holds the store weakly | `a2m-vault` | `a2m-actions` |
 | Spans, metrics, the step trace | `a2m-telemetry` | `a2m-telemetry` | Every crate above it. The finished trace goes back to the engine as redacted bytes, and the engine sends it to the store | `a2m-actions` |
 | Target files: schemas, loader, linter, compiler; the drafter | `a2m-files` | `a2m-files` | `a2m-actions` to lint, compile, draft. Never the engine | Not applicable |
 | What a pack registers with the compiler: file kinds, verb lowerings, lint rules, drafting rules | `a2m-files` | Packs | `a2m-files` | `a2m-provider` gathers them into one set; `a2m-actions` passes the set to the compiler |
@@ -88,7 +88,7 @@ Nine consequences are worth stating, because each closes a question an implement
 - **The engine and the scheduler do not know each other.** The scheduler hands out job leases. A runner claims one and calls the engine. In one process the runner is a loop inside `a2m-actions`; across machines it is `a2m-runner`.
 - **The session keeper never calls upward.** Its checks and renewals are work that must run on a session's home runner, so it is handed a `KeeperWork` and uses that.
 - **Every entry is an action, with one exception.** Calling a target's tool is the action `tool.call`. A front door reads the caller's credential, has `a2m-actions` check it, builds a request, and dispatches. It decides nothing and holds no engine logic. The exception is recording a person's approval or refusal: it is deliberately not an action and has no generated face, so that no command, tool, or route can approve. The approval surface is given a handle that can do those two things and nothing else.
-- **A table has one owner.** The store owns the connection, the transactions, and the migrations; each crate owns the meaning of its own tables, and no crate's SQL names another's. The one declared exception: when writes begin, the ledger checks the approval that policy recorded, in the same transaction.
+- **A table has one owner.** The store owns the connection, the transactions, and the migrations; each crate owns the meaning of its own tables, and no crate's SQL names another's. A transaction is a closure run on the store's own thread, `store.write(durability, |tx| ...)`, and a crate above reaches its own tables through `tx.tables(Owner::X)` ([decision 0080](../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). The one declared exception: when writes begin, the ledger checks the approval that policy recorded, in the same transaction.
 - **Words that arrive with packs are registered names, not enums.** A mode, a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name, and a failure code are checked names that a provider registers or a crate defines. A step kind is a name within its mode. The kernel's enums are the words that are the same for every kind of system.
 - **Packs share data shapes and never code.** A file kind or a finding kind has one owning pack, which registers its schema for a surface kind. Another pack may declare that it reads the kind, and the compiler hands it the validated entries as data ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
 - **A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and telemetry. The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
@@ -152,7 +152,7 @@ Steps 1 to 6 as for a read, then:
 | Runs, the ledger, record locks, events, findings, the audit chain, evidence blobs | The store and the data directory | `a2m-ledger` |
 | Decisions, approvals, grants, consents, delegations, kill switches, quota counters | The store | `a2m-policy` |
 | Sessions' records, their events, and saved session state, sealed | The store | `a2m-auth` |
-| Jobs, leases, budgets | The store | `a2m-sched` |
+| Jobs, leases, and budgets, in the tables `jobs`, `runners`, `resource_holds`, `caller_turns`, `scheduler_holds`, and `budgets` | The store | `a2m-sched` |
 | The health of each binding | The store | `a2m-engine`, written through `Control` |
 | Toolsets, and the scout's stage results | The store | `a2m-actions` |
 | The vault's wrapped keys | The store, through `KeyRecords`; the root key in the operating system's key store or a key service | `a2m-vault` |
@@ -214,7 +214,7 @@ Test stands, the pip and npm packages, the pages, profiles, plug-in examples, be
 
 ## Pack designs
 
-A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). The crate designs for the four first packs are in [crates/](crates); the packs that have no crates yet are designed in the specification, and listed in its [index](../spec/README.md).
+A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). The crate designs for the four first packs are in [crates/](crates). The command, data, file, stream, and device packs have crates too, such as `a2m-pack-command`, each with a stub design that the package building the pack completes. Every pack is designed in the specification, and listed in its [index](../spec/README.md).
 
 ## Using this folder
 

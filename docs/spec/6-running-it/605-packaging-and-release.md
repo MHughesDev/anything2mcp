@@ -35,6 +35,11 @@ anything2mcp/
     a2m-pack-http/        # HTTP pack: http and api drivers; OpenAPI, GraphQL, OData import
     a2m-pack-mcp/         # MCP pack: pass-through to an upstream MCP server, through a mapping file
     a2m-pack-desktop/     # desktop pack: Windows UI Automation, macOS Accessibility, Linux AT-SPI
+    a2m-pack-command/      # the command pack: the cli driver over declared programs, run by the supervisor
+    a2m-pack-data/         # the data pack: the sql driver; reads and keyed writes; the catalog as discoverer
+    a2m-pack-file/         # the file pack: the file driver; named places in files under declared roots
+    a2m-pack-stream/       # the stream pack: the stream driver; bounded reads and keyed publishes
+    a2m-pack-device/       # the device pack: the device driver; points over a link, ranges enforced first
     # The product: wires the packs into the kernel.
     anything2mcp/         # the `anything2mcp` and `a2m` commands and the embeddable library facade
   bindings/
@@ -60,10 +65,10 @@ The folders that are not crates (`targets/`, `bindings/`, `web/console/`, `plugi
 | --- | --- | --- |
 | Async runtime, HTTP server and client | Tokio, Axum, Hyper with rustls | Standard, fast, no OpenSSL dependency |
 | MCP protocol | `rmcp`, the official Rust SDK | Tracks the 2026-07-28 specification ([docs.rs](https://docs.rs/crate/rmcp)) |
-| Browser | Own DevTools-protocol engine, in the web pack | Evaluate chromiumoxide and Rustwright as a base first; package 0.4 decides ([decision 0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md)) |
+| Browser | Own DevTools-protocol engine, in the web pack | It stands on a protocol client of our own, over the debugging pipe. Package 0.4 weighed chromiumoxide and Rustwright as a base and chose this ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)) |
 | Desktop accessibility | [xa11y](https://docs.rs/crate/xa11y/0.3.0) or per-platform crates | xa11y offers one API over UI Automation, AXUIElement, and AT-SPI2, under MIT; package 8.1 decides |
 | Storage | SQLite for one machine, Postgres for servers | One schema, two back ends |
-| Expressions | A CEL implementation for Rust | Pre-compiled at publish |
+| Expressions | A typed subset of CEL, on the engine's own parser and evaluator ([decision 0072](../../decisions/0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md)) | Pre-compiled at publish |
 | Spreadsheets, decimals | A pure-Rust xlsx reader; a decimal arithmetic crate | Exact comparison needs decimals, never floats |
 | Key store | A cross-platform keyring crate over DPAPI, Keychain, and Secret Service | Outside secret managers on servers |
 | OAuth and OpenID Connect | Standards-based crates; no official MSAL for Rust exists | Broker sign-in handled on user devices |
@@ -213,7 +218,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - A container image for servers.
 - An offline bundle for networks with no internet access: the binary, the wheels, and a pinned browser.
 
-Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5.
+Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)).
 
 ## Versions
 

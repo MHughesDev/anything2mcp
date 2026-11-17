@@ -4,7 +4,7 @@ Input is read and validated in full before any surface of the target is touched,
 
 **Readers.** Built-in readers for xlsx, csv, json, and another operation's output. The xlsx reader:
 
-- Loads the workbook twice, once for formulas and once for cached values, and fails when a formula cell has no cached value.
+- Reads each cell's formula and its cached value, which a workbook keeps side by side, and fails when a formula cell has no cached value. It never calculates a formula.
 - Records the workbook's date system, each cell's number format, merged ranges, and hidden rows and columns.
 - Finds inputs by named range or header text, never by fixed cell coordinates.
 - Treats text such as "NA" or "null" as text, never as missing, unless the mapping says otherwise.

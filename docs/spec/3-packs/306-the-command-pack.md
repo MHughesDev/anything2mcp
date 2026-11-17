@@ -270,14 +270,15 @@ An `input`, `rejected`, `stale`, `busy`, `session_expired`, or `transient` exit 
 
 ## The test stand
 
-A small Rust program, `example-tool`, under `targets/`: an inventory of items kept in a data file inside the folder named by `EXAMPLE_TOOL_HOME`. It follows [the test application plan](../../plan/test-application.md): ground truth comes from the tool's own store, every fault is a setting, and it is as real as is cheap. Its harness, like the test application's, starts a tool with a fresh home folder per test.
+A small Rust program, `example-cli`, in `targets/example-cli`: an inventory of items kept in a data file inside the folder named by a leading `--home` argument or by `EXAMPLE_CLI_HOME`. It stands in for the `example-tool` of the examples above; its [README](../../../targets/example-cli/README.md) lists its commands, its exit statuses, its faults, and its harness. It follows [the test application plan](../../plan/test-application.md): ground truth comes from the tool's own store, every fault is a setting, and it is as real as is cheap. Its harness, like the test application's, starts a tool with a fresh home folder per test.
 
 | Control | Purpose |
 | --- | --- |
 | Reset | Restore the seed items |
 | Inspect | What the data file holds for an item, read directly, not through the tool |
 | Count writes | How many times each item was written, and by which start of the program |
-| Set a fault | Written to a control file the tool reads at every start; for the next start or until cleared |
+| Invocations | Every start the tool received: its arguments in order, its environment, and how it ended |
+| Set a fault | Written to a control file the tool reads at every start; for the next start or until cleared. The control folder sits beside the tool's own file, so a start with a bare environment still finds it |
 
 | # | The tool does this | Risk it exercises |
 | --- | --- | --- |
@@ -322,13 +323,13 @@ The usual remote-login protocols run a command by handing one line to the remote
 
 | Step | What | Proof |
 | --- | --- | --- |
-| 1 | D2: `example-tool`, its control interface, and its harness | Its own tests on three systems |
+| 1 | D2: `example-cli`, its control interface, and its harness | Its own tests on three systems |
 | 2 | The `commands/` schema, lint rules, and the `read`, `list`, `search` lowerings | Files for C1 compile; files that break each rule above do not |
 | 3 | The driver for reads: prepare, `spawn`, `expect`, `parse`, stopping | C1, C2, C9 to C12, and C14 on three systems |
 | 4 | D3: a read through the same engine loop | The same trace signature across five runs |
 | 5 | D4: the H-26 count | A hypothesis result file |
 | 6 | Writes: `create`, `update`, `delete`, read-back, identity, secrets | C3 to C8, C13, and the fault tests of every write |
-| 7 | The discoverer and drafting rules | A scout of `example-tool` drafts C1's commands and tries none |
+| 7 | The discoverer and drafting rules | A scout of `example-cli` drafts C1's commands and tries none |
 
 ## Open points
 

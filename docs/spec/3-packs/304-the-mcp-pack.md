@@ -165,7 +165,7 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 
 ## The test stand
 
-A small MCP server, to be added under `targets/`, over the example data, with a control interface: inspect what it stored, count writes and calls, change a tool's definition, announce a list change, drop the connection after a commit, and return text with instructions aimed at an agent.
+A small MCP server at `targets/example-mcp` ([README](../../../targets/example-mcp/README.md)), over the example data, with a control interface: inspect what it stored, count writes and calls, change a tool's definition, announce a list change, drop the connection after a commit, and return text with instructions aimed at an agent.
 
 | Must always hold | Proven by |
 | --- | --- |

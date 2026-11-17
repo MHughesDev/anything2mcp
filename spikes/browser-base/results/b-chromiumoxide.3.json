@@ -1,0 +1,38 @@
+{
+  "candidate": "b: chromiumoxide 0.9.1",
+  "transport": "WebSocket on a loopback port",
+  "browser_version": "Chrome/153.0.8010.12",
+  "cold_start_to_first_read_ms": 351.452,
+  "launch_to_connected_ms": 230.9,
+  "wait_kind": "the crate's navigation wait, then our own in-page observer; the crate has no wait for an element",
+  "field_value": "Left rail",
+  "warm_reads": {
+    "count": 200,
+    "median_ms": 0.109,
+    "p95_ms": 0.245,
+    "max_ms": 3.234
+  },
+  "snapshot_kind": "accessibility tree, through the crate's raw command",
+  "snapshot_nodes": 60,
+  "snapshot_ms": 3.196,
+  "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
+  "writes_stored_after_blocked_save": 0,
+  "clean_close": {
+    "checked": true,
+    "remaining": 0,
+    "after_ms": 0.539
+  },
+  "kill_mid_call": {
+    "outcome": "Err(ChannelSendError(Canceled(Canceled)))",
+    "after_kill_ms": 6.938,
+    "leftover": {
+      "checked": true,
+      "remaining": 0,
+      "after_ms": 11.25
+    }
+  },
+  "notes": [
+    "exit after close: Ok(Ok(Some(ExitStatus(unix_wait_status(0)))))",
+    "a call after the kill: Ok(Err(ChannelSendError(Send(SendError { kind: Disconnected }))))"
+  ]
+}

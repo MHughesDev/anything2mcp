@@ -19,7 +19,7 @@ jobs:
   rust:
     name: Rust on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -39,8 +39,23 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --all-targets --locked
+      # Every crate's tests run even when one crate fails, so that one run
+      # shows every failure on this operating system.
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
+      # The harness and its sample scenario; nothing is gated until a budgeted
+      # path is measured (spec section 225).
+      - name: Benchmark
+        run: cargo run --locked --release -p a2m-bench -- run --out bench-results
+        env:
+          A2M_BENCH_COMMIT: ${{ github.sha }}
+      # Pinned by commit; this is v7.0.2.
+      - name: Store the benchmark result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench-results/
+          if-no-files-found: error
 
   dependencies:
     name: Licences and advisories of dependencies

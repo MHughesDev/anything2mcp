@@ -1,0 +1,10 @@
+[1794891558.914][SEVERE]: CreatePlatformSocket() failed: Address family not supported by protocol (97)
+driver ready after 9.698 ms
+[1794891559.043][SEVERE]: CreatePlatformSocket() failed: Address family not supported by protocol (97)
+no session: Unable to create WebDriver session:     
+    Status: 500
+    Additional info:
+        session not created: This version of ChromeDriver only supports Chrome version 147
+        Current browser version is 153.0.8010.12 with binary path /opt/pw-browsers/chromium
+        Error: session not created
+            

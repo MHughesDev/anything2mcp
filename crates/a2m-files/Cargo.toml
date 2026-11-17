@@ -7,5 +7,18 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+a2m-core = { path = "../a2m-core" }
+a2m-expr = { path = "../a2m-expr" }
+saphyr-parser.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+# The imaginary `stand` pack, for the tests of the crates above this one,
+# which name it under their dev-dependencies. Never enabled in the product.
+# This crate's own tests have it without the feature.
+testing = []
+
 [lints]
 workspace = true

@@ -1,0 +1,21 @@
+operation: example_line_item_upsert
+title: Create or update a line item
+effect: write
+key: [order_id, item_code]
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  length: {type: length_ft_in, description: "Length, in inches"}
+outputs:
+  length: {type: length_ft_in}
+bindings:
+  - mode: stand
+    verb: upsert
+    status: shadow
+    call: line_item_put
+    args: {length: input.length}
+    read_back: {call: line_item_get}
+description: >
+  Creates or updates one line item on an order.
+  Prefer example_order_sheet_enter for whole sheets.

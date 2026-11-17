@@ -22,9 +22,13 @@ docs = repo / "docs"
 LINK = re.compile(r"\[([^\]]+)\]\((<[^>]+>|[^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)")
 
 
+# Folders that hold what a build or an install produced, never a document of ours.
+NOT_OURS = (".git/", "target/", "node_modules/", ".venv/", "venv/", "site-packages/")
+
+
 def load():
     return {p.relative_to(repo).as_posix(): p.read_text(encoding="utf-8")
-            for p in sorted(repo.rglob("*.md")) if ".git/" not in p.as_posix() and "target/" not in p.as_posix()}
+            for p in sorted(repo.rglob("*.md")) if not any(part in p.as_posix() for part in NOT_OURS)}
 
 
 def links(text):
@@ -275,6 +279,17 @@ def main():
     def pack_of(crate):
         return crate.split("-")[2] if crate.startswith("a2m-pack-") else None
 
+    # Every crate under targets/ is test equipment, the test application and each test stand alike.
+    stands = set()
+    for manifest_path in sorted((repo / "targets").glob("*/Cargo.toml")):
+        try:
+            stand = tomllib.loads(manifest_path.read_text(encoding="utf-8")).get("package", {}).get("name")
+        except tomllib.TOMLDecodeError as e:
+            note("layering", f"targets/{manifest_path.parent.name}/Cargo.toml cannot be parsed: {e}")
+            continue
+        if stand:
+            stands.add(stand)
+
     on_disk = {}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
@@ -288,9 +303,9 @@ def main():
         if name != folder:
             note("layering", f"crates/{folder} holds a package named {name}; the two must match")
         on_disk[folder] = internal_dependencies(manifest)
-        if "example-app" in internal_dependencies(manifest, ("dependencies", "build-dependencies")):
-            note("layering", f"{folder} depends on example-app outside its tests; "
-                             "the test application is test equipment and may only be a dev-dependency")
+        for stand in sorted(stands & internal_dependencies(manifest, ("dependencies", "build-dependencies"))):
+            note("layering", f"{folder} depends on {stand} outside its tests; "
+                             "a crate under targets/ is test equipment and may only be a dev-dependency")
     if crates_dir.is_dir():
         for c in sorted(set(on_disk) - set(layer)):
             note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")
@@ -345,7 +360,7 @@ def main():
                "docs/references/sources.md",
                "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
     kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}
-    skipped = {".git", "target", "__pycache__", "dist", ".venv", "node_modules"}
+    skipped = {".git", "target", "__pycache__", "dist", ".venv", "venv", "node_modules", "site-packages"}
     for path in sorted(repo.rglob("*")):
         rel = path.relative_to(repo).as_posix()
         if (not path.is_file() or skipped & set(rel.split("/")) or rel.startswith(history)

@@ -1,0 +1,18 @@
+pipeline: example_order_sheet_enter
+title: Enter an order sheet
+description: >
+  Enters every row of an order sheet as a line item of one draft order,
+  then reads the order back. Stops at the first row that fails.
+effect: write
+inputs:
+  order_id: {type: identifier, description: "Order the sheet belongs to"}
+source: {template: order_sheet_v2}
+limits: {max_records: 50}
+steps:
+  - {id: check, operation: example_order_get, with: {order_id: input.order_id},
+     expect: "result.status == 'draft'"}
+  - {id: enter, for_each: source.rows, operation: example_line_item_upsert,
+     with: {order_id: input.order_id, item_code: row.code, length: row.length},
+     checkpoint: per_record}
+  - {id: totals, operation: example_order_get, with: {order_id: input.order_id}}
+success: [all_records_verified]

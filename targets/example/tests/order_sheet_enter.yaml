@@ -1,0 +1,5 @@
+test: example_order_sheet_enter
+kind: offline
+fixture: order_sheet_enter
+inputs: {order_id: "SO-1001", source: "order_sheet.csv"}
+expect: {state: completed, records_verified: 2}

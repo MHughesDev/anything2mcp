@@ -1,0 +1,25 @@
+# Throwaway. Roadmap package 0.5. Never promoted into the product.
+[package]
+name = "spike-mcp-on-sdk"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+# No macros: the tool list comes from data read at run time.
+rmcp = { version = "=3.10.0", default-features = false, features = ["server", "transport-io"] }
+serde_json = "1.0.154"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"], optional = true }
+tokio = { version = "1.54.1", features = ["macros", "rt", "io-std", "time"] }
+
+[features]
+# Not used by the stdio spike. It exists so the licence check and the size
+# measurement also cover the SDK's Streamable HTTP server.
+http = ["rmcp/transport-streamable-http-server", "dep:axum", "tokio/net"]
+
+[profile.release]
+opt-level = 3
+strip = true

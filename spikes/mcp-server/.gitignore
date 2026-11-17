@@ -1,0 +1,7 @@
+# Build output and the client libraries installed for the run. Neither is kept.
+/target/
+/clients/
+# Per-run reports and wire logs; run_all.sh writes them again. The summary,
+# the two conformance listings, and results/samples/ are kept.
+/results/*.json
+/results/*.jsonl

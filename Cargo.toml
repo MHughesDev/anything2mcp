@@ -1,6 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "targets/example-app"]
+members = [
+    "crates/*",
+    "targets/example-app",
+    "targets/example-broker",
+    "targets/example-cli",
+    "targets/example-db",
+    "targets/example-device",
+    "targets/example-files",
+    "targets/example-mcp",
+    "bench",
+]
+# Throwaway experiments are never part of the product or of its build.
+exclude = ["spikes"]
 
 # Every crate shares these. The version is the one number of the whole product;
 # the audit checks that the pip package carries the same one (spec section 41).
@@ -15,11 +27,58 @@ publish = false
 # table. Versions live here and nowhere else.
 [workspace.dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+# One SQLite for the whole workspace: the store, the data pack, and the test
+# stands all use this crate, because two crates that link SQLite cannot coexist.
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
+# Exact decimals for business values, wrapped by a2m-core and named nowhere
+# else (decision 0068). No features: the wrapper writes its own text form.
+rust_decimal = { version = "1.43.0", default-features = false }
+# TLS for the session keeper's calls to identity services, behind a2m-auth's
+# `tls` feature and nowhere else yet: rustls with the ring provider, which
+# needs only a C compiler on every platform (decision 0084).
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# SHA-1 only for one-time codes, whose standard (RFC 6238) uses it by default;
+# a2m-auth is its one user (decision 0084). Same family and tree as sha2.
+sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.1", default-features = false }
 tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+# Unicode NFC for text normalization in a2m-expr (decision 0073). Its tables
+# fix the Unicode version, so the version is part of the expression library.
+unicode-normalization = { version = "0.1.26", default-features = false }
+# Logging macros and the subscriber interface only; a2m-telemetry writes the
+# subscriber itself (decision 0077). No attribute macros, so no proc-macro tree.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# The vault's outside crates, each verified in decision 0074: the cipher, the
+# passphrase derivation, operating-system randomness, the redactor's matcher,
+# memory wiping, and the three desktop key stores.
+aho-corasick = "1.1.5"
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+getrandom = "0.4.3"
+keyring-core = "1.0.1"
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
+zeroize = "1.9.1"
+# The YAML parser for target files: an event parser that gives the line and
+# column of every value; a2m-files builds its own located tree (decision 0078).
+saphyr-parser = "0.3.4"
+# Inflate for a workbook's package, the one outside crate of a2m-sources; the
+# csv, json, package, and XML readers are its own (decision 0086).
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+# The provider contract's outside crates (decision 0088): the manifest parser;
+# on Unix, the helper that places a pipe on a child's descriptors and the safe
+# system calls that end a process group; on Windows, the handle and job calls.
+toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
+command-fds = { version = "0.3.3", features = ["tokio"] }
+rustix = { version = "1.1.6", default-features = false, features = ["std", "process"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+# The command pack's one outside crate (decision 0099): patterns for a
+# program's version line, its prompts, its output, and its text arguments.
+# Matching takes time linear in the text, which output from a program needs.
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.

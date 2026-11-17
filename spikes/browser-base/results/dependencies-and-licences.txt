@@ -1,0 +1,9 @@
+a-own-pipe: adds 7 crates on Linux; refused by the licence list: none
+b-chromiumoxide: adds 44 crates on Linux; refused by the licence list: none
+c-thirtyfour: adds 30 crates on Linux; refused by the licence list: none
+b-chromey: adds 102 crates on Linux; refused by the licence list: aws-lc-rs 1.19.0, aws-lc-sys 0.47.0, rustls-webpki 0.103.17, untrusted 0.9.0, webpki-root-certs 1.0.12
+b-ferrous-browser: adds 63 crates on Linux; refused by the licence list: none
+b-headless-chrome: adds 45 crates on Linux; refused by the licence list: auto_generate_cdp 0.4.6, ring 0.17.14, rustls-webpki 0.103.17, untrusted 0.9.0, webpki-roots 1.0.12
+b-rustwright: adds 46 crates on Linux; refused by the licence list: ring 0.17.14, rustls-webpki 0.103.17, untrusted 0.9.0, webpki-roots 0.26.11, webpki-roots 1.0.12
+c-fantoccini: adds 22 crates on Linux; refused by the licence list: webdriver 0.54.0
+c-rustenium: adds 56 crates on Linux; refused by the licence list: none

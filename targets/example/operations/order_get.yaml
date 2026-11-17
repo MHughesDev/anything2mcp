@@ -1,0 +1,19 @@
+operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  status: {type: order_status}
+  total: {type: amount}
+  note: {type: note}
+examples:
+  - {order_id: "SO-1001"}
+bindings:
+  - mode: stand
+    status: verified
+    call: order_get
+description: >
+  Reads the status, the total, and the note of one order.
+  Prefer example_order_sheet_enter to enter a whole sheet.

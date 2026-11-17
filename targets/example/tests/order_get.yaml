@@ -1,0 +1,5 @@
+test: example_order_get
+kind: offline
+fixture: order_get
+inputs: {order_id: "SO-1001"}
+expect: {status: draft, total: "125.00", note: "Call before delivery"}

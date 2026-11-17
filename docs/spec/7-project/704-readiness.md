@@ -14,7 +14,7 @@ How much of this specification a builder can work from today, what exists and is
 | The test application, with a web interface, a JSON interface, a control interface that reports ground truth, and injectable faults, for cases 1 to 4 (package 0.3) | A test resets it, changes a record, and asks it what it stored |
 | Continuous checks: formatting, lints, build, tests, a closed list of dependency licences, and the documentation audit with its self-test | Green on every pull request, on three operating systems |
 | The release workflow and a pip placeholder at 0.0.1, with a manual start that can rehearse a release (packages 0.2 and F2) | The build job is green; the package installs from the built wheel. Nothing is published yet |
-| The design: this specification; the [architecture](../../architecture/README.md), with a design for each of the 24 crates; the decision records; the research notes; a register of 39 hypotheses; the roadmap | The audit, which keeps links, names, counts, and the layering consistent, and requires a design for every crate |
+| The design: this specification; the [architecture](../../architecture/README.md), with a design for each of the 24 crates; the decision records; the research notes; a register of 40 hypotheses; the roadmap | The audit, which keeps links, names, counts, and the layering consistent, and requires a design for every crate |
 
 Nothing of the engine is built. No hypothesis has been tested; all 39 in the [register](../../hypotheses/README.md) are open.
 
@@ -55,15 +55,15 @@ Nothing of the engine is built. No hypothesis has been tested; all 39 in the [re
 | [225](../2-kernel/225-performance.md). Performance | Budgets set; none measured | Measure against them (package 1.7) | Treat a budget as a fact before it is measured |
 | [226](../2-kernel/226-configuration.md). Settings | Designed; key names are drafts until the loader is written | Build the loader | Add a setting that weakens a guardrail |
 | [301](../3-packs/301-the-web-pack.md). The web pack | Designed; the interface flavors and hard cases are a catalog, each built in Phase 8 | Build its interface mode from package 1.1 | Build a widget or platform rule without a test application case |
-| [302](../3-packs/302-the-web-pack-browser-engine.md). The web pack: the browser engine | Designed; its base waits on package 0.4 | Run the spike | Drive the user's own browser profile |
+| [302](../3-packs/302-the-web-pack-browser-engine.md). The web pack: the browser engine | Designed; its base is a client of our own, chosen by the spike of package 0.4 | Build the client as its crate design orders | Drive the user's own browser profile |
 | [303](../3-packs/303-the-http-pack.md). The HTTP pack | Designed in its crate design | Build it in Phase 4 | Write over a mined binding before it has passed shadow |
 | [304](../3-packs/304-the-mcp-pack.md). The MCP pack | Designed in its crate design | Build it in package 8.2 | Reach an upstream tool its mapping file does not name |
 | [305](../3-packs/305-the-desktop-pack.md). The desktop pack | Designed in outline; its base waits on package 8.1 | Run the spike | Click by position on a picture of the screen |
-| [306](../3-packs/306-the-command-pack.md). The command pack | Designed, not built | Build its test stand (package D2), then its reads | Start a shell |
-| [307](../3-packs/307-the-data-pack.md). The data pack | Designed, not built | Build its test stand (package G1) | Build the pack before package D4 has reported |
-| [308](../3-packs/308-the-file-pack.md). The file pack | Designed, not built | Build its test stand (package H1) | Write a format that has not passed both of its round-trip tests |
-| [309](../3-packs/309-the-stream-pack.md). The stream pack | Designed, not built | Build its test stand (package J1) | Consume a message during discovery |
-| [310](../3-packs/310-the-device-pack.md). The device pack | Designed, with rules and a catalog; not built | Build the simulated device (package K1) | Run anything against real hardware, or publish a firmware update without a declared recovery route |
+| [306](../3-packs/306-the-command-pack.md). The command pack | Designed, not built; its test stand is built (package D2) | Build its reads (package D3) | Start a shell |
+| [307](../3-packs/307-the-data-pack.md). The data pack | Designed, not built; its test stand is built (package G1) | Build its reads (package G2) | Build the pack before package D4 has reported |
+| [308](../3-packs/308-the-file-pack.md). The file pack | Designed, not built; its test stand is built (package H1) | Build its reads (package H2) | Write a format that has not passed both of its round-trip tests |
+| [309](../3-packs/309-the-stream-pack.md). The stream pack | Designed, not built; its test stand is built (package J1) | Build its reads (package J2) | Consume a message during discovery |
+| [310](../3-packs/310-the-device-pack.md). The device pack | Designed, with rules and a catalog; not built; the simulated device is built (package K1) | Build its reads (package K2) | Run anything against real hardware, or publish a firmware update without a declared recovery route |
 | [401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md). Overlaying tools on an existing system | Designed as a method | Follow it for the web pack now | Write beneath a system's own rules without its owner's word |
 | [402](../4-building-tools/402-the-scout-and-who-does-what.md). The scout, and who does what | Designed, without each pack's drafting rules | Build the pipeline's stages as the actions they are made from come to exist | Let the scout try a write, or draft a unit, key, or read-back rule the system did not state |
 | [403](../4-building-tools/403-testing-and-publish-gates.md). Testing and publish gates | Designed | Build each gate as its package needs it | Prove a write through the product's own read path alone |

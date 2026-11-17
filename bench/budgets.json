@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "source": "docs/spec/2-kernel/225-performance.md",
+  "regression_percent": 10,
+  "noise_floor_us": 100,
+  "budgets": [
+    {
+      "scenario": "start_to_ready",
+      "path": "Process start to ready",
+      "metric": "median",
+      "limit": { "value": 100, "unit": "ms" }
+    },
+    {
+      "scenario": "list_tools",
+      "path": "Listing tools",
+      "metric": "median",
+      "limit": { "value": 5, "unit": "ms" }
+    },
+    {
+      "scenario": "call_overhead",
+      "path": "Policy check, scheduling, and ledger write per call",
+      "metric": "median",
+      "limit": { "value": 3, "unit": "ms" }
+    },
+    {
+      "scenario": "http_operation",
+      "path": "`http` and `api` operations",
+      "metric": "overhead_median",
+      "limit": { "value": 5, "unit": "ms" }
+    },
+    {
+      "scenario": "api_operation",
+      "path": "`http` and `api` operations",
+      "metric": "overhead_median",
+      "limit": { "value": 5, "unit": "ms" }
+    },
+    {
+      "scenario": "page_http_operation",
+      "path": "`page_http` operations",
+      "metric": "overhead_median",
+      "limit": { "value": 20, "unit": "ms" }
+    },
+    {
+      "scenario": "ui_step",
+      "path": "`ui` steps",
+      "metric": "overhead_median",
+      "limit": { "value": 50, "unit": "ms" }
+    },
+    {
+      "scenario": "warm_tab",
+      "path": "Getting a tab on a warm, signed-in browser",
+      "metric": "median",
+      "limit": { "value": 100, "unit": "ms" }
+    },
+    {
+      "scenario": "cold_browser_start",
+      "path": "Getting a tab on a warm, signed-in browser",
+      "metric": "median",
+      "limit": { "value": 1, "unit": "s" }
+    },
+    {
+      "scenario": "idle_memory",
+      "path": "Idle memory of the server",
+      "metric": "resident_memory",
+      "limit": { "value": 50, "unit": "MB" }
+    }
+  ]
+}

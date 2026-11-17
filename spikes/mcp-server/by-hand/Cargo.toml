@@ -1,0 +1,16 @@
+# Throwaway. Roadmap package 0.5. Never promoted into the product.
+[package]
+name = "spike-mcp-by-hand"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+serde_json = "1.0.154"
+
+[profile.release]
+opt-level = 3
+strip = true

@@ -1,0 +1,5 @@
+test: example_line_item_upsert
+kind: offline
+fixture: line_item_upsert
+inputs: {order_id: "SO-1001", item_code: "L-101", length: "90.5"}
+expect: {length: "90.5"}

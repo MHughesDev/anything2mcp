@@ -26,7 +26,7 @@ Feeds spec sections [217](../spec/2-kernel/217-traces-evidence-and-repair.md) an
 
 ## Not verified
 
-- The current major version, license, and maintenance state of the key-store crate, read from its own repository.
+- The current major version, license, and maintenance state of the key-store crate: since checked, in [decision 0074](../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md). The vault links the family's core crate and one store crate per system.
 - How the Windows Credential Manager behaves for a service account with no interactive sign-in.
 - Whether the Linux kernel keyring's contents survive a restart, and what that means for a server.
-- Which authenticated-encryption crate to use and whether it has had an independent review.
+- Whether the authenticated-encryption crate chosen in decision 0074 has had an independent review; one is recalled and was not re-read.

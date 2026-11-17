@@ -17,10 +17,10 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | `title` | Name shown to people |
 | `surfaces` (required) | Map of surface name to a surface (below) |
 | `environments` | Map of environment name to an environment (below); at least `production` is implied |
-| `default_environment` | Used when a call names none |
-| `environment` | Fixed run settings: `locale`, `timezone`, `viewport` |
+| `default_environment` | Used when a call names none; `production` unless given |
+| `environment` | Fixed run settings that hold for every kind of surface: `locale`, and `timezone`, which is `UTC` or an offset such as `+02:00`. What only one kind of surface has, such as a viewport, is a field of that surface, which its pack registers |
 | `modules` | Module names, for large applications |
-| `defaults` | `timeouts`, `limits`, and `capture` level applied to every operation unless overridden |
+| `defaults` | What applies unless overridden. `timeouts` is a map from a name to milliseconds, which a pack's lowering gives to a step that states none. `limits` holds `max_records` and `max_duration_ms`, which a pipeline that states none takes. `capture` is the capture level of a run: one of the levels of [spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md). The compiler applies the timeouts and the limits, so the plan holds the result and the engine applies no default; the capture level travels in the plan |
 | `exclusive_session` | True when the application allows one session per account |
 | `drift_risk` | `low`, `medium`, or `high`; sets how often canaries run |
 | `authorization` | Reference to the record of who agreed to this target being wrapped; required to publish on a server |
@@ -29,12 +29,12 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's |
+| `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's. A field the pack marks as naming a program takes an absolute path, and the plan declares that program for the surface; a relative path is `kernel.program_invalid` |
 | `origin`, `base`, `server`, `app` | The address for the kind: a web origin, an API base address, an MCP server address, or a desktop application identifier. Other kinds have their own, given in their pack's section |
 | `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
-| `rate` | Requests allowed per period |
+| `rate` | Requests allowed per period: `requests` and `per_ms`, the period in milliseconds |
 
 **Environment.**
 
@@ -42,29 +42,31 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | --- | --- |
 | `kind` (required) | `test` or `production` |
 | `surfaces` | Address overrides per surface |
-| `test_records` | Record keys that drafts and publish gates may write to |
-| `approve_writes` | A stricter approval rule for this environment |
+| `test_records` | Record keys that drafts and publish gates may write to. Each is one plain value, or a list of them for a key of several parts, parent first, written as the system shows it; text goes in quotes |
+| `approve_writes` | The approval rule of this environment: one of the values of `policy.approve_writes` in [spec section 226](../spec/2-kernel/226-configuration.md). Policy applies whichever of this and the installation's own rule is the stricter, so a target can tighten the rule and never loosen it |
 
 ## `auth.yaml`
 
-One entry per group of surfaces that share a sign-in.
+The file is a map with one key, `auth`: a list with one entry per group of surfaces that share a sign-in.
 
 | Field | Meaning |
 | --- | --- |
 | `surfaces` (required) | The surfaces this entry covers |
 | `mode` (required) | `use_existing`, `managed_session`, or `custom` |
 | `provider` (required) | An auth provider from the technical reference |
-| `probe` (required) | A cheap signed-in read: an operation name or an endpoint |
+| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile |
+| `probe_inputs` | For a probe that is an operation: the inputs it is called with. Every required input with no default is given here, so the probe can be run as written |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
-| `timeouts` | Declared `idle` and `absolute` durations, when known |
+| `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
-| `credentials` | For `custom`: vault references only, such as `vault://example/service/password` |
+| `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know is refused by the provider's own check when the version is published, because the compiler holds no list of providers. Never a credential |
+| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`. References only |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
 | `movable` | `auto` or `false`; `false` pins the session to its runner |
 
 ## `types.yaml`
 
-Field types say how a value is formatted, normalized, compared, and classified.
+Field types say how a value is formatted, normalized, compared, and classified. The file is a map with one key, `types`, from a field type's name to its fields. A key that means nothing for the type's base is refused.
 
 | Field | Meaning |
 | --- | --- |
@@ -73,9 +75,11 @@ Field types say how a value is formatted, normalized, compared, and classified.
 | `step` | The smallest increment, such as 1/16 inch |
 | `places`, `rounding` | Decimal places and rounding mode |
 | `currency` | For money |
-| `format` | How the application displays and accepts the value |
-| `timezone` | For dates and times: `fixed`, `user`, or a named zone |
-| `case`, `whitespace` | Text comparison rules |
+| `format` | For a date or a time: the pattern the application displays and accepts, such as `MM/DD/YYYY` |
+| `timezone` | For dates and times: `fixed`, `user`, or a named zone. Only `UTC` and a fixed offset such as `+02:00` are built so far; a named zone or the `user` rule cannot be normalized yet |
+| `case`, `whitespace` | Text comparison rules. `case` is `sensitive` or `insensitive`; `whitespace` is `collapse`, `trim`, or `exact` |
+| `decimal_mark` | For numbers: `.` or `,`, the decimal mark the application shows; `.` unless given |
+| `true_text`, `false_text` | For booleans: the text the application shows for each; `true` and `false` unless given |
 | `codes` | For choices: map of stored code to label |
 | `sensitivity` | `public`, `internal`, or `restricted` |
 | `untrusted` | True for free text that came from the application |
@@ -177,12 +181,14 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
-| `outputs` (required) | A schema, usually a reference to an endpoint's response |
+| `outputs` (required) | Map of name to `type`, a field type, and `list`, true for a list of that type. A reference to a pack's schema is not built yet |
+| `title` | Name shown to people; the operation's name unless given |
+| `hazard` | What the operation could damage beyond its record ([spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md)); `none` unless given. Any other hazard requires the effect `irreversible` |
 | `bindings` (required) | One or more bindings (below) |
 | `description` (required) | What it does, when to prefer something else, side effects, limits |
-| `examples` | One to three example inputs |
+| `examples` | One to three example inputs, each a map from an input's name to a value of its type |
 | `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use |
-| `decision_points` | Named questions a person may have to answer during a run |
+| `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
 
 **Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`.
 
@@ -204,13 +210,15 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | Field | Meaning |
 | --- | --- |
 | `pipeline` (required) | The tool name, for its outcome |
+| `description` (required) | As for operations |
+| `title` | Name shown to people |
 | `effect` | Derived by the compiler; may be declared higher |
 | `inputs` | As for operations |
 | `source` | `template`: the name and version of a file under `sources/`, which names the reader and the mapping. A pipeline with a source has a reserved input named `source`, of type `file`, that carries the file to read; a source whose reader is `operation` has none |
-| `limits` (required for writes) | `max_records`, and optional time and rate limits |
+| `limits` (required for writes) | `max_records`, and optionally `max_duration_ms` |
 | `steps` (required) | Ordered list of steps (below) |
-| `success` (required) | Conditions for `completed`, such as `all_records_verified`. A record found `unchanged` counts as verified |
-| `headroom` | Minimum session time left before starting |
+| `success` (required) | Conditions for `completed`: a list of expressions, each of which may read `all_records_verified`. A record found `unchanged` counts as verified |
+| `headroom_ms` | Minimum session time left before starting, in milliseconds |
 
 **Step.**
 
@@ -229,30 +237,37 @@ A step can only stop on failure. There is no continue-on-error.
 
 | Field | Meaning |
 | --- | --- |
-| `template` (required) | Name and version |
-| `reader` (required) | `xlsx`, `csv`, `json`, or `operation` |
-| `fingerprint` (required) | What identifies this template version |
-| `locate` | Named ranges or header text that find the data |
-| `mapping` (required) | Map of row field name to a source column or an expression. Each row the source yields has these fields; a pipeline step passes them to an operation's inputs through `with`, so a source never names an operation |
+| `template` (required) | The template's name |
+| `reader` (required) | `xlsx`, `csv`, `json`, a plug-in's reader, or `operation` for rows that are another operation's result |
+| `versions` (required unless the reader is `operation`) | List of the template versions the definition knows, each with `version` and `fingerprint`. A fingerprint has `parts`, each with `kind`, `place`, and `value`, and may state its `digest`; the compiler works the digest out from the parts and refuses one that differs |
+| `locate` | Where the data lies: `document` (the default), `{named: ...}` for a table, a defined name, or a key, or `{sheet: ...}` |
+| `columns` (required) | The header text of every column the definition reads, each once. A column in the data that is not listed is a problem |
+| `fields` (required) | Map of row field name to its `type`, a field type, and either `column`, the header it is read from, or `expression`; and `required`, true unless given. Each row the source yields has these fields, each of its field type; a pipeline step passes them to an operation's inputs through `with`, so a source never names an operation |
+| `key` | The row fields that together identify a row; two rows with one key are a problem |
 | `rows` | An expression filtering which rows are records |
 | `missing` | Which text values, if any, count as empty |
+| `hidden` | `reject` (the default) or `include`: what is done with a hidden row or column |
+| `options` | The reader's dialect: `delimiter`, one character, a comma unless given |
+
+An `expression` and `rows` read `row`, the record of the row's cells by header text, and `source`. A cell has no type until a file is read, so each must end in a type of its own, as `upper(row.Code)` and `row.Code != ""` do. The compiled form is the `SourceSpec` in `a2m-files`, which `a2m-sources` loads ([decision 0087](../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md)).
 
 ## `tests/*.yaml` and `fixtures/`
 
 | Field | Meaning |
 | --- | --- |
 | `test` (required) | The operation or pipeline under test |
+| `name` | The test's name; the file's name unless given |
 | `kind` (required) | `offline` against a fixture, or `live` against a test record |
-| `fixture` | The fixture folder, for offline tests |
+| `fixture` | The name of the fixture's folder under `fixtures/`; required for offline tests |
 | `inputs` (required) | Inputs to call with |
 | `expect` (required) | The expected result, or the expected trace signature |
 | `restore` | For live write tests: true to put the original values back afterwards |
 
-A fixture folder holds recorded snapshots and exchanges and a marker file stating that it was scrubbed.
+A fixture folder holds recorded snapshots and exchanges and a marker file stating that it was scrubbed: `fixture.yaml`, with `scrubbed: true`.
 
 ## Expressions
 
-Expressions are CEL. They always terminate and never convert types silently.
+Expressions are written in CEL's syntax, in the part of it that `a2m-expr` reads ([decision 0072](../decisions/0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md)). They always terminate and never convert types silently. There is no float: a number with a decimal point does not compile. A decimal is written `decimal("12.50")`; `+`, `-`, `*`, and the comparisons work on two decimals, and division is `div(a, b, places, rounding)` ([decision 0073](../decisions/0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md)).
 
 | Available | Where |
 | --- | --- |
@@ -262,7 +277,7 @@ Expressions are CEL. They always terminate and never convert types silently.
 | `steps` | In a pipeline: `steps.<id>.result` is an earlier step's result |
 | `env` | The environment's name and kind |
 
-Host functions, the starting library: `to_inches`, `to_feet_inches`, `to_unit`, `parse_decimal`, `round_to`, `parse_date`, `format_date`, `trim`, `lower`, `upper`, `code_for`, `label_for`, `coalesce`. Each is tested, documented by `anything2mcp docs`, and versioned with the engine. Anything not expressible this way is a reviewed plug-in, not a script.
+Host functions, the starting library: `to_inches`, `to_feet_inches`, `to_unit`, `parse_decimal`, `round_to`, `parse_date`, `format_date`, `trim`, `lower`, `upper`, `code_for`, `label_for`, `coalesce`. The library as built adds `decimal`, `div`, `parse_int`, `parse_money`, `parse_bool`, `snap_to_step`, `parse_datetime`, `format_datetime`, `parse_time`, `excel_serial_to_date`, `nfc`, `collapse_space`, `size`, and one `as_` function for each field-type base, which is that base's normalizer. An argument that is a rule, such as places, a rounding mode, a unit, a format, or a zone, is written as a literal. Each is tested, documented by `anything2mcp docs`, and versioned with the engine. Anything not expressible this way is a reviewed plug-in, not a script.
 
 ## Open points
 
@@ -271,5 +286,5 @@ Found by walking the sheet-entry pipeline through these formats on 2026-11-16. E
 - **A record that does not exist yet, in a `ui` binding.** The formats cannot yet say how a screen shows that a record is absent, or how an `upsert` reaches the create form when the update form is a different one. Hypothesis H-23; slice 3.8.
 - **The kind of record.** A record key is built from identity inputs only, so two operations on the same record share a lock only if they declare the same inputs in the same order. Hypothesis H-24; slice 3.8.
 - **The fields of `identity`.** Only the strategy names and the `key` short form are fixed. The long form for `stamped` and `find` is written with the first operation that needs one; slice 3.8.
-- **The type of a bare column in a mapping.** The compiler type-checks `with` against the operation's inputs, so every row field needs a type before any file is read; slice 3.9.
+- **The type of a bare column in a mapping.** Settled by [decision 0087](../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md): every row field names a field type, whether it reads a bare column or an expression, so every row field has a type before any file is read. The fields of `sources/*.yaml` that carry this, and the columns, the key, the hidden rule, and the delimiter that `a2m-sources` reads, are written into the table above with the compiler's slice.
 - **Whether `checkpoint` is still needed.** Since the ledger keeps one row per commit point, it only places snapshots. A candidate for removal in a review round with the lens "less".

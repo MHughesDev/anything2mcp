@@ -9,7 +9,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: `rmcp`, the official Rust SDK named in spec section 605, its dual-revision support to be confirmed by roadmap package 0.5 and research brief 2; Tokio; Hyper |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: `rmcp` 3.10.0, the official Rust SDK, with default features off and the features `server` and `transport-streamable-http-server` ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)); Tokio. No macro of the SDK is used, and no type of it appears in this crate's public interface |
 | Built in | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
 | Carries out | Spec sections [221](../../spec/2-kernel/221-the-tool-surface-agents-see.md), [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for MCP, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the MCP face, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md); the MCP half of [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) |
 
@@ -39,7 +39,7 @@ impl McpService {
 }
 
 pub struct McpSettings {
-    pub revisions: Vec<Revision>,      // server.mcp_revisions; default 2026-07-28 and 2025-11-25
+    pub revisions: Vec<Revision>,      // mcp.revisions; default 2026-07-28 and 2025-11-25
     pub listing: Listing,              // Default (pipelines and control tools), Full
     pub listed_max: u32,               // tools.listed_max; a fixed ceiling above it
     pub result_cap: ByteSize,          // tools.result_size_cap
@@ -63,7 +63,56 @@ The proxy is started by `bridge`, a process command of the product crate, which 
 | 2026-07-28 | Stateless. No handshake, no session header. Every request carries everything; continuity is the `run_id` |
 | 2025-11-25 | The initialize exchange is answered from settings. No session identifier is issued, which that revision allows, so the server stays stateless |
 
-Whether one `rmcp` server can do both is the question of package 0.5. If it cannot, the older revision is dropped before statefulness is added ([decision 0011](../../decisions/0011-stateless-streamable-http-and-an-oauth-resource-server.md) says how to choose).
+One `rmcp` service serves both, with no session for either. Spike 0.5 ran it over stdio and over stateless Streamable HTTP, with the reference client libraries for Python and TypeScript ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md)). Both are served because a server with only one of them turns clients away: the handshake is still the default way a reference client library opens.
+
+**How a revision is agreed.**
+
+1. A request whose `_meta` carries `io.modelcontextprotocol/protocolVersion` is served under that revision. On HTTP the `MCP-Protocol-Version` header must say the same. An unserved revision is error -32022 with `data.supported` and `data.requested`, and status 400 on HTTP.
+2. `server/discover` lists the revisions served and the capabilities.
+3. `initialize` selects the handshake revision: 2025-11-25 if the client asks for it, and 2025-11-25 as the answer if it asks for anything else. The client then decides.
+4. A handshake-era request on HTTP names its revision in the header and is served as it comes.
+5. With `mcp.revisions` set to the handshake revision alone, `server/discover` must be answered as an unknown method, so that a client that speaks both falls back. The SDK answers -32022 there; the two client libraries tolerated it, and the service must answer before the SDK does. With 2026-07-28 alone, `initialize` is refused with -32022 and the list.
+
+**What a handshake-era caller does not get.** A stateless server does not remember what a client declared in `initialize`. Such a caller gets the fallback every client gets: the link in the result in place of elicitation, the run identifier in place of a task.
+
+**The seam.** The service is built on the SDK's handler and its Streamable HTTP service, with the session manager that never makes a session and JSON answers where no stream is needed. The tool list is built from data with the SDK's plain constructors. Everything this crate promises is in the list of messages below, which is tested with raw messages and so does not depend on the SDK. If the SDK must be left, a layer of our own takes its place behind the same list; the spike's hand-written server passed all of the stdio part in about 400 lines.
+
+## What the server must pass, message by message
+
+Each line is a test with raw messages. "H" is the handshake revision, "M" the newer one. The spike's caller, `spikes/mcp-server/callers/raw_conformance.py`, holds a first version of most of them.
+
+| Message | The server must |
+| --- | --- |
+| A body or line that is not JSON | Answer -32700 with a null id. On stdio this is the proxy's to do |
+| A message that is not a request, or has no method | Answer -32600. A batch is not a request |
+| An unknown method | Answer -32601 |
+| An unknown notification | Answer nothing; on HTTP, status 202 |
+| A request id | Come back unchanged, text as text and number as number |
+| `initialize` (H) | Answer with `protocolVersion` 2025-11-25 whatever was asked, `capabilities` that name only what is served, and `serverInfo` with a name and a version. Issue no session identifier |
+| `initialize` when only M is served | Refuse with -32022 and the revisions served |
+| `notifications/initialized` (H) | Answer nothing |
+| `ping` (H) | Answer an empty result, before `initialize` too |
+| `ping` (M) | Answer -32601 |
+| `server/discover` (M) | Answer `supportedVersions`, `capabilities`, `instructions`, `resultType`, `ttlMs`, `cacheScope` |
+| `server/discover` when only H is served | Answer -32601 |
+| Any M request with an unserved version | Answer -32022 with `data.supported` and `data.requested`; status 400 on HTTP |
+| Any M request without `io.modelcontextprotocol/clientCapabilities` | Answer -32602 |
+| Any M request on HTTP whose `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` header disagrees with the body | Answer status 400 with -32020 |
+| Every M result | Carry `resultType`, and name the server in `_meta` under `io.modelcontextprotocol/serverInfo` |
+| `tools/list` (H and M) | List each tool with its name, description, and input schema of type object; annotations from the effect class; the same tools in the same order every time; no `nextCursor` on a single page; -32602 for a cursor it did not issue |
+| `tools/list` (M) | Also carry `ttlMs` and `cacheScope` |
+| `tools/call` for a known tool (H and M) | Answer `structuredContent` that fits the tool's output schema, and one text item |
+| `tools/call` for an unknown tool | Answer -32602, a protocol error |
+| `tools/call` with input that fails the schema | Answer a result with `isError` true, not a protocol error |
+| `tools/call` that fails | Answer a result with `isError` true and text; structured content only if it fits the output schema |
+| `tools/call` with a `progressToken` | Send `notifications/progress` with that token and a rising count before the result, and say nothing in one that the result does not say |
+| `tools/call` without a `progressToken` | Send no progress |
+| `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
+| `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not covered by the spike. Their lines are added by the packages that build them |
+| A request over HTTP with a foreign `Host` | Be refused before it is read |
+| End of input on stdio | The proxy exits with status 0 |
+| Standard output on stdio | Carry one JSON message per line and nothing else |
+| Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result |
 
 ## Tool lists
 
@@ -147,7 +196,7 @@ Every failure is the dispatcher's, rendered. This crate adds one: `input` / `sch
 
 ## Build order
 
-1. From spike 0.5: one `rmcp` service over the local channel, the stdio proxy, and the `use` toolset with `a2m_tool_call` for one read. Package 1.5.
+1. From spike 0.5: one `rmcp` service over the local channel, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for one read. Package 1.5.
 2. Structured results, resource links, `next`, annotations; the two revisions.
 3. Elicitation and the link fallback, with the approval surface. Package 3.6.
 4. The `build` toolset, the action search tools, prompts, resources, server instructions. Package 5.1.
@@ -155,7 +204,11 @@ Every failure is the dispatcher's, rendered. This crate adds one: `input` / `sch
 
 ## Open points
 
-- Whether `rmcp` can serve both revisions from one service: package 0.5.
+- Where a failed call's class, code, message, and fix go. Structured content must fit the tool's published output schema; one reference client library refuses the whole result otherwise. Either every output schema admits the error shape, or an error carries text alone.
+- What the one text item holds. The specification asks for the JSON as text beside structured content, for clients that read only text; the design sends a one-line summary.
+- How the stdio proxy stays a copier. It has to turn a `notifications/cancelled` line into the closing of that request's HTTP stream, and copy the three request headers of the newer revision out of the body. Both are transport framing; the byte-for-byte test must allow for them and nothing else.
+- Whether the SDK's log events can carry a caller's input or a header. The planted-secret test must capture them at their most verbose.
+- Answering `server/discover` as an unknown method when only the handshake revision is served: the SDK does not, and the step that does it in front of the SDK is not built.
 - The byte budget for a tool list and for one compact schema.
 - How compact schemas are derived from full ones mechanically, so that "exact or wider" is proven, not reviewed.
 - How a client is told of a changed tool list with no session, if at all.
