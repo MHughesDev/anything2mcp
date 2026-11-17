@@ -240,6 +240,8 @@ class RealEngineTests(unittest.TestCase):
         finally:
             engine.terminate()
             engine.wait(timeout=60)
+            if engine.stderr is not None:
+                engine.stderr.close()
             shutil.rmtree(home, ignore_errors=True)
 
 

@@ -343,3 +343,72 @@ async fn a_secret_in_what_the_device_says_reaches_no_value_and_no_failure() {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+#[tokio::test]
+async fn a_driver_in_the_discovery_posture_sends_nothing_but_identification() {
+    let scene = Scene::start().await;
+    let control = scene.device.control();
+
+    // A read's steps, handed to the driver under the discovery posture:
+    // the device is identified, and the register read is refused by the
+    // driver itself.
+    let (handle, mut prepared) = scene.prepare(None, Posture::Discovery).await;
+    let failure = scene
+        .run(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_pump_speed_get").act,
+            &Values::new(),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (class_and_code(&failure), failure.sent),
+        (
+            (FailureClass::Policy, "discovery_identifies_only"),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    scene.links_closed().await;
+
+    // The stand: one frame, the identification.
+    let frames = control.frames();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].function, 0x2B);
+}
+
+#[tokio::test]
+async fn a_run_stops_at_its_frame_ceiling() {
+    let scene = Scene::start().await;
+    let control = scene.device.control();
+
+    // One link, one run: the identification, then two frames for each
+    // pass over a read's steps. The default ceiling is one hundred frames.
+    let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
+    let act = &scene.binding("example_pump_speed_get").act;
+    let mut stopped = None;
+    for _ in 0..60 {
+        if let Err(failure) = scene
+            .run(&handle, &mut prepared, act, &Values::new(), None)
+            .await
+        {
+            stopped = Some(failure);
+            break;
+        }
+    }
+    let failure = stopped.expect("a run sent frames without a count");
+    assert_eq!(
+        (class_and_code(&failure), failure.sent),
+        (
+            (FailureClass::Policy, "frame_budget_exceeded"),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    scene.links_closed().await;
+
+    // The stand: one hundred frames, and not one more.
+    assert_eq!(control.frames().len(), 100);
+}

@@ -122,15 +122,15 @@ The router is the REST router of `a2m-api` and the MCP endpoint of `a2m-mcp` for
 | What | How |
 | --- | --- |
 | The caller | The `Peer` the channel put on the request is given to `Kernel::verify_caller`; the caller that comes back goes on the request. A request with no peer is refused. A stopped engine names nobody and answers its own status |
-| Agent or person | An MCP client and an SDK are agents. The command line is an agent unless it sends `a2m-person-at-terminal: true`, which it does when its input and error output are a terminal. This stops a mistake; the presence prompt is what proves a person |
-| The project folder | The command sends the folder it was run in as `a2m-project`, percent-encoded; it goes on the request as the `ProjectFolder` of `a2m-api`. The handlers check it before any use. An MCP request carries none yet |
+| Agent or person | An MCP client and an SDK are agents. The command line is an agent unless it sends `A2M-Person-At-Terminal: true`, which it does when its input and error output are a terminal. This stops a mistake; the presence prompt is what proves a person |
+| The project folder | The command sends the folder it was run in as `A2M-Project`, percent-encoded; it goes on the request as the `ProjectFolder` of `a2m-api`. The handlers check it before any use. An MCP request carries none yet |
 | `engine.stop` | Sent to the dispatcher, so that the policy engine decides and the decision is recorded. When the dispatcher answers that the action is the client end's, this process stops serving |
 
 `serve` writes one line to standard error when it answers, `anything2mcp: the local engine is ready.`, and before it the reason when the engine runs no job. It stops when `engine.stop` is dispatched, on the terminal's interrupt, on the termination signal where the system has one, and after `engine.idle_stop_minutes` with no connection and no page waiting for a person (0 never stops). It then closes the kernel and prints one object, `{"ok": true, "action": "serve", "result": {"stopped": "asked"}}`, with exit code 0.
 
 ### The thin client, as built
 
-A command looks for the engine with `Connector`. When one answers, each action is sent to `POST /api/v1/actions/<name>` with its input as the body, the project folder and the terminal's state as the two headers above, and `--idempotency-key` as `Idempotency-Key`. The answer's body is the response, and its header `a2m-exit-class` gives the exit code; both go to the same renderer as a response made in this process. A shortcut's steps go one after another on the one connection, and the first that is not a success ends them. The client holds no engine logic.
+A command looks for the engine with `Connector`. When one answers, each action is sent to `POST /api/v1/actions/<name>` with its input as the body, the project folder and the terminal's state as the two headers above, and `--idempotency-key` as `Idempotency-Key`. The answer's body is the response, and its header `A2M-Exit-Class` gives the exit code; both go to the same renderer as a response made in this process. A shortcut's steps go one after another on the one connection, and the first that is not a success ends them. The client holds no engine logic.
 
 When nothing answers and nobody holds the engine lock, the command runs the engine in its own process. When the lock is held and nothing answers, an engine is starting or closing: the command looks again for up to twenty seconds, then ends with `busy`, `engine_unreachable`, and exit code 4. `--in-process` skips the engine and is refused, `busy`, `engine_running`, while one runs.
 

@@ -31,11 +31,14 @@ Issues = "https://github.com/MHughesDev/anything2mcp/issues"
 [tool.maturin]
 bindings = "bin"
 manifest-path = "../../crates/anything2mcp/Cargo.toml"
-# Only the binary with the product's name; `a2m` is the console script above.
+# Only the binary with the product's name: maturin refuses console scripts
+# beside a binary, and a second copy would double the wheel.
 targets = [{ name = "anything2mcp", kind = "bin" }]
 python-source = "src"
 python-packages = ["anything2mcp"]
 strip = true
 # The short name `a2m`: a small script installed beside the binary.
 data = "wheel-data"
+# The source distribution carries it too, so that a wheel built from it has `a2m`.
+include = [{ path = "wheel-data/**/*", format = "sdist" }]
 locked = true

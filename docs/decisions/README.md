@@ -100,6 +100,8 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0088 | [The provider contract's outside crates: a TOML parser, a descriptor helper, safe process calls, and the Windows calls](0088-the-provider-contracts-outside-crates.md) | Accepted (design decision) |
 | 0089 | [The provider contract as building it settled it](0089-the-provider-contract-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0090 | [The supervisor ends a group only while its leader is unreaped, and its links are started by three calls](0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) | Accepted (design decision) |
+| 0091 | [The engine loop, as its first two passes settled it](0091-the-engine-loop-as-its-first-two-passes-settled-it.md) | Accepted (design decision) |
+| 0092 | [A record that waits for an earlier record is planned under its place in the run](0092-a-record-that-waits-for-an-earlier-record-is-planned-under-its-place-in-the-run.md) | Accepted (design decision) |
 | 0093 | [The scheduler's interface, as building it settled it](0093-the-schedulers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0094 | [The action layer's interface, as building it settled it](0094-the-action-layers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0095 | [The settings loader and the in-process runner, as built](0095-the-settings-loader-and-the-in-process-runner-as-built.md) | Accepted (design decision) |
@@ -132,5 +134,7 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0123 | [The Linux Secret Service back end is left out until its store crate stands on maintained crates](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md) | Accepted (design decision) |
 | 0124 | [The plan declares a surface's programs, and a schema checks run-time values](0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md) | Accepted (design decision) |
 | 0130 | [The MCP protocol layer is our own, because the SDK brings an unmaintained crate](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md) | Accepted (design decision) |
+| 0131 | [The front doors joined: `serve`, the thin client, and the bridge](0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md) | Accepted (design decision) |
+| 0132 | [The action registry's second pass: a decline ends the run, and a wait reads the scheduler's own table](0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) | Accepted (design decision) |
 | 0133 | [The presence prompt on each operating system, and what it is said to prove](0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) | Accepted (design decision) |
 | 0134 | [One browser starts at a time, and a silent start is slow, not foreign](0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md) | Accepted (design decision) |

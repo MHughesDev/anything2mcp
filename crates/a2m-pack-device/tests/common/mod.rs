@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName, Plan,
-    PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values,
-    Version, WorkspaceId,
+    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName,
+    PackPayload, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
+    Timestamp, Value, Values, Version, WorkspaceId,
 };
 use a2m_expr::{Bindings, Normalizer, Program};
 use a2m_files::{CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, TargetRoot};
@@ -28,8 +28,8 @@ use a2m_ledger::{
 };
 use a2m_provider::{
     Authority, Capture, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
-    PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder, Roots, StepFailure,
-    StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
+    PrepareContext, Prepared, ProviderName, ProviderSettings, Registry, RegistryBuilder, Roots,
+    StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
 use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
@@ -75,6 +75,15 @@ impl Redact for Planted {
 
 /// A registry that holds the device pack and nothing else.
 pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
+    registry_set(folder, redact, None)
+}
+
+/// The same, with the pack's own settings group as a person wrote it.
+pub fn registry_set(
+    folder: &Folder,
+    redact: Arc<dyn Redact>,
+    settings: Option<Values>,
+) -> Registry {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let host = HostServices {
@@ -83,7 +92,13 @@ pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         redact: Arc::clone(&redact),
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
     };
-    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    let mut provider = ProviderSettings::default();
+    if let Some(settings) = settings {
+        provider
+            .packs
+            .insert(ProviderName::new("device").unwrap(), settings);
+    }
+    let mut builder = RegistryBuilder::new(provider, host);
     a2m_pack_device::add_to(&mut builder);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -333,8 +348,13 @@ impl Scene {
     }
 
     pub async fn start_with(redact: Arc<dyn Redact>) -> Self {
+        Self::start_set(redact, None).await
+    }
+
+    /// A scene whose registry was built with the pack's settings given.
+    pub async fn start_set(redact: Arc<dyn Redact>, settings: Option<Values>) -> Self {
         let folder = Folder::new("scene");
-        let registry = registry_with(&folder, redact);
+        let registry = registry_set(&folder, redact, settings);
         let plan = compiled(registry.compiler_set()).plan;
         let device = TestDevice::start().await.unwrap();
         // The plan's surface, at the address of the run's environment: here
@@ -354,6 +374,17 @@ impl Scene {
             device,
             destinations,
         }
+    }
+
+    /// Declares another serial for the device of the environment `test`
+    /// than the target's files do, or none: what the surface's fields
+    /// would compile to.
+    pub fn declare_serial(&mut self, serial: Option<&str>) {
+        let mut fields = serde_json::json!({"protocol": "modbus_tcp", "unit": 1});
+        if let Some(serial) = serial {
+            fields["serials"] = serde_json::json!({"test": serial});
+        }
+        self.surface.surface.payload = PackPayload::encode(&fields).unwrap();
     }
 
     pub fn handle(&self) -> DriverHandle {

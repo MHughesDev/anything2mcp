@@ -1,4 +1,4 @@
-#!python -I -S
+#!python
 # The short name of the anything2mcp program. It replaces itself with the
 # binary installed beside it, and imports nothing else, so that it starts fast.
 import os

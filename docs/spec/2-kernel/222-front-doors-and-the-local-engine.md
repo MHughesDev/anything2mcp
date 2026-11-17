@@ -103,7 +103,7 @@ The [technical reference](../../reference/technical-reference.md#local-channel) 
 
 1. **Find.** A client connects to the engine's channel at a fixed per-user path. No answer, or a refused connection on a stale socket, means not running.
 2. **Start on demand.** If nothing answers, the client takes the start lock, checks again, and starts the engine detached. A second client arriving at the same moment waits on the start lock and then connects, instead of starting a second engine.
-3. **Ready.** The engine binds the channel only after the kernel has opened, in whatever health state ([section 224](224-when-the-engine-itself-fails.md)). The client waits for the channel to become connectable up to a fixed deadline, then exits with code 4.
+3. **Ready.** The engine takes the engine lock and binds the channel first, then opens the kernel, and answers a hello only once the kernel has opened, in whatever health state ([section 224](224-when-the-engine-itself-fails.md)). A second engine is thus refused before it opens the store ([decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)). The client waits for the answer up to a fixed deadline, then exits with code 4.
 4. **Version check.** After an upgrade, a newer client asks the older engine to finish its runs and restart; if runs are still active, the client reports that instead of interrupting them. An older client reaching a newer engine is served while the local API version matches; otherwise it is told to upgrade.
 5. **Idle stop.** With no runs, no captures, no pending approval, and no clients for a set time, 30 minutes by default (`engine.idle_stop_minutes`), the engine saves session state to the vault and exits. The session keeper holds the engine open for a session that would not survive a restart, up to its keep-alive window ([section 215](215-sessions-and-the-session-keeper.md)). The next command starts the engine again, and sessions resume from the vault.
 6. **Crash.** Runs in flight are left `running` in the ledger under a lease nobody holds. The next start sets each to `stopped` with the class `possible_commit` and the code `runner_lost`, and reconciles before any resumed write ([section 208](208-runs-the-ledger-and-resume.md)).
@@ -112,7 +112,7 @@ Two locks are used. The engine lock is held by the engine for its whole life and
 
 **In-process mode.** For CI jobs and containers that run one command and exit, `--in-process` runs the engine inside the command itself, with no background process and no channel. It refuses to start while the engine lock is held (`engine_running`).
 
-`engine.status`, `engine.start`, `engine.stop`, and `engine.logs` expose this to people; nobody needs them in normal use. They are carried out in the client end, because they act on the process: `engine.status` reports `not running` when nothing answers and otherwise asks the engine.
+`engine.status`, `engine.start`, `engine.stop`, and `engine.logs` expose this to people; nobody needs them in normal use. They are carried out in the client end, because they act on the process: `engine.status` reports `not running` when nothing answers and otherwise asks the engine. `engine.stop` is sent to the engine like any action, so that the policy engine decides, and the engine's own process then stops serving ([decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)).
 
 ### Deployment profiles
 

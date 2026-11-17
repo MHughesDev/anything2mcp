@@ -14,7 +14,7 @@ engine's response as it was written. It does not start the engine.
 
 from ._channel import ChannelError, socket_path
 from ._client import LOCAL_API, Client, Error, Response, connect
-from ._launch import binary_path
+from ._binary import binary_path
 
 __all__ = [
     "LOCAL_API",
