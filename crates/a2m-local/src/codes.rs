@@ -81,7 +81,7 @@ pub(crate) fn answer_lost() -> Failure {
         FailureClass::PossibleCommit,
         ANSWER_LOST,
         "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run.",
-        "Do not send it again: a second request may start a second run and write twice. Find this request's run first in your recent runs (`anything2mcp run list`), or tell the person that the answer was lost so that they can check.",
+        "If the request carried an idempotency key, send the same request again with the same key and nothing changed: it gives back the run the first one started, finished or not, and starts no other. If it carried none, do not send it again, because a second request may start a second run and write twice: find its run first with the run list (`anything2mcp run list --since <ms>`, with `--tool <tool>` for a tool call), from one minute before the request was sent, and do what that run's `next` says.",
     )
 }
 
@@ -96,4 +96,38 @@ pub(crate) fn unavailable(what: &str, error: &std::io::Error) -> Failure {
         ),
         "Check that the engine's runtime and data directories exist and belong to you, then try again.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::FailureClass;
+
+    use super::{ANSWER_LOST, answer_lost};
+
+    #[test]
+    fn a_lost_answer_says_both_ways_to_go_on_and_never_that_sending_again_is_safe() {
+        let failure = answer_lost();
+        assert_eq!(failure.class(), FailureClass::PossibleCommit);
+        assert_eq!(failure.code(), &ANSWER_LOST);
+        let next = failure.next_step();
+        assert!(
+            next.contains(
+                "carried an idempotency key, send the same request again with the same key"
+            ),
+            "{next}"
+        );
+        assert!(
+            next.contains("carried none, do not send it again"),
+            "{next}"
+        );
+        assert!(
+            next.contains("`anything2mcp run list --since <ms>`"),
+            "{next}"
+        );
+        assert!(
+            next.contains("one minute before the request was sent"),
+            "{next}"
+        );
+        assert!(next.contains("what that run's `next` says"), "{next}");
+    }
 }

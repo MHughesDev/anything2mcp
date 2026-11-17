@@ -1130,7 +1130,7 @@ const READS_KEY: &[&str] = &["tool.call", "action.run"];
 
 /// The field of `tool.call` that carries the idempotency key, for a door
 /// that has no other place for one.
-const KEY_FIELD: &str = "idempotency_key";
+pub(crate) const KEY_FIELD: &str = "idempotency_key";
 
 /// Takes the idempotency key of a request: the one the door carried, or,
 /// for `tool.call`, the one in its own field, which is taken out of the
@@ -1145,6 +1145,28 @@ fn taken_key(
     mut input: Map<String, Json>,
     stated: Option<String>,
 ) -> Result<(Map<String, Json>, Option<String>), Failure> {
+    if def.name.as_str() == "run.list" {
+        // A key beside a listing is the key to look for: a door or a
+        // command line with one place for a key carries it there. It is
+        // no key of the listing's own, which starts no run.
+        if let Some(door) = stated {
+            match input.get(KEY_FIELD) {
+                Some(Json::String(field)) if *field != door => {
+                    return Err(codes::input(
+                        codes::IDEMPOTENCY_KEY_INVALID,
+                        "The call carries two different idempotency keys: one in its input and one beside it.",
+                        "Send one key, in one place.",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    a2m_ledger::CallerKey::new(&door)?;
+                    input.insert(KEY_FIELD.to_owned(), Json::String(door));
+                }
+            }
+        }
+        return Ok((input, None));
+    }
     let given = if def.name.as_str() == "tool.call" {
         match input.remove(KEY_FIELD) {
             Some(Json::String(text)) => Some(text),

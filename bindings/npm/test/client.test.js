@@ -184,6 +184,10 @@ test("a call whose answer is lost after the engine took it is not safe to make a
     assert.strictEqual(error.retrySafe, false);
     assert.ok(error.fix.startsWith("Do not make the call again"), error.fix);
     assert.ok(!error.fix.includes("Run it again"), error.fix);
+    assert.match(error.fix, /`client\.runList\(\{ since: \d+, tool: "example_order_update" \}\)`/);
+    assert.ok(error.fix.includes("one minute before the call"), error.fix);
+    assert.ok(error.fix.includes("what that run's `next` says"), error.fix);
+    assert.ok(error.fix.includes("pass `idempotencyKey` in the options of a call that may write"), error.fix);
     return true;
   });
   assert.strictEqual(engine.requests.at(-1).url, "/api/v1/actions/tool.call");
@@ -197,6 +201,24 @@ test("a call whose answer is lost after the engine took it is not safe to make a
     slow.toolCall({ tool: "example_order_update", input: {} }),
     (error) => error.code === "answer_lost" && error.retrySafe === false,
   );
+});
+
+test("a keyed call whose answer is lost is told to make the same call again", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
+  engine.drops.add("tool.call");
+  const c = await client.connectTo(engine.address);
+  t.after(() => c.close());
+  await assert.rejects(c.toolCall({ tool: "example_order_update", input: {} }, { idempotencyKey: "example-key-1" }), (error) => {
+    assert.strictEqual(error.code, "answer_lost");
+    assert.strictEqual(error.retrySafe, false);
+    assert.strictEqual(
+      error.fix,
+      "Make the same call again with the same idempotency key and nothing changed: it gives back " +
+        "the run the first call started, finished or not, and starts no other.",
+    );
+    return true;
+  });
 });
 
 test("an action's name that is not noun.verb is refused before anything is sent", async (t) => {

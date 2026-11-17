@@ -29,3 +29,7 @@ Every door and both client libraries tell a caller whose answer was lost not to 
 - A key given to an action that starts no run is answered with a warning that it was not used.
 - `a2m-core` would do better with a digest purpose of its own for caller keys; moving to one makes every key held then unknown, so it is best done before a release.
 - What the product's client and the two client libraries must change is in the report of this package: sending a key with every `tool.call`, and the exact advice.
+
+## Added before merge: a key beside a listing
+
+The command line and the client libraries have one place for a key, beside the input. For `run.list` a key carried there is the key to look for, the same as the `idempotency_key` filter in its input; two different keys in the two places are refused. So `anything2mcp run list --idempotency-key <key>` finds the run that key started, and the generated command line has no second flag of that name. A key beside any other action that starts no run is still answered with a warning that it was not used.

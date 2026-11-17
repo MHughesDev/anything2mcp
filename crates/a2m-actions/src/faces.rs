@@ -76,6 +76,11 @@ pub fn command_faces_of(def: &ActionDef) -> CommandFace {
         .input
         .fields
         .iter()
+        // The command line carries an idempotency key in its own flag for
+        // every command, and the dispatcher takes the key from beside the
+        // input as well as from inside it. A second flag of the same name
+        // would be taken for the first.
+        .filter(|field| field.name != crate::dispatch::KEY_FIELD)
         .map(|field| CommandArg {
             field: field.name.clone(),
             flag: if field.positional {

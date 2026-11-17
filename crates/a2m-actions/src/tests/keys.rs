@@ -110,7 +110,14 @@ async fn the_same_key_gives_back_one_run_and_one_write_finished_or_not() {
     assert_eq!(listed(&runs), vec![run.clone()]);
     // The key finds its run in the list.
     let by_key = world.ok("run.list", json!({"idempotency_key": key})).await;
-    assert_eq!(listed(&by_key), vec![run]);
+    assert_eq!(listed(&by_key), vec![run.clone()]);
+    // A door with one place for a key carries it beside the listing: it is
+    // the key to look for, and the listing says nothing of an unused key.
+    let mut beside = Request::new("run.list", json!({}), world.caller.clone());
+    beside.idempotency_key = Some(key.to_owned());
+    let beside = world.kernel.dispatch(beside).await;
+    assert!(beside.warnings.is_empty(), "{:?}", beside.warnings);
+    assert_eq!(listed(beside.result.as_ref().unwrap()), vec![run]);
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -161,7 +168,7 @@ async fn a_key_given_with_another_call_is_refused_and_another_persons_key_is_the
     let two = world.kernel.dispatch(two).await;
     assert_eq!(error_of(&two).1, "idempotency_key_invalid");
     // A key on an action that starts no run is said to be unused.
-    let mut read = Request::new("run.list", json!({}), world.caller.clone());
+    let mut read = Request::new("engine.status", json!({}), world.caller.clone());
     read.idempotency_key = Some("example-key-c".to_owned());
     let read = world.kernel.dispatch(read).await;
     assert!(read.ok);

@@ -2645,6 +2645,9 @@
                "doc": {
                 "type": "string"
                },
+               "in_force": {
+                "type": "boolean"
+               },
                "key": {
                 "type": "string"
                },
@@ -2773,6 +2776,9 @@
               "properties": {
                "doc": {
                 "type": "string"
+               },
+               "in_force": {
+                "type": "boolean"
                },
                "key": {
                 "type": "string"
@@ -10149,6 +10155,9 @@
             "person": {
              "type": "string"
             },
+            "repeated": {
+             "type": "boolean"
+            },
             "result": {},
             "run_id": {
              "type": "string"
@@ -10269,6 +10278,9 @@
             "person": {
              "type": "string"
             },
+            "repeated": {
+             "type": "boolean"
+            },
             "result": {},
             "run_id": {
              "type": "string"
@@ -10349,17 +10361,32 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "after": {
+          "type": "string"
+         },
+         "idempotency_key": {
+          "type": "string"
+         },
          "limit": {
-          "maximum": 1000,
+          "maximum": 100,
           "minimum": 1,
           "type": "integer"
          },
-         "offset": {
-          "maximum": 1000000,
+         "since": {
+          "maximum": 99999999999999,
           "minimum": 0,
           "type": "integer"
          },
+         "state": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
          "target": {
+          "type": "string"
+         },
+         "tool": {
           "type": "string"
          }
         },
@@ -10392,8 +10419,14 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "after": {
+             "type": "string"
+            },
+            "complete": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -10420,9 +10453,70 @@
               "when"
              ],
              "type": "object"
+            },
+            "runs": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "created_at": {
+                "type": "integer"
+               },
+               "ended_at": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "in_doubt": {
+                "type": "boolean"
+               },
+               "next": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "run_id": {
+                "type": "string"
+               },
+               "started_at": {
+                "type": "integer"
+               },
+               "status": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "waits_for_person": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "run_id",
+               "tool",
+               "target",
+               "status",
+               "created_at",
+               "in_doubt",
+               "waits_for_person",
+               "next"
+              ],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "runs",
+            "complete"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -10464,8 +10558,14 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "after": {
+             "type": "string"
+            },
+            "complete": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -10492,9 +10592,70 @@
               "when"
              ],
              "type": "object"
+            },
+            "runs": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "created_at": {
+                "type": "integer"
+               },
+               "ended_at": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "in_doubt": {
+                "type": "boolean"
+               },
+               "next": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "run_id": {
+                "type": "string"
+               },
+               "started_at": {
+                "type": "integer"
+               },
+               "status": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "waits_for_person": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "run_id",
+               "tool",
+               "target",
+               "status",
+               "created_at",
+               "in_doubt",
+               "waits_for_person",
+               "next"
+              ],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "runs",
+            "complete"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -10526,7 +10687,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The caller's recent runs, newest first.",
+    "summary": "The caller's recent runs, newest first: each run's state, whether a record of it is in doubt, whether it waits for a person, and the next step. After a lost answer, list the runs since the call was sent to find its run before calling again.",
     "x-action": "run.list"
    }
   },
@@ -10648,6 +10809,9 @@
             "person": {
              "type": "string"
             },
+            "repeated": {
+             "type": "boolean"
+            },
             "result": {},
             "run_id": {
              "type": "string"
@@ -10767,6 +10931,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -15447,6 +15614,9 @@
          "environment": {
           "type": "string"
          },
+         "idempotency_key": {
+          "type": "string"
+         },
          "input": {
           "additionalProperties": {},
           "properties": {},
@@ -15560,6 +15730,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -15680,6 +15853,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -16074,6 +16250,12 @@
         "properties": {
          "full": {
           "type": "boolean"
+         },
+         "kind": {
+          "enum": [
+           "operation",
+           "pipeline"
+          ]
          },
          "limit": {
           "maximum": 1000,
@@ -17301,6 +17483,9 @@
             },
             "trace": {
              "type": "string"
+            },
+            "trace_check": {
+             "type": "string"
             }
            },
            "required": [
@@ -17398,6 +17583,9 @@
              "type": "string"
             },
             "trace": {
+             "type": "string"
+            },
+            "trace_check": {
              "type": "string"
             }
            },
@@ -19489,6 +19677,368 @@
     "summary": "This document: every route of the REST interface, generated from the action registry."
    }
   },
+  "/api/v1/runs": {
+   "get": {
+    "operationId": "run_list_alias",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "after",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "idempotency_key",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "maximum": 100,
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "since",
+      "required": false,
+      "schema": {
+       "maximum": 99999999999999,
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "state",
+      "required": false,
+      "schema": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     },
+     {
+      "in": "query",
+      "name": "target",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "tool",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "string"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "runs": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "created_at": {
+                "type": "integer"
+               },
+               "ended_at": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "in_doubt": {
+                "type": "boolean"
+               },
+               "next": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "run_id": {
+                "type": "string"
+               },
+               "started_at": {
+                "type": "integer"
+               },
+               "status": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "waits_for_person": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "run_id",
+               "tool",
+               "target",
+               "status",
+               "created_at",
+               "in_doubt",
+               "waits_for_person",
+               "next"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "runs",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "string"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "runs": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "created_at": {
+                "type": "integer"
+               },
+               "ended_at": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "in_doubt": {
+                "type": "boolean"
+               },
+               "next": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "run_id": {
+                "type": "string"
+               },
+               "started_at": {
+                "type": "integer"
+               },
+               "status": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               },
+               "waits_for_person": {
+                "type": "boolean"
+               }
+              },
+              "required": [
+               "run_id",
+               "tool",
+               "target",
+               "status",
+               "created_at",
+               "in_doubt",
+               "waits_for_person",
+               "next"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "runs",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The caller's recent runs, newest first: each run's state, whether a record of it is in doubt, whether it waits for a person, and the next step. After a lost answer, list the runs since the call was sent to find its run before calling again.",
+    "x-action": "run.list"
+   }
+  },
   "/api/v1/runs/{run_id}": {
    "get": {
     "operationId": "run_get_alias",
@@ -19579,6 +20129,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -19699,6 +20252,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -20244,6 +20800,9 @@
             "person": {
              "type": "string"
             },
+            "repeated": {
+             "type": "boolean"
+            },
             "result": {},
             "run_id": {
              "type": "string"
@@ -20363,6 +20922,9 @@
             },
             "person": {
              "type": "string"
+            },
+            "repeated": {
+             "type": "boolean"
             },
             "result": {},
             "run_id": {
@@ -20635,6 +21197,17 @@
       "required": false,
       "schema": {
        "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "kind",
+      "required": false,
+      "schema": {
+       "enum": [
+        "operation",
+        "pipeline"
+       ]
       }
      },
      {

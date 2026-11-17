@@ -350,9 +350,12 @@ export interface RunGetInput {
  * The input of `run.list`.
  */
 export interface RunListInput {
+  after?: string;
   limit?: number;
-  offset?: number;
+  since?: number;
+  state?: string[];
   target?: string;
+  tool?: string;
 }
 
 /**
@@ -550,6 +553,7 @@ export interface ToolDescribeInput {
  */
 export interface ToolSearchInput {
   full?: boolean;
+  kind?: "operation" | "pipeline";
   limit?: number;
   module?: string;
   offset?: number;
@@ -958,7 +962,10 @@ export declare abstract class Actions {
   runGet(input: RunGetInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * The caller's recent runs, newest first. The engine action is `run.list`.
+   * The caller's recent runs, newest first: each run's state, whether a record of it is
+   * in doubt, whether it waits for a person, and the next step. After a lost answer,
+   * list the runs since the call was sent to find its run before calling again. The
+   * engine action is `run.list`.
    */
   runList(input?: RunListInput, options?: CallOptions): Promise<Response>;
 

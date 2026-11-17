@@ -835,21 +835,30 @@ class Actions:
     def run_list(
         self,
         *,
+        after: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        since: Optional[int] = None,
+        state: Optional[List[str]] = None,
         target: Optional[str] = None,
+        tool: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """The caller's recent runs, newest first.
+        """The caller's recent runs, newest first: each run's state, whether a
+        record of it is in doubt, whether it waits for a person, and the next
+        step. After a lost answer, list the runs since the call was sent to find
+        its run before calling again.
 
         The engine action is ``run.list``.
         """
         return self._action(
             "run.list",
             {
+                "after": after,
                 "limit": limit,
-                "offset": offset,
+                "since": since,
+                "state": state,
                 "target": target,
+                "tool": tool,
             },
             idempotency_key,
         )
@@ -1253,6 +1262,7 @@ class Actions:
         self,
         *,
         full: Optional[bool] = None,
+        kind: Optional[Literal["operation", "pipeline"]] = None,
         limit: Optional[int] = None,
         module: Optional[str] = None,
         offset: Optional[int] = None,
@@ -1270,6 +1280,7 @@ class Actions:
             "tool.search",
             {
                 "full": full,
+                "kind": kind,
                 "limit": limit,
                 "module": module,
                 "offset": offset,

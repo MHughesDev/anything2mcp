@@ -47,13 +47,31 @@ function lost(why = "The connection to the engine is closed, so nothing was sent
   return new ChannelError("connection_lost", why, "Connect again with `connect()`, then make the call again.");
 }
 
-// The request may have reached the engine, and its answer is lost.
-function answerLost(why = "The connection to the engine was lost before it answered.") {
+// The request may have reached the engine, and its answer is lost. `call`
+// says what was sent: whether it carried an idempotency key, which decides
+// the advice, and the action, input, and time (milliseconds) that name the
+// run list to look in when it did not.
+function answerLost(why = "The connection to the engine was lost before it answered.", call = {}) {
+  const { keyed = false, action = "", input = {}, sentAt = 0 } = call;
+  let fix;
+  if (keyed) {
+    fix =
+      "Make the same call again with the same idempotency key and nothing changed: it gives back " +
+      "the run the first call started, finished or not, and starts no other.";
+  } else {
+    const since = Math.max(sentAt - 60000, 0);
+    const tool = action === "tool.call" && input && typeof input.tool === "string" ? input.tool : null;
+    const look = tool === null ? `client.runList({ since: ${since} })` : `client.runList({ since: ${since}, tool: ${JSON.stringify(tool)} })`;
+    fix =
+      "Do not make the call again: a second call may start a second run and write twice. " +
+      `Find the run first with the run list, \`${look}\`, since one minute before the call, ` +
+      "and do what that run's `next` says; and pass `idempotencyKey` in the options of a call that may write, " +
+      "so that it can be made again.";
+  }
   return new ChannelError(
     "answer_lost",
     `${why} The engine may have had the call: it may have started a run, and that run may have written.`,
-    "Do not make the call again: a second call may start a second run and write twice. " +
-      "Find this call's run first in your recent runs (`run.list`), or tell the person that the answer was lost so that they can check.",
+    fix,
     false,
   );
 }

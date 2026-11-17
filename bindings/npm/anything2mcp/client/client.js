@@ -96,7 +96,7 @@ class Client extends Actions {
   // One request and its answer. `lostAnswer` makes the error for an answer
   // lost once the request may have been written: for an action, that is a
   // call in doubt; for the hello, nothing was asked that could write.
-  _exchange(method, requestPath, headers, payload, lostAnswer = channel.answerLost) {
+  _exchange(method, requestPath, headers, payload, lostAnswer = (why) => channel.answerLost(why)) {
     return new Promise((resolve, reject) => {
       if (this._closed) {
         // Nothing is written on a connection that has closed.
@@ -184,9 +184,9 @@ class Client extends Actions {
   // answer could not be read. Once the request may have reached the engine,
   // a lost answer is `answer_lost` with `retrySafe` false: the call may have
   // started a run that writes. `options.idempotencyKey` is sent as the
-  // Idempotency-Key header; the engine does not yet tie a second call with
-  // the same key to the first one's run, so it does not make a repeated
-  // call safe.
+  // Idempotency-Key header. A `tool.call` made again with the same key gives
+  // back the run the first one started, finished or not; the same key with
+  // another input is refused with `idempotency_key_reused`.
   async call(action, input = {}, options = {}) {
     if (typeof action !== "string" || !ACTION_NAME.test(action)) {
       throw new TypeError("An action's name is `noun.verb`, in lowercase letters, digits, and underscores.");
@@ -196,7 +196,10 @@ class Client extends Actions {
     if (options.idempotencyKey !== undefined) headers["idempotency-key"] = options.idempotencyKey;
     const payload = JSON.stringify(input ?? {});
     headers["content-length"] = String(Buffer.byteLength(payload));
-    const { body, exit } = await this._exchange("POST", `${REST_PREFIX}/actions/${action}`, headers, payload);
+    const sent = { keyed: options.idempotencyKey !== undefined, action, input: input ?? {}, sentAt: Date.now() };
+    const { body, exit } = await this._exchange("POST", `${REST_PREFIX}/actions/${action}`, headers, payload, (why) =>
+      channel.answerLost(why, sent),
+    );
     return toResponse(body, exit);
   }
 

@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use a2m_actions::{ExitClass, Paths, REST_PREFIX};
 use a2m_api::EXIT_CLASS_HEADER;
@@ -128,14 +128,51 @@ fn exit_class(word: Option<&str>) -> ExitClass {
     .unwrap_or(ExitClass::Failed)
 }
 
+/// What a command sent, as far as the advice after a lost answer needs it.
+struct Sent<'a> {
+    /// The command carried an idempotency key.
+    keyed: bool,
+    /// The tool the request named, for a `tool.call`.
+    tool: Option<&'a str>,
+    /// When the request was sent, in milliseconds since 1970.
+    at_ms: u128,
+}
+
+impl<'a> Sent<'a> {
+    fn of(step: &'a Step, globals: &Globals, at_ms: u128) -> Self {
+        Self {
+            keyed: globals.idempotency_key.is_some(),
+            tool: if step.action == "tool.call" {
+                step.input.get("tool").and_then(Json::as_str)
+            } else {
+                None
+            },
+            at_ms,
+        }
+    }
+}
+
 /// The engine had the request, and its answer cannot be read: the
-/// request is in doubt, as one whose answer was lost.
-fn not_an_answer() -> Failure {
+/// request is in doubt, as one whose answer was lost. With a key the
+/// command is run again as it was; without one, the run is looked up
+/// from a minute before the request was sent.
+fn not_an_answer(sent: &Sent<'_>) -> Failure {
+    let next = if sent.keyed {
+        "Run the same command again with the same `--idempotency-key` and nothing changed: it gives back the run the first one started, finished or not, and starts no other.".to_owned()
+    } else {
+        let since = sent.at_ms.saturating_sub(60_000);
+        let tool = sent
+            .tool
+            .map_or_else(String::new, |tool| format!(" --tool {tool}"));
+        format!(
+            "Do not run the command again: a second run of it may start a second run and write twice. Find its run first with `anything2mcp run list --since {since}{tool}`, and do what that run's `next` says."
+        )
+    };
     Failure::new(
         FailureClass::PossibleCommit,
         local_codes::ANSWER_LOST,
         "The engine had the request, and its answer could not be read: what it asked may have been done, and a write may have started a run.",
-        "Do not run the command again: a second run of it may start a second run and write twice. Find this command's run first in your recent runs (`anything2mcp run list`), or tell the person that the answer was lost so that they can check.",
+        next,
     )
 }
 
@@ -143,7 +180,7 @@ fn not_an_answer() -> Failure {
 /// channel itself, which refused the request before any part of the engine
 /// saw it, has its four parts and no `ok`: it becomes the failure it
 /// names. Anything else that is not a response is no answer.
-fn response_of(body: Json) -> Result<Json, Failure> {
+fn response_of(body: Json, sent: &Sent<'_>) -> Result<Json, Failure> {
     if body.get("ok").is_some_and(Json::is_boolean) {
         return Ok(body);
     }
@@ -162,7 +199,7 @@ fn response_of(body: Json) -> Result<Json, Failure> {
             },
             "warnings": [],
         })),
-        _ => Err(not_an_answer()),
+        _ => Err(not_an_answer(sent)),
     }
 }
 
@@ -201,6 +238,10 @@ async fn send(
                 "Write the idempotency key as plain printable characters.",
             )
         })?;
+    let at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let sent = Sent::of(step, globals, at_ms);
     let answer = link.send(request).await?;
     let exit = exit_class(
         answer
@@ -210,9 +251,9 @@ async fn send(
     );
     let bytes = axum::body::to_bytes(answer.into_body(), ANSWER_LIMIT)
         .await
-        .map_err(|_| not_an_answer())?;
-    let body: Json = serde_json::from_slice(&bytes).map_err(|_| not_an_answer())?;
-    let body = response_of(body)?;
+        .map_err(|_| not_an_answer(&sent))?;
+    let body: Json = serde_json::from_slice(&bytes).map_err(|_| not_an_answer(&sent))?;
+    let body = response_of(body, &sent)?;
     Ok(Answered { body, exit })
 }
 
@@ -312,7 +353,7 @@ pub(crate) async fn carry(
 mod tests {
     use a2m_actions::ExitClass;
 
-    use super::exit_class;
+    use super::{Sent, exit_class, not_an_answer};
 
     #[test]
     fn the_exit_class_is_read_from_its_word_and_anything_else_is_a_failure() {
@@ -326,5 +367,40 @@ mod tests {
         }
         assert_eq!(exit_class(Some("fine")), ExitClass::Failed);
         assert_eq!(exit_class(None), ExitClass::Failed);
+    }
+
+    #[test]
+    fn an_answer_that_cannot_be_read_says_to_repeat_a_keyed_command_and_to_look_up_an_unkeyed_one()
+    {
+        let keyed = not_an_answer(&Sent {
+            keyed: true,
+            tool: Some("example_orders_order_update"),
+            at_ms: 1_000_000,
+        });
+        assert_eq!(
+            keyed.next_step(),
+            "Run the same command again with the same `--idempotency-key` and nothing changed: it gives back the run the first one started, finished or not, and starts no other."
+        );
+        let unkeyed = not_an_answer(&Sent {
+            keyed: false,
+            tool: Some("example_orders_order_update"),
+            at_ms: 1_000_000,
+        });
+        assert_eq!(
+            unkeyed.next_step(),
+            "Do not run the command again: a second run of it may start a second run and write twice. Find its run first with `anything2mcp run list --since 940000 --tool example_orders_order_update`, and do what that run's `next` says."
+        );
+        let other = not_an_answer(&Sent {
+            keyed: false,
+            tool: None,
+            at_ms: 30,
+        });
+        assert!(
+            other
+                .next_step()
+                .contains("`anything2mcp run list --since 0`"),
+            "{}",
+            other.next_step()
+        );
     }
 }

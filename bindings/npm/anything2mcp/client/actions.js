@@ -480,7 +480,10 @@ class Actions {
   }
 
   /**
-   * The caller's recent runs, newest first. The engine action is `run.list`.
+   * The caller's recent runs, newest first: each run's state, whether a record of it is
+   * in doubt, whether it waits for a person, and the next step. After a lost answer,
+   * list the runs since the call was sent to find its run before calling again. The
+   * engine action is `run.list`.
    */
   runList(input = {}, options = {}) {
     return this.call("run.list", input, options);

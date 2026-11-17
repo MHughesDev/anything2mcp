@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
@@ -45,14 +46,34 @@ def _closed() -> ChannelError:
     )
 
 
-def _answer_lost(why: str) -> ChannelError:
-    """The request may have reached the engine, and its answer is lost."""
+#: How far before the call the run list is asked to look, in milliseconds.
+_LOST_MARGIN_MS = 60_000
+
+
+def _answer_lost(why: str, keyed: bool, action: str, input: Optional[Mapping[str, Any]], sent_at_ms: int = 0) -> ChannelError:
+    """The request may have reached the engine, and its answer is lost.
+    ``keyed`` says that the call carried an idempotency key, which decides
+    the advice: a call with a key is made again; one without is looked up
+    in the run list, from a minute before ``sent_at_ms``."""
+    if keyed:
+        fix = (
+            "Make the same call again with the same idempotency key and nothing changed: it gives back "
+            "the run the first call started, finished or not, and starts no other."
+        )
+    else:
+        tool = input.get("tool") if action == "tool.call" and input else None
+        since = max(sent_at_ms - _LOST_MARGIN_MS, 0)
+        look = f"run_list(since={since}, tool={tool!r})" if isinstance(tool, str) else f"run_list(since={since})"
+        fix = (
+            "Do not make the call again: a second call may start a second run and write twice. "
+            f"Find the run first with the run list, `{look}`, since one minute before the call, "
+            "and do what that run's `next` says; and pass an `idempotency_key` on a call that may write, "
+            "so that it can be made again."
+        )
     return ChannelError(
         "answer_lost",
         f"{why} The engine may have had the call: it may have started a run, and that run may have written.",
-        "Do not make the call again: a second call may start a second run and write twice. "
-        "Find this call's run first in your recent runs (`run.list`), or tell the person that the "
-        "answer was lost so that they can check.",
+        fix,
         retry_safe=False,
     )
 
@@ -162,7 +183,7 @@ class Client(Actions):
         return str(body.get("engine_version", ""))
 
     @staticmethod
-    def _read(answer: http.client.HTTPResponse, lost: Any = _answer_lost) -> Dict[str, Any]:
+    def _read(answer: http.client.HTTPResponse, lost: Any) -> Dict[str, Any]:
         """The answer's body as one JSON object. ``lost`` makes the error
         for an answer that breaks off, runs too long, or is not one."""
         try:
@@ -193,9 +214,10 @@ class Client(Actions):
         engine, a lost answer is ``answer_lost`` with ``retry_safe`` false:
         the call may have started a run that writes.
 
-        ``idempotency_key`` is sent as the ``Idempotency-Key`` header. The
-        engine does not yet tie a second call with the same key to the
-        first one's run, so it does not make a repeated call safe."""
+        ``idempotency_key`` is sent as the ``Idempotency-Key`` header. A
+        ``tool.call`` made again with the same key gives back the run the first
+        one started, finished or not; the same key with another input is
+        refused with ``idempotency_key_reused``."""
         if not isinstance(action, str) or not _ACTION_NAME.match(action):
             raise ValueError("An action's name is `noun.verb`, in lowercase letters, digits, and underscores.")
         headers = {"content-type": "application/json"}
@@ -204,6 +226,12 @@ class Client(Actions):
         if idempotency_key is not None:
             headers["idempotency-key"] = idempotency_key
         payload = json.dumps(dict(input or {})).encode("utf-8")
+        keyed = idempotency_key is not None
+        sent_at_ms = int(time.time() * 1000)
+
+        def lost_answer(why: str) -> ChannelError:
+            return _answer_lost(why, keyed, action, input, sent_at_ms)
+
         try:
             self._connection.request(
                 "POST", f"{REST_PREFIX}/actions/{action}", body=payload, headers=headers
@@ -216,13 +244,13 @@ class Client(Actions):
         except (OSError, http.client.HTTPException) as lost:
             # Some of the request may have been written.
             self._connection.close()
-            raise _answer_lost("The connection to the engine was lost while the call was sent.") from lost
+            raise lost_answer("The connection to the engine was lost while the call was sent.") from lost
         try:
             answer = self._connection.getresponse()
-            body = self._read(answer)
+            body = self._read(answer, lost=lost_answer)
         except (OSError, http.client.HTTPException) as lost:
             self._connection.close()
-            raise _answer_lost("The connection to the engine was lost before it answered.") from lost
+            raise lost_answer("The connection to the engine was lost before it answered.") from lost
         except ChannelError:
             self._connection.close()
             raise

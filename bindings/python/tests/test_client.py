@@ -158,6 +158,25 @@ class ClientTests(unittest.TestCase):
         finally:
             engine.stop()
 
+    def test_a_keyed_call_whose_answer_is_lost_is_told_to_make_the_same_call_again(self) -> None:
+        engine = FakeEngine(self.home)
+        engine.drops.add("tool.call")
+        try:
+            client = anything2mcp.connect(env=self.env)
+            with self.assertRaises(anything2mcp.ChannelError) as raised:
+                client.call("tool.call", {"tool": "example_orders_order_update"}, idempotency_key="example-key-1")
+            lost = raised.exception
+            self.assertEqual(lost.code, "answer_lost")
+            self.assertFalse(lost.retry_safe)
+            self.assertEqual(
+                lost.fix,
+                "Make the same call again with the same idempotency key and nothing changed: it gives back "
+                "the run the first call started, finished or not, and starts no other.",
+            )
+            client.close()
+        finally:
+            engine.stop()
+
     def test_a_call_whose_answer_is_lost_after_the_engine_took_it_is_not_safe_to_make_again(self) -> None:
         engine = FakeEngine(self.home)
         engine.drops.add("tool.call")
@@ -170,6 +189,10 @@ class ClientTests(unittest.TestCase):
             self.assertFalse(lost.retry_safe)
             self.assertTrue(lost.fix.startswith("Do not make the call again"), lost.fix)
             self.assertNotIn("Run it again", lost.fix)
+            self.assertRegex(lost.fix, r"`run_list\(since=\d+, tool='example_orders_order_update'\)`")
+            self.assertIn("one minute before the call", lost.fix)
+            self.assertIn("what that run's `next` says", lost.fix)
+            self.assertIn("pass an `idempotency_key` on a call that may write", lost.fix)
             # The engine had it.
             self.assertEqual([r[1] for r in engine.requests][-1], "/api/v1/actions/tool.call")
             # The client does not open the channel again behind the caller's

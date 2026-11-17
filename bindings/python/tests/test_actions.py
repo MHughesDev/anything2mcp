@@ -137,7 +137,8 @@ class GeneratorTests(unittest.TestCase):
                 }
             )
         )
-        self.assertEqual(text.count("idempotency_key: Optional[str] = None"), 1)
+        method = text[text.index("    def thing_do("):]
+        self.assertEqual(method.count("idempotency_key: Optional[str] = None"), 1)
         self.assertNotIn("idempotency_key: str", text)
         self.assertNotIn('"idempotency_key":', text)
         compile(text, "_actions.py", "exec")
