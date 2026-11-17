@@ -172,6 +172,15 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | 7 | Effects and hazards | The plan's programs; network to the surfaces; a session. The upstream's own effects are `declared`. Hazards come from operations |
 | 8 | A record per new mode | None: decision 0005 |
 
+### After the kernel's second pass (decisions 0161 and 0162)
+
+- Every step input is built with `StepInput::new` and `for_record`. A `call_tool` and a `list_tools` push the `acting` capture: `means` the tool and whether its result was an error, `measured` the size of the result or the count of tools. Five runs of one read give the same `means`.
+- An upstream tool's error text is carried by `StepFailure::with_said`: redacted, cleaned, and redacted again. The failure's sentence says only that the tool refused the call.
+- `Lowering::evidence` returns `acknowledged` for an operation declared `irreversible`, with identity `none`, whose binding names no `read_back` and whose act saves. Since the lint `mcp.write_no_readback` refuses a tool mapped `write` with no read tool, such an operation calls a tool mapped `irreversible`. Every other write keeps its read-back.
+- `delete` and `submit` are `irreversible`. **Not done:** a mapping entry whose effect is an open question still does not count as a write in `FileKind::writes`; the drafter leaves the effect of every tool the server does not mark read-only as one, and counting it makes the drafter refuse those drafts (see the report of the package).
+- Not moved to expressions: `key_args` in a mapping entry, which names the arguments that take the parts of a record's key. It could be `args: {order_id: record.key.0}` in the binding; the entry's `key_args` is kept because it serves the lookup and read-back tools, which a binding does not give arguments to.
+- Keys: a record with no key gets no key argument; the call is then checked against the tool's input schema and stops unsent, `arguments_invalid`, when a required argument is missing.
+
 ## Used by, and uses
 
 | Caller | Uses |

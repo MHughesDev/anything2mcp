@@ -160,6 +160,15 @@ A `request` step has the target's time limit for a request, 30 seconds unless th
 | 7 | Effects and hazards | Network: the declared `http` surfaces only. Holds sessions for those surfaces. Hazards come from operations |
 | 8 | A record per new mode | None: decision 0005 |
 
+### After the kernel's second pass (decisions 0161 and 0162)
+
+- Every step input is built with `StepInput::new` and `for_record`. The `acting` capture is made with `Capture::acting`; its bytes are the ones written before.
+- A refusal the endpoint declares under `responses.refused` carries the body's own words, the first of the top-level `message`, `detail`, and `error` that is text, through `StepFailure::with_said`. The failure's sentence never holds it.
+- `Lowering::evidence` returns `acknowledged` for a `submit` whose binding names no `read_back`, and nothing else; the operation is then `irreversible`. Every other write keeps its read-back, or the save's answer under `prefer: response`.
+- `delete` and `submit` are `irreversible`. An endpoint's effect that is an open question already counts as a write: `FileKind::writes` is true unless the effect is `read` and the method is safe.
+- Not moved to expressions: the version precondition (`version: {send, read}` in the endpoint file), kept because moving it would change the file format. It could become `if_version: current.version` in the binding, with the endpoint's `version` kept only for where the version is read.
+- Not used: `Prepared::recorded()`. No step of this pack needs what an earlier step recorded, because the read-back is by key.
+
 ## Used by, and uses
 
 | Caller | Uses |
