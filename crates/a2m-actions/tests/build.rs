@@ -1961,3 +1961,251 @@ async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() 
     assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// `binding.promote` and `draft.delete` (decision 0189, points 4 and 6):
+/// the first binding of a drafted read is made verified only on its
+/// evidence, a passing offline test and a trial that proved it, by a
+/// rewrite of its status alone; a write's promote is a person's act; a
+/// draft is removed by its checked path, and nothing else is; and the gate
+/// names `draft.delete` beside `test.run` for an operation with no test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_its_path() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new()
+            .with("status", "draft")
+            .with("total", "125.00")
+            .with("note", "Call before delivery"),
+        ..a2m_provider::Observed::default()
+    });
+    let write = |file: &'static str, content: String| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let written = world
+                .call(
+                    &agent,
+                    "draft.write",
+                    json!({"target": "example", "file": file, "content": content}),
+                )
+                .await;
+            assert_eq!(written.result.unwrap()["written"], true, "{file}");
+        }
+    };
+    let promote = |tool: &'static str, mode: &'static str, run: Option<String>| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            let mut input = json!({"target": "example", "tool": tool, "mode": mode});
+            if let Some(run) = run {
+                input["run_id"] = json!(run);
+            }
+            world.call(&agent, "binding.promote", input).await
+        }
+    };
+    let operation = target_dir.join("operations").join("order_get.yaml");
+    let verified = std::fs::read_to_string(&operation).unwrap();
+    let drafted = verified.replace("    status: verified\n", "    status: draft\n");
+    assert_ne!(drafted, verified);
+    write("operations/order_get.yaml", drafted.clone()).await;
+
+    // No trial proved it yet: refused, and the file is as it was.
+    let unproven = promote("example_order_get", "stand", None).await;
+    assert_eq!(unproven.error.unwrap().code, "promotion_unproven");
+    assert_eq!(std::fs::read_to_string(&operation).unwrap(), drafted);
+    // Tried in the sandbox.
+    let tried = world
+        .call(
+            &agent,
+            "draft.try",
+            json!({"target": "example", "tool": "example_order_get", "input": {"order_id": "SO-1001"}}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(tried["status"], "completed", "{tried}");
+    let run = tried["run_id"].as_str().unwrap().to_owned();
+    // An offline test that does not pass: refused, naming it.
+    let test_file = target_dir.join("tests").join("order_get.yaml");
+    let test = std::fs::read_to_string(&test_file).unwrap();
+    write(
+        "tests/order_get.yaml",
+        test.replace("total: \"125.00\"", "total: \"999.00\""),
+    )
+    .await;
+    let failing = promote("example_order_get", "stand", Some(run.clone())).await;
+    let failing = failing.error.unwrap();
+    assert_eq!(failing.code, "promotion_unproven");
+    assert!(failing.message.contains("order_get"), "{}", failing.message);
+    write("tests/order_get.yaml", test).await;
+
+    // On its evidence: the status alone is rewritten, on its own line.
+    let promoted = promote("example_order_get", "stand", Some(run.clone())).await;
+    assert!(promoted.ok, "{:?}", promoted.error);
+    let promoted = promoted.result.unwrap();
+    assert_eq!(promoted["promoted"], true, "{promoted}");
+    assert_eq!(promoted["evidence"]["tried"]["by"], "run");
+    assert_eq!(
+        promoted["evidence"]["offline_tests"][0]["state"], "passed",
+        "{promoted}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&operation).unwrap(),
+        verified.replace("    status: verified\n", "    status: \"verified\"\n")
+    );
+    let again = promote("example_order_get", "stand", Some(run)).await;
+    assert_eq!(again.result.unwrap()["promoted"], false);
+
+    // A shadow binding is promoted on its comparison, which is not built;
+    // a drafted write is a person's act, shown on the person's page.
+    let shadow = promote("example_line_item_upsert", "stand", None).await;
+    assert_eq!(shadow.error.unwrap().code, "action_not_built");
+    *world.surface.pages.lock().unwrap() = true;
+    let upsert = target_dir.join("operations").join("line_item_upsert.yaml");
+    let shadowed = std::fs::read_to_string(&upsert).unwrap();
+    write(
+        "operations/line_item_upsert.yaml",
+        shadowed.replace("    status: shadow\n", "    status: draft\n"),
+    )
+    .await;
+    let asked = promote("example_line_item_upsert", "stand", None).await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    assert_eq!(asked.result.unwrap()["state"], "needs_person");
+    assert_eq!(
+        world.surface.acts.lock().unwrap().last().unwrap().action.as_str(),
+        "binding.promote"
+    );
+    assert!(
+        std::fs::read_to_string(&upsert)
+            .unwrap()
+            .contains("    status: draft\n")
+    );
+
+    // `draft.delete`: only a draft in one of the target's folders, by its
+    // checked path, and a regular file.
+    let refused = |file: &'static str| {
+        let world = &world;
+        let agent = agent.clone();
+        async move {
+            world
+                .call(
+                    &agent,
+                    "draft.delete",
+                    json!({"target": "example", "file": file}),
+                )
+                .await
+                .error
+                .unwrap()
+                .code
+        }
+    };
+    assert_eq!(refused("target.yaml").await, "path_not_allowed");
+    assert_eq!(refused("../anything2mcp.toml").await, "schema_invalid");
+    std::fs::create_dir_all(target_dir.join("notes")).unwrap();
+    std::fs::write(target_dir.join("notes").join("readme.txt"), "kept").unwrap();
+    assert_eq!(refused("notes/readme.txt").await, "path_not_allowed");
+    assert_eq!(refused("operations/nowhere.yaml").await, "not_found");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&test_file, target_dir.join("tests").join("linked.yaml"))
+            .unwrap();
+        assert_eq!(refused("tests/linked.yaml").await, "path_not_allowed");
+        assert!(test_file.is_file());
+        std::fs::remove_file(target_dir.join("tests").join("linked.yaml")).unwrap();
+    }
+    assert!(target_dir.join("target.yaml").is_file());
+    assert!(target_dir.join("notes").join("readme.txt").is_file());
+    let removed = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "file": "tests/order_get.yaml"}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(removed["removed"], true, "{removed}");
+    assert!(!test_file.exists());
+    // The operation has no test now: the gate names both ways on.
+    let gates = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let missing = &gates["missing"][0];
+    assert_eq!(missing["file"], "operations/order_get.yaml", "{gates}");
+    assert_eq!(missing["next"][0]["action"], "test.run");
+    assert_eq!(missing["next"][1]["action"], "draft.delete");
+    assert_eq!(
+        missing["next"][1]["input"]["file"],
+        "operations/order_get.yaml"
+    );
+    let publish = world
+        .call(&agent, "publish.request", json!({"target": "example"}))
+        .await
+        .error
+        .unwrap();
+    assert_eq!(publish.code, "publish_gates_not_passed");
+    assert!(publish.next_step.contains("draft.delete"), "{}", publish.next_step);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Audit findings A3 and A4: a scout is kept by its project, so that a
+/// target of the same name in another project starts its own and never
+/// continues this one; and no consent is recorded on a person's behalf.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let other = example_project();
+    for project in [world.project.path(), other.path()] {
+        std::fs::remove_file(project.join("targets").join("example").join("auth.yaml")).unwrap();
+    }
+    let here = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "wait_seconds": 0}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(here["state"], "working", "{here}");
+    // In the other project, the same target's name: a scout of its own.
+    let there = world
+        .call_in(&agent, "scout.run", json!({"target": "example"}), other.path())
+        .await
+        .result
+        .unwrap();
+    assert!(there["report_hash"].is_string(), "{there}");
+    assert_ne!(there["scout_id"], here["scout_id"]);
+    // Here, the first scout goes on where it stopped.
+    let finished = world
+        .call(&agent, "scout.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(finished["scout_id"], here["scout_id"], "{finished}");
+    let report = world
+        .call(&agent, "scout.report", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(report["scout_id"], here["scout_id"]);
+    // An agent asked: no consent is recorded, and the report says so.
+    assert_eq!(
+        report["content"]["consent"],
+        json!({
+            "recorded": false,
+            "asked_by": "agent",
+            "why": report["content"]["consent"]["why"],
+        })
+    );
+    assert!(!report.to_string().contains("The person who added the target"));
+    world.kernel.close(CloseReason::Asked).await;
+}
