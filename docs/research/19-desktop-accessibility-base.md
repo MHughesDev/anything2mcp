@@ -1,6 +1,6 @@
 # Research: what the desktop pack stands on
 
-**Status:** completed on 2026-11-17 by a spike and by reading sources. It answers brief 19 of [open research](11-open-research.md) and closes roadmap package 8.1. The spike is in [spikes/desktop-base](../../spikes/desktop-base/README.md). The choice it supports is [decision 0120](../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md). Feeds [spec section 305](../spec/3-packs/305-the-desktop-pack.md) and the design of [`a2m-pack-desktop`](../architecture/crates/a2m-pack-desktop.md). Updates the desktop entry of [research note 09](09-rust-building-blocks.md).
+**Status:** completed on 2026-11-17 by a spike and by reading sources. It answers brief 19 of [open research](11-open-research.md) and closes roadmap package 8.1. The spike is in [spikes/desktop-base](../../spikes/desktop-base/README.md). The choice it supports is [decision 0120](../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md). Feeds [spec section 305](../spec/3-packs/305-the-desktop-pack.md) and the design of [`a2m-pack-desktop`](../architecture/crates/a2m-pack-desktop.md). It verifies, and in part rejects, the desktop candidates listed in [research note 09](09-rust-building-blocks.md).
 
 ## Question
 

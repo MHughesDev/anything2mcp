@@ -92,19 +92,23 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
     }
     let mut router = Router::new();
     for (path, methods) in by_path {
-        router = router.route(&path, methods.fallback(not_allowed));
+        router = router.route(&path, methods.fallback(not_allowed(settings)));
     }
     let doc_route = on(MethodFilter::GET, move |request: axum::extract::Request| {
         let doc = Arc::clone(&doc);
         async move {
-            match caller_of(request.extensions()) {
+            let (parts, body) = request.into_parts();
+            drain(&settings, &parts, body).await;
+            match caller_of(&parts.extensions) {
                 Ok(_) => json_answer(StatusCode::OK, doc.as_str().to_owned()),
                 Err(failure) => render(&refused("", &failure, true)),
             }
         }
     })
-    .fallback(not_allowed);
-    Ok(router.route(OPENAPI_PATH, doc_route).fallback(not_found))
+    .fallback(not_allowed(settings));
+    Ok(router
+        .route(OPENAPI_PATH, doc_route)
+        .fallback(not_found(settings)))
 }
 
 /// Every route the router built from this registry serves, the document's
@@ -200,18 +204,31 @@ async fn prepare(
     parts: &mut Parts,
     body: axum::body::Body,
 ) -> Result<Request, Failure> {
-    let caller = caller_of(&parts.extensions)?;
-    let key = idempotency_key(parts)?;
-    let mut input = if route.get {
-        query_input(route, parts.uri.query().unwrap_or(""))?
-    } else {
-        if parts.uri.query().is_some_and(|query| !query.is_empty()) {
+    // Whatever is refused before the body is read, the body is still
+    // drained, so that the refusal reaches the caller (`drain`).
+    let early = (|| {
+        let caller = caller_of(&parts.extensions)?;
+        let key = idempotency_key(parts)?;
+        if !route.get && parts.uri.query().is_some_and(|query| !query.is_empty()) {
             return Err(input_failure(
                 codes::QUERY_INVALID,
                 "This route reads its input from the body, and a query was sent.",
                 "Send the input as a JSON object in the body.",
             ));
         }
+        Ok((caller, key))
+    })();
+    let (caller, key) = match early {
+        Ok(checked) => checked,
+        Err(failure) => {
+            drain(settings, parts, body).await;
+            return Err(failure);
+        }
+    };
+    let mut input = if route.get {
+        drain(settings, parts, body).await;
+        query_input(route, parts.uri.query().unwrap_or(""))?
+    } else {
         body_input(settings, parts, body).await?
     };
     let params = RawPathParams::from_request_parts(parts, &())
@@ -286,27 +303,17 @@ async fn body_input(
             "Send a smaller input.",
         )
     };
-    let declared = parts
-        .headers
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok());
-    if declared.is_some_and(|length| length > settings.max_body_bytes as u64) {
-        return Err(too_large());
-    }
-    let bytes = tokio::time::timeout(
-        settings.body_timeout,
-        axum::body::to_bytes(body, settings.max_body_bytes),
-    )
-    .await
-    .map_err(|_| {
-        input_failure(
-            codes::BODY_TIMED_OUT,
-            "The body did not arrive in time.",
-            "Send the whole body at once.",
-        )
-    })?
-    .map_err(|_| too_large())?;
+    let bytes = match read_body(settings, parts, body).await {
+        Read::Whole(bytes) => bytes,
+        Read::TooLarge => return Err(too_large()),
+        Read::TimedOut => {
+            return Err(input_failure(
+                codes::BODY_TIMED_OUT,
+                "The body did not arrive in time.",
+                "Send the whole body at once.",
+            ));
+        }
+    };
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Map::new());
     }
@@ -444,28 +451,163 @@ async fn dispatch(
     }
 }
 
-async fn not_found() -> axum::response::Response {
-    render(&refused(
-        "",
-        &input_failure(
-            codes::ROUTE_NOT_FOUND,
-            "No route has this path.",
-            "Read /api/v1/openapi.json for the routes.",
-        ),
-        true,
-    ))
+fn not_found(
+    settings: ApiSettings,
+) -> impl Fn(axum::extract::Request) -> BoxedAnswer + Clone + Send + Sync + 'static {
+    move |request: axum::extract::Request| {
+        Box::pin(async move {
+            let (parts, body) = request.into_parts();
+            drain(&settings, &parts, body).await;
+            render(&refused(
+                "",
+                &input_failure(
+                    codes::ROUTE_NOT_FOUND,
+                    "No route has this path.",
+                    "Read /api/v1/openapi.json for the routes.",
+                ),
+                true,
+            ))
+        })
+    }
 }
 
-async fn not_allowed(method: Method) -> axum::response::Response {
-    render(&refused(
-        "",
-        &input_failure(
-            codes::METHOD_NOT_ALLOWED,
-            format!("This route does not take {}.", method.as_str()),
-            "Read /api/v1/openapi.json for the method of each route.",
-        ),
-        true,
-    ))
+fn not_allowed(
+    settings: ApiSettings,
+) -> impl Fn(axum::extract::Request) -> BoxedAnswer + Clone + Send + Sync + 'static {
+    move |request: axum::extract::Request| {
+        Box::pin(async move {
+            let (parts, body) = request.into_parts();
+            let method: Method = parts.method.clone();
+            drain(&settings, &parts, body).await;
+            render(&refused(
+                "",
+                &input_failure(
+                    codes::METHOD_NOT_ALLOWED,
+                    format!("This route does not take {}.", method.as_str()),
+                    "Read /api/v1/openapi.json for the method of each route.",
+                ),
+                true,
+            ))
+        })
+    }
+}
+
+type BoxedAnswer =
+    std::pin::Pin<Box<dyn std::future::Future<Output = axum::response::Response> + Send>>;
+
+/// How many times the body limit the door keeps reading, and discarding,
+/// after it has decided to refuse a request, so that the refusal can be
+/// delivered: a server that closes a connection with unread data on it
+/// makes the operating system reset the connection, and the caller may see
+/// the reset instead of the answer. A body declared or found longer than
+/// this is not drained: the connection is closed, and the caller sees
+/// either the refusal or a closed connection.
+pub const DRAIN_FACTOR: usize = 4;
+
+/// The longest the door keeps draining a refused request's body.
+pub const DRAIN_TIME: Duration = Duration::from_secs(5);
+
+/// The body as read within the limits.
+enum Read {
+    Whole(Vec<u8>),
+    TooLarge,
+    TimedOut,
+}
+
+fn declared_length(parts: &Parts) -> Option<u64> {
+    parts
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn ceiling(settings: &ApiSettings) -> usize {
+    settings.max_body_bytes.saturating_mul(DRAIN_FACTOR)
+}
+
+/// The next piece of data of a body, skipping trailers. None at the end;
+/// an error when the connection failed.
+async fn next_data(body: &mut axum::body::Body) -> Option<Result<axum::body::Bytes, ()>> {
+    use axum::body::HttpBody;
+    loop {
+        let frame =
+            std::future::poll_fn(|cx| std::pin::Pin::new(&mut *body).poll_frame(cx)).await?;
+        match frame {
+            Ok(frame) => {
+                if let Ok(data) = frame.into_data() {
+                    return Some(Ok(data));
+                }
+            }
+            Err(_) => return Some(Err(())),
+        }
+    }
+}
+
+/// Reads and discards the rest of a body, up to the drain ceiling in all
+/// and for at most [`DRAIN_TIME`]. Returns whether it reached the end.
+async fn discard(settings: &ApiSettings, body: &mut axum::body::Body, mut seen: usize) -> bool {
+    let limit = ceiling(settings);
+    let rest = async {
+        while let Some(data) = next_data(body).await {
+            let Ok(data) = data else { return false };
+            seen = seen.saturating_add(data.len());
+            if seen > limit {
+                return false;
+            }
+        }
+        true
+    };
+    tokio::time::timeout(DRAIN_TIME.min(settings.body_timeout), rest)
+        .await
+        .unwrap_or(false)
+}
+
+/// Drains a body the door will not use, unless it is declared longer than
+/// the drain ceiling.
+async fn drain(settings: &ApiSettings, parts: &Parts, mut body: axum::body::Body) {
+    if declared_length(parts).is_some_and(|length| length > ceiling(settings) as u64) {
+        return;
+    }
+    discard(settings, &mut body, 0).await;
+}
+
+/// Reads a body up to the limit within the body's time. A body over the
+/// limit is drained up to the ceiling before the refusal, so that the
+/// refusal is delivered.
+async fn read_body(settings: &ApiSettings, parts: &Parts, mut body: axum::body::Body) -> Read {
+    let limit = settings.max_body_bytes;
+    if let Some(length) = declared_length(parts) {
+        if length > ceiling(settings) as u64 {
+            return Read::TooLarge;
+        }
+        if length > limit as u64 {
+            discard(settings, &mut body, 0).await;
+            return Read::TooLarge;
+        }
+    }
+    let mut bytes = Vec::new();
+    let whole = tokio::time::timeout(settings.body_timeout, async {
+        while let Some(data) = next_data(&mut body).await {
+            let Ok(data) = data else { return false };
+            if bytes.len() + data.len() > limit {
+                let seen = bytes.len() + data.len();
+                bytes.clear();
+                bytes.shrink_to_fit();
+                discard(settings, &mut body, seen).await;
+                return false;
+            }
+            bytes.extend_from_slice(&data);
+        }
+        true
+    })
+    .await;
+    match whole {
+        Ok(true) => Read::Whole(bytes),
+        // A body that broke off is reported as too large or ended early.
+        Ok(false) => Read::TooLarge,
+        Err(_) => Read::TimedOut,
+    }
 }
 
 /// Refuses route faces that cannot be served together, instead of letting
