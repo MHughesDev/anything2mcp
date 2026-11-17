@@ -77,6 +77,13 @@ impl Loaded {
         program.evaluate(&bindings)
     }
 
+    /// Whether an expression reads the name given.
+    pub fn reads(&self, index: ExprIndex, name: &str) -> bool {
+        self.programs
+            .get(index.get())
+            .is_some_and(|program| program.names().iter().any(|read| read == name))
+    }
+
     /// Whether an expression that gives true or false holds.
     pub fn holds(&self, index: ExprIndex, scope: &Scope) -> Result<bool, Failure> {
         Ok(self.eval(index, scope)?.as_bool().unwrap_or(false))
@@ -105,6 +112,18 @@ impl Loaded {
     /// declarations, and normalizes each by its field type. Every problem
     /// is reported at once, by the name of its input and never by a value.
     pub fn inputs(&self, declared: &[InputPlan], given: &Values) -> Result<Values, Failure> {
+        self.inputs_waiting(declared, given, &[])
+    }
+
+    /// As [`Loaded::inputs`], for a call some of whose inputs wait for a
+    /// record written earlier in the run: an input named in `waiting` may
+    /// be missing.
+    pub fn inputs_waiting(
+        &self,
+        declared: &[InputPlan],
+        given: &Values,
+        waiting: &[String],
+    ) -> Result<Values, Failure> {
         let mut problems = Vec::new();
         let mut out = Values::new();
         for name in given.names() {
@@ -118,7 +137,7 @@ impl Loaded {
                 .filter(|value| !value.is_null())
                 .or(input.default.as_ref());
             let Some(raw) = raw else {
-                if input.required {
+                if input.required && !waiting.contains(&input.name) {
                     problems.push(format!("`{}` is required", input.name));
                 }
                 continue;

@@ -122,6 +122,66 @@ impl CallerFacts {
 pub(crate) struct RunCall {
     pub(crate) input: BlobRef,
     pub(crate) caller: CallerFacts,
+    /// The stored bytes of the source the run reads, when it reads one.
+    pub(crate) source: Option<BlobRef>,
+}
+
+/// How the source of a run was handed over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    /// A file of the project, read once by the dispatcher.
+    File,
+    /// Rows the caller gave inline.
+    Rows,
+}
+
+impl SourceKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Rows => "rows",
+        }
+    }
+}
+
+/// The source a run is called with: its stored bytes, and where they came
+/// from.
+#[derive(Debug, Clone)]
+pub(crate) struct KeptSource {
+    pub(crate) blob: BlobRef,
+    pub(crate) kind: SourceKind,
+    /// The path inside the project, as the caller wrote it; empty for rows.
+    pub(crate) name: String,
+    pub(crate) size: u64,
+}
+
+/// Keeps the source a run is called with, before the run is admitted.
+pub(crate) fn keep_run_source(
+    tx: &mut Tx<'_>,
+    run: &a2m_ledger::NewRun,
+    source: &KeptSource,
+) -> Result<(), Failure> {
+    tx.tables(Owner::Actions).execute(
+        "INSERT INTO actions_run_sources
+            (workspace_id, principal_id, tool_name, target_version, input_hash,
+             source_ref, kind, name, size_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT (workspace_id, principal_id, tool_name, target_version, input_hash)
+         DO UPDATE SET source_ref = excluded.source_ref, kind = excluded.kind,
+             name = excluded.name, size_bytes = excluded.size_bytes",
+        &[
+            SqlValue::from(run.workspace.to_string()),
+            SqlValue::from(run.principal.to_string()),
+            SqlValue::from(run.tool_name.as_str()),
+            SqlValue::from(run.target_version.to_string()),
+            SqlValue::from(run.input_hash.to_string()),
+            SqlValue::from(source.blob.to_string()),
+            SqlValue::from(source.kind.as_str()),
+            SqlValue::from(source.name.as_str()),
+            SqlValue::from(i64::try_from(source.size).unwrap_or(i64::MAX)),
+        ],
+    )?;
+    Ok(())
 }
 
 /// Keeps what a run is called with, before the run is admitted.
@@ -190,7 +250,30 @@ fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
         return Ok(None);
     };
     let input: BlobRef = row.text(0)?.parse()?;
-    Ok(CallerFacts::from_json(row.text(1)?).map(|caller| RunCall { input, caller }))
+    let Some(caller) = CallerFacts::from_json(row.text(1)?) else {
+        return Ok(None);
+    };
+    let source = tx
+        .tables(Owner::Actions)
+        .query_first(
+            "SELECT source_ref FROM actions_run_sources
+             WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
+               AND target_version = ?4 AND input_hash = ?5",
+            &[
+                SqlValue::from(run.workspace.to_string()),
+                SqlValue::from(run.principal.to_string()),
+                SqlValue::from(run.tool_name.as_str()),
+                SqlValue::from(run.target_version.to_string()),
+                SqlValue::from(run.input_hash.to_string()),
+            ],
+        )?
+        .map(|row| row.text(0)?.parse::<BlobRef>())
+        .transpose()?;
+    Ok(Some(RunCall {
+        input,
+        caller,
+        source,
+    }))
 }
 
 /// What the kernel keeps about its runner loop.
@@ -439,10 +522,19 @@ impl Kernel {
             })
             .await?;
         let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
-        let (input, caller) = match call {
+        let (input, caller, source) = match call {
             Some(call) => {
                 let opened = store.blobs().get(&call.input).await?;
-                (decode_values(opened.expose())?, call.caller)
+                // The source is the stored bytes the run was called with:
+                // every lease of the run reads the same ones, whatever the
+                // file in the project holds by now.
+                let source = match &call.source {
+                    Some(blob) => Some(Arc::new(
+                        store.blobs().get(blob).await?.expose().to_vec(),
+                    )),
+                    None => None,
+                };
+                (decode_values(opened.expose())?, call.caller, source)
             }
             // A run this installation holds no call for: nothing is known
             // of its input, and its caller is the person who started it.
@@ -457,6 +549,7 @@ impl Kernel {
                         .decision
                         .unwrap_or_else(|| DecisionId::from_bytes([0; 16])),
                 },
+                None,
             ),
         };
 
@@ -487,7 +580,7 @@ impl Kernel {
             environment: Some(row.environment.clone()),
             identity: Some(Identity::Person(row.principal)),
             input,
-            source: None,
+            source,
             snapshot: self.snapshot(&row).await?,
             conditions: Conditions {
                 health: match health.state {

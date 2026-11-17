@@ -10,6 +10,7 @@ use a2m_telemetry::{Clock, TraceBuilder, TraceIdentity};
 
 use crate::codes;
 use crate::control::{Control, EngineEvent};
+use crate::guard::Timed;
 use crate::job::{JobKind, JobOutcome, JobSpec, ToolRef};
 use crate::loaded::Loaded;
 use crate::run::{Run, Stop};
@@ -27,6 +28,11 @@ pub struct EngineSettings {
     pub prepare_timeout: Duration,
     /// The time limit of a step whose plan states none.
     pub step_timeout: Duration,
+    /// How long the engine waits for one call to `Control` to be answered.
+    /// An implementation that waits (for a lock, a lease, a rate budget)
+    /// keeps its own, shorter limit; this one ends a call that never
+    /// answers.
+    pub control_timeout: Duration,
     /// What reading a source may use up.
     pub source_limits: Limits,
     /// How many plans are kept loaded.
@@ -42,6 +48,7 @@ impl Default for EngineSettings {
             freshness_window: Duration::from_secs(60),
             prepare_timeout: Duration::from_secs(30),
             step_timeout: Duration::from_secs(30),
+            control_timeout: Duration::from_secs(120),
             source_limits: Limits {
                 bytes: 64 * 1024 * 1024,
                 unpacked_bytes: 256 * 1024 * 1024,
@@ -196,6 +203,9 @@ impl Engine {
         let ToolRef::Tool(name) = &job.tool else {
             return self.discover(job, control).await;
         };
+        // A call to the control plane that never answers is given up.
+        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let control: &dyn Control = &timed;
         let keeps_state = job.kind == JobKind::VerifyAfterLoss;
         let give_up = |state: RunState, failure: Failure| {
             if keeps_state {

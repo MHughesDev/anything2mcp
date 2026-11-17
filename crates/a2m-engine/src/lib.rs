@@ -23,6 +23,7 @@ mod compare;
 mod control;
 mod diff;
 mod engine;
+mod guard;
 mod job;
 mod loaded;
 mod run;

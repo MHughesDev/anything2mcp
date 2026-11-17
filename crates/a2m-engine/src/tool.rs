@@ -15,9 +15,9 @@ use a2m_ledger::{
     RecordRef, RetentionClass, Settled,
 };
 use a2m_provider::{Observed, Posture, StepFailure, StepOutcome};
-use a2m_sources::{LoadedSource, Sources};
+use a2m_expr::names;
+use a2m_sources::{LoadedSource, OPERATION_READER, Sources};
 use a2m_telemetry::Phase;
-use tokio::time::Instant;
 
 use crate::codes;
 use crate::compare::{self, Field};
@@ -72,12 +72,34 @@ struct Planned {
     before: Option<Values>,
     /// What the system gave when this job last read the record.
     current: Option<Values>,
-    seen_at: Option<Instant>,
+    /// When this job last read the record, on the engine's clock.
+    seen_at: Option<Duration>,
     state: RecordState,
     stamp: Option<String>,
     /// The position of the binding that writes it.
     binding: usize,
     outputs: Values,
+    /// What is known of the record beyond its inputs: the values recorded
+    /// before its commit point, and those its write's answer carried. The
+    /// steps that read the record find them under `result`.
+    known: Values,
+    /// The key the system assigned, once known. From then on the record is
+    /// read by it.
+    assigned: Option<RecordKey>,
+    /// Whether values were recorded before the record's commit point, by
+    /// which it is read instead of being looked up.
+    recorded: bool,
+    /// True while an input that is part of the record's key waits for a
+    /// record written earlier in the run.
+    pending: bool,
+}
+
+/// The inputs of one call of a step.
+struct Call {
+    inputs: Values,
+    /// True when an input that is part of the key could not be worked out
+    /// yet, because it comes from a record that is still to be written.
+    pending: bool,
 }
 
 fn writes(operation: &OperationPlan) -> bool {
@@ -133,13 +155,27 @@ fn key_of(
         parts.push(value);
     }
     if parts.is_empty() {
-        parts = vec![
-            Value::Text(operation.name.to_string()),
-            Value::Int(i64::from(record.step_seq)),
-            Value::Int(i64::from(record.record_seq)),
-        ];
+        return place_key(operation, record);
     }
     RecordKey::new(parts).map_err(Failure::from)
+}
+
+/// The key of a record that has none of its own yet: its place in the run.
+/// It is the key of a record whose operation names no key input, and of a
+/// record whose key waits for a record written earlier in the run.
+fn place_key(operation: &OperationPlan, record: RecordRef) -> Result<RecordKey, Failure> {
+    RecordKey::new(vec![
+        Value::Text(operation.name.to_string()),
+        Value::Int(i64::from(record.step_seq)),
+        Value::Int(i64::from(record.record_seq)),
+    ])
+    .map_err(Failure::from)
+}
+
+/// A key the system assigned, read back from the text the ledger keeps.
+fn parse_key(text: &str) -> Option<RecordKey> {
+    let parts: Vec<Value> = serde_json::from_str(text).ok()?;
+    RecordKey::new(parts).ok()
 }
 
 /// The outputs an operation declares, from what its steps observed, each
@@ -264,7 +300,18 @@ struct Tool<'p> {
 
 impl Tool<'_> {
     /// The inputs of each call of a step: one, or one for each row.
-    fn calls(&self, loaded: &Loaded, step: &StepShape<'_>) -> Result<Vec<Values>, Failure> {
+    ///
+    /// With `may_wait`, an input whose expression reads `steps` and cannot
+    /// be worked out is left out, and its call is marked as pending: it
+    /// comes from a record that is still to be written. Such an input must
+    /// be part of the record's key, because a value that is written has to
+    /// be known when its diff is approved.
+    fn calls(
+        &self,
+        loaded: &Loaded,
+        step: &StepShape<'_>,
+        may_wait: bool,
+    ) -> Result<Vec<Call>, Failure> {
         if let Some(when) = step.when
             && !loaded.holds(when, &self.scope)?
         {
@@ -273,9 +320,12 @@ impl Tool<'_> {
         let found = operation(loaded, step.operation)?;
         let Some(with) = step.with else {
             // The tool's inputs were validated as this operation's inputs.
-            return Ok(vec![match &self.scope.input {
-                Value::Record(values) => values.clone(),
-                _ => Values::new(),
+            return Ok(vec![Call {
+                inputs: match &self.scope.input {
+                    Value::Record(values) => values.clone(),
+                    _ => Values::new(),
+                },
+                pending: false,
             }]);
         };
         let rows = match step.for_each {
@@ -295,10 +345,41 @@ impl Tool<'_> {
             let mut scope = self.scope.clone();
             scope.row = row;
             let mut given = Values::new();
+            let mut waiting: Vec<String> = Vec::new();
             for arg in with {
-                given.insert(arg.name.clone(), loaded.eval(arg.value, &scope)?);
+                let waits = may_wait && loaded.reads(arg.value, names::STEPS);
+                match loaded.eval(arg.value, &scope) {
+                    Ok(value) if waits && value.is_null() => waiting.push(arg.name.clone()),
+                    Ok(value) => {
+                        given.insert(arg.name.clone(), value);
+                    }
+                    Err(_) if waits => waiting.push(arg.name.clone()),
+                    Err(failure) => return Err(failure),
+                }
             }
-            calls.push(loaded.inputs(&found.inputs, &given)?);
+            for name in &waiting {
+                let in_key = found.identity.key.iter().any(|index| {
+                    found
+                        .inputs
+                        .get(index.get())
+                        .is_some_and(|input| &input.name == name)
+                });
+                if !in_key {
+                    return Err(codes::fail(
+                        FailureClass::Input,
+                        codes::INPUT_INVALID,
+                        format!(
+                            "The input `{name}` of the step `{}` comes from a record that is still to be written, and it is not part of the record's key, so its value cannot be shown for approval.",
+                            step.id
+                        ),
+                        "Pass a later step only the key of a record an earlier step writes.",
+                    ));
+                }
+            }
+            calls.push(Call {
+                inputs: loaded.inputs_waiting(&found.inputs, &given, &waiting)?,
+                pending: !waiting.is_empty(),
+            });
         }
         Ok(calls)
     }
@@ -332,6 +413,14 @@ fn read_source(run: &Run<'_>, loaded: &Loaded, runs: ToolRuns) -> Result<(Value,
     else {
         return Ok((Value::Null, 0));
     };
+    if source.reader == OPERATION_READER {
+        return Err(codes::fail(
+            FailureClass::Busy,
+            codes::JOB_KIND_NOT_BUILT,
+            "The tool reads its rows from another operation's result, and this engine does not carry that out yet.",
+            "Give the rows as a file, or call the operations one after the other.",
+        ));
+    }
     let Some(bytes) = run.job.source.as_ref() else {
         return Err(codes::fail(
             FailureClass::Input,
@@ -429,7 +518,8 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         })
         .await?;
     if let Some(longest) = limits.max_duration_ms {
-        run.time_limit = Some(Instant::now() + Duration::from_millis(longest));
+        run.time_limit =
+            Some(run.engine.deps.clock.elapsed() + Duration::from_millis(longest));
     }
     let mut scope = run.base.with_input(&inputs);
     scope.source = source;
@@ -475,10 +565,10 @@ async fn read_steps_of(
             operation: found.name.clone(),
         })
         .await;
-        let calls = tool.calls(loaded, step)?;
+        let calls = tool.calls(loaded, step, false)?;
         let mut results = Vec::with_capacity(calls.len());
-        for inputs in &calls {
-            let outputs = read_operation(run, loaded, found, inputs).await?;
+        for call in &calls {
+            let outputs = read_operation(run, loaded, found, &call.inputs).await?;
             if let Some(expect) = step.expect {
                 let mut scope = tool.scope.clone();
                 scope.result = Value::Record(outputs.clone());

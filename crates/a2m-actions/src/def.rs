@@ -275,6 +275,9 @@ pub enum FieldType {
     TextList,
     /// A map of named values, such as a tool's own input.
     Map,
+    /// A list of maps of named values, such as the rows of a source. The
+    /// command face takes it as JSON.
+    MapList,
     /// Whatever the schema says; for a provider's action, whose schema is
     /// its own.
     Any,
@@ -289,6 +292,7 @@ impl FieldType {
             Self::Word(words) => JsonSchema::words(words),
             Self::TextList => JsonSchema::list(JsonSchema::text()),
             Self::Map => JsonSchema::map_of(JsonSchema::any()),
+            Self::MapList => JsonSchema::list(JsonSchema::map_of(JsonSchema::any())),
             Self::Any => JsonSchema::any(),
         }
     }
@@ -303,7 +307,7 @@ impl FieldType {
             Self::Word(_) => "word",
             Self::TextList => "list",
             Self::Map => "map",
-            Self::Any => "value",
+            Self::MapList | Self::Any => "value",
         }
     }
 }

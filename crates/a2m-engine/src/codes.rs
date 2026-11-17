@@ -64,6 +64,13 @@ pub const NO_TOKEN: FailureCode = FailureCode::fixed("intent_token_missing");
 /// `unknown_variant`: a binding ended without sending its write.
 pub const COMMIT_SKIPPED: FailureCode = FailureCode::fixed("commit_skipped");
 
+/// `busy`: a call to the control plane was not answered within the time the
+/// engine waits for one.
+pub const CONTROL_UNANSWERED: FailureCode = FailureCode::fixed("control_unanswered");
+/// `unknown_variant`: a provider's code panicked. The engine goes on; the
+/// step does not.
+pub const DRIVER_PANICKED: FailureCode = FailureCode::fixed("driver_panicked");
+
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -94,6 +101,8 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Busy, "no_rate_budget"),
     (FailureClass::Policy, "intent_token_missing"),
     (FailureClass::UnknownVariant, "commit_skipped"),
+    (FailureClass::Busy, "control_unanswered"),
+    (FailureClass::UnknownVariant, "driver_panicked"),
 ];
 
 pub(crate) fn fail(

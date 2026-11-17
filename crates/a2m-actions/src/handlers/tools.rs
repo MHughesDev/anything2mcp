@@ -3,12 +3,13 @@
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Environment, Failure, FailureCode, Identity, OperationName, RunId, RunState,
-    ToolRuns, Values,
+    EffectClass, Environment, Failure, FailureCode, FieldHasher, Identity, OperationName, RunId,
+    RunState, ToolRuns, Values,
 };
 use a2m_engine::encode_values;
 use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, RunRow, ToolKind};
 use a2m_policy::PrincipalKind;
+use a2m_provider::{Access, RootName, Roots};
 use a2m_sched::{
     Admitted, CancelOutcome, Enqueue, HealthState as SchedHealth, JobKind, JobRequirements,
     Priority, Scheduler, SessionLimits, Submission,
@@ -22,7 +23,8 @@ use crate::dispatch::{Call, ExitClass, Next, Output};
 use crate::health::HealthState;
 use crate::kernel::Kernel;
 use crate::person::{ApprovalAsk, SignInAsk};
-use crate::runner::{CallerFacts, keep_run_call};
+use crate::runner::{CallerFacts, KeptSource, SourceKind, keep_run_call, keep_run_source};
+use crate::tools::FoundTool;
 use crate::signals::KeptLink;
 
 /// How long a call waits for its run to rest or end, when it does not say.
@@ -130,6 +132,119 @@ handler!(
     }
 );
 
+/// The most bytes of rows a call may carry inline. A larger input is a
+/// file.
+const INLINE_ROWS_BYTES: usize = 256 * 1024;
+
+/// The reader inline rows are read by: they are handed on as a JSON
+/// document.
+const ROWS_READER: &str = "json";
+
+/// The source a call hands to a tool: its bytes, read and not yet stored.
+struct GivenSource {
+    kind: SourceKind,
+    name: String,
+    bytes: Vec<u8>,
+}
+
+/// Takes the source of a call. A file is named by its path inside the
+/// project folder and read here, through a checked path, once; the engine
+/// is handed bytes and never a path (spec section 210). Rows given inline
+/// are the bytes of a JSON document.
+///
+/// # Errors
+///
+/// `input`/`schema_invalid` when the tool reads a source and the call gives
+/// none, gives both forms, or gives one to a tool that reads none, and for
+/// rows given to a source that another reader reads;
+/// `input`/`path_not_allowed` and `input`/`file_unavailable` for the file.
+async fn given_source(call: &Call, found: &FoundTool) -> Result<Option<GivenSource>, Failure> {
+    let reads = match found.tool.runs {
+        ToolRuns::Pipeline(index) => found
+            .plan
+            .pipeline(index)
+            .and_then(|pipeline| pipeline.source.as_ref()),
+        ToolRuns::Operation(_) => None,
+    };
+    let tool = &found.tool.name;
+    let invalid = |message: String, fix: &str| codes::input(codes::SCHEMA_INVALID, message, fix);
+    match (reads, call.text("source_file"), call.input.get("source_rows")) {
+        (None, None, None) => Ok(None),
+        (None, _, _) => Err(invalid(
+            format!("`{tool}` reads no source, and the call gives one."),
+            "Leave `source_file` and `source_rows` out.",
+        )),
+        (Some(_), None, None) => Err(invalid(
+            format!("`{tool}` reads a source, and the call gives none."),
+            "Give `source_file`, the file's path inside the project folder, or `source_rows` for a small input.",
+        )),
+        (Some(_), Some(_), Some(_)) => Err(invalid(
+            format!("The call gives `{tool}` both a source file and rows."),
+            "Give `source_file` or `source_rows`, not both.",
+        )),
+        (Some(_), Some(path), None) => {
+            let folder = call.project.as_ref().ok_or_else(|| {
+                codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    "A source file is read from a project folder, and the call names none.",
+                    "Run the command inside the project folder, or pass `--project` with the folder's full path.",
+                )
+            })?;
+            let root = RootName::new("project")?;
+            let mut roots = Roots::none();
+            roots.add(root.clone(), folder, Access::Read)?;
+            let file = roots.folder(&root, Access::Read)?.join(path)?;
+            let most = a2m_engine::EngineSettings::default().source_limits.bytes;
+            // Reading a file waits on the disk: off the async threads.
+            let bytes = tokio::task::spawn_blocking(move || file.read(most))
+                .await
+                .map_err(|_| {
+                    codes::input(
+                        a2m_provider::codes::FILE_UNAVAILABLE,
+                        "The source file could not be read.",
+                        "Try again.",
+                    )
+                })??;
+            Ok(Some(GivenSource {
+                kind: SourceKind::File,
+                name: codes::shown(path),
+                bytes,
+            }))
+        }
+        (Some(source), None, Some(rows)) => {
+            if source.reader != ROWS_READER {
+                return Err(invalid(
+                    format!(
+                        "The source of `{tool}` is read by the `{}` reader, which takes a file; rows given inline are read as a JSON document.",
+                        source.reader
+                    ),
+                    "Give `source_file`, the file's path inside the project folder.",
+                ));
+            }
+            let bytes = serde_json::to_vec(rows).map_err(|_| {
+                invalid(
+                    "The rows could not be written as a JSON document.".to_owned(),
+                    "Give `source_rows` as a list of records.",
+                )
+            })?;
+            if bytes.len() > INLINE_ROWS_BYTES {
+                return Err(invalid(
+                    format!(
+                        "The rows are {} bytes, and at most {INLINE_ROWS_BYTES} may be given inline.",
+                        bytes.len()
+                    ),
+                    "Write the rows to a file in the project and give `source_file`.",
+                ));
+            }
+            Ok(Some(GivenSource {
+                kind: SourceKind::Rows,
+                name: String::new(),
+                bytes,
+            }))
+        }
+    }
+}
+
 fn sched_health(kernel: &Kernel) -> SchedHealth {
     let health = kernel.health();
     let cause = || {
@@ -208,10 +323,47 @@ handler!(
                 "Leave `environment` out to use the target's default.",
             ));
         }
+        let given = given_source(&call, &found).await?;
         let store = kernel.store()?;
         let principal = &call.caller.principal;
         let identity = (principal.principal.kind == PrincipalKind::Person)
             .then_some(Identity::Person(principal.principal.id));
+        // The source is stored before the run is admitted, under a name
+        // that is a keyed digest of its bytes. That name is part of what
+        // makes a run the same run, so the same call with another file is
+        // another run, and a resumed run reads the bytes it was given.
+        let source = match given {
+            Some(given) => {
+                let size = given.bytes.len() as u64;
+                let blob = store
+                    .blobs()
+                    .put(NewBlob {
+                        workspace: principal.workspace,
+                        owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
+                        kind: BlobKind::Input,
+                        class: RetentionClass::Long,
+                        plain: given.bytes,
+                    })
+                    .await?;
+                Some(KeptSource {
+                    blob,
+                    kind: given.kind,
+                    name: given.name,
+                    size,
+                })
+            }
+            None => None,
+        };
+        let input_hash = match &source {
+            None => input.digest(),
+            Some(source) => {
+                let mut hasher = FieldHasher::new();
+                hasher.field("purpose", b"anything2mcp call with source 1");
+                hasher.field("input", input.digest().to_string().as_bytes());
+                hasher.field("source", source.blob.to_string().as_bytes());
+                hasher.finish()
+            }
+        };
         let stored = store
             .blobs()
             .put(NewBlob {
@@ -236,7 +388,7 @@ handler!(
             environment: environment.clone(),
             identity,
             effect,
-            input_hash: input.digest(),
+            input_hash,
             input: Some(stored),
             retention: RetentionClass::Long,
         };
@@ -244,7 +396,11 @@ handler!(
         let kept = run.clone();
         store
             .write(Durability::Synced, move |tx| {
-                keep_run_call(tx, &kept, stored, &facts)
+                keep_run_call(tx, &kept, stored, &facts)?;
+                match &source {
+                    Some(source) => keep_run_source(tx, &kept, source),
+                    None => Ok(()),
+                }
             })
             .await?;
         let admitted = kernel

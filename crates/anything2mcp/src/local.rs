@@ -1,0 +1,339 @@
+//! The local engine: the kernel of one machine, served on the local
+//! channel. This is where the role crates are joined, because none of
+//! them may name another's types:
+//!
+//! - the channel of `a2m-local` carries one router;
+//! - the router is the REST router of `a2m-api` and, for each built-in
+//!   toolset, the MCP endpoint of `a2m-mcp`;
+//! - one layer of this crate stands in front of both. It turns the
+//!   [`Peer`] the channel saw connect into a caller the kernel verified,
+//!   and refuses a request with none;
+//! - the person surface is [`LocalSurface`], the only holder of the
+//!   approval desk.
+//!
+//! The channel is bound before the kernel is opened. Binding takes the
+//! engine lock, so a second engine on the same data directory is refused
+//! before it opens the store; and a client that connects while the kernel
+//! opens waits for its hello instead of finding nothing.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use a2m_actions::{
+    BuiltInToolset, Caller, CloseReason, ErrorBody, ExitClass, FrontDoor, Kernel, PersonSurface,
+    REST_PREFIX, Request, Response, Settings, codes,
+};
+use a2m_api::{ApiSettings, EXIT_CLASS_HEADER, ProjectFolder};
+use a2m_core::{Failure, FailureClass, Version};
+use a2m_local::{
+    Channel, ChannelControl, ClientLabel, IdleHolds, IdlePolicy, LocalSurface, OsUser, Peer,
+    PresencePrompt, StopReason, SurfaceParts,
+};
+use a2m_mcp::{McpService, McpSettings, mcp_path};
+use a2m_policy::ToolsetName;
+use axum::Router;
+use axum::extract::{Request as HttpRequest, State};
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response as HttpResponse};
+use serde_json::json;
+
+use crate::engine::{Engine, EngineOptions, load_settings};
+use crate::wire;
+
+/// The action that stops the engine. The dispatcher decides whether its
+/// caller may; this process then carries it out.
+const STOP_ACTION: &str = "engine.stop";
+/// The most a request to stop may send.
+const STOP_BODY_LIMIT: usize = 64 * 1024;
+
+/// The version of this program, as the hello of the local channel states
+/// it.
+pub(crate) fn program_version() -> Result<Version, Failure> {
+    crate::version().parse::<Version>()
+}
+
+/// What keeps an engine with no connection from stopping: a page that
+/// waits for a person. The kernel offers no count of the runs in hand
+/// yet, so a run is held open only by the connection that waits for it.
+struct Holds(LocalSurface);
+
+impl IdleHolds for Holds {
+    fn busy(&self) -> bool {
+        self.0.waiting() > 0
+    }
+}
+
+fn minutes(settings: &Settings, key: &str) -> Option<Duration> {
+    let minutes = u64::try_from(settings.int(key)?).ok()?;
+    (minutes > 0).then(|| Duration::from_secs(minutes * 60))
+}
+
+/// What the layer in front of the front doors needs.
+#[derive(Clone)]
+struct Door {
+    kernel: Kernel,
+    control: ChannelControl,
+}
+
+/// A response as the REST interface renders one: the status from its one
+/// table, the exit class as a header, and the whole response as the body.
+fn render(response: &Response) -> HttpResponse {
+    let mut answer = (
+        a2m_api::status_of(response),
+        response.to_json().to_string(),
+    )
+        .into_response();
+    let headers = answer.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        EXIT_CLASS_HEADER,
+        HeaderValue::from_static(response.exit.as_str()),
+    );
+    answer
+}
+
+fn refused(action: &str, failure: &Failure) -> Response {
+    Response {
+        ok: false,
+        action: action.to_owned(),
+        result: None,
+        error: Some(ErrorBody {
+            class: failure.class(),
+            code: failure.code().to_string(),
+            message: failure.message().to_owned(),
+            fix: failure.next_step().to_owned(),
+            // Nothing was handed to the dispatcher.
+            retry_safe: true,
+        }),
+        warnings: Vec::new(),
+        next: None,
+        exit: match failure.class() {
+            FailureClass::Input => ExitClass::Malformed,
+            _ => ExitClass::Failed,
+        },
+        decision: None,
+    }
+}
+
+/// The caller a peer of the channel is, once the kernel has checked it.
+async fn caller_of(kernel: &Kernel, peer: &Peer, person: bool) -> Result<Caller, Failure> {
+    let principal = match kernel.verify_caller(peer.credential()).await {
+        Ok(principal) => principal,
+        // A stopped engine names nobody; it answers its own status.
+        Err(failure) if failure.class() == FailureClass::Busy => kernel.status_only_caller(),
+        Err(failure) => return Err(failure),
+    };
+    let (door, is_agent) = match &peer.label {
+        ClientLabel::CommandLine => (FrontDoor::Command, !person),
+        ClientLabel::Mcp(_) => (FrontDoor::Mcp, true),
+        ClientLabel::Sdk(_) => (FrontDoor::Sdk, true),
+    };
+    let mut caller = Caller::new(principal, door, is_agent);
+    caller.client = peer.label.as_text();
+    Ok(caller)
+}
+
+/// The layer in front of both front doors. A request reaches them only
+/// with a caller the kernel verified, made from the peer the channel saw
+/// connect; nothing a request says names its caller.
+async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -> HttpResponse {
+    let Some(peer) = request.extensions().get::<Peer>().cloned() else {
+        return render(&refused(
+            "",
+            &Failure::new(
+                FailureClass::Policy,
+                a2m_api::codes::CALLER_MISSING,
+                "The request did not come through the local channel.",
+                "Call through `anything2mcp`, which connects to the engine as you.",
+            ),
+        ));
+    };
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    };
+    let person = header(wire::PERSON_HEADER) == Some(wire::PERSON_PRESENT);
+    let project = match header(wire::PROJECT_HEADER).map(wire::decode_path) {
+        None => None,
+        Some(Some(folder)) => Some(ProjectFolder(folder)),
+        Some(None) => {
+            return render(&refused(
+                "",
+                &Failure::new(
+                    FailureClass::Input,
+                    codes::SCHEMA_INVALID,
+                    "The project folder the request names cannot be read.",
+                    "Call through `anything2mcp`, which names the folder it was run in.",
+                ),
+            ));
+        }
+    };
+    let caller = match caller_of(&door.kernel, &peer, person).await {
+        Ok(caller) => caller,
+        Err(failure) => return render(&refused("", &failure)),
+    };
+    let stop = format!("{REST_PREFIX}/actions/{STOP_ACTION}");
+    if request.method() == Method::POST && request.uri().path() == stop {
+        return stop_engine(&door, caller, request).await;
+    }
+    request.extensions_mut().insert(caller);
+    if let Some(project) = project {
+        request.extensions_mut().insert(project);
+    }
+    next.run(request).await
+}
+
+/// `engine.stop`, which acts on this process. The dispatcher is asked
+/// first, so that the one decider decides and the decision is recorded;
+/// it answers that the action is the client end's to carry out, and this
+/// process, which serves the channel, then stops serving.
+async fn stop_engine(door: &Door, mut caller: Caller, request: HttpRequest) -> HttpResponse {
+    // The body is read so that the answer can be delivered; an input is
+    // not taken, because the action has none.
+    let _ = axum::body::to_bytes(request.into_body(), STOP_BODY_LIMIT).await;
+    caller.door = FrontDoor::Rest;
+    let mut response = door
+        .kernel
+        .dispatch(Request::new(STOP_ACTION, json!({}), caller))
+        .await;
+    let allowed = response
+        .error
+        .as_ref()
+        .is_some_and(|error| error.code == codes::CLIENT_ACTION.as_str());
+    if allowed {
+        door.control.stop(StopReason::Asked);
+        response.ok = true;
+        response.error = None;
+        response.result = Some(json!({"stopping": true}));
+        response.exit = ExitClass::Succeeded;
+    }
+    render(&response)
+}
+
+/// The one router of the local engine: the REST router and the MCP
+/// endpoint of each built-in toolset, behind [`admit`].
+fn service(kernel: &Kernel, control: ChannelControl) -> Result<Router, Failure> {
+    let mut router = a2m_api::router(kernel.clone(), ApiSettings::default())?;
+    let settings = McpSettings::from_settings(kernel.settings())?;
+    for toolset in [BuiltInToolset::Use, BuiltInToolset::Build] {
+        let name = ToolsetName::new(toolset.as_str())?;
+        let endpoint = McpService::new(kernel.clone(), name, settings.clone())?;
+        router = router.nest_service(&mcp_path(endpoint.toolset()), endpoint.http());
+    }
+    Ok(router.layer(axum::middleware::from_fn_with_state(
+        Door {
+            kernel: kernel.clone(),
+            control,
+        },
+        admit,
+    )))
+}
+
+/// The local engine, bound and open, not yet serving.
+pub struct LocalEngine {
+    engine: Engine,
+    surface: LocalSurface,
+    channel: Channel,
+    service: Router,
+    idle: IdlePolicy,
+}
+
+impl std::fmt::Debug for LocalEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalEngine")
+            .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+impl LocalEngine {
+    /// Binds the local channel, which takes the engine lock, and opens the
+    /// kernel behind it with [`LocalSurface`] as its person surface. The
+    /// person surface of `options` is not used; `prompt` is the presence
+    /// prompt of this machine, which `a2m_local::system_prompt` gives.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_running` when an engine already runs for this user
+    /// and data directory; `busy`/`channel_unavailable` when the channel
+    /// cannot be opened; what [`Engine::open`] answers for settings that
+    /// do not load; `input`/`mcp_not_served` and `input`/`route_conflict`
+    /// from the front doors.
+    pub async fn start(
+        mut options: EngineOptions,
+        prompt: Arc<dyn PresencePrompt>,
+    ) -> Result<Self, Failure> {
+        let settings = load_settings(&options)?;
+        let channel = Channel::bind(&options.paths, program_version()?).await?;
+        // The caller of the channel is the user the operating system
+        // reports, so that is the name the kernel is opened for.
+        options.os_user = OsUser::current()?.as_str().to_owned();
+        let surface = LocalSurface::new(SurfaceParts {
+            prompt,
+            clock: Arc::clone(&options.clock),
+            random: Arc::clone(&options.random),
+            window: minutes(&settings, "policy.approval_window_minutes")
+                .unwrap_or(Duration::from_secs(15 * 60)),
+        });
+        options.person = Arc::new(surface.clone()) as Arc<dyn PersonSurface>;
+        let idle = match minutes(&settings, "engine.idle_stop_minutes") {
+            Some(after) => IdlePolicy::after(after, Arc::new(Holds(surface.clone()))),
+            None => IdlePolicy::never(),
+        };
+        let engine = Engine::open_loaded(options, settings).await;
+        let service = match service(engine.kernel(), channel.control()) {
+            Ok(service) => service,
+            Err(failure) => {
+                engine.close().await;
+                return Err(failure);
+            }
+        };
+        Ok(Self {
+            engine,
+            surface,
+            channel,
+            service,
+            idle,
+        })
+    }
+
+    /// The engine behind the channel.
+    #[must_use]
+    pub const fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// The person surface of this engine.
+    #[must_use]
+    pub const fn surface(&self) -> &LocalSurface {
+        &self.surface
+    }
+
+    /// The handle that stops the engine once it serves.
+    #[must_use]
+    pub fn control(&self) -> ChannelControl {
+        self.channel.control()
+    }
+
+    /// Serves the channel until the engine is asked to stop or has been
+    /// idle for `engine.idle_stop_minutes`, then closes the kernel. A page
+    /// that still waits for a person is lost with the engine, which is a
+    /// decline.
+    pub async fn serve(self) -> StopReason {
+        let stopped = self.channel.serve(self.service, self.idle).await;
+        let why = match stopped {
+            StopReason::Idle => CloseReason::Idle,
+            StopReason::Restart => CloseReason::Restart,
+            StopReason::Asked | StopReason::Failed => CloseReason::Asked,
+        };
+        self.engine.close_because(why).await;
+        stopped
+    }
+}
