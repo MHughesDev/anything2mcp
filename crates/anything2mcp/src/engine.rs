@@ -38,6 +38,10 @@ pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
 /// passphrase route. The salt is not a secret.
 const SALT_FILE: &str = "vault-salt";
 
+/// The name of the installation's settings file, in the installation's
+/// configuration directory.
+const INSTALLATION_SETTINGS_FILE: &str = "settings.toml";
+
 /// How many jobs the in-process runner loop holds at once.
 const RUNNER_SLOTS: u32 = 4;
 
@@ -315,7 +319,25 @@ async fn machine_key_store(
     };
     match OsKeyStore::open(&installation).await {
         Ok(store) => Arc::new(store),
-        Err(failure) => no_key_store(name, failure),
+        // The failure keeps its class, code, and sentence, and gains the
+        // way out a machine with no key store has: the passphrase route,
+        // which only the installation's own settings file can choose.
+        Err(failure) => no_key_store(
+            name,
+            Failure::new(
+                failure.class(),
+                failure.code().clone(),
+                failure.message(),
+                format!(
+                    "Unlock or start the key store. On a machine that has none, write `backend = \"passphrase\"` under `[vault]` in `{}`, and start the engine with the passphrase in the environment variable `{PASSPHRASE_VARIABLE}`.",
+                    options
+                        .paths
+                        .installation_config
+                        .join(INSTALLATION_SETTINGS_FILE)
+                        .display()
+                ),
+            ),
+        ),
     }
 }
 

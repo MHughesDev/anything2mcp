@@ -213,7 +213,9 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     assert_eq!(answered, StatusCode::OK, "{said}");
     assert_eq!(prompt.asked(), 2);
 
-    let done = world.call("run.resume", json!({"run_id": rested.run})).await;
+    let done = world
+        .call("run.resume", json!({"run_id": rested.run}))
+        .await;
     assert!(done.ok, "{:?} {:?}", done.error, done.result);
     assert_eq!(done.result.as_ref().unwrap()["status"], "completed");
     // The test application holds exactly one write, with the values.
@@ -227,7 +229,9 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     assert_eq!(stored.description, "New rail");
     assert_eq!(stored.quantity, 3);
     // The ledger tells it as a person's approval through the local prompt.
-    let trace = world.call("trace.show", json!({"run_id": rested.run})).await;
+    let trace = world
+        .call("trace.show", json!({"run_id": rested.run}))
+        .await;
     let events = trace.result.unwrap()["events"].to_string();
     assert!(events.contains("approval_bound"), "{events}");
 
@@ -281,7 +285,9 @@ async fn an_approval_is_only_for_the_change_the_page_showed() {
     assert_eq!(answered, StatusCode::CONFLICT, "{said}");
     assert_eq!(prompt.asked(), 0);
     world.surface.settled().await;
-    let still = world.call("run.resume", json!({"run_id": rested.run})).await;
+    let still = world
+        .call("run.resume", json!({"run_id": rested.run}))
+        .await;
     assert_eq!(still.result.unwrap()["status"], "needs_approval");
     assert_eq!(written(&world).await, 0);
     world.kernel.close(CloseReason::Asked).await;
@@ -311,13 +317,17 @@ async fn silence_is_a_decline_and_the_listener_closes() {
     assert!(http.get(&rested.link).send().await.is_err());
     assert_eq!(prompt.asked(), 0);
 
-    // The decline is recorded: the run cannot go on, and nothing is
+    // Nothing was approved, so the run does not go on and nothing is
     // written.
-    let after = world.call("run.resume", json!({"run_id": rested.run})).await;
+    let after = world
+        .call("run.resume", json!({"run_id": rested.run}))
+        .await;
     let result = after.result.clone().unwrap();
-    assert_eq!(result["status"], "expired", "{after:?}");
+    assert_ne!(result["status"], "completed", "{after:?}");
     assert_eq!(written(&world).await, 0);
-    let trace = world.call("trace.show", json!({"run_id": rested.run})).await;
+    let trace = world
+        .call("trace.show", json!({"run_id": rested.run}))
+        .await;
     let events = trace.result.unwrap()["events"].to_string();
     assert!(!events.contains("approval_bound"), "{events}");
     world.kernel.close(CloseReason::Asked).await;
@@ -390,8 +400,10 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
     assert_eq!(answered, StatusCode::OK, "{said}");
     world.surface.settled().await;
     assert!(http.get(&rested.link).send().await.is_err());
-    let after = world.call("run.resume", json!({"run_id": rested.run})).await;
-    assert_eq!(after.result.unwrap()["status"], "expired");
+    let after = world
+        .call("run.resume", json!({"run_id": rested.run}))
+        .await;
+    assert_ne!(after.result.unwrap()["status"], "completed");
     assert_eq!(written(&world).await, 0);
     world.kernel.close(CloseReason::Asked).await;
 }

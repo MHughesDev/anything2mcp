@@ -9,6 +9,7 @@
 )]
 
 pub mod proxy;
+pub mod service;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -240,6 +241,7 @@ impl Machine {
         command
             .args(args)
             .current_dir(self.project.path())
+            .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
             .envs(self.environment())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

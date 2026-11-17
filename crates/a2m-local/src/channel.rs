@@ -452,8 +452,7 @@ struct Open(watch::Sender<usize>);
 
 impl Drop for Open {
     fn drop(&mut self) {
-        self.0
-            .send_modify(|count| *count = count.saturating_sub(1));
+        self.0.send_modify(|count| *count = count.saturating_sub(1));
     }
 }
 

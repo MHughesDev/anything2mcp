@@ -1,0 +1,13 @@
+# Throwaway. Package 8.1: the one library over all three systems. Only its
+# tree, licences, and build were checked, and its source read; see the README.
+[package]
+name = "spike-desktop-xa11y"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+xa11y = { version = "=0.16.0", default-features = false }

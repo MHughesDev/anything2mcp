@@ -394,8 +394,7 @@ async fn code(State(state): State<AppState>, headers: HeaderMap, body: String) -
     let fields = form_fields(&body);
     let mut inner = state.lock().await;
     let auth = &mut inner.auth;
-    let Some(pending) =
-        cookie(&headers, PENDING_COOKIE).filter(|id| auth.pending.contains_key(id))
+    let Some(pending) = cookie(&headers, PENDING_COOKIE).filter(|id| auth.pending.contains_key(id))
     else {
         return Redirect::to(SIGN_IN).into_response();
     };
@@ -407,7 +406,10 @@ async fn code(State(state): State<AppState>, headers: HeaderMap, body: String) -
         )
             .into_response();
     }
-    let next = auth.pending.remove(&pending).unwrap_or_else(|| HOME.to_owned());
+    let next = auth
+        .pending
+        .remove(&pending)
+        .unwrap_or_else(|| HOME.to_owned());
     let session = auth.issue_session();
     (
         AppendHeaders([
@@ -421,10 +423,10 @@ async fn code(State(state): State<AppState>, headers: HeaderMap, body: String) -
 
 async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let mut inner = state.lock().await;
-    if let Some(id) = cookie(&headers, SESSION_COOKIE) {
-        if inner.auth.sessions.remove(&id).is_some() {
-            inner.auth.report.sign_outs += 1;
-        }
+    if let Some(id) = cookie(&headers, SESSION_COOKIE)
+        && inner.auth.sessions.remove(&id).is_some()
+    {
+        inner.auth.report.sign_outs += 1;
     }
     (
         AppendHeaders([(header::SET_COOKIE, clear_cookie(SESSION_COOKIE))]),
@@ -555,7 +557,9 @@ mod tests {
 
     #[test]
     fn form_text_is_decoded() {
-        let fields = form_fields("username=example-user&password=a+b%26c%3D&next=%2Fsecure%2Fx&bad=%zz&end=%4");
+        let fields = form_fields(
+            "username=example-user&password=a+b%26c%3D&next=%2Fsecure%2Fx&bad=%zz&end=%4",
+        );
         assert_eq!(fields["username"], "example-user");
         assert_eq!(fields["password"], "a b&c=");
         assert_eq!(fields["next"], "/secure/x");
@@ -567,7 +571,12 @@ mod tests {
     fn the_next_page_never_leaves_the_signed_in_part() {
         let next = |value: &str| next_page(&[("next".to_owned(), value.to_owned())].into());
         assert_eq!(next("/secure/api/orders"), "/secure/api/orders");
-        for away in ["https://elsewhere.example/", "//elsewhere.example/", "/orders", "/secure/\\x"] {
+        for away in [
+            "https://elsewhere.example/",
+            "//elsewhere.example/",
+            "/orders",
+            "/secure/\\x",
+        ] {
             assert_eq!(next(away), HOME, "{away}");
         }
     }

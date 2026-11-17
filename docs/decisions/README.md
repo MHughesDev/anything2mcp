@@ -123,3 +123,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0114 | [The web probe as built: three discoverers over an observing tab](0114-the-web-probe-as-built-three-discoverers-over-an-observing-tab.md) | Accepted (design decision) |
 | 0112 | [The `ui` driver as built: five step kinds, and a commit that waits for its confirmation](0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md) | Accepted (design decision) |
 | 0113 | [A screen's fingerprint is a section, absent is a variant, and a table is read by its headings](0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md) | Accepted (design decision) |
+| 0115 | [The MCP endpoint as built: checks in front of the SDK, and a redactor on the way out](0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md) | Accepted (design decision) |
+| 0117 | [The local channel and the person surface on one machine, as built](0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md) | Accepted (design decision) |

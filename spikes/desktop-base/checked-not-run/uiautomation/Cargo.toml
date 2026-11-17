@@ -1,0 +1,14 @@
+# Throwaway. Package 8.1: the `uiautomation` wrapper crate, type-checked for
+# It does not compile without its `input` feature (synthetic mouse and keys).
+# x86_64-pc-windows-msvc only, to compare its surface with our own bindings.
+[package]
+name = "spike-desktop-uiautomation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+uiautomation = { version = "=0.25.1", default-features = false, features = ["input", "pattern", "control", "event"] }

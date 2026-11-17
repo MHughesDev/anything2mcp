@@ -134,7 +134,11 @@ pub(crate) async fn connect(place: &Place, expected: &str) -> Result<ClientStrea
     };
     match checked {
         Ok(result) => result?,
-        Err(_) => return Err(ConnectError::Io(io::Error::other("the owner check stopped"))),
+        Err(_) => {
+            return Err(ConnectError::Io(io::Error::other(
+                "the owner check stopped",
+            )));
+        }
     }
     match UnixStream::connect(&place.socket).await {
         Ok(stream) => Ok(stream),

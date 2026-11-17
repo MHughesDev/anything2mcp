@@ -27,6 +27,18 @@ use crate::{
 
 pub(crate) const VERSION: Version = Version::new(0, 0, 1);
 
+/// The longest a step of a test may take before the test fails by name
+/// instead of waiting for ever.
+const PATIENCE: Duration = Duration::from_secs(60);
+
+/// `step`, or a failure that names it when it does not end.
+pub(crate) async fn within<T>(what: &str, step: impl Future<Output = T>) -> T {
+    match tokio::time::timeout(PATIENCE, step).await {
+        Ok(done) => done,
+        Err(_) => panic!("{what} did not end"),
+    }
+}
+
 /// A temporary home for one engine's paths. The folder's name is short,
 /// because a socket's path may not be long.
 pub(crate) fn home(name: &str) -> (Folder, Paths) {
@@ -124,7 +136,12 @@ impl World {
             Arc::new(surface.clone()) as Arc<dyn PersonSurface>,
         )
         .await;
-        assert_eq!(kernel.health().state, HealthState::Ok, "{:?}", kernel.health());
+        assert_eq!(
+            kernel.health().state,
+            HealthState::Ok,
+            "{:?}",
+            kernel.health()
+        );
         let principal = kernel
             .verify_caller(CallerCredential::LocalUser(user))
             .await

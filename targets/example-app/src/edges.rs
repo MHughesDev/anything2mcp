@@ -60,7 +60,9 @@ async fn limited() -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],
-        axum::Json(json!({"error": "rate_limited", "message": "Too many requests. Try again later."})),
+        axum::Json(
+            json!({"error": "rate_limited", "message": "Too many requests. Try again later."}),
+        ),
     )
         .into_response()
 }

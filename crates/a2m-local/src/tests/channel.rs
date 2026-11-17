@@ -17,7 +17,7 @@ use serde_json::{Value as Json, json};
 use tokio::task::JoinHandle;
 
 use super::world::engine::ORDER_GET;
-use super::world::{TestPrompt, VERSION, World, home};
+use super::world::{TestPrompt, VERSION, World, home, within};
 use crate::channel::refusal;
 use crate::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, Channel, ChannelControl, ClientLabel, Connector,
@@ -64,7 +64,7 @@ impl Engine {
 
     async fn stop(self) -> StopReason {
         self.control.stop(StopReason::Asked);
-        self.serving.await.unwrap()
+        within("the engine's stop", self.serving).await.unwrap()
     }
 }
 
@@ -76,8 +76,13 @@ fn get_request(path: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// Connects, or fails by name when the connect does not end.
+async fn connect(connector: &Connector) -> Result<Link, Failure> {
+    within("the client's connect", connector.connect()).await
+}
+
 async fn json_of(link: &Link, request: Request<Body>) -> (StatusCode, Json) {
-    let response = link.send(request).await.unwrap();
+    let response = within("the request", link.send(request)).await.unwrap();
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
@@ -101,17 +106,14 @@ async fn two_clients_share_one_engine_and_their_requests_reach_the_service() {
     let command = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
     let agent = Connector::new(&paths, VERSION, ClientLabel::mcp("example client")).unwrap();
     // Both at the same moment.
-    let (first, second) = tokio::join!(command.connect(), agent.connect());
+    let (first, second) = tokio::join!(connect(&command), connect(&agent));
     let (first, second) = (first.unwrap(), second.unwrap());
     assert_eq!(first.engine_version(), VERSION);
 
     let me = OsUser::current().unwrap().to_string();
     let (status, said) = json_of(&first, get_request("/who")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        said,
-        json!({"instance": 7, "user": me, "label": "cli"})
-    );
+    assert_eq!(said, json!({"instance": 7, "user": me, "label": "cli"}));
     let (_, said) = json_of(&second, get_request("/who")).await;
     assert_eq!(
         said,
@@ -128,7 +130,7 @@ async fn two_clients_share_one_engine_and_their_requests_reach_the_service() {
     assert!(EngineLock::held(&paths).unwrap());
     drop((first, second));
     assert_eq!(engine.stop().await, StopReason::Asked);
-    let gone = command.connect().await.unwrap_err();
+    let gone = connect(&command).await.unwrap_err();
     assert_failure(&gone, FailureClass::Busy, &codes::ENGINE_UNREACHABLE);
     assert!(!EngineLock::held(&paths).unwrap());
 }
@@ -175,7 +177,7 @@ async fn a_stale_socket_is_not_an_engine_and_does_not_block_the_next() {
     assert!(place.socket.exists());
 
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
-    let nothing = connector.connect().await.unwrap_err();
+    let nothing = connect(&connector).await.unwrap_err();
     assert_failure(&nothing, FailureClass::Busy, &codes::ENGINE_UNREACHABLE);
 
     let engine = Engine::start(
@@ -183,7 +185,7 @@ async fn a_stale_socket_is_not_an_engine_and_does_not_block_the_next() {
         2,
         IdlePolicy::never(),
     );
-    let link = connector.connect().await.unwrap();
+    let link = connect(&connector).await.unwrap();
     let (_, said) = json_of(&link, get_request("/who")).await;
     assert_eq!(said["instance"], 2);
     drop(link);
@@ -205,7 +207,7 @@ async fn another_users_connection_is_closed_unread_and_another_users_engine_is_n
         IdlePolicy::never(),
     );
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
-    let refused = connector.connect().await.unwrap_err();
+    let refused = connect(&connector).await.unwrap_err();
     assert_failure(&refused, FailureClass::Transient, &codes::CONNECTION_LOST);
     assert_eq!(engine.control.refused(), 1);
     assert_eq!(engine.hits.load(Ordering::SeqCst), 0);
@@ -219,7 +221,7 @@ async fn another_users_connection_is_closed_unread_and_another_users_engine_is_n
         IdlePolicy::never(),
     );
     let wary = connector.clone().expecting(stranger);
-    let refused = wary.connect().await.unwrap_err();
+    let refused = connect(&wary).await.unwrap_err();
     assert_failure(&refused, FailureClass::Policy, &codes::PEER_NOT_ALLOWED);
     assert_eq!(engine.hits.load(Ordering::SeqCst), 0);
     assert_eq!(engine.control.refused(), 0);
@@ -243,7 +245,12 @@ async fn what_is_not_a_well_formed_hello_is_refused_by_name_and_reaches_no_servi
     assert_eq!(said["class"], "input");
     assert_eq!(said["code"], "hello_invalid");
     // The refusal is its four parts and nothing else.
-    let mut parts: Vec<&str> = said.as_object().unwrap().keys().map(String::as_str).collect();
+    let mut parts: Vec<&str> = said
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     parts.sort_unstable();
     assert_eq!(parts, ["class", "code", "fix", "message"]);
 
@@ -313,7 +320,8 @@ async fn an_engine_with_no_connection_and_nothing_held_stops_and_a_hold_keeps_it
     let engine = Engine::start(channel, 1, idle);
     // Nobody asks it to stop: it stops by itself, and only once the hold
     // let go.
-    assert_eq!(engine.serving.await.unwrap(), StopReason::Idle);
+    let stopped = within("the idle stop", engine.serving).await.unwrap();
+    assert_eq!(stopped, StopReason::Idle);
     assert_eq!(holds.asked.load(Ordering::SeqCst), 3);
     assert!(!EngineLock::held(&paths).unwrap());
 }
@@ -362,11 +370,8 @@ async fn a_read_goes_through_the_channel_to_the_kernel_and_a_secret_does_not_com
     let channel = Channel::bind(&world.paths, VERSION).await.unwrap();
     let control = channel.control();
     let serving = tokio::spawn(channel.serve(door(world.kernel.clone()), IdlePolicy::never()));
-    let link = Connector::new(&world.paths, VERSION, ClientLabel::CommandLine)
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
+    let connector = Connector::new(&world.paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let link = connect(&connector).await.unwrap();
 
     // The value the test application holds is released as a secret first.
     let secret = "Example Customer One";
@@ -401,7 +406,8 @@ async fn a_read_goes_through_the_channel_to_the_kernel_and_a_secret_does_not_com
 
     drop(link);
     control.stop(StopReason::Asked);
-    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    let stopped = within("the engine's stop", serving).await.unwrap();
+    assert_eq!(stopped, StopReason::Asked);
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -419,7 +425,7 @@ async fn a_client_whose_connection_is_closed_is_told_so_every_time() {
     );
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
     for _ in 0..200 {
-        let refused = connector.connect().await.unwrap_err();
+        let refused = connect(&connector).await.unwrap_err();
         assert_failure(&refused, FailureClass::Transient, &codes::CONNECTION_LOST);
     }
     assert_eq!(engine.control.refused(), 200);

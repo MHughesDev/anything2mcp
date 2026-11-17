@@ -321,10 +321,10 @@ struct Pressed {
 /// Takes the page's one-time value and marks the page as pressed. A press
 /// without the value of the page served last changes nothing but that
 /// value, which is spent either way.
-fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Response> {
+fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Response>> {
     let mut state = inner.state();
     let Some(found) = state.pages.get_mut(code) else {
-        return Err(nothing_here());
+        return Err(Box::new(nothing_here()));
     };
     let expected = found.once.take();
     let fits = match (expected.as_deref(), once_of(body)) {
@@ -332,18 +332,18 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Response> {
         _ => false,
     };
     if !fits {
-        return Err(answer(
+        return Err(Box::new(answer(
             StatusCode::FORBIDDEN,
             "Nothing was recorded",
             "The press did not come from the page as it was last shown. Open the link again and press there.",
-        ));
+        )));
     }
     if found.pressed {
-        return Err(answer(
+        return Err(Box::new(answer(
             StatusCode::CONFLICT,
             "A press is already being answered",
             "Answer the prompt on this machine, or open the link again when it has closed.",
-        ));
+        )));
     }
     found.pressed = true;
     Ok(Pressed {
@@ -387,7 +387,7 @@ async fn approve(
 ) -> Response {
     let pressed = match begin(&inner, &code, &body) {
         Ok(pressed) => pressed,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let (settled, response) = approve_pressed(&inner, &pressed).await;
     finish(&inner, &code, settled).await;
@@ -475,7 +475,11 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (bool, Response) {
         // The policy engine's refusal is the engine's own words.
         Err(failure) => (
             false,
-            answer(StatusCode::FORBIDDEN, "Nothing was approved", failure.message()),
+            answer(
+                StatusCode::FORBIDDEN,
+                "Nothing was approved",
+                failure.message(),
+            ),
         ),
     }
 }
@@ -487,7 +491,7 @@ async fn decline(
 ) -> Response {
     let pressed = match begin(&inner, &code, &body) {
         Ok(pressed) => pressed,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let recorded = match inner.desk.get() {
         Some(desk) => desk

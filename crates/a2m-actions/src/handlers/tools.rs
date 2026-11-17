@@ -535,11 +535,6 @@ handler!(
         ) {
             return run_output(kernel, &call, row).await;
         }
-        // A job may be working on the run already, such as the reconcile
-        // the scheduler queued after a lost lease. It took its lease number
-        // before this call read the run, so the wait below ends when that
-        // job does, and not only when a later lease has worked.
-        let busy = kernel.in_hand(run);
         // The caller's facts are kept again, so that the guard's question
         // is asked about whoever resumes.
         let facts = CallerFacts::of(&call.caller, call.decision);
@@ -550,27 +545,41 @@ handler!(
                 crate::runner::rekeep_caller(tx, &for_run, &facts)
             })
             .await?;
-        let queued = kernel
-            .sched()?
-            .enqueue(Enqueue {
-                run,
-                job: requirements(&row, JobKind::Execute),
-                priority: Priority::Interactive,
-                health: sched_health(kernel),
-                queue_wait: None,
-            })
-            .await;
-        match queued {
-            Ok(_) => {}
-            // A job for the run is waiting or leased already, such as the
-            // reconcile the scheduler queued after a lost lease.
-            Err(failure) if failure.code() == &codes::SCHEMA_INVALID => {}
-            Err(failure) => return Err(failure),
+        let give_up = tokio::time::Instant::now() + wait_of(&call);
+        let mut row = row;
+        // Twice at most: a job for the run may be waiting or leased already,
+        // such as the reconcile the scheduler queued after a lost lease. A
+        // reconcile settles what was in doubt and leaves the run stopped;
+        // going on from there is this call's own job, queued once the
+        // other has ended.
+        for last in [false, true] {
+            // A job in hand took its lease number before this call read
+            // the run, so its end, and not a later lease, is waited for.
+            let busy = kernel.in_hand(run);
+            let queued = kernel
+                .sched()?
+                .enqueue(Enqueue {
+                    run,
+                    job: requirements(&row, JobKind::Execute),
+                    priority: Priority::Interactive,
+                    health: sched_health(kernel),
+                    queue_wait: None,
+                })
+                .await;
+            let own = match queued {
+                Ok(_) => true,
+                Err(failure) if failure.code() == &codes::SCHEMA_INVALID => false,
+                Err(failure) => return Err(failure),
+            };
+            kernel.run_changed();
+            let left = give_up.saturating_duration_since(tokio::time::Instant::now());
+            row = kernel
+                .wait_for_work(run, row.epoch, !own && busy, left)
+                .await?;
+            if own || last || row.state != RunState::Stopped || left.is_zero() {
+                break;
+            }
         }
-        kernel.run_changed();
-        let row = kernel
-            .wait_for_work(run, row.epoch, busy, wait_of(&call))
-            .await?;
         run_output(kernel, &call, row).await
     }
 );

@@ -1,0 +1,14 @@
+operation: example_account_get
+title: Get the account
+effect: read
+inputs: {}
+outputs:
+  name: {type: text}
+  echo: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: account_get
+description: >
+  Reads the name of the signed-in account.

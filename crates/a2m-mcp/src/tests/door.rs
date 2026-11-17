@@ -106,6 +106,8 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
         .unwrap();
     let mut request = axum::http::Request::post("/mcp/use")
         .header("host", "localhost")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
         .body(axum::body::Body::from(ping.clone()))
         .unwrap();
     request.extensions_mut().insert(a2m_actions::Caller::new(
@@ -581,4 +583,54 @@ pub async fn ask_lines(stdio: &mut Stdio, message: &Json) -> Vec<String> {
             return lines;
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_router_nests_and_serves_a_call_with_progress_over_a_real_socket() {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let path = crate::mcp_path(service.toolset());
+    // What the product crate does: nest the endpoint, and name the peer.
+    let app = axum::Router::new()
+        .nest_service(&path, service.http())
+        .layer(axum::Extension(super::world::peer()));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let asked = m(
+        1,
+        "tools/call",
+        json!({
+            "name": ORDER_GET,
+            "arguments": {"order_id": "A-100"},
+            "_meta": {"progressToken": "t"},
+        }),
+    );
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}{path}"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", M)
+        .header("mcp-method", "tools/call")
+        .header("mcp-name", ORDER_GET)
+        .body(asked.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let kind = response.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(kind.starts_with("text/event-stream"), "{kind}");
+    assert!(!response.headers().contains_key("mcp-session-id"));
+    let text = response.text().await.unwrap();
+    let progress = text.find("notifications/progress").expect("progress");
+    let result = text.find("structuredContent").expect("the result");
+    assert!(progress < result, "{text}");
+    assert!(text.contains("Example Customer One"), "{text}");
+    server.abort();
 }

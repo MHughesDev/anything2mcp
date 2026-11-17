@@ -160,7 +160,11 @@ const MAX_REWRITTEN_BYTES: usize = 4 * 1024 * 1024;
 async fn changed_shape(response: Response, field: &str, renamed_to: &str) -> Response {
     let (mut parts, body) = response.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, MAX_REWRITTEN_BYTES).await else {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "the answer could not be read").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the answer could not be read",
+        )
+            .into_response();
     };
     let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
         return Response::from_parts(parts, Body::from(bytes));

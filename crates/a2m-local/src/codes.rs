@@ -29,7 +29,11 @@ pub const LOCAL_API_MISMATCH: FailureCode = FailureCode::fixed("local_api_mismat
 /// `busy`.
 pub const SURFACE_UNAVAILABLE: FailureCode = FailureCode::fixed("surface_unavailable");
 
-pub(crate) fn busy(code: FailureCode, message: impl Into<String>, next: impl Into<String>) -> Failure {
+pub(crate) fn busy(
+    code: FailureCode,
+    message: impl Into<String>,
+    next: impl Into<String>,
+) -> Failure {
     Failure::new(FailureClass::Busy, code, message, next)
 }
 
@@ -63,7 +67,10 @@ pub(crate) fn lost() -> Failure {
 pub(crate) fn unavailable(what: &str, error: &std::io::Error) -> Failure {
     busy(
         CHANNEL_UNAVAILABLE,
-        format!("{what} cannot be opened on this machine ({}).", error.kind()),
+        format!(
+            "{what} cannot be opened on this machine ({}).",
+            error.kind()
+        ),
         "Check that the engine's runtime and data directories exist and belong to you, then try again.",
     )
 }
