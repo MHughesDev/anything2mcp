@@ -9,7 +9,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-policy` for the name of a toolset. Outside: `rmcp` 3.10.0, the official Rust SDK, with default features off and the features `server` and `transport-streamable-http-server` ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)); `axum` for the HTTP types and the router; `futures-core` for one stream trait; Tokio. No macro of the SDK is used, and no type of it appears in this crate's public interface ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md)) |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-policy` for the name of a toolset. Outside: `axum` for the HTTP types and the router; `futures-core` for one stream trait; `serde_json`; Tokio. The protocol layer is this crate's own. The official Rust SDK, `rmcp`, was built on first and left, because its tree holds a crate declared unmaintained ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md), which supersedes that part of [decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md); [research note 18](../../research/18-mcp-server-base.md)) |
 | Built in | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
 | Carries out | Spec sections [221](../../spec/2-kernel/221-the-tool-surface-agents-see.md), [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for MCP, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the MCP face, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md); the MCP half of [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) |
 
@@ -29,11 +29,11 @@ It must never: hold run state between requests; decide whether a call is allowed
 
 ## Interface
 
-As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md)).
+As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md), and [decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md), which changed nothing in it).
 
 ```rust
 /// One endpoint per toolset. Cheap to clone; no state between requests.
-pub struct McpService { /* Kernel, toolset, settings, the SDK's service */ }
+pub struct McpService { /* Kernel, toolset, settings */ }
 impl McpService {
     /// Refuses a toolset other than `use` and `build`, and settings with no revision.
     pub fn new(kernel: Kernel, toolset: ToolsetName, settings: McpSettings) -> Result<Self, Failure>;
@@ -86,7 +86,7 @@ The proxy is started by `bridge`, a process command of the product crate, which 
 | 2026-07-28 | Stateless. No handshake, no session header. Every request carries everything; continuity is the `run_id` |
 | 2025-11-25 | The initialize exchange is answered from settings. No session identifier is issued, which that revision allows, so the server stays stateless |
 
-One `rmcp` service serves both, with no session for either. Spike 0.5 ran it over stdio and over stateless Streamable HTTP, with the reference client libraries for Python and TypeScript ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md)). Both are served because a server with only one of them turns clients away: the handshake is still the default way a reference client library opens.
+One service serves both, with no session for either. Both are served because a server with only one of them turns clients away: the handshake is still the default way a reference client library opens ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md)).
 
 **How a revision is agreed.**
 
@@ -94,16 +94,16 @@ One `rmcp` service serves both, with no session for either. Spike 0.5 ran it ove
 2. `server/discover` lists the revisions served and the capabilities.
 3. `initialize` selects the handshake revision: 2025-11-25 if the client asks for it, and 2025-11-25 as the answer if it asks for anything else. The client then decides.
 4. A handshake-era request on HTTP names its revision in the header and is served as it comes.
-5. With `mcp.revisions` set to the handshake revision alone, `server/discover` is answered as an unknown method, so that a client that speaks both falls back. The SDK answers -32022 there, so this crate answers before the SDK does. With 2026-07-28 alone, `initialize` is refused with -32022 and the list, and a request that names no revision is refused with -32602.
+5. With `mcp.revisions` set to the handshake revision alone, `server/discover` is answered as an unknown method, so that a client that speaks both falls back. With 2026-07-28 alone, `initialize` is refused with -32022 and the list, and a request that names no revision is refused with -32602.
 6. A request of the handshake revision that names no revision, in its body or in a header, is served as 2025-11-25. The stdio proxy therefore remembers nothing of the handshake.
 
 **What a handshake-era caller does not get.** A stateless server does not remember what a client declared in `initialize`. Such a caller gets the fallback every client gets: the link in the result in place of elicitation, the run identifier in place of a task.
 
-**The seam.** The service is built on the SDK's handler and its Streamable HTTP service, with the session manager that never makes a session and JSON answers where no stream is needed. The tool list is built from data with the SDK's plain constructors. One module names the SDK and nothing else does. Everything this crate promises is in the list of messages below, which is tested with raw messages and so does not depend on the SDK. If the SDK must be left, a layer of our own takes its place behind the same list; the spike's hand-written server passed all of the stdio part in about 400 lines.
+**The protocol layer.** One module of this crate answers the methods: `initialize` and `ping` of the handshake revision, `server/discover` of the stateless revision, and `tools/list` and `tools/call` in both. It builds each result in the shape its revision wants, and answers a tool call whose caller asked for progress as a stream of events. It is about 300 lines over `serde_json`, and names no outside protocol library ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)). Everything this crate promises is in the list of messages below, which is tested with raw messages; that list is what let the SDK be replaced in one step, with every test passing unchanged.
 
-**In front of the SDK.** A layer of this crate's own checks, in order: the `Host`, the HTTP method, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
+**In front of it.** The endpoint checks, in order: the `Host`, the HTTP method, the content types, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names and that its headers agree, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal of a message is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
 
-**On the way out.** Every message that leaves is parsed, and every text in it passes the kernel's redactor. The dispatcher has already redacted a result; this pass covers what the protocol layer writes itself, such as an error that quotes a tool's name, and the id and progress token it echoes. A message with nothing to redact leaves byte for byte as it was written.
+**On the way out.** Every text of every message passes the kernel's redactor as the message leaves. The dispatcher has already redacted a result; this pass covers what the protocol layer writes itself, such as an error that quotes a tool's name, and the id and progress token it echoes.
 
 ## What the server must pass, message by message
 
@@ -134,17 +134,19 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | `tools/call` whose name is not text or whose arguments are not an object | Answer -32602, before any dispatch |
 | `tools/call` with input that fails the schema | Answer a result with `isError` true, not a protocol error |
 | `tools/call` that fails | Answer a result with `isError` true and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content and nothing else |
-| `tools/call` with a `progressToken` | Send `notifications/progress` with that token and a rising count before the result, and say nothing in one that the result does not say |
-| `tools/call` without a `progressToken` | Send no progress |
+| `tools/call` with a `progressToken` | Answer as a stream of events: `notifications/progress` with that token and a rising count, then the result. Say nothing in progress that the result does not say |
+| `tools/call` without a `progressToken` | Send no progress, and answer with one JSON message |
 | `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
 | `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
 | A request over HTTP with a foreign `Host`, or none | Be refused with status 403 before it is read |
 | A request over HTTP that is not a `POST` | Be refused with status 405 |
+| A request over HTTP that is not `application/json`, or whose caller does not accept both `application/json` and `text/event-stream` | Be refused with status 415, or 406 |
+| A request of the stateless revision over HTTP with no `MCP-Protocol-Version` header | Answer status 400 with -32020 |
 | A request over HTTP that names no caller, or one the kernel does not let in | Be refused with status 401 or 403 and error -32001, before the body is read |
 | Any message that leaves | Hold no registered secret, in a result or in a protocol error |
 | End of input on stdio | The proxy exits with status 0 |
 | Standard output on stdio | Carry one JSON message per line and nothing else |
-| Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result. Run by the spike against its own server; not yet run against this service |
+| Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result. Not yet run against this service; owed before Phase 1 exits |
 
 Every line but the last is a test in this crate, with raw messages over the HTTP service in process, and, for the lines that hold on both transports, through the proxy with in-memory streams as well.
 
@@ -234,7 +236,7 @@ Every failure of a call is the dispatcher's, rendered. This crate adds four, non
 | A built-in toolset never lists more than its cap | The registry check, in `a2m-actions` |
 | A call is validated against the full schema, whatever the list showed | The checklist: an input with an unknown key, and one of the wrong type, are results with `isError` |
 | No secret appears in any MCP message | The planted-secret test through both transports: results, later reads of the run, and protocol errors that quote the caller's input |
-| No secret of the engine and no caller's token is in the SDK's log | A test in a program of its own, with every event captured at the most verbose level |
+| Nothing that passed through the door is in the process's log: no secret of the engine, no caller's token, no caller's input | A test in a program of its own, with every event captured at the most verbose level |
 | No client name reaches the kernel | Not proven. The label goes to the dispatcher as the caller's label and nowhere else |
 | The proxy copies messages and adds nothing | A test that compares proxied and direct answers byte for byte |
 | A cancelled request is sent nothing more, and others are still answered | A test that holds a call open, cancels it through the proxy, and waits for the endpoint to see the stream close |
@@ -243,7 +245,7 @@ Every failure of a call is the dispatcher's, rendered. This crate adds four, non
 
 ## Build order
 
-1. Done: one `rmcp` service, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for a read. Package 1.5.
+1. Done: one service, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for a read. Package 1.5.
 2. Done: structured results, `next`, annotations, the two revisions, progress, and cancelling. Not built: resource links.
 3. Not built: elicitation. The link fallback is in the result. Package 3.6.
 4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions. Not built: prompts, resources, instructions generated from the guidance file. Package 5.1.
@@ -255,7 +257,7 @@ Also not built: client profiles, the Tasks extension, an idempotency key from th
 
 - Whether a client that does not read `_meta` needs the following call. If so, the output schemas must admit `next`, which is a change in `a2m-actions`.
 - The cost of a list: one dispatch, and one recorded decision, for each published tool listed, and two dispatches for a call by a published tool's own name. A kernel call that returns a toolset's tools with their schemas would remove it.
-- The SDK logs the caller's own message, input included, at the debug and trace levels. The process's log passes the redactor of `a2m-telemetry`; whether the SDK's level should also be capped is open.
+- Keep-alive comments on an event stream that stays open for minutes, which an intermediary that closes idle connections would need. The SDK sent them; this layer does not.
 - Progress from a run's events, which the kernel does not offer yet.
 - Whether cancelling a request should also cancel the run it started.
 - The byte budget for a tool list and for one compact schema.
