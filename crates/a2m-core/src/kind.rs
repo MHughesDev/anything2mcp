@@ -8,7 +8,7 @@ use crate::name::{InvalidName, check_name};
 use crate::vocabulary::vocabulary;
 
 vocabulary! {
-    /// One of the seven ways of reaching a system (spec section 54).
+    /// One of the seven ways of reaching a system (spec section 201).
     ///
     /// An archetype fixes how a step is prepared, acted, confirmed, and read
     /// back. Every mode belongs to exactly one.

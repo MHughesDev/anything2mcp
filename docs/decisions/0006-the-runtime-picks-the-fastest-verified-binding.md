@@ -27,5 +27,5 @@ Mode switching causes confusing differences in practice.
 
 ## Spec sections
 
-- [06-modes-and-drivers.md](../spec/06-modes-and-drivers.md)
-- [09-performance.md](../spec/09-performance.md)
+- [06-modes-and-drivers.md](../archive/spec-2026-11/06-modes-and-drivers.md)
+- [09-performance.md](../spec/2-kernel/225-performance.md)

@@ -1,6 +1,6 @@
 # Research: connecting Copilot Studio and other hosted agents
 
-**Status:** gathered from web searches on 2026-11-15. Microsoft Learn pages are primary; several findings come from community posts and are marked. Nothing here was tested hands-on. Feeds [spec section 24](../spec/24-networking.md).
+**Status:** gathered from web searches on 2026-11-15. Microsoft Learn pages are primary; several findings come from community posts and are marked. Nothing here was tested hands-on. Feeds [spec section 603](../spec/6-running-it/603-networking.md).
 
 ## Findings
 

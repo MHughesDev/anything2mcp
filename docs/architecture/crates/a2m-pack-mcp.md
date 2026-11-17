@@ -11,7 +11,7 @@ The MCP pack: the `mcp` driver, which reaches an MCP server that a system alread
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (registration), `a2m-auth` (`AuthProvider`, `SessionLease`, the neutral OAuth pieces), `a2m-provider` (`Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext` with its scoped supervisor, registration), `a2m-telemetry`. Outside: `rmcp`, the official Rust SDK, verified as existing ([research note 09](../../research/09-rust-building-blocks.md)); its client side and its revisions are to be confirmed |
 | Built in | Package 8.2. Package E6, the optional discovery provider, comes after it |
-| Carries out | Spec sections [6](../../spec/06-modes-and-drivers.md) (`mcp`), [56](../../spec/56-the-provider-contract.md) (an upstream MCP server as a provider), [57](../../spec/57-supervising-subsystems.md) (starting a server program), [61](../../spec/61-effects-hazards-and-consent.md) (untrusted text), [67](../../spec/67-the-scout-and-who-does-what.md) (drafting from a tool list) |
+| Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`mcp`), [203](../../spec/2-kernel/203-the-provider-contract.md) (an upstream MCP server as a provider), [204](../../spec/2-kernel/204-supervising-subsystems.md) (starting a server program), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (untrusted text), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (drafting from a tool list) |
 
 ## Owns
 
@@ -26,7 +26,7 @@ It must never: reach a tool the mapping does not name; pass an upstream tool's d
 
 ## Not here: `site_tools`
 
-Spec section 29 and the roadmap's package 8.2 place the `site_tools` mode in this crate. It calls tools that a page registers in the browser, so it needs an acting tab, and only the web pack has one: a pack may not depend on another pack's crates. It is designed in `a2m-pack-web-ui`, where spec section 55 and the long-term plan already put it. The two modes share ideas, a pinned list of tools and a typed call, and no code. That placement is now settled.
+Spec section 605 and the roadmap's package 8.2 place the `site_tools` mode in this crate. It calls tools that a page registers in the browser, so it needs an acting tab, and only the web pack has one: a pack may not depend on another pack's crates. It is designed in `a2m-pack-web-ui`, where spec section 202 and the long-term plan already put it. The two modes share ideas, a pinned list of tools and a typed call, and no code. That placement is now settled.
 
 ## What it registers
 
@@ -54,7 +54,7 @@ Spec section 29 and the roadmap's package 8.2 place the `site_tools` mode in thi
 | `credential` | Which vault reference the server is given, and how: a header for a remote server, an environment variable for a local program |
 | `purpose` | `tools`, or `discovery` for a server used only as a discovery provider, whose tools can never be bound to an operation |
 
-The mapping is the upstream server's manifest in the sense of [section 56](../../spec/56-the-provider-contract.md): what it may be asked to do is what the mapping names. Its effects are `declared`, because the server runs code this runtime cannot see, and the person enabling it is told so.
+The mapping is the upstream server's manifest in the sense of [section 203](../../spec/2-kernel/203-the-provider-contract.md): what it may be asked to do is what the mapping names. Its effects are `declared`, because the server runs code this runtime cannot see, and the person enabling it is told so.
 
 ### Lint rules
 
@@ -65,7 +65,7 @@ The mapping is the upstream server's manifest in the sense of [section 56](../..
 | `mcp_program_unpinned` | Error | A local server program with no digest |
 | `mcp_write_no_readback` | Error, unless the operation is `irreversible` | A write tool with no mapped read tool |
 | `mcp_discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
-| `mcp_free_text` | Warning | A mapped tool whose input is one free-text string that the server could run as a command or a query. A reviewer decides; a tool that runs free text is refused by section 61 |
+| `mcp_free_text` | Warning | A mapped tool whose input is one free-text string that the server could run as a command or a query. A reviewer decides; a tool that runs free text is refused by section 213 |
 
 ### Drafting rules
 
@@ -104,7 +104,7 @@ pub struct McpTools;    impl Discoverer for McpTools { /* lists, never calls */ 
 What the kernel gives this crate:
 
 - The engine reaches the driver through a handle that refuses a committing step without the ledger's intent token. Every failure says whether the call was not sent, was answered, or is unknown; a lost connection after a write call was sent is unknown. A step marked as a lookup may report a record as absent.
-- The scoped supervisor starts a local server program by path and digest, hands it its credential privately, owns its process group, and reports whether a request on a lost connection ran ([section 57](../../spec/57-supervising-subsystems.md)).
+- The scoped supervisor starts a local server program by path and digest, hands it its credential privately, owns its process group, and reports whether a request on a lost connection ran ([section 204](../../spec/2-kernel/204-supervising-subsystems.md)).
 - `SessionLease::inject` places a token in a request header, or an environment variable into a program's start, without returning it.
 - When the protocol's authorization needs a person to consent in a browser, `upstream_mcp` asks through `PersonSurface`, defined in `a2m-actions` and reached through the keeper: the person is given a link and opens it in their own browser. Nothing drives that browser, and this pack borrows nothing from the web pack. The callback carries the authorization code back to the provider, which exchanges it for tokens the keeper holds.
 - `mcp_tools` runs as a discovery job on a runner, inside the engine's sandbox, and is given only what `SandboxPort` offers.
@@ -124,7 +124,7 @@ What the kernel gives this crate:
 | A mapped tool's definition | `prepare`, the canary, and on the server's notice that its list changed | Calls to that tool stop as `drift`; bindings on it fall to `shadow` until the mapping is re-pinned and the gates pass |
 | A mapped tool is gone | The same | The same |
 | An unmapped tool is added | `mcp_tools` | A finding. Nothing is reachable until a person maps it |
-| The server's reported version | `prepare` | A finding, and the bindings' levels fall ([section 60](../../spec/60-overlaying-tools-on-an-existing-system.md)); a call still runs if every pin matches |
+| The server's reported version | `prepare` | A finding, and the bindings' levels fall ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)); a call still runs if every pin matches |
 
 ### The entry bar
 

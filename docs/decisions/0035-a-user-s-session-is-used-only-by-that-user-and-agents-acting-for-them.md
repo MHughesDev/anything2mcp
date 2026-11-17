@@ -29,6 +29,6 @@ Never without the owner's decision.
 
 ## Spec sections
 
-- [44-session-keeper.md](../spec/44-session-keeper.md)
-- [45-policy-engine.md](../spec/45-policy-engine.md)
-- [16-identity-on-a-shared-server.md](../spec/16-identity-on-a-shared-server.md)
+- [44-session-keeper.md](../archive/spec-2026-11/44-session-keeper.md)
+- [45-policy-engine.md](../archive/spec-2026-11/45-policy-engine.md)
+- [16-identity-on-a-shared-server.md](../spec/6-running-it/602-identity-on-a-shared-server.md)

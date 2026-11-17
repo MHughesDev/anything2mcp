@@ -11,7 +11,7 @@ The HTTP pack: the `http` and `api` drivers, the endpoint catalog as a file kind
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-expr` (template values), `a2m-files` (file-kind, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, `inject`), `a2m-provider` (`Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-telemetry`. Outside: `tokio`, `serde_json`, an HTTP client (`reqwest` is verified for the test harness; its TLS choice is still open), a JSON Schema validator and parsers for the description formats, outside crates to be verified |
 | Built in | Package 4.1 (`http`, reads then writes), package 4.4 (descriptions and the `api` mode), with the drafting rules in E4. Package 2.6 touches it for sign-in signals on HTTP surfaces |
-| Carries out | Spec sections [6](../../spec/06-modes-and-drivers.md) (`http`, `api`), [14](../../spec/14-edge-cases-and-large-applications.md) (the request rows), [46](../../spec/46-target-compiler-and-plan.md) (typed templates), [51](../../spec/51-defending-against-a-manipulated-agent.md) (no input changes a destination), [54](../../spec/54-interaction-archetypes.md) (request), [60](../../spec/60-overlaying-tools-on-an-existing-system.md) and [67](../../spec/67-the-scout-and-who-does-what.md) (drafting from descriptions and from captured endpoints) |
+| Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`http`, `api`), [301](../../spec/3-packs/301-the-web-pack.md) (the request rows), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (typed templates), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes a destination), [201](../../spec/2-kernel/201-archetypes-and-modes.md) (request), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) and [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (drafting from descriptions and from captured endpoints) |
 
 ## Owns
 
@@ -48,7 +48,7 @@ It must never: hold a credential outside one request; put a secret into a templa
 | `http_secret_literal` | Error | A header, query, or body template holds a literal that looks like a credential |
 | `http_no_response_schema` | Error | An endpoint without a response schema |
 | `http_effect_method` | Warning | An endpoint marked `read` whose method is not one its description, or HTTP itself, marks safe |
-| `http_signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser ([section 14](../../spec/14-edge-cases-and-large-applications.md)) |
+| `http_signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser ([section 301](../../spec/3-packs/301-the-web-pack.md)) |
 | `http_placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry |
 | `http_graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash |
 | `api_operation_missing` | Error | An `operation_id` not in the pinned description |
@@ -103,7 +103,7 @@ pub(crate) struct ReadClient { /* GET, HEAD, OPTIONS, and the fixed introspectio
 
 What the kernel gives this crate:
 
-- **Packs share data shapes, never code.** There is no kernel request-template type. This crate's template, a resolved origin, a path of literal segments and typed holes, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition, is its own opaque step payload inside the core's `Plan`, stored and hashed by the kernel and decoded only here. The typed-template guarantee of spec section 46 is kept by each pack that compiles `endpoints/` entries.
+- **Packs share data shapes, never code.** There is no kernel request-template type. This crate's template, a resolved origin, a path of literal segments and typed holes, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition, is its own opaque step payload inside the core's `Plan`, stored and hashed by the kernel and decoded only here. The typed-template guarantee of spec section 206 is kept by each pack that compiles `endpoints/` entries.
 - The engine reaches the driver through a handle that refuses a committing step without the ledger's intent token. Every failure says whether the request was not sent, was answered, or is unknown. An outcome may carry outputs known before the commit point.
 - `SessionLease::inject` places a token or the session's cookies into one outgoing request without returning them, and the lease takes the report of an expiry signal.
 - A step marked as a lookup may report a record as absent, and a 404 on a declared lookup is that answer, not a failure.
@@ -164,7 +164,7 @@ What the kernel gives this crate:
 
 | Must always hold | Proven by |
 | --- | --- |
-| No input can change the origin, the path's shape, or which header a value goes in | The manipulation cases of section 51: a path input holding separators, a host, an encoded newline |
+| No input can change the origin, the path's shape, or which header a value goes in | The manipulation cases of section 502: a path input holding separators, a host, an encoded newline |
 | A write whose connection drops after sending is `possible_commit`, and the test application shows at most one write after reconcile | Case 17 over `http` |
 | No discovery sends a request that could write | A test with the control interface counting writes during `spec.import` and `target.probe` |
 | A drafted read exists only for a method the description marks safe | Drafting tests in package E4 |
@@ -182,7 +182,7 @@ What the kernel gives this crate:
 
 - How the schema of `endpoints/` and of the `endpoint` finding is versioned, so that `a2m-pack-web-ui` and `a2m-pack-web-probe` are held to the version they read or write by a test.
 - Two packs compile the same entries into two payloads. A test that both build the same request from the same entry would catch drift between them.
-- gRPC reflection, which spec section 6 lists under `api`. Not in the first release; it needs its own stand.
+- gRPC reflection, which spec section 201 lists under `api`. Not in the first release; it needs its own stand.
 - Which OpenAPI versions are accepted, and what happens to a description that references files outside itself.
 - The HTTP client and its TLS stack, verified on three operating systems with a licence on the list in `deny.toml`.
 - Whether the `api` mode needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`.

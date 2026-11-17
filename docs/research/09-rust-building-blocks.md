@@ -1,6 +1,6 @@
 # Research: Rust building blocks
 
-**Status:** partial. The MCP SDK, browser engine options, and desktop accessibility library were looked up on 2026-11-15. Everything under "Candidates from general knowledge" is unverified and must be confirmed in Phase 0 before it is added to `Cargo.toml`. Feeds [spec section 29](../spec/29-repository-crates-and-packaging.md) and [section 17](../spec/17-browser-engine-and-runtime.md).
+**Status:** partial. The MCP SDK, browser engine options, and desktop accessibility library were looked up on 2026-11-15. Everything under "Candidates from general knowledge" is unverified and must be confirmed in Phase 0 before it is added to `Cargo.toml`. Feeds [spec section 605](../spec/6-running-it/605-packaging-and-release.md) and [section 302](../spec/3-packs/302-the-web-pack-browser-engine.md).
 
 ## Verified by search
 
@@ -39,6 +39,7 @@ Added to `Cargo.toml` in slice 0.3, on 2026-11-16, for the test application. Eac
 | `tokio` | 1.54.1 | MIT | Async runtime | Features `macros`, `net`, `rt-multi-thread`, `sync`, `time` |
 | `axum` | 0.8.9 | MIT | HTTP server | Default features off; `http1`, `json`, `tokio` |
 | `serde`, `serde_json` | 1.0.229, 1.0.154 | MIT or Apache-2.0 | Serialization | |
+| `sha2` | 0.11.1 | MIT or Apache-2.0 | SHA-256, for digests in `a2m-core` | From the RustCrypto project; default features off. Checked on 2026-11-17: published 2026-10-12, builds on three operating systems in CI, and brings only crates under the same licences |
 | `reqwest` | 0.13.5 | MIT or Apache-2.0 | HTTP client in the test harness | Default features off, so no TLS yet. The product's choice of TLS is still to make |
 
 The whole dependency tree is checked by `cargo-deny` in CI against `deny.toml`. The licences in it are MIT, Apache-2.0, BSD-3-Clause, and Unicode-3.0, the last through the Unicode data crates that `reqwest` brings in by way of `url`.

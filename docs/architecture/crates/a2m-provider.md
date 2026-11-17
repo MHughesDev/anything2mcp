@@ -11,7 +11,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 | May depend on | Layers 1 to 4 |
 | Depends on | `a2m-core`, including `Plan` and `Step` as data; `a2m-files` for the compiler registration traits only; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken`; `a2m-telemetry` for spans. Outside: `serde`, a TOML parser and a JSON Schema validator, each an outside crate to be verified |
 | Built in | Stage B, package B3 (manifest, registry); slice 1.1 (`Driver`); slice 1.3 (compiler registrations); Stage E, package E1 (`Discoverer`, `Describer`); package F3 and Phase 8 (plug-in host) |
-| Carries out | Spec sections [55](../../spec/55-kernel-and-packs.md), [56](../../spec/56-the-provider-contract.md), [57](../../spec/57-supervising-subsystems.md), [58](../../spec/58-discovery-and-findings.md) for the discoverer's side, [61](../../spec/61-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
+| Carries out | Spec sections [202](../../spec/2-kernel/202-kernel-and-packs.md), [203](../../spec/2-kernel/203-the-provider-contract.md), [204](../../spec/2-kernel/204-supervising-subsystems.md), [218](../../spec/2-kernel/218-discovery-and-findings.md) for the discoverer's side, [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
 
 ## Owns
 
@@ -20,10 +20,10 @@ The one doorway between the kernel and everything that knows a kind of system. I
 - The traits `Driver`, `Discoverer`, `Describer`, and `ProviderAction`, and the `DriverHandle` through which alone the engine reaches a driver.
 - The registered names a provider brings: modes with their archetypes, surface kinds, step kinds, file kinds, lint codes, finding kinds. Each is a checked name from `a2m-core`; the registry is the only list of them.
 - The choice between two providers that could fill the same place, and its recorded reason.
-- File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 51](../../spec/51-defending-against-a-manipulated-agent.md), [section 61](../../spec/61-effects-hazards-and-consent.md)).
+- File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md), [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 - The supervisor: the only way anything starts a process, with the handshake, the framing, deadlines, and ownership-proven stopping.
 - The plug-in host, and the plug-in protocol's message list and version.
-- The availability check of section 56, which inspects the machine and starts nothing.
+- The availability check of section 203, which inspects the machine and starts nothing.
 
 It must never: decide whether something may happen; sign in or renew; write a ledger row; open the vault; retry a step; hold a list of modes or name a pack; let a caller's input choose a program, a file, or a destination.
 
@@ -67,6 +67,11 @@ exclusive = "file"                       # what one write holds alone: "none", "
 name = "file"
 archetype = "artifact"
 session = false                          # whether a session of the keeper is held on it
+
+[[reads]]                                # kinds owned by another pack that this provider reads; the compiler hands it the validated entries as data
+kind = "schemas"                         # a file kind or a finding kind
+of = "file_kinds"                        # "file_kinds" | "finding_kinds"
+surface_kind = "file"                    # the owner is the one pack that owns this kind for this surface kind
 
 [points]                                 # the extension points it fills; nothing else can be registered
 driver = ["sheet"]                       # modes it drives
@@ -131,7 +136,17 @@ max_level = "discovered"
 vouches_for = ["live_system", "artifact"]
 ```
 
-Checks made when a manifest is read, each a named failure:
+A kind has one owning pack per surface kind, and another pack may declare that it reads it (decision 0062). The web pack's manifest, for instance, lets its `page_http` mode use the HTTP pack's endpoint catalog without owning it:
+
+```toml
+# In the web pack's manifest
+[[reads]]
+kind = "endpoints"                       # owned by the HTTP pack
+of = "file_kinds"
+surface_kind = "web"
+```
+
+Checks made when a manifest is read, and when the registry is built, each a named failure:
 
 | Check | Failure |
 | --- | --- |
@@ -139,6 +154,8 @@ Checks made when a manifest is read, each a named failure:
 | `contract` is current or previous | `input`, `contract_unsupported` |
 | Every mode and surface kind has exactly one archetype; two providers that register one name agree on it | `input`, `mode_conflict` |
 | Every step kind, file kind, lint code, and finding kind is a well formed checked name, unique to its provider | `input`, `schema_invalid` |
+| Every kind a provider `reads` has exactly one enabled owner for that surface kind. If the owner is absent or disabled, the reader stays registered, the problem is listed, and any binding that needs the kind does not compile | `input`, `kind_owner_missing`, naming the kind, the surface kind, and the pack to enable |
+| No two enabled packs own one kind for one surface kind | `input`, `kind_owner_conflict` |
 | Every object registered matches a declared point, mode, or discoverer | `policy`, `effect_not_declared` |
 | A plug-in's signature verifies, or unsigned plug-ins are switched on by a person | `policy`, `signature_invalid` |
 | A discoverer's `max_level` is `inferred` or `discovered` | `input`, `manifest_invalid` |
@@ -205,7 +222,7 @@ impl Registry {
 
 **There is no priority and no silent fallback.** If one mode is driven by two ready providers and no setting names one, `driver` fails with `input`, `provider_ambiguous`, and the message lists each candidate with its availability. If the named one is not ready, it fails with `busy`, `provider_unavailable`, carrying the availability state and its fix; it never falls to the other. Registration order never affects the result, and a test builds the registry in every order and compares digests.
 
-**Declared against observed.** `ProviderListing` carries three separate answers: the manifest (what it can do), the availability (can it here, now), and the health (is it working). Availability is computed by looking for each requirement at its declared paths and taking its digest. It starts no process. Its states are the eight of section 56; the subsystem states of section 57 are separate. Both are status words, so they belong in `a2m-core` as enums with a test against the documents.
+**Declared against observed.** `ProviderListing` carries three separate answers: the manifest (what it can do), the availability (can it here, now), and the health (is it working). Availability is computed by looking for each requirement at its declared paths and taking its digest. It starts no process. Its states are the eight of section 203; the subsystem states of section 204 are separate. Both are status words, so they belong in `a2m-core` as enums with a test against the documents.
 
 ### The extension points
 
@@ -342,7 +359,7 @@ pub struct Cleanup { pub complete: bool, pub remaining: Vec<Leftover> }
 | Incomplete cleanup is a state | It names what remains, blocks new starts of that kind with `busy`, `cleanup_incomplete`, and is shown by `doctor.run` |
 | Fixed system paths | The process list is read through the operating system's own interfaces, never through a program found on a search path |
 
-Two cases section 57 does not cover:
+Two cases section 204 does not cover:
 
 | Link | Identified and owned by | What the supervisor still does |
 | --- | --- | --- |
@@ -399,6 +416,7 @@ Memory only: the registry snapshot; for each subsystem its place, count, state, 
 | --- | --- | --- |
 | `input` | `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `path_not_allowed` | A manifest fails its checks; `Roots::check` refuses a path |
 | `input` | `provider_ambiguous`, `mode_unknown` | Two ready providers and no setting; a mode nobody registered |
+| `input` | `kind_owner_missing`, `kind_owner_conflict` | A kind a provider reads has no enabled owner; two enabled packs own one kind for one surface kind |
 | `policy` | `effect_not_declared`, `signature_invalid`, `intent_missing` | A registration or start beyond the manifest; a bad signature; a `commits` step without a token |
 | `busy` | `provider_unavailable`, `queue_full`, `cleanup_incomplete` | Not ready, with the availability state; a full subsystem queue; leftovers block a start |
 | `unknown_variant` | `handshake_failed`, `undeclared_code`, `unexpected_absent` | A subsystem fails its handshake; a driver invents a code; `Absent` from a step that is no lookup |

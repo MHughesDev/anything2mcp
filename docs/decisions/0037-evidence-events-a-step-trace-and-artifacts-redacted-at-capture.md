@@ -29,5 +29,5 @@ The step-trace schema proves too rigid for a new driver.
 
 ## Spec sections
 
-- [47-traces-and-evidence.md](../spec/47-traces-and-evidence.md)
-- [28-observability-audit-and-repair.md](../spec/28-observability-audit-and-repair.md)
+- [47-traces-and-evidence.md](../archive/spec-2026-11/47-traces-and-evidence.md)
+- [28-observability-audit-and-repair.md](../archive/spec-2026-11/28-observability-audit-and-repair.md)

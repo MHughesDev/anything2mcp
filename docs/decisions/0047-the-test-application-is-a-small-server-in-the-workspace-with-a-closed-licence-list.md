@@ -48,6 +48,6 @@ A case needs something plain pages cannot imitate before Phase 8, or the depende
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)
 - [The test application plan](../plan/test-application.md)
 - [Research note 9](../research/09-rust-building-blocks.md)

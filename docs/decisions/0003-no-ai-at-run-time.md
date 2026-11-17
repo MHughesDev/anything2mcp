@@ -28,5 +28,5 @@ Never for write paths. A read-only, opt-in exploratory mode could be considered 
 
 ## Spec sections
 
-- [03-design-principles.md](../spec/03-design-principles.md)
-- [28-observability-audit-and-repair.md](../spec/28-observability-audit-and-repair.md)
+- [03-design-principles.md](../spec/1-product/103-design-principles.md)
+- [28-observability-audit-and-repair.md](../archive/spec-2026-11/28-observability-audit-and-repair.md)

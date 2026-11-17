@@ -28,6 +28,6 @@ An identity mode needs session movement this rule forbids.
 
 ## Spec sections
 
-- [43-runner-protocol.md](../spec/43-runner-protocol.md)
-- [16-identity-on-a-shared-server.md](../spec/16-identity-on-a-shared-server.md)
-- [19-security-model.md](../spec/19-security-model.md)
+- [43-runner-protocol.md](../spec/2-kernel/223-the-runner-protocol.md)
+- [16-identity-on-a-shared-server.md](../spec/6-running-it/602-identity-on-a-shared-server.md)
+- [19-security-model.md](../spec/5-security/501-security-model.md)

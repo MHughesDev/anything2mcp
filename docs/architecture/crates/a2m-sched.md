@@ -11,7 +11,7 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 | May depend on | Layers 1 to 5. Never `a2m-engine` |
 | Depends on | `a2m-core`; `a2m-ledger` for the `jobs` and `runners` tables, the scheduling columns of `runs`, its transactions, and its lock calls; `a2m-telemetry` for spans and metrics. Outside: `tokio` |
 | Built in | Phase 3 (admission, dedupe, leases, lock waiting, and quarantine with slice 3.7); Phase 7 (slices 7.1 and 7.2, the runner link and lost leases); slice 9.4 (the cluster profile) |
-| Carries out | Spec sections [11](../../spec/11-concurrency-many-agents-at-once.md), [42](../../spec/42-run-ledger-design.md) for rule 6 and waiting for locks, [43](../../spec/43-runner-protocol.md) for leases, matching, and rate budgets, [52](../../spec/52-when-the-engine-itself-fails.md) for bounded queues, [9](../../spec/09-performance.md) for the scheduling budget; the [ledger schema](../../reference/ledger-schema.md) |
+| Carries out | Spec sections [211](../../spec/2-kernel/211-concurrency.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for rule 6 and waiting for locks, [223](../../spec/2-kernel/223-the-runner-protocol.md) for leases, matching, and rate budgets, [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) for bounded queues, [225](../../spec/2-kernel/225-performance.md) for the scheduling budget; the [ledger schema](../../reference/ledger-schema.md) |
 
 ## Owns
 
@@ -108,7 +108,7 @@ In this order. The first that refuses ends it.
 | 4 | The caller has fewer queued jobs than its cap | `busy`, `caller_queue_full` |
 | 5 | A runner that could ever serve the requirements is enrolled, or the profile runs work in process | `busy`, `runner_unavailable`, naming what is missing |
 
-Disk space before a pipeline (section 52) and record limits and quotas (section 45) are checked before `submit`, by the store and by policy.
+Disk space before a pipeline (section 224) and record limits and quotas (section 212) are checked before `submit`, by the store and by policy.
 
 ## Queues and dispatch
 
@@ -127,11 +127,11 @@ Disk space before a pipeline (section 52) and record limits and quotas (section 
 | Declared lost | 5 s after the scheduler's own count runs out | By `sweep` |
 | Quarantine | 60 s, or the job's `max_step` if greater | Before anyone touches the run's records again |
 
-Leasing a job increments the run's lease number and writes it to the job in the same transaction, so the ledger can refuse anything older. A lease ends in one of three ways: `finish`; `drain` followed by `finish`; or loss. On loss, `sweep` does section 43's steps in one transaction: the job becomes `lost`; the run stops with `possible_commit`, `runner_lost`; every lock the run held becomes `quarantined`; a `reconcile` job is created with `available_at` at the end of the quarantine. When that reconcile job is leased, the quarantined locks pass to it under its new lease number. A `verify_after_loss` job follows later. A late result from the lost runner is refused for state and stored by the store as late evidence.
+Leasing a job increments the run's lease number and writes it to the job in the same transaction, so the ledger can refuse anything older. A lease ends in one of three ways: `finish`; `drain` followed by `finish`; or loss. On loss, `sweep` does section 223's steps in one transaction: the job becomes `lost`; the run stops with `possible_commit`, `runner_lost`; every lock the run held becomes `quarantined`; a `reconcile` job is created with `available_at` at the end of the quarantine. When that reconcile job is leased, the quarantined locks pass to it under its new lease number. A `verify_after_loss` job follows later. A late result from the lost runner is refused for state and stored by the store as late evidence.
 
 ## Record locks
 
-The lock table and its rules belong to `a2m-ledger` ([section 42](../../spec/42-run-ledger-design.md), rules 4, 5, and 7): an intent checks the lock under the run's lease number in the same transaction, the ledger releases a lock when its record reaches `verified` or `unchanged`, and it quarantines a lock whose record is in doubt. The scheduler keeps only the waiting.
+The lock table and its rules belong to `a2m-ledger` ([section 208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), rules 4, 5, and 7): an intent checks the lock under the run's lease number in the same transaction, the ledger releases a lock when its record reaches `verified` or `unchanged`, and it quarantines a lock whose record is in doubt. The scheduler keeps only the waiting.
 
 - A run that wants a held lock waits in order, behind earlier waiters, up to `wait`, bounded by its lease, and then gets `busy`, `record_locked` with a retry time.
 - The waiting is the same mechanism as for `exclusive` resource keys; a record key is one more kind of key, whose holder the ledger and not the scheduler records.
@@ -205,5 +205,5 @@ On SQLite a claim is an immediate transaction; on Postgres an atomic update that
 - The per-caller share and cap defaults, and whether a caller's share is a policy matter or a setting.
 - Whether a pinned mode in a call narrows `modes` at submission, so that a runner without that mode is never chosen.
 - Whether long polling is fast enough for interactive reads at scale (H-07), and what replaces it behind the same calls if not.
-- The size of the dispatch overhead inside the 3 ms per-call budget of section 9 once locks and the dedupe check are in it (H-21).
+- The size of the dispatch overhead inside the 3 ms per-call budget of section 225 once locks and the dedupe check are in it (H-21).
 - Whether a `session_keepalive` job should be scheduled here at all, or run by the keeper's `KeeperWork` outside the queues.

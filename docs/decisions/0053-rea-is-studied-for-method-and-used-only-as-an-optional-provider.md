@@ -33,6 +33,6 @@ H-27 is refuted, or REA's licence or direction changes.
 
 ## Spec sections
 
-- [57-supervising-subsystems.md](../spec/57-supervising-subsystems.md)
-- [58-discovery-and-findings.md](../spec/58-discovery-and-findings.md)
-- [64-rules-for-tools-and-capability-discovery.md](../spec/64-rules-for-tools-and-capability-discovery.md)
+- [57-supervising-subsystems.md](../spec/2-kernel/204-supervising-subsystems.md)
+- [58-discovery-and-findings.md](../spec/2-kernel/218-discovery-and-findings.md)
+- [64-rules-for-tools-and-capability-discovery.md](../archive/spec-2026-11/64-rules-for-tools-and-capability-discovery.md)

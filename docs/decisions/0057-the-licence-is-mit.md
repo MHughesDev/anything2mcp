@@ -35,4 +35,4 @@ A contributor or a company that wants to use the project asks for a patent grant
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)

@@ -11,7 +11,7 @@ The engine on one machine, and the channel to it. This crate holds both ends of 
 | May depend on | Layers 1 to 7 |
 | Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: Tokio, Hyper; crates for the named pipe, peer identity, file locks, notifications, and each operating system's presence prompt, all to be chosen by research briefs 26 and 27 |
 | Built in | Roadmap package 1.4 (the channel, the lifecycle); 3.6 (the loopback listener, the presence prompt, notifications) |
-| Carries out | Spec sections [39](../../spec/39-local-engine-and-clients.md), [49](../../spec/49-approval-and-sign-in-surfaces.md) on one machine, the protected settings of [51](../../spec/51-defending-against-a-manipulated-agent.md); the [local channel](../../reference/technical-reference.md#local-channel) and [on-disk layout](../../reference/technical-reference.md#on-disk-layout) of the technical reference |
+| Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on one machine, the protected settings of [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md); the [local channel](../../reference/technical-reference.md#local-channel) and [on-disk layout](../../reference/technical-reference.md#on-disk-layout) of the technical reference |
 
 ## Owns
 
@@ -106,7 +106,7 @@ The `engine.*` actions are carried out here, in the client end, because they act
 | Silence is a decline | The listener closes at the end of the approval window, and the answer recorded is decline |
 | Protected settings | `config.set` and `provider.enable` on a protected setting call `confirm_presence`, which is this same prompt |
 
-Where the operating system offers no prompt a background process can raise, the fallback is a native dialog showing the tool name and the counts. `doctor.run` says which kind this machine has. Spec section 39 states plainly what each protects against.
+Where the operating system offers no prompt a background process can raise, the fallback is a native dialog showing the tool name and the counts. `doctor.run` says which kind this machine has. Spec section 222 states plainly what each protects against.
 
 Sign-in is the keeper's work, not this crate's. `ask_sign_in` only notifies the person and serves a status page on the same loopback listener while the keeper's sign-in window, opened by the pack's auth provider, is waiting. `give_link` is for a sign-in provider outside the web pack that needs the person's consent in a browser, such as authorization-code sign-in or an upstream MCP server's: it raises a notification with the link and returns it to the calling client, and the person opens it in their own browser. Nothing here starts, reads, or drives that browser.
 
@@ -153,7 +153,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 
 1. `Paths` from `a2m-actions`, the engine lock, and the socket on Linux and macOS with the peer check. Two commands share one engine.
 2. The named pipe on Windows, with both checks. Hypothesis H-06 begins to be measured.
-3. Start on demand, the start lock, the version exchange, idle stop, and `--in-process`. Package 1.4 ends here, with the 30 ms and cold-start numbers of spec section 39.
+3. Start on demand, the start lock, the version exchange, idle stop, and `--in-process`. Package 1.4 ends here, with the 30 ms and cold-start numbers of spec section 222.
 4. The loopback listener and the diff page, with a stub prompt. Package 3.6 begins.
 5. The presence prompt on each operating system, or the fallback; notifications. Package 3.6 ends with H-12.
 

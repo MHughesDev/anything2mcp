@@ -8,6 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
+| 2026-11-17 | [The restructure, configuration, and the bar](2026-11-17-the-restructure.md) | The specification rebuilt as 59 sections in seven parts; the first design archived; one plan; configuration and the bar designed; findings built in the core |
 | 2026-11-17 | [The architecture, ahead of the code](2026-11-17-the-architecture-ahead-of-the-code.md) | A spine of who defines and joins every interface; a design for each of the 24 crates; five more packs designed; one roadmap to 1.0; the layers redrawn; no product code changed |
 | 2026-11-17 | [The rename, the owner's answers, and the rules for working without waiting](2026-11-17-the-rename-and-the-rules.md) | Everything renamed to Anything2MCP; kernel and packs enforced by the audit; MIT; agents no longer wait; the scout designed; the public files written; the core types built; nothing published |
 | 2026-11-17 | [The universal design, sections 53 to 66](2026-11-17-the-universal-design.md) | A deep study of REA from source; fourteen new spec sections; six decision records; nothing built or renamed |

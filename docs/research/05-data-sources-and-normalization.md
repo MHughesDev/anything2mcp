@@ -1,6 +1,6 @@
 # Research: reading input data and comparing values exactly
 
-**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 12](../spec/12-data-sources-and-value-normalization.md).
+**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 210](../spec/2-kernel/210-sources-and-value-normalization.md).
 
 ## Question
 

@@ -4,7 +4,7 @@ use crate::vocabulary::vocabulary;
 
 vocabulary! {
     /// What kind of change an operation makes to the record it names (spec
-    /// section 18). The order is from least to most serious, so the effect
+    /// section 212). The order is from least to most serious, so the effect
     /// class of a pipeline is the greatest of its operations'.
     #[derive(PartialOrd, Ord)]
     pub enum EffectClass: "effect class" {
@@ -19,7 +19,7 @@ vocabulary! {
 
 vocabulary! {
     /// What an operation could damage beyond the record it names (spec section
-    /// 61). The order is from least to most serious, so the hazard of a
+    /// 213). The order is from least to most serious, so the hazard of a
     /// pipeline is the greatest of its operations'.
     #[derive(PartialOrd, Ord)]
     pub enum Hazard: "hazard" {

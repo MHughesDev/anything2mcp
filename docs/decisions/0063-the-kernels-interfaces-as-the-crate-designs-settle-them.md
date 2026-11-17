@@ -70,5 +70,5 @@ Slice 1.1 builds the driver interface and `Control` and finds either wrong. That
 
 ## Spec sections
 
-- [The architecture](../architecture/README.md) and the designs in [crates](../architecture/crates/)
+- [The architecture](../architecture/README.md) and the designs in [crates](../architecture/crates)
 - [The technical reference](../reference/technical-reference.md)

@@ -36,5 +36,5 @@ H-25 shows real code being refused by the table more than a few times before the
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)
 - [The technical reference](../reference/technical-reference.md)

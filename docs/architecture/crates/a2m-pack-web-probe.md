@@ -11,7 +11,7 @@ The web pack's discoverers and its describer: the capability probe, sign-in dete
 | May depend on | Layers 1 to 5, and `a2m-pack-web-browser` |
 | Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-auth` (`SessionLease`, read-only use), `a2m-telemetry`, `a2m-pack-web-browser` (an `Observer`, never `Browsers`). Outside: `tokio`, `serde_json` |
 | Built in | Package E2, after E1 gives the discoverer extension point and the findings store, and after 2.6 gives sign-in. `auth.detect` arrives earlier, in package 2.6, as the first discoverer |
-| Carries out | Spec sections [13](../../spec/13-interface-flavors.md) (the probe), [15](../../spec/15-identity-sign-in-and-sessions.md) (auth discovery), [26](../../spec/26-agent-toolkit-how-tools-get-built.md) (capture, mining, read-only exploration), [58](../../spec/58-discovery-and-findings.md), [60](../../spec/60-overlaying-tools-on-an-existing-system.md) (scenarios, templating), [67](../../spec/67-the-scout-and-who-does-what.md) (stages 1 and 2 for web surfaces) |
+| Carries out | Spec sections [301](../../spec/3-packs/301-the-web-pack.md) (the probe), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (auth discovery), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (capture, mining, read-only exploration), [218](../../spec/2-kernel/218-discovery-and-findings.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (scenarios, templating), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (stages 1 and 2 for web surfaces) |
 
 ## Owns
 
@@ -47,7 +47,7 @@ The `endpoint` finding kind is owned by `a2m-pack-http`, which registers the sch
 
 ## Discovery cannot write
 
-Rule one of [section 58](../../spec/58-discovery-and-findings.md) is held in four places. Each would hold without the others.
+Rule one of [section 218](../../spec/2-kernel/218-discovery-and-findings.md) is held in four places. Each would hold without the others.
 
 | Where | How |
 | --- | --- |
@@ -56,7 +56,7 @@ Rule one of [section 58](../../spec/58-discovery-and-findings.md) is held in fou
 | Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped. What "looks like an action" means is settled in Phase 4 |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox, with a lease the keeper marked for discovery. A discoverer is given only what `SandboxPort` offers: no driver, no ledger token, no way to reach `Driver::act` |
 
-**Capture of a person's use is not exploration.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 61](../../spec/61-effects-hazards-and-consent.md)).
+**Capture of a person's use is not exploration.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 
 ## Endpoint inference
 
@@ -159,8 +159,8 @@ Hitting a bound is not a failure. It is a limitation on the findings, `truncated
 
 ## Open points
 
-- How a GET that changes state is recognized ([section 67](../../spec/67-the-scout-and-who-does-what.md)). A word list is a start, not an answer.
-- Whether the neutral part of the probe belongs in the kernel ([section 55](../../spec/55-kernel-and-packs.md)): naming a surface's kind and its pack before any pack is chosen.
+- How a GET that changes state is recognized ([section 402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md)). A word list is a start, not an answer.
+- Whether the neutral part of the probe belongs in the kernel ([section 202](../../spec/2-kernel/202-kernel-and-packs.md)): naming a surface's kind and its pack before any pack is chosen.
 - How this crate is held to the `endpoint` finding schema's version when `a2m-pack-http` changes it.
-- The file format of a scenario ([section 60](../../spec/60-overlaying-tools-on-an-existing-system.md)).
-- Whether capture should also read what in-page code sends over WebSockets and server-sent events, which section 14 observes for confirmation and does not drive.
+- The file format of a scenario ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)).
+- Whether capture should also read what in-page code sends over WebSockets and server-sent events, which section 301 observes for confirmation and does not drive.

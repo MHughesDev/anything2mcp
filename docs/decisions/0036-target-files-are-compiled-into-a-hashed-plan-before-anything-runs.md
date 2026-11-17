@@ -28,5 +28,5 @@ A target needs behavior that cannot be decided at compile time.
 
 ## Spec sections
 
-- [46-target-compiler-and-plan.md](../spec/46-target-compiler-and-plan.md)
-- [07-files-and-formats.md](../spec/07-files-and-formats.md)
+- [46-target-compiler-and-plan.md](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [07-files-and-formats.md](../spec/2-kernel/205-target-files.md)

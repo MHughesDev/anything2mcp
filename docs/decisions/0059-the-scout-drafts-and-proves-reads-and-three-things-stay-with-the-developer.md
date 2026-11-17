@@ -19,7 +19,7 @@ The design had an agent or a person do every step between a finding and a draft.
 - **Some things only a person does,** because they are authority: saying that the system may be inspected, signing in, approving, and publishing to others.
 - **The second rule of discovery now reads:** a finding cannot run; only target files that pass the compiler and the gates can, whoever or whatever wrote them.
 
-[Section 67](../spec/67-the-scout-and-who-does-what.md) is the design.
+[Section 67](../spec/4-building-tools/402-the-scout-and-who-does-what.md) is the design.
 
 ## Consequences
 
@@ -40,6 +40,6 @@ Drafted reads fail their first try so often that fixing them costs more than wri
 
 ## Spec sections
 
-- [58-discovery-and-findings.md](../spec/58-discovery-and-findings.md)
-- [60-overlaying-tools-on-an-existing-system.md](../spec/60-overlaying-tools-on-an-existing-system.md)
-- [67-the-scout-and-who-does-what.md](../spec/67-the-scout-and-who-does-what.md)
+- [58-discovery-and-findings.md](../spec/2-kernel/218-discovery-and-findings.md)
+- [60-overlaying-tools-on-an-existing-system.md](../archive/spec-2026-11/60-overlaying-tools-on-an-existing-system.md)
+- [67-the-scout-and-who-does-what.md](../spec/4-building-tools/402-the-scout-and-who-does-what.md)

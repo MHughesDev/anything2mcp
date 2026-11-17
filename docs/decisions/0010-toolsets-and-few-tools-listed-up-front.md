@@ -27,5 +27,5 @@ Agents fail to find operations through search in the usability gate.
 
 ## Spec sections
 
-- [20-access-control-toolsets-and-tenancy.md](../spec/20-access-control-toolsets-and-tenancy.md)
-- [21-agent-facing-tool-surface.md](../spec/21-agent-facing-tool-surface.md)
+- [20-access-control-toolsets-and-tenancy.md](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)
+- [21-agent-facing-tool-surface.md](../spec/2-kernel/221-the-tool-surface-agents-see.md)

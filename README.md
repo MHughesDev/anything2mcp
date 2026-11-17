@@ -45,7 +45,7 @@ Anything2MCP takes the opposite position. An agent, or a person, does the thinki
 4. **Publish.** A person reads a summary ordered by risk and publishes a version. An agent cannot do this step.
 5. **Run.** Agents call the tools. The engine picks the fastest way that has been proven correct, and stops with a named failure when anything is not as described.
 
-[The scout, and who does what](docs/spec/67-the-scout-and-who-does-what.md) draws the line between what the toolkit automates and what it leaves to you.
+[The scout, and who does what](docs/spec/4-building-tools/402-the-scout-and-who-does-what.md) draws the line between what the toolkit automates and what it leaves to you.
 
 ## What it can latch onto
 
@@ -53,23 +53,29 @@ A neutral kernel does the work that is the same everywhere. A pack knows one kin
 
 | Kind of system | Reached through | State |
 | --- | --- | --- |
-| Web applications | The interface, as a person uses it; the requests the page itself makes | Designed; built first |
+| Web applications | The interface, as a person uses it; the requests the page itself makes; tools a site publishes | Designed; built first |
 | HTTP services | Direct requests; published descriptions such as OpenAPI, GraphQL, and OData | Designed |
-| Existing MCP servers | Pass-through, with verification added | Designed |
-| Desktop applications | The operating system's accessibility interfaces | Outlined |
-| Command-line programs | Declared commands with typed arguments, never a free-form shell | Proposed as the second pack |
-| Data stores and files | Read-only connections first; spreadsheets and structured files | Outlined |
-| Streams and queues | A broker's own listing and bounded samples | Outlined |
-| Devices and firmware | The device's own management interface; firmware inspected, and updated only by the device's own route | Outlined |
+| Existing MCP servers | Pass-through to named tools only, with verification added | Designed |
+| Desktop applications | The operating system's accessibility interfaces | Designed in outline |
+| Command-line programs | Declared commands with typed arguments, never a free-form shell | Designed; built second |
+| Databases | Declared statements with typed parameters; read-only first | Designed |
+| Files | Named places in a file; a write replaces the file in one step | Designed |
+| Streams and queues | Bounded waits and keyed publishes; never consuming what others expect | Designed |
+| Devices and firmware | The device's own interface, with a range and a hazard on every writable point; firmware updated only by the device's own route | Designed |
 
-The [catalog of surface kinds](docs/spec/62-catalog-of-surface-kinds.md) has the full list and what each needs.
+[What it latches onto](docs/spec/1-product/106-what-it-latches-onto.md) has the full catalog, with what each kind needs and what is refused.
+
+## Configurable, up to the point of safety
+
+An empty settings file is a complete configuration: the defaults are the safe single-user installation. From there nearly everything can be set, in layers: a deployment profile, a preset such as `cautious` or one for continuous integration, the installation's file, your own, the project's, environment variables, and flags. Each pack brings its own settings. The layers closest to a project can only make things stricter, and the rules that make the product safe have no setting at all. [Configuration](docs/spec/2-kernel/226-configuration.md) is the full design.
 
 ## What works today
 
 - A Cargo workspace of 24 crates with the kernel, the packs, and the product in enforced layers. The first kernel crate holds the shared vocabulary and a secret type that cannot be printed; the product crate's `anything2mcp` command reports its version; the rest are empty.
 - A test application with a web interface, a JSON interface, a control interface that reports ground truth, and injectable faults.
 - Continuous checks on three operating systems: formatting, lints, build, tests, a closed list of dependency licences, and an audit that keeps the documents and the crates consistent with each other.
-- The design: 72 sections, the decisions behind them, the research they rest on, and a register of the bets still to be tested.
+- The design: a specification of 59 sections in seven parts, the decisions behind them, the research they rest on, and a register of the bets still to be tested.
+- Findings, the first piece of discovery: what was learned about a system, how strongly, and on whose word, with rules that stop a guess passing as a fact.
 - The architecture: a design for every crate, written before its code, and one page that says who defines and joins each interface.
 
 What comes next is in the [roadmap](docs/plan/roadmap.md). Progress is in the [changelog](CHANGELOG.md) and, session by session, in the [journal](docs/journal/README.md).
@@ -88,7 +94,9 @@ npm install -g anything2mcp
 
 | You want to | Read |
 | --- | --- |
-| Understand what this is | [Summary](docs/spec/01-summary.md) and [the universal runtime](docs/spec/53-the-universal-runtime.md) |
+| Understand what this is | [Summary](docs/spec/1-product/101-summary.md) and [what it latches onto](docs/spec/1-product/106-what-it-latches-onto.md) |
+| Know what "best" is being held to | [The bar](docs/spec/1-product/107-the-bar.md) |
+| Configure it | [Configuration](docs/spec/2-kernel/226-configuration.md) |
 | See the whole design | [The specification](docs/spec/README.md) |
 | See what was decided and why | [Decision records](docs/decisions/README.md) |
 | Check what is researched and what is a guess | [Research notes](docs/research/README.md) and [the hypotheses](docs/hypotheses/README.md) |

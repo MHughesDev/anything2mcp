@@ -25,7 +25,7 @@ The status column is what each registry's public index answered on that date fro
 
 ## How releases authenticate
 
-The design calls for short-lived credentials issued to the release pipeline, never stored tokens ([spec section 41](../spec/41-packaging-and-release.md)).
+The design calls for short-lived credentials issued to the release pipeline, never stored tokens ([spec section 605](../spec/6-running-it/605-packaging-and-release.md)).
 
 | Registry | Arrangement | What the owner sets up |
 | --- | --- | --- |

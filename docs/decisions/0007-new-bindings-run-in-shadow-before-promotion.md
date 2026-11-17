@@ -27,5 +27,5 @@ Shadow comparison proves impractical for a class of endpoints.
 
 ## Spec sections
 
-- [06-modes-and-drivers.md](../spec/06-modes-and-drivers.md)
-- [26-agent-toolkit-how-tools-get-built.md](../spec/26-agent-toolkit-how-tools-get-built.md)
+- [06-modes-and-drivers.md](../archive/spec-2026-11/06-modes-and-drivers.md)
+- [26-agent-toolkit-how-tools-get-built.md](../archive/spec-2026-11/26-agent-toolkit-how-tools-get-built.md)

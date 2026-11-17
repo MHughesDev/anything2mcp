@@ -1,6 +1,6 @@
 [package]
 name = "a2m-core"
-description = "Shared types for Anything2MCP: the closed vocabularies, failures, and the secret wrapper."
+description = "Shared types for Anything2MCP: the closed vocabularies, failures, digests, findings, and the secret wrapper."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

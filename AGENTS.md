@@ -12,7 +12,7 @@ Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral
 
 ## How this project grows
 
-- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. The [roadmap](docs/plan/roadmap.md) lists every package in order; [docs/plan/core-first.md](docs/plan/core-first.md) and the [long-term plan](docs/plan/anything2mcp-master-plan.md) give the reasoning.
+- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. The [roadmap](docs/plan/roadmap.md) lists every package in order.
 - **Every slice tests the design.** The design is a set of bets, listed in [docs/hypotheses/README.md](docs/hypotheses/README.md). Before building, name an alternative to the documented design. After building, write down what the work showed.
 - **Keep improving the design.** Question the documents. When something is ambiguous, fix it. When evidence shows a section is wrong, correct it and record the decision. When a different design looks better, test it or propose it. [docs/plan/working-method.md](docs/plan/working-method.md) says how each kind of change is made.
 - **Review the whole design regularly,** one lens at a time, with [docs/plan/design-review-lenses.md](docs/plan/design-review-lenses.md).
@@ -33,17 +33,18 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 
 ## Read these first, in this order
 
-0. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md)
-1. [docs/architecture/README.md](docs/architecture/README.md): how the crates fit together, and the design of the crate you are about to touch
-1. [docs/plan/roadmap.md](docs/plan/roadmap.md): every work package, what it needs, what proves it, and which are ready now. The [long-term plan](docs/plan/anything2mcp-master-plan.md) holds the reasoning behind it
-2. [docs/plan/readiness.md](docs/plan/readiness.md) and [spec section 66](docs/spec/66-readiness-of-the-universal-design.md): what is ready, the risks, and what is deliberately not designed yet
-3. [docs/spec/01-summary.md](docs/spec/01-summary.md), [02](docs/spec/02-requirements-and-guarantees.md), [03](docs/spec/03-design-principles.md), [04](docs/spec/04-system-overview.md), [05](docs/spec/05-core-concepts.md), then [53](docs/spec/53-the-universal-runtime.md), [55](docs/spec/55-kernel-and-packs.md), and [67](docs/spec/67-the-scout-and-who-does-what.md)
-4. [docs/decisions/README.md](docs/decisions/README.md): the decisions already made
-5. [docs/plan/phase-map.md](docs/plan/phase-map.md): for the phase in hand, what to read, which decisions bind it, and what to research first. Phases 0 to 3 have task lists: [0](docs/plan/phase-0.md), [1](docs/plan/phase-1.md), [2](docs/plan/phase-2.md), [3](docs/plan/phase-3.md). The later three are drafts to revise as each earlier phase ends
-6. The spec sections that phase lists; the index is [docs/spec/README.md](docs/spec/README.md). Later sections refine earlier ones and win where they differ: sections 53 to 67 over everything before them, and sections 39 to 52 over sections 1 to 38
-7. The references, as needed: [technical reference](docs/reference/technical-reference.md), [action catalog](docs/reference/action-catalog.md), [file formats](docs/reference/file-formats.md), [steps, snapshots, and diffs](docs/reference/steps-snapshots-and-diffs.md), [ledger schema](docs/reference/ledger-schema.md), [glossary](docs/reference/glossary.md), [settings examples](docs/reference/settings-example.md), and the [walkthrough](docs/reference/walkthrough.md) of what the finished product should feel like
+1. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md).
+2. [docs/plan/roadmap.md](docs/plan/roadmap.md): every work package, what it needs, what proves it, and which are ready now.
+3. [docs/architecture/README.md](docs/architecture/README.md): how the crates fit together. Then the design, in `docs/architecture/crates/`, of each crate you are about to touch.
+4. Part 1 of the [specification](docs/spec/README.md), once: the [summary](docs/spec/1-product/101-summary.md), [requirements](docs/spec/1-product/102-requirements-and-guarantees.md), [principles](docs/spec/1-product/103-design-principles.md), [overview](docs/spec/1-product/104-system-overview.md), [concepts](docs/spec/1-product/105-core-concepts.md), [what it latches onto](docs/spec/1-product/106-what-it-latches-onto.md), and [the bar](docs/spec/1-product/107-the-bar.md). Then [kernel and packs](docs/spec/2-kernel/202-kernel-and-packs.md) and [the scout, and who does what](docs/spec/4-building-tools/402-the-scout-and-who-does-what.md).
+5. The spec sections the crate designs name for your package. The specification has seven parts: product, kernel, packs, building tools, security, running it, and project. Each section states the design as it stands; there is no rule about which section wins.
+6. [docs/spec/7-project/704-readiness.md](docs/spec/7-project/704-readiness.md): what is ready, what rests on judgment alone, and what is deliberately not designed yet.
+7. [docs/decisions/README.md](docs/decisions/README.md): the decisions already made.
+8. The references, as needed: [technical reference](docs/reference/technical-reference.md), [action catalog](docs/reference/action-catalog.md), [file formats](docs/reference/file-formats.md), [steps, snapshots, and diffs](docs/reference/steps-snapshots-and-diffs.md), [ledger schema](docs/reference/ledger-schema.md), [glossary](docs/reference/glossary.md), and the [walkthrough](docs/reference/walkthrough.md) of what the finished product should feel like.
 
 Do not read the whole spec into context at once. Open the sections a task touches.
+
+Decision records and journal entries written before 2026-11-17 cite spec sections by older numbers, and some by the product's first name. [docs/archive/](docs/archive/README.md) has the key, and keeps the documents that were consolidated. Nothing in the archive is in force.
 
 ## Rules that never bend
 
@@ -54,7 +55,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 3. **Every write is verified.** Record intent in the ledger before acting; read the value back; compare after normalization. On resume, reconcile before writing.
 4. **Secrets never reach a caller.** Cookies, tokens, and passwords never appear in tool inputs, tool results, logs, traces, captures, fixtures, or error messages. Register every secret with the redactor.
 5. **Operate openly.** The browser always runs with a data directory the engine owns; never read, copy, or drive the user's everyday browser profile or another program's cookie store. No stealth, no fingerprint spoofing, no CAPTCHA or MFA bypass, no imitating another application's client id, and no getting past a licence check or a device's protection. A block is a named stop.
-6. **Rust first, other languages where they fit.** Everything on the path of a run is Rust. Use another language where it is clearly the better tool: the web pages, in-page scripts, SDKs, installers, migrations, and plug-ins, as listed in [spec section 29](docs/spec/29-repository-crates-and-packaging.md). A new use of another language gets a decision record.
+6. **Rust first, other languages where they fit.** Everything on the path of a run is Rust. Use another language where it is clearly the better tool: the web pages, in-page scripts, SDKs, installers, migrations, and plug-ins, as listed in [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md). A new use of another language gets a decision record.
 7. **Unknown means stop.** A control, platform, response shape, or page variant with no rule is a failure, never a guess.
 8. **Knowledge lives in one place.** Locators only in screen models, endpoints only in the endpoint catalog, units only in field types, business steps only in operations and pipelines. Knowledge about one kind of system lives in its pack.
 9. **Name no real application.** Examples, tests, fixtures, file names, and commit messages use the imaginary `example` target or the built-in test application. Target files for real applications live outside this repository, and the project publishes no catalog of them.
@@ -85,7 +86,7 @@ Everything else is yours to decide and record.
 
 ## Code conventions
 
-- **Workspace.** One Cargo workspace. Kernel crates are named `a2m-*`, pack crates `a2m-pack-*`, and the product crate `anything2mcp`, laid out as in [spec section 29](docs/spec/29-repository-crates-and-packaging.md).
+- **Workspace.** One Cargo workspace. Kernel crates are named `a2m-*`, pack crates `a2m-pack-*`, and the product crate `anything2mcp`, laid out as in [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md).
 - **Kernel and packs.** A kernel crate never depends on a pack crate. A pack crate sees the kernel up to the provider contract, layers 1 to 5, and the base of its own pack. Only the product crate names packs. The layering table in the technical reference is the rule, and the audit enforces it.
 - **Toolchain.** Stable Rust, pinned in `rust-toolchain.toml`. `cargo fmt` and `cargo clippy -- -D warnings` must pass.
 - **Errors.** Library crates return typed errors that map to exactly one failure class and code from the technical reference. No `unwrap` or `expect` in library code outside tests. No panics across crate boundaries.
@@ -99,8 +100,8 @@ Everything else is yours to decide and record.
 - **One registry.** Every authoring and admin action is defined once in `a2m-actions`; its command, MCP tool, REST route, and SDK method are generated. Never hand-write one of those faces.
 - **A user's session is theirs alone.** A session signed in as a person may be used only by that person or an agent acting for them. No role, including administrator, runs as someone else.
 - **One decider, one renewer.** Only the policy engine decides whether something may happen, and only the session keeper signs in or renews. Drivers and front doors ask; they never decide or renew.
-- **Assume the agent may be steered.** No input may change where a request goes or which file is read; see [spec section 51](docs/spec/51-defending-against-a-manipulated-agent.md).
-- **Fail closed.** No ledger, no write; nothing unverified runs; see [spec section 52](docs/spec/52-when-the-engine-itself-fails.md).
+- **Assume the agent may be steered.** No input may change where a request goes or which file is read; see [spec section 502](docs/spec/5-security/502-defending-against-a-manipulated-agent.md).
+- **Fail closed.** No ledger, no write; nothing unverified runs; see [spec section 224](docs/spec/2-kernel/224-when-the-engine-itself-fails.md).
 - **Nothing phones home.** No usage data, crash reports, or update checks unless a person switches them on.
 - **Thin clients.** Commands, the stdio proxy, and the SDKs hold no engine logic; they talk to the local engine. There is no approve command, tool, or route on a local machine.
 - **No client is special.** Nothing in the kernel knows which make of agent is calling. A client's quirk, where one must be handled, is data in a profile.
@@ -113,8 +114,8 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 - A test stand imitates the part of its kind of system that makes the kind hard, and nothing else. Make it as real as is cheap.
 - Tests ask the test stand what it stored. A test never proves a write using Anything2MCP's own read path alone.
 - CI runs on Windows, macOS, and Linux.
-- The benchmark suite in `bench/` runs in CI. A regression over 10% on a budgeted path fails the build. Budgets in [spec section 9](docs/spec/09-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
-- The nine ledger rules in spec section 42 are each a test; a change that breaks one cannot merge.
+- The benchmark suite in `bench/` runs in CI. A regression over 10% on a budgeted path fails the build. Budgets in [spec section 225](docs/spec/2-kernel/225-performance.md) are targets until measured; when you measure, record the numbers and revise the budget with a decision record if needed.
+- The nine ledger rules in spec section 208 are each a test; a change that breaks one cannot merge.
 - Fault-injection tests are part of the definition of done for anything that writes: expired session, lost connection after a write was sent, bad input, stale approval, blocked surface.
 - Fixtures must be synthetic or scrubbed. Never commit recorded business data.
 
@@ -135,12 +136,13 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `targets/` | The imaginary `example` target and the test stands |
 | `bindings/` | The pip and npm packages |
 | `docs/architecture/` | How the code is put together: who defines, implements, and joins each interface, and one design per crate |
-| `docs/spec/` | The system design, one section per file |
+| `docs/spec/` | The specification, in seven parts, one section per file |
 | `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, settings examples |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
 | `docs/references/` | Every source URL cited |
-| `docs/plan/` | The roadmap, the long-term plan, working method, core-first slice order, design review lenses, readiness report, phase map, task lists for Phases 0 to 3, the test application plan, publishing setup |
+| `docs/plan/` | The roadmap, the working method, the design review lenses, the test application plan, publishing setup |
+| `docs/archive/` | The first design's consolidated sections and its plans, kept as history, with the key from old section numbers to new |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
 | `docs/journal/` | One entry per session; read the newest first |
 | `.claude/skills/` | Procedures for starting and ending a session, building a slice, testing a hypothesis, reviewing the design, and running research |

@@ -1,6 +1,6 @@
 # 0048. The product becomes Anything2MCP, a universal runtime built on the same core
 
-**Status:** Accepted. Owner decision. The direction is the owner's; the architecture that carries it out is proposed in the [long-term plan](../plan/anything2mcp-master-plan.md) and is not accepted in detail by this record.
+**Status:** Accepted. Owner decision. The direction is the owner's; the architecture that carries it out is proposed in the [long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md) and is not accepted in detail by this record.
 
 **Date:** 2026-11-16
 
@@ -37,6 +37,6 @@ The first second kind of system cannot be added without reshaping the kernel. Th
 
 ## Spec sections
 
-- [01-summary.md](../spec/01-summary.md)
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
-- [The long-term plan](../plan/anything2mcp-master-plan.md)
+- [01-summary.md](../archive/spec-2026-11/01-summary.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)
+- [The long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md)

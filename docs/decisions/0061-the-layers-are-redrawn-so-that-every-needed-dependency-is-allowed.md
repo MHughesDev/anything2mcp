@@ -58,4 +58,4 @@ A real dependency turns up that this table forbids. That is a finding about the 
 
 - [The architecture](../architecture/README.md)
 - [The technical reference](../reference/technical-reference.md#crate-layering)
-- [55-kernel-and-packs.md](../spec/55-kernel-and-packs.md)
+- [55-kernel-and-packs.md](../spec/2-kernel/202-kernel-and-packs.md)

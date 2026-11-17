@@ -46,6 +46,6 @@ For the owner. The long-term plan, section 9, still has the full list; the first
 
 ## Next
 
-1. The owner reads [section 53](../spec/53-the-universal-runtime.md) and [section 66](../spec/66-readiness-of-the-universal-design.md) first; they are the shortest way into the rest.
-2. With answers to questions 1 to 3, start Stage A of the [long-term plan](../plan/anything2mcp-master-plan.md): the rename and the kernel and pack separation, each package proven by the audit script and CI.
+1. The owner reads [section 53](../archive/spec-2026-11/53-the-universal-runtime.md) and [section 66](../archive/spec-2026-11/66-readiness-of-the-universal-design.md) first; they are the shortest way into the rest.
+2. With answers to questions 1 to 3, start Stage A of the [long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md): the rename and the kernel and pack separation, each package proven by the audit script and CI.
 3. Without those answers, the work that does not depend on names can still go on: slice 0.4, the browser engine spike, and package B2, the evidence level and the tagged subject as core types.

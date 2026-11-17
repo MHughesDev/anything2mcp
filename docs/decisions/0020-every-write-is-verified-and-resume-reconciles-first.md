@@ -28,6 +28,6 @@ Never.
 
 ## Spec sections
 
-- [10-runs-ledger-and-resume.md](../spec/10-runs-ledger-and-resume.md)
-- [08-execution-engine.md](../spec/08-execution-engine.md)
-- [12-data-sources-and-value-normalization.md](../spec/12-data-sources-and-value-normalization.md)
+- [10-runs-ledger-and-resume.md](../archive/spec-2026-11/10-runs-ledger-and-resume.md)
+- [08-execution-engine.md](../spec/2-kernel/207-the-engine-loop.md)
+- [12-data-sources-and-value-normalization.md](../spec/2-kernel/210-sources-and-value-normalization.md)

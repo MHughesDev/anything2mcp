@@ -35,5 +35,5 @@ A real device of interest can be reached in no allowed way, or a maker documents
 
 ## Spec sections
 
-- [63-devices-and-firmware.md](../spec/63-devices-and-firmware.md)
-- [61-effects-hazards-and-consent.md](../spec/61-effects-hazards-and-consent.md)
+- [63-devices-and-firmware.md](../archive/spec-2026-11/63-devices-and-firmware.md)
+- [61-effects-hazards-and-consent.md](../spec/2-kernel/213-effects-hazards-and-consent.md)

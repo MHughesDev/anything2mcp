@@ -29,5 +29,5 @@ Measured dispatch latency misses the budget for interactive reads.
 
 ## Spec sections
 
-- [43-runner-protocol.md](../spec/43-runner-protocol.md)
-- [24-networking.md](../spec/24-networking.md)
+- [43-runner-protocol.md](../spec/2-kernel/223-the-runner-protocol.md)
+- [24-networking.md](../spec/6-running-it/603-networking.md)

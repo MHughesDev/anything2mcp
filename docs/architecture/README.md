@@ -133,7 +133,7 @@ Steps 1 to 6 as for a read, then:
 
 1. The product crate reads the settings and builds a registry: one call per enabled pack, then the plug-ins found on the machine, each checked against its manifest.
 2. A role calls `Kernel::open` in `a2m-actions` with the settings and the registry. It opens the store and runs migrations, opens the vault, loads policy, and starts the keeper, the scheduler, and the engine.
-3. The kernel has three health states ([spec section 52](../spec/52-when-the-engine-itself-fails.md)). If the store cannot be opened or no valid policy version exists, it is stopped and serves nothing but its own status. If the vault or the space for evidence is unavailable, it is degraded: reads that need no secret still run, and nothing writes, because nothing could be sealed or verified.
+3. The kernel has three health states ([spec section 224](../spec/2-kernel/224-when-the-engine-itself-fails.md)). If the store cannot be opened or no valid policy version exists, it is stopped and serves nothing but its own status. If the vault or the space for evidence is unavailable, it is degraded: reads that need no secret still run, and nothing writes, because nothing could be sealed or verified.
 4. The product crate joins the role crates, which never use each other: the local channel on one machine; the REST and MCP endpoints on a server; the runner link on a runner.
 
 ### A runner on another machine
@@ -166,9 +166,9 @@ One numbered sequence of migrations, in `a2m-ledger`, covers the whole schema. E
 
 | Shape | Processes | Notes |
 | --- | --- | --- |
-| One machine | One engine per user, started on demand; commands and the stdio proxy are thin clients of it | [Spec section 39](../spec/39-local-engine-and-clients.md) |
-| A server | A control plane and one or more runners. They may be one process | [Spec section 43](../spec/43-runner-protocol.md) |
-| A plug-in | Its own process, started and stopped by the supervisor in `a2m-provider` | [Spec section 57](../spec/57-supervising-subsystems.md) |
+| One machine | One engine per user, started on demand; commands and the stdio proxy are thin clients of it | [Spec section 222](../spec/2-kernel/222-front-doors-and-the-local-engine.md) |
+| A server | A control plane and one or more runners. They may be one process | [Spec section 223](../spec/2-kernel/223-the-runner-protocol.md) |
+| A plug-in | Its own process, started and stopped by the supervisor in `a2m-provider` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
 | A browser, a database client, a device link | Owned by the pack that needs it, behind its driver | The kernel never holds a handle to one |
 
 ## Rules the arrangement enforces
@@ -178,7 +178,7 @@ A rule that depends on every author remembering it will be broken. Each of these
 | Rule | How the arrangement enforces it | Proof |
 | --- | --- | --- |
 | No AI at run time | No crate on the path of a run may depend on a model client; the engine executes only a compiled plan | A ban list in `deny.toml` once a model client could be depended on by accident; engine tests |
-| Every write is verified | Only the engine reaches a driver, through a handle that refuses a committing step without the token the ledger gives for a recorded intent | The nine ledger rules of spec section 42, each a test |
+| Every write is verified | Only the engine reaches a driver, through a handle that refuses a committing step without the token the ledger gives for a recorded intent | The nine ledger rules of spec section 208, each a test |
 | Secrets never reach a caller | `Secret` cannot be printed or serialized; credentials reach a driver only through `inject`; everything leaving a front door passes `Redact` | The compile-time test in `a2m-core`; a fault test that plants a secret in a system's answer |
 | The kernel is neutral | The layering table | The audit, with planted mistakes |
 | One decider | Only `a2m-policy` exports `decide`; no other crate holds a grant | Review; a test that every action's dispatch records a decision |
@@ -191,7 +191,7 @@ A rule that depends on every author remembering it will be broken. Each of these
 
 ## Crate designs
 
-One file per crate, in [crates/](crates/). The audit checks that every crate on disk has one and that every design names a crate that exists.
+One file per crate, in [crates/](crates). The audit checks that every crate on disk has one and that every design names a crate that exists.
 
 Each design has the same parts, in this order.
 
@@ -214,7 +214,7 @@ Test stands, the pip and npm packages, the pages, profiles, plug-in examples, be
 
 ## Pack designs
 
-A pack is designed as a spec section before it is built ([section 55](../spec/55-kernel-and-packs.md)). The crate designs for the four first packs are in [crates/](crates/); the packs that have no crates yet are designed in the specification, and listed in its [index](../spec/README.md).
+A pack is designed as a spec section before it is built ([section 202](../spec/2-kernel/202-kernel-and-packs.md)). The crate designs for the four first packs are in [crates/](crates); the packs that have no crates yet are designed in the specification, and listed in its [index](../spec/README.md).
 
 ## Using this folder
 

@@ -29,5 +29,5 @@ The spike shows Cedar missing the size or speed budget.
 
 ## Spec sections
 
-- [45-policy-engine.md](../spec/45-policy-engine.md)
-- [20-access-control-toolsets-and-tenancy.md](../spec/20-access-control-toolsets-and-tenancy.md)
+- [45-policy-engine.md](../archive/spec-2026-11/45-policy-engine.md)
+- [20-access-control-toolsets-and-tenancy.md](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)

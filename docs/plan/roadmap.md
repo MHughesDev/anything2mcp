@@ -2,15 +2,19 @@
 
 Every work package from where the repository stands to version 1.0, in one list: what each package is, which crates it touches, what it needs first, and what proves it. An agent picks the first package marked ready whose crates nobody else holds, builds it, proves it, merges it, and marks it done here.
 
-This document is the order of work. The [long-term plan](anything2mcp-master-plan.md) holds the reasoning behind the stages, [core first](core-first.md) holds the reasoning behind the slice order of Phases 1 to 3, the [architecture](../architecture/README.md) says how the crates fit together, and each crate's design gives its own build order. Where they differ on order, this document wins and the other is corrected.
+This document is the order of work, and the only plan. The [architecture](../architecture/README.md) says how the crates fit together, and each crate's design gives its own build order; where they differ on order, this document wins and the other is corrected. The plans it replaced are in the [archive](../archive/README.md).
 
-The order after milestone 3 is a proposal. It is reviewed at the end of every milestone, as core first requires, and changed by a line in the journal.
+The order after milestone 3 is a proposal. It is reviewed at the end of every milestone and changed by a line in the journal.
+
+## Core first
+
+The engine loop, one driver, the compiler and the plan, the local engine with its command and MCP faces, the session keeper and the vault, the ledger and the policy gate, and the step trace are the core. Nothing else is deepened until the core works for reads and writes on one machine, which is milestone 3. The first goal is not a finished part: it is one read travelling through every layer, each as thin as it can be, so that the shape of the whole is proven before any part is deepened. A second kind of system is added early and on purpose, at milestone 4, to test that the kernel is neutral, and no more than one.
 
 ## Reading the tables
 
 | Column | Meaning |
 | --- | --- |
-| # | The package's name. Slices keep the numbers core first gave them; stage packages keep their letters |
+| # | The package's name. A slice of the first three phases is numbered by phase; a package of a later stage has a letter |
 | Package | What is built |
 | Crates | The crates it changes. Two agents never hold the same crate at once |
 | Needs | Packages that must be done first |
@@ -48,8 +52,8 @@ A package is one branch and one pull request. When it merges, its row changes to
 | A7 | Every spec section marked kernel, pack, or product-wide in the index | Documents | A5 | A reader can tell from the index which side a section is on | done |
 | AR | The architecture: who defines, implements, and joins every interface; one design per crate; the layers redrawn | Documents; the audit | A2 | The audit refuses a crate with no design and a design with no crate | done |
 | B1 | Core vocabularies, `Failure`, `Secret` | `a2m-core` | A2 | Names held to the documents by a test; a secret cannot be printed | done |
-| B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | ready |
-| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | held |
+| B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | done |
+| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | ready |
 | B3 | The provider manifest, the registry, and a pack registering nothing but its modes | `a2m-provider` | B1 | A manifest that asks for an undeclared effect is refused with a named failure; a mode registered twice is refused | ready |
 | B4 | Target file schemas and the loader, for the file kinds the kernel owns. This is slice 0.6 | `a2m-files`, `a2m-core` | B1 | The `example` target's files validate; a broken one fails with a file, a line, and a fix | ready |
 | B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | held |
@@ -67,6 +71,7 @@ Phase 1 of the build plan. One read travels through every layer, each as thin as
 | 1.2 | The step trace and its signature | `a2m-telemetry`, `a2m-engine` | 1.1 | Five runs, one signature | held |
 | 1.3 | The compiler replaces the hand-written plan; packs register their file kinds and lowerings | `a2m-files`, `a2m-expr`, `a2m-provider`, `a2m-pack-web-ui` | 1.1, B4 | The same read from target files; the plan is byte-identical on three operating systems | held |
 | 1.4 | The store for reads, and the local engine: one process, two clients | `a2m-ledger`, `a2m-local`, `a2m-actions` | 1.2 | Two commands at once share one browser; a different user is refused; a read leaves a run row and its events | held |
+| 1.4a | The settings loader: one schema, the layers in order, an unknown key refused, and where each value came from | `a2m-actions` | 1.4 | An empty file is a complete configuration; a file that loosens a protected setting is refused; `config.show` names the layer of every value | held |
 | 1.5 | The action registry with generated faces, and MCP over stdio | `a2m-actions`, `a2m-mcp`, `anything2mcp` | 1.4, 0.5 | An MCP client calls the same read; a hand-written face fails CI | held |
 | 1.6 | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | `a2m-pack-web-browser`, `a2m-pack-web-ui` | 1.3 | The Phase 1 cases of the test application pass on three operating systems | held |
 | 1.7 | Measure every budget; a design review round; a locally built wheel installs | `bench/`, `bindings/python` | 1.6, 0.7 | Numbers recorded, budgets confirmed or revised by decision record | held |
@@ -105,11 +110,11 @@ Phase 3. At its end the first usable product exists: stop, use it, and review th
 
 ## Milestone 4: anything, proven once
 
-Stage D. The command pack is designed in [section 68](../spec/68-the-command-pack.md). It is built read-only first, to answer one question: did the kernel have to change?
+Stage D. The command pack is designed in [section 306](../spec/3-packs/306-the-command-pack.md). It is built read-only first, to answer one question: did the kernel have to change?
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| D1 | The design of the command pack | Documents | None | Section 68 answers every item of the entry bar | done |
+| D1 | The design of the command pack | Documents | None | Section 306 answers every item of the entry bar | done |
 | D2 | The command-line test stand, with its control interface | `targets/` | D1 | Its own tests, on three operating systems | ready |
 | D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode | New pack crates | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
 | D4 | The result of hypothesis H-26: every kernel change the pack forced, counted | Documents | D3 | A hypothesis result file. If the kernel changed more than slightly, the boundary is redrawn before another pack starts | held |
@@ -117,7 +122,7 @@ Stage D. The command pack is designed in [section 68](../spec/68-the-command-pac
 
 ## Milestone 5: the scout
 
-Stage E, with the scout of [section 67](../spec/67-the-scout-and-who-does-what.md).
+Stage E, with the scout of [section 402](../spec/4-building-tools/402-the-scout-and-who-does-what.md).
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
@@ -159,7 +164,7 @@ Phase 5, with Stage F.
 
 ## Milestone 8: more kinds
 
-One pack at a time, each through the entry bar of [section 55](../spec/55-kernel-and-packs.md). Each is designed: data in [section 69](../spec/69-the-data-pack.md), files in [section 70](../spec/70-the-file-pack.md), streams in [section 71](../spec/71-the-stream-pack.md), devices in [section 72](../spec/72-the-device-pack.md). Reads come before writes in every pack, and the order of the four is reviewed when milestone 5 ends.
+One pack at a time, each through the entry bar of [section 202](../spec/2-kernel/202-kernel-and-packs.md). Each is designed: data in [section 307](../spec/3-packs/307-the-data-pack.md), files in [section 308](../spec/3-packs/308-the-file-pack.md), streams in [section 309](../spec/3-packs/309-the-stream-pack.md), devices in [section 310](../spec/3-packs/310-the-device-pack.md). Reads come before writes in every pack, and the order of the four is reviewed when milestone 5 ends.
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
@@ -204,7 +209,7 @@ Phase 8.
 | 8.2a | Tools a site publishes, as a mode of the web pack | `a2m-pack-web-ui`, `targets/example-app` | 1.6 | A page of the test application registers a tool and it is called through the engine loop | held |
 | 8.3 | The desktop pack | `a2m-pack-desktop` | 8.1, D4 | Test application case 28 passes on three operating systems | held |
 | 8.4 | Platform profiles and the remaining widget drivers | `a2m-pack-web-ui`, `profiles/` | 1.6 | Every control in the test application is set and read back | held |
-| 8.5 | The edge-case handlers of spec section 14 | `a2m-pack-web-ui`, `a2m-pack-web-browser` | 8.4 | Every hard case in the test application passes on three operating systems | held |
+| 8.5 | The edge-case handlers of spec section 301 | `a2m-pack-web-ui`, `a2m-pack-web-browser` | 8.4 | Every hard case in the test application passes on three operating systems | held |
 
 ## Milestone 11: hardening
 
@@ -214,7 +219,7 @@ Phase 9, the real systems, and version 1.0.
 | --- | --- | --- | --- | --- | --- |
 | 9.1 | Canaries, drift detection, and the repair loop | `a2m-engine`, `a2m-actions` | 4.3 | A deliberately changed screen is caught by a canary and repaired with no failed write | held |
 | 9.2 | The audit chain, alerts, backup, and upgrades | `a2m-ledger`, `a2m-actions` | 6.1 | A broken chain is detected; a restored backup resumes a stopped run | held |
-| 9.3 | Every failure of spec section 52 as a fault test; the manipulation suite of spec section 51 | All kernel crates | 7.2 | Each named failure and each named attack has a test that fails when the defence is removed | held |
+| 9.3 | Every failure of spec section 224 as a fault test; the manipulation suite of spec section 502 | All kernel crates | 7.2 | Each named failure and each named attack has a test that fails when the defence is removed | held |
 | 9.4 | The cluster profile | `a2m-sched`, `a2m-api` | 7.2 | A control plane node is lost and no run is | held |
 | 9.5 | Real systems, with the owner: a read, then a write to a declared test record, on a few systems of different kinds | None in this repository | 9.3 | Five identical runs each; nothing about any system is committed here | owner |
 | 9.6 | An outside security review, and its findings closed | As found | 9.3 | The review's report, and a test for every finding | owner |
@@ -234,9 +239,11 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are B2, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2, B2a, and B4 all touch `a2m-core`: run them one after the other.
+Right now, the packages marked `ready` are B2a, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2a and B4 both touch `a2m-core`: run them one after the other.
 
 ## Rules for changing this document
+
+- At the end of every milestone, update the scorecard in [the bar](../spec/1-product/107-the-bar.md). A number that misses its target is a finding: the design changes, or the target does, by decision record.
 
 - Mark a package `done` in the pull request that completes it, and change `held` to `ready` for whatever it unblocks.
 - Split a package that grows past a session; give the parts letters, such as 3.7a and 3.7b.

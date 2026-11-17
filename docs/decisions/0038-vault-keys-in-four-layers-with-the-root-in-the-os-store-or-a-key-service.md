@@ -28,5 +28,5 @@ A deployment needs hardware-bound keys for runners.
 
 ## Spec sections
 
-- [48-vault-and-keys.md](../spec/48-vault-and-keys.md)
-- [44-session-keeper.md](../spec/44-session-keeper.md)
+- [48-vault-and-keys.md](../spec/2-kernel/216-the-vault-and-its-keys.md)
+- [44-session-keeper.md](../archive/spec-2026-11/44-session-keeper.md)

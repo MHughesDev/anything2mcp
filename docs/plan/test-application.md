@@ -70,7 +70,7 @@ The interface driver is the riskiest piece of engineering, and the design keeps 
 | Network | Observe the response for a named endpoint; make a request from inside the page with the page's own credentials |
 | Snapshots | The same page gives the same snapshot twice; restricted values are masked |
 | Isolation | Two identities never share a process or a profile; two runs on one identity share a sign-in and nothing else they should not |
-| Speed | Each budgeted path in spec section 9, measured |
+| Speed | Each budgeted path in spec section 225, measured |
 
 Results are kept as a table per implementation and operating system. The Phase 0 spike fills in the first rows for each candidate base; choosing a base means comparing those tables.
 

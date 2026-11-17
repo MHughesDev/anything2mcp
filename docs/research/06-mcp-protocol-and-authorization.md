@@ -1,6 +1,6 @@
 # Research: the MCP protocol and authorization for a shared server
 
-**Status:** gathered from web searches on 2026-11-15. The pages on modelcontextprotocol.io are primary; several findings come from secondary write-ups and are marked. The full specification was not read end to end, so re-check each point against the specification before building [front doors](../spec/22-front-doors.md).
+**Status:** gathered from web searches on 2026-11-15. The pages on modelcontextprotocol.io are primary; several findings come from secondary write-ups and are marked. The full specification was not read end to end, so re-check each point against the specification before building [front doors](../spec/2-kernel/222-front-doors-and-the-local-engine.md).
 
 ## Findings
 
@@ -21,7 +21,7 @@
 - Secondary sources report: clients must send the RFC 8707 `resource` parameter; the server must reject tokens not issued for it; token passthrough to downstream APIs is forbidden; clients validate the issuer of authorization responses (RFC 9207). [Scalekit](https://www.scalekit.com/blog/mcp-authorization-guide), [SSOJet](https://ssojet.com/blog/mcp-authentication-oauth-tokens-security-ai-connections)
 - One secondary source reports an "Enterprise-Managed Authorization" extension shipped in June 2026. Not verified. [rohitraj.tech](https://rohitraj.tech/notes/mcp-server-authentication-oauth-guide-2026)
 
-**Design consequence.** Anything2MCP is a resource server only. The organization's identity provider issues tokens. A caller's token is never forwarded to a target; reaching a target as the user goes through the identity modes in [spec section 16](../spec/16-identity-on-a-shared-server.md).
+**Design consequence.** Anything2MCP is a resource server only. The organization's identity provider issues tokens. A caller's token is never forwarded to a target; reaching a target as the user goes through the identity modes in [spec section 602](../spec/6-running-it/602-identity-on-a-shared-server.md).
 
 ### Elicitation
 

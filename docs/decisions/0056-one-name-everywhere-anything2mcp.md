@@ -66,6 +66,6 @@ A registry refuses `anything2mcp`, or the second pack shows that packs need some
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
-- [41-packaging-and-release.md](../spec/41-packaging-and-release.md)
-- [55-kernel-and-packs.md](../spec/55-kernel-and-packs.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)
+- [41-packaging-and-release.md](../archive/spec-2026-11/41-packaging-and-release.md)
+- [55-kernel-and-packs.md](../spec/2-kernel/202-kernel-and-packs.md)

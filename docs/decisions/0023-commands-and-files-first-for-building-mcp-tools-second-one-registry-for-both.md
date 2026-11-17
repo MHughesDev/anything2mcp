@@ -30,5 +30,5 @@ Measured agent runs show the MCP face succeeding more often or faster than comma
 
 ## Spec sections
 
-- [40-authoring-interface.md](../spec/40-authoring-interface.md)
-- [26-agent-toolkit-how-tools-get-built.md](../spec/26-agent-toolkit-how-tools-get-built.md)
+- [40-authoring-interface.md](../archive/spec-2026-11/40-authoring-interface.md)
+- [26-agent-toolkit-how-tools-get-built.md](../archive/spec-2026-11/26-agent-toolkit-how-tools-get-built.md)

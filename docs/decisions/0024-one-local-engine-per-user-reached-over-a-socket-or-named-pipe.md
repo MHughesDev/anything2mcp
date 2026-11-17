@@ -30,5 +30,5 @@ The on-demand engine proves unreliable on an operating system.
 
 ## Spec sections
 
-- [39-local-engine-and-clients.md](../spec/39-local-engine-and-clients.md)
-- [23-deployment-configurations.md](../spec/23-deployment-configurations.md)
+- [39-local-engine-and-clients.md](../archive/spec-2026-11/39-local-engine-and-clients.md)
+- [23-deployment-configurations.md](../spec/6-running-it/601-deployment-configurations.md)

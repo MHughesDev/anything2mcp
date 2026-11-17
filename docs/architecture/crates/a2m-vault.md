@@ -11,7 +11,7 @@ Sealing and opening: envelope encryption in four key layers, the key-store back 
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside, each to be verified and recorded: an authenticated cipher from a vetted Rust library; a crate over the three desktop key stores ([research note 15](../../research/15-traces-and-key-stores.md) names one); a memory-wiping crate; a multi-pattern string matcher; `tokio` for blocking calls to synchronous key stores |
 | Built in | Roadmap package 2.1, the redactor and the planted-secret test; package 2.2, sealing with the operating system's key store. The key-service back ends with the server profile, Phase 6; `vault.rotate` in Phase 9 |
-| Carries out | Spec sections [48](../../spec/48-vault-and-keys.md) and the redaction steps of [47](../../spec/47-traces-and-evidence.md); [decision 0038](../../decisions/0038-vault-keys-in-four-layers-with-the-root-in-the-os-store-or-a-key-service.md) and [decision 0030](../../decisions/0030-where-session-secrets-live.md); the engine-fault rows for the key store in [section 52](../../spec/52-when-the-engine-itself-fails.md) |
+| Carries out | Spec sections [216](../../spec/2-kernel/216-the-vault-and-its-keys.md) and the redaction steps of [217](../../spec/2-kernel/217-traces-evidence-and-repair.md); [decision 0038](../../decisions/0038-vault-keys-in-four-layers-with-the-root-in-the-os-store-or-a-key-service.md) and [decision 0030](../../decisions/0030-where-session-secrets-live.md); the engine-fault rows for the key store in [section 224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) |
 
 ## Owns
 
@@ -35,7 +35,7 @@ The order at start is therefore: the store opens its connection and runs migrati
 ## Interface
 
 ```rust
-/// The root back end: three operations, as section 48 says. A desktop back end holds the root in
+/// The root back end: three operations, as section 216 says. A desktop back end holds the root in
 /// the operating system's store and wraps in memory; a key service wraps remotely and never
 /// releases the root.
 pub trait KeyStore: Send + Sync {
@@ -108,11 +108,11 @@ impl Redactor {
 Contracts that the signatures do not show:
 
 - **The owner rule is cryptographic, not a check.** Each owner's items are sealed under that owner's key, and `SealContext.owner` is authenticated with the ciphertext. An item sealed for one owner cannot be opened under another's context, by any caller. Whether the job asking is really acting for that owner, and whether its runner holds the job's lease, is decided by the session keeper and the scheduler before they call. The vault cannot see leases, and says so rather than pretending.
-- **The redactor masks every form a secret travels in.** Exact matches are the rule of section 47. A secret is also registered in the forms text commonly carries it: percent-encoded, JSON-escaped, and base64. Each form is masked as `[redacted]`.
+- **The redactor masks every form a secret travels in.** Exact matches are the rule of section 217. A secret is also registered in the forms text commonly carries it: percent-encoded, JSON-escaped, and base64. Each form is masked as `[redacted]`.
 - **Registration outlives the secret's use.** A registered value stays registered for the life of the process, so that a log line written after a session ends is still masked. The set has a size bound; reaching it is reported through `health`, never handled by dropping old entries.
 - **Redaction never fails and never shortens the work.** `redact` has no error path. It matches over the whole text, whatever its length.
 - **A synchronous key store runs on a blocking thread.** The desktop key-store crate is synchronous, so calls to it are moved off the async threads.
-- **An unreachable key store is not an error the caller works around.** Items already opened stay in memory and keep working; nothing new is sealed or opened; the kernel reports the degraded state of section 52.
+- **An unreachable key store is not an error the caller works around.** Items already opened stay in memory and keep working; nothing new is sealed or opened; the kernel reports the degraded state of section 224.
 
 ## Used by, and uses
 
@@ -133,7 +133,7 @@ It calls only `a2m-core`, and through its two traits, the back end and the key r
 | --- | --- | --- |
 | The root key | The operating system's key store, or a key service | One entry per installation, named after the installation, never after a target |
 | Wrapped workspace and owner keys | The store, through `KeyRecords` | A table the ledger owns; one row per key and generation |
-| Wrapped data keys | Inside each `Sealed` envelope | Beside the data, as section 48 says |
+| Wrapped data keys | Inside each `Sealed` envelope | Beside the data, as section 216 says |
 | Unwrapped upper keys | Memory, wiped on drop | Cached for the process; dropped on rotation |
 | Registered secrets | Memory, wiped on drop, inside the `Redactor` | Never written anywhere |
 

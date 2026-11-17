@@ -2,7 +2,7 @@
 
 **Status:** Partial. Built from search-result summaries on 2026-11-15; no primary page was opened in full. It answers part of open briefs 7 and 18, which stay open for a proper pass.
 
-Feeds spec sections [42](../spec/42-run-ledger-design.md) and [43](../spec/43-runner-protocol.md).
+Feeds spec sections [208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and [223](../spec/2-kernel/223-the-runner-protocol.md).
 
 ## No engine gives exactly-once effects on someone else's system
 
@@ -29,7 +29,7 @@ Feeds spec sections [42](../spec/42-run-ledger-design.md) and [43](../spec/43-ru
 - Where fencing is impossible, correctness has to come from somewhere else: idempotency, a transaction, or a different design ([HackerNoon](https://hackernoon.com/distributed-locks-are-more-dangerous-than-they-look)).
 - One write-up notes a further limit: a stale write that arrives before any newer one is not refused merely because its lease expired ([OneUptime](https://oneuptime.com/blog/post/2026-09-09-etcd-fenced-lock-leases-revisions/markdown)).
 
-**Consequence.** Anything2MCP's ledger can check lease numbers, so it is fenced. The wrapped application cannot, so writes to it rest on idempotent upserts, version preconditions where the application has them, a quarantine, and a later verification read. The remaining window is written down in spec section 43.
+**Consequence.** Anything2MCP's ledger can check lease numbers, so it is fenced. The wrapped application cannot, so writes to it rest on idempotent upserts, version preconditions where the application has them, a quarantine, and a later verification read. The remaining window is written down in spec section 223.
 
 ## Workers that dial out
 

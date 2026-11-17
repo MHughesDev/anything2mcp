@@ -1,6 +1,6 @@
 # Research: designing tools for AI agents
 
-**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 21](../spec/21-agent-facing-tool-surface.md).
+**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 221](../spec/2-kernel/221-the-tool-surface-agents-see.md).
 
 ## Question
 

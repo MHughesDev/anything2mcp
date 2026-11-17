@@ -37,5 +37,5 @@ Confinement proves impractical on a major operating system, or the closed list o
 
 ## Spec sections
 
-- [61-effects-hazards-and-consent.md](../spec/61-effects-hazards-and-consent.md)
-- [18-safety-policy-and-approvals.md](../spec/18-safety-policy-and-approvals.md)
+- [61-effects-hazards-and-consent.md](../spec/2-kernel/213-effects-hazards-and-consent.md)
+- [18-safety-policy-and-approvals.md](../archive/spec-2026-11/18-safety-policy-and-approvals.md)

@@ -1,0 +1,137 @@
+# 217. Traces, evidence, and repair
+
+Everything Anything2MCP claims about a run has to be checkable afterwards. Every run can be replayed from its record, every change can be traced to a person's approval, and a change in a system is caught before a write meets it. Several parts of the system consume that record: the publish gates, the repair loop, shadow comparison, the audit, and people investigating a problem. This section says what is captured, in what form, how secrets are kept out of it, how long it is kept, how it connects to outside monitoring, and how drift is repaired ([decision 0037](../../decisions/0037-evidence-events-a-step-trace-and-artifacts-redacted-at-capture.md)).
+
+`a2m-telemetry` builds the step trace and its signature, applies the capture level, redacts at capture, and emits spans, metrics, and logs. It stores nothing durable. `a2m-ledger` seals and stores what must be kept. The engine joins the two: it asks `a2m-telemetry` for a finished piece of evidence and hands it to the store through `Control` ([crate design](../../architecture/crates/a2m-telemetry.md)).
+
+## Three layers
+
+| Layer | What it is | Size | Where it lives |
+| --- | --- | --- | --- |
+| Run events | The ledger's append-only history: state changes, intents, verifications | Small | The store ([section 208](208-runs-the-ledger-and-resume.md)) |
+| Step trace | One structured record per step: what was chosen, matched, sent, seen, and how long it took | About 2 KB per step | A blob of kind `trace`, as JSON Lines |
+| Artifacts | Snapshots, network exchanges, screenshots, desktop window trees | Large | Blobs, referenced from the step trace |
+
+## A step trace record
+
+| Group | Fields |
+| --- | --- |
+| Identity | Run, attempt, step, step kind, record, operation, plan hash, engine and driver versions |
+| Choice | Binding mode and the reason it was chosen |
+| Timing | Queue, prepare, act, confirm, and read-back durations |
+| Locating | For a mode that locates elements, which locator matched, at which position in the list, and the fingerprint score |
+| Acting | What the driver did: in the web pack, the widget-driver rung used; for HTTP, the method, path template, status, and sizes |
+| Values | For each field: the intended value, the value read back, the normalized forms, and whether they matched, each held as its sensitivity label allows |
+| Outcome | Verified, done, or the failure class and code |
+| Artifacts | References to snapshots and exchanges taken at this step |
+
+Request and response bodies are not in the step trace. They are artifacts, captured only at the levels below. The trace has a published schema, and becomes a public format once it is fixed in Phase 1.
+
+## The trace signature
+
+Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, and the values the plan declares volatile are left out. Records enter in step order; within a record, fields in a fixed order; values in a canonical text form. The signature is SHA-256 over those bytes, and the store records it on the run.
+
+- The **determinism gate** passes when five runs on the same input have the same signature ([section 403](../4-building-tools/403-testing-and-publish-gates.md); hypothesis H-16).
+- The **binding-equivalence gate** compares normalized results across bindings and, for an HTTP binding against a UI binding, the shape of the request each produced.
+- **Shadow comparison** uses the same request-shape comparison.
+
+## Capture levels
+
+| Level | Captures | Used |
+| --- | --- | --- |
+| `minimal` | Run events and step trace | Reads in production |
+| `standard` | Plus a snapshot at each checkpoint and at any failure | Writes in production; the default |
+| `full` | Plus every network exchange and a screenshot per step | Building, testing, and a time-boxed window an administrator opens to investigate |
+
+The plan and policy decide a run's level; `a2m-telemetry` applies it. Screenshots are the riskiest evidence, because they show whatever was on the screen. Outside `full` they are kept only at a failure.
+
+**When capture fails.** A failure to capture evidence never fails a read. For a write the engine decides: under `standard`, a checkpoint snapshot that cannot be kept stops the run before the next record, because the evidence the level promises is missing. A trace that passes its size limit is cut, the cut is recorded as a `truncated` limitation, and the run is not stopped for it.
+
+## Keeping secrets out
+
+Redaction happens on the runner, at capture, before anything is written or sent. Every text field passes the redactor when it is recorded, so nothing unredacted is held even in memory longer than the call. The redactor is the vault's ([section 216](216-the-vault-and-its-keys.md)).
+
+1. **Registered secrets.** Every secret the vault releases is registered with the redactor, which masks exact matches anywhere in text.
+2. **Headers and cookies.** In an exchange, only headers on a fixed allowlist are kept. Cookie and authorization values are always dropped, whatever the level.
+3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a digest, never as a value. One labelled `internal` is kept at `standard` and above. Policy may also say a labelled field is masked or left out.
+4. **Free text.** Length-limited and stripped of markup and hidden characters.
+5. **Images are masked by the pack that took them.** Only the pack knows where the password inputs and labelled fields were on its screen. It paints over them, and sends with the image a report of what it masked. An image that arrives without that report is dropped, and a limitation is recorded. The kernel never paints over an image.
+6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
+
+A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, artifact, span, metric, or log line.
+
+## Evidence in the store
+
+- **Evidence is named by a keyed digest of its content.** A blob's name is the workspace's keyed digest of its plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name.
+- **Blobs are sealed before they are written,** with the blob's name, kind, and owner as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention.
+- Event payloads, audit entries, and failure messages pass the redactor before they are written.
+
+## Formats and tools
+
+- **Step trace:** JSON Lines, one record per step, with a published schema whose version is stored with each trace blob.
+- **Network exchanges:** a subset of the HAR format, so existing viewers open them.
+- **Snapshots:** the compact accessibility snapshot the authoring tools already produce ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)).
+- **Export:** `anything2mcp trace export` writes one archive with a manifest, for attaching to a bug report.
+- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console. `run.trace` gives a summary of a run's trace with links to its artifacts.
+- **For agents:** the trace tool returns a summary and resource links. A whole trace is never returned inline ([section 221](221-the-tool-surface-agents-see.md)).
+
+## Retention
+
+Traces are kept 30 days by default and audit entries 1 year. Both can be set to company policy. Retention classes are set per blob, and a legal hold keeps evidence past its class. Run events and audit entries are append-only: triggers in the store refuse an update or a delete, except deletes of a run whose retention state is `purging`, which only the retention job sets.
+
+## The audit chain
+
+The audit log is append-only and hash-chained, one chain per workspace, so a removed, changed, or reordered entry is detectable. Each entry holds who called and, where there is one, the agent that acted for them; which tool version; the input hash; who approved; the diff hash; and the outcome. A move of the engine to a lower health state is also an audit event ([section 224](224-when-the-engine-itself-fails.md)). `audit.query` reads the log; a chain that fails its check stops the store as corrupt.
+
+## Logs
+
+The engine also writes ordinary logs for operating it: structured, one JSON object per line, with levels, rotated by size, and passed through the same redactor, in `logs/` in the data directory. Logs say what the engine did as a program. They are never the record of a run; that is the ledger and the trace. `anything2mcp engine logs` shows them. If the log directory cannot be written, the engine keeps running and logs to standard error, redacted.
+
+## Metrics and outside monitoring
+
+Nothing leaves the machine unless a person switches it on ([decision 0040](../../decisions/0040-nothing-leaves-the-machine-unless-switched-on.md)). Export through OpenTelemetry is optional and off by default on a local machine. With export off, spans and metrics are kept in memory for `engine.status` and never sent.
+
+- Each MCP call produces a span that follows OpenTelemetry's semantic conventions for MCP: the span is named for the method and the tool, and carries the method name and the tool name as attributes. Those conventions are still marked as in development, so the names may change; their spelling lives in one table in `a2m-telemetry` ([research note 15](../../research/15-traces-and-key-stores.md)).
+- Trace context sent by the calling agent in the request's metadata is honored, so the agent's trace and Anything2MCP's join into one.
+- Steps appear as child spans with Anything2MCP's own attributes: mode, binding, and failure class.
+- **No value, snapshot, or secret is ever placed in a span or a metric.** Spans carry names, timings, and outcomes only. Their attributes come from a closed set with no constructor for an arbitrary string.
+- Metrics, per tool version: call duration, and the success, mismatch, retry, and drift rates. A rising retry or drift rate is the early sign of a change in the system.
+- When the exporter cannot reach its endpoint, spans are dropped after a bounded buffer. A run is never slowed or stopped for it.
+
+## Drift and the repair loop
+
+Because locators, endpoints, and every other piece of knowledge about a system each live in one place, one repair fixes every operation and pipeline that uses them. Anything2MCP never heals a locator or any other knowledge during a run, because a wrong match on a write path silently corrupts data. Unknown means stop.
+
+When a canary or a run reports `drift`:
+
+1. The affected tools are marked unavailable. Reads through other tools continue.
+2. The repairing agent is given a fixed bundle, with restricted fields masked in all of it:
+   - the failing step's trace record;
+   - the snapshot taken at the failure;
+   - the last snapshot of the same screen or surface from a verified run or a fixture;
+   - the differences between the two;
+   - the file involved: in the web pack a screen model, an endpoint, or a platform-profile rule; in another pack, the file of its kind that holds the knowledge that drifted.
+3. The agent proposes a file change: a new locator, a fingerprint update, a schema update, a new rule. It never touches a live run. Repair is building work, done by an agent at authoring time, never at run time.
+4. The change runs through the publish gates against the test environment and the fixtures ([section 403](../4-building-tools/403-testing-and-publish-gates.md)).
+5. A person approves the diff, and it is published as a new version.
+
+## Fixtures from traces
+
+`fixture.record` turns captured evidence into a fixture for offline tests.
+
+- Values are replaced with synthetic ones of the same field type, keeping structure and lengths.
+- The fixture carries a marker stating that it was scrubbed, and a hash.
+- The linter refuses a fixture without the marker.
+
+## Overhead targets
+
+`standard` capture adds no more than 5% to a run's time. A step trace record stays near 2 KB. Both are targets until measured in the benchmarks in `bench/` ([section 225](225-performance.md)).
+
+## Open points
+
+- **The unit of a record.** The glossary's step is one driver instruction, yet the record above has one locator and the timings of a whole pass of the engine loop. The proposal is one record per step, with the binding choice on the first record of each pass and timings per step. Roadmap package 1.2 decides before the signature is defined over it, and fixes the exact schema with the first driver.
+- How a restricted value enters the signature. A plain digest of a short value can be reversed by guessing; a keyed digest differs between installations. The proposal is a keyed digest, with the determinism gate comparing within one installation.
+- Whether the check on the way out is a method of the redactor in `a2m-core`, proposed as `contains_secret`. Until then it is a comparison of the redacted text with the original.
+- The allowlist of headers, written once and shared by every pack that records exchanges.
+- How well a pack's masking of a screenshot works on screens that move while being captured.
+- Whether `full` capture should ever be allowed on a production write.

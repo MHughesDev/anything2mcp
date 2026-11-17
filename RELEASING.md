@@ -1,6 +1,6 @@
 # Releasing
 
-How a version of Anything2MCP is numbered, built, and published. The design behind it is [spec section 41](docs/spec/41-packaging-and-release.md); the state of each registry is in [publishing setup](docs/plan/publishing-setup.md).
+How a version of Anything2MCP is numbered, built, and published. The design behind it is [spec section 605](docs/spec/6-running-it/605-packaging-and-release.md); the state of each registry is in [publishing setup](docs/plan/publishing-setup.md).
 
 ## Version numbers
 

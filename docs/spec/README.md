@@ -1,84 +1,127 @@
-# Anything2MCP system design
+# Anything2MCP specification
 
-The specification, one section per file. Read in order the first time; after that, open only the sections a task touches.
+What Anything2MCP does and why, one section per file, in seven parts. Each section states the design as it stands; nothing here has to be reconciled with anything else here. Read part 1 the first time. After that, open only the sections a task touches.
 
-Sections 1 to 38 were exported from the working design document on 2026-11-15. Sections 39 to 52 were added afterwards and refine sections 7, 10, 11, 15, 17, 18, 20, 22, 23, 25, 26, 28, and 29; where they differ, the later section wins. Sections 53 to 67 were added on 2026-11-17 and widen the design from applications to any existing system, as Anything2MCP; they refine sections 5, 6, 7, 26, 29, and 41, and win where they differ. Section 67 draws the line between what the runtime automates and what it leaves to the developer. Sections 68 to 72 are the designs of five further packs, each written before its pack is built.
+How the code is arranged is in [the architecture](../architecture/README.md). Interfaces, once settled, are in the [technical reference](../reference/technical-reference.md). The order of work is the [roadmap](../plan/roadmap.md). Why each choice was made is in the [decision records](../decisions/README.md).
 
-**Side.** Each section is marked with the side of the kernel boundary it describes ([section 55](55-kernel-and-packs.md)). *Kernel*: the same whatever is being integrated. A named pack: knowledge of one kind of system. *Product-wide*: scope, method, plans, and catalogs that belong to neither. A section marked as kernel with web pack parts was written when applications were the only kind in view; its rules are the kernel's and its examples are the web pack's. This folder is the master copy.
+A section's number has three digits, and the first is its part. Sections written before 2026-11-17 had other numbers; the [archive](../archive/README.md) has the key from the old numbers to these, and keeps the sections that were consolidated.
 
-| # | Section | File | Side |
-| --- | --- | --- | --- |
-| 1 | Summary | [01-summary.md](01-summary.md) | Product-wide |
-| 2 | Requirements and guarantees | [02-requirements-and-guarantees.md](02-requirements-and-guarantees.md) | Product-wide |
-| 3 | Design principles | [03-design-principles.md](03-design-principles.md) | Product-wide |
-| 4 | System overview | [04-system-overview.md](04-system-overview.md) | Product-wide |
-| 5 | Core concepts | [05-core-concepts.md](05-core-concepts.md) | Kernel |
-| 6 | Modes and drivers | [06-modes-and-drivers.md](06-modes-and-drivers.md) | Product-wide |
-| 7 | Files and formats | [07-files-and-formats.md](07-files-and-formats.md) | Kernel |
-| 8 | Execution engine | [08-execution-engine.md](08-execution-engine.md) | Kernel |
-| 9 | Performance | [09-performance.md](09-performance.md) | Kernel |
-| 10 | Runs, ledger, and resume | [10-runs-ledger-and-resume.md](10-runs-ledger-and-resume.md) | Kernel |
-| 11 | Concurrency: many agents at once | [11-concurrency-many-agents-at-once.md](11-concurrency-many-agents-at-once.md) | Kernel |
-| 12 | Data sources and value normalization | [12-data-sources-and-value-normalization.md](12-data-sources-and-value-normalization.md) | Kernel |
-| 13 | Interface flavors | [13-interface-flavors.md](13-interface-flavors.md) | Web pack |
-| 14 | Edge cases and large applications | [14-edge-cases-and-large-applications.md](14-edge-cases-and-large-applications.md) | Web pack |
-| 15 | Identity, sign-in, and sessions | [15-identity-sign-in-and-sessions.md](15-identity-sign-in-and-sessions.md) | Kernel, with web pack parts |
-| 16 | Identity on a shared server | [16-identity-on-a-shared-server.md](16-identity-on-a-shared-server.md) | Product-wide |
-| 17 | Browser engine and runtime | [17-browser-engine-and-runtime.md](17-browser-engine-and-runtime.md) | Web pack |
-| 18 | Safety, policy, and approvals | [18-safety-policy-and-approvals.md](18-safety-policy-and-approvals.md) | Kernel |
-| 19 | Security model | [19-security-model.md](19-security-model.md) | Kernel |
-| 20 | Access control, toolsets, and tenancy | [20-access-control-toolsets-and-tenancy.md](20-access-control-toolsets-and-tenancy.md) | Kernel |
-| 21 | Agent-facing tool surface | [21-agent-facing-tool-surface.md](21-agent-facing-tool-surface.md) | Kernel |
-| 22 | Front doors | [22-front-doors.md](22-front-doors.md) | Kernel |
-| 23 | Deployment configurations | [23-deployment-configurations.md](23-deployment-configurations.md) | Product-wide |
-| 24 | Networking | [24-networking.md](24-networking.md) | Product-wide |
-| 25 | Setup and ease of use | [25-setup-and-ease-of-use.md](25-setup-and-ease-of-use.md) | Product-wide |
-| 26 | Agent toolkit: how tools get built | [26-agent-toolkit-how-tools-get-built.md](26-agent-toolkit-how-tools-get-built.md) | Kernel, with web pack parts |
-| 27 | Testing and publish gates | [27-testing-and-publish-gates.md](27-testing-and-publish-gates.md) | Kernel |
-| 28 | Observability, audit, and repair | [28-observability-audit-and-repair.md](28-observability-audit-and-repair.md) | Kernel |
-| 29 | Repository, crates, and packaging | [29-repository-crates-and-packaging.md](29-repository-crates-and-packaging.md) | Product-wide |
-| 30 | Settings | [30-settings.md](30-settings.md) | Kernel |
-| 31 | Management and operations | [31-management-and-operations.md](31-management-and-operations.md) | Product-wide |
-| 32 | Components added by the gap review | [32-components-added-by-the-gap-review.md](32-components-added-by-the-gap-review.md) | Product-wide |
-| 33 | Requirements audit | [33-requirements-audit.md](33-requirements-audit.md) | Product-wide |
-| 34 | First target archetypes | [34-first-target-archetypes.md](34-first-target-archetypes.md) | Web pack |
-| 35 | Prior art | [35-prior-art.md](35-prior-art.md) | Product-wide |
-| 36 | Build plan | [36-build-plan.md](36-build-plan.md) | Product-wide |
-| 37 | Decisions and open questions | [37-decisions-and-open-questions.md](37-decisions-and-open-questions.md) | Product-wide |
-| 38 | Sources | [38-sources.md](38-sources.md) | Product-wide |
-| 39 | The local engine and its clients | [39-local-engine-and-clients.md](39-local-engine-and-clients.md) | Kernel |
-| 40 | The authoring interface | [40-authoring-interface.md](40-authoring-interface.md) | Kernel |
-| 41 | Packaging and release | [41-packaging-and-release.md](41-packaging-and-release.md) | Product-wide |
-| 42 | Run ledger design | [42-run-ledger-design.md](42-run-ledger-design.md) | Kernel |
-| 43 | The runner protocol | [43-runner-protocol.md](43-runner-protocol.md) | Kernel |
-| 44 | The session keeper | [44-session-keeper.md](44-session-keeper.md) | Kernel, with web pack parts |
-| 45 | The policy engine | [45-policy-engine.md](45-policy-engine.md) | Kernel |
-| 46 | The target compiler and the compiled plan | [46-target-compiler-and-plan.md](46-target-compiler-and-plan.md) | Kernel |
-| 47 | Traces and evidence | [47-traces-and-evidence.md](47-traces-and-evidence.md) | Kernel |
-| 48 | The vault and its keys | [48-vault-and-keys.md](48-vault-and-keys.md) | Kernel |
-| 49 | Approval and sign-in surfaces | [49-approval-and-sign-in-surfaces.md](49-approval-and-sign-in-surfaces.md) | Kernel, with web pack parts |
-| 50 | Record identity and dependent records | [50-record-identity-and-dependent-records.md](50-record-identity-and-dependent-records.md) | Kernel |
-| 51 | Defending against a manipulated agent | [51-defending-against-a-manipulated-agent.md](51-defending-against-a-manipulated-agent.md) | Kernel |
-| 52 | When the engine itself fails | [52-when-the-engine-itself-fails.md](52-when-the-engine-itself-fails.md) | Kernel |
-| 53 | Anything2MCP: the universal runtime | [53-the-universal-runtime.md](53-the-universal-runtime.md) | Product-wide |
-| 54 | Interaction archetypes | [54-interaction-archetypes.md](54-interaction-archetypes.md) | Kernel |
-| 55 | Kernel and packs | [55-kernel-and-packs.md](55-kernel-and-packs.md) | Kernel |
-| 56 | The provider contract | [56-the-provider-contract.md](56-the-provider-contract.md) | Kernel |
-| 57 | Supervising subsystems | [57-supervising-subsystems.md](57-supervising-subsystems.md) | Kernel |
-| 58 | Discovery and findings | [58-discovery-and-findings.md](58-discovery-and-findings.md) | Kernel |
-| 59 | The evidence ladder | [59-the-evidence-ladder.md](59-the-evidence-ladder.md) | Kernel |
-| 60 | Overlaying tools on an existing system | [60-overlaying-tools-on-an-existing-system.md](60-overlaying-tools-on-an-existing-system.md) | Product-wide |
-| 61 | Effects, hazards, and consent | [61-effects-hazards-and-consent.md](61-effects-hazards-and-consent.md) | Kernel |
-| 62 | Catalog of surface kinds | [62-catalog-of-surface-kinds.md](62-catalog-of-surface-kinds.md) | Product-wide |
-| 63 | Devices and firmware | [63-devices-and-firmware.md](63-devices-and-firmware.md) | Device pack |
-| 64 | Rules for tools and capability discovery | [64-rules-for-tools-and-capability-discovery.md](64-rules-for-tools-and-capability-discovery.md) | Kernel |
-| 65 | Python-first packaging | [65-python-first-packaging.md](65-python-first-packaging.md) | Product-wide |
-| 66 | Readiness of the universal design | [66-readiness-of-the-universal-design.md](66-readiness-of-the-universal-design.md) | Product-wide |
-| 67 | The scout, and who does what | [67-the-scout-and-who-does-what.md](67-the-scout-and-who-does-what.md) | Kernel |
-| 68 | The command pack | [68-the-command-pack.md](68-the-command-pack.md) | Command pack |
-| 69 | The data pack | [69-the-data-pack.md](69-the-data-pack.md) | Data pack |
-| 70 | The file pack | [70-the-file-pack.md](70-the-file-pack.md) | File pack |
-| 71 | The stream pack | [71-the-stream-pack.md](71-the-stream-pack.md) | Stream pack |
-| 72 | The device pack | [72-the-device-pack.md](72-the-device-pack.md) | Device pack |
+## Part 1: Product
 
-Related: [technical reference](../reference/technical-reference.md) · [action catalog](../reference/action-catalog.md) · [file formats](../reference/file-formats.md) · [steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md) · [ledger schema](../reference/ledger-schema.md) · [walkthrough](../reference/walkthrough.md) · [glossary](../reference/glossary.md) · [settings examples](../reference/settings-example.md) · [decision records](../decisions/README.md) · [research notes](../research/README.md)
+What Anything2MCP is, what it promises, and what it reaches.
+
+| # | Section |
+| --- | --- |
+| 101 | [Summary](1-product/101-summary.md) |
+| 102 | [Requirements and guarantees](1-product/102-requirements-and-guarantees.md) |
+| 103 | [Design principles](1-product/103-design-principles.md) |
+| 104 | [System overview](1-product/104-system-overview.md) |
+| 105 | [Core concepts](1-product/105-core-concepts.md) |
+| 106 | [What it latches onto](1-product/106-what-it-latches-onto.md) |
+| 107 | [The bar: what the best means](1-product/107-the-bar.md) |
+
+## Part 2: Kernel
+
+What is the same whatever kind of system is integrated.
+
+| # | Section |
+| --- | --- |
+| 201 | [Archetypes and modes](2-kernel/201-archetypes-and-modes.md) |
+| 202 | [Kernel and packs](2-kernel/202-kernel-and-packs.md) |
+| 203 | [The provider contract](2-kernel/203-the-provider-contract.md) |
+| 204 | [Supervising subsystems](2-kernel/204-supervising-subsystems.md) |
+| 205 | [Target files](2-kernel/205-target-files.md) |
+| 206 | [The compiler and the plan](2-kernel/206-the-compiler-and-the-plan.md) |
+| 207 | [The engine loop](2-kernel/207-the-engine-loop.md) |
+| 208 | [Runs, the ledger, and resume](2-kernel/208-runs-the-ledger-and-resume.md) |
+| 209 | [Record identity and dependent records](2-kernel/209-record-identity-and-dependent-records.md) |
+| 210 | [Sources and value normalization](2-kernel/210-sources-and-value-normalization.md) |
+| 211 | [Concurrency: many callers at once](2-kernel/211-concurrency.md) |
+| 212 | [Policy and approvals](2-kernel/212-policy-and-approvals.md) |
+| 213 | [Effects, hazards, and consent](2-kernel/213-effects-hazards-and-consent.md) |
+| 214 | [Access control, toolsets, and tenancy](2-kernel/214-access-control-toolsets-and-tenancy.md) |
+| 215 | [Sessions and the session keeper](2-kernel/215-sessions-and-the-session-keeper.md) |
+| 216 | [The vault and its keys](2-kernel/216-the-vault-and-its-keys.md) |
+| 217 | [Traces, evidence, and repair](2-kernel/217-traces-evidence-and-repair.md) |
+| 218 | [Discovery and findings](2-kernel/218-discovery-and-findings.md) |
+| 219 | [The evidence ladder](2-kernel/219-the-evidence-ladder.md) |
+| 220 | [Actions and the authoring interface](2-kernel/220-actions-and-the-authoring-interface.md) |
+| 221 | [The tool surface agents see](2-kernel/221-the-tool-surface-agents-see.md) |
+| 222 | [Front doors and the local engine](2-kernel/222-front-doors-and-the-local-engine.md) |
+| 223 | [The runner protocol](2-kernel/223-the-runner-protocol.md) |
+| 224 | [When the engine itself fails](2-kernel/224-when-the-engine-itself-fails.md) |
+| 225 | [Performance](2-kernel/225-performance.md) |
+| 226 | [Configuration](2-kernel/226-configuration.md) |
+
+## Part 3: Packs
+
+Knowledge of one kind of system each.
+
+| # | Section |
+| --- | --- |
+| 301 | [The web pack](3-packs/301-the-web-pack.md) |
+| 302 | [The web pack: the browser engine](3-packs/302-the-web-pack-browser-engine.md) |
+| 303 | [The HTTP pack](3-packs/303-the-http-pack.md) |
+| 304 | [The MCP pack](3-packs/304-the-mcp-pack.md) |
+| 305 | [The desktop pack](3-packs/305-the-desktop-pack.md) |
+| 306 | [The command pack](3-packs/306-the-command-pack.md) |
+| 307 | [The data pack](3-packs/307-the-data-pack.md) |
+| 308 | [The file pack](3-packs/308-the-file-pack.md) |
+| 309 | [The stream pack](3-packs/309-the-stream-pack.md) |
+| 310 | [The device pack](3-packs/310-the-device-pack.md) |
+
+## Part 4: Building tools
+
+How an existing system comes to have verified tools laid over it.
+
+| # | Section |
+| --- | --- |
+| 401 | [Overlaying tools on an existing system](4-building-tools/401-overlaying-tools-on-an-existing-system.md) |
+| 402 | [The scout, and who does what](4-building-tools/402-the-scout-and-who-does-what.md) |
+| 403 | [Testing and publish gates](4-building-tools/403-testing-and-publish-gates.md) |
+| 404 | [Setup and ease of use](4-building-tools/404-setup-and-ease-of-use.md) |
+
+## Part 5: Security
+
+What is defended, against whom, and how.
+
+| # | Section |
+| --- | --- |
+| 501 | [Security model](5-security/501-security-model.md) |
+| 502 | [Defending against a manipulated agent](5-security/502-defending-against-a-manipulated-agent.md) |
+| 503 | [Approval and sign-in surfaces](5-security/503-approval-and-sign-in-surfaces.md) |
+
+## Part 6: Running it
+
+Deployment, networks, operation, and release.
+
+| # | Section |
+| --- | --- |
+| 601 | [Deployment configurations](6-running-it/601-deployment-configurations.md) |
+| 602 | [Identity on a shared server](6-running-it/602-identity-on-a-shared-server.md) |
+| 603 | [Networking](6-running-it/603-networking.md) |
+| 604 | [Management and operations](6-running-it/604-management-and-operations.md) |
+| 605 | [Packaging and release](6-running-it/605-packaging-and-release.md) |
+
+## Part 7: Project
+
+Where the design stands and what it rests on.
+
+| # | Section |
+| --- | --- |
+| 701 | [Prior art](7-project/701-prior-art.md) |
+| 702 | [Requirements audit](7-project/702-requirements-audit.md) |
+| 703 | [Decisions and open questions](7-project/703-open-questions.md) |
+| 704 | [Readiness](7-project/704-readiness.md) |
+
+## Beside the specification
+
+| Document | Holds |
+| --- | --- |
+| [Technical reference](../reference/technical-reference.md) | The crate layering, the core types, the driver interface in brief, the data model, failure codes, the command line, the local channel, REST |
+| [Action catalog](../reference/action-catalog.md) | Every action a person, an agent, or a program can ask for |
+| [File formats](../reference/file-formats.md) | The target files |
+| [Steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md) | What a step is, what a snapshot holds, how a diff is hashed |
+| [Ledger schema](../reference/ledger-schema.md) | The store's tables |
+| [Glossary](../reference/glossary.md) | One meaning per word |
+| [Walkthrough](../reference/walkthrough.md) | What the finished product should feel like |

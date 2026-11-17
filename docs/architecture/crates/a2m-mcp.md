@@ -9,9 +9,9 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: `rmcp`, the official Rust SDK named in spec section 29, its dual-revision support to be confirmed by roadmap package 0.5 and research brief 2; Tokio; Hyper |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: `rmcp`, the official Rust SDK named in spec section 605, its dual-revision support to be confirmed by roadmap package 0.5 and research brief 2; Tokio; Hyper |
 | Built in | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
-| Carries out | Spec sections [21](../../spec/21-agent-facing-tool-surface.md), [22](../../spec/22-front-doors.md) for MCP, [40](../../spec/40-authoring-interface.md) for the MCP face, [64](../../spec/64-rules-for-tools-and-capability-discovery.md); the MCP half of [49](../../spec/49-approval-and-sign-in-surfaces.md) |
+| Carries out | Spec sections [221](../../spec/2-kernel/221-the-tool-surface-agents-see.md), [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for MCP, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the MCP face, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md); the MCP half of [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) |
 
 ## Owns
 
@@ -67,7 +67,7 @@ Whether one `rmcp` server can do both is the question of package 0.5. If it cann
 
 ## Tool lists
 
-A toolset's list is the same for every caller connected to it; rights are checked at call time and a refused call is a clear `policy` result ([spec section 20](../../spec/20-access-control-toolsets-and-tenancy.md)).
+A toolset's list is the same for every caller connected to it; rights are checked at call time and a refused call is a clear `policy` result ([spec section 214](../../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)).
 
 | Toolset | Lists | Reaches without listing |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 - **Descriptions** are the published ones, or the action's summary. The first 240 characters are enough to choose.
 - **Schemas.** The input schema in a list may be the compact form, provided every difference is exact or wider. Output schemas are left out of the list unless the client asks; `tool.describe` returns them.
 - **Annotations.** `readOnlyHint` for `read`; `destructiveHint` for `irreversible` and for writes without a key; `idempotentHint` from the key.
-- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 21 and 40). For target tools the cap is `tools.listed_max`; past it, pipelines beyond the cap move to search and the list says so in the server instructions. The list's size in bytes is measured and budgeted (spec section 64 leaves the budget open).
+- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_max`; past it, pipelines beyond the cap move to search and the list says so in the server instructions. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
 - **Full listing** is a setting for clients with their own tool search. It lists every operation, and changes nothing about how calls are checked.
 
 ## Calls and results
@@ -93,7 +93,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 | `result` | `structuredContent`, matching the published output schema |
 | A one-line summary | One text content item |
 | Kept blobs: traces, diffs, snapshots, files | Resource links, never inlined; read through `resources/read` |
-| `next` | A field in the structured content, as spec section 21 shows |
+| `next` | A field in the structured content, as spec section 221 shows |
 | `error` | `isError` with the class, code, message, fix, and whether a retry is safe |
 | Text from the target | Inside fields marked untrusted, already cut and stripped by the dispatcher |
 
@@ -101,7 +101,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 
 **Elicitation.** When a run rests at `needs_login` or `needs_approval`, the result carries the link from `PersonSurface`; that includes a plain link from `give_link`, which a sign-in provider such as authorization-code sign-in needs the person to open in their own browser. Where the client supports URL-mode elicitation, the same link is also sent as an elicitation. On one machine the link is the loopback page, which can only raise the operating system's prompt; on a server it is the console page behind the identity provider's sign-in. Following the link is never an approval by itself, so giving it to an agent is safe.
 
-**Found tools.** Spec section 64 asks that a tool found by search be added to the client's list. The stateless revision has no per-connection list. Until a client can be told of a changed list without a session, the generic `a2m_tool_call` is the route, and every call is checked against the full schema either way.
+**Found tools.** Spec section 220 asks that a tool found by search be added to the client's list. The stateless revision has no per-connection list. Until a client can be told of a changed list without a session, the generic `a2m_tool_call` is the route, and every call is checked against the full schema either way.
 
 ## No client is special
 

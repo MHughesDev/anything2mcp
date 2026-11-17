@@ -1,6 +1,6 @@
 # Research: browser runtime management and bot defenses
 
-**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 17](../spec/17-browser-engine-and-runtime.md) and [section 11](../spec/11-concurrency-many-agents-at-once.md).
+**Status:** completed by a research agent on 2026-11-15. Feeds [spec section 302](../spec/3-packs/302-the-web-pack-browser-engine.md) and [section 211](../spec/2-kernel/211-concurrency.md).
 
 ## Questions
 

@@ -28,5 +28,5 @@ Remote MCP is served as stateless Streamable HTTP. Web2MCP is an OAuth 2.1 resou
 
 ## Spec sections
 
-- [22-front-doors.md](../spec/22-front-doors.md)
-- [24-networking.md](../spec/24-networking.md)
+- [22-front-doors.md](../archive/spec-2026-11/22-front-doors.md)
+- [24-networking.md](../spec/6-running-it/603-networking.md)

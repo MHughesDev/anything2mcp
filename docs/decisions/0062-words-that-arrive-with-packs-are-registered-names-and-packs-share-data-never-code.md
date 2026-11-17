@@ -41,6 +41,6 @@ Checking names at load time lets through a class of mistake the Rust compiler wo
 
 ## Spec sections
 
-- [54-interaction-archetypes.md](../spec/54-interaction-archetypes.md)
-- [55-kernel-and-packs.md](../spec/55-kernel-and-packs.md)
+- [54-interaction-archetypes.md](../archive/spec-2026-11/54-interaction-archetypes.md)
+- [55-kernel-and-packs.md](../spec/2-kernel/202-kernel-and-packs.md)
 - [The architecture](../architecture/README.md)

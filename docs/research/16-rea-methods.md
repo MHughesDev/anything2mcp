@@ -1,6 +1,6 @@
 # Research: how the REA project works, and what applies here
 
-**Status:** completed, from source. REA was read at commit `8ffea11` of <https://github.com/morluto/rea> on 2026-11-16 and 2026-11-17, by five read-only studies of different parts. Nothing in it was run. The claims the design rests on were then checked against the source by hand. What could not be determined is listed at the end. Feeds [spec sections 56 to 61, 63, and 64](../spec/README.md).
+**Status:** completed, from source. REA was read at commit `8ffea11` of <https://github.com/morluto/rea> on 2026-11-16 and 2026-11-17, by five read-only studies of different parts. Nothing in it was run. The claims the design rests on were then checked against the source by hand. What could not be determined is listed at the end. Feeds [spec sections 203, 204, 218, 219, 401, 213, 310, and 220](../spec/README.md).
 
 REA ("Reverse Engineer Anything") is a command-line tool and MCP server for understanding software without its source. It is MIT licensed, published on npm as `rea-agents`, written in TypeScript for Node.js 22 or newer, and has roughly 200 tools; its own documents record 207 and 234 at different dates.
 
@@ -93,25 +93,25 @@ Not taken: attaching to a person's own browser profile, which our decision 0031 
 
 | Idea | Where it lands |
 | --- | --- |
-| Declared capability apart from observed availability | Section 56 |
-| No priority or silent fallback between providers | Section 56 |
-| The private launch handshake; one framing; a broken stream is closed | Section 57 |
-| Every failure says whether the request ran | Section 57; it matches `possible_commit` |
-| Ownership proven at the moment of stopping; cleanup may be incomplete | Section 57 |
-| Bridges inside a host, three ways in | Sections 54 and 57 |
-| Components by digest, never fetched during a run | Sections 57 and 65 |
-| A tagged subject for every finding | Section 58 |
-| Level apart from source; never stronger than a parent | Section 58 |
-| Coverage apart from content | Section 58 |
-| Described against observed | Section 58 |
-| An unknowns ledger | Section 58 |
-| Stored evidence is not migrated | Section 58 |
-| Scenarios with named steps; shape by default; two tiers of path templates | Section 60 |
-| A model is kept only if it reproduces the recordings | Section 60 |
-| A check must be able to fail | Section 60 |
-| Hints derived only from declared effects | Section 61 |
-| Take the bytes, probe, read back as its own fact | Sections 61 and 63 |
-| The tool doctrine | Section 64 |
+| Declared capability apart from observed availability | Section 203 |
+| No priority or silent fallback between providers | Section 203 |
+| The private launch handshake; one framing; a broken stream is closed | Section 204 |
+| Every failure says whether the request ran | Section 204; it matches `possible_commit` |
+| Ownership proven at the moment of stopping; cleanup may be incomplete | Section 204 |
+| Bridges inside a host, three ways in | Sections 201 and 204 |
+| Components by digest, never fetched during a run | Sections 204 and 605 |
+| A tagged subject for every finding | Section 218 |
+| Level apart from source; never stronger than a parent | Section 218 |
+| Coverage apart from content | Section 218 |
+| Described against observed | Section 218 |
+| An unknowns ledger | Section 218 |
+| Stored evidence is not migrated | Section 218 |
+| Scenarios with named steps; shape by default; two tiers of path templates | Section 401 |
+| A model is kept only if it reproduces the recordings | Section 401 |
+| A check must be able to fail | Section 401 |
+| Hints derived only from declared effects | Section 213 |
+| Take the bytes, probe, read back as its own fact | Sections 213 and 310 |
+| The tool doctrine | Section 220 |
 
 ## What we do differently, on purpose
 

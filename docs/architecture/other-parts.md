@@ -1,6 +1,6 @@
 # The parts that are not crates
 
-The Cargo workspace is most of the product and not all of it. This page covers every other folder in the [repository layout](../spec/29-repository-crates-and-packaging.md): what it holds, what language it is in, what it may know, and when it is built. Each follows the same rule as a thin client: it holds no engine logic.
+The Cargo workspace is most of the product and not all of it. This page covers every other folder in the [repository layout](../spec/6-running-it/605-packaging-and-release.md): what it holds, what language it is in, what it may know, and when it is built. Each follows the same rule as a thin client: it holds no engine logic.
 
 | Folder | Holds | Language | State |
 | --- | --- | --- | --- |
@@ -22,11 +22,11 @@ A test stand imitates the part of one kind of system that makes the kind hard, a
 | Stand | Imitates | Control interface reports | Designed in | Package |
 | --- | --- | --- | --- | --- |
 | `targets/example-app` | A web application with a JSON interface | What is stored, how many times each record was written, which faults are set | The [test application plan](../plan/test-application.md) | 0.3, done |
-| A command-line tool | A program with typed arguments, several output forms, a prompt, slow output | What it stored, every invocation it received | [Section 68](../spec/68-the-command-pack.md) | D2 |
-| A local database | A relational store with keys and constraints | The rows as stored, by a control query | [Section 69](../spec/69-the-data-pack.md) | G1 |
-| Files in a temporary folder | Files in each supported format | The bytes on disk and their digests | [Section 70](../spec/70-the-file-pack.md) | H1 |
-| A small local broker | A queue and a topic, with retained and unretained messages | Every message received and delivered, and to whom | [Section 71](../spec/71-the-stream-pack.md) | J1 |
-| A simulated device | A device with readable and writable points, and its own update mechanism | Every frame received, and the state of its simulated outputs | [Section 72](../spec/72-the-device-pack.md) | K1 |
+| A command-line tool | A program with typed arguments, several output forms, a prompt, slow output | What it stored, every invocation it received | [Section 306](../spec/3-packs/306-the-command-pack.md) | D2 |
+| A local database | A relational store with keys and constraints | The rows as stored, by a control query | [Section 307](../spec/3-packs/307-the-data-pack.md) | G1 |
+| Files in a temporary folder | Files in each supported format | The bytes on disk and their digests | [Section 308](../spec/3-packs/308-the-file-pack.md) | H1 |
+| A small local broker | A queue and a topic, with retained and unretained messages | Every message received and delivered, and to whom | [Section 309](../spec/3-packs/309-the-stream-pack.md) | J1 |
+| A simulated device | A device with readable and writable points, and its own update mechanism | Every frame received, and the state of its simulated outputs | [Section 310](../spec/3-packs/310-the-device-pack.md) | K1 |
 | A small MCP server | An upstream server whose tools can change, and whose connection can drop after a commit | Every call it received | The design of [`a2m-pack-mcp`](crates/a2m-pack-mcp.md) | 8.2 |
 
 Rules for every stand:
@@ -51,7 +51,7 @@ The target files used in every document, test, and fixture describe an imaginary
 | Talks to | The local engine over the local channel, or a server over HTTPS | The same |
 | Must never | Contain a branch on what a result means; hold a credential; start a browser | The same |
 
-A client is generated, not written. The generator reads the action registry ([`a2m-actions`](crates/a2m-actions.md)) and is run by `xtask`; CI fails when a generated file differs from what the generator produces. [Spec section 65](../spec/65-python-first-packaging.md) and [section 41](../spec/41-packaging-and-release.md) give the packaging. Provider packages installed with pip are found through an entry point and are listed as present and not enabled until a person enables them ([`a2m-provider`](crates/a2m-provider.md)).
+A client is generated, not written. The generator reads the action registry ([`a2m-actions`](crates/a2m-actions.md)) and is run by `xtask`; CI fails when a generated file differs from what the generator produces. [Spec section 605](../spec/6-running-it/605-packaging-and-release.md) and [section 605](../spec/6-running-it/605-packaging-and-release.md) give the packaging. Provider packages installed with pip are found through an entry point and are listed as present and not enabled until a person enables them ([`a2m-provider`](crates/a2m-provider.md)).
 
 ## The pages: `web/console/`
 
@@ -63,11 +63,11 @@ Three small sets of pages, served by [`a2m-api`](crates/a2m-api.md) on a server 
 | Sign-in | The person whose session is being made | On a server, it shows the runner's browser; the person's credentials go to the system, never to the product |
 | Console | Administrators | Every change it makes is an action from the registry. It has no route of its own into the kernel |
 
-The pages are static files built ahead of time and embedded in the binary. They call the REST interface and nothing else. [Spec section 49](../spec/49-approval-and-sign-in-surfaces.md) designs the first two.
+The pages are static files built ahead of time and embedded in the binary. They call the REST interface and nothing else. [Spec section 503](../spec/5-security/503-approval-and-sign-in-surfaces.md) designs the first two.
 
 ## Data, not code: `profiles/`
 
-A platform profile says how one family of web interface behaves: how to detect it, how to know a page is ready, which locators to trust. Profiles are data files read by the web pack ([`a2m-pack-web-ui`](crates/a2m-pack-web-ui.md)), validated against a schema at build time, and embedded in the binary. Adding a profile changes no Rust. The schema is in the [technical reference](../reference/technical-reference.md#platform-profile-schema).
+A platform profile says how one family of web interface behaves: how to detect it, how to know a page is ready, which locators to trust. Profiles are data files read by the web pack ([`a2m-pack-web-ui`](crates/a2m-pack-web-ui.md)), validated against a schema at build time, and embedded in the binary. Adding a profile changes no Rust. The schema is in the [technical reference](../spec/3-packs/301-the-web-pack.md#platform-profiles).
 
 ## Plug-ins: `plugins/`
 
@@ -75,7 +75,7 @@ Holds the written protocol a plug-in speaks, a conformance check any plug-in can
 
 ## Measurement: `bench/`
 
-The harness measures the product's overhead beyond the test stand's own time, for each scenario in the [benchmark matrix](../reference/technical-reference.md#benchmark-matrix). It runs in CI, stores its results, and fails the build on a regression over ten percent on a budgeted path. Budgets are targets until measured ([spec section 9](../spec/09-performance.md)).
+The harness measures the product's overhead beyond the test stand's own time, for each scenario in the [benchmark matrix](../reference/technical-reference.md#benchmark-matrix). It runs in CI, stores its results, and fails the build on a regression over ten percent on a budgeted path. Budgets are targets until measured ([spec section 225](../spec/2-kernel/225-performance.md)).
 
 ## Tasks: `xtask/`
 

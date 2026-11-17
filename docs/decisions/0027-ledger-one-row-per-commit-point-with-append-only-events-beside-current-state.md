@@ -30,5 +30,5 @@ Phase 3 tests show a rule cannot be enforced on SQLite or Postgres as designed.
 
 ## Spec sections
 
-- [42-run-ledger-design.md](../spec/42-run-ledger-design.md)
-- [10-runs-ledger-and-resume.md](../spec/10-runs-ledger-and-resume.md)
+- [42-run-ledger-design.md](../archive/spec-2026-11/42-run-ledger-design.md)
+- [10-runs-ledger-and-resume.md](../archive/spec-2026-11/10-runs-ledger-and-resume.md)

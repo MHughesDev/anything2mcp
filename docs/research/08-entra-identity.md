@@ -1,6 +1,6 @@
 # Research: acting as a user, or as a service, under Microsoft Entra ID
 
-**Status:** partial. Gathered from web searches on 2026-11-15; a dedicated research round did not run. Items under "From general knowledge" are unverified. Feeds [spec section 15](../spec/15-identity-sign-in-and-sessions.md) and [section 16](../spec/16-identity-on-a-shared-server.md).
+**Status:** partial. Gathered from web searches on 2026-11-15; a dedicated research round did not run. Items under "From general knowledge" are unverified. Feeds [spec section 215](../spec/2-kernel/215-sessions-and-the-session-keeper.md) and [section 602](../spec/6-running-it/602-identity-on-a-shared-server.md).
 
 ## Findings
 

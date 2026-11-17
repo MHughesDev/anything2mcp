@@ -28,5 +28,5 @@ Never for the template and file rules.
 
 ## Spec sections
 
-- [51-defending-against-a-manipulated-agent.md](../spec/51-defending-against-a-manipulated-agent.md)
-- [19-security-model.md](../spec/19-security-model.md)
+- [51-defending-against-a-manipulated-agent.md](../spec/5-security/502-defending-against-a-manipulated-agent.md)
+- [19-security-model.md](../spec/5-security/501-security-model.md)

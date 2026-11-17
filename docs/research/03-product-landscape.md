@@ -1,6 +1,6 @@
 # Research: products that turn applications into APIs or agent tools
 
-**Status:** completed by a research agent on 2026-11-15, plus search results gathered in the design sessions. Only browser-to-mcp, Pomerado, and the pip `anything2mcp` package were inspected at code level (see [10-code-reviews.md](10-code-reviews.md)); everything else is from product pages, docs, and listings. Feeds [spec section 35](../spec/35-prior-art.md).
+**Status:** completed by a research agent on 2026-11-15, plus search results gathered in the design sessions. Only browser-to-mcp, Pomerado, and the pip `anything2mcp` package were inspected at code level (see [10-code-reviews.md](10-code-reviews.md)); everything else is from product pages, docs, and listings. Feeds [spec section 701](../spec/7-project/701-prior-art.md).
 
 ## The four underlying mechanisms
 

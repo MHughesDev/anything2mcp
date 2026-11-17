@@ -28,5 +28,5 @@ Measured budgets turn out unrealistic; revise the numbers, not the order.
 
 ## Spec sections
 
-- [03-design-principles.md](../spec/03-design-principles.md)
-- [09-performance.md](../spec/09-performance.md)
+- [03-design-principles.md](../spec/1-product/103-design-principles.md)
+- [09-performance.md](../spec/2-kernel/225-performance.md)
