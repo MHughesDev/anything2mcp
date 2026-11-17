@@ -255,7 +255,7 @@ pub trait ProviderAction: Send + Sync {
     fn output_schema(&self) -> &JsonSchema;
     fn handle<'a>(&'a self, input: &'a Values, cx: &'a ActionContext<'a>) -> BoxFuture<'a, Result<Values, Failure>>;
 }
-pub struct ActionContext<'a> { pub roots: &'a Roots, pub registry: &'a Registry, pub redact: &'a dyn Redact }
+pub struct ActionContext<'a> { pub roots: &'a Roots, pub registry: &'a Registry, pub redact: &'a dyn Redact, pub paths: &'a CheckedPaths }
 
 #[derive(Clone)]
 pub struct Registry { /* immutable; an Arc inside */ }

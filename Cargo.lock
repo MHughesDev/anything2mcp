@@ -1021,6 +1021,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-desk"
+version = "0.0.1"
+dependencies = [
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "example-device"
 version = "0.0.1"
 dependencies = [
