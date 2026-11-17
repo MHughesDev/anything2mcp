@@ -350,8 +350,8 @@ class Actions {
   }
 
   /**
-   * Turn captured evidence into a scrubbed fixture. The engine action is
-   * `fixture.record`.
+   * Record an offline test's fixture from one real read, every value scrubbed by rule,
+   * and the test that replays it. The engine action is `fixture.record`.
    */
   fixtureRecord(input, options = {}) {
     return this.call("fixture.record", input, options);

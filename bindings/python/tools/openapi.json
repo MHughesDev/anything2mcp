@@ -7120,16 +7120,25 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
-         "run_id": {
+         "input": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
+         "name": {
           "type": "string"
          },
          "target": {
+          "type": "string"
+         },
+         "tool": {
           "type": "string"
          }
         },
         "required": [
          "target",
-         "run_id"
+         "tool"
         ],
         "type": "object"
        }
@@ -7159,8 +7168,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "files": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "fixture": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -7187,9 +7205,42 @@
               "when"
              ],
              "type": "object"
+            },
+            "review": {
+             "type": "string"
+            },
+            "scrubbed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "test": {
+             "type": "string"
+            },
+            "test_state": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "tool",
+            "fixture",
+            "test",
+            "files",
+            "scrubbed",
+            "test_state",
+            "review"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -7231,8 +7282,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "files": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "fixture": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -7259,9 +7319,42 @@
               "when"
              ],
              "type": "object"
+            },
+            "review": {
+             "type": "string"
+            },
+            "scrubbed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "test": {
+             "type": "string"
+            },
+            "test_state": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "tool",
+            "fixture",
+            "test",
+            "files",
+            "scrubbed",
+            "test_state",
+            "review"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -7293,7 +7386,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Turn captured evidence into a scrubbed fixture.",
+    "summary": "Record an offline test's fixture from one real read, every value scrubbed by rule, and the test that replays it.",
     "x-action": "fixture.record"
    }
   },

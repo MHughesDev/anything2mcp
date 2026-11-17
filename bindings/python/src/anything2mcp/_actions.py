@@ -611,19 +611,24 @@ class Actions:
     def fixture_record(
         self,
         *,
-        run_id: str,
         target: str,
+        tool: str,
+        input: Optional[Dict[str, Any]] = None,
+        name: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Turn captured evidence into a scrubbed fixture.
+        """Record an offline test's fixture from one real read, every value
+        scrubbed by rule, and the test that replays it.
 
         The engine action is ``fixture.record``.
         """
         return self._action(
             "fixture.record",
             {
-                "run_id": run_id,
                 "target": target,
+                "tool": tool,
+                "input": input,
+                "name": name,
             },
             idempotency_key,
         )

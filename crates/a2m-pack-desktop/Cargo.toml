@@ -21,6 +21,8 @@ tokio.workspace = true
 # back end yet, and so no system crate.
 [target.'cfg(target_os = "linux")'.dependencies]
 futures-core.workspace = true
+# A program's digest, as the surface states it: SHA-256 of its file.
+sha2.workspace = true
 zbus.workspace = true
 
 [dev-dependencies]

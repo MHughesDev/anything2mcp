@@ -1,0 +1,419 @@
+//! The `screens/` file kind for surfaces of the kind `desktop`: its schema,
+//! and its compilation into the screens of the plan.
+//!
+//! Locators live here and nowhere else (rule 8). A desktop locator is a
+//! role and an accessible name, both exact: no text near it, no selector,
+//! no position on the screen. A screen declares no action in this version
+//! of the pack, so a screen file never describes a write.
+
+use std::collections::BTreeMap;
+
+use a2m_core::{FileKindName, LintCode, PackPayload, SurfaceKind};
+use a2m_files::{
+    CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
+    KindContext, Located, Place, Stage,
+};
+
+use crate::codes::shown;
+use crate::model::{
+    Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, WindowMatch,
+};
+use crate::roles;
+
+/// The name of this pack, as its manifest gives it.
+pub const PACK: &str = "desktop";
+/// The name of the file kind.
+pub const SCREEN_KIND: FileKindName = FileKindName::fixed("screen");
+/// The surface kind this pack serves.
+pub const DESKTOP_SURFACE: SurfaceKind = SurfaceKind::fixed("desktop");
+
+/// The controls this pack has a rule for: a value read as text. Each is
+/// declared in the manifest and registered with the compiler, which
+/// refuses any other.
+pub const CONTROLS: &[&str] = &["text"];
+
+/// A code of this pack's compiler.
+pub(crate) fn code(rule: &'static str) -> LintCode {
+    // Every rule name in this crate is a lowercase name; a test holds that.
+    LintCode::new(&format!("{PACK}.{rule}")).unwrap_or(LintCode::fixed("desktop.invalid"))
+}
+
+pub(crate) fn problem(
+    rule: &'static str,
+    stage: Stage,
+    at: &Place,
+    message: impl Into<String>,
+    fix: &str,
+) -> Diagnostic {
+    Diagnostic::error(code(rule), stage, at, message, fix)
+}
+
+fn locator_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("role", JsonSchema::text())
+        .required("name", JsonSchema::text())
+}
+
+fn condition_schema(depth: u8) -> JsonSchema {
+    let schema = JsonSchema::object()
+        .optional("visible", locator_schema())
+        .optional(
+            "text",
+            JsonSchema::object()
+                .required("locate", locator_schema())
+                .optional("equals", JsonSchema::text())
+                .optional("contains", JsonSchema::text()),
+        );
+    if depth == 0 {
+        schema
+    } else {
+        schema.optional(
+            "all",
+            JsonSchema::non_empty_list(condition_schema(depth - 1)),
+        )
+    }
+}
+
+fn locate_schema() -> JsonSchema {
+    JsonSchema::non_empty_list(locator_schema())
+}
+
+/// The schema of one screen.
+pub(crate) fn screen_schema() -> JsonSchema {
+    let field = JsonSchema::object()
+        .required("type", JsonSchema::field_type())
+        .required("control", JsonSchema::control())
+        .required("locate", locate_schema());
+    let rows = JsonSchema::object()
+        .required("locate", locate_schema())
+        .required("header", JsonSchema::non_empty_list(JsonSchema::text()))
+        .required(
+            "columns",
+            JsonSchema::map_of(
+                JsonSchema::object()
+                    .required("header", JsonSchema::text())
+                    .required("type", JsonSchema::field_type()),
+            ),
+        );
+    JsonSchema::object()
+        .required("screen", JsonSchema::name())
+        .optional("surface", JsonSchema::surface())
+        .required(
+            "reach",
+            JsonSchema::object().required(
+                "window",
+                JsonSchema::object()
+                    .required("role", JsonSchema::words(roles::WINDOW_ROLES))
+                    .required("title", JsonSchema::text()),
+            ),
+        )
+        .required("ready", condition_schema(2))
+        .optional("fields", JsonSchema::map_of(field))
+        .optional("rows", rows)
+}
+
+/// Reads documents into the model, collecting what is wrong.
+struct Reader {
+    problems: Diagnostics,
+}
+
+impl Reader {
+    fn refuse(&mut self, rule: &'static str, at: &Place, message: String, fix: &str) {
+        self.problems
+            .push(problem(rule, Stage::Resolve, at, message, fix));
+    }
+
+    fn locator(&mut self, doc: &Located<Doc>) -> Option<Locator> {
+        let role = doc.text("role")?.to_owned();
+        let name = doc.text("name")?.to_owned();
+        if !roles::known(&role) {
+            self.refuse(
+                "role_unknown",
+                &doc.at,
+                format!(
+                    "The role `{}` is not one the desktop pack locates by.",
+                    shown(&role)
+                ),
+                "Write one of the pack's role words, such as `entry`, `label`, `table`, or `push_button`.",
+            );
+            return None;
+        }
+        if name.trim().is_empty() {
+            self.refuse(
+                "unnamed",
+                &doc.at,
+                "A desktop locator names the element; an element with no accessible name cannot be told apart from others of its role.".to_owned(),
+                "Name the element as the application names it. A control the application gives no name is not read in this version.",
+            );
+            return None;
+        }
+        Some(Locator { role, name })
+    }
+
+    fn locators(&mut self, doc: &Located<Doc>) -> Option<Vec<Locator>> {
+        let list = doc.get("locate")?;
+        let found: Vec<Locator> = list
+            .items()
+            .iter()
+            .filter_map(|item| self.locator(item))
+            .collect();
+        (found.len() == list.items().len()).then_some(found)
+    }
+
+    fn condition(&mut self, doc: &Located<Doc>) -> Option<Cond> {
+        let mut found = Vec::new();
+        for entry in doc.entries() {
+            let value = &entry.value;
+            let condition = match entry.key.value.as_str() {
+                "visible" => Cond::Visible(self.locator(value)?),
+                "text" => {
+                    let locate = self.locator(value.get("locate")?)?;
+                    match (value.text("equals"), value.text("contains")) {
+                        (Some(text), None) => Cond::Text {
+                            locate,
+                            text: text.to_owned(),
+                            contains: false,
+                        },
+                        (None, Some(text)) => Cond::Text {
+                            locate,
+                            text: text.to_owned(),
+                            contains: true,
+                        },
+                        _ => {
+                            self.refuse(
+                                "condition_invalid",
+                                &value.at,
+                                "A `text` condition states exactly one of `equals` and `contains`."
+                                    .to_owned(),
+                                "Write one of them.",
+                            );
+                            return None;
+                        }
+                    }
+                }
+                "all" => {
+                    let of: Vec<Cond> = value
+                        .items()
+                        .iter()
+                        .filter_map(|item| self.condition(item))
+                        .collect();
+                    if of.len() != value.items().len() {
+                        return None;
+                    }
+                    Cond::All(of)
+                }
+                _ => return None,
+            };
+            found.push(condition);
+        }
+        if found.len() != 1 {
+            self.refuse(
+                "condition_invalid",
+                &doc.at,
+                "A condition is exactly one of `visible`, `text`, and `all`.".to_owned(),
+                "Write one; join several with `all`.",
+            );
+            return None;
+        }
+        found.pop()
+    }
+
+    fn rows(&mut self, doc: &Located<Doc>) -> Option<Rows> {
+        let locate = self.locators(doc)?;
+        let header: Vec<String> = doc
+            .get("header")?
+            .items()
+            .iter()
+            .filter_map(|item| item.as_text().map(str::to_owned))
+            .collect();
+        let mut columns = BTreeMap::new();
+        for entry in doc.get("columns")?.entries() {
+            let heading = entry.value.text("header").unwrap_or_default();
+            let position = header.iter().position(|known| known == heading);
+            let unique = header.iter().filter(|known| *known == heading).count() == 1;
+            match position.and_then(|position| u32::try_from(position).ok()) {
+                Some(position) if unique => {
+                    columns.insert(entry.key.value.clone(), position);
+                }
+                _ => self.refuse(
+                    "column_unknown",
+                    &entry.value.at,
+                    format!(
+                        "The column `{}` names the heading `{}`, which the table's `header` does not list exactly once.",
+                        shown(&entry.key.value),
+                        shown(heading)
+                    ),
+                    "Write the heading as `header` lists it.",
+                ),
+            }
+        }
+        Some(Rows {
+            locate,
+            header,
+            columns,
+        })
+    }
+
+    fn screen(&mut self, doc: &Located<Doc>, surface: &str) -> Option<Screen> {
+        let before = self.problems.len();
+        let window = doc.get("reach")?.get("window")?;
+        let title = window.text("title")?.to_owned();
+        if title.trim().is_empty() {
+            self.refuse(
+                "unnamed",
+                &window.at,
+                "A screen's window is matched by its title, and this one states none.".to_owned(),
+                "Write the window's title as the application gives it. A window with no title is not read in this version.",
+            );
+        }
+        let window = WindowMatch {
+            role: window.text("role")?.to_owned(),
+            title,
+        };
+        let ready = self.condition(doc.get("ready")?);
+        let mut fields = BTreeMap::new();
+        for entry in doc.get("fields").map(Located::entries).unwrap_or_default() {
+            let control = entry.value.text("control").unwrap_or_default().to_owned();
+            if let Some(locate) = self.locators(&entry.value) {
+                fields.insert(entry.key.value.clone(), Field { control, locate });
+            }
+        }
+        let rows = match doc.get("rows") {
+            Some(rows) => self.rows(rows),
+            None => None,
+        };
+        if self.problems.len() != before {
+            return None;
+        }
+        Some(Screen {
+            surface: surface.to_owned(),
+            window,
+            ready: ready?,
+            fields,
+            rows,
+        })
+    }
+}
+
+/// The `screens/` file kind, for `desktop` surfaces.
+pub(crate) struct ScreenKind {
+    schema: JsonSchema,
+    kinds: Vec<SurfaceKind>,
+}
+
+impl ScreenKind {
+    pub(crate) fn new() -> Self {
+        Self {
+            schema: screen_schema(),
+            kinds: vec![DESKTOP_SURFACE],
+        }
+    }
+}
+
+impl FileKind for ScreenKind {
+    fn name(&self) -> FileKindName {
+        SCREEN_KIND
+    }
+
+    fn surface_kinds(&self) -> &[SurfaceKind] {
+        &self.kinds
+    }
+
+    fn folder(&self) -> &str {
+        "screens"
+    }
+
+    fn schema(&self) -> &JsonSchema {
+        &self.schema
+    }
+
+    /// A desktop screen declares no action in this version: it never
+    /// describes a write.
+    fn writes(&self, _doc: &Located<Doc>) -> bool {
+        false
+    }
+
+    fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
+        doc.get("screen")
+            .and_then(|name| {
+                name.as_text().map(|text| {
+                    Located::new(
+                        DefinedName {
+                            name: text.to_owned(),
+                        },
+                        name.at.clone(),
+                    )
+                })
+            })
+            .into_iter()
+            .collect()
+    }
+
+    fn expressions(&self, _doc: &Located<Doc>) -> Vec<ExprSite> {
+        Vec::new()
+    }
+
+    fn compile(
+        &self,
+        docs: &[Located<Doc>],
+        cx: &KindContext<'_>,
+    ) -> Result<CompiledSection, Diagnostics> {
+        let mut section = ScreenSection::new();
+        let mut reader = Reader {
+            problems: Diagnostics::new(),
+        };
+        for doc in docs {
+            let name = doc.text("screen").unwrap_or_default();
+            let Some(surface) = cx.surface_of(doc) else {
+                continue;
+            };
+            if let Some(screen) = reader.screen(doc, surface.name.as_str()) {
+                section.insert(name.to_owned(), screen);
+            }
+        }
+        if !reader.problems.is_empty() {
+            return Err(reader.problems);
+        }
+        PackPayload::encode(&section)
+            .map(|payload| CompiledSection {
+                format: PAYLOAD_FORMAT,
+                payload,
+            })
+            .map_err(|failure| {
+                Diagnostics::from(problem(
+                    "not_encodable",
+                    Stage::Lower,
+                    &docs.first().map_or_else(
+                        || Place::start_of(&a2m_files::RelPath::target_file()),
+                        |doc| doc.at.clone(),
+                    ),
+                    failure.message().to_owned(),
+                    "Report this to the desktop pack's author.",
+                ))
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_rule_name_is_a_code_of_this_pack() {
+        for rule in [
+            "role_unknown",
+            "unnamed",
+            "condition_invalid",
+            "column_unknown",
+            "not_encodable",
+            "unknown_screen",
+            "unknown_field",
+            "writes_not_built",
+        ] {
+            assert_eq!(code(rule).as_str(), format!("desktop.{rule}"));
+        }
+        for control in CONTROLS {
+            assert!(a2m_core::ControlName::new(control).is_ok());
+        }
+    }
+}

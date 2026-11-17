@@ -234,8 +234,10 @@ export interface FindingListInput {
  * The input of `fixture.record`.
  */
 export interface FixtureRecordInput {
-  run_id: string;
   target: string;
+  tool: string;
+  input?: Record<string, unknown>;
+  name?: string;
 }
 
 /**
@@ -882,8 +884,8 @@ export declare abstract class Actions {
   findingList(input: FindingListInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Turn captured evidence into a scrubbed fixture. The engine action is
-   * `fixture.record`.
+   * Record an offline test's fixture from one real read, every value scrubbed by rule,
+   * and the test that replays it. The engine action is `fixture.record`.
    */
   fixtureRecord(input: FixtureRecordInput, options?: CallOptions): Promise<Response>;
 
