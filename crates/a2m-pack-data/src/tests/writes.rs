@@ -76,7 +76,8 @@ async fn an_update_is_written_once_and_reads_back() {
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
     let stored = scene.db.stored_row(Table::OrderLines, &LINE).unwrap().unwrap();
     assert_eq!(stored.text("length_in"), Some("151.25"));
-    assert_eq!(stored.text("unit_price"), Some("13.10"));
+    // A decimal is bound as its exact text, which carries no trailing zero.
+    assert_eq!(stored.text("unit_price"), Some("13.1"));
     assert_eq!(stored.integer("row_version"), Some(2));
 
     // Read-back, in a new read-only transaction after the commit.
