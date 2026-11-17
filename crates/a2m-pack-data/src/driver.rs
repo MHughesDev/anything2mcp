@@ -27,8 +27,9 @@ use a2m_core::{
     FailsAs, Failure, FailureClass, FailureCode, RecordKey, Redact, Step, Value, Values,
 };
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, CheckedPath, Cleanup, Deadline, Driver, DriverHealth, FileIdentity,
+    Observed, Posture, PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput,
+    StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
 
@@ -53,10 +54,12 @@ pub(crate) type Openers = Arc<dyn Fn(&str) -> Option<Arc<dyn Opener>> + Send + S
 
 #[cfg(feature = "postgres")]
 /// Which connections may serve the next run: those of one surface, opened
-/// with one session's credentials at one epoch. A connection is never handed
-/// to a run of another session, nor of the same session after its
-/// credentials were renewed.
-pub(crate) type PoolKey = (String, String, u64);
+/// with one session's credentials at one epoch, to one address, port,
+/// database, and schema, as one role, by one link mode. A connection is
+/// never handed to a run of another session, nor of the same session after
+/// its credentials were renewed, nor to a run whose surface now leads
+/// elsewhere.
+pub(crate) type PoolKey = (String, String, u64, crate::store::Leads);
 
 /// The most idle connections kept for one key and one access.
 #[cfg(feature = "postgres")]
@@ -77,14 +80,18 @@ type Idle = (Access, Box<dyn Conn>);
 
 #[cfg(feature = "postgres")]
 impl Pool {
-    /// An idle connection of the key and the access, when one is usable.
+    /// An idle connection of the key and the access, when one is usable and
+    /// says it leads where the key does.
     fn take(&self, key: &PoolKey, access: Access) -> Option<Box<dyn Conn>> {
         let mut idle = self.idle.lock().unwrap_or_else(PoisonError::into_inner);
-        // A connection of the same session at an older epoch is never used
-        // again: its credentials were replaced.
+        // A connection of the same surface and session at an older epoch, or
+        // to another place, is never used again: its credentials were
+        // replaced, or the surface was published again to lead elsewhere.
         let stale: Vec<PoolKey> = idle
             .keys()
-            .filter(|held| held.0 == key.0 && held.1 == key.1 && held.2 != key.2)
+            .filter(|held| {
+                held.0 == key.0 && held.1 == key.1 && (held.2 != key.2 || held.3 != key.3)
+            })
             .cloned()
             .collect();
         for held in stale {
@@ -97,7 +104,10 @@ impl Pool {
         let conns = idle.get_mut(key)?;
         while let Some(position) = conns.iter().position(|(held, _)| *held == access) {
             let (_, conn) = conns.remove(position);
-            if conn.usable() {
+            // The connection's own record of where it leads, held to the
+            // plan's surface again here: a connection that says anything
+            // else is closed and never used.
+            if conn.usable() && conn.leads_to() == Some(&key.3) {
                 return Some(conn);
             }
             close(conn);
@@ -155,6 +165,10 @@ pub(crate) struct Session {
     /// The name of the surface the session was prepared for.
     surface: String,
     at: StoreAt,
+    /// The embedded store's file by its checked path, with its identity when
+    /// the run was prepared: every connection opened by its name is held to
+    /// it.
+    file: Option<(CheckedPath, FileIdentity)>,
     opener: Arc<dyn Opener>,
     /// Where the session's connections go at release, for a store whose
     /// connections are kept: the pool and the key.
@@ -256,6 +270,28 @@ fn too_powerful() -> Failure {
     )
 }
 
+/// The connection, or the file, does not lead where the plan names.
+#[cfg(feature = "postgres")]
+fn leads_elsewhere() -> Failure {
+    failure(
+        FailureClass::Policy,
+        codes::CONNECTION_LEADS_ELSEWHERE,
+        "The connection does not lead where the plan's surface names: the server reports another database, role, or `search_path`, or another address or port than when the connection was opened. It was closed, and nothing was sent.",
+        "Check the surface's address, port, database, and schema, and what else may change a connection's settings; then start the run again.",
+    )
+}
+
+/// The embedded store's file is no longer the file the run was prepared
+/// with: another file was put at its name.
+fn file_replaced() -> Failure {
+    failure(
+        FailureClass::Drift,
+        codes::STORE_FILE_REPLACED,
+        "The store's file was replaced by another file at its name since the run was prepared, so nothing was sent to it.",
+        "Check what replaced the file, then start the run again.",
+    )
+}
+
 fn not_by_key(message: &str) -> Failure {
     failure(
         FailureClass::Drift,
@@ -343,6 +379,8 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
         Refusal::NotGuarded => unexpected(
             "The store did not take a setting that holds the connection to its access and to its one file, or its one database, schema, and identity.",
         ),
+        #[cfg(feature = "postgres")]
+        Refusal::Elsewhere => leads_elsewhere(),
         #[cfg(feature = "postgres")]
         Refusal::TooPowerful => too_powerful(),
         Refusal::Other(code) => failure(
@@ -533,6 +571,14 @@ impl Session {
         }
     }
 
+    /// Whether the embedded store's file is still the file the run was
+    /// prepared with. Always true of a server store.
+    fn same_file(&self) -> bool {
+        self.file
+            .as_ref()
+            .is_none_or(|(path, identity)| path.identity().ok().as_ref() == Some(identity))
+    }
+
     async fn begin(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
         let detail: StepDetail = step.payload.decode().map_err(StepFailure::not_sent)?;
         let (Some(access), Some(isolation)) = (detail.access, detail.isolation) else {
@@ -571,6 +617,10 @@ impl Session {
                     Some(conn)
                 }
                 None => {
+                    if !self.same_file() {
+                        self.lost = true;
+                        return Err(StepFailure::not_sent(file_replaced()));
+                    }
                     let opener = Arc::clone(&self.opener);
                     let at = self.at.clone();
                     let opening =
@@ -607,6 +657,20 @@ impl Session {
             self.lost = true;
             return Err(StepFailure::not_sent(lost()));
         };
+        // A connection the server says leads elsewhere is never used again.
+        #[cfg(feature = "postgres")]
+        if matches!(began, Err(Refusal::Elsewhere)) {
+            close(conn);
+            self.lost = true;
+            return Err(StepFailure::not_sent(leads_elsewhere()));
+        }
+        // A writer opened by the file's name holds the file the run was
+        // prepared with, or nothing is sent to it.
+        if access == Access::ReadWrite && !self.same_file() {
+            close(conn);
+            self.lost = true;
+            return Err(StepFailure::not_sent(file_replaced()));
+        }
         self.give_back(access, conn);
         match began {
             Ok(()) => {
@@ -1293,7 +1357,7 @@ impl SqlDriver {
         cx: &PrepareContext<'_>,
         surface: &a2m_core::SurfacePlan,
         fields: &SurfaceFields,
-    ) -> Result<StoreAt, StepFailure> {
+    ) -> Result<CheckedPath, StepFailure> {
         // The store's file arrives as a checked path under the surface's
         // name, when the run was handed one. The driver takes only the file
         // the target declares.
@@ -1304,7 +1368,7 @@ impl SqlDriver {
             .filter(|path| path.root().as_str() == root && path.relative() == surface.address)
             .cloned();
         if let Some(path) = given {
-            return Ok(StoreAt::File(path.as_path().to_path_buf()));
+            return Ok(path);
         }
         // A file named in the root `project` is a file of the project of the
         // request that started the run: it is resolved against that folder,
@@ -1316,7 +1380,7 @@ impl SqlDriver {
                 .project_folder()
                 .and_then(|folder| folder.join(&surface.address))
                 .map_err(StepFailure::not_sent)?;
-            return Ok(StoreAt::File(path.as_path().to_path_buf()));
+            return Ok(path);
         }
         // Any other root is one the pack's manifest declares: the surface's
         // root, among them, and the surface's address below it, through the
@@ -1341,7 +1405,7 @@ impl SqlDriver {
                 "Keep the store's file inside the named root, and name it in `target.yaml` by its path below that root.",
             )));
         };
-        Ok(StoreAt::File(path.as_path().to_path_buf()))
+        Ok(path)
     }
 }
 
@@ -1365,19 +1429,48 @@ impl Driver for SqlDriver {
                 )));
             };
             #[cfg(feature = "postgres")]
-            let (at, pooled): (StoreAt, Option<(Arc<Pool>, PoolKey)>) = if surface.kind == DATABASE
+            let (at, file, pooled): (StoreAt, _, Option<(Arc<Pool>, PoolKey)>) = if surface.kind
+                == DATABASE
             {
-                (self.file_of(cx, surface, &fields)?, None)
+                let path = self.file_of(cx, surface, &fields)?;
+                (
+                    StoreAt::File(path.as_path().to_path_buf()),
+                    Some(path),
+                    None,
+                )
             } else {
+                // A server store is one of the run's destinations, as
+                // every other surface a run reaches is.
+                if !cx.destinations.contains(&surface.address) {
+                    return Err(StepFailure::not_sent(failure(
+                        FailureClass::Policy,
+                        codes::SURFACE_NOT_DECLARED,
+                        format!(
+                            "The surface `{}` is not among the destinations the operation may reach.",
+                            surface.name
+                        ),
+                        "Name the surface in the target, and run an operation of that target.",
+                    )));
+                }
                 let (at, key) = crate::postgres::server_of(surface, &fields, lease)?;
                 let pooled = opener.pooled().then(|| (Arc::clone(&self.pool), key));
-                (at, pooled)
+                (at, None, pooled)
             };
             // An embedded file has no sign-in.
             #[cfg(not(feature = "postgres"))]
-            let at = {
+            let (at, file) = {
                 let _ = lease;
-                self.file_of(cx, surface, &fields)?
+                let path = self.file_of(cx, surface, &fields)?;
+                (StoreAt::File(path.as_path().to_path_buf()), Some(path))
+            };
+            // The file's identity now, before it is opened, and again once it
+            // is: a connection opened by the name holds the file named.
+            let file = match file {
+                Some(path) => {
+                    let identity = path.identity().map_err(StepFailure::not_sent)?;
+                    Some((path, identity))
+                }
+                None => None,
             };
             let section_index = cx.plan.packs.iter().position(|section| {
                 section.pack == PACK
@@ -1421,9 +1514,18 @@ impl Driver for SqlDriver {
                     }
                 }
             };
+            let session_file = file;
+            if session_file
+                .as_ref()
+                .is_some_and(|(path, identity)| path.identity().ok().as_ref() != Some(identity))
+            {
+                close(reader);
+                return Err(StepFailure::not_sent(file_replaced()));
+            }
             Ok(Prepared::new(Session {
                 surface: surface.name.as_str().to_owned(),
                 at,
+                file: session_file,
                 opener,
                 #[cfg(feature = "postgres")]
                 pooled,

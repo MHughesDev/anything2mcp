@@ -94,6 +94,10 @@ pub enum RelayFault {
     /// The `COMMIT` is never passed on, and the relay closes both sides. The
     /// server rolls back.
     DropCommit,
+    /// The `COMMIT` reaches the server, and from then on nothing the server
+    /// says is passed back, while the connection stays open: a server that
+    /// holds its answer without end. The write landed.
+    HoldCommitAnswer,
 }
 
 /// How the stand reaches the server for its own control queries.
@@ -128,6 +132,8 @@ struct Programs {
 pub struct TestServer {
     control: Control,
     database: String,
+    /// The databases [`TestServer::second_database`] made.
+    extra: Mutex<Vec<String>>,
     relay: Relay,
     own: Option<OwnServer>,
     psql: PathBuf,
@@ -164,6 +170,7 @@ impl TestServer {
             let server = Self {
                 control: Control::Given { conninfo },
                 database,
+                extra: Mutex::new(Vec::new()),
                 relay: Relay::start(Upstream::Tcp(address))?,
                 own: None,
                 psql,
@@ -186,6 +193,7 @@ impl TestServer {
                 socket_dir: own.dir.clone(),
             },
             database,
+            extra: Mutex::new(Vec::new()),
             relay: Relay::start(upstream)?,
             psql: programs.psql.clone(),
             own: Some(own),
@@ -285,6 +293,52 @@ impl TestServer {
         )?;
         self.run_on(&self.database, SCHEMA_SQL)?;
         Ok(())
+    }
+
+    /// Makes a second database of the `example` schema and seed on the same
+    /// server, reached through the same relay: what a surface names when its
+    /// `database` is changed. It is dropped with the stand.
+    ///
+    /// # Errors
+    ///
+    /// When the server refuses to make it.
+    pub fn second_database(&self) -> Result<String, ServerError> {
+        let name = format!("{}_second", self.database);
+        self.run_on(
+            "postgres",
+            &format!("CREATE DATABASE {name} OWNER {OWNER_ROLE};"),
+        )?;
+        self.extra
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(name.clone());
+        self.run_on(&name, SCHEMA_SQL)?;
+        Ok(name)
+    }
+
+    /// [`Self::write_count`] in the database named.
+    ///
+    /// # Errors
+    ///
+    /// When the server refuses the query.
+    pub fn write_count_in(
+        &self,
+        database: &str,
+        table: &str,
+        key: &[&str],
+    ) -> Result<u64, ServerError> {
+        let joined = key.join(&FIELD.to_string());
+        let out = self.run_on(
+            database,
+            &format!(
+                "SELECT count(*) FROM stand.write_log WHERE table_name = {} AND row_key = {}",
+                literal(table),
+                literal(&joined)
+            ),
+        )?;
+        out.trim_end_matches([RECORD, '\n'])
+            .parse()
+            .map_err(|_| error("the write log gave no count"))
     }
 
     /// Runs statements as the stand's administrator in the test's database:
@@ -490,10 +544,14 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.relay.stop();
         if self.own.is_none() {
-            let _ = self.run_on(
-                "postgres",
-                &format!("DROP DATABASE IF EXISTS {} WITH (FORCE);", self.database),
-            );
+            let extra =
+                std::mem::take(&mut *self.extra.lock().unwrap_or_else(PoisonError::into_inner));
+            for database in extra.iter().chain(std::iter::once(&self.database)) {
+                let _ = self.run_on(
+                    "postgres",
+                    &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE);"),
+                );
+            }
         }
         // The server of the stand's own stops when `own` is dropped, after this.
     }
@@ -840,6 +898,8 @@ fn relay(client: End, server: End, fault: Arc<Mutex<RelayFault>>) {
     // answer, which cannot come earlier, is never passed back.
     let lose_answer = Arc::new(AtomicBool::new(false));
     let lose = Arc::clone(&lose_answer);
+    let hold_answer = Arc::new(AtomicBool::new(false));
+    let hold = Arc::clone(&hold_answer);
     std::thread::spawn(move || {
         let mut client = client;
         let mut server = server;
@@ -869,6 +929,10 @@ fn relay(client: End, server: End, fault: Arc<Mutex<RelayFault>>) {
                         *armed = RelayFault::None;
                         lose.store(true, Ordering::SeqCst);
                     }
+                    RelayFault::HoldCommitAnswer => {
+                        *armed = RelayFault::None;
+                        hold.store(true, Ordering::SeqCst);
+                    }
                     RelayFault::None => {}
                 }
             }
@@ -892,6 +956,11 @@ fn relay(client: End, server: End, fault: Arc<Mutex<RelayFault>>) {
                 // The server answered the `COMMIT`: it committed. The answer
                 // is dropped and the connection ends on both sides.
                 break;
+            }
+            if hold_answer.load(Ordering::SeqCst) {
+                // Read and never passed back; the link stays open until the
+                // client ends it.
+                continue;
             }
             if client.write_all(&buffer[..read]).is_err() {
                 break;

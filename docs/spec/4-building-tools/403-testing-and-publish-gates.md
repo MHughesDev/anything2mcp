@@ -1,6 +1,6 @@
 # 403. Testing and publish gates
 
-A version is published only when every gate passes, and the evidence is stored with the version. The determinism and equivalence gates compare trace signatures ([section 217](../2-kernel/217-traces-evidence-and-repair.md)); the schema and lint gate is the compiler ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)).
+A version is published only when every gate passes, and the evidence is stored with the version. The determinism and equivalence gates compare trace signatures ([section 217](../2-kernel/217-traces-evidence-and-repair.md)); the schema and lint gate is the compiler ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). Two gates are built, schema and lint and offline replay: a publish is refused unless both pass, and the evidence stored with the version, and shown on the page a person publishes from, names each gate that did not run ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)).
 
 | Gate | What it checks | Applies to |
 | --- | --- | --- |

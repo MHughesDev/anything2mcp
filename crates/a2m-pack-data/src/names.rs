@@ -124,6 +124,9 @@ pub mod codes {
         CATALOG_TOO_LARGE = UnknownVariant, "catalog_too_large";
         /// An argument is missing, or is a list or a record.
         VALUE_NOT_BINDABLE = Input, "value_not_bindable";
+        /// The embedded store's file was replaced by another file at its
+        /// name after the run was prepared.
+        STORE_FILE_REPLACED = Drift, "store_file_replaced";
     }
 
     /// The store's connection ended before `commit` was sent. The provider
@@ -159,6 +162,15 @@ pub mod codes {
     /// server store is signed in with.
     #[cfg(feature = "postgres")]
     pub const CREDENTIAL_NOT_CARRIED: FailureCode = FailureCode::fixed("credential_not_carried");
+    /// A connection, or the server it reaches, does not lead where the plan's
+    /// surface names: another address, port, database, schema, `search_path`,
+    /// link mode, or role. It is closed and never used, and nothing is sent.
+    #[cfg(feature = "postgres")]
+    pub const CONNECTION_LEADS_ELSEWHERE: FailureCode =
+        FailureCode::fixed("connection_leads_elsewhere");
+    /// The server store's address is not among the run's destinations.
+    #[cfg(feature = "postgres")]
+    pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
 
     /// The codes only a build with the server store returns, with their class.
     #[cfg(feature = "postgres")]
@@ -166,6 +178,8 @@ pub mod codes {
         (FailureClass::Policy, "link_not_encrypted"),
         (FailureClass::Policy, "identity_is_administrator"),
         (FailureClass::Input, "credential_not_carried"),
+        (FailureClass::Policy, "connection_leads_elsewhere"),
+        (FailureClass::Policy, "surface_not_declared"),
     ];
 }
 

@@ -59,6 +59,47 @@ pub(crate) struct ServerAt {
     pub password: Arc<Secret>,
 }
 
+/// Everything that says where a server store's connection leads and as
+/// whom: what a connection is kept under, and what it is held to at every
+/// `prepare` and before every write. The password is not part of it: a
+/// renewed one comes with a new epoch, which the pool's key holds.
+#[cfg(feature = "postgres")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Leads {
+    /// The address dialled.
+    pub host: std::net::IpAddr,
+    /// The port dialled.
+    pub port: u16,
+    /// The database signed in to.
+    pub database: String,
+    /// The one schema, which is the whole `search_path`.
+    pub schema: String,
+    /// The role signed in as.
+    pub user: String,
+    /// The link's mode and the trust it was opened under. This build makes
+    /// only an unencrypted link on the loopback address, with no trust.
+    pub link: &'static str,
+}
+
+/// The one link mode this build makes.
+#[cfg(feature = "postgres")]
+pub(crate) const LINK_LOOPBACK_PLAIN: &str = "loopback_plain";
+
+#[cfg(feature = "postgres")]
+impl ServerAt {
+    /// Where a connection opened from this leads.
+    pub(crate) fn leads(&self) -> Leads {
+        Leads {
+            host: self.host,
+            port: self.port,
+            database: self.database.clone(),
+            schema: self.schema.clone(),
+            user: self.user.clone(),
+            link: LINK_LOOPBACK_PLAIN,
+        }
+    }
+}
+
 #[cfg(feature = "postgres")]
 impl std::fmt::Debug for ServerAt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -181,6 +222,11 @@ pub(crate) enum Refusal {
     /// then no bar.
     #[cfg(feature = "postgres")]
     TooPowerful,
+    /// The server says it is another database, or that the connection is
+    /// signed in as another role, reads another `search_path`, or reaches
+    /// another address or port than when it was opened.
+    #[cfg(feature = "postgres")]
+    Elsewhere,
     /// An error with no rule; the store's primary result code.
     Other(i32),
 }
@@ -362,6 +408,13 @@ pub(crate) trait Conn: Send {
     #[cfg(feature = "postgres")]
     fn usable(&self) -> bool {
         true
+    }
+
+    /// Where a server store's connection leads, as it was opened. `None`
+    /// for a store in a file.
+    #[cfg(feature = "postgres")]
+    fn leads_to(&self) -> Option<&Leads> {
+        None
     }
 }
 

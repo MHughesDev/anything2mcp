@@ -165,6 +165,80 @@ impl Shape {
         shape
     }
 
+    /// The shape of a JSON answer that only its names and the kinds of
+    /// their values were kept of, to one level inside an object or a
+    /// list's items, as the browser's observing tab records it: `outer`,
+    /// `outer.inner`, `[]`, and `[].name`. What is deeper is not known, and
+    /// a text is `text`, its form not seen.
+    #[must_use]
+    pub fn of_fields(fields: &BTreeMap<String, String>) -> Self {
+        fn kind(name: &str) -> &'static str {
+            match name {
+                "string" => "text",
+                "integer" => "integer",
+                "number" => "decimal",
+                "boolean" => "boolean",
+                "null" => "null",
+                "object" => "object",
+                "array" => "list",
+                _ => "mixed",
+            }
+        }
+        fn one(name: &str) -> Shape {
+            let mut shape = Shape::default();
+            let kind = kind(name);
+            shape.types.insert(kind);
+            if kind == "object" {
+                shape.objects = 1;
+            }
+            shape
+        }
+        fn object(fields: &BTreeMap<String, String>, prefix: &str) -> Shape {
+            let mut shape = Shape::default();
+            shape.types.insert("object");
+            shape.objects = 1;
+            for (name, value) in fields {
+                let Some(rest) = name.strip_prefix(prefix) else {
+                    continue;
+                };
+                match rest.split_once('.') {
+                    None if !rest.is_empty() => {
+                        let entry = shape
+                            .fields
+                            .entry(rest.to_owned())
+                            .or_insert_with(|| (Shape::default(), 1));
+                        let own = one(value);
+                        entry.0.types.extend(own.types);
+                        entry.0.objects = entry.0.objects.max(own.objects);
+                    }
+                    Some((outer, inner)) if !outer.is_empty() && !inner.is_empty() => {
+                        let entry = shape
+                            .fields
+                            .entry(outer.to_owned())
+                            .or_insert_with(|| (Shape::default(), 1));
+                        entry.0.objects = 1;
+                        entry.0.fields.insert(inner.to_owned(), (one(value), 1));
+                    }
+                    _ => {}
+                }
+            }
+            shape
+        }
+        match fields.get("[]") {
+            Some(items) => {
+                let mut shape = Self::default();
+                shape.types.insert("list");
+                let mut inner = object(fields, "[].");
+                if items != "object" {
+                    inner = one(items);
+                }
+                shape.items = Some(Box::new(inner));
+                shape
+            }
+            None => object(fields, ""),
+        }
+    }
+
     /// This shape and another observation of the same place, as one.
     #[must_use]
     pub fn merged(&self, other: &Self) -> Self {

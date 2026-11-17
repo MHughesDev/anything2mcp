@@ -120,6 +120,9 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     // An engine as the product opens it, for its registry: both web
     // crates, joined by the one handle on their browsers.
     let machine = Machine::new("pages", &[("http://127.0.0.1:4010", &origin)]);
+    // The browsers' profiles live in the data directory's own folder,
+    // which the product hands the web pack only when it exists.
+    std::fs::create_dir_all(a2m_actions::Paths::under(machine.home.path()).profiles).unwrap();
     let world = machine.open().await;
     let registry = world.engine.kernel().providers();
 
@@ -153,10 +156,15 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         .discover(&NoPort, &scope, &mut kept)
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
+    // The start page, which leads to the list of orders, and the page
+    // asked for: one screen of the order's page.
     let screens: Vec<&Finding> = kept
         .0
         .iter()
-        .filter(|finding| finding.kind().as_str() == "screen")
+        .filter(|finding| {
+            finding.kind().as_str() == "screen"
+                && matches!(finding.subject(), a2m_core::Subject::Address(at) if at.path() == PAGE)
+        })
         .collect();
     assert_eq!(screens.len(), 1, "{:?}", kept.0);
 
@@ -182,8 +190,8 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         .into_iter()
         .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
         .collect();
-    let sources = a2m_files::load_files(&root, &files, set)
-        .unwrap_or_else(|problems| panic!("{problems:?}"));
+    let sources =
+        a2m_files::load_files(&root, &files, set).unwrap_or_else(|problems| panic!("{problems:?}"));
     let plan = a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{problems:?}"))
         .plan;
@@ -266,7 +274,13 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     let stored = app.stored_order("A-100").await.unwrap().unwrap();
     assert_eq!(stored.items.len(), 3);
     let column = |of: &dyn Fn(&example_app::store::StoredItem) -> String| {
-        Value::List(stored.items.values().map(|item| Value::from(of(item))).collect())
+        Value::List(
+            stored
+                .items
+                .values()
+                .map(|item| Value::from(of(item)))
+                .collect(),
+        )
     };
     assert_eq!(
         values.get("item_code"),

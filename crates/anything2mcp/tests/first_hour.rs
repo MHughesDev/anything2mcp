@@ -144,7 +144,13 @@ impl Desk {
     async fn write(&self, file: &str, content: &str) {
         let written = self
             .ok(&[
-                "draft", "write", "example", "--file", file, "--content", content,
+                "draft",
+                "write",
+                "example",
+                "--file",
+                file,
+                "--content",
+                content,
             ])
             .await;
         assert_eq!(written["result"]["written"], true, "{file}: {written}");
@@ -154,8 +160,10 @@ impl Desk {
     /// publish out as the person: the page is read, Carry out is pressed
     /// from the page's own origin, and the presence prompt is passed, for
     /// the `presses`-th time.
-    async fn publish_as_a_person(&self, prompt: &Passed, presses: u32) {
-        let (code, asked) = self.run(&["publish", "example"]).await;
+    async fn publish_as_a_person(&self, prompt: &Passed, version: &str, presses: u32) {
+        let (code, asked) = self
+            .run(&["publish", "example", "--version", version])
+            .await;
         assert_eq!(code, Some(3), "{asked}");
         assert_eq!(asked["result"]["state"], "needs_person", "{asked}");
         let link = asked["result"]["link"].as_str().unwrap().to_owned();
@@ -166,7 +174,10 @@ impl Desk {
         let page = http.get(&link).send().await.unwrap();
         assert_eq!(page.status().as_u16(), 200);
         let text = page.text().await.unwrap();
-        assert!(text.contains("version.publish") && text.contains(READ), "{text}");
+        assert!(
+            text.contains("version.publish") && text.contains(READ),
+            "{text}"
+        );
         let marker = "name=\"once\" value=\"";
         let from = text.find(marker).unwrap() + marker.len();
         let once = &text[from..from + text[from..].find('"').unwrap()];
@@ -216,8 +227,10 @@ const SEED_OPERATION: &str = "operation: example_order_get\ntitle: Get an order\
 /// The offline test a developer writes for the read once the publish
 /// asks for one, with a fixture of synthetic values that match the test
 /// application's seed: the answer the read's endpoint gives for A-100.
-const FIXTURE: &str = "scrubbed: true\nnote: \"Synthetic data, written by hand for the imaginary target.\"\n";
-const FIXTURE_ANSWER: &str = r#"{"order_id":"A-100","customer":"Example Customer One","status":"draft","items":[]}"#;
+const FIXTURE: &str =
+    "scrubbed: true\nnote: \"Synthetic data, written by hand for the imaginary target.\"\n";
+const FIXTURE_ANSWER: &str =
+    r#"{"order_id":"A-100","customer":"Example Customer One","status":"draft","items":[]}"#;
 const OFFLINE_TEST: &str = "test: example_api_orders_get\nkind: offline\nfixture: api_orders_get\ninputs: {order_id: \"A-100\"}\nexpect: {status: draft, customer: \"Example Customer One\"}\n";
 
 /// The target file a developer writes once `target add` has made it: the
@@ -277,7 +290,10 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     let mut options = EngineOptions::of_machine(
         Paths::under(desk.home.path()),
         std::collections::BTreeMap::from([
-            ("A2M_HOME".to_owned(), desk.home.path().display().to_string()),
+            (
+                "A2M_HOME".to_owned(),
+                desk.home.path().display().to_string(),
+            ),
             ("USER".to_owned(), USER.to_owned()),
             (PASSPHRASE_VARIABLE.to_owned(), PASSPHRASE.to_owned()),
         ]),
@@ -310,9 +326,16 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // scout (decision 0179's stage 3). Until then a developer writes one
     // read by hand first, as the stop's fix says.
     assert_eq!(ended[0]["discoverer"], "http_description", "{first}");
-    assert_eq!(ended[0]["report"]["failure"]["code"], "no_binding", "{first}");
+    assert_eq!(
+        ended[0]["report"]["failure"]["code"], "no_binding",
+        "{first}"
+    );
     assert_eq!(ended[1]["findings"], 0, "{first}");
-    assert_eq!(first["result"]["content"]["drafted"]["written"], json!([]), "{first}");
+    assert_eq!(
+        first["result"]["content"]["drafted"]["written"],
+        json!([]),
+        "{first}"
+    );
     desk.write("endpoints/orders.yaml", SEED_ENDPOINT).await;
     desk.write("operations/orders.yaml", SEED_OPERATION).await;
 
@@ -337,7 +360,9 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     let drafted = files_of(&desk.project.path().join("targets").join("example"));
     for file in ["operations/api_orders_get.yaml", "endpoints/get_order.yaml"] {
         assert!(
-            drafted.iter().any(|path| path.replace('\\', "/").ends_with(file)),
+            drafted
+                .iter()
+                .any(|path| path.replace('\\', "/").ends_with(file)),
             "{file} in {drafted:?}"
         );
     }
@@ -354,12 +379,22 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     );
     let tried = desk
         .ok(&[
-            "draft", "try", "example", "--tool", READ, "--input", ORDER_INPUT,
+            "draft",
+            "try",
+            "example",
+            "--tool",
+            READ,
+            "--input",
+            ORDER_INPUT,
         ])
         .await;
     assert_eq!(tried["result"]["status"], "completed", "{tried}");
     let held = app.stored_order("A-100").await.unwrap().unwrap();
-    assert_eq!(tried["result"]["result"]["customer"], held.customer.as_str(), "{tried}");
+    assert_eq!(
+        tried["result"]["result"]["customer"],
+        held.customer.as_str(),
+        "{tried}"
+    );
 
     // 5. Its tests. Nothing drafted one: an observed answer is business
     // data until a fixture is scrubbed, and `fixture.record` is not built.
@@ -380,16 +415,21 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     let folder = desk.project.path().join("targets").join("example");
     for path in files_of(&folder) {
         let name = path.replace('\\', "/");
-        if !["target.yaml", "endpoints/get_order.yaml", "operations/api_orders_get.yaml"]
-            .iter()
-            .any(|kept| name.ends_with(&format!("/{kept}")))
+        if ![
+            "target.yaml",
+            "endpoints/get_order.yaml",
+            "operations/api_orders_get.yaml",
+        ]
+        .iter()
+        .any(|kept| name.ends_with(&format!("/{kept}")))
         {
             std::fs::remove_file(&path).unwrap();
         }
     }
     // And writes its offline test, with a fixture of synthetic values that
     // match the application's seed, as the refusal's fix says.
-    desk.write("fixtures/api_orders_get/fixture.yaml", FIXTURE).await;
+    desk.write("fixtures/api_orders_get/fixture.yaml", FIXTURE)
+        .await;
     desk.write("fixtures/api_orders_get/get_order.json", FIXTURE_ANSWER)
         .await;
     desk.write("tests/api_orders_get.yaml", OFFLINE_TEST).await;
@@ -400,7 +440,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // 6. The publish, asked for by the developer's agent, waits for a
     // person on the engine's page; the person reads it, presses Carry out,
     // and passes the presence prompt.
-    desk.publish_as_a_person(&prompt, 1).await;
+    desk.publish_as_a_person(&prompt, "1.0.0", 1).await;
     // 7. The published tool, called by an agent, reads what the
     // application holds.
     let (code, refused) = desk.run(&["call", READ, "--input", ORDER_INPUT]).await;
@@ -424,16 +464,20 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     );
     let operation = folder.join("operations").join("api_orders_get.yaml");
     let text = std::fs::read_to_string(&operation).unwrap();
-    let marked = text.replacen("    verb: \"read\"\n", "    verb: \"read\"\n    status: \"verified\"\n", 1);
+    let marked = text.replacen(
+        "    verb: \"read\"\n",
+        "    verb: \"read\"\n    status: \"verified\"\n",
+        1,
+    );
     assert_ne!(marked, text, "{text}");
     std::fs::write(&operation, marked).unwrap();
     let tested = desk.ok(&["test", "example"]).await;
     assert_eq!(tested["result"]["passed"], true, "{tested}");
-    desk.publish_as_a_person(&prompt, 2).await;
+    // The same call again would be given what became of the first act
+    // for the approval window, so the next version is named.
+    desk.publish_as_a_person(&prompt, "1.1.0", 2).await;
 
-    let called = desk
-        .ok(&["call", READ, "--input", ORDER_INPUT])
-        .await;
+    let called = desk.ok(&["call", READ, "--input", ORDER_INPUT]).await;
     assert_eq!(called["result"]["status"], "completed", "{called}");
     let read = &called["result"]["result"];
     assert_eq!(read["customer"], held.customer.as_str(), "{called}");

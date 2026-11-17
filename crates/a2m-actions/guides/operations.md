@@ -107,6 +107,16 @@ inputs: {order_id: "SO-1001"}
 expect: {status: draft, total: "125.00", note: "Call before delivery"}
 ```
 
-A fixture folder holds a `fixture.yaml` that states `scrubbed: true`, and one file per step it answers, named after what the step refers to (the call, the endpoint, the document, or the upstream tool; or the step's kind when it refers to none): `<name>.json`, holding an object of the values the step observed, `null` for a record that is absent, or a list of those, given in order to the steps of that name. Write an exact number as text. Never commit recorded business data.
+A fixture folder holds a `fixture.yaml` that states `scrubbed: true`, and one file per step it answers, named after what the step refers to (the call, the endpoint, the statement, the document, or the upstream tool; or the step's kind when it refers to none): `<name>.json`. One object of the values the step observed, or `null` for a record that is absent, answers every step of that name; a list answers them in order, each once, which a write needs: the record before the save, then after it. A save also has `<name>.request.json`: the values the engine must send it, an object, or a list in the order the saves are sent. A pipeline's source is a file of the same folder, named by the test's input `source`. Write an exact number as text. Never commit recorded business data.
 
-`test.run` runs each offline test of a read through the engine against these answers: no system is reached, no session is used, and nothing is written. The result is compared with `expect`, field by field; a field that differs fails the test and the result names it, and a step the fixture has no answer for fails the test as `fixture_no_answer`. A passing test proves that the binding turns the recorded answers into the expected result; it does not prove the system still answers so. An offline test of a write, and a live test, are listed as `not_run`: they are not built yet.
+```yaml
+test: example_line_item_upsert
+kind: offline
+fixture: line_item_upsert
+inputs: {order_id: "SO-1001", item_code: "L-101", length: "90.5"}
+expect: {length: "90.5"}
+```
+
+`test.run` runs each offline test through the engine against these answers: no system is reached, no session is used, and nothing is written to the installation. A test of a write runs in a ledger of its own, thrown away when the test ends: its intent is recorded, its save is answered from the fixture, and its read-back is compared, as in a real run. The result is compared with `expect`, field by field; a field the result does not hold may name the run itself: `state`, `records_verified`, or `failure`. A field that differs fails the test and the result names it; a save sent with other values than the request recorded fails it and names the field; a step the fixture has no answer for fails it as `fixture_no_answer`. A passing test proves that the binding turns the recorded answers into the expected result and sends the recorded request; it does not prove the system still answers so. A live test is listed as `not_run`.
+
+A version is published only when every offline test has run and passed: `version.publish` and `publish.request` run them again and refuse with `publish_gates_not_passed`, naming each test that did not pass. The person's page lists each gate that ran, and those that are not built.

@@ -442,3 +442,43 @@ async fn a_read_by_key_that_returns_another_record_is_stopped() {
     assert_eq!(found.get("customer_id"), Some(&Value::from("C-001")));
     run.release().await;
 }
+
+// ---- the file a run was prepared with ----
+
+/// On Windows a file the reader holds open cannot be replaced at its name.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_store_file_replaced_after_prepare_is_never_written() {
+    let scene = Scene::new();
+    let other = TestDb::start().unwrap();
+    let (mut run, write) = scene.live(&["C-001"]).await;
+    // Another file is put at the store's name while the run holds its reader.
+    std::fs::rename(other.path(), scene.db.path()).unwrap();
+    let stopped = run
+        .steps(
+            &scene.binding("example_customer_credit_update").act,
+            &inputs(&[("customer_id", "C-001")]).with("credit_limit_cents", 1_i64),
+            Some(&write),
+        )
+        .await;
+    assert_eq!(
+        failed(stopped),
+        (
+            FailureClass::Drift,
+            codes::STORE_FILE_REPLACED,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+    // The file at the name now, asked through the stand's own connection.
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
+    assert_ne!(stored.integer("credit_limit_cents"), Some(1));
+    assert_eq!(
+        scene.db.write_count(Table::Customers, &["C-001"]).unwrap(),
+        0
+    );
+}

@@ -133,6 +133,10 @@ class = "input"
 code = "value_not_bindable"
 
 [[failure_codes]]
+class = "drift"
+code = "store_file_replaced"
+
+[[failure_codes]]
 class = "input"
 code = "payload_unreadable"
 

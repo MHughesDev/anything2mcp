@@ -164,8 +164,10 @@ async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absen
         .await
         .unwrap();
     assert!(missing.absent && missing.values.is_empty());
-    // A value cannot leave its segment of the address: it is one segment,
-    // whatever it holds, and the application knows no such order.
+    // A value cannot leave its segment of the address: one that is not a
+    // plain segment is refused before the tab is sent anywhere (decision
+    // 0187), and the application hears nothing.
+    let before = app.seen().await.unwrap();
     let escaping = scene
         .read(
             &handle,
@@ -174,9 +176,15 @@ async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absen
             &item("../../__control/reset?x=", "L-101"),
         )
         .await
-        .unwrap();
-    assert!(escaping.absent);
-    assert!(handle.release(prepared, false).await.complete);
+        .unwrap_err();
+    assert_eq!(
+        escaping.failure.code().as_str(),
+        "address_value_refused",
+        "{escaping}"
+    );
+    assert_eq!(escaping.sent, a2m_provider::Sent::NotSent);
+    assert_eq!(app.seen().await.unwrap(), before);
+    assert!(handle.release(prepared, true).await.complete);
     assert!(app.stored_item("A-100", "L-101").await.unwrap().is_some());
     scene.stand.end().await;
 }

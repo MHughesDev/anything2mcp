@@ -40,12 +40,18 @@ const OPERATION: &str = "operations/orders_a_100_line_items_list.yaml";
 /// The snapshot of `/orders/A-100` the discoverers take, as a finding of
 /// the application at `origin`.
 fn order_screen(origin: &str) -> Finding {
+    shared_finding(origin, "order_screen.json")
+}
+
+/// A finding the discoverers give, kept in `tests/fixtures/findings/`, as a
+/// finding of the application at `origin`.
+fn shared_finding(origin: &str, file: &str) -> Finding {
     let text = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
             .join("findings")
-            .join("order_screen.json"),
+            .join(file),
     )
     .unwrap();
     let shared: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -156,6 +162,15 @@ fn class_and_code(failure: &StepFailure) -> (FailureClass, &str) {
 
 /// Runs one read of a plan in a run that may only look.
 async fn look(scene: &Scene, operation: &str) -> Result<common::Ran, StepFailure> {
+    look_with(scene, operation, &Values::new()).await
+}
+
+/// Runs one read of a plan with these inputs, in a run that may only look.
+async fn look_with(
+    scene: &Scene,
+    operation: &str,
+    inputs: &Values,
+) -> Result<common::Ran, StepFailure> {
     let (handle, mut prepared) = scene
         .try_prepare(
             None,
@@ -165,9 +180,7 @@ async fn look(scene: &Scene, operation: &str) -> Result<common::Ran, StepFailure
         )
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
-    let read = scene
-        .read(&handle, &mut prepared, operation, &Values::new())
-        .await;
+    let read = scene.read(&handle, &mut prepared, operation, inputs).await;
     assert!(handle.release(prepared, read.is_err()).await.complete);
     read
 }
@@ -182,7 +195,16 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
     let folder = new_target("drafts", &origin);
     let report = draft(&stand, &folder, std::slice::from_ref(&finding));
     let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
-    assert_eq!(written, [OPERATION, SCREEN], "{report:?}");
+    assert_eq!(
+        written,
+        [
+            OPERATION,
+            "operations/orders_a_100_values_get.yaml",
+            SCREEN,
+            "screens/orders_a_100_values.yaml",
+        ],
+        "{report:?}"
+    );
     assert!(
         report.refused.is_empty()
             && report.kept_failing.is_empty()
@@ -506,4 +528,263 @@ async fn a_run_that_may_only_look_has_a_tab_that_cannot_write() {
     assert!(app.trap_writes().await.unwrap().is_empty());
     assert!(app.writes().await.unwrap().is_empty());
     scene.stand.end().await;
+}
+
+const BY_KEY: &str = "example_orders_line_items_list";
+const VALUES: &str = "example_orders_get";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_pages_of_one_screen_draft_reads_by_key_that_read_each_order_and_refuse_a_key_that_leaves_its_segment()
+ {
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let stand = Stand::new("by-key", Arc::new(NoSecrets));
+    let folder = new_target("by-key", &origin);
+    let report = draft(
+        &stand,
+        &folder,
+        &[shared_finding(&origin, "orders_screen.json")],
+    );
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        [
+            "operations/orders_line_items_list.yaml",
+            "operations/orders_values_get.yaml",
+            "screens/orders_line_items.yaml",
+            "screens/orders_values.yaml",
+        ],
+        "{report:?}"
+    );
+    assert!(
+        report.open_questions.is_empty() && report.refused.is_empty(),
+        "{report:?}"
+    );
+    // The screens are reached by the pattern, and no file holds a record's
+    // number or a value of the page.
+    for path in &written {
+        let text = std::fs::read_to_string(folder.path().join(path)).unwrap();
+        assert!(!text.contains("A-10"), "{path}: {text}");
+        assert!(!text.contains("Example Customer"), "{path}: {text}");
+        if path.starts_with("screens/") {
+            assert!(text.contains("/orders/{order_id}"), "{path}: {text}");
+            assert!(!text.contains("actions") && !text.contains("css"), "{text}");
+        }
+    }
+
+    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    for name in [BY_KEY, VALUES] {
+        let read = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap();
+        assert_eq!(read.effect, a2m_core::EffectClass::Read);
+        let inputs: Vec<&str> = read
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect();
+        assert_eq!(inputs, ["order_id"], "{name}");
+    }
+
+    let scene = Scene::over(stand, plan, &origin);
+    for order in ["A-100", "A-101"] {
+        let key = Values::new().with("order_id", order);
+        let stored = app.stored_order(order).await.unwrap().unwrap();
+        let ran = look_with(&scene, BY_KEY, &key).await.unwrap();
+        let column = |of: &dyn Fn(&example_app::store::StoredItem) -> String| {
+            Value::List(
+                stored
+                    .items
+                    .values()
+                    .map(|item| Value::from(of(item)))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            ran.values.get("item_code"),
+            Some(&column(&|item| item.item_code.clone())),
+            "{order}"
+        );
+        assert_eq!(
+            ran.values.get("quantity"),
+            Some(&column(&|item| item.quantity.to_string())),
+            "{order}"
+        );
+        let ran = look_with(&scene, VALUES, &key).await.unwrap();
+        assert_eq!(
+            ran.values.get("customer"),
+            Some(&Value::from(stored.customer.clone())),
+            "{order}"
+        );
+        assert_eq!(
+            ran.values.get("status"),
+            Some(&Value::from(format!("{:?}", stored.status))),
+            "{order}"
+        );
+    }
+
+    // A key that is not one plain segment is refused before the tab is
+    // sent anywhere: the application hears no request at all.
+    for refused in [
+        "A-100/items/L-101",
+        "..",
+        "A-100?status=x",
+        "A-100#top",
+        "%2e%2e",
+        "A-100%2Fx",
+        "https:A-100",
+        "\\A-100",
+        "A-100\u{0}",
+        "A-100\n",
+        "A 100",
+    ] {
+        let before = app.seen().await.unwrap();
+        let key = Values::new().with("order_id", refused);
+        for name in [BY_KEY, VALUES] {
+            let stopped = look_with(&scene, name, &key).await.unwrap_err();
+            assert_eq!(
+                class_and_code(&stopped),
+                (FailureClass::Input, "address_value_refused"),
+                "{refused:?}: {stopped}"
+            );
+            assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+        }
+        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+    }
+
+    assert!(app.writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
+#[test]
+fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("labels", Arc::new(NoSecrets));
+    let page = snapshot(&[
+        (0, "main", Some("")),
+        (1, "DescriptionList", None),
+        (2, "term", Some("Customer")),
+        (2, "definition", Some("Customer")),
+        (2, "term", Some("Note")),
+        (2, "definition", Some("Note")),
+        (2, "term", Some("Note")),
+        (2, "definition", Some("Note")),
+        // A term whose value the page does not label gives nothing.
+        (2, "term", Some("Total")),
+        (2, "definition", None),
+        // A form beside them drafts nothing.
+        (1, "form", Some("")),
+        (2, "textbox", Some("Customer")),
+        (2, "button", Some("Save")),
+    ]);
+    let folder = new_target("labels", origin);
+    let report = draft(&stand, &folder, &[screen_finding(origin, "/order", &page)]);
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        [
+            "operations/order_values_get.yaml",
+            "screens/order_values.yaml",
+            "screens/order_values_undecided.yaml",
+        ],
+        "{report:?}"
+    );
+    let read =
+        std::fs::read_to_string(folder.path().join("operations/order_values_get.yaml")).unwrap();
+    assert!(read.contains("customer:") && !read.contains("note") && !read.contains("total"));
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .all(|open| open.file.as_str() == "screens/order_values_undecided.yaml")
+    );
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .any(|open| open.question.contains("labelled `Note`")),
+        "{report:?}"
+    );
+    let screen = std::fs::read_to_string(folder.path().join("screens/order_values.yaml")).unwrap();
+    assert!(
+        !screen.contains("Save") && !screen.contains("actions"),
+        "{screen}"
+    );
+    // What leaves the question out compiles.
+    compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+#[test]
+fn a_page_with_a_form_and_a_button_drafts_no_operation_that_could_write_by_any_rule() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("never-writes", Arc::new(NoSecrets));
+    // Everything the rules read, beside a form whose fields have the names
+    // of the labels and the columns, and two buttons.
+    let page = snapshot(&[
+        (0, "main", Some("")),
+        (1, "DescriptionList", None),
+        (2, "term", Some("Customer")),
+        (2, "definition", Some("Customer")),
+        (1, "table", Some("Lines")),
+        (2, "row", None),
+        (3, "columnheader", Some("Code")),
+        (2, "row", None),
+        (3, "cell", None),
+        (1, "form", Some("Order")),
+        (2, "textbox", Some("Customer")),
+        (2, "textbox", Some("Code")),
+        (2, "checkbox", Some("Paid")),
+        (2, "button", Some("Save")),
+        (2, "button", Some("Delete")),
+    ]);
+    let findings = [
+        screen_finding(origin, "/order", &page),
+        screen_finding(origin, "/orders/{order_id}", &page),
+    ];
+    let folder = new_target("never-writes", origin);
+    let report = draft(&stand, &folder, &findings);
+    assert!(report.refused.is_empty(), "{report:?}");
+    let operations: Vec<&str> = report
+        .written
+        .iter()
+        .map(RelPath::as_str)
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    assert_eq!(operations.len(), 4, "{report:?}");
+    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    assert_eq!(plan.operations.len(), 4);
+    for operation in &plan.operations {
+        assert_eq!(
+            operation.effect,
+            a2m_core::EffectClass::Read,
+            "{}",
+            operation.name
+        );
+        for binding in &operation.bindings {
+            assert!(
+                binding.act.iter().all(|step| !step.commits),
+                "{}",
+                operation.name
+            );
+            let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
+            assert!(
+                kinds
+                    .iter()
+                    .all(|kind| ["goto", "wait", "read"].contains(kind)),
+                "{}: {kinds:?}",
+                operation.name
+            );
+        }
+    }
+    for (path, bytes) in files_of(folder.path()) {
+        let text = String::from_utf8(bytes).unwrap();
+        for word in ["actions", "Save", "Delete", "Paid", "textbox", "checkbox"] {
+            assert!(!text.contains(word), "{path:?}: {text}");
+        }
+    }
 }

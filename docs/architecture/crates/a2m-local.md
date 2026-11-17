@@ -42,10 +42,11 @@ impl Channel {
     /// The channel answers the hello; every other request carries a `Peer` in its extensions.
     /// The engine lock comes back, still held: the caller drops it once the kernel has closed.
     pub async fn serve(self, service: axum::Router, idle: IdlePolicy) -> (StopReason, EngineLock);
+    pub fn lock_place(&self) -> LockPlace;   // the engine asks it before each use it can see
 }
 pub struct ChannelControl { /* cheap to clone */ }
 impl ChannelControl { pub fn stop(&self, why: StopReason); pub fn refused(&self) -> u64; }
-pub enum StopReason { Idle, Asked, Restart, Failed }
+pub enum StopReason { Idle, Asked, Restart, Failed, DataGone }   // DataGone: decision 0181
 
 pub struct OsUser(/* the user id, or the security identifier, as text */);
 impl OsUser { pub fn current() -> Result<OsUser, Failure>; pub fn as_str(&self) -> &str; }
@@ -65,7 +66,12 @@ pub struct EngineLock { /* two file locks: runtime directory and data directory 
 impl EngineLock {
     pub fn take(paths: &Paths) -> Result<EngineLock, Failure>;
     pub fn held(paths: &Paths) -> Result<bool, Failure>;   // a question for a report, never a guard
+    pub fn place(&self) -> LockPlace;
 }
+// Which file the lock of the data directory is (decision 0181): `holds` asks
+// whether that file still stands at its place, by device and file number on
+// macOS and Linux, by the file standing there on Windows. Cheap to clone.
+pub struct LockPlace; impl LockPlace { pub fn holds(&self) -> bool; }
 
 // Who may change a file or a folder: on macOS and Linux, Private when its owner is
 // the user or the administrator, nobody else may write, and a group may only when
@@ -79,8 +85,11 @@ impl Connector {
     pub fn new(paths: &Paths, version: Version, label: ClientLabel) -> Result<Connector, Failure>;
     /// Finds the engine, checks its owner before sending anything, and says hello.
     /// It starts nothing: when no engine answers it fails with busy / engine_unreachable.
+    /// The hello waits at most HELLO_PATIENCE (30 s); an engine that holds the channel
+    /// and does not answer is busy / engine_unreachable, naming the engine's output file.
     pub async fn connect(&self) -> Result<Link, Failure>;
 }
+pub const HELLO_PATIENCE: Duration;
 // Start on demand (decision 0165): the client takes the start lock, looks again, starts
 // `start` detached, and waits for the channel to answer, all within `patience`.
 pub struct Launch {
@@ -95,7 +104,8 @@ impl Connector {
     pub async fn connect_or_start(&self, paths: &Paths, start: &Launch, patience: Duration)
         -> Result<Started, Failure>;
 }
-pub const START_LOCK_NAME: &str; pub const ENGINE_LOG_NAME: &str; pub const STARTED_LINE: &str;
+pub const START_LOCK_NAME: &str; pub const STARTED_LINE: &str;
+pub const ENGINE_LOG_NAME: &str;   // "engine-output.log", not telemetry's engine.log (decision 0181)
 pub struct Link { /* an HTTP/1.1 connection over the channel; the engine's hello */ }
 impl Link {
     pub fn engine_version(&self) -> Version;
@@ -184,11 +194,12 @@ On Windows the pipe's name also carries a short digest of the runtime directory'
 | --- | --- | --- |
 | Find | The client connects to the fixed path from `Paths` | No answer, or a refused connection on a stale socket, means not running |
 | Start | The client takes the start lock, checks again, and starts the same program's `serve`, detached: on macOS and Linux in a session of its own, on Windows with no console, in a process group of its own, and out of the caller's job where the job allows it. Its environment, folder, and standard streams are what the product's `Launch` says ([decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md)) | A second client arriving at once waits on the start lock and then connects. A refused start is `Started::Refused`, and the caller may run the engine inside itself |
-| Ready | The engine binds the channel, which takes the engine lock, then opens the kernel, and answers a hello only once `Kernel::open` has returned, in whatever health state | The client waits on the channel answering its hello, up to a fixed deadline (30 seconds for an engine it started), then exits with code 4 |
+| Ready | The engine binds the channel, which takes the engine lock, then opens the kernel, and answers a hello only once `Kernel::open` has returned, in whatever health state | The client waits on the channel answering its hello, up to a fixed deadline (30 seconds for an engine it started, and `HELLO_PATIENCE`, 30 seconds, for any hello), then exits with code 4, naming the engine's output file. A hello whose connection ends is an engine that stopped while starting: start on demand looks on, and a plain connect says so and names the file ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)) |
 | Version | A newer client asks an older engine to drain and restart. If runs are active, the client reports that and leaves the engine alone | An older client reaching a newer engine is served while the local API version matches; otherwise it is told to upgrade |
 | Idle stop | After `engine.idle_stop_minutes` with no connections and `IdleHolds::busy` false, the engine saves sessions to the vault, closes the kernel, and exits | A waiting page and a run in hand are idle holds: the product's hold asks `Kernel::runs_in_hand`. The keeper's keep-alive window is to be one |
 | Stop | `Channel::serve` returns the engine lock, still held; the product closes the kernel and then drops it | No second engine opens the store while the first still writes to it |
 | Crash | The engine lock is an operating-system lock, so it is released when the process dies | The next start sets orphaned runs to `stopped`, as `Kernel::open` describes |
+| Data directory gone | The lock of the data directory remembers which file it is (`LockPlace`). The product asks it before each request and at each idle look; when the file is gone or another, the request is refused `busy`/`data_directory_gone` and the channel stops with `StopReason::DataGone` | Spec section 224: fail closed. The next client starts a new engine ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)) |
 | In process | A command that finds no engine takes the engine lock in the same step and holds it until its kernel has closed; `--in-process` is refused while an engine answers | The product crate opens the kernel inside the command, with no channel. A second command waits a bounded time for the lock; `serve` is refused at its bind |
 
 Two locks are used. The engine lock is held by the engine for its whole life and proves one engine per user and per data directory. It is two operating-system file locks taken together, one in the runtime directory and one in the data directory, because two runtime directories can lead to one data directory and two engines on one store must never run. The start lock is held by a client only while it starts the engine, so two clients never start two; it is a file lock in the runtime directory, `start.lock`, taken without waiting and looked at again every 25 ms while the channel is looked at too. No lock is judged by a file merely existing.
@@ -310,6 +321,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | `input` | `hello_invalid` | A connection's first request was not a well-formed hello |
 | `input` | `local_api_mismatch` | The client and the engine speak different versions of the local API |
 | `busy` | `surface_unavailable` | The surface holds no approval desk, so it shows no page |
+| `busy` | `data_directory_gone` | The engine's data directory was removed or replaced while it ran: the request is not handed to the kernel, and the engine stops. `codes::data_directory_gone()` gives the failure the product answers with |
 
 ## Invariants
 
@@ -330,6 +342,11 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | One prompt is up at a time | Built: a press on a second page and a protected setting, while a prompt is up, raise nothing and are told busy |
 | A prompt ends with the approval window | Built: a prompt nobody answers is dismissed at the page's deadline and the run ends as declined; for polkit, the cancellation id of the check that was raised is the one cancelled |
 | The page shows the stored change as text | Built: the page shows the record's fields from what to what, and a value that holds markup and a place-holder of the page arrives as text |
+| A write that will not be read back says so before it is approved | Built: `a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_approved`: after the record's heading, "This write is accepted by the system, not read back. Nothing will read it back or compare it after it is sent." |
+| What is pressed on an act's page is what it showed | Built: `a_persons_act_whose_input_the_page_cannot_show_whole_is_not_carried_out_from_it`: a value cut to the page's length is said above the input, and a press raises no prompt and carries nothing out |
+| A client waits for no engine for ever | Built: `an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patience` and `an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_log` |
+| The started engine's output goes to no file but its own | Built, on macOS and Linux: `the_started_engines_output_is_not_written_through_a_link_and_is_kept_to_the_user`. On Windows the file takes its folder's access list |
+| The engine lock knows whether it is still in place | Built: `the_engine_lock_says_whether_it_is_still_the_file_at_its_place`; the removal itself is run on macOS and Linux only |
 | The engine lock outlives the channel | Built: after `serve` returns the lock is held and a second bind is refused, until the lock that came back is dropped |
 
 ## Build order
@@ -337,7 +354,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 1. Done: `Paths` from `a2m-actions`, the engine lock, and the socket on Linux and macOS with the peer check and the client's check of the owner. Two clients share one engine. Run on Linux only; the macOS code is compiled and linted, not run.
 2. Written, not run: the named pipe on Windows, with both checks. It is compiled and linted for Windows through a crate that holds only the operating-system module, because the whole crate's tree compiles SQLite. CI must show its tests and the channel's tests passing on Windows. Hypothesis H-06 is not yet measured.
 3. Partly done: the hello with the version exchange, the idle stop, the engine lock held by a command that runs the engine inside itself ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)), and start on demand under the start lock, detached on each system ([decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md)), run on Linux; the Windows start is compiled, not run. Not built: the drain and restart of an older engine, `engine.logs`, rotation of the engine's log, and the 30 ms and cold-start numbers of spec section 222.
-4. Done: the loopback listener and the approval page, which shows the stored change through `ApprovalDesk::preview`, with the prompt behind an interface. Not built: the words above the records for uploads, sends, and anything irreversible.
+4. Done: the loopback listener and the approval page, which shows the stored change through `ApprovalDesk::preview`, with the prompt behind an interface, and beside a record whose write is only acknowledged, that it will not be read back ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)). Not built: the words above the records for uploads, sends, and anything irreversible.
 4a. Done ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)): the page of a person's act an agent asked for, such as a publish, served by `ask_person_act` on the same listener at `/act/<code>`. It shows what `ApprovalDesk::person_act` reads back: the action, its summary, every input field as text, who asked, and for a publish what each tool may do. A press of Carry out raises the presence prompt, one at a time with every other; only a proof from it, made with `PresenceProof::for_act`, goes to `ApprovalDesk::carry_out`, and the answer page says what the act came to. Decline and silence call `ApprovalDesk::decline_act`. The page has the approval page's guard, headers, one-time value, and window. Tests: `a_persons_act_an_agent_asks_for_is_carried_out_once_from_its_page` and `a_persons_act_nobody_carries_out_ends_with_its_window_and_nothing_is_done`, through the real loopback page.
 5. Done: the presence prompt's interface as [decision 0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) gives it: availability asked at run time with a kind and a reason, a deadline on every ask, one prompt at a time, and the name of the prompt that answered.
 6. Done, with what only a prepared machine can show: the Linux prompt over polkit. Run here: the whole mapping against a made-up authority; the real bus code against an address where nothing listens; and the real bus code against a real polkit on a bus of the test's own, for the cases that need nothing installed (no polkit on the bus, and no policy file). Not run anywhere yet: the cases that need the policy file installed and a test account, which the CI job prepares (below). Never run: a dialog on a real desktop, under Wayland and under X11, which needs a person once.
@@ -365,4 +382,5 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 - Settled by [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md): the page reads the stored diff through `ApprovalDesk::preview`, and a declined run ends as `expired`. Still open: a change of more than 2,000 records cannot be approved on the page; it needs paging that a person can follow.
 - How a drained engine is restarted by the newer client: the client starts the new one after the old has released the engine lock, most likely.
 - Whether the hardened Workstation service, under its own account, needs the access rule widened to name one other user, and how that is kept from becoming a hole.
-- Where `engine.logs` reads from when the engine is not running and logs are rotated.
+- Where `engine.logs` reads from when the engine is not running and logs are rotated. The started engine's output is its own file, `engine-output.log`, since [decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md); it is not rotated.
+- From the second safety review, not built ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)): on Windows the runtime directory that holds the locks is not checked and the output file has no access list of its own (S4); the start's short blocking calls run on an async thread (S5); an engine started on demand keeps the settings variables of the client that started it (S6).

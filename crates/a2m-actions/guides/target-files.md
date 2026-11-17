@@ -88,4 +88,4 @@ description: >
 - A secret is never a value in these files. `auth.yaml` holds a reference such as `vault://example/service/password`.
 - Run `draft.lint` after every change. It reports every problem at once, with a file, a line, a rule, and a fix.
 
-Built-in field types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`. A field type of your own goes in `types.yaml`. Text that comes from the system, such as a note, should be a type with `untrusted: true`.
+Built-in field types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`, `untrusted_text`. A field type of your own goes in `types.yaml`. Text that comes from the system, such as a note, should be `untrusted_text` (text marked untrusted) or a type of your own with `untrusted: true`.

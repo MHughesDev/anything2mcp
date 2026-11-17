@@ -904,7 +904,9 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
     let refused = world
         .call(&agent, "publish.request", json!({"target": "example"}))
         .await;
-    let error = refused.error.expect("a publish whose test fails is refused");
+    let error = refused
+        .error
+        .expect("a publish whose test fails is refused");
     assert_eq!(error.code, "publish_gates_not_passed", "{error:?}");
     assert!(error.message.contains("order_get (failed)"), "{error:?}");
     assert!(error.fix.contains("test.run"), "{error:?}");
@@ -954,7 +956,12 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
     std::fs::write(&answer, &recorded).unwrap();
     let listed = world.call(&agent, "target.list", json!({})).await;
     assert_eq!(
-        listed.result.unwrap().to_string().matches("\"version\":\"").count(),
+        listed
+            .result
+            .unwrap()
+            .to_string()
+            .matches("\"version\":\"")
+            .count(),
         0
     );
 
@@ -1203,7 +1210,11 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     // The gates: the lint gate runs, and every offline test, of the read
     // and of the two writes, runs against its fixture and passes. The
     // other gates are not built, so the result is never complete.
-    let runs_before = world.call(&agent, "run.list", json!({})).await.result.unwrap();
+    let runs_before = world
+        .call(&agent, "run.list", json!({}))
+        .await
+        .result
+        .unwrap();
     let tested = world
         .call(&agent, "test.run", json!({"target": "example"}))
         .await;
@@ -1258,7 +1269,11 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     // Nothing reached the stand's driver, and the installation's ledger
     // holds no run of a test.
     assert!(world.reached.lock().unwrap().is_empty());
-    let runs_after = world.call(&agent, "run.list", json!({})).await.result.unwrap();
+    let runs_after = world
+        .call(&agent, "run.list", json!({}))
+        .await
+        .result
+        .unwrap();
     assert_eq!(runs_before["runs"], runs_after["runs"], "{runs_after}");
 
     let fixtures = world
@@ -1337,7 +1352,10 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     let kept_sheet = std::fs::read_to_string(&sheet_test).unwrap();
     std::fs::write(
         &sheet_test,
-        kept_sheet.replace("source: \"order_sheet.csv\"", "source: \"../../target.yaml\""),
+        kept_sheet.replace(
+            "source: \"order_sheet.csv\"",
+            "source: \"../../target.yaml\"",
+        ),
     )
     .unwrap();
     let tested = world
@@ -1347,11 +1365,18 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         .unwrap();
     let failed = state_of(&tested, "order_sheet_enter");
     assert_eq!(failed["state"], "failed", "{failed}");
-    assert_eq!(failed["fixture_problem"]["file"], "../../target.yaml", "{failed}");
+    assert_eq!(
+        failed["fixture_problem"]["file"], "../../target.yaml",
+        "{failed}"
+    );
     assert_eq!(failed["steps"], Json::Null, "{failed}");
     std::fs::write(&sheet_test, &kept_sheet).unwrap();
     assert!(world.reached.lock().unwrap().is_empty());
-    let runs_after = world.call(&agent, "run.list", json!({})).await.result.unwrap();
+    let runs_after = world
+        .call(&agent, "run.list", json!({}))
+        .await
+        .result
+        .unwrap();
     assert_eq!(runs_before["runs"], runs_after["runs"], "{runs_after}");
 
     // A result that differs from the test's fails with the difference.

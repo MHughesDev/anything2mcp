@@ -831,7 +831,10 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
                 versions.gate_evidence(&workspace(), &target(), &second)?,
                 Some(r#"{"gates":[]}"#.to_owned())
             );
-            assert_eq!(versions.gate_evidence(&workspace(), &target(), &first)?, None);
+            assert_eq!(
+                versions.gate_evidence(&workspace(), &target(), &first)?,
+                None
+            );
             versions.list(&workspace(), &target())
         })
         .await

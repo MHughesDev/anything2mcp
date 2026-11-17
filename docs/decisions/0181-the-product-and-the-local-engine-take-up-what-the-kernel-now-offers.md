@@ -34,4 +34,5 @@
 - `cargo test --workspace` now builds every crate with TLS on, because the product's default turns on the features of the crates under it; the separate TLS job of CI now tests what the default build tests, and could test `--no-default-features` instead.
 - A client that finds an engine stuck while opening ends in 30 seconds with exit code 4 and the file to read.
 - On Windows a data directory that holds an open lock file can seldom be removed, so the check rarely has anything to see there; this build asks only that the lock file still stands at its place.
+- The first hour is a product test (`first_hour.rs`): from an empty folder to a published read an agent calls, through the command face, 7.5 seconds on Linux here. It asserts three stops the product gives today and names the package that lifts each: a target that declares only its surface gives the scout no driver to observe through (`no_binding`); the scout's try stage does not end; and a drafted binding is `draft`, so a published draft cannot act until a person marks it verified.
 - Not run on Windows or macOS.

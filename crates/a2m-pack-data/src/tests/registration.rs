@@ -119,7 +119,7 @@ fn the_server_manifest_is_the_embedded_one_with_its_additions() {
     let built = Manifest::parse(server).unwrap();
     assert_eq!(built.modes.len(), embedded.modes.len());
     assert_eq!(built.surface_kinds.len(), 2);
-    assert_eq!(built.failure_codes.len(), embedded.failure_codes.len() + 3);
+    assert_eq!(built.failure_codes.len(), embedded.failure_codes.len() + 5);
 }
 
 #[test]

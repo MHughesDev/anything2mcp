@@ -513,3 +513,91 @@ async fn an_offline_write_reaches_no_system_even_where_its_fixture_answers_the_s
     );
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 0);
 }
+
+// ---- decision 0180: a list output is normalized item by item ----
+
+/// The order read with one more output, `lengths`: a list of the field
+/// type `inches`, a decimal.
+fn with_lengths(plan: &mut a2m_core::Plan) {
+    let inches = plan
+        .field_types
+        .iter()
+        .position(|field_type| field_type.name == "inches")
+        .unwrap();
+    let operation = plan
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name.as_str() == ORDER_GET)
+        .unwrap();
+    operation.outputs.push(a2m_core::OutputPlan {
+        name: "lengths".to_owned(),
+        ty: a2m_core::ValueType::List(Box::new(a2m_core::ValueType::Decimal)),
+        field_type: Some(a2m_core::FieldTypeIndex::new(
+            u32::try_from(inches).unwrap(),
+        )),
+    });
+}
+
+fn order_with_lengths(lengths: Vec<Value>) -> Values {
+    Values::new()
+        .with("order_id", "A-900")
+        .with("customer", "Replayed Customer")
+        .with("status", "draft")
+        .with("lines", Value::Int(2))
+        .with("lengths", Value::List(lengths))
+}
+
+#[tokio::test]
+async fn a_list_output_is_normalized_item_by_item_and_an_item_that_fails_is_named_by_place() {
+    let scene = Scene::new(ORDER_GET, with_lengths).await;
+    // Decimals given as text, and an item with no value, which stays none.
+    let replay = replay_of(vec![(
+        "get_order",
+        a2m_provider::Recorded::Done(order_with_lengths(vec![
+            Value::Text("12.5".to_owned()),
+            Value::Null,
+            Value::Text("7".to_owned()),
+        ])),
+    )]);
+    let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+    let outcome = scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay)
+        .await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let decimal = |text: &str| Value::Decimal(text.parse().unwrap());
+    assert_eq!(
+        scene.last_result().get("lengths"),
+        Some(&Value::List(vec![
+            decimal("12.5"),
+            Value::Null,
+            decimal("7")
+        ]))
+    );
+
+    // One item that cannot be read fails the read by its place, and the
+    // failure holds no value.
+    scene.another_run(ORDER_GET).await;
+    let replay = replay_of(vec![(
+        "get_order",
+        a2m_provider::Recorded::Done(order_with_lengths(vec![
+            Value::Text("12.5".to_owned()),
+            Value::Text("secret-for-tests-length".to_owned()),
+        ])),
+    )]);
+    let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+    let outcome = scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay)
+        .await;
+    let failure = outcome
+        .failure()
+        .expect("an item that cannot be read fails");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+    assert!(failure.message().contains("item 2"), "{failure:?}");
+    assert!(failure.message().contains("`lengths`"), "{failure:?}");
+    assert!(
+        !failure.message().contains("secret-for-tests"),
+        "{failure:?}"
+    );
+}

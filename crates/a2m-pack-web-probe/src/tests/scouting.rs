@@ -643,3 +643,48 @@ async fn two_pages_of_one_screen_give_one_screen_with_a_placeholder_the_same_twi
     assert!(site.writes().await.is_empty());
     bench.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_the_page_makes_by_itself_is_an_exchange_of_names_and_kinds_only() {
+    let site = Site::start().await;
+    let bench = Bench::new("page-requests", no_secrets());
+    let start = site.url("/");
+    let look = Look {
+        paths: vec!["/orders/A-100/totals"],
+        depth: Some(0),
+        ready_text: Some("Loaded."),
+        ..Look::default()
+    };
+    let seen = must(bench.run("web_capture", &start, &look).await);
+    check(&seen);
+    let (finding, found) = seen.one("exchange", "/api/orders/A-100/totals");
+    assert_eq!(finding.level(), EvidenceLevel::Discovered);
+    assert_eq!(
+        found,
+        json!({
+            "format": "1", "method": "GET", "path": "/api/orders/A-100/totals",
+            "query": {"lang": "unknown", "view": "unknown"}, "answered": true, "status": 200,
+            "content": "json",
+            "response": {"type": "object", "fields": {
+                "lines": {"type": "integer"}, "order_id": {"type": "text"},
+                "total_length_in": {"type": "text"}, "total_quantity": {"type": "integer"},
+            }},
+            "made_by": "/orders/A-100/totals",
+            "credential_headers": ["cookie", "x-csrf-token"],
+        })
+    );
+    // No value of the query, a header, the cookie, or the answer.
+    let whole = serde_json::to_string(&seen.findings).unwrap();
+    for value in [
+        "summary",
+        "example-token-for-tests",
+        "secret-for-tests-cookie",
+    ] {
+        assert!(!whole.contains(value), "{whole}");
+    }
+    // The endpoint it groups into, as for any other exchange.
+    let (_, endpoint) = seen.one("endpoint", "/api/orders/A-100/totals");
+    assert_eq!(endpoint["method"], "GET");
+    assert!(site.writes().await.is_empty());
+    bench.end().await;
+}

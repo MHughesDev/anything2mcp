@@ -18,3 +18,11 @@ code = "identity_is_administrator"
 [[failure_codes]]
 class = "input"
 code = "credential_not_carried"
+
+[[failure_codes]]
+class = "policy"
+code = "connection_leads_elsewhere"
+
+[[failure_codes]]
+class = "policy"
+code = "surface_not_declared"

@@ -231,6 +231,31 @@ impl ServerScene {
         self.registry.driver(&super::mode()).unwrap()
     }
 
+    /// Points the scene's surface at another database of the same server: a
+    /// surface published again with another `database`.
+    fn lead_to(&mut self, database: &str) {
+        self.surface = surface_at(
+            &self.plan,
+            &self.server.address().ip().to_string(),
+            self.server.address().port(),
+            database,
+        );
+    }
+
+    /// Changes one statement of the plan's section, as the compiler would
+    /// never make it.
+    fn alter(&mut self, name: &str, change: impl FnOnce(&mut crate::model::Statement)) {
+        let section = self
+            .plan
+            .packs
+            .iter_mut()
+            .find(|section| section.pack == crate::names::PACK)
+            .unwrap();
+        let mut held: crate::model::Section = section.payload.decode().unwrap();
+        change(held.statements.get_mut(name).unwrap());
+        section.payload = PackPayload::encode(&held).unwrap();
+    }
+
     fn binding(&self, operation: &str) -> &BindingPlan {
         &self
             .plan
@@ -249,6 +274,7 @@ impl ServerScene {
     ) -> Result<Prepared, StepFailure> {
         let lease = self.signed.lease().await;
         let supervisor = handle.supervisor(Vec::new());
+        let destinations = Destinations::new([self.surface.surface.address.clone()]);
         let cx = a2m_provider::PrepareContext {
             run: fence.run,
             epoch: fence.epoch,
@@ -257,7 +283,7 @@ impl ServerScene {
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
-            destinations: &Destinations::default(),
+            destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
         };
@@ -786,15 +812,18 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
     let plan = compiled(&registry);
     let handle = registry.driver(&super::mode()).unwrap();
-    for (address, code) in [
+    for (address, declared, code) in [
         // Documentation addresses: nothing is ever sent to them.
-        ("192.0.2.10", &codes::LINK_NOT_ENCRYPTED),
-        ("localhost", &codes::LINK_NOT_ENCRYPTED),
-        ("db.example.test", &codes::LINK_NOT_ENCRYPTED),
+        ("192.0.2.10", true, &codes::LINK_NOT_ENCRYPTED),
+        ("localhost", true, &codes::LINK_NOT_ENCRYPTED),
+        ("db.example.test", true, &codes::LINK_NOT_ENCRYPTED),
         // On the loopback address, but with no session to sign in with.
-        ("127.0.0.1", &codes::CREDENTIAL_NOT_CARRIED),
+        ("127.0.0.1", true, &codes::CREDENTIAL_NOT_CARRIED),
+        // Not among the run's destinations.
+        ("127.0.0.1", false, &codes::SURFACE_NOT_DECLARED),
     ] {
         let surface = surface_at(&plan, address, 5432, "example");
+        let destinations = Destinations::new(declared.then(|| address.to_owned()));
         let supervisor = handle.supervisor(Vec::new());
         let cx = a2m_provider::PrepareContext {
             run: fence().run,
@@ -804,7 +833,7 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
             posture: Posture::Live,
             deadline: Deadline::after(Duration::from_secs(5)),
             redact: &NoSecrets,
-            destinations: &Destinations::default(),
+            destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
         };
@@ -849,6 +878,195 @@ async fn connections_are_kept_for_the_session_and_closed_after_a_failure() {
     assert_eq!(failed(stale).0, FailureClass::Stale);
     run.release().await;
     connections_become(&scene, 0).await;
+}
+
+#[tokio::test]
+async fn a_kept_connection_never_serves_a_surface_that_now_leads_to_another_database() {
+    let Some(mut scene) = ServerScene::new().await else {
+        return;
+    };
+    let first = scene.server.database().to_owned();
+    let second = scene.server.second_database().unwrap();
+    let binding = scene.binding("example_line_item_update").clone();
+    let (mut run, write) = scene.live(&LINE).await;
+    run.steps(&binding.act, &update("151.25", "13.10", 1), Some(&write))
+        .await
+        .unwrap();
+    run.release().await;
+    drop(write);
+    assert_eq!(
+        scene
+            .server
+            .write_count_in(&first, "order_lines", &LINE)
+            .unwrap(),
+        1
+    );
+    // The surface is published again to name the second database; the same
+    // session runs again while the first run's connections are kept.
+    scene.lead_to(&second);
+    let (mut run, write) = scene.live(&LINE).await;
+    run.steps(&binding.act, &update("151.25", "13.10", 1), Some(&write))
+        .await
+        .unwrap();
+    let read = values(
+        run.steps(&binding.read_back, &update("151.25", "13.10", 1), None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(read.get("row_version"), Some(&Value::Int(2)));
+    run.release().await;
+    // Each database, asked through the server's own client.
+    assert_eq!(
+        scene
+            .server
+            .write_count_in(&second, "order_lines", &LINE)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        scene
+            .server
+            .write_count_in(&first, "order_lines", &LINE)
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_kept_connection_whose_search_path_was_changed_writes_nothing() {
+    let Some(scene) = ServerScene::new().await else {
+        return;
+    };
+    // A trigger of the store's owner moves the session's `search_path` of
+    // whatever connection writes the table, past the end of its transaction.
+    scene
+        .server
+        .execute(&format!(
+            "SET ROLE {OWNER_ROLE}; CREATE OR REPLACE FUNCTION order_lines_bump_version() RETURNS trigger \
+             LANGUAGE plpgsql AS $t$ BEGIN PERFORM set_config('search_path', 'stand', false); \
+             NEW.row_version := OLD.row_version + 1; RETURN NEW; END $t$;"
+        ))
+        .unwrap();
+    let binding = scene.binding("example_line_item_update");
+    let (mut run, write) = scene.live(&LINE).await;
+    run.steps(&binding.act, &update("151.25", "13.10", 1), Some(&write))
+        .await
+        .unwrap();
+    run.release().await;
+    assert_eq!(scene.server.write_count("order_lines", &LINE).unwrap(), 1);
+    // The next write of the session is given the kept writer, whose server
+    // now reads another schema first: it stops before anything is sent.
+    let (mut run, write) = scene.live(&LINE).await;
+    let stopped = run
+        .steps(&binding.act, &update("152.25", "13.10", 2), Some(&write))
+        .await;
+    assert_eq!(
+        failed(stopped),
+        (
+            FailureClass::Policy,
+            codes::CONNECTION_LEADS_ELSEWHERE,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+    assert_eq!(scene.server.write_count("order_lines", &LINE).unwrap(), 1);
+    assert_eq!(scene.line("length_in").as_deref(), Some("151.2500"));
+}
+
+#[tokio::test]
+async fn a_comment_the_server_ends_at_a_carriage_return_is_refused_before_it_is_sent() {
+    let Some(mut scene) = ServerScene::new().await else {
+        return;
+    };
+    // The server's own reading: a `--` comment ends at a carriage return,
+    // and what follows is a second column.
+    let hidden = "SELECT 1 AS a --\r, current_setting('search_path') AS b";
+    let lease = scene.signed.lease().await;
+    let fields: crate::model::SurfaceFields = scene.surface.surface.payload.decode().unwrap();
+    let (at, _) =
+        crate::postgres::server_of(&scene.surface.surface, &fields, Some(&lease)).unwrap();
+    let columns = tokio::task::spawn_blocking(move || {
+        let mut conn = crate::store::opener("postgres")
+            .unwrap()
+            .open(&at, crate::model::Access::ReadOnly)
+            .unwrap();
+        conn.describe(hidden).unwrap().columns
+    })
+    .await
+    .unwrap();
+    assert_eq!(columns, ["a", "b"]);
+    // The driver refuses a plan's statement that holds one, unsent.
+    scene.alter("line_item_by_key", |statement| {
+        statement.text = "SELECT \"order_id\", \"item_code\" --\r, current_setting('search_path') AS \"description\"\n FROM \"order_lines\" WHERE \"order_id\" = $1 AND \"item_code\" = $2"
+            .to_owned();
+    });
+    let mut run = scene.prepare().await;
+    let refused = run
+        .steps(
+            &scene.binding("example_line_item_get").act,
+            &inputs(&LINE_KEY),
+            None,
+        )
+        .await;
+    assert_eq!(
+        failed(refused),
+        (
+            FailureClass::Policy,
+            codes::STATEMENT_NOT_ALLOWED,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+}
+
+#[tokio::test]
+async fn a_commit_whose_answer_never_comes_is_in_doubt_at_the_steps_deadline() {
+    let Some(scene) = ServerScene::new().await else {
+        return;
+    };
+    let binding = scene.binding("example_line_item_update");
+    let (mut run, write) = scene.live(&LINE).await;
+    run.wait = Duration::from_secs(2);
+    scene.server.arm(RelayFault::HoldCommitAnswer);
+    let held = run
+        .steps(&binding.act, &update("151.25", "13.10", 1), Some(&write))
+        .await;
+    assert!(scene.server.fault_met());
+    assert_eq!(
+        failed(held),
+        (
+            FailureClass::PossibleCommit,
+            contract::NO_CONFIRMATION,
+            Sent::Unknown
+        )
+    );
+    run.release().await;
+    assert_eq!(scene.server.write_count("order_lines", &LINE).unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_role_that_may_read_the_servers_files_is_refused_before_anything_runs() {
+    const READER: &str = "example_files_reader";
+    const READER_PASSWORD: &str = "secret-for-tests-files-reader";
+    let Some(scene) = ServerScene::as_role(READER, READER_PASSWORD).await else {
+        return;
+    };
+    scene
+        .server
+        .execute(&format!(
+            "DO $r$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{READER}') THEN \
+             CREATE ROLE {READER} LOGIN PASSWORD '{READER_PASSWORD}'; END IF; END $r$; \
+             GRANT pg_read_server_files TO {READER}; GRANT USAGE ON SCHEMA public TO {READER};"
+        ))
+        .unwrap();
+    let handle = scene.handle();
+    let failure = scene
+        .try_prepare(&handle, Posture::Live, fence())
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(failure.failure.code(), &codes::IDENTITY_IS_ADMINISTRATOR);
+    assert_eq!(failure.sent, Sent::NotSent);
 }
 
 // ---- discovery ----

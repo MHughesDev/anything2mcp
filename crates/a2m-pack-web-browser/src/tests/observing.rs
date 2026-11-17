@@ -157,3 +157,69 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     drop(tab);
     stand.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_value() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("exchanges");
+    let clerk = profile("clerk");
+    let observer = stand.browsers.observer();
+    let tab = must(
+        observer
+            .observing_tab(
+                &clerk,
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    let totals = Address::new(&app.url("/orders/A-100/totals")).unwrap();
+    must(tab.goto(&totals, soon()).await);
+    let loaded = crate::Primitive::Text(
+        css("#state"),
+        crate::TextMatch {
+            text: "Loaded.".to_owned(),
+            contains: false,
+        },
+    );
+    must(tab.wait(&loaded, soon()).await);
+    let exchanges = tab.exchanges(soon()).await;
+    let fields = [
+        ("lines", "integer"),
+        ("order_id", "string"),
+        ("total_length_in", "string"),
+        ("total_quantity", "integer"),
+    ]
+    .into_iter()
+    .map(|(name, kind)| (name.to_owned(), kind.to_owned()))
+    .collect();
+    assert_eq!(
+        exchanges,
+        [crate::PageExchange {
+            method: "GET".to_owned(),
+            origin: app.url("").trim_end_matches('/').to_owned(),
+            path: "/api/orders/A-100/totals".to_owned(),
+            query: vec!["lang".to_owned(), "view".to_owned()],
+            credential_headers: vec!["cookie".to_owned(), "x-csrf-token".to_owned()],
+            status: 200,
+            content_type: "application/json".to_owned(),
+            fields: Some(fields),
+        }]
+    );
+    // No value of the query, the header, the cookie, or the answer.
+    let whole = format!("{exchanges:?}");
+    for value in [
+        "summary",
+        "example-token-for-tests",
+        "secret-for-tests",
+        "Example Customer",
+    ] {
+        assert!(!whole.contains(value), "{whole}");
+    }
+    // Taken once; the document the tab was sent to is not one.
+    assert!(tab.exchanges(soon()).await.is_empty());
+    assert!(app.writes().await.unwrap().is_empty());
+    drop(tab);
+    stand.end().await;
+}

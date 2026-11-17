@@ -145,7 +145,22 @@ fn tokens(text: &str, dialect: Dialect) -> Result<Vec<Token<'_>>, Wrong> {
     const ESCAPED: Wrong = Wrong::Form(
         "The statement holds a text with escapes or in dollar quotes. Write a text in plain single quotes, or bind it as a parameter.",
     );
+    const CONTROL: Wrong = Wrong::Form(
+        "The statement holds a control character other than a line feed or a tab: a carriage return, a form feed, a vertical tab, a NUL, or another. A store's reader may end a comment or a word at one where this check does not, so none is taken anywhere in a statement.",
+    );
     let server = dialect == Dialect::Server;
+    // Where a reader ends a line comment or a word is the reader's own rule:
+    // the server ends a `--` comment at a carriage return as well as a line
+    // feed, and reads a vertical tab and a form feed as space. A statement is
+    // written by a person in a target file and needs none of them, so every
+    // control character but a line feed and a tab is refused before any word
+    // is read, inside a quoted text too.
+    if text
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Err(CONTROL);
+    }
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut at = 0;
@@ -154,9 +169,11 @@ fn tokens(text: &str, dialect: Dialect) -> Result<Vec<Token<'_>>, Wrong> {
         match byte {
             _ if byte.is_ascii_whitespace() => at += 1,
             b'-' if next == Some(b'-') => {
+                // A line feed or a carriage return ends it, as the server's
+                // lexer reads it; the second is refused above all the same.
                 at = bytes
                     .get(at..)
-                    .and_then(|rest| rest.iter().position(|byte| *byte == b'\n'))
+                    .and_then(|rest| rest.iter().position(|byte| matches!(byte, b'\n' | b'\r')))
                     .map_or(bytes.len(), |line| at + line + 1);
             }
             b'/' if next == Some(b'*') => {
@@ -373,6 +390,20 @@ mod tests {
             "SELECT a FROM t WHERE k = $1 FOR UPDATE",
         ] {
             assert!(server(text, Does::Read).is_err(), "{text}");
+        }
+        // A comment the server ends at a carriage return, a form feed, a
+        // vertical tab, a NUL, and a control character inside a text: in
+        // both dialects.
+        for text in [
+            "SELECT a FROM t --\r, set_config('search_path', 'x', false)",
+            "SELECT a FROM t --\u{c}x",
+            "SELECT a\u{b}FROM t",
+            "SELECT a FROM t\0",
+            "SELECT 'a\r' FROM t",
+            "SELECT a FROM t \u{1b}",
+        ] {
+            assert!(server(text, Does::Read).is_err(), "{text:?}");
+            assert!(check(text, Does::Read).is_err(), "{text:?}");
         }
         // `SET` opens an update's assignments and nothing else.
         assert!(server("INSERT INTO t (a) VALUES ($1); SET ROLE x", Does::Insert).is_err());

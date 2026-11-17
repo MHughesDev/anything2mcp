@@ -91,10 +91,7 @@ pub(crate) fn compile_what_can(
         Err(problems) => {
             let questioned: Vec<String> = problems
                 .iter()
-                .filter(|problem| {
-                    problem.code.as_str()
-                        == format!("kernel.{}", a2m_files::codes::OPEN_QUESTION)
-                })
+                .filter(|problem| problem.code.as_str() == a2m_files::codes::OPEN_QUESTION)
                 .map(|problem| problem.at.file.as_str().to_owned())
                 .collect();
             if questioned.iter().all(|file| left_out.contains(file)) {

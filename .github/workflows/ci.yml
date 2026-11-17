@@ -232,7 +232,7 @@ jobs:
         run: sudo journalctl --unit polkit.service --no-pager | tail -n 200
 
   tls:
-    name: Rust with TLS on ${{ matrix.os }}
+    name: Rust without TLS on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -246,10 +246,12 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
-      - name: Lint with TLS on
-        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --features anything2mcp/tls -- -D warnings
-      - name: Test with TLS on
-        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --features anything2mcp/tls
+      # HTTPS is in the default build, which the job above tests. This job
+      # holds the build without it, which `--no-default-features` gives.
+      - name: Lint with TLS off
+        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --no-default-features -- -D warnings
+      - name: Test with TLS off
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
 
   postgres:
     name: The data pack against a real PostgreSQL server

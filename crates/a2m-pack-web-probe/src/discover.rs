@@ -382,6 +382,10 @@ async fn ready(
 
 // ---- web_snapshot ----
 
+/// One page a snapshot was taken of: where it ended, what was found, and
+/// why that is weaker than it looks.
+type Looked = (Place, Json, Vec<(LimitationCode, String)>);
+
 /// `web_snapshot`: the screens of the surface's start page, of the pages
 /// the focus names, and of the pages plain links lead to, as deep as the
 /// bounds allow.
@@ -507,7 +511,7 @@ impl WebSnapshot {
         core: &Core,
         kinds: &Kinds,
         scope: &DiscoveryScope<'_>,
-        seen: &[(Place, Json, Vec<(LimitationCode, String)>)],
+        seen: &[Looked],
         out: &mut Once<'_>,
     ) -> Result<(), Failure> {
         let listed: Vec<(&str, &str, &Json)> = seen
@@ -640,6 +644,8 @@ impl WebCapture {
                         query: BTreeMap::new(),
                         status: None,
                         answer: Answer::Refused,
+                        made_by: None,
+                        credential_headers: Vec::new(),
                     }),
                     // A request to a system that is not this surface.
                     _ => pages.report.dropped += 1,
@@ -654,9 +660,53 @@ impl WebCapture {
                     query: arrival.ended.query.clone(),
                     status: arrival.status,
                     answer,
+                    made_by: None,
+                    credential_headers: Vec::new(),
                 },
                 limitations,
             ));
+            // What the page asked for by itself, with GET, from its own
+            // origin, as the tab recorded it: names and kinds only.
+            for own in tab.exchanges(scope.deadline).await {
+                if own.origin != start.origin {
+                    pages.report.dropped += 1;
+                    continue;
+                }
+                let mut limitations = vec![(
+                    LimitationCode::SingleVariant,
+                    "A request the page made by itself, seen once, signed in as nobody. Its query and its answer are kept as names, the answer's to one level inside an object.".to_owned(),
+                )];
+                if !own.credential_headers.is_empty() {
+                    limitations.push((
+                        LimitationCode::NotExercised,
+                        format!(
+                            "The request carried {} header(s) that hold a credential or an anti-forgery token; they are named, and their values were not kept.",
+                            own.credential_headers.len()
+                        ),
+                    ));
+                }
+                let answer = match &own.fields {
+                    Some(fields) => Answer::Json(Shape::of_fields(fields)),
+                    None => Answer::Document,
+                };
+                exchanges.push((
+                    Exchange {
+                        method: own.method,
+                        origin: own.origin,
+                        path: own.path,
+                        query: own
+                            .query
+                            .into_iter()
+                            .map(|name| (name, "unknown"))
+                            .collect(),
+                        status: Some(own.status),
+                        answer,
+                        made_by: Some(arrival.ended.path.clone()),
+                        credential_headers: own.credential_headers,
+                    },
+                    limitations,
+                ));
+            }
             for one in refused {
                 exchanges.push((
                     one,

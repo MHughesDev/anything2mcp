@@ -45,7 +45,8 @@ async fn only_a_throwaway_store_takes_an_offline_tests_clearance() {
         let fence = previewed(&store, 1, &["a"]).await;
         let refused = store
             .write(Durability::Synced, move |tx| {
-                tx.ledger().begin_writes(&fence, WriteClearance::OfflineTest)
+                tx.ledger()
+                    .begin_writes(&fence, WriteClearance::OfflineTest)
             })
             .await
             .unwrap_err();
@@ -65,7 +66,8 @@ async fn only_a_throwaway_store_takes_an_offline_tests_clearance() {
     let fence = previewed(&store, 1, &["a"]).await;
     store
         .write(Durability::Synced, move |tx| {
-            tx.ledger().begin_writes(&fence, WriteClearance::OfflineTest)
+            tx.ledger()
+                .begin_writes(&fence, WriteClearance::OfflineTest)
         })
         .await
         .unwrap();
@@ -77,7 +79,8 @@ async fn only_a_throwaway_store_takes_an_offline_tests_clearance() {
     assert!(run.cleared_to_write());
     let again = store
         .write(Durability::Synced, move |tx| {
-            tx.ledger().begin_writes(&fence, WriteClearance::OfflineTest)
+            tx.ledger()
+                .begin_writes(&fence, WriteClearance::OfflineTest)
         })
         .await
         .unwrap_err();

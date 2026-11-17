@@ -142,6 +142,10 @@ pub(crate) enum EventKind {
     MoveStarted(MoveStarted),
     /// A download is about to begin.
     DownloadBegins(DownloadBegins),
+    /// A request's answer has arrived whole.
+    LoadingFinished(Loading),
+    /// A request failed, or was ended.
+    LoadingFailed(Loading),
 }
 
 impl EventKind {
@@ -168,6 +172,8 @@ impl EventKind {
             "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
             "Page.frameStartedNavigating" => Self::MoveStarted(of(params)?),
             "Page.downloadWillBegin" => Self::DownloadBegins(of(params)?),
+            "Network.loadingFinished" => Self::LoadingFinished(of(params)?),
+            "Network.loadingFailed" => Self::LoadingFailed(of(params)?),
             _ => return None,
         })
     }
@@ -258,11 +264,16 @@ pub(crate) struct RequestPaused {
 pub(crate) struct PausedRequest {
     pub url: String,
     pub method: String,
+    /// The request's headers. Only their names are ever read.
+    #[serde(default)]
+    pub headers: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResponseReceived {
+    #[serde(default)]
+    pub request_id: String,
     #[serde(default)]
     pub loader_id: String,
     #[serde(default, rename = "type")]
@@ -271,8 +282,17 @@ pub(crate) struct ResponseReceived {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ResponseDescription {
     pub status: u16,
+    #[serde(default)]
+    pub mime_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Loading {
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -779,6 +799,21 @@ pub(crate) struct BypassServiceWorker {
     pub bypass: bool,
 }
 command!(BypassServiceWorker, "Network.setBypassServiceWorker" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetResponseBody<'a> {
+    pub request_id: &'a str,
+}
+command!(GetResponseBody<'_>, "Network.getResponseBody" => ResponseBody);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResponseBody {
+    pub body: String,
+    #[serde(default)]
+    pub base64_encoded: bool,
+}
 
 // ---- Input ----
 

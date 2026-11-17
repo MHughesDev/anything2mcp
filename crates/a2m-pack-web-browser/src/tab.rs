@@ -2,7 +2,9 @@
 //! tab that may only observe. Everything that only looks is the [`Look`]
 //! trait, which both have; only [`ActTab`] has a method that acts.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use serde_json::Value as Json;
 use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,9 +25,9 @@ use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
     CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
-    FailRequest, FetchEnable, GetFullAxTree, GetProperties, HandleDialog, InsertText, MediaFeature,
-    Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern, RequestPaused,
-    RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
+    FailRequest, FetchEnable, GetFullAxTree, GetProperties, GetResponseBody, HandleDialog,
+    InsertText, MediaFeature, Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern,
+    RequestPaused, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
     SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
@@ -532,6 +534,112 @@ pub struct PageResponse {
     pub body: String,
 }
 
+/// One request the page of an observing tab made by itself, with GET, to
+/// one of the tab's origins, and its answer, by structure alone: no value
+/// of the address's query, of a header, of a cookie, or of the answer is
+/// kept (decision 0187).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageExchange {
+    /// The method, in capitals: `GET`.
+    pub method: String,
+    /// The origin, as the browser writes it.
+    pub origin: String,
+    /// The path, without its query, with every known secret replaced.
+    pub path: String,
+    /// The names of the query's parameters, in order, each once.
+    pub query: Vec<String>,
+    /// The names, in lowercase and in order, of the request's headers that
+    /// carry a credential or an anti-forgery token. Never their values.
+    pub credential_headers: Vec<String>,
+    /// The status of the answer.
+    pub status: u16,
+    /// The answer's media type, in lowercase, without its parameters.
+    pub content_type: String,
+    /// For an answer that is a JSON document: each of its top-level names,
+    /// and each name one level inside an object, as `outer.inner`, or
+    /// `[]` and `[].name` for a list's items, with the kind of value it held:
+    /// `string`, `integer`, `number`, `boolean`, `null`, `object`, or
+    /// `array`; `mixed` when the items of a list held more than one.
+    /// `None` when the answer is not JSON, could not be read, or is longer
+    /// than the tab reads.
+    pub fields: Option<BTreeMap<String, String>>,
+}
+
+/// The words in a request header's name that say it carries a credential
+/// or an anti-forgery token. Data.
+pub const CREDENTIAL_HEADER_WORDS: &[&str] = &[
+    "authorization",
+    "cookie",
+    "token",
+    "csrf",
+    "xsrf",
+    "auth",
+    "session",
+    "key",
+    "secret",
+];
+
+/// A request of the page, heard and not yet answered whole.
+#[derive(Debug, Clone)]
+struct Pending {
+    exchange: PageExchange,
+    answered: bool,
+}
+
+/// The most exchanges an observing tab keeps before they are taken.
+const EXCHANGES_KEPT: usize = 256;
+
+fn json_kind(value: &Json) -> &'static str {
+    match value {
+        Json::Null => "null",
+        Json::Bool(_) => "boolean",
+        Json::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Json::Number(_) => "number",
+        Json::String(_) => "string",
+        Json::Array(_) => "array",
+        Json::Object(_) => "object",
+    }
+}
+
+/// The names of a JSON answer and the kinds of what they held, to one
+/// level inside an object or a list's items. No value is kept.
+pub(crate) fn fields_of(json: &Json) -> BTreeMap<String, String> {
+    fn note(out: &mut BTreeMap<String, String>, name: String, kind: &str) {
+        let entry = out.entry(name).or_insert_with(|| kind.to_owned());
+        if entry != kind {
+            "mixed".clone_into(entry);
+        }
+    }
+    fn object(
+        out: &mut BTreeMap<String, String>,
+        prefix: &str,
+        map: &serde_json::Map<String, Json>,
+        inner: bool,
+    ) {
+        for (name, value) in map {
+            let at = format!("{prefix}{name}");
+            note(out, at.clone(), json_kind(value));
+            if inner && let Json::Object(nested) = value {
+                object(out, &format!("{at}."), nested, false);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    match json {
+        Json::Object(map) => object(&mut out, "", map, true),
+        Json::Array(items) => {
+            for item in items {
+                note(&mut out, "[]".to_owned(), json_kind(item));
+                if let Json::Object(map) = item {
+                    object(&mut out, "[].", map, false);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
     Open,
@@ -664,6 +772,12 @@ pub(crate) struct Page {
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
+    /// The page's own requests heard and not yet answered whole, by the
+    /// browser's number for them, and how many there are.
+    pending: Mutex<BTreeMap<String, Pending>>,
+    waiting: watch::Sender<usize>,
+    /// The page's own requests answered whole, oldest first.
+    exchanges: Mutex<Vec<PageExchange>>,
     safe: Option<SafeRequests>,
     /// The origins the tab was opened for.
     origins: Origins,
@@ -1896,6 +2010,7 @@ impl Page {
                 }
             }
             EventKind::ResponseReceived(received) if own => {
+                self.answered(&received.request_id, &received.response);
                 if received.kind == "Document" && !received.loader_id.is_empty() {
                     self.nav.send_modify(|nav| {
                         nav.document = Some((received.loader_id, received.response.status));
@@ -1983,6 +2098,9 @@ impl Page {
                 };
                 match verdict {
                     Verdict::Pass => {
+                        if own && !document {
+                            self.heard_request(&paused);
+                        }
                         let _ = self
                             .client
                             .call(
@@ -2017,6 +2135,8 @@ impl Page {
                     }
                 }
             }
+            EventKind::LoadingFinished(done) if own => self.finished(&done.request_id).await,
+            EventKind::LoadingFailed(done) if own => self.forget(&done.request_id),
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
                 // The payload is the page's: only a known word is taken as
                 // the method, and the rest is an address like any other.
@@ -2033,6 +2153,153 @@ impl Page {
             }
             _ => {}
         }
+    }
+
+    /// Notes a request the page of an observing tab made by itself, with
+    /// GET, to one of the tab's origins, from a script: the start of a
+    /// [`PageExchange`]. Only names are kept.
+    fn heard_request(&self, paused: &RequestPaused) {
+        let request = &paused.request;
+        let scripted = matches!(paused.resource_type.as_str(), "XHR" | "Fetch");
+        let Some(number) = paused.network_id.as_deref() else {
+            return;
+        };
+        if self.safe.is_none()
+            || !scripted
+            || request.method != "GET"
+            || !self.origins.allows_reported(&request.url)
+        {
+            return;
+        }
+        let Some(origin) = origin_of(&request.url) else {
+            return;
+        };
+        let address = without_fragment(&request.url);
+        let query: BTreeSet<String> = address
+            .split_once('?')
+            .map(|(_, query)| query)
+            .unwrap_or_default()
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| pair.split_once('=').map_or(pair, |(name, _)| name))
+            .map(|name| self.redact.redact(name))
+            .collect();
+        let credential_headers: BTreeSet<String> = request
+            .headers
+            .keys()
+            .map(|name| name.to_ascii_lowercase())
+            .filter(|name| {
+                CREDENTIAL_HEADER_WORDS
+                    .iter()
+                    .any(|word| name.contains(word))
+            })
+            .collect();
+        let exchange = PageExchange {
+            method: request.method.clone(),
+            origin,
+            path: self.redact.redact(path_of(address)),
+            query: query.into_iter().collect(),
+            credential_headers: credential_headers.into_iter().collect(),
+            status: 0,
+            content_type: String::new(),
+            fields: None,
+        };
+        if let Ok(mut pending) = self.pending.lock()
+            && pending.len() < EXCHANGES_KEPT
+        {
+            pending.insert(
+                number.to_owned(),
+                Pending {
+                    exchange,
+                    answered: false,
+                },
+            );
+            self.waiting.send_replace(pending.len());
+        }
+    }
+
+    /// The head of the answer to a request of the page that is noted.
+    fn answered(&self, number: &str, response: &crate::protocol::ResponseDescription) {
+        if let Ok(mut pending) = self.pending.lock()
+            && let Some(one) = pending.get_mut(number)
+        {
+            one.exchange.status = response.status;
+            one.exchange.content_type = response
+                .mime_type
+                .split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            one.answered = true;
+        }
+    }
+
+    /// Forgets a request of the page that failed: it has no answer.
+    fn forget(&self, number: &str) {
+        if let Ok(mut pending) = self.pending.lock()
+            && pending.remove(number).is_some()
+        {
+            self.waiting.send_replace(pending.len());
+        }
+    }
+
+    /// The answer to a request of the page has arrived whole: its names
+    /// and kinds are read, and it is an exchange.
+    async fn finished(&self, number: &str) {
+        let taken = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|pending| pending.get(number).cloned());
+        let Some(Pending {
+            mut exchange,
+            answered: true,
+        }) = taken
+        else {
+            self.forget(number);
+            return;
+        };
+        let json =
+            exchange.content_type == "application/json" || exchange.content_type.ends_with("+json");
+        if json {
+            let deadline = Deadline::after(self.call_deadline);
+            let body = self
+                .client
+                .call(
+                    Some(&self.session),
+                    &GetResponseBody { request_id: number },
+                    deadline,
+                )
+                .await;
+            exchange.fields = body
+                .ok()
+                .filter(|body| !body.base64_encoded && body.body.chars().count() <= self.max_read)
+                .and_then(|body| serde_json::from_str::<Json>(&body.body).ok())
+                .map(|json| {
+                    fields_of(&json)
+                        .into_iter()
+                        .map(|(name, kind)| (self.redact.redact(&name), kind))
+                        .collect()
+                });
+        }
+        if let Ok(mut exchanges) = self.exchanges.lock()
+            && exchanges.len() < EXCHANGES_KEPT
+        {
+            exchanges.push(exchange);
+        }
+        self.forget(number);
+    }
+
+    /// The page's own requests answered whole, oldest first, taken out,
+    /// once none is awaiting its answer or the deadline has passed.
+    async fn take_exchanges(&self, deadline: Deadline) -> Vec<PageExchange> {
+        let mut waiting = self.waiting.subscribe();
+        let _ = tokio::time::timeout_at(deadline.at(), waiting.wait_for(|count| *count == 0)).await;
+        self.exchanges
+            .lock()
+            .map(|mut exchanges| std::mem::take(&mut *exchanges))
+            .unwrap_or_default()
     }
 
     /// The requests this observing tab refused, oldest first, taken out.
@@ -2358,6 +2625,9 @@ pub(crate) async fn open_page(
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
         blocked: Mutex::new(Vec::new()),
+        pending: Mutex::new(BTreeMap::new()),
+        waiting: watch::Sender::new(0),
+        exchanges: Mutex::new(Vec::new()),
         safe: match posture {
             Posture::Act => None,
             Posture::Observe(safe) => Some(safe),
@@ -2752,6 +3022,15 @@ impl ObserveTab {
     pub fn blocked(&self) -> Vec<RequestShape> {
         self.page.take_blocked()
     }
+
+    /// The requests its page made by itself since the last call, with GET,
+    /// from a script, to one of the tab's origins, and their answers, by
+    /// structure alone: oldest first, once no such request is awaiting its
+    /// answer, or when the deadline passes with what was answered by then.
+    /// A request of any other method is refused, and is in [`Self::blocked`].
+    pub async fn exchanges(&self, deadline: Deadline) -> Vec<PageExchange> {
+        self.page.take_exchanges(deadline).await
+    }
 }
 
 #[cfg(test)]
@@ -2770,6 +3049,7 @@ mod tests {
             request: PausedRequest {
                 url: address.to_owned(),
                 method: "GET".to_owned(),
+                headers: serde_json::Map::new(),
             },
             frame_id: "frame".to_owned(),
             resource_type: "Document".to_owned(),

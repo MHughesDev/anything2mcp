@@ -880,14 +880,7 @@ async fn try_reads(
     // whole kind from compiling (decision 0180).
     let compiled = {
         let kernel = kernel.clone();
-        off_thread(move || {
-            Ok(super::build::compile_what_can(
-                &kernel,
-                &folder,
-                &held_back,
-            ))
-        })
-        .await?
+        off_thread(move || Ok(super::build::compile_what_can(&kernel, &folder, &held_back))).await?
     };
     let (compiled, left_out) = match compiled {
         Ok((compiled, left_out)) => (compiled, json!(left_out)),
@@ -1173,10 +1166,13 @@ handler!(
                 "runs": identified.runs_json(),
             });
             if let Some(why) = &identified.not_compiled {
+                // The compiler's message may quote a drafted value, the
+                // system's words: it is kept apart, under the mark.
                 result["state"] = json!("not_looked_at");
-                result["why"] = json!(format!(
-                    "The target's drafts do not compile, so no surface can be observed: {why} `draft.lint` names every problem."
-                ));
+                result["why"] = json!(
+                    "The target's drafts do not compile, so no surface can be observed. `draft.lint` names every problem."
+                );
+                result["problems"] = untrusted(json!(why));
             }
             kernel
                 .store_stage(id, 1, input_hash(&done[&0]), &result)

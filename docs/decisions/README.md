@@ -187,3 +187,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0181 | [The product and the local engine take up what the kernel now offers](0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md) | Accepted (design decision) |
 | 0182 | [The file, data, and stream packs after the first drafted reads](0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md) | Accepted (design decision) |
 | 0187 | [The web pack matches a screen by its address, reads by key, and reads labelled values](0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md) | Accepted (design decision) |
+| 0180 | [A target's offline tests cover writes, and nothing is published unless they pass](0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md) | Accepted (design decision) |

@@ -51,8 +51,8 @@ use crate::model::{Access, Isolation, SurfaceFields};
 use crate::names::codes;
 use crate::shape::Dialect;
 use crate::store::{
-    Bound, Catalog, Cell, ColumnInfo, CommitFailed, Conn, ForeignKey, Interrupter, Opener, Ran,
-    Refusal, RunLimits, ServerAt, Shape, StoreAt, TableInfo, Unseen,
+    Bound, Catalog, Cell, ColumnInfo, CommitFailed, Conn, ForeignKey, Interrupter, Leads, Opener,
+    Ran, Refusal, RunLimits, ServerAt, Shape, StoreAt, TableInfo, Unseen,
 };
 
 /// The schema statements are read in when a surface names none.
@@ -62,6 +62,13 @@ const CONNECT_LIMIT: Duration = Duration::from_secs(10);
 /// How long a transaction may stay open with nothing sent, before the server
 /// ends the session.
 const IDLE_IN_TRANSACTION_MS: u32 = 60_000;
+/// The server's predefined roles whose rights reach beyond the rows of a
+/// schema: its files, its programs, other sessions, every table, and what
+/// the server reports of itself. A role that is a member of any is refused,
+/// as a superuser is: the store's own rights would then be no bar.
+const REACHING_ROLES: &str = "'pg_read_server_files', 'pg_write_server_files', \
+     'pg_execute_server_program', 'pg_signal_backend', 'pg_read_all_data', 'pg_write_all_data', \
+     'pg_monitor', 'pg_read_all_settings', 'pg_read_all_stats'";
 
 // ---- the surface and the lease ----
 
@@ -108,22 +115,24 @@ pub(crate) fn server_of(
             "The session's credential is not one user and one password, which is all a server store is signed in with.",
         ));
     };
+    let at = ServerAt {
+        host,
+        port,
+        database,
+        schema,
+        user,
+        password: Arc::new(password),
+    };
+    // Kept under everything that says where a connection leads and as whom,
+    // so that a surface published again with another port, database, or
+    // schema never takes a connection of the old one.
     let key: PoolKey = (
         surface.name.as_str().to_owned(),
         lease.session().to_string(),
         lease.epoch(),
+        at.leads(),
     );
-    Ok((
-        StoreAt::Server(ServerAt {
-            host,
-            port,
-            database,
-            schema,
-            user,
-            password: Arc::new(password),
-        }),
-        key,
-    ))
+    Ok((StoreAt::Server(at), key))
 }
 
 fn not_carried(message: &str) -> StepFailure {
@@ -295,6 +304,8 @@ impl Opener for Postgres {
             access,
             user: server.user.clone(),
             schema: server.schema.clone(),
+            leads: server.leads(),
+            reported: None,
             open: false,
             prepared: BTreeMap::new(),
         };
@@ -310,6 +321,12 @@ struct PgConn {
     /// The role the lease signed in as.
     user: String,
     schema: String,
+    /// Where the connection was opened to, and as whom.
+    leads: Leads,
+    /// The server's own address and port, as the server reported them when
+    /// the connection was opened (`None` for each on a local socket behind a
+    /// relay): asked again before every transaction, and held to these.
+    reported: Option<(Option<String>, Option<i64>)>,
     /// Whether a transaction is open, as far as this connection knows.
     open: bool,
     /// The statements prepared on this connection, by their text.
@@ -691,13 +708,18 @@ impl PgConn {
     /// Reads back what the connection is held to, before it is used.
     fn confine(&mut self) -> Result<(), Refusal> {
         let rows = self.own(
-            "SELECT current_setting('search_path'), current_setting('default_transaction_read_only'), \
-             current_setting('standard_conforming_strings'), current_setting('server_encoding'), \
-             session_user::text, current_user::text, \
-             (r.rolsuper OR r.rolbypassrls OR r.rolreplication OR r.rolcreaterole), \
-             (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE n.nspname = $1 AND pg_catalog.pg_has_role(c.relowner, 'MEMBER')) \
-             FROM pg_catalog.pg_roles r WHERE r.rolname = current_user",
+            &format!(
+                "SELECT current_setting('search_path'), current_setting('default_transaction_read_only'), \
+                 current_setting('standard_conforming_strings'), current_setting('server_encoding'), \
+                 session_user::text, current_user::text, \
+                 (r.rolsuper OR r.rolbypassrls OR r.rolreplication OR r.rolcreaterole), \
+                 (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                  WHERE n.nspname = $1 AND pg_catalog.pg_has_role(c.relowner, 'MEMBER')), \
+                 (SELECT count(*) FROM pg_catalog.pg_roles p WHERE p.rolname IN ({REACHING_ROLES}) \
+                  AND pg_catalog.pg_has_role(current_user, p.oid, 'MEMBER')), \
+                 current_database()::text, pg_catalog.inet_server_addr()::text, pg_catalog.inet_server_port() \
+                 FROM pg_catalog.pg_roles r WHERE r.rolname = current_user"
+            ),
             &[Bound::Text(self.schema.clone())],
         )?;
         let row = rows.first().ok_or(Refusal::NotGuarded)?;
@@ -714,9 +736,13 @@ impl PgConn {
         if !held {
             return Err(Refusal::NotGuarded);
         }
-        if number(row, 6) != Some(0) || number(row, 7) != Some(0) {
+        if texts(row, 9).as_deref() != Some(self.leads.database.as_str()) {
+            return Err(Refusal::Elsewhere);
+        }
+        if number(row, 6) != Some(0) || number(row, 7) != Some(0) || number(row, 8) != Some(0) {
             return Err(Refusal::TooPowerful);
         }
+        self.reported = Some((texts(row, 10), number(row, 11)));
         Ok(())
     }
 
@@ -761,31 +787,41 @@ impl Conn for PgConn {
         )
         .map_err(|error| refusal(&error))?;
         self.open = true;
-        // The access and the role, read back inside the transaction: a
-        // statement of an earlier transaction that changed either is found
-        // here, before anything else runs.
+        // The access and the role, read back inside the transaction, and
+        // where the server says the connection is: its database, its
+        // `search_path`, the reading of a backslash, and its own address
+        // and port. A statement of an earlier transaction that changed any
+        // of them, or a connection that does not lead where it was opened
+        // to, is found here, before anything else runs: before every write,
+        // and before every read-back.
         let rows = self.own(
             "SELECT set_config('lock_timeout', $1, true), current_setting('transaction_read_only'), \
-             session_user::text, current_user::text",
+             session_user::text, current_user::text, current_database()::text, \
+             current_setting('search_path'), current_setting('standard_conforming_strings'), \
+             pg_catalog.inet_server_addr()::text, pg_catalog.inet_server_port()",
             &[Bound::Text(millis(wait))],
         );
-        let held = rows
-            .as_ref()
-            .ok()
-            .and_then(|rows| rows.first())
-            .is_some_and(|row| {
-                texts(row, 1).as_deref()
-                    == Some(match self.access {
-                        Access::ReadOnly => "on",
-                        Access::ReadWrite => "off",
-                    })
-                    && texts(row, 2).as_deref() == Some(self.user.as_str())
-                    && texts(row, 3).as_deref() == Some(self.user.as_str())
-            });
-        if !held {
+        let row = rows.as_ref().ok().and_then(|rows| rows.first());
+        let held = row.is_some_and(|row| {
+            texts(row, 1).as_deref()
+                == Some(match self.access {
+                    Access::ReadOnly => "on",
+                    Access::ReadWrite => "off",
+                })
+                && texts(row, 6).as_deref() == Some("on")
+        });
+        let here = row.is_some_and(|row| {
+            texts(row, 2).as_deref() == Some(self.leads.user.as_str())
+                && texts(row, 3).as_deref() == Some(self.leads.user.as_str())
+                && texts(row, 4).as_deref() == Some(self.leads.database.as_str())
+                && texts(row, 5).as_deref() == Some(self.leads.schema.as_str())
+                && self.reported.as_ref() == Some(&(texts(row, 7), number(row, 8)))
+        });
+        if !held || !here {
             self.rollback();
             return Err(match rows {
                 Err(refusal) => refusal,
+                Ok(_) if !here => Refusal::Elsewhere,
                 Ok(_) => Refusal::NotGuarded,
             });
         }
@@ -880,7 +916,7 @@ impl Conn for PgConn {
         Ok(ran)
     }
 
-    fn commit(&mut self, _wait: Duration) -> Result<(), CommitFailed> {
+    fn commit(&mut self, wait: Duration) -> Result<(), CommitFailed> {
         if !self.open {
             return Err(CommitFailed::NotCommitted(Refusal::Other(0)));
         }
@@ -890,8 +926,19 @@ impl Conn for PgConn {
             self.open = false;
             return Err(CommitFailed::NotCommitted(Refusal::Unavailable));
         }
-        let done = self.wait(self.client.batch_execute("COMMIT"));
+        // Held to the step's time: a server that holds its answer (a
+        // synchronous standby that is gone waits without end) leaves the
+        // write in doubt at the deadline, and the connection is closed.
+        // Nothing is cancelled: a commit cut short is the doubt itself.
+        let done = self.wait(tokio::time::timeout(
+            wait,
+            self.client.batch_execute("COMMIT"),
+        ));
         self.open = false;
+        let Ok(done) = done else {
+            self.open = true;
+            return Err(CommitFailed::Unknown);
+        };
         match done {
             Ok(()) => Ok(()),
             // The server answered with an error of the transaction itself (a
@@ -1081,6 +1128,10 @@ impl Conn for PgConn {
 
     fn usable(&self) -> bool {
         !self.client.is_closed() && !self.open
+    }
+
+    fn leads_to(&self) -> Option<&Leads> {
+        Some(&self.leads)
     }
 }
 

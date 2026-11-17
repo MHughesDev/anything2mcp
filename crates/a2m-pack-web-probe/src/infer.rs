@@ -46,6 +46,12 @@ pub struct Exchange {
     pub status: Option<u16>,
     /// What came back.
     pub answer: Answer,
+    /// For a request the page made by itself: the path of the page that
+    /// made it. `None` for the request of a document the tab was sent to.
+    pub made_by: Option<String>,
+    /// The names of the request's headers that carry a credential or an
+    /// anti-forgery token. Never their values.
+    pub credential_headers: Vec<String>,
 }
 
 impl Exchange {
@@ -55,9 +61,30 @@ impl Exchange {
         self.status.is_some() && self.answer != Answer::Refused
     }
 
-    /// The exchange as the `found` of an `exchange` finding.
+    /// The exchange as the `found` of an `exchange` finding. A request the
+    /// page made by itself also names the page, as `made_by`, and the
+    /// names of the headers that carried a credential, as
+    /// `credential_headers`.
     #[must_use]
     pub fn found(&self) -> Json {
+        let mut found = self.found_of_a_document();
+        if let (Some(page), Json::Object(fields)) = (&self.made_by, &mut found) {
+            fields.insert("made_by".to_owned(), Json::from(page.as_str()));
+            fields.insert(
+                "credential_headers".to_owned(),
+                Json::Array(
+                    self.credential_headers
+                        .iter()
+                        .map(|name| Json::from(name.as_str()))
+                        .collect(),
+                ),
+            );
+            return Json::Object(crate::shape::sorted(fields.clone()));
+        }
+        found
+    }
+
+    fn found_of_a_document(&self) -> Json {
         object([
             ("format", Json::from("1")),
             ("method", Json::from(self.method.as_str())),

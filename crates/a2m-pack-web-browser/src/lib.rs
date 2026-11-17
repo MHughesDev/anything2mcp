@@ -15,8 +15,11 @@
 //! without touching the crates above. The design is
 //! `docs/architecture/crates/a2m-pack-web-browser.md`.
 //!
+//! An observing tab records, by structure alone, the requests its page
+//! makes by itself with GET to its own origins ([`PageExchange`]).
+//!
 //! Not built yet: a visible window, exporting and importing a session's
-//! state, the watching tab, frames, the stream of network exchanges,
+//! state, the watching tab, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
 //! reported), uploads, recycling, and the platform profiles.
 
@@ -46,7 +49,7 @@ pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use tab::{
-    ActTab, By, DialogAnswer, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment,
-    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests,
-    TextMatch,
+    ActTab, By, CREDENTIAL_HEADER_WORDS, DialogAnswer, Element, Input, Key, Loaded, Look,
+    ObserveTab, PageEnvironment, PageExchange, PageRequest, PageResponse, Primitive, Query,
+    RawValue, ReadWhat, SafeRequest, SafeRequests, TextMatch,
 };

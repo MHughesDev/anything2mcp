@@ -164,6 +164,8 @@ fn get(path: &str, answer: serde_json::Value) -> Exchange {
         query: BTreeMap::new(),
         status: Some(200),
         answer: Answer::Json(Shape::of(&answer)),
+        made_by: None,
+        credential_headers: Vec::new(),
     }
 }
 
@@ -183,6 +185,8 @@ fn tier_one_takes_identifiers_by_form_and_tier_two_only_when_asked() {
             query: BTreeMap::new(),
             status: None,
             answer: Answer::Refused,
+            made_by: None,
+            credential_headers: Vec::new(),
         },
     ];
 

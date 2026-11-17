@@ -480,7 +480,10 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
             };
             for item in items {
                 if !item.is_object() {
-                    return Err(wrong(&file, "a recorded request is not an object of values"));
+                    return Err(wrong(
+                        &file,
+                        "a recorded request is not an object of values",
+                    ));
                 }
                 fixture.requests.push((name.to_owned(), item));
             }
@@ -625,6 +628,9 @@ fn writes(plan: &Plan, test: &TestPlan) -> bool {
     effect.is_none_or(|effect| effect != EffectClass::Read)
 }
 
+/// The bytes of a pipeline's source, as a job carries them.
+type SourceBytes = Arc<Vec<u8>>;
+
 /// The source a test of a pipeline gives, read from its fixture folder, and
 /// the inputs to call with. A pipeline with a source names the file as the
 /// input `source`: a name inside the fixture folder, read through the
@@ -633,7 +639,7 @@ fn source_of(
     plan: &Plan,
     test: &TestPlan,
     fixture: &Fixture,
-) -> Result<(Values, Option<Arc<Vec<u8>>>), Json> {
+) -> Result<(Values, Option<SourceBytes>), Json> {
     let pipeline_source = plan
         .tools
         .get(test.tool.get())
@@ -836,7 +842,11 @@ pub(crate) async fn run_test(
         epoch,
         // A read in the sandbox's posture, where a committing step is
         // refused by the handle; a write as a run of its own ledger.
-        kind: if write { JobKind::Execute } else { JobKind::Try },
+        kind: if write {
+            JobKind::Execute
+        } else {
+            JobKind::Try
+        },
         plan: plan_hash,
         tool: ToolRef::Tool(tool.name.clone()),
         environment: None,
@@ -976,7 +986,10 @@ impl GateRun {
             let state = gate["state"].as_str().unwrap_or_default();
             let line = match gate["tests"].as_array() {
                 Some(tests) => {
-                    let passed = tests.iter().filter(|test| test["state"] == "passed").count();
+                    let passed = tests
+                        .iter()
+                        .filter(|test| test["state"] == "passed")
+                        .count();
                     format!(
                         "Gate {name}: {state}, {passed} of {} offline tests passed.",
                         tests.len()
