@@ -9,92 +9,133 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 | Side | Kernel |
 | Layer | 6, Engine |
 | May depend on | Layers 1 to 5. Never `a2m-engine` |
-| Depends on | `a2m-core`; `a2m-ledger` for the `jobs` and `runners` tables, the scheduling columns of `runs`, its transactions, and its lock calls; `a2m-telemetry` for spans and metrics. Outside: `tokio` |
+| Depends on | `a2m-core`; `a2m-ledger` for the store, its transactions, the run rows, and its lock calls; `a2m-telemetry` for the clock trait and metrics. Outside: `tokio`, `serde`, `serde_json` |
 | Built in | Phase 3 (admission, dedupe, leases, lock waiting, and quarantine with slice 3.7); Phase 7 (slices 7.1 and 7.2, the runner link and lost leases); slice 9.4 (the cluster profile) |
 | Carries out | Spec sections [211](../../spec/2-kernel/211-concurrency.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for rule 6 and waiting for locks, [223](../../spec/2-kernel/223-the-runner-protocol.md) for leases, matching, and rate budgets, [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) for bounded queues, [225](../../spec/2-kernel/225-performance.md) for the scheduling budget; the [ledger schema](../../reference/ledger-schema.md) |
 
 ## Owns
 
-- Admission: whether a run is accepted, returned as an existing run, or refused with a retry time.
-- Queues: one per target and environment, bounded, ordered by priority, then fairly by caller.
+- Admission: whether a run is accepted, returned as an existing run, or refused with a next step.
+- The queue: bounded for each target and environment, ordered by priority, then fairly by caller.
 - Job leases: who may work on a job, until when, under which number.
 - Waiting for a record lock: the queue of runs that want a lock the ledger reports as held, woken when the ledger releases it. The lock itself, its table, and its rules are `a2m-ledger`'s, because an intent must check the lock in the same transaction.
-- Rate budgets per surface, granted in batches.
-- Per-session parallelism, exclusive resources such as a screen or a device link, and per-caller shares.
-- Detecting lost leases and scheduling the reconcile and verification jobs that follow.
+- Exclusive resources: who holds each key, and who waits for it.
+- Rate budgets, granted in batches.
+- Per-session parallelism and the cap on a caller's waiting jobs.
+- Holds: scopes for which no job is handed out, the stop-everything switch among them.
+- Detecting lost leases and queueing the reconcile jobs that follow.
 
 It must never: call the engine, a driver, or the session keeper; read a plan; decide policy; change a record row of the ledger; let a job run twice at once; take, release, or quarantine a record lock itself.
 
 ## Interface
 
+As built ([decision 0093](../../decisions/0093-the-schedulers-interface-as-building-it-settled-it.md)).
+
 ```rust
-pub struct Scheduler { /* store handle, clock, settings, wakers, rate buckets */ }
+#[derive(Clone)]
+pub struct Scheduler { /* the store, its clock, the settings, and who waits */ }
 
 impl Scheduler {
-    pub fn new(store: Store, clock: Arc<dyn Clock>, settings: SchedSettings) -> Self;   // Store from `a2m-ledger`
+    pub fn new(store: Store, settings: SchedSettings, telemetry: Option<Telemetry>) -> Self;   // time is the store's clock
 
     // Admission. Called by `a2m-actions` after policy has allowed the call.
     pub async fn submit(&self, s: Submission) -> Result<Admitted, Failure>;
-    pub async fn cancel(&self, run: &RunId) -> Result<(), Failure>;       // a directive on the next heartbeat; final when the job ends
+    pub async fn enqueue(&self, e: Enqueue) -> Result<JobId, Failure>;      // a further job for a run that exists: execute after approval, resume
+    pub async fn cancel(&self, run: RunId) -> Result<CancelOutcome, Failure>;
 
     // Runners. Called by the in-process runner loop in `a2m-actions`, or by the control plane's side of the runner link.
     pub async fn hello(&self, offer: RunnerOffer) -> Result<RunnerTerms, Failure>;    // heartbeat interval, lease length, protocol
-    pub async fn claim(&self, runner: &RunnerId, free: &Slots, wait: Duration) -> Result<Vec<JobLease>, Failure>;
+    pub async fn claim(&self, runner: RunnerId, free: Slots, wait: Duration) -> Result<Vec<JobLease>, Failure>;
     pub async fn heartbeat(&self, lease: &LeaseRef) -> Result<Renewal, Failure>;      // time remaining and a directive
     pub async fn finish(&self, lease: &LeaseRef, end: JobEnd) -> Result<(), Failure>;
-    pub async fn drain(&self, runner: &RunnerId) -> Result<(), Failure>;
+    pub async fn drain(&self, runner: RunnerId) -> Result<(), Failure>;
+    pub async fn bye(&self, runner: RunnerId) -> Result<(), Failure>;
 
     // What a running job asks for, through the engine's `Control`.
+    pub async fn acquire(&self, lease: &LeaseRef, keys: &[ResourceKey], wait: Duration) -> Result<(), Failure>;
+    pub async fn release(&self, lease: &LeaseRef, keys: &[ResourceKey]) -> Result<(), Failure>;
+    /// Taken before asking the ledger for a record lock, so a release in between is not missed.
+    pub fn lock_ticket(&self, key: &ResourceKey) -> LockTicket;
     /// The ledger refused a lock as held: wait in order for it, up to `wait` and the lease, then `record_locked`.
-    pub async fn wait_lock(&self, lease: &LeaseRef, key: &LockKey, wait: Duration) -> Result<(), Failure>;
-    /// The ledger released or handed on a lock: wake the first waiter.
-    pub fn lock_freed(&self, key: &LockKey);
-    pub async fn rate(&self, lease: &LeaseRef, surface: &SurfaceKey, want: u32) -> Result<RateGrant, Failure>;
+    pub async fn wait_lock(&self, lease: &LeaseRef, ticket: LockTicket, wait: Duration) -> Result<(), Failure>;
+    /// The ledger released a lock: wake the first waiter.
+    pub fn lock_freed(&self, key: &ResourceKey);
+    pub async fn rate(&self, lease: &LeaseRef, budgets: &[BudgetKey], want: u32) -> Result<RateGrant, Failure>;
+    pub async fn set_budget(&self, key: BudgetKey, limit: RateLimit) -> Result<(), Failure>;
 
-    // Time. Called by one background task in `a2m-actions`, which waits on `next_due`.
-    pub async fn sweep(&self) -> Result<SweepReport, Failure>;   // lost leases, quarantines ended, waits expired
-    pub fn next_due(&self) -> Instant;                           // the earliest deadline the scheduler holds
+    // Holds. Called by `a2m-actions` when a kill switch is set or released.
+    pub async fn hold(&self, scope: HoldScope) -> Result<(), Failure>;
+    pub async fn release_hold(&self, scope: HoldScope) -> Result<bool, Failure>;
+    pub async fn holds(&self) -> Result<Vec<HoldScope>, Failure>;
+
+    // Time. Called by one background task in `a2m-actions`.
+    pub async fn sweep(&self) -> Result<SweepReport, Failure>;            // lost leases, queue limits, waits that ran out
+    pub async fn next_due(&self) -> Result<Option<Timestamp>, Failure>;   // the earliest deadline the scheduler holds
+    pub fn due_watch(&self) -> DueWatch;                                  // tells that task to read `next_due` again
+
+    pub async fn job(&self, job: JobId) -> Result<JobRow, Failure>;
+    pub fn settings(&self) -> &SchedSettings;
 }
 
 pub struct Submission {
-    pub run: NewRun,                       // the run row: caller, tool, version hash, input hash, effect, target, environment
-    pub dedupe: DedupeKey,                 // caller, tool version hash, input hash; a file's content, not its path
+    pub run: NewRun,                       // the run row; its caller, tool version, and input hash are the dedupe key, which the ledger computes
     pub job: JobRequirements,
     pub priority: Priority,                // interactive or batch
-    pub health: HealthState,               // the kernel's, at the moment of submission
+    pub health: HealthState,               // the kernel's, at the moment of submission: Ready, Degraded { cause }, Stopped { cause }
+    pub queue_wait: Option<Duration>,      // how long the job may wait for a runner; the setting when absent
+    pub budgets: Vec<BudgetKey>,           // a submission spends one request of each
 }
+pub struct Enqueue { pub run: RunId, pub job: JobRequirements, pub priority: Priority, pub health: HealthState, pub queue_wait: Option<Duration> }
 pub enum Admitted { New { run: RunId, job: JobId }, Existing { run: RunId } }
+pub enum CancelOutcome { Cancelled, Requested, AlreadyFinal(RunState) }
 
 pub struct JobRequirements {
-    pub kind: JobKindName,                 // preview, execute, try, discover, reconcile, verify_after_loss, canary, session_keepalive
+    pub kind: JobKind,                     // preview, execute, try, discover, reconcile, verify_after_loss, canary, session_keepalive
     pub target: TargetName, pub environment: Environment,
     pub modes: Vec<Mode>,                  // any of these; compared by name only
     pub os: Option<OsName>,
-    pub identity: Option<Identity>,
-    pub session: Option<SessionKey>,       // with its home runner and whether it is movable, from the keeper's records
+    pub acts_as: Option<PrincipalId>,      // a person's own device takes only jobs that act as that person
+    pub session: Option<SessionNeed>,      // the session, its home runner, and whether it is movable, from the keeper's records
     pub session_limits: SessionLimits,     // reads and writes at once; the lowest across the operation's candidate bindings
     pub exclusive: Vec<ResourceKey>,       // at most one leased job per key: a screen, a device link, a file
     pub max_step: Duration,                // the longest step time limit in the tool; sets the quarantine
     pub writes: bool,
 }
 
+pub struct RunnerOffer { pub runner: RunnerId, pub workspace: WorkspaceId, pub targets: Vec<TargetName>, pub modes: Vec<Mode>, pub os: Option<OsName>, pub owner: Option<PrincipalId>, pub protocol: u32 }
+pub struct RunnerTerms { pub heartbeat: Duration, pub lease: Duration, pub protocol: u32 }
+pub struct Slots { pub total: u32, pub per_mode: BTreeMap<Mode, u32> }
+
 pub struct JobLease {
     pub job: JobId, pub run: Option<RunId>, pub epoch: Epoch,    // only ever increases, per run
     pub length: Duration,                  // a duration, never a clock time
-    pub parallelism: Parallelism,          // records the job may run at once
+    pub mode: Option<Mode>,                // the mode whose slot the job took
+    pub attempt: u32,
     pub requirements: JobRequirements,
 }
-pub enum JobEnd { Done(RunState), Rests(RunState), Stopped { class: FailureClass, code: FailureCode, in_doubt: bool }, LeaseEnding }
-pub struct RateGrant { pub requests: u32, pub over: Duration } // or a time to wait until, inside the lease
-pub trait Clock: Send + Sync { fn now(&self) -> Instant; }      // steady locally; the database clock on Postgres
+impl JobLease { pub fn lease_ref(&self) -> LeaseRef; pub fn fence(&self) -> Option<Fence>; }   // the fence is what the ledger checks
+pub struct LeaseRef { pub job: JobId, pub epoch: Epoch }
+pub struct Renewal { pub remaining: Duration, pub directive: Directive }
+pub enum Directive { Continue, Cancel, Drain, Pause }
+pub enum JobEnd { Done, Rests, Stopped { class: FailureClass, code: FailureCode, in_doubt: bool }, LeaseEnding }
+
+pub struct ResourceKey(/* `kind:name`, ordered by its text */);    // ::new(kind, name), ::record(workspace, target, environment, key_hash), ::session(id)
+pub struct BudgetKey(/* `kind:name` */);                            // ::target, ::surface, ::session, ::caller, ::new
+pub struct RateLimit { pub capacity: u32, pub refill: u32, pub per: Duration }
+pub struct RateGrant { pub requests: u32, pub over: Duration }
+pub enum HoldScope { Everything, Workspace(WorkspaceId), Target(WorkspaceId, TargetName), Caller(WorkspaceId, PrincipalId) }
+pub struct SweepReport { pub lost: Vec<JobId>, pub reconcile: Vec<JobId>, pub expired: Vec<JobId>, pub waits_ended: usize }
+pub struct SchedSettings { queue_length, caller_queue_cap, queue_wait, lease_length, heartbeat_interval, lost_after, quarantine, default_rate }
 ```
 
 Contracts the signatures do not show:
 
-- **Every call from a runner carries its lease number,** and a number lower than the job's current one is refused with `policy`, `lease_superseded`. This is the scheduler's half of ledger rule 4; the store's insert checks are the other half.
-- **`submit` is one transaction:** the dedupe check, the queue bound, the run row, and the job row. Two identical calls racing get one run (ledger rule 6, held by the store's unique index on `dedupe_key` among unfinished runs).
-- **`claim` waits on a named condition.** In one process it is woken by an in-process signal; on Postgres by a notification, with a poll as the fallback. It never sleeps a fixed time.
+- **Every call from a runner carries its lease number,** and a call whose number is not the job's current one, or whose lease has run out on the scheduler's count, is refused with `policy`, `lease_superseded`. This is the scheduler's half of ledger rule 4; the ledger's own check of the run's lease number is the other half.
+- **`submit` is one transaction:** the health check, the holds, the run row with its duplicate check, the queue bound, the caller's cap, the runner check, the budgets, and the job row. A refusal takes all of it back. Two identical calls get one run (ledger rule 6, held by the ledger's `open_run` and the store's unique index on `dedupe_key` among unfinished runs).
+- **`claim` is one transaction, and waits on a named condition.** Granting the lease, raising the run's lease number through the ledger's `new_epoch`, and taking the job's exclusive resources commit together. A claim that finds nothing waits for work to arrive, woken by an in-process signal, up to `wait` on the store's clock. Nothing in the crate sleeps: a wait for a moment ends when `sweep` finds that the moment has come.
+- **Time is the store's clock.** Every deadline the scheduler keeps is a moment of that clock, written to the store, so a restart finds it again. A lease is still handed to the runner as a duration.
 - **Mode names are data.** The scheduler matches a job's modes against a runner's by string equality and holds no list of modes. Limits that differ by mode, such as one write at a time on an interface binding, reach it as numbers in `JobRequirements`, filled by `a2m-actions` from the registry's mode defaults and the settings.
+- **The run's state is the ledger's.** The engine writes it under the lease's fence. The scheduler writes it in three cases only, each when no runner holds the run: a lost lease (`stopped`, under a new lease number), a queue limit that ran out (`stopped`), and a cancel of a run nobody holds (`cancelled`).
 
 ## Admission
 
@@ -102,108 +143,141 @@ In this order. The first that refuses ends it.
 
 | # | Check | Refusal |
 | --- | --- | --- |
-| 1 | The kernel's health: `stopped` refuses everything; `degraded` refuses writes | `busy`, `engine_degraded`, with the cause |
-| 2 | An unfinished run with the same dedupe key exists | Not a refusal: `Admitted::Existing` with that run |
-| 3 | The target's queue is shorter than its length, 100 by default | `busy`, `queue_full`, with a retry time from the queue's recent rate |
-| 4 | The caller has fewer queued jobs than its cap | `busy`, `caller_queue_full` |
-| 5 | A runner that could ever serve the requirements is enrolled, or the profile runs work in process | `busy`, `runner_unavailable`, naming what is missing |
+| 1 | The kernel's health: `Stopped` refuses everything; `Degraded` refuses writes | `busy`, `engine_degraded`, with the cause's code |
+| 2 | No hold covers the caller, the target, the workspace, or everything | `busy`, `on_hold` |
+| 3 | An unfinished run with the same dedupe key exists | Not a refusal: `Admitted::Existing` with that run |
+| 4 | The target's queue is shorter than its length, 100 by default | `busy`, `queue_full`, with a retry time from the queue's recent rate: a minute divided by the jobs it ended in the last minute, or the lease length when it ended none |
+| 5 | The caller has fewer waiting jobs than its cap, 25 by default | `busy`, `caller_queue_full` |
+| 6 | A runner that could ever serve the requirements has said `hello` | `busy`, `runner_unavailable`, naming what is missing |
+| 7 | Every budget the submission names holds a request | `busy`, `rate_limited`, with the time to wait |
 
-Disk space before a pipeline (section 224) and record limits and quotas (section 212) are checked before `submit`, by the store and by policy.
+The loop that runs work in the same process says `hello` like any runner, so check 6 needs no special case. Disk space before a pipeline (section 224) and record limits and quotas (section 212) are checked before `submit`, by the store and by policy.
 
 ## Queues and dispatch
 
-- **Order.** Within a queue: priority first, interactive before batch; then `available_at`; then round robin across callers, so one caller's hundred jobs do not starve another's one. A caller's share is a setting.
-- **Matching.** A job goes to a runner that serves its target, environment, one of its modes, its operating system, and its identity, and has a free slot for that mode. A job that needs a live session goes to the session's home runner. If that runner is gone and the session is movable, any matching runner may take it and the keeper restores the session there. A session bound to a device waits for its device.
-- **Per-session parallelism.** Leased jobs sharing a session key are counted against `session_limits`. A job over the limit stays pending; if it waits past its limit, its run is told `busy`, `session_in_use`.
-- **Exclusive resources.** At most one leased job holds each `ResourceKey`. This is how desktop work on one application, and anything else that changes a person's screen or holds a device link, is serialized without the scheduler knowing what a screen is.
-- **Waiting is bounded.** A job that no runner can take within its queue limit ends its run with `busy`, `runner_unavailable`, saying what is missing.
+- **Order.** Priority first, interactive before batch. Within a priority, the caller that was served longest ago goes first, and a caller that was never served goes before all of them: round robin, kept in the store. Within one caller, the order of arrival. So one caller's hundred jobs do not starve another's one. A weighted share for a caller is not built.
+- **Readiness.** A job is handed out from its `available_at`. A reconcile job after a lost lease becomes available when the quarantine ends.
+- **Matching.** A job goes to a runner in its workspace that serves its target, offers one of its modes with a free slot, reports its operating system when the job names one, and, when the runner is a person's own device, only if the job acts as that person. A job that needs a live session goes to the session's home runner. If that runner has said `bye` and the session is movable, any matching runner may take it and the keeper restores the session there.
+- **Per-session parallelism.** Leased jobs sharing a session are counted, reads and writes apart, against the job's `session_limits`. A job over the limit stays pending; if it waits past its queue limit, its run is told `busy`, `session_in_use`.
+- **Exclusive resources.** At most one job holds each `ResourceKey`; the primary key of `resource_holds` is the rule. A job is not handed out while another holds one of its keys, and it takes all of them in the transaction that leases it. This is how desktop work on one application, and anything else that changes a person's screen or holds a device link, is serialized without the scheduler knowing what a screen is. A waiting job keeps its place for its keys: a later job that wants one of them is not handed out first.
+- **Waiting is bounded.** A job that no runner takes within its queue limit, five minutes by default, ends, and its run stops as `busy` with the reason: `session_in_use`, `resource_in_use`, or `runner_unavailable` saying what is missing.
 
 ## Leases
 
 | Setting | Default | Held how |
 | --- | --- | --- |
-| Lease length | 30 s | Granted as a duration; the runner measures it on its steady clock from when it sent the request |
-| Heartbeat | Every 10 s | Each renews the lease and returns any directive |
-| Declared lost | 5 s after the scheduler's own count runs out | By `sweep` |
+| Lease length | 30 s | Granted as a duration; the runner measures it on its steady clock from when it sent the request. The scheduler keeps the moment it runs out, on the store's clock |
+| Heartbeat | Every 10 s | Each renews the lease and returns a directive: `continue`, `cancel`, `pause` when a hold covers the job, or `drain` |
+| Declared lost | 5 s after the scheduler's own count runs out | By `sweep`. In those five seconds the heartbeat is refused, a result is still taken, and nobody else is given the job |
 | Quarantine | 60 s, or the job's `max_step` if greater | Before anyone touches the run's records again |
 
-Leasing a job increments the run's lease number and writes it to the job in the same transaction, so the ledger can refuse anything older. A lease ends in one of three ways: `finish`; `drain` followed by `finish`; or loss. On loss, `sweep` does section 223's steps in one transaction: the job becomes `lost`; the run stops with `possible_commit`, `runner_lost`; every lock the run held becomes `quarantined`; a `reconcile` job is created with `available_at` at the end of the quarantine. When that reconcile job is leased, the quarantined locks pass to it under its new lease number. A `verify_after_loss` job follows later. A late result from the lost runner is refused for state and stored by the store as late evidence.
+Leasing a job of a run raises the run's lease number through the ledger and writes it to the job in the same transaction, so the ledger refuses anything older. A lease ends in one of three ways: `finish`; `finish` with `LeaseEnding`, which puts the job back in the queue; or loss.
+
+On loss, `sweep` does section 223's steps in one transaction:
+
+1. The job becomes `lost`.
+2. The run is given a new lease number that nobody holds. From that commit on, the ledger refuses the lost runner, and the ledger sorts the run's locks: those of records in doubt are quarantined, the rest released.
+3. The run stops as `possible_commit`, `runner_lost`, when it is in a state a run can stop from.
+4. A `reconcile` job is queued when the job could write or a record is in doubt, with `available_at` at the end of the quarantine. What the lost job held alone passes to it, so no other job takes those resources in between.
+
+When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The `verify_after_loss` job that follows later is not built.
+
+## Exclusive resources during a run
+
+A job may take further keys while it runs, with `acquire`, and give them back with `release`; the end of the job frees whatever it holds.
+
+**The ordering rule.** Keys are ordered by their text. One call takes its keys together, all or none. A job that already holds keys, those of its requirements included, may ask only for keys that sort after every key it holds; a call that breaks the order is refused at once with `busy`, `resource_order`, and does not wait. So a job only ever waits for keys above the ones it holds, no circle of waiting jobs can form, and there is no deadlock. Those who wait are served in the order they came, and no wait outlasts its limit or the lease.
 
 ## Record locks
 
 The lock table and its rules belong to `a2m-ledger` ([section 208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), rules 4, 5, and 7): an intent checks the lock under the run's lease number in the same transaction, the ledger releases a lock when its record reaches `verified` or `unchanged`, and it quarantines a lock whose record is in doubt. The scheduler keeps only the waiting.
 
-- A run that wants a held lock waits in order, behind earlier waiters, up to `wait`, bounded by its lease, and then gets `busy`, `record_locked` with a retry time.
-- The waiting is the same mechanism as for `exclusive` resource keys; a record key is one more kind of key, whose holder the ledger and not the scheduler records.
-- On a lost lease, `sweep` asks the ledger, in the same transaction that marks the job lost, to quarantine every lock the run holds. When the reconcile job is leased, the ledger hands those locks to it under its new lease number.
-- A run that stops or is cancelled tells the scheduler whether a record is in doubt (`JobEnd::Stopped::in_doubt`); the ledger has already quarantined or released its locks. The scheduler creates the reconcile job.
+- The caller takes a `lock_ticket`, asks the ledger for the lock, and on `record_locked` calls `wait_lock` with the ticket. A release between the two is not missed.
+- A run that wants a held lock waits behind earlier waiters, up to `wait`, bounded by its lease, and then gets `busy`, `record_locked` with a retry time.
+- `Ok` from `wait_lock` means "ask the ledger again". The ledger alone grants a lock, so a run that never waited can take a freed lock before the waiter that was woken; that waiter then waits again, at the back.
+- `lock_freed` wakes the first waiter of one key. When a job ends, is lost, or its run is cancelled, the ledger has sorted that run's locks, and the scheduler wakes every lock waiter to ask again.
+- The ordering rule above does not reach record locks, because the ledger and not the scheduler knows who holds them. Two runs that each hold a record lock and wait for the other's are ended by their deadlines, not prevented.
 - No lock is ever released by a timer.
 
 ## Rate budgets
 
-Each surface has a token bucket: its declared limit from the target's files, or a conservative default. A job asks for a grant, such as 20 requests over 5 seconds, and spends it locally. When the bucket is empty the answer is the time at which a grant will be possible; the job waits on it if that falls inside its lease, and otherwise the run stops `busy` with that time. Rate budgets protect the application, so a grant is never larger than what the bucket holds, and unspent requests in a grant are not returned.
+A budget is a token bucket named by a `BudgetKey`: for a target, a surface, a session, or a caller. Its limit is set with `set_budget` from the target's files; a budget nobody set gets a conservative default, five requests and one more each second. A job asks for a grant against several budgets at once, such as 20 requests against its surface, its session, and its caller, and spends it locally. The grant is the same number from each, never more than the emptiest holds, and unspent requests are not returned. When a budget is empty, the call waits for the refill if that falls inside the lease, and otherwise answers `busy`, `rate_limited` with the time.
+
+Buckets are kept in the store, in whole numbers, and refill by the store's clock and nothing else. A restart does not refill them.
+
+## Holds
+
+`hold` puts a scope on hold: everything, a workspace, a target, or a caller. While it lasts, a submission the scope covers is refused, no job it covers is handed out, and the heartbeat of a leased job it covers answers `pause`: the runner stops at its next commit point and ends the job as `Stopped`, which leaves the run resumable. A hold does not use up a waiting job's queue limit: the time it lasted is given back on release. Holds are kept in the store.
+
+Whether a hold may be set or released is the policy engine's question. `a2m-actions` asks it, and tells the scheduler when a kill switch changes.
 
 ## Used by, and uses
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-actions` | `submit`, `cancel`; `claim`, `heartbeat`, `finish` from its in-process runner loop; `wait_lock`, `lock_freed`, `rate` inside its `Control`; `sweep` and `next_due` from one background task |
-| The control plane's side of the runner link, in a role crate | `hello`, `claim`, `heartbeat`, `finish`, `wait_lock`, `rate`, `drain`, answering a runner's calls and `need`s |
+| `a2m-actions` | `submit`, `enqueue`, `cancel`, `hold`, `release_hold`, `set_budget`; `hello`, `claim`, `heartbeat`, `finish` from its in-process runner loop; `acquire`, `release`, `lock_ticket`, `wait_lock`, `lock_freed`, `rate` inside its `Control`; `sweep`, `next_due`, and `due_watch` from one background task |
+| The control plane's side of the runner link, in a role crate | `hello`, `claim`, `heartbeat`, `finish`, `acquire`, `release`, `wait_lock`, `rate`, `drain`, `bye`, answering a runner's calls and `need`s |
 
-It calls: `a2m-ledger` for every read and write of its tables, inside its transactions; `a2m-telemetry` for queue length, wait time, and lease metrics.
+It calls: `a2m-ledger` for every read and write of its tables, inside its transactions, and for the run rows (`open_run`, `new_epoch`, `set_state`, `quarantine_locks`, `run`, `in_doubt`); `a2m-telemetry` for the counts of admitted, refused, leased, and lost, and the time a job waited.
 
 ## State
 
 | State | Where |
 | --- | --- |
-| `jobs`, `runners`; the `lease_epoch`, `dedupe_key`, and state columns of `runs` | The store, through `a2m-ledger`; the scheduler owns their meaning. `record_locks` is the ledger's |
-| A `session_key` column on `jobs`, for counting per-session parallelism | Proposed; not yet in the ledger schema |
-| Rate buckets | Memory, on a single control plane. A table is needed for the cluster profile; until then a second replica must not grant from the same bucket |
-| Wakers for waiting claims and locks | Memory |
+| `jobs`, `runners`, `resource_holds`, `caller_turns`, `scheduler_holds`, `budgets` | The store, through `a2m-ledger`, in one migration file the scheduler owns. The `lease_epoch`, `dedupe_key`, and state columns of `runs` are reached through the ledger's calls. `record_locks` is the ledger's |
+| Who waits: claims, waits for a moment, for a resource, for a record lock | Memory. A restart ends them; the callers ask again |
 
-On SQLite a claim is an immediate transaction; on Postgres an atomic update that selects with `FOR UPDATE SKIP LOCKED`. The same tests run on both.
+A claim is one writing transaction of the store, which has one writer. Postgres is not built.
 
 ## Failures
 
 | Class | Code | When |
 | --- | --- | --- |
 | `busy` | `queue_full`, `caller_queue_full` | A bounded queue is full |
-| `busy` | `record_locked`, `session_in_use` | A wait for a lock or a session slot ran out |
-| `busy` | `runner_unavailable`, `engine_degraded` | No runner can serve the job; the kernel cannot take writes |
-| `policy` | `lease_superseded` | A call carries an older lease number than the job's |
+| `busy` | `record_locked`, `session_in_use`, `resource_in_use` | A wait for a lock, a session slot, or an exclusive resource ran out |
+| `busy` | `resource_order` | A job asked for a resource that sorts before one it holds |
+| `busy` | `runner_unavailable`, `engine_degraded`, `on_hold` | No runner can serve the job; the kernel cannot take the work; a hold covers it |
+| `busy` | `rate_limited` | A budget is spent and does not refill inside the lease |
+| `policy` | `lease_superseded` | A call carries another lease number than the job's, or a lease that ran out |
+| `policy` | `runner_not_enrolled` | A runner asked for work before saying `hello` |
 | `possible_commit` | `runner_lost` | Written on a run whose lease was lost |
-| `input` | `schema_invalid` | A submission is malformed |
+| `unknown_variant` | `runner_protocol_unsupported` | A runner speaks neither the current protocol version nor the one before |
+| `input` | `schema_invalid`, `not_found` | A submission is malformed; there is no such job or run |
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| At most one runner holds a valid lease on a job | A test that claims from many tasks at once, on both databases |
-| A lease number only increases, and an older one is refused (ledger rule 4) | Unit test |
-| At most one unfinished run per dedupe key (ledger rule 6) | Racing identical submissions |
-| Waiters for a lock are served in order, and none waits past its lease | Racing lock requests against a ledger stub |
-| A lost lease's locks are quarantined in the same transaction that marks the job lost | Slice 3.7: a run killed with a record in `acted`; a second run on that record waits until reconcile |
-| After a lost lease, no other job touches the run's records before the quarantine ends | Slice 7.2: a runner frozen past its lease |
-| A full queue answers at once and never grows | A test that submits past the bound |
-| An interactive job is dispatched before a batch job queued earlier | Unit test |
-| One caller cannot starve another | A test with a flood from one caller and one job from another |
-| No fixed sleeps | Every test runs on a controlled `Clock`; a lint forbids sleeping in the crate |
+| At most one runner holds a valid lease on a job | Eight tasks claiming three jobs at once, against a store in a folder |
+| A lease number only increases, and an older one is refused (ledger rule 4) | A test over the scheduler's calls, the ledger's, and a direct statement against the database |
+| At most one unfinished run per dedupe key (ledger rule 6) | Two identical submissions; the store is asked how many jobs it holds |
+| An expired lease is handed to nobody before the run is fenced, and the reconcile job to nobody before the quarantine ends | A runner frozen with a record in `intent`: the lock is quarantined in the transaction that marks the job lost, a second run on that record is refused the lock, and the ledger and the scheduler both refuse the thawed runner |
+| Waiters for a lock are woken in order, and none waits past its lease | Two waiters and a release; a wait of ten minutes that ends with the lease |
+| Two jobs that need one resource run one after the other, and a deadline frees the waiter | Three jobs on one key in the queue; three jobs on one key during their runs |
+| No deadlock on resources taken in opposite order | Two jobs, two keys: the one that asks against the order is refused at once and the other is served |
+| A full queue answers at once and never grows | Submissions past the queue's length and the caller's cap; the store is asked what it holds |
+| An interactive job is dispatched before a batch job queued earlier, and one caller cannot starve another | A batch job, a flood from one caller, and one job from another |
+| Budgets refill by the clock only, and a restart does not refill them | Sweeps and calls with the clock standing still; a restart |
+| Everything queued or leased is found again after a restart | The store closed and opened again: the queue, the lease, the runner, the hold; a job whose runner is gone is recovered by the deadline rule |
+| No fixed sleeps | Every test runs on a clock that moves only when told; a source test forbids sleeping in the crate |
 | The scheduler names no mode and does not depend on the engine | The audit's layering rule; a source test |
 
 ## Build order
 
-1. `submit` with health, dedupe, and the queue bound; one in-process queue; `claim`, `heartbeat`, `finish` for the in-process runner loop. With slice 3.7.
-2. Waiting for locks, behind the ledger's lock calls. With slice 3.7.
-3. Lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test.
-4. Per-session parallelism, exclusive resources, priority, and caller shares. With slice 3.9, the first pipeline of many records.
-5. Rate budgets. With the first binding that declares a limit, in Phase 4.
-6. Runners over the link: `hello`, matching by capability and home runner, `drain`. Slices 7.1 and 7.2.
-7. Shared rate buckets and several control planes. Slice 9.4.
+1. Done: `submit` with health, dedupe, the queue bound, and the caller's cap; the queue; `claim`, `heartbeat`, `finish`. With slice 3.7.
+2. Done: waiting for locks, behind the ledger's lock calls. With slice 3.7.
+3. Done: lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test. Not built: the `verify_after_loss` job that follows a reconcile.
+4. Done: per-session parallelism, exclusive resources, priority, and round robin between callers. Not built: a weighted share for a caller.
+5. Done: rate budgets, kept in the store.
+6. Done in part: `hello`, matching by capability and home runner, `drain`, `bye`, `cancel`, holds. Not built: enrollment and revoking a runner, which belong to the runner link of slices 7.1 and 7.2; marking a runner offline when it falls silent.
+7. Not built: several control planes over one store, a claim on Postgres, and waking a waiter in another process. Slice 9.4. On one store with one writer the same tables serve.
 
 ## Open points
 
-- The per-caller share and cap defaults, and whether a caller's share is a policy matter or a setting.
+- The per-caller share and cap defaults, and whether a caller's share is a policy matter or a setting. The cap is a setting today.
 - Whether a pinned mode in a call narrows `modes` at submission, so that a runner without that mode is never chosen.
 - Whether long polling is fast enough for interactive reads at scale (H-07), and what replaces it behind the same calls if not.
-- The size of the dispatch overhead inside the 3 ms per-call budget of section 225 once locks and the dedupe check are in it (H-21).
+- The size of the dispatch overhead inside the 3 ms per-call budget of section 225 once locks and the dedupe check are in it (H-21). Not measured: a claim is one synced commit.
 - Whether a `session_keepalive` job should be scheduled here at all, or run by the keeper's `KeeperWork` outside the queues.
+- A waiter woken for a record lock can lose it to a run that never waited. Closing this needs the ledger to grant a lock to a named waiter.
+- A run that ends final with a record in doubt keeps its quarantined lock, and a reconcile job is queued only for a run that is not final.

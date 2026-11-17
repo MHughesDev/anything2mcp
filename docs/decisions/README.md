@@ -97,3 +97,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0087 | [The source readers' interface, as building it settled it](0087-the-source-readers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0084 | [The session keeper's outside crates, and TLS for identity services](0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md) | Accepted (design decision) |
 | 0085 | [The session keeper's interface, as building it settled it](0085-the-session-keepers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0093 | [The scheduler's interface, as building it settled it](0093-the-schedulers-interface-as-building-it-settled-it.md) | Accepted (design decision) |

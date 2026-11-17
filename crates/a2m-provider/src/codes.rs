@@ -87,15 +87,27 @@ pub(crate) fn failure(
     Failure::new(class, code, message, next_step)
 }
 
-pub(crate) fn input(code: FailureCode, message: impl Into<String>, next: impl Into<String>) -> Failure {
+pub(crate) fn input(
+    code: FailureCode,
+    message: impl Into<String>,
+    next: impl Into<String>,
+) -> Failure {
     failure(FailureClass::Input, code, message, next)
 }
 
-pub(crate) fn policy(code: FailureCode, message: impl Into<String>, next: impl Into<String>) -> Failure {
+pub(crate) fn policy(
+    code: FailureCode,
+    message: impl Into<String>,
+    next: impl Into<String>,
+) -> Failure {
     failure(FailureClass::Policy, code, message, next)
 }
 
-pub(crate) fn busy(code: FailureCode, message: impl Into<String>, next: impl Into<String>) -> Failure {
+pub(crate) fn busy(
+    code: FailureCode,
+    message: impl Into<String>,
+    next: impl Into<String>,
+) -> Failure {
     failure(FailureClass::Busy, code, message, next)
 }
 
@@ -110,7 +122,11 @@ pub(crate) fn unknown_variant(
 /// Text from outside, cut before it is shown in a message.
 pub(crate) fn shown(text: &str) -> String {
     const SHOWN: usize = 80;
-    let clean: String = text.chars().filter(|c| !c.is_control()).take(SHOWN).collect();
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(SHOWN)
+        .collect();
     if text.chars().count() > SHOWN {
         format!("{clean}…")
     } else {

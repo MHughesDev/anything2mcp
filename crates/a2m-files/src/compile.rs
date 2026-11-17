@@ -5,14 +5,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    AddressOverride, BindingPlan, BindingStatus, CanonicalJson, Checkpoint, Date, Decimal,
-    EffectClass, EncodedPlan, Environment, EnvironmentKind, EnvironmentPlan, FieldOf,
-    FieldTypeIndex, FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan,
-    LintCode, Millis, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT,
-    PackPayload, PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
-    PipelineStep, Plan, PlanHeader, RatePlan, SourcePlan, Step, StepArg, SurfaceIndex, SurfaceKind,
-    SurfaceName, SurfacePlan, TargetName, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan,
-    ToolRuns, Value, ValueType, Values, Verb, Version,
+    AddressOverride, ApproveWrites, AuthPlan, AuthProviderName, AuthSetting, BindingPlan,
+    BindingStatus, CanonicalJson, CaptureLevel, Checkpoint, CredentialRef, CredentialUse, Date,
+    Decimal, DecisionPoint, DriftRisk, EffectClass, EncodedPlan, Environment, EnvironmentIndex,
+    EnvironmentKind, EnvironmentPlan, FieldOf, FieldTypeIndex, FileKindName, Hazard, IdentityPlan,
+    IdentityStrategy, InputIndex, InputPlan, LintCode, Millis, Mode, OperationIndex, OperationName,
+    OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload, PackRef, PackSection, PermissionManifest,
+    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanHeader, ProbePlan,
+    RatePlan, RecordKey, SectionIndex, SignInMode, SourcePlan, Stands, Step, StepArg, SurfaceIndex,
+    SurfaceKind, SurfaceName, SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan,
+    ToolAnnotations, ToolIndex, ToolPlan, ToolRuns, Value, ValueType, Values, Verb, Version,
 };
 use a2m_expr::TypeEnv;
 
@@ -108,6 +110,9 @@ pub fn compile(
         problems: Vec::new(),
         model: Model::default(),
         environments: Vec::new(),
+        about: None,
+        default_limits: PipelineLimits::default(),
+        auth: Vec::new(),
         operations: Vec::new(),
         op_plans: Vec::new(),
         pipelines: Vec::new(),
@@ -154,6 +159,11 @@ struct Compiler<'a> {
     problems: Vec<Diagnostic>,
     model: Model,
     environments: Vec<EnvironmentPlan>,
+    /// What `target.yaml` states for the target as a whole.
+    about: Option<TargetPlan>,
+    /// `defaults.limits`: what a pipeline that states no limit takes.
+    default_limits: PipelineLimits,
+    auth: Vec<AuthPlan>,
     operations: Vec<OpInfo>,
     op_plans: Vec<(OperationPlan, String, String)>,
     pipelines: Vec<PipelineInfo>,
@@ -197,6 +207,27 @@ fn value_of(doc: &Located<Doc>, ty: &ValueType) -> Option<Value> {
         (ValueType::Decimal, Doc::Text(text)) => Decimal::parse(text).ok().map(Value::Decimal),
         (ValueType::Date, Doc::Text(text)) => text.parse::<Date>().ok().map(Value::Date),
         (ValueType::Duration, Doc::Int(number)) => Some(Value::Duration(Millis::new(*number))),
+        _ => None,
+    }
+}
+
+/// A plain value as a file wrote it, with no field type to read it by: text
+/// is text, and a whole number is a whole number.
+fn written_value(doc: &Located<Doc>) -> Option<Value> {
+    match &doc.value {
+        Doc::Text(text) => Some(Value::Text(text.clone())),
+        Doc::Int(number) => Some(Value::Int(*number)),
+        Doc::Bool(flag) => Some(Value::Bool(*flag)),
+        _ => None,
+    }
+}
+
+/// A plain value as the text of a setting.
+fn written_text(doc: &Located<Doc>) -> Option<String> {
+    match &doc.value {
+        Doc::Text(text) => Some(text.clone()),
+        Doc::Int(number) => Some(number.to_string()),
+        Doc::Bool(flag) => Some(flag.to_string()),
         _ => None,
     }
 }
@@ -368,9 +399,9 @@ impl<'a> Compiler<'a> {
     fn run(&mut self, version: Version) -> Result<Compiled, Diagnostics> {
         self.target();
         self.field_types();
-        self.auth();
         self.pack_kinds();
         self.operations();
+        self.auth();
         self.source_files();
         self.pipelines();
         self.describe();
@@ -383,7 +414,7 @@ impl<'a> Compiler<'a> {
             all.extend(warnings);
             return Err(all);
         }
-        let Some(target) = self.model.target.clone() else {
+        let (Some(target), Some(about)) = (self.model.target.clone(), self.about.take()) else {
             return Err(warnings);
         };
         let plan = Plan {
@@ -395,6 +426,7 @@ impl<'a> Compiler<'a> {
                 version,
                 sources: self.sources.digest,
             },
+            target: about,
             surfaces: self
                 .model
                 .surfaces
@@ -402,6 +434,7 @@ impl<'a> Compiler<'a> {
                 .map(|info| info.plan.clone())
                 .collect(),
             environments: std::mem::take(&mut self.environments),
+            auth: std::mem::take(&mut self.auth),
             field_types: std::mem::take(&mut self.model.field_types),
             expressions: std::mem::take(&mut self.model.exprs.borrow_mut().exprs),
             operations: self
@@ -514,7 +547,74 @@ impl<'a> Compiler<'a> {
         if let Some(surfaces) = doc.get("surfaces") {
             self.surfaces(surfaces);
         }
-        self.environments(doc);
+        let default_environment = self.environments(doc);
+
+        // Defaults are inputs to compiling, not data for the engine: a
+        // timeout reaches a step through its lowering, and a limit reaches a
+        // pipeline that states none. Only the capture level travels.
+        let defaults = doc.get("defaults");
+        self.model.default_timeouts = defaults
+            .and_then(|defaults| defaults.get("timeouts"))
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value
+                    .as_int()
+                    .map(|number| (entry.key.value.clone(), to_u32(number)))
+            })
+            .collect();
+        let limit = |key: &str| {
+            defaults
+                .and_then(|defaults| defaults.get("limits"))
+                .and_then(|limits| limits.get(key))
+                .and_then(Located::as_int)
+        };
+        self.default_limits = PipelineLimits {
+            max_records: limit("max_records").map(to_u32),
+            max_duration_ms: limit("max_duration_ms").and_then(|number| u64::try_from(number).ok()),
+        };
+        let environment = doc.get("environment");
+        let timezone = environment.and_then(|environment| environment.get("timezone"));
+        if let Some(zone) = timezone
+            && zone
+                .as_text()
+                .is_none_or(|text| types::utc_offset_minutes(text).is_none())
+        {
+            self.error(
+                codes::UNKNOWN_VALUE,
+                Stage::Validate,
+                &zone.at,
+                "The target's time zone is not one the compiler can fix.".to_owned(),
+                "Write `UTC`, or an offset such as `\"+02:00\"`; a named zone is not built yet."
+                    .to_owned(),
+            );
+        }
+        self.about = Some(TargetPlan {
+            title: doc
+                .text("title")
+                .or_else(|| doc.text("target"))
+                .unwrap_or_default()
+                .to_owned(),
+            modules: self.model.modules.clone(),
+            default_environment,
+            locale: environment
+                .and_then(|environment| environment.text("locale"))
+                .map(str::to_owned),
+            timezone: timezone.and_then(Located::as_text).map(str::to_owned),
+            capture: defaults
+                .and_then(|defaults| defaults.text("capture"))
+                .and_then(|level| level.parse::<CaptureLevel>().ok()),
+            exclusive_session: doc
+                .get("exclusive_session")
+                .and_then(Located::as_bool)
+                .unwrap_or(false),
+            drift_risk: doc
+                .text("drift_risk")
+                .and_then(|risk| risk.parse::<DriftRisk>().ok()),
+            authorization: doc.text("authorization").map(str::to_owned),
+        });
     }
 
     fn surfaces(&mut self, surfaces: &Located<Doc>) {
@@ -623,6 +723,7 @@ impl<'a> Compiler<'a> {
                     kind,
                     address: address.to_owned(),
                     same_session_as: None,
+                    stands: None,
                     rate,
                     payload,
                 },
@@ -640,21 +741,35 @@ impl<'a> Compiler<'a> {
         }
         // `stands: {beneath: surface}` names a surface too.
         for entry in surfaces.entries() {
-            if let Some(beneath) = entry
-                .value
-                .get("stands")
-                .and_then(|stands| stands.get("beneath"))
-                && let Some(text) = beneath.as_text()
+            let Some(stands) = entry.value.get("stands") else {
+                continue;
+            };
+            let found = match stands.get("beneath") {
+                None => Some(Stands::Alone),
+                Some(beneath) => beneath.as_text().and_then(|text| {
+                    let named = Located::new(text.to_owned(), beneath.at.clone());
+                    if !self.resolve(Reference::Surface, &named) {
+                        return None;
+                    }
+                    self.model
+                        .surface(text)
+                        .map(|owner| Stands::Beneath(owner.index))
+                }),
+            };
+            if let Some(position) = self
+                .model
+                .surfaces
+                .iter()
+                .position(|surface| surface.plan.name.as_str() == entry.key.value)
             {
-                self.resolve(
-                    Reference::Surface,
-                    &Located::new(text.to_owned(), beneath.at.clone()),
-                );
+                self.model.surfaces[position].plan.stands = found;
             }
         }
     }
 
-    fn environments(&mut self, doc: &Located<Doc>) {
+    /// The target's environments, and which of them a call runs in when it
+    /// names none: the one the target states, or `production`.
+    fn environments(&mut self, doc: &Located<Doc>) -> EnvironmentIndex {
         let mut names = BTreeSet::new();
         if let Some(environments) = doc.get("environments") {
             for entry in environments.entries() {
@@ -693,11 +808,38 @@ impl<'a> Compiler<'a> {
                         });
                     }
                 }
+                let mut test_records = Vec::new();
+                for record in entry
+                    .value
+                    .get("test_records")
+                    .map(Located::items)
+                    .unwrap_or_default()
+                {
+                    let parts: Option<Vec<Value>> = match &record.value {
+                        Doc::List(parts) => parts.iter().map(written_value).collect(),
+                        _ => written_value(record).map(|part| vec![part]),
+                    };
+                    match parts.and_then(|parts| RecordKey::new(parts).ok()) {
+                        Some(key) => test_records.push(key),
+                        None => self.error(
+                            codes::WRONG_TYPE,
+                            Stage::Validate,
+                            &record.at,
+                            "A test record is a record key: one plain value, or a list of them, parent first.".to_owned(),
+                            "Write the key as the system shows it, such as `\"SO-1001\"`, or `[\"SO-1001\", \"L-101\"]` for a key of two parts.".to_owned(),
+                        ),
+                    }
+                }
                 names.insert(name.as_str().to_owned());
                 self.environments.push(EnvironmentPlan {
                     name,
                     kind,
                     addresses,
+                    test_records,
+                    approve_writes: entry
+                        .value
+                        .text("approve_writes")
+                        .and_then(|rule| rule.parse::<ApproveWrites>().ok()),
                 });
             }
         }
@@ -710,6 +852,8 @@ impl<'a> Compiler<'a> {
                 name,
                 kind: EnvironmentKind::Production,
                 addresses: Vec::new(),
+                test_records: Vec::new(),
+                approve_writes: None,
             });
         }
         if let Some(default) = doc.get("default_environment")
@@ -728,6 +872,13 @@ impl<'a> Compiler<'a> {
                 fix_for_unknown(text, &known),
             );
         }
+        let default = doc.text("default_environment").unwrap_or("production");
+        let position = self
+            .environments
+            .iter()
+            .position(|environment| environment.name.as_str() == default)
+            .unwrap_or(0);
+        EnvironmentIndex::new(index(position))
     }
 
     // ---- types.yaml: field types ----
@@ -831,35 +982,343 @@ impl<'a> Compiler<'a> {
 
     // ---- auth.yaml ----
 
+    /// One entry per group of surfaces that share a sign-in. It runs after
+    /// the operations and the pack sections, because a probe names one of
+    /// them.
     fn auth(&mut self) {
         let Some(schema) = k::schema_of(k::AUTH) else {
             return;
         };
         let docs: Vec<&Located<Doc>> = self.sources.docs_of(k::AUTH).collect();
+        let mut covered: BTreeMap<SurfaceIndex, Place> = BTreeMap::new();
         for doc in docs {
             if !self.fits(schema, doc) {
                 continue;
             }
             for entry in doc.get("auth").map(Located::items).unwrap_or_default() {
-                for credential in entry
-                    .get("credentials")
-                    .map(Located::entries)
-                    .unwrap_or_default()
-                {
-                    let vaulted = credential
-                        .value
-                        .as_text()
-                        .is_some_and(|text| text.starts_with("vault://"));
-                    if !vaulted {
+                if let Some(plan) = self.auth_entry(entry, &mut covered) {
+                    self.auth.push(plan);
+                }
+            }
+        }
+    }
+
+    fn auth_entry(
+        &mut self,
+        entry: &Located<Doc>,
+        covered: &mut BTreeMap<SurfaceIndex, Place>,
+    ) -> Option<AuthPlan> {
+        let mut fine = true;
+        let mut surfaces = Vec::new();
+        for named in entry
+            .get("surfaces")
+            .map(Located::items)
+            .unwrap_or_default()
+        {
+            let Some(found) = named
+                .as_text()
+                .and_then(|name| self.model.surface(name))
+                .map(|surface| surface.index)
+            else {
+                fine = false;
+                continue;
+            };
+            if let Some(first) = covered.get(&found) {
+                let message = format!(
+                    "The surface `{}` is signed in to twice; its first entry is at {first}.",
+                    named.as_text().unwrap_or_default()
+                );
+                self.error(
+                    codes::PROBE_INVALID,
+                    Stage::Resolve,
+                    &named.at,
+                    message,
+                    "Name each surface in one entry of `auth.yaml`; surfaces that share a sign-in go in the same entry.".to_owned(),
+                );
+                fine = false;
+                continue;
+            }
+            covered.insert(found, named.at.clone());
+            surfaces.push(found);
+        }
+        let mode = entry
+            .text("mode")
+            .and_then(|mode| mode.parse::<SignInMode>().ok())?;
+        let provider_doc = entry.get("provider")?;
+        let Some(provider) = provider_doc
+            .as_text()
+            .and_then(|name| AuthProviderName::new(name).ok())
+        else {
+            self.error(
+                codes::NAME_MALFORMED,
+                Stage::Validate,
+                &provider_doc.at,
+                "This is not the name of an auth provider.".to_owned(),
+                "Write one lowercase name of at most 32 characters, such as `api_key`.".to_owned(),
+            );
+            return None;
+        };
+        let probe = self.probe(entry, &surfaces);
+
+        let mut expiry_signals = Vec::new();
+        for signal in entry
+            .get("expiry_signals")
+            .map(Located::items)
+            .unwrap_or_default()
+        {
+            match PackPayload::encode(&signal.to_json()) {
+                Ok(payload) => expiry_signals.push(payload),
+                Err(_) => fine = false,
+            }
+        }
+        let mut settings = Vec::new();
+        for setting in entry
+            .get("settings")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            if let Some(value) = written_text(&setting.value) {
+                settings.push(AuthSetting {
+                    name: setting.key.value.clone(),
+                    value,
+                });
+            }
+        }
+        settings.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut credentials = Vec::new();
+        for credential in entry
+            .get("credentials")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let reference = credential
+                .value
+                .as_text()
+                .and_then(|text| CredentialRef::new(text).ok());
+            match reference {
+                Some(reference) => credentials.push(CredentialUse {
+                    role: credential.key.value.clone(),
+                    reference,
+                }),
+                None => {
+                    // The value may be the credential itself: it is never shown.
+                    self.error(
+                        codes::CREDENTIAL_IN_FILE,
+                        Stage::Lint,
+                        &credential.value.at,
+                        format!("The credential `{}` is not a vault reference.", shown(&credential.key.value)),
+                        "Store the value in the vault and write its reference here, such as `vault://example/service/password`.".to_owned(),
+                    );
+                    fine = false;
+                }
+            }
+        }
+        credentials.sort_by(|a, b| a.role.cmp(&b.role));
+        let timeout = |key: &str| {
+            entry
+                .get("timeouts")
+                .and_then(|timeouts| timeouts.get(key))
+                .and_then(Located::as_int)
+                .and_then(|number| u64::try_from(number).ok())
+        };
+        let movable = match entry.get("movable").map(|movable| &movable.value) {
+            Some(Doc::Bool(flag)) => *flag,
+            Some(Doc::Text(text)) => text != "false",
+            _ => true,
+        };
+        let probe = probe?;
+        fine.then(|| AuthPlan {
+            surfaces,
+            mode,
+            provider,
+            probe,
+            expiry_signals,
+            idle_ms: timeout("idle_ms"),
+            absolute_ms: timeout("absolute_ms"),
+            sign_out: entry.text("sign_out").map(str::to_owned),
+            settings,
+            credentials,
+            attempt_limit: entry
+                .get("attempt_limit")
+                .and_then(Located::as_int)
+                .map_or(1, to_u32),
+            movable,
+        })
+    }
+
+    /// The probe of one entry of `auth.yaml`: a read operation of the
+    /// target, with the inputs the entry gives it, or an entry of a pack's
+    /// file kind on one of the entry's surfaces.
+    fn probe(&mut self, entry: &Located<Doc>, surfaces: &[SurfaceIndex]) -> Option<ProbePlan> {
+        let named = entry.get("probe")?;
+        let name = named.as_text()?;
+        let given = entry.get("probe_inputs");
+        let invalid = |this: &mut Self, at: &Place, message: String, fix: &str| {
+            this.error(
+                codes::PROBE_INVALID,
+                Stage::Resolve,
+                at,
+                message,
+                fix.to_owned(),
+            );
+        };
+        if let Some(position) = self
+            .operations
+            .iter()
+            .position(|info| info.name.as_str() == name)
+        {
+            let info = self.operations[position].clone();
+            let mut fine = true;
+            if info.effect != EffectClass::Read {
+                invalid(
+                    self,
+                    &named.at,
+                    format!(
+                        "The probe `{name}` has the effect `{}`; a session is checked with a read.",
+                        info.effect
+                    ),
+                    "Name an operation whose effect is `read`.",
+                );
+                fine = false;
+            }
+            let mut inputs = Values::new();
+            for input in given.map(Located::entries).unwrap_or_default() {
+                let Some(declared) = info
+                    .inputs
+                    .iter()
+                    .find(|declared| declared.plan.name == input.key.value)
+                else {
+                    let known: Vec<&str> = info
+                        .inputs
+                        .iter()
+                        .map(|declared| declared.plan.name.as_str())
+                        .collect();
+                    let fix = fix_for_unknown(&input.key.value, &known);
+                    self.error(
+                        codes::UNKNOWN_NAME,
+                        Stage::Resolve,
+                        &input.key.at,
+                        format!("`{}` is not an input of `{name}`.", shown(&input.key.value)),
+                        fix,
+                    );
+                    fine = false;
+                    continue;
+                };
+                match value_of(&input.value, &declared.plan.ty) {
+                    Some(value) => {
+                        inputs.insert(declared.plan.name.clone(), value);
+                    }
+                    None => {
                         self.error(
-                            codes::CREDENTIAL_IN_FILE,
-                            Stage::Lint,
-                            &credential.value.at,
-                            format!("The credential `{}` is not a vault reference.", shown(&credential.key.value)),
-                            "Store the value in the vault and write its reference here, such as `vault://example/service/password`.".to_owned(),
+                            codes::VALUE_NOT_OF_TYPE,
+                            Stage::Resolve,
+                            &input.value.at,
+                            format!(
+                                "The probe gives `{}` a {}, and the input is a {}.",
+                                declared.plan.name,
+                                input.value.value.kind(),
+                                declared.plan.ty.name()
+                            ),
+                            format!(
+                                "Write a {} here; text goes in quotes.",
+                                declared.plan.ty.name()
+                            ),
                         );
+                        fine = false;
                     }
                 }
+            }
+            for declared in &info.inputs {
+                if declared.plan.required
+                    && declared.plan.default.is_none()
+                    && !inputs.contains(&declared.plan.name)
+                {
+                    invalid(
+                        self,
+                        &named.at,
+                        format!(
+                            "The probe `{name}` needs the input `{}`, and the entry does not give it.",
+                            declared.plan.name
+                        ),
+                        &format!(
+                            "Add `probe_inputs: {{{}: ...}}` with a record that always exists, or name a read that needs no input.",
+                            declared.plan.name
+                        ),
+                    );
+                    fine = false;
+                }
+            }
+            return fine.then(|| ProbePlan::Operation {
+                operation: OperationIndex::new(index(position)),
+                inputs,
+            });
+        }
+        // Not an operation: an entry of a pack's file kind on one of the
+        // entry's surfaces, such as an endpoint.
+        let kinds: BTreeSet<&SurfaceKind> = surfaces
+            .iter()
+            .filter_map(|surface| self.model.surfaces.get(surface.get()))
+            .map(|surface| &surface.plan.kind)
+            .collect();
+        let found: Vec<SectionIndex> = self
+            .model
+            .sections
+            .iter()
+            .enumerate()
+            .filter(|(_, section)| {
+                kinds.contains(&section.surface_kind)
+                    && self
+                        .model
+                        .defined
+                        .get(&(section.kind.clone(), section.surface_kind.clone()))
+                        .is_some_and(|names| names.iter().any(|known| known == name))
+            })
+            .map(|(position, _)| SectionIndex::new(index(position)))
+            .collect();
+        match found.as_slice() {
+            [section] => {
+                if let Some(extra) = given {
+                    invalid(
+                        self,
+                        &extra.at,
+                        format!(
+                            "`probe_inputs` are an operation's inputs, and the probe `{name}` is not an operation."
+                        ),
+                        "Remove `probe_inputs`, or name a read operation as the probe.",
+                    );
+                    return None;
+                }
+                Some(ProbePlan::Entry(PackRef {
+                    section: *section,
+                    entry: name.to_owned(),
+                }))
+            }
+            [] => {
+                let known: Vec<&str> = self
+                    .operations
+                    .iter()
+                    .map(|info| info.name.as_str())
+                    .collect();
+                let fix = fix_for_unknown(name, &known);
+                self.error(
+                    codes::UNKNOWN_NAME,
+                    Stage::Resolve,
+                    &named.at,
+                    format!("The probe `{}` is not an operation of the target, or the one that is has errors, and no file on the entry's surfaces defines it.", shown(name)),
+                    fix,
+                );
+                None
+            }
+            _ => {
+                invalid(
+                    self,
+                    &named.at,
+                    format!(
+                        "The probe `{name}` is defined by more than one kind of file on the entry's surfaces."
+                    ),
+                    "Name a read operation as the probe, or rename one of the two.",
+                );
+                None
             }
         }
     }
@@ -954,6 +1413,13 @@ impl<'a> Compiler<'a> {
                 }
                 if fine {
                     let key = (file.kind.clone(), surface_kind);
+                    self.model.defined.entry(key.clone()).or_default().extend(
+                        owner
+                            .item
+                            .names(doc)
+                            .into_iter()
+                            .map(|name| name.value.name),
+                    );
                     self.model.owners.insert(key.clone(), owner.pack.clone());
                     self.model.entries.entry(key).or_default().push(doc.clone());
                 }
@@ -1353,13 +1819,126 @@ impl<'a> Compiler<'a> {
                     .and_then(Located::as_int)
                     .map(to_u32),
             };
-            if let Some(plan) = self.bindings(&info) {
+            let examples = self.examples(doc, &info);
+            let decision_points = self.decision_points(doc);
+            if let (Some(mut plan), Some(examples), Some(decision_points)) =
+                (self.bindings(&info), examples, decision_points)
+            {
+                plan.examples = examples;
+                plan.decision_points = decision_points;
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
                 self.op_plans.push((plan, title, description));
                 self.operations.push(info);
             }
         }
+    }
+
+    /// An operation's example inputs, each typed by the inputs it names.
+    fn examples(&mut self, doc: &Located<Doc>, info: &OpInfo) -> Option<Vec<Values>> {
+        let mut fine = true;
+        let mut examples = Vec::new();
+        let listed = doc.get("examples").map(Located::items).unwrap_or_default();
+        if listed.len() > 3 {
+            self.error(
+                codes::WRONG_TYPE,
+                Stage::Validate,
+                &listed[3].at,
+                format!(
+                    "The operation has {} examples, and a tool shows at most three.",
+                    listed.len()
+                ),
+                "Keep the one to three examples that show the tool best.".to_owned(),
+            );
+            fine = false;
+        }
+        for example in listed {
+            let mut values = Values::new();
+            for given in example.entries() {
+                let Some(input) = info
+                    .inputs
+                    .iter()
+                    .find(|input| input.plan.name == given.key.value)
+                else {
+                    let known: Vec<&str> = info
+                        .inputs
+                        .iter()
+                        .map(|input| input.plan.name.as_str())
+                        .collect();
+                    let fix = fix_for_unknown(&given.key.value, &known);
+                    self.error(
+                        codes::UNKNOWN_NAME,
+                        Stage::Resolve,
+                        &given.key.at,
+                        format!(
+                            "`{}` is not an input of `{}`.",
+                            shown(&given.key.value),
+                            info.name
+                        ),
+                        fix,
+                    );
+                    fine = false;
+                    continue;
+                };
+                match value_of(&given.value, &input.plan.ty) {
+                    Some(value) => {
+                        values.insert(input.plan.name.clone(), value);
+                    }
+                    None => {
+                        self.error(
+                            codes::VALUE_NOT_OF_TYPE,
+                            Stage::Resolve,
+                            &given.value.at,
+                            format!(
+                                "The example gives `{}` a {}, and the input is a {}.",
+                                input.plan.name,
+                                given.value.value.kind(),
+                                input.plan.ty.name()
+                            ),
+                            format!(
+                                "Write a {} here; text goes in quotes.",
+                                input.plan.ty.name()
+                            ),
+                        );
+                        fine = false;
+                    }
+                }
+            }
+            examples.push(values);
+        }
+        fine.then_some(examples)
+    }
+
+    /// The questions an operation declares that a person may have to answer.
+    fn decision_points(&mut self, doc: &Located<Doc>) -> Option<Vec<DecisionPoint>> {
+        let mut fine = true;
+        let mut points: Vec<DecisionPoint> = Vec::new();
+        for point in doc
+            .get("decision_points")
+            .map(Located::items)
+            .unwrap_or_default()
+        {
+            let (Some(name), Some(question)) = (point.get("name"), point.text("question")) else {
+                continue;
+            };
+            let text = name.as_text().unwrap_or_default();
+            if !is_simple_name(text) || points.iter().any(|known| known.name == text) {
+                self.error(
+                    codes::NAME_DEFINED_TWICE,
+                    Stage::Resolve,
+                    &name.at,
+                    format!("The decision point `{}` is named twice in the operation, or is not one name.", shown(text)),
+                    "Give each decision point its own lowercase name.".to_owned(),
+                );
+                fine = false;
+                continue;
+            }
+            points.push(DecisionPoint {
+                name: text.to_owned(),
+                question: question.to_owned(),
+            });
+        }
+        fine.then_some(points)
     }
 
     fn bindings(&mut self, info: &OpInfo) -> Option<OperationPlan> {
@@ -1597,6 +2176,8 @@ impl<'a> Compiler<'a> {
                 downloads: list("downloads"),
                 destinations: list("destinations"),
             },
+            examples: Vec::new(),
+            decision_points: Vec::new(),
         })
     }
 
@@ -2351,17 +2932,21 @@ impl<'a> Compiler<'a> {
             }
             effect = effect.max(class);
         }
+        // A limit the pipeline does not state is the target's default, so
+        // the plan holds the limit and the engine applies no default.
         let limits = PipelineLimits {
             max_records: doc
                 .get("limits")
                 .and_then(|limits| limits.get("max_records"))
                 .and_then(Located::as_int)
-                .map(to_u32),
+                .map(to_u32)
+                .or(self.default_limits.max_records),
             max_duration_ms: doc
                 .get("limits")
                 .and_then(|limits| limits.get("max_duration_ms"))
                 .and_then(Located::as_int)
-                .and_then(|number| u64::try_from(number).ok()),
+                .and_then(|number| u64::try_from(number).ok())
+                .or(self.default_limits.max_duration_ms),
         };
         if effect >= EffectClass::Write && limits.max_records.is_none() {
             self.error(
@@ -2369,7 +2954,7 @@ impl<'a> Compiler<'a> {
                 Stage::Lint,
                 &doc.at,
                 "The pipeline writes and declares no record limit.".to_owned(),
-                "Add `limits: {max_records: N}` with the most records one run may touch."
+                "Add `limits: {max_records: N}` with the most records one run may touch, or state one for every pipeline under `defaults.limits` in `target.yaml`."
                     .to_owned(),
             );
             fine = false;
@@ -2559,6 +3144,25 @@ impl<'a> Compiler<'a> {
         self.tools = tools;
     }
 
+    /// The module a tool belongs to: the longest of the target's modules
+    /// that follows the target's name in the tool's name.
+    fn module_of(&self, name: &OperationName) -> Option<String> {
+        let target = self.model.target.as_ref()?;
+        let rest = name
+            .as_str()
+            .strip_prefix(target.as_str())?
+            .strip_prefix('_')?;
+        self.model
+            .modules
+            .iter()
+            .filter(|module| {
+                rest.strip_prefix(module.as_str())
+                    .is_some_and(|rest| rest.starts_with('_'))
+            })
+            .max_by_key(|module| module.len())
+            .cloned()
+    }
+
     fn schema_of_type(
         &self,
         ty: &ValueType,
@@ -2622,9 +3226,11 @@ impl<'a> Compiler<'a> {
         ) else {
             return None;
         };
+        let module = self.module_of(&name);
         Some(ToolPlan {
             name,
             runs,
+            module,
             title,
             description: description.trim().to_owned(),
             input_schema,

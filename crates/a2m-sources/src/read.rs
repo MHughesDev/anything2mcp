@@ -9,12 +9,12 @@ use a2m_core::{Digest, Failure, Value, Values};
 use a2m_expr::Bindings;
 
 use crate::csv::CsvReader;
-use crate::definition::{LoadedSource, OPERATION_READER, Origin};
+use crate::definition::{LoadedSource, Origin};
 use crate::error::{
     KEY_NOT_UNIQUE, Problem, Rejected, SCHEMA_INVALID, SOURCE_READER_UNKNOWN,
     SOURCE_TEMPLATE_UNKNOWN, definition, failure, too_large,
 };
-use crate::fingerprint::{Fingerprint, Structure};
+use crate::fingerprint::{Structure, differences};
 use crate::json::JsonReader;
 use crate::locate::{CellTable, locate};
 use crate::model::{
@@ -22,6 +22,7 @@ use crate::model::{
 };
 use crate::typing::{CellContext, normalized, row_value, typed};
 use crate::xlsx::XlsxReader;
+use a2m_files::{Fingerprint, OPERATION_READER};
 
 /// One row of a source: its row fields, typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,7 +315,7 @@ fn unknown_template(def: &LoadedSource, found: &Fingerprint) -> Rejected {
         .spec()
         .versions
         .iter()
-        .map(|version| version.fingerprint.differences(found))
+        .map(|version| differences(&version.fingerprint, found))
         .min_by_key(Vec::len)
         .unwrap_or_default();
     Rejected {

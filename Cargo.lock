@@ -164,6 +164,7 @@ dependencies = [
  "a2m-ledger",
  "a2m-sources",
  "a2m-telemetry",
+ "a2m-vault",
  "command-fds",
  "example-cli",
  "getrandom 0.4.3",
@@ -199,6 +200,7 @@ version = "0.0.1"
 dependencies = [
  "a2m-core",
  "a2m-expr",
+ "a2m-files",
  "example-files",
  "miniz_oxide",
  "serde",

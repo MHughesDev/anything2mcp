@@ -8,9 +8,10 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::checked_name;
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::finding::Timestamp;
-use crate::checked_name;
+use crate::name::{InvalidName, check_reference};
 
 checked_name! {
     /// The name of a target: one system a developer builds tools over. It is
@@ -110,6 +111,73 @@ impl LintCode {
     #[must_use]
     pub fn rule(&self) -> &str {
         self.as_str().split_once('.').map_or("", |(_, rule)| rule)
+    }
+}
+
+checked_name! {
+    /// The name of an auth provider, such as `api_key`: what knows how to
+    /// sign in to one kind of thing. The providers that exist are the ones
+    /// handed to the session keeper; the kernel holds no list (decision
+    /// 0062).
+    pub struct AuthProviderName: "auth provider", 32;
+}
+
+/// A reference to a stored credential, as an auth file writes it:
+/// `vault://` and one to four parts joined by `/`, each of lowercase
+/// letters, digits, `_`, `-`, and `.`. It is a name the vault resolves,
+/// never the credential.
+///
+/// A refusal never shows the text back: what was written where a reference
+/// belongs may be the credential itself.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CredentialRef(String);
+
+impl CredentialRef {
+    /// What every reference starts with.
+    pub const SCHEME: &'static str = "vault://";
+
+    /// Checks `text` and keeps it.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidName`] when the text is not `vault://` and one to four
+    /// well-formed parts.
+    pub fn new(text: &str) -> Result<Self, InvalidName> {
+        check_reference("credential reference", text, Self::SCHEME)?;
+        Ok(Self(text.to_owned()))
+    }
+
+    /// The reference as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for CredentialRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for CredentialRef {
+    type Err = InvalidName;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::new(text)
+    }
+}
+
+impl serde::Serialize for CredentialRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CredentialRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::new(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -525,9 +593,9 @@ impl<'de> serde::Deserialize<'de> for Version {
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountName, ControlName, Environment, Epoch, FileKindName, Identity, InvalidId, JobId,
-        LintCode, OperationName, PrincipalId, RunId, StepKind, SurfaceKind, SurfaceName,
-        TargetName, Verb, Version,
+        AccountName, AuthProviderName, ControlName, CredentialRef, Environment, Epoch,
+        FileKindName, Identity, InvalidId, JobId, LintCode, OperationName, PrincipalId, RunId,
+        StepKind, SurfaceKind, SurfaceName, TargetName, Verb, Version,
     };
     use crate::{Failure, FailureClass, FailureCode, Timestamp};
 
@@ -559,6 +627,52 @@ mod tests {
         refuses(FileKindName::new, FileKindName::LONGEST);
         refuses(ControlName::new, ControlName::LONGEST);
         refuses(AccountName::new, AccountName::LONGEST);
+        refuses(AuthProviderName::new, AuthProviderName::LONGEST);
+    }
+
+    /// A name written in the source is checked when the crate is built: a
+    /// badly formed one in either constant would not compile.
+    #[test]
+    fn a_fixed_name_equals_the_same_name_made_at_run_time() {
+        const CODE: LintCode = LintCode::fixed("kernel.no_fixed_wait");
+        const KIND: StepKind = StepKind::fixed("locate");
+        assert_eq!(CODE, LintCode::new("kernel.no_fixed_wait").unwrap());
+        assert_eq!(CODE.owner(), "kernel");
+        assert_eq!(KIND, StepKind::new("locate").unwrap());
+        assert_eq!(serde_json::to_string(&KIND).unwrap(), "\"locate\"");
+        let caught = std::panic::catch_unwind(|| LintCode::fixed("kernel"));
+        assert!(caught.is_err());
+    }
+
+    #[test]
+    fn a_credential_reference_is_a_vault_name_and_a_refusal_never_shows_what_was_written() {
+        let reference = CredentialRef::new("vault://example/service/password").unwrap();
+        assert_eq!(reference.as_str(), "vault://example/service/password");
+        assert_eq!(
+            serde_json::from_str::<CredentialRef>("\"vault://example/service/password\"").unwrap(),
+            reference
+        );
+        for bad in [
+            "example/service/password",
+            "vault://",
+            "vault://a//b",
+            "vault://a/../b",
+            "vault://a/b/c/d/e",
+            "vault://A",
+            "file:///etc/passwd",
+            "correct horse battery staple",
+        ] {
+            let error = CredentialRef::new(bad).unwrap_err();
+            // The scheme alone is in the rule the refusal states.
+            assert!(
+                bad == CredentialRef::SCHEME || !error.to_string().contains(bad),
+                "{error}"
+            );
+            let failure: Failure = error.into();
+            assert_eq!(failure.code(), &FailureCode::SCHEMA_INVALID, "{bad}");
+            assert!(!failure.message().contains("horse"), "{failure}");
+        }
+        assert!(serde_json::from_str::<CredentialRef>("\"hunter2\"").is_err());
     }
 
     #[test]

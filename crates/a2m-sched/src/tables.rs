@@ -9,8 +9,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use a2m_core::{
-    Epoch, Failure, FailureClass, FailureCode, JobId, Mode, PrincipalId, RunId, RunState,
-    RunnerId, TargetName, Timestamp, WorkspaceId,
+    Epoch, Failure, FailureClass, FailureCode, JobId, Mode, PrincipalId, RunId, RunState, RunnerId,
+    TargetName, Timestamp, WorkspaceId,
 };
 use a2m_ledger::{Fence, Opened, Owner, Row, SqlValue, Tx};
 use serde::{Deserialize, Serialize};
@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use crate::budget::{self, Take};
 use crate::failure;
 use crate::types::{
-    Admitted, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd, JobKind,
-    JobLease, JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, Priority,
-    Renewal, ResourceKey, RunnerOffer, RunnerTerms, SchedSettings, Slots, Submission,
+    Admitted, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd, JobKind, JobLease,
+    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, Priority, Renewal,
+    ResourceKey, RunnerOffer, RunnerTerms, SchedSettings, Slots, Submission,
 };
 
 /// The most keys a job may name as exclusive, and the most modes.
@@ -116,7 +116,8 @@ fn job_of(row: &Row) -> Result<Job, Failure> {
         queue_until: Timestamp::from_unix_millis(row.int(7)?),
         state: JobState::parse(row.text(8)?)?,
         epoch: Epoch::new(
-            u64::try_from(row.int(9)?).map_err(|_| failure::corrupt("a lease number below zero"))?,
+            u64::try_from(row.int(9)?)
+                .map_err(|_| failure::corrupt("a lease number below zero"))?,
         ),
         runner: stored_opt(row.opt_text(10)?)?,
         lease_until: row.opt_int(11)?.map(Timestamp::from_unix_millis),
@@ -287,10 +288,7 @@ fn missing_runner(
     }
     Ok(Some(match closest {
         Missing::Workspace => "no runner is enrolled in this workspace".to_owned(),
-        Missing::Target => format!(
-            "no runner serves the target `{}`",
-            requirements.target
-        ),
+        Missing::Target => format!("no runner serves the target `{}`", requirements.target),
         Missing::Mode => format!(
             "no runner offers one of the modes the job can use ({})",
             requirements
@@ -315,7 +313,7 @@ fn missing_runner(
 
 #[derive(Debug, Clone)]
 pub(crate) struct Hold {
-    scope: HoldScope,
+    pub(crate) scope: HoldScope,
     held_at: Timestamp,
 }
 
@@ -331,7 +329,11 @@ pub(crate) fn scope_holds(tx: &mut Tx<'_>) -> Result<Vec<Hold>, Failure> {
                 "workspace" => HoldScope::Workspace(stored(row.text(1)?)?),
                 "target" => HoldScope::Target(stored(row.text(1)?)?, stored(row.text(2)?)?),
                 "caller" => HoldScope::Caller(stored(row.text(1)?)?, stored(row.text(2)?)?),
-                _ => return Err(failure::corrupt("a hold on a scope that is not in the list")),
+                _ => {
+                    return Err(failure::corrupt(
+                        "a hold on a scope that is not in the list",
+                    ));
+                }
             };
             Ok(Hold {
                 scope,
@@ -341,7 +343,12 @@ pub(crate) fn scope_holds(tx: &mut Tx<'_>) -> Result<Vec<Hold>, Failure> {
         .collect()
 }
 
-fn covers(scope: &HoldScope, workspace: WorkspaceId, target: &TargetName, caller: PrincipalId) -> bool {
+fn covers(
+    scope: &HoldScope,
+    workspace: WorkspaceId,
+    target: &TargetName,
+    caller: PrincipalId,
+) -> bool {
     match scope {
         HoldScope::Everything => true,
         HoldScope::Workspace(held) => *held == workspace,
@@ -386,12 +393,18 @@ pub(crate) fn release_hold(tx: &mut Tx<'_>, scope: &HoldScope) -> Result<bool, F
         &[word.into(), workspace.into(), name.into()],
     )?;
     let lost = ms(between(held.held_at, tx.now()));
-    let pending = tx
-        .tables(Owner::Sched)
-        .query(select_jobs!("WHERE j.state = 'pending' ORDER BY j.seq"), &[])?;
+    let pending = tx.tables(Owner::Sched).query(
+        select_jobs!("WHERE j.state = 'pending' ORDER BY j.seq"),
+        &[],
+    )?;
     for row in &pending {
         let job = job_of(row)?;
-        if covers(scope, job.workspace, &job.requirements.target, job.principal) {
+        if covers(
+            scope,
+            job.workspace,
+            &job.requirements.target,
+            job.principal,
+        ) {
             tx.tables(Owner::Sched).execute(
                 "UPDATE jobs SET queue_until = queue_until + ?2 WHERE id = ?1",
                 &[job.id.to_string().into(), lost.into()],
@@ -512,8 +525,11 @@ pub(crate) fn grant(
         let free = keys.iter().all(|key| {
             holds.get(key).is_none_or(|holder| *holder == me) && !spoken_for.contains(key)
         });
-        let leased = find_job(tx, *job)?.state == JobState::Leased;
-        if free && leased {
+        if find_job(tx, *job)?.state != JobState::Leased {
+            // Its job has ended: it is given nothing and keeps no place.
+            continue;
+        }
+        if free {
             take_holds(tx, *job, keys)?;
             for key in keys {
                 holds.insert(key.clone(), me.clone());
@@ -557,10 +573,10 @@ struct NewJob {
 fn insert_job(tx: &mut Tx<'_>, new: &NewJob) -> Result<JobId, Failure> {
     let now = tx.now();
     let id = JobId::from_parts(now, tx.random()?)?;
-    let seq = count(tx.tables(Owner::Sched).query_first(
-        "SELECT COALESCE(MAX(seq), 0) + 1 FROM jobs",
-        &[],
-    )?)?;
+    let seq = count(
+        tx.tables(Owner::Sched)
+            .query_first("SELECT COALESCE(MAX(seq), 0) + 1 FROM jobs", &[])?,
+    )?;
     let requirements = serde_json::to_string(&new.requirements)
         .map_err(|_| failure::invalid("requirements that cannot be written down"))?;
     let session = new.requirements.session.as_ref();
@@ -726,7 +742,12 @@ pub(crate) fn admit(
         available_at: now,
         queue_until: now,
     };
-    let job = place(tx, settings, &new, queue_wait.unwrap_or(settings.queue_wait))?;
+    let job = place(
+        tx,
+        settings,
+        &new,
+        queue_wait.unwrap_or(settings.queue_wait),
+    )?;
     if !budgets.is_empty()
         && let Take::Wait { until } = budget::take(tx, &settings.default_rate, &budgets, 1, true)?
     {
@@ -795,7 +816,9 @@ pub(crate) fn hello(
         return Err(failure::protocol_unsupported(offer.protocol));
     }
     if offer.modes.len() > 64 || offer.targets.len() > 1024 {
-        return Err(failure::invalid("a runner that offers too many modes or targets"));
+        return Err(failure::invalid(
+            "a runner that offers too many modes or targets",
+        ));
     }
     let capabilities = serde_json::to_string(&Capabilities {
         targets: offer.targets.clone(),
@@ -877,9 +900,10 @@ fn blocked(
     spoken_for: &BTreeSet<ResourceKey>,
 ) -> Result<Option<Blocked>, Failure> {
     let me = job.id.to_string();
-    let resource_busy = job.requirements.exclusive.iter().any(|key| {
-        holds.get(key).is_some_and(|holder| *holder != me) || spoken_for.contains(key)
-    });
+    let resource_busy =
+        job.requirements.exclusive.iter().any(|key| {
+            holds.get(key).is_some_and(|holder| *holder != me) || spoken_for.contains(key)
+        });
     if resource_busy {
         return Ok(Some(Blocked::Resource));
     }
@@ -1010,7 +1034,16 @@ fn lease(
     let now = tx.now();
     let epoch = match job.run {
         Some(run) => {
-            let row = tx.ledger().run(run)?;
+            let row = match tx.ledger().run(run) {
+                Ok(row) => row,
+                // Retention removed the run: its job has nothing to work on,
+                // and must not stand in the way of the jobs behind it.
+                Err(gone) if gone.code() == &failure::NOT_FOUND => {
+                    end_pending(tx, job, None, Some((gone.class(), gone.code().clone())))?;
+                    return Ok(None);
+                }
+                Err(other) => return Err(other),
+            };
             if row.state.is_final() {
                 end_pending(tx, job, Some(row.state), None)?;
                 return Ok(None);
@@ -1041,10 +1074,10 @@ fn lease(
         return Err(failure::lease_superseded("the job is no longer waiting"));
     }
     take_holds(tx, job.id, &job.requirements.exclusive)?;
-    let turn = count(tx.tables(Owner::Sched).query_first(
-        "SELECT COALESCE(MAX(served), 0) + 1 FROM caller_turns",
-        &[],
-    )?)?;
+    let turn = count(
+        tx.tables(Owner::Sched)
+            .query_first("SELECT COALESCE(MAX(served), 0) + 1 FROM caller_turns", &[])?,
+    )?;
     tx.tables(Owner::Sched).execute(
         "INSERT INTO caller_turns (workspace_id, principal_id, served) VALUES (?1, ?2, ?3)
          ON CONFLICT (workspace_id, principal_id) DO UPDATE SET served = ?3",
@@ -1119,7 +1152,13 @@ pub(crate) fn heartbeat(
         draining = find_runner(tx, runner)?.is_some_and(|runner| runner.state == "draining");
     }
     let holds = scope_holds(tx)?;
-    let on_hold = hold_on(&holds, job.workspace, &job.requirements.target, job.principal).is_some();
+    let on_hold = hold_on(
+        &holds,
+        job.workspace,
+        &job.requirements.target,
+        job.principal,
+    )
+    .is_some();
     let directive = if job.cancel {
         Directive::Cancel
     } else if on_hold {
@@ -1332,10 +1371,8 @@ pub(crate) fn sweep(tx: &mut Tx<'_>, settings: &SchedSettings) -> Result<Swept, 
     // number that nobody holds, which sorts its locks, and stops as
     // `possible_commit`, `runner_lost`; a reconcile job waits out the
     // quarantine.
-    let lost_before = Timestamp::from_unix_millis(
-        now.as_unix_millis()
-            .saturating_sub(ms(settings.lost_after)),
-    );
+    let lost_before =
+        Timestamp::from_unix_millis(now.as_unix_millis().saturating_sub(ms(settings.lost_after)));
     let rows = tx.tables(Owner::Sched).query(
         select_jobs!("WHERE j.state = 'leased' AND j.lease_until <= ?1 ORDER BY j.seq"),
         &[lost_before.into()],
@@ -1363,8 +1400,7 @@ pub(crate) fn sweep(tx: &mut Tx<'_>, settings: &SchedSettings) -> Result<Swept, 
                     tx.ledger()
                         .set_state(&fence, RunState::Stopped, Some(&why))?;
                 }
-                reconcile =
-                    job.requirements.writes || !tx.ledger().in_doubt(run)?.is_empty();
+                reconcile = job.requirements.writes || !tx.ledger().in_doubt(run)?.is_empty();
             }
         }
         if reconcile {
@@ -1385,15 +1421,22 @@ pub(crate) fn sweep(tx: &mut Tx<'_>, settings: &SchedSettings) -> Result<Swept, 
     let holds = resource_holds(tx)?;
     for row in &rows {
         let job = job_of(row)?;
-        if hold_on(&scope_holds, job.workspace, &job.requirements.target, job.principal).is_some() {
+        if hold_on(
+            &scope_holds,
+            job.workspace,
+            &job.requirements.target,
+            job.principal,
+        )
+        .is_some()
+        {
             continue;
         }
         let why = match blocked(tx, &job, &holds, &BTreeSet::new())? {
             Some(Blocked::Session) => failure::session_in_use(),
             Some(Blocked::Resource) => failure::resource_in_use(settings.lease_length),
             None => {
-                let missing = missing_runner(tx, job.workspace, &job.requirements)?
-                    .unwrap_or_else(|| {
+                let missing =
+                    missing_runner(tx, job.workspace, &job.requirements)?.unwrap_or_else(|| {
                         "no runner that can serve it was free within its queue limit".to_owned()
                     });
                 failure::runner_unavailable(&missing)
@@ -1432,15 +1475,26 @@ pub(crate) fn next_due(
         &[],
     )? && let Some(until) = row.opt_int(0)?
     {
-        sooner(plus(Timestamp::from_unix_millis(until), settings.lost_after));
+        sooner(plus(
+            Timestamp::from_unix_millis(until),
+            settings.lost_after,
+        ));
     }
     let scope_holds = scope_holds(tx)?;
-    let rows = tx
-        .tables(Owner::Sched)
-        .query(select_jobs!("WHERE j.state = 'pending' ORDER BY j.seq"), &[])?;
+    let rows = tx.tables(Owner::Sched).query(
+        select_jobs!("WHERE j.state = 'pending' ORDER BY j.seq"),
+        &[],
+    )?;
     for row in &rows {
         let job = job_of(row)?;
-        if hold_on(&scope_holds, job.workspace, &job.requirements.target, job.principal).is_some() {
+        if hold_on(
+            &scope_holds,
+            job.workspace,
+            &job.requirements.target,
+            job.principal,
+        )
+        .is_some()
+        {
             continue;
         }
         sooner(job.queue_until);

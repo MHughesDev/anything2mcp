@@ -29,6 +29,7 @@ windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_Jo
 
 [dev-dependencies]
 a2m-files = { path = "../a2m-files", features = ["testing"] }
+a2m-vault = { path = "../a2m-vault" }
 example-cli = { path = "../../targets/example-cli" }
 tokio = { workspace = true, features = ["test-util"] }
 

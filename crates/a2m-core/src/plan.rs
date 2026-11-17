@@ -11,17 +11,17 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::canonical::{self, CanonicalJson, PackPayload};
-use crate::decimal::Rounding;
+use crate::decimal::{Decimal, Rounding};
 use crate::digest::Digest;
 use crate::effect::{EffectClass, Hazard};
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::ident::{
-    Environment, FileKindName, OperationName, StepKind, SurfaceKind, SurfaceName, TargetName, Verb,
-    Version,
+    AuthProviderName, CredentialRef, Environment, FileKindName, OperationName, StepKind,
+    SurfaceKind, SurfaceName, TargetName, Verb, Version,
 };
 use crate::kind::Mode;
 use crate::state::BindingStatus;
-use crate::value::{Value, ValueType, Values};
+use crate::value::{RecordKey, Value, ValueType, Values};
 use crate::vocabulary::vocabulary;
 
 /// The plan format this crate writes. The engine loads this one and, once
@@ -124,6 +124,85 @@ vocabulary! {
     }
 }
 
+vocabulary! {
+    /// How a sign-in comes to exist (spec section 215).
+    pub enum SignInMode: "sign-in mode" {
+        /// What the device already has.
+        UseExisting => "use_existing",
+        /// A person signs in once, in a place the engine owns.
+        ManagedSession => "managed_session",
+        /// Dedicated credentials, held in the vault.
+        Custom => "custom",
+    }
+}
+
+vocabulary! {
+    /// How often a system changes under its tools (file formats,
+    /// `target.yaml`). It sets how often drift is checked. The order is from
+    /// least to most often.
+    #[derive(PartialOrd, Ord)]
+    pub enum DriftRisk: "drift risk" {
+        /// It seldom changes.
+        Low => "low",
+        /// It changes now and then.
+        Medium => "medium",
+        /// It changes often.
+        High => "high",
+    }
+}
+
+vocabulary! {
+    /// How much evidence a run keeps (spec section 217). Each level includes
+    /// the one before it.
+    #[derive(PartialOrd, Ord)]
+    pub enum CaptureLevel: "capture level" {
+        /// Run events and the step trace.
+        Minimal => "minimal",
+        /// Plus a snapshot at each checkpoint and at any failure.
+        Standard => "standard",
+        /// Plus every exchange and a screenshot per step.
+        Full => "full",
+    }
+}
+
+vocabulary! {
+    /// Who must approve a write (spec sections 212 and 226). The order is
+    /// from least to most strict.
+    #[derive(PartialOrd, Ord)]
+    pub enum ApproveWrites: "approval rule" {
+        /// The caller confirms its own write.
+        CallerConfirms => "caller_confirms",
+        /// A person approves every run.
+        PersonEachRun => "person_each_run",
+        /// A person other than the one whose call started the run.
+        NamedApprover => "named_approver",
+    }
+}
+
+vocabulary! {
+    /// What is done to whitespace before text is compared (file formats,
+    /// `types.yaml`).
+    pub enum WhitespaceRule: "whitespace rule" {
+        /// Every run of whitespace becomes one space, and the ends have none.
+        Collapse => "collapse",
+        /// Whitespace at the ends is dropped.
+        Trim => "trim",
+        /// Text is compared as written.
+        Exact => "exact",
+    }
+}
+
+vocabulary! {
+    /// The mark between the whole part of a number and its fraction, as a
+    /// system shows it (file formats, `types.yaml`).
+    pub enum DecimalMark: "decimal mark" {
+        /// A point, with a comma between groups of digits: `1,234.50`.
+        Point => ".",
+        /// A comma, with a point between groups of digits: `1.234,50`.
+        Comma => ",",
+    }
+}
+
 /// Defines the position of one part of a plan in its list.
 macro_rules! plan_index {
     ($(#[$meta:meta])* $name:ident) => {
@@ -155,6 +234,10 @@ plan_index! {
 plan_index! {
     /// Which of a plan's surfaces.
     SurfaceIndex
+}
+plan_index! {
+    /// Which of a plan's environments.
+    EnvironmentIndex
 }
 plan_index! {
     /// Which of a plan's field types.
@@ -192,10 +275,14 @@ plan_index! {
 pub struct Plan {
     /// What the plan is, and what made it.
     pub header: PlanHeader,
+    /// What holds for the target as a whole.
+    pub target: TargetPlan,
     /// The target's surfaces.
     pub surfaces: Vec<SurfacePlan>,
     /// The target's environments, with the addresses each one changes.
     pub environments: Vec<EnvironmentPlan>,
+    /// How each group of surfaces is signed in to.
+    pub auth: Vec<AuthPlan>,
     /// How each kind of value is normalized, compared, and classified.
     pub field_types: Vec<FieldTypePlan>,
     /// Every expression, once. Everything else refers to one by its index.
@@ -231,6 +318,50 @@ pub struct PlanHeader {
     pub sources: Digest,
 }
 
+/// What `target.yaml` states for the target as a whole. A published version
+/// pins every part of it.
+///
+/// What belongs to one kind of surface, such as a viewport, is not here: it
+/// is a field of that surface, in the surface's payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetPlan {
+    /// The name shown to people.
+    pub title: String,
+    /// The target's modules, in declared order. Empty for a target that has
+    /// none.
+    pub modules: Vec<String>,
+    /// The environment a call runs in when it names none.
+    pub default_environment: EnvironmentIndex,
+    /// The locale every run sees, such as `en-US`, when the target fixes one.
+    pub locale: Option<String>,
+    /// The time zone every run sees, when the target fixes one: `UTC` or an
+    /// offset such as `+02:00`.
+    pub timezone: Option<String>,
+    /// The capture level of a run, when the target states one. Policy may
+    /// raise it.
+    pub capture: Option<CaptureLevel>,
+    /// True when the system allows one session per account, so that signing
+    /// in from the engine signs the person out elsewhere.
+    pub exclusive_session: bool,
+    /// How often the system changes under its tools, when the target says.
+    pub drift_risk: Option<DriftRisk>,
+    /// A reference to the record of who agreed to this target being wrapped.
+    /// It names a record; it holds nothing of it.
+    pub authorization: Option<String>,
+}
+
+/// Where a surface stands to an application that owns its data (spec
+/// section 401).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stands {
+    /// It is the system of record.
+    Alone,
+    /// It lies beneath the application reached through this surface.
+    Beneath(SurfaceIndex),
+}
+
 /// One surface of the target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -243,6 +374,9 @@ pub struct SurfacePlan {
     pub address: String,
     /// The surface whose sign-in this one shares.
     pub same_session_as: Option<SurfaceIndex>,
+    /// Where it stands to an application that owns its data. Nothing when
+    /// the target does not say, which a pack may treat as unknown.
+    pub stands: Option<Stands>,
     /// How many requests it accepts in a period.
     pub rate: Option<RatePlan>,
     /// What else its pack compiled about it.
@@ -269,6 +403,14 @@ pub struct EnvironmentPlan {
     pub kind: EnvironmentKind,
     /// The surfaces it reaches at another address.
     pub addresses: Vec<AddressOverride>,
+    /// The record keys that drafts and publish gates may write to, each as
+    /// its target file wrote it. Policy compares a run's record key with
+    /// these.
+    pub test_records: Vec<RecordKey>,
+    /// The approval rule of this environment, when the target states one.
+    /// Policy applies whichever of this and the installation's own rule is
+    /// the stricter, so a target can tighten the rule and never loosen it.
+    pub approve_writes: Option<ApproveWrites>,
 }
 
 /// The address of one surface in one environment.
@@ -279,6 +421,85 @@ pub struct AddressOverride {
     pub surface: SurfaceIndex,
     /// Where it is reached in this environment.
     pub address: String,
+}
+
+/// What a session is checked with: one cheap read that works only while the
+/// sign-in holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbePlan {
+    /// A read operation of the target, run through the engine as any read
+    /// is, with these inputs.
+    Operation {
+        /// The operation. Its effect is `read`.
+        operation: OperationIndex,
+        /// The inputs it is called with.
+        inputs: Values,
+    },
+    /// An entry of a pack section, such as an endpoint, which the pack of
+    /// the surface reads.
+    Entry(PackRef),
+}
+
+/// One setting of an auth provider: a name the provider documents, and a
+/// plain value. Never a credential.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthSetting {
+    /// The setting's name.
+    pub name: String,
+    /// Its value, as text.
+    pub value: String,
+}
+
+/// One stored credential an auth provider uses, by the role the provider
+/// gives it. The plan holds the reference; the value never leaves the vault
+/// except to the provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialUse {
+    /// The role, such as `password` or `client_secret`.
+    pub role: String,
+    /// The name the vault resolves.
+    pub reference: CredentialRef,
+}
+
+/// How one group of surfaces that share a sign-in is signed in to: one entry
+/// of `auth.yaml`. The session keeper reads the typed fields; the provider
+/// reads its settings and credentials; the expiry signals are read by the
+/// pack that owns the surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthPlan {
+    /// The surfaces the entry covers. No surface is covered twice.
+    pub surfaces: Vec<SurfaceIndex>,
+    /// How the sign-in comes to exist.
+    pub mode: SignInMode,
+    /// The auth provider that signs in.
+    pub provider: AuthProviderName,
+    /// The read that shows the sign-in still holds.
+    pub probe: ProbePlan,
+    /// The signs that the session has ended, in declared order, each in the
+    /// form the surface's pack defines. Opaque here.
+    pub expiry_signals: Vec<PackPayload>,
+    /// The system's idle timeout, in milliseconds, when the target states it.
+    pub idle_ms: Option<u64>,
+    /// The longest a sign-in lasts, in milliseconds, when the target states
+    /// it.
+    pub absolute_ms: Option<u64>,
+    /// What ends the session on the system's side: a name the provider
+    /// resolves, such as an endpoint or an action.
+    pub sign_out: Option<String>,
+    /// The provider's own settings, sorted by name.
+    pub settings: Vec<AuthSetting>,
+    /// The stored credentials the provider uses, sorted by role. References
+    /// only.
+    pub credentials: Vec<CredentialUse>,
+    /// How many times a stored credential is tried without a person.
+    pub attempt_limit: u32,
+    /// Whether the session's state may be saved and restored on another
+    /// runner.
+    pub movable: bool,
 }
 
 /// Which zone a date or a time is read in.
@@ -303,6 +524,45 @@ pub struct CodeLabel {
     pub label: String,
 }
 
+/// How a system shows a value of one field type, and so how a value is
+/// written for it and described to a caller. It is data beside the
+/// normalizer and says the same thing; the normalizer alone decides whether
+/// two values are equal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldFormat {
+    /// Text.
+    Text {
+        /// False when case is ignored in comparison.
+        case_sensitive: bool,
+        /// What is done to whitespace.
+        whitespace: WhitespaceRule,
+    },
+    /// A whole number, a decimal, money, or a measurement. Its places,
+    /// rounding, step, and units are the field type's own fields.
+    Number {
+        /// The mark before the fraction.
+        decimal_mark: DecimalMark,
+    },
+    /// A date, a time, or a date and a time.
+    Calendar {
+        /// The pattern the system shows and accepts, such as `MM/DD/YYYY`.
+        pattern: String,
+        /// For a date and a time whose zone the compiler could fix: the
+        /// zone's offset from UTC in minutes, east positive.
+        utc_offset_minutes: Option<i32>,
+    },
+    /// True or false.
+    Boolean {
+        /// The text shown for true.
+        true_text: String,
+        /// The text shown for false.
+        false_text: String,
+    },
+    /// One of the field type's codes, shown by its label.
+    Choice,
+}
+
 /// How one kind of value is formatted, normalized, compared, and classified.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -317,6 +577,8 @@ pub struct FieldTypePlan {
     pub places: Option<u32>,
     /// How a number is rounded to those places.
     pub rounding: Option<Rounding>,
+    /// The smallest increment of a measurement, in the unit it is stored in.
+    pub step: Option<Decimal>,
     /// The unit a measurement is stored in.
     pub unit: Option<String>,
     /// The unit a measurement is shown in.
@@ -331,7 +593,11 @@ pub struct FieldTypePlan {
     pub sensitivity: Sensitivity,
     /// True for free text that came from the system.
     pub untrusted: bool,
+    /// How the system shows a value, for writing one and for describing the
+    /// type.
+    pub format: FieldFormat,
     /// The expression that normalizes a raw value, as host-function calls.
+    /// The one rule by which two values are compared.
     pub normalizer: Option<ExprIndex>,
 }
 
@@ -404,6 +670,17 @@ pub struct PermissionManifest {
     pub destinations: Vec<String>,
 }
 
+/// A question a person may have to answer during a run. A run asks only
+/// what its operation declares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionPoint {
+    /// The decision point's name, unique within the operation.
+    pub name: String,
+    /// The question, as the person is asked it.
+    pub question: String,
+}
+
 /// One operation: one thing a tool does to the system.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -426,6 +703,11 @@ pub struct OperationPlan {
     pub bindings: Vec<BindingPlan>,
     /// What it may touch.
     pub manifest: PermissionManifest,
+    /// Example inputs, for the caller: each a value of the operation's
+    /// inputs.
+    pub examples: Vec<Values>,
+    /// The questions a person may have to answer during a run.
+    pub decision_points: Vec<DecisionPoint>,
 }
 
 /// One way of carrying out an operation, through one mode.
@@ -563,7 +845,9 @@ pub struct SourcePlan {
     pub template: String,
     /// The reader that turns the input into rows.
     pub reader: String,
-    /// Each row field, from an expression over the source's columns.
+    /// The row fields that are worked out, each from an expression over the
+    /// row's cells. A row field read from one column as it stands is not
+    /// here: its column is named in the payload.
     pub mapping: Vec<StepArg>,
     /// Which rows are records.
     pub rows: Option<ExprIndex>,
@@ -628,6 +912,8 @@ pub struct ToolPlan {
     pub name: OperationName,
     /// What it runs.
     pub runs: ToolRuns,
+    /// The module of the target it belongs to, where the target has modules.
+    pub module: Option<String>,
     /// The name shown to people.
     pub title: String,
     /// What it does, when to prefer another tool, its side effects and
@@ -729,6 +1015,42 @@ impl Plan {
         self.surfaces.get(index.get())
     }
 
+    /// The environment at `index`.
+    #[must_use]
+    pub fn environment(&self, index: EnvironmentIndex) -> Option<&EnvironmentPlan> {
+        self.environments.get(index.get())
+    }
+
+    /// The environment with this name.
+    #[must_use]
+    pub fn environment_named(&self, name: &Environment) -> Option<&EnvironmentPlan> {
+        self.environments
+            .iter()
+            .find(|environment| &environment.name == name)
+    }
+
+    /// The environment a call runs in when it names none.
+    #[must_use]
+    pub fn default_environment(&self) -> Option<&EnvironmentPlan> {
+        self.environment(self.target.default_environment)
+    }
+
+    /// How the surface at `index` is signed in to: the entry that covers it,
+    /// or the entry of the surface whose sign-in it shares. Nothing for a
+    /// surface that needs no sign-in.
+    #[must_use]
+    pub fn auth_of(&self, index: SurfaceIndex) -> Option<&AuthPlan> {
+        let mut at = index;
+        // A chain of shared sign-ins is no longer than the list of surfaces.
+        for _ in 0..=self.surfaces.len() {
+            if let Some(entry) = self.auth.iter().find(|entry| entry.surfaces.contains(&at)) {
+                return Some(entry);
+            }
+            at = self.surface(at)?.same_session_as?;
+        }
+        None
+    }
+
     /// The field type at `index`.
     #[must_use]
     pub fn field_type(&self, index: FieldTypeIndex) -> Option<&FieldTypePlan> {
@@ -811,8 +1133,37 @@ impl Plan {
             })
         };
 
+        within(
+            "environment",
+            self.target.default_environment.get(),
+            self.environments.len(),
+        )?;
         for item in &self.surfaces {
             item.same_session_as.map_or(Ok(()), surface)?;
+            if let Some(Stands::Beneath(owner)) = item.stands {
+                surface(owner)?;
+            }
+        }
+        let mut signed_in: Vec<SurfaceIndex> = Vec::new();
+        for entry in &self.auth {
+            for index in &entry.surfaces {
+                surface(*index)?;
+                if signed_in.contains(index) {
+                    return Err(refused(
+                        FailureCode::PLAN_UNREADABLE,
+                        format!("The plan signs in to surface {} in two ways.", index.get()),
+                    ));
+                }
+                signed_in.push(*index);
+            }
+            match &entry.probe {
+                ProbePlan::Operation { operation, .. } => {
+                    within("operation", operation.get(), self.operations.len())?;
+                }
+                ProbePlan::Entry(reference) => {
+                    within("pack section", reference.section.get(), self.packs.len())?;
+                }
+            }
         }
         for environment in &self.environments {
             for address in &environment.addresses {
@@ -1082,6 +1433,11 @@ mod tests {
                 downloads: vec!["artifact_out".to_owned()],
                 destinations: vec!["https://files.example.test".to_owned()],
             },
+            examples: vec![Values::new().with("order_id", "SO-1001")],
+            decision_points: vec![DecisionPoint {
+                name: "which_order".to_owned(),
+                question: "Two orders match. Which one?".to_owned(),
+            }],
         };
         Plan {
             header: PlanHeader {
@@ -1092,12 +1448,24 @@ mod tests {
                 version: Version::new(1, 4, 0),
                 sources: Digest::of(b"operations/order_update.yaml"),
             },
+            target: TargetPlan {
+                title: "Example order entry".to_owned(),
+                modules: vec!["order".to_owned()],
+                default_environment: EnvironmentIndex::new(0),
+                locale: Some("en-US".to_owned()),
+                timezone: Some("+02:00".to_owned()),
+                capture: Some(CaptureLevel::Standard),
+                exclusive_session: true,
+                drift_risk: Some(DriftRisk::Low),
+                authorization: Some("wrap-2026-11".to_owned()),
+            },
             surfaces: vec![
                 SurfacePlan {
                     name: SurfaceName::new("api").unwrap(),
                     kind: SurfaceKind::new("http").unwrap(),
                     address: "https://api.example.test".to_owned(),
                     same_session_as: None,
+                    stands: Some(Stands::Alone),
                     rate: Some(RatePlan {
                         requests: 10,
                         per_ms: 1_000,
@@ -1109,6 +1477,7 @@ mod tests {
                     kind: SurfaceKind::new("web").unwrap(),
                     address: "https://www.example.test".to_owned(),
                     same_session_as: Some(SurfaceIndex::new(0)),
+                    stands: Some(Stands::Beneath(SurfaceIndex::new(0))),
                     rate: None,
                     payload: PackPayload::none(),
                 },
@@ -1120,6 +1489,34 @@ mod tests {
                     surface: SurfaceIndex::new(0),
                     address: "https://api.test.example.test".to_owned(),
                 }],
+                test_records: vec![
+                    RecordKey::new(vec![Value::from("SO-1001")]).unwrap(),
+                    RecordKey::new(vec![Value::from("SO-1001"), Value::Int(7)]).unwrap(),
+                ],
+                approve_writes: Some(ApproveWrites::NamedApprover),
+            }],
+            auth: vec![AuthPlan {
+                surfaces: vec![SurfaceIndex::new(0)],
+                mode: SignInMode::Custom,
+                provider: AuthProviderName::new("api_key").unwrap(),
+                probe: ProbePlan::Operation {
+                    operation: OperationIndex::new(0),
+                    inputs: Values::new().with("order_id", "SO-1001"),
+                },
+                expiry_signals: vec![payload("status 401")],
+                idle_ms: Some(1_800_000),
+                absolute_ms: None,
+                sign_out: Some("sign_out".to_owned()),
+                settings: vec![AuthSetting {
+                    name: "header".to_owned(),
+                    value: "X-Example-Key".to_owned(),
+                }],
+                credentials: vec![CredentialUse {
+                    role: "key".to_owned(),
+                    reference: CredentialRef::new("vault://example/service/key").unwrap(),
+                }],
+                attempt_limit: 1,
+                movable: true,
             }],
             field_types: vec![
                 FieldTypePlan {
@@ -1128,6 +1525,7 @@ mod tests {
                     ty: ValueType::Text,
                     places: None,
                     rounding: None,
+                    step: None,
                     unit: None,
                     display_unit: None,
                     currency: None,
@@ -1135,6 +1533,10 @@ mod tests {
                     codes: vec![],
                     sensitivity: Sensitivity::Internal,
                     untrusted: false,
+                    format: FieldFormat::Text {
+                        case_sensitive: true,
+                        whitespace: WhitespaceRule::Trim,
+                    },
                     normalizer: None,
                 },
                 FieldTypePlan {
@@ -1143,6 +1545,7 @@ mod tests {
                     ty: ValueType::Decimal,
                     places: Some(2),
                     rounding: Some(Rounding::HalfEven),
+                    step: Some(Decimal::parse("0.05").unwrap()),
                     unit: None,
                     display_unit: None,
                     currency: Some("EUR".to_owned()),
@@ -1153,6 +1556,9 @@ mod tests {
                     }],
                     sensitivity: Sensitivity::Restricted,
                     untrusted: true,
+                    format: FieldFormat::Number {
+                        decimal_mark: DecimalMark::Comma,
+                    },
                     normalizer: Some(ExprIndex::new(1)),
                 },
             ],
@@ -1212,6 +1618,7 @@ mod tests {
                 ToolPlan {
                     name: OperationName::new("example_order_update").unwrap(),
                     runs: ToolRuns::Operation(OperationIndex::new(0)),
+                    module: Some("order".to_owned()),
                     title: "Update an order".to_owned(),
                     description: "Sets the total of one order. Naïve text: \"quoted\", ünïcode, and a\nline end.".to_owned(),
                     input_schema: payload("object"),
@@ -1226,6 +1633,7 @@ mod tests {
                 ToolPlan {
                     name: OperationName::new("example_orders_import").unwrap(),
                     runs: ToolRuns::Pipeline(PipelineIndex::new(0)),
+                    module: None,
                     title: "Import orders".to_owned(),
                     description: "Updates every order in a sheet.".to_owned(),
                     input_schema: payload("object"),
@@ -1259,7 +1667,7 @@ mod tests {
     /// Windows, macOS, and Linux, in every run. If the encoding or the
     /// sample changes on purpose, this changes with it, and the plan format
     /// number says whether stored plans still load.
-    const SAMPLE_HASH: &str = "cdb71441dc100a559a4312a64eca6255715bfa9be9f830ee3fc02729beaaa708";
+    const SAMPLE_HASH: &str = "d09fe3110bbf66555e5e30d5a4bbe2c0a6a58fe7e6bb13f659efbfbab3ca6817";
 
     #[test]
     fn a_plan_encodes_to_the_same_bytes_every_time_and_on_every_machine() {
@@ -1370,7 +1778,7 @@ mod tests {
                 .unwrap();
         let with_line = |line: &str, body: &str| [line.as_bytes(), body.as_bytes()].concat();
 
-        let unknown_field = body.replacen("{\"environments\"", "{\"added\":1,\"environments\"", 1);
+        let unknown_field = body.replacen("{\"auth\"", "{\"added\":1,\"auth\"", 1);
         assert_ne!(unknown_field, body);
         let with_float = body.replacen("\"commit_points\":1", "\"commit_points\":1.0", 1);
         assert_ne!(with_float, body);
@@ -1412,7 +1820,31 @@ mod tests {
     #[test]
     fn a_plan_with_a_loose_reference_is_refused_on_the_way_out_and_on_the_way_in() {
         type Loosen = fn(&mut Plan);
-        let loosen: [(&str, Loosen); 9] = [
+        let loosen: [(&str, Loosen); 15] = [
+            ("environment", |plan| {
+                plan.target.default_environment = EnvironmentIndex::new(1);
+            }),
+            ("surface", |plan| {
+                plan.surfaces[1].stands = Some(Stands::Beneath(SurfaceIndex::new(2)));
+            }),
+            ("surface", |plan| {
+                plan.auth[0].surfaces = vec![SurfaceIndex::new(2)];
+            }),
+            ("two ways", |plan| {
+                plan.auth.push(plan.auth[0].clone());
+            }),
+            ("operation", |plan| {
+                plan.auth[0].probe = ProbePlan::Operation {
+                    operation: OperationIndex::new(1),
+                    inputs: Values::new(),
+                };
+            }),
+            ("pack section", |plan| {
+                plan.auth[0].probe = ProbePlan::Entry(PackRef {
+                    section: SectionIndex::new(1),
+                    entry: "order".to_owned(),
+                });
+            }),
             ("expression", |plan| {
                 plan.operations[0].bindings[0].read_back[0].args[0].value = ExprIndex::new(99);
             }),
@@ -1485,6 +1917,56 @@ mod tests {
         walk(&serde_json::from_slice(body).unwrap(), "plan");
         // A decimal travels as text.
         assert!(String::from_utf8_lossy(body).contains(r#"{"decimal":"12.5"}"#));
+    }
+
+    #[test]
+    fn a_sign_in_is_found_for_a_surface_and_for_one_that_shares_it() {
+        let mut plan = sample();
+        let entry = plan.auth_of(SurfaceIndex::new(0)).unwrap();
+        assert_eq!(entry.provider.as_str(), "api_key");
+        // The second surface shares the first one's sign-in.
+        assert_eq!(plan.auth_of(SurfaceIndex::new(1)), Some(entry));
+        assert!(plan.auth_of(SurfaceIndex::new(2)).is_none());
+        // A surface nobody signs in to has none, however the surfaces point
+        // at each other.
+        plan.auth.clear();
+        plan.surfaces[0].same_session_as = Some(SurfaceIndex::new(1));
+        assert!(plan.auth_of(SurfaceIndex::new(0)).is_none());
+
+        let plan = sample();
+        assert_eq!(plan.default_environment().unwrap().name.as_str(), "test");
+        let name = Environment::new("test").unwrap();
+        assert_eq!(
+            plan.environment_named(&name).unwrap().kind,
+            EnvironmentKind::Test
+        );
+        assert!(
+            plan.environment_named(&Environment::new("production").unwrap())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_credential_in_a_plan_is_a_reference_and_bytes_that_hold_anything_else_are_refused() {
+        let good = String::from_utf8(sample().encode().unwrap().bytes).unwrap();
+        assert!(good.contains("\"reference\":\"vault://example/service/key\""));
+        let with_value = good.replacen("vault://example/service/key", "correct horse battery", 1);
+        assert_ne!(with_value, good);
+        let failure = decode_own(with_value.as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(!failure.message().contains("horse"), "{failure}");
+    }
+
+    #[test]
+    fn a_zone_west_of_utc_travels_as_a_whole_number_below_zero() {
+        let mut plan = sample();
+        plan.field_types[0].format = FieldFormat::Calendar {
+            pattern: "YYYY-MM-DD HH:mm".to_owned(),
+            utc_offset_minutes: Some(-330),
+        };
+        let encoded = plan.encode().unwrap();
+        assert!(String::from_utf8_lossy(&encoded.bytes).contains("\"utc_offset_minutes\":-330"));
+        assert_eq!(Plan::decode(&encoded.bytes, &encoded.hash).unwrap(), plan);
     }
 
     #[test]

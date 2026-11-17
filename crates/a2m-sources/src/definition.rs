@@ -1,105 +1,18 @@
-//! The compiled source definition: what a plan's `SourcePlan` carries in its
-//! payload, and the loaded form `read` works from.
+//! A source definition, loaded: the form `read` works from.
 //!
 //! The compiler in `a2m-files` writes a [`SourceSpec`] into the payload of
-//! `a2m_core::SourcePlan`; this crate reads it back. The two share only the
-//! data, so neither depends on the other.
+//! `a2m_core::SourcePlan`; this crate reads it back. The type and the types
+//! it is made of are defined once, in `a2m-files`, beside the file formats
+//! (decisions 0079 and 0121); this crate uses them and has no copy.
 
 use a2m_core::{
     Failure, FieldBase, FieldTypeIndex, FieldTypePlan, Plan, PlanExpr, SourcePlan, ValueType,
 };
 use a2m_expr::{Normalizer, Program};
-use serde::{Deserialize, Serialize};
+use a2m_files::{OPERATION_READER, SourceSpec};
 
 use crate::error::definition;
-use crate::fingerprint::Fingerprint;
-use crate::model::{ReaderName, ReaderOptions};
-
-/// The reader name of a source whose rows are another operation's result:
-/// no reader is registered under it, and its rows go to `from_rows`.
-pub const OPERATION_READER: &str = "operation";
-
-/// Where the data lies in an input. Always a name or header text, never a
-/// coordinate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Locate {
-    /// The whole document: a delimited file, or the list at the root of a
-    /// JSON document. A workbook's data is never found this way.
-    Document,
-    /// A table or a defined name of a workbook, whose first row is the
-    /// header row; or the list under that key of a JSON document.
-    Named(String),
-    /// The sheet with that name. The header row is the first row that holds
-    /// every header the definition names.
-    Sheet(String),
-}
-
-/// What is done with a hidden row or column inside the located data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HiddenRule {
-    /// A hidden cell in the data is a problem: nobody saw what it holds.
-    #[default]
-    Reject,
-    /// A hidden cell is read like any other.
-    Include,
-}
-
-/// One version of a template: its name, and the fingerprint a file of that
-/// version has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TemplateVersion {
-    /// The version, as the source file states it.
-    pub version: String,
-    /// The fingerprint, with its parts, so that a file that matches no
-    /// version can be told how it differs.
-    pub fingerprint: Fingerprint,
-}
-
-/// One row field: its name, its field type, and where its value comes from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RowField {
-    /// The row field's name.
-    pub name: String,
-    /// Its field type, by which its value is typed. Every row field has
-    /// one, so every row field has a type before any file is read.
-    pub field_type: FieldTypeIndex,
-    /// True when a row without a value for it is a problem.
-    pub required: bool,
-    /// The header of the column it is read from. When absent, the value is
-    /// the result of the expression of the same name in the plan's mapping.
-    pub column: Option<String>,
-}
-
-/// What a source definition says beyond the plan's own fields: the payload
-/// of `a2m_core::SourcePlan`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SourceSpec {
-    /// The template versions the definition knows. Empty only for a source
-    /// whose reader is `operation`.
-    pub versions: Vec<TemplateVersion>,
-    /// Where the data lies.
-    pub locate: Locate,
-    /// The header text of every column the definition reads, each once. A
-    /// column in the data that is not listed here is a problem.
-    pub columns: Vec<String>,
-    /// The row fields, in declared order.
-    pub fields: Vec<RowField>,
-    /// The row fields whose values, together, identify a row. Two rows with
-    /// the same values are a problem. Empty when rows have no key.
-    pub key: Vec<String>,
-    /// The texts that count as no value. Empty unless the source file lists
-    /// some: text such as `NA` is text.
-    pub missing: Vec<String>,
-    /// What is done with hidden rows and columns.
-    pub hidden: HiddenRule,
-    /// The dialect the reader is told.
-    pub options: ReaderOptions,
-}
+use crate::model::ReaderName;
 
 /// A field type, loaded: its base and its normalizer. This is what types a
 /// cell, for `read` and for the file pack alike.

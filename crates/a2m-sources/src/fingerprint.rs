@@ -5,8 +5,8 @@
 //! not enter it, so two files of one template have one fingerprint, and the
 //! same file has the same fingerprint on every operating system.
 
-use a2m_core::Digest;
 use a2m_expr::DateSystem;
+use a2m_files::{Fingerprint, FingerprintPart, PartKind};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Problem, SOURCE_TEMPLATE_UNKNOWN};
@@ -87,148 +87,45 @@ pub struct DropdownList {
     pub choices: String,
 }
 
-/// Which kind of thing one part of a fingerprint is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PartKind {
-    /// A workbook's date system.
-    DateSystem,
-    /// A sheet or a list: its name and whether it is hidden.
-    Sheet,
-    /// One header of a sheet, by its position.
-    Header,
-    /// A merged range of a sheet.
-    Merged,
-    /// A table of a sheet: its range.
-    Table,
-    /// One header of a table, by its position.
-    TableHeader,
-    /// A dropdown list of a sheet.
-    List,
-    /// A defined name and its target.
-    Name,
-    /// Whether the package holds a macro part.
-    Macros,
-}
-
-impl PartKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::DateSystem => "date_system",
-            Self::Sheet => "sheet",
-            Self::Header => "header",
-            Self::Merged => "merged",
-            Self::Table => "table",
-            Self::TableHeader => "table_header",
-            Self::List => "list",
-            Self::Name => "name",
-            Self::Macros => "macros",
-        }
-    }
-
-    const fn noun(self) -> &'static str {
-        match self {
-            Self::DateSystem => "the date system",
-            Self::Sheet => "a sheet",
-            Self::Header => "a header",
-            Self::Merged => "a merged range",
-            Self::Table => "a table",
-            Self::TableHeader => "a table's header",
-            Self::List => "a dropdown list",
-            Self::Name => "a defined name",
-            Self::Macros => "the macro part",
-        }
-    }
-}
-
-/// One part of a fingerprint: a kind, where it belongs, and what it is.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FingerprintPart {
-    /// Which kind of thing.
-    pub kind: PartKind,
-    /// Where it belongs: a sheet and a position, a table, a name.
-    pub place: String,
-    /// What it is: a header's text, a name's target, a range.
-    pub value: String,
-}
-
-/// The fingerprint of a structure: its parts, and the digest over them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Fingerprint {
-    /// The digest of the parts in their fixed encoding.
-    pub digest: Digest,
-    /// The parts, in declared order.
-    pub parts: Vec<FingerprintPart>,
-}
-
-/// What every fingerprint's encoding starts with. A change to the encoding
-/// or to what enters it changes this line.
-const ENCODING: &[u8] = b"anything2mcp-source-fingerprint 1\n";
-
-impl Fingerprint {
-    /// The fingerprint of a list of parts. The digest covers, for each part
-    /// in order, its kind, its place, and its value, each with its length
-    /// before it, so no two lists of parts share an encoding.
-    #[must_use]
-    pub fn of_parts(parts: Vec<FingerprintPart>) -> Self {
-        let mut bytes = ENCODING.to_vec();
-        for part in &parts {
-            for text in [part.kind.as_str(), part.place.as_str(), part.value.as_str()] {
-                bytes.extend_from_slice(&(text.len() as u64).to_be_bytes());
-                bytes.extend_from_slice(text.as_bytes());
+/// Each difference between a known template version's fingerprint, `known`,
+/// and the fingerprint of the input given, `found`: a part missing, a part
+/// added, a part changed. In the order of the known version, then what the
+/// input adds.
+#[must_use]
+pub fn differences(known: &Fingerprint, found: &Fingerprint) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let key = |part: &FingerprintPart| (part.kind, part.place.clone());
+    for expected in &known.parts {
+        match found.parts.iter().find(|part| key(part) == key(expected)) {
+            None => problems.push(difference(expected, "is missing from the input")),
+            Some(part) if part.value != expected.value => {
+                problems.push(difference(
+                    expected,
+                    &format!(
+                        "is `{}` in the template and `{}` in the input",
+                        expected.value, part.value
+                    ),
+                ));
             }
-        }
-        Self {
-            digest: Digest::of(&bytes),
-            parts,
+            Some(_) => {}
         }
     }
-
-    /// Whether the fingerprint holds together: its digest is the digest of
-    /// its parts. A definition's fingerprint that does not is refused.
-    #[must_use]
-    pub fn is_sound(&self) -> bool {
-        Self::of_parts(self.parts.clone()).digest == self.digest
+    for part in &found.parts {
+        if !known
+            .parts
+            .iter()
+            .any(|expected| key(expected) == key(part))
+        {
+            problems.push(difference(part, "is in the input and not in the template"));
+        }
     }
-
-    /// Each difference between a known template version's fingerprint,
-    /// `self`, and the fingerprint of the input given: a part missing, a
-    /// part added, a part changed. In the order of the known version, then
-    /// what the input adds.
-    #[must_use]
-    pub fn differences(&self, found: &Self) -> Vec<Problem> {
-        let mut problems = Vec::new();
-        let key = |part: &FingerprintPart| (part.kind, part.place.clone());
-        for known in &self.parts {
-            match found.parts.iter().find(|part| key(part) == key(known)) {
-                None => problems.push(difference(known, "is missing from the input")),
-                Some(part) if part.value != known.value => {
-                    problems.push(difference(
-                        known,
-                        &format!(
-                            "is `{}` in the template and `{}` in the input",
-                            known.value, part.value
-                        ),
-                    ));
-                }
-                Some(_) => {}
-            }
-        }
-        for part in &found.parts {
-            if !self.parts.iter().any(|known| key(known) == key(part)) {
-                problems.push(difference(part, "is in the input and not in the template"));
-            }
-        }
-        if problems.is_empty() && self.digest != found.digest {
-            problems.push(Problem::new(
-                SOURCE_TEMPLATE_UNKNOWN,
-                "The parts of the input are those of the template, in another order.",
-            ));
-        }
-        problems
+    if problems.is_empty() && known.digest != found.digest {
+        problems.push(Problem::new(
+            SOURCE_TEMPLATE_UNKNOWN,
+            "The parts of the input are those of the template, in another order.",
+        ));
     }
+    problems
 }
 
 fn difference(part: &FingerprintPart, what: &str) -> Problem {
@@ -392,15 +289,15 @@ mod tests {
         let known = sheet(&["item_code", "on_hand"]).fingerprint();
         let renamed = sheet(&["item_code", "stock"]).fingerprint();
         assert_ne!(known.digest, renamed.digest);
-        let differences = known.differences(&renamed);
-        assert_eq!(differences.len(), 1);
-        assert!(differences[0].message.contains("`on_hand`"));
-        assert!(differences[0].message.contains("`stock`"));
+        let changed = differences(&known, &renamed);
+        assert_eq!(changed.len(), 1);
+        assert!(changed[0].message.contains("`on_hand`"));
+        assert!(changed[0].message.contains("`stock`"));
 
         let added = sheet(&["item_code", "on_hand", "note"]).fingerprint();
-        assert_eq!(known.differences(&added).len(), 1);
+        assert_eq!(differences(&known, &added).len(), 1);
         let removed = sheet(&["item_code"]).fingerprint();
-        assert_eq!(known.differences(&removed).len(), 1);
+        assert_eq!(differences(&known, &removed).len(), 1);
 
         let mut other_dates = sheet(&["item_code", "on_hand"]);
         other_dates.date_system = Some(DateSystem::From1904);

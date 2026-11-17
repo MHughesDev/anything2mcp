@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use a2m_core::{
-    BindingStatus, Checkpoint, EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy,
-    Rounding, Sensitivity, TestKind,
+    ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DriftRisk, EffectClass,
+    EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity, SignInMode,
+    TestKind, WhitespaceRule,
 };
 
 use crate::schema::JsonSchema;
@@ -85,8 +86,14 @@ fn target() -> JsonSchema {
     let environment = JsonSchema::object()
         .required("kind", JsonSchema::words(EnvironmentKind::NAMES))
         .optional("surfaces", JsonSchema::map_of(JsonSchema::text()))
-        .optional("test_records", JsonSchema::list(JsonSchema::scalar()))
-        .optional("approve_writes", JsonSchema::any());
+        .optional(
+            "test_records",
+            JsonSchema::list(JsonSchema::either(vec![
+                JsonSchema::scalar(),
+                JsonSchema::non_empty_list(JsonSchema::scalar()),
+            ])),
+        )
+        .optional("approve_writes", JsonSchema::words(ApproveWrites::NAMES));
     JsonSchema::object()
         .required("schema_version", JsonSchema::int())
         .required("target", JsonSchema::name())
@@ -98,11 +105,7 @@ fn target() -> JsonSchema {
             "environment",
             JsonSchema::object()
                 .optional("locale", JsonSchema::text())
-                .optional("timezone", JsonSchema::text())
-                .optional(
-                    "viewport",
-                    JsonSchema::list(JsonSchema::int_between(1, 100_000)),
-                ),
+                .optional("timezone", JsonSchema::text()),
         )
         .optional("modules", JsonSchema::list(JsonSchema::name()))
         .optional(
@@ -114,12 +117,17 @@ fn target() -> JsonSchema {
                 )
                 .optional(
                     "limits",
-                    JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))),
+                    JsonSchema::object()
+                        .optional(
+                            "max_records",
+                            JsonSchema::int_between(1, i64::from(u32::MAX)),
+                        )
+                        .optional("max_duration_ms", JsonSchema::int_between(1, i64::MAX)),
                 )
-                .optional("capture", JsonSchema::name()),
+                .optional("capture", JsonSchema::words(CaptureLevel::NAMES)),
         )
         .optional("exclusive_session", JsonSchema::bool())
-        .optional("drift_risk", JsonSchema::words(&["low", "medium", "high"]))
+        .optional("drift_risk", JsonSchema::words(DriftRisk::NAMES))
         .optional("authorization", JsonSchema::text())
 }
 
@@ -158,12 +166,10 @@ fn auth() -> JsonSchema {
             "surfaces",
             JsonSchema::non_empty_list(JsonSchema::surface()),
         )
-        .required(
-            "mode",
-            JsonSchema::words(&["use_existing", "managed_session", "custom"]),
-        )
+        .required("mode", JsonSchema::words(SignInMode::NAMES))
         .required("provider", JsonSchema::name())
         .required("probe", JsonSchema::name())
+        .optional("probe_inputs", JsonSchema::map_of(JsonSchema::scalar()))
         .optional(
             "expiry_signals",
             JsonSchema::list(JsonSchema::map_of(JsonSchema::any())),
@@ -175,9 +181,16 @@ fn auth() -> JsonSchema {
                 .optional("absolute_ms", JsonSchema::int_between(1, i64::MAX)),
         )
         .optional("sign_out", JsonSchema::name())
+        .optional("settings", JsonSchema::map_of(JsonSchema::scalar()))
         .optional("credentials", JsonSchema::map_of(JsonSchema::text()))
         .optional("attempt_limit", JsonSchema::int_between(0, 10))
-        .optional("movable", JsonSchema::words(&["auto", "false"]));
+        .optional(
+            "movable",
+            JsonSchema::either(vec![
+                JsonSchema::words(&["auto", "false"]),
+                JsonSchema::bool(),
+            ]),
+        );
     JsonSchema::object().required("auth", JsonSchema::non_empty_list(entry))
 }
 
@@ -193,11 +206,8 @@ fn types() -> JsonSchema {
         .optional("format", JsonSchema::text())
         .optional("timezone", JsonSchema::text())
         .optional("case", JsonSchema::words(&["sensitive", "insensitive"]))
-        .optional(
-            "whitespace",
-            JsonSchema::words(&["collapse", "trim", "exact"]),
-        )
-        .optional("decimal_mark", JsonSchema::words(&[".", ","]))
+        .optional("whitespace", JsonSchema::words(WhitespaceRule::NAMES))
+        .optional("decimal_mark", JsonSchema::words(DecimalMark::NAMES))
         .optional("true_text", JsonSchema::text())
         .optional("false_text", JsonSchema::text())
         .optional("codes", JsonSchema::map_of(JsonSchema::text()))
@@ -251,7 +261,14 @@ fn operation() -> JsonSchema {
                 .optional("downloads", JsonSchema::list(JsonSchema::text()))
                 .optional("destinations", JsonSchema::list(JsonSchema::text())),
         )
-        .optional("decision_points", JsonSchema::list(JsonSchema::any()))
+        .optional(
+            "decision_points",
+            JsonSchema::list(
+                JsonSchema::object()
+                    .required("name", JsonSchema::name())
+                    .required("question", JsonSchema::text()),
+            ),
+        )
 }
 
 fn pipeline() -> JsonSchema {

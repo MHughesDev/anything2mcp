@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    Date, Decimal, Digest, ExprIndex, FieldTypeIndex, FieldTypePlan, PLAN_FORMAT, PackPayload,
-    Plan, PlanHeader, Rounding, Sensitivity, SourcePlan, StepArg, TargetName, Value, ValueType,
-    Values, Version,
+    Date, Decimal, Digest, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan,
+    ExprIndex, FieldFormat, FieldTypeIndex, FieldTypePlan, PLAN_FORMAT, PackPayload, Plan,
+    PlanHeader, Rounding, Sensitivity, SourcePlan, StepArg, TargetName, TargetPlan, Value,
+    ValueType, Values, Version,
 };
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, TypeEnv, Whitespace, compile};
 use example_files::seed;
@@ -49,8 +50,26 @@ impl Target {
                     version: Version::new(1, 0, 0),
                     sources: Digest::of(b"sources/example.yaml"),
                 },
+                target: TargetPlan {
+                    title: "Example".to_owned(),
+                    modules: vec![],
+                    default_environment: EnvironmentIndex::new(0),
+                    locale: None,
+                    timezone: None,
+                    capture: None,
+                    exclusive_session: false,
+                    drift_risk: None,
+                    authorization: None,
+                },
                 surfaces: vec![],
-                environments: vec![],
+                environments: vec![EnvironmentPlan {
+                    name: Environment::new("production").unwrap(),
+                    kind: EnvironmentKind::Production,
+                    addresses: vec![],
+                    test_records: vec![],
+                    approve_writes: None,
+                }],
+                auth: vec![],
                 field_types: vec![],
                 expressions: vec![],
                 operations: vec![],
@@ -81,6 +100,7 @@ impl Target {
             ty: rule.value_type(),
             places: None,
             rounding: None,
+            step: None,
             unit: None,
             display_unit: None,
             currency: None,
@@ -88,6 +108,9 @@ impl Target {
             codes: vec![],
             sensitivity: Sensitivity::default(),
             untrusted: false,
+            // The readers type a cell by the normalizer and never read the
+            // format, so these plans do not state a true one.
+            format: FieldFormat::Choice,
             normalizer: Some(normalizer),
         });
         FieldTypeIndex::new(u32::try_from(self.plan.field_types.len() - 1).unwrap())

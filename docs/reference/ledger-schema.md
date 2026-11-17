@@ -105,31 +105,49 @@ Append-only. An insert carrying an `epoch` other than the run's current `lease_e
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | id | Primary key |
-| `run_id` | id | Null for system jobs |
-| `kind` | enum | `preview`, `execute`, `reconcile`, `verify_after_loss`, `canary`, `session_keepalive` |
-| `requirements` | json | Target, environment, modes, operating system, identity, session |
-| `home_runner_id` | id | The runner holding the live session, when there is one |
-| `priority`, `available_at` | int, ts | Ordering |
+| `seq` | bigint | Order of arrival |
+| `run_id` | id | Null for system jobs. At most one job of a run is `pending` or `leased` |
+| `workspace_id`, `principal_id` | id, id | Whose job; the caller, for its cap and its turn |
+| `kind` | enum | `preview`, `execute`, `try`, `discover`, `reconcile`, `verify_after_loss`, `canary`, `session_keepalive` |
+| `target`, `environment` | text, text | The queue the job waits in |
+| `requirements` | json | Target, environment, modes, operating system, the person it acts as, session and its limits, exclusive resources, longest step |
+| `session_key`, `home_runner_id` | id, id | The live session the job needs, and the runner holding it, when there is one |
+| `writes` | bool | Whether the job may write |
+| `priority`, `available_at`, `queue_until` | int, ts, ts | Ordering, the moment from which it may be handed out, and its queue limit |
 | `state` | enum | `pending`, `leased`, `done`, `lost`, `dead` |
-| `epoch` | bigint | Lease number given to the runner |
-| `runner_id`, `lease_until`, `heartbeat_at` | id, ts, ts | Current lease |
+| `epoch` | bigint | Lease number given to the runner; it only grows |
+| `runner_id`, `lease_mode`, `lease_until`, `heartbeat_at` | id, text, ts, ts | Current lease, and the mode whose slot it took |
 | `attempts` | int | Dispatch attempts |
+| `directive` | enum | `continue` or `cancel`: what the next heartbeat tells the runner |
+| `end_state`, `end_class`, `end_code` | text, text, text | The run's state when the job ended, and the failure it ended with |
+| `created_at`, `finished_at` | ts, ts | |
 
-Indexes: on `(state, priority, available_at)` where the state is `pending`; on `(runner_id, state)`.
+Indexes: on `(priority, seq)` where the state is `pending`; on `(runner_id, state)`; on `(session_key)` where the state is `leased`; unique on `(run_id)` where the state is `pending` or `leased`. A job that has ended never changes.
 
 ## runners
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | id | Primary key |
-| `kind` | enum | `server`, `desktop`, `user_device` |
 | `owner_principal_id` | id | Set for user-device runners |
 | `workspace_id` | id | Scope |
-| `capabilities` | json | Operating system, modes, slots, targets |
-| `version`, `protocol_version` | text, int | For compatibility |
+| `capabilities` | json | Operating system, modes, targets |
+| `protocol_version` | int | For compatibility |
 | `state` | enum | `enrolled`, `online`, `draining`, `offline`, `revoked` |
-| `public_key`, `cert_expires_at` | text, ts | Identity |
 | `last_seen_at` | ts | Liveness |
+
+The runner's kind, version, public key, and certificate expiry arrive with the runner link and are not columns yet.
+
+## resource_holds, caller_turns, scheduler_holds, budgets
+
+The scheduler's other tables ([`a2m-sched`](../architecture/crates/a2m-sched.md)).
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `resource_holds` | `resource_key` (primary key), `job_id`, `acquired_at` | Who holds each exclusive resource: one holder for one key |
+| `caller_turns` | `workspace_id`, `principal_id` (primary key), `served` | The number of the dispatch that last gave this caller a job; the lowest goes first |
+| `scheduler_holds` | `scope`, `workspace_id`, `name` (primary key), `held_at` | Scopes no job is handed out for: `everything`, `workspace`, `target`, `caller` |
+| `budgets` | `budget_key` (primary key), `capacity`, `refill`, `per_ms`, `level`, `updated_at` | Token buckets. `level` is in requests times `per_ms`, so no fraction is lost |
 
 ## sessions
 

@@ -1,7 +1,10 @@
 //! Field types: the built-in ones, and those a target adds in `types.yaml`,
 //! each compiled to a normalizer through `a2m-expr`.
 
-use a2m_core::{CodeLabel, Decimal, FieldBase, FieldTypePlan, Rounding, Sensitivity, ZoneRule};
+use a2m_core::{
+    CodeLabel, Decimal, FieldBase, FieldFormat, FieldTypePlan, Rounding, Sensitivity,
+    WhitespaceRule, ZoneRule,
+};
 use a2m_expr::{DecimalMark, FieldRule, Whitespace};
 
 use crate::codes::{self, kernel};
@@ -106,6 +109,74 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
     ]
 }
 
+/// The offset from UTC, in minutes, of a zone the expression library can
+/// fix: `UTC`, or an offset written `+02:00`.
+pub(crate) fn utc_offset_minutes(zone: &str) -> Option<i32> {
+    if zone == "UTC" {
+        return Some(0);
+    }
+    let sign = match zone.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let (hours, minutes) = zone.get(1..)?.split_once(':')?;
+    let number = |text: &str, most: i32| {
+        (text.len() == 2 && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse::<i32>().ok())
+            .flatten()
+            .filter(|number| *number <= most)
+    };
+    Some(sign * (number(hours, 14)? * 60 + number(minutes, 59)?))
+}
+
+const fn plan_mark(mark: DecimalMark) -> a2m_core::DecimalMark {
+    match mark {
+        DecimalMark::Point => a2m_core::DecimalMark::Point,
+        DecimalMark::Comma => a2m_core::DecimalMark::Comma,
+    }
+}
+
+/// How the system shows a value, stated as data from the same rule the
+/// normalizer is made from, so the two cannot disagree.
+fn format_of(rule: &FieldRule) -> FieldFormat {
+    match rule {
+        FieldRule::Text {
+            case_sensitive,
+            whitespace,
+        } => FieldFormat::Text {
+            case_sensitive: *case_sensitive,
+            whitespace: match whitespace {
+                Whitespace::Collapse => WhitespaceRule::Collapse,
+                Whitespace::Trim => WhitespaceRule::Trim,
+                Whitespace::Exact => WhitespaceRule::Exact,
+            },
+        },
+        FieldRule::Integer { mark }
+        | FieldRule::Decimal { mark, .. }
+        | FieldRule::Money { mark, .. }
+        | FieldRule::Measurement { mark, .. } => FieldFormat::Number {
+            decimal_mark: plan_mark(*mark),
+        },
+        FieldRule::Date { format } | FieldRule::Time { format } => FieldFormat::Calendar {
+            pattern: format.clone(),
+            utc_offset_minutes: None,
+        },
+        FieldRule::Datetime { format, zone } => FieldFormat::Calendar {
+            pattern: format.clone(),
+            utc_offset_minutes: utc_offset_minutes(zone),
+        },
+        FieldRule::Boolean {
+            true_text,
+            false_text,
+        } => FieldFormat::Boolean {
+            true_text: true_text.clone(),
+            false_text: false_text.clone(),
+        },
+        FieldRule::Choice { .. } => FieldFormat::Choice,
+    }
+}
+
 /// What a field type states beside its rule.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Labels {
@@ -137,6 +208,7 @@ pub(crate) fn plan_of(
         ty: rule.value_type(),
         places: None,
         rounding: None,
+        step: None,
         unit: None,
         display_unit: None,
         currency: None,
@@ -144,6 +216,7 @@ pub(crate) fn plan_of(
         codes: Vec::new(),
         sensitivity: labels.sensitivity,
         untrusted: labels.untrusted,
+        format: format_of(rule),
         normalizer: Some(index),
     };
     match rule {
@@ -172,6 +245,7 @@ pub(crate) fn plan_of(
         } => {
             plan.places = Some(step.places());
             plan.rounding = Some(*rounding);
+            plan.step = Some(*step);
             plan.unit = Some(unit.clone());
             plan.display_unit = Some(display_unit.clone());
         }
@@ -388,8 +462,61 @@ pub(crate) fn rule_of(
 
 #[cfg(test)]
 mod tests {
-    use super::{Labels, built_ins, plan_of};
+    use super::{Labels, built_ins, plan_of, utc_offset_minutes};
     use crate::view::ExprTable;
+    use a2m_core::{DecimalMark, FieldFormat};
+
+    #[test]
+    fn a_zone_the_library_can_fix_has_an_offset_in_minutes() {
+        assert_eq!(utc_offset_minutes("UTC"), Some(0));
+        assert_eq!(utc_offset_minutes("+02:00"), Some(120));
+        assert_eq!(utc_offset_minutes("-05:30"), Some(-330));
+        for other in [
+            "",
+            "Europe/Example",
+            "+2:00",
+            "+02",
+            "+15:00",
+            "+02:60",
+            "02:00",
+        ] {
+            assert_eq!(utc_offset_minutes(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn a_field_type_states_its_format_as_data_beside_its_normalizer() {
+        let mut exprs = ExprTable::default();
+        let plan = |name: &str, exprs: &mut ExprTable| {
+            let (_, rule) = built_ins()
+                .into_iter()
+                .find(|(known, _)| *known == name)
+                .unwrap();
+            plan_of(name, &rule, Labels::default(), exprs).unwrap()
+        };
+        let length = plan("length_ft_in", &mut exprs);
+        assert_eq!(length.step.as_ref().unwrap().to_string(), "0.0625");
+        assert_eq!(
+            length.format,
+            FieldFormat::Number {
+                decimal_mark: DecimalMark::Point
+            }
+        );
+        assert_eq!(
+            plan("datetime", &mut exprs).format,
+            FieldFormat::Calendar {
+                pattern: "YYYY-MM-DD'T'HH:mm:ss".to_owned(),
+                utc_offset_minutes: Some(0),
+            }
+        );
+        assert_eq!(
+            plan("date", &mut exprs).format,
+            FieldFormat::Calendar {
+                pattern: "YYYY-MM-DD".to_owned(),
+                utc_offset_minutes: None,
+            }
+        );
+    }
 
     #[test]
     fn every_built_in_field_type_compiles_to_a_normalizer() {

@@ -10,9 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    Archetype, ControlName, Digest, EffectClass, EvidenceLevel, Failure, FailureClass,
-    FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Value, Values,
-    Verb, Version,
+    Archetype, ControlName, Digest, EffectClass, EvidenceLevel, Failure, FailureClass, FailureCode,
+    FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Value, Values, Verb, Version,
 };
 use serde::Deserialize;
 
@@ -720,7 +719,12 @@ fn undeclared(what: String) -> Failure {
 fn digest(field: &str, text: &str) -> Result<Digest, Failure> {
     text.strip_prefix("sha256:")
         .and_then(|hex| hex.parse::<Digest>().ok())
-        .ok_or_else(|| invalid(field, "a digest is `sha256:` and 64 lowercase hexadecimal characters"))
+        .ok_or_else(|| {
+            invalid(
+                field,
+                "a digest is `sha256:` and 64 lowercase hexadecimal characters",
+            )
+        })
 }
 
 /// Whether the text is an absolute path on any operating system.
@@ -740,7 +744,10 @@ fn program_path(field: &str, path: &str) -> Result<(), Failure> {
     let refused = |why: &str| {
         codes::input(
             codes::PATH_NOT_ALLOWED,
-            format!("The manifest field `{field}` names the program `{}`: {why}.", shown(path)),
+            format!(
+                "The manifest field `{field}` names the program `{}`: {why}.",
+                shown(path)
+            ),
             "Name the program by a path inside the provider, or by one fixed absolute path.",
         )
     };
@@ -754,9 +761,20 @@ fn program_path(field: &str, path: &str) -> Result<(), Failure> {
         return Ok(());
     }
     if path.contains(':') || path.contains('\\') || path.starts_with('~') {
-        return Err(refused("a relative program path uses forward slashes and no drive"));
+        return Err(refused(
+            "a relative program path uses forward slashes and no drive",
+        ));
     }
     Ok(())
+}
+
+/// The line, from one, that holds the byte at `offset`.
+fn line_of(text: &str, offset: usize) -> usize {
+    text.bytes()
+        .take(offset)
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1
 }
 
 fn unique<'a, T: Ord + 'a>(items: impl Iterator<Item = &'a T>) -> bool {
@@ -841,8 +859,7 @@ impl Manifest {
                 match error.span() {
                     Some(span) => format!(
                         "Correct line {} of the provider's manifest.",
-                        text.get(..span.start).map_or(1, |before| before.lines().count().max(1))
-                            + usize::from(text.get(..span.start).is_some_and(|b| b.ends_with('\n')))
+                        line_of(text, span.start)
                     ),
                     None => "Correct the provider's manifest.".to_owned(),
                 },
@@ -865,7 +882,10 @@ impl Manifest {
 
         let name = ProviderName::new(&raw.provider.name)?;
         if name.as_str() == "kernel" {
-            return Err(invalid("provider.name", "`kernel` is the kernel's own name"));
+            return Err(invalid(
+                "provider.name",
+                "`kernel` is the kernel's own name",
+            ));
         }
         let provider = ProviderSection {
             digest: raw
@@ -892,10 +912,16 @@ impl Manifest {
             (_, Some(run)) => {
                 program_path("run.program", &run.program)?;
                 if is_absolute_anywhere(&run.program) {
-                    return Err(invalid("run.program", "a plug-in's program is inside the plug-in"));
+                    return Err(invalid(
+                        "run.program",
+                        "a plug-in's program is inside the plug-in",
+                    ));
                 }
                 if run.protocol.is_empty() || run.concurrency == 0 {
-                    return Err(invalid("run", "it names a protocol version and serves at least one request"));
+                    return Err(invalid(
+                        "run",
+                        "it names a protocol version and serves at least one request",
+                    ));
                 }
                 Some(RunSection {
                     program: run.program,
@@ -920,16 +946,25 @@ impl Manifest {
         if !unique(raw.surface_kinds.iter().map(|kind| &kind.name)) {
             return Err(codes::input(
                 codes::MODE_CONFLICT,
-                format!("The provider `{}` registers one surface kind twice.", provider.name),
+                format!(
+                    "The provider `{}` registers one surface kind twice.",
+                    provider.name
+                ),
                 "State each surface kind once, with its one archetype.",
             ));
         }
         for mode in &raw.modes {
             if !unique(mode.steps.iter()) || !unique(mode.verbs.iter()) {
-                return Err(invalid("modes", "a mode lists each step kind and each verb once"));
+                return Err(invalid(
+                    "modes",
+                    "a mode lists each step kind and each verb once",
+                ));
             }
             if mode.session_reads == 0 || mode.session_writes == 0 {
-                return Err(invalid("modes", "a session allows at least one read and one write at a time"));
+                return Err(invalid(
+                    "modes",
+                    "a session allows at least one read and one write at a time",
+                ));
             }
         }
         if !unique(raw.file_kinds.iter().map(|kind| &kind.name))
@@ -944,19 +979,29 @@ impl Manifest {
             ));
         }
         for kind in &raw.file_kinds {
-            if kind.surface_kinds.is_empty() || FileKindName::new(&kind.directory).is_err() {
+            if kind.surface_kinds.is_empty() || FileKindName::new(kind.directory.trim_end_matches('/')).is_err() {
                 return Err(invalid(
                     "file_kinds",
                     "a file kind names at least one surface kind, and its directory is one lowercase name",
                 ));
             }
         }
-        if raw.finding_kinds.iter().any(|kind| kind.surface_kinds.is_empty()) {
-            return Err(invalid("finding_kinds", "a finding kind names at least one surface kind"));
+        if raw
+            .finding_kinds
+            .iter()
+            .any(|kind| kind.surface_kinds.is_empty())
+        {
+            return Err(invalid(
+                "finding_kinds",
+                "a finding kind names at least one surface kind",
+            ));
         }
         for rule in &raw.lint_rules {
             if rule.code.owner() != provider.name.as_str() {
-                return Err(invalid("lint_rules", "a lint code starts with the provider's own name"));
+                return Err(invalid(
+                    "lint_rules",
+                    "a lint code starts with the provider's own name",
+                ));
             }
         }
         for code in &raw.failure_codes {
@@ -964,7 +1009,10 @@ impl Manifest {
                 .iter()
                 .any(|(class, text)| *text == code.code.as_str() && *class != code.class);
             if other_class {
-                return Err(invalid("failure_codes", "a code of the provider contract keeps its own class"));
+                return Err(invalid(
+                    "failure_codes",
+                    "a code of the provider contract keeps its own class",
+                ));
             }
         }
 
@@ -980,8 +1028,14 @@ impl Manifest {
         }
         let mut discoverers = Vec::new();
         for found in raw.discoverers {
-            if !matches!(found.max_level, EvidenceLevel::Inferred | EvidenceLevel::Discovered) {
-                return Err(invalid("discoverers.max_level", "a discoverer claims `inferred` or `discovered`"));
+            if !matches!(
+                found.max_level,
+                EvidenceLevel::Inferred | EvidenceLevel::Discovered
+            ) {
+                return Err(invalid(
+                    "discoverers.max_level",
+                    "a discoverer claims `inferred` or `discovered`",
+                ));
             }
             for kind in &found.kinds {
                 let owned = raw.finding_kinds.iter().any(|own| own.name == *kind);
@@ -1034,7 +1088,10 @@ impl Manifest {
         let roots = |field: &str, names: &[String]| -> Result<Vec<RootName>, Failure> {
             names
                 .iter()
-                .map(|name| RootName::new(name).map_err(|_| invalid(field, "a root is a lowercase name, never a path")))
+                .map(|name| {
+                    RootName::new(name)
+                        .map_err(|_| invalid(field, "a root is a lowercase name, never a path"))
+                })
                 .collect()
         };
         let mut processes = Vec::new();
@@ -1080,7 +1137,10 @@ impl Manifest {
         for action in raw.actions {
             let name = ActionName::new(&action.name)?;
             if name.provider() != provider.name.as_str() {
-                return Err(invalid("actions", "an action is named under the provider's own name"));
+                return Err(invalid(
+                    "actions",
+                    "an action is named under the provider's own name",
+                ));
             }
             actions.push(ActionDecl {
                 name,
@@ -1094,7 +1154,11 @@ impl Manifest {
         let mut requirements = Vec::new();
         for needed in raw.requirements {
             if needed.detect.paths.is_empty()
-                || needed.detect.paths.iter().any(|path| !is_absolute_anywhere(path))
+                || needed
+                    .detect
+                    .paths
+                    .iter()
+                    .any(|path| !is_absolute_anywhere(path))
             {
                 return Err(codes::input(
                     codes::PATH_NOT_ALLOWED,
@@ -1123,7 +1187,10 @@ impl Manifest {
             let ok_key = FileKindName::new(&setting.key).is_ok();
             let default = to_value(&setting.default);
             let (true, Some(default)) = (ok_key, default) else {
-                return Err(invalid("settings", "a key is a lowercase name and a default is a flag, a number, text, or a list of texts"));
+                return Err(invalid(
+                    "settings",
+                    "a key is a lowercase name and a default is a flag, a number, text, or a list of texts",
+                ));
             };
             let decl = SettingDecl {
                 key: setting.key,
@@ -1141,10 +1208,16 @@ impl Manifest {
                 return Err(invalid("settings", "every setting is documented"));
             }
             if decl.protected && decl.safer.is_none() {
-                return Err(invalid("settings", "a protected setting states its safer direction"));
+                return Err(invalid(
+                    "settings",
+                    "a protected setting states its safer direction",
+                ));
             }
             if let Err(why) = decl.fits(&decl.default) {
-                return Err(invalid("settings", &format!("the default of `{}` does not fit: {why}", decl.key)));
+                return Err(invalid(
+                    "settings",
+                    &format!("the default of `{}` does not fit: {why}", decl.key),
+                ));
             }
             settings.push(decl);
         }
@@ -1163,7 +1236,11 @@ impl Manifest {
             discoverers,
             file_kinds: raw.file_kinds,
             finding_kinds: raw.finding_kinds,
-            controls: raw.controls.into_iter().map(|control| control.name).collect(),
+            controls: raw
+                .controls
+                .into_iter()
+                .map(|control| control.name)
+                .collect(),
             lint_rules: raw.lint_rules,
             drafting_rules: raw.drafting_rules,
             actions,

@@ -10,10 +10,13 @@ publish.workspace = true
 [dependencies]
 a2m-core = { path = "../a2m-core" }
 a2m-expr = { path = "../a2m-expr" }
+a2m-files = { path = "../a2m-files" }
 miniz_oxide.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+# The imaginary `stand` pack, to compile the `example` target in a test.
+a2m-files = { path = "../a2m-files", features = ["testing"] }
 example-files = { path = "../../targets/example-files" }
 
 [lints]

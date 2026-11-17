@@ -5,6 +5,7 @@ use std::fmt;
 
 use a2m_core::Failure;
 use a2m_expr::DateSystem;
+use a2m_files::ReaderOptions;
 use serde::{Deserialize, Serialize};
 
 use crate::error::definition;
@@ -74,15 +75,6 @@ pub struct Limits {
     pub cells: u32,
     /// The most bytes one cell's value may have.
     pub cell_bytes: u32,
-}
-
-/// What a source definition tells its reader about the format's dialect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReaderOptions {
-    /// For delimited text: the character between fields. A comma when absent.
-    /// One ASCII character that is not a quote or a line break.
-    pub delimiter: Option<char>,
 }
 
 /// One input: bytes the caller has already read, once, and stored. There is

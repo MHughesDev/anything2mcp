@@ -51,20 +51,23 @@ pub use finding::{
     ProducedBy, Source, Subject, Timestamp, UnknownReason,
 };
 pub use ident::{
-    AccountName, ApprovalId, ControlName, DecisionId, Environment, Epoch, FileKindName, Identity,
-    InvalidId, JobId, LintCode, OperationName, PrincipalId, RunId, RunnerId, SessionId, StepKind,
-    SurfaceKind, SurfaceName, TargetName, Verb, Version, WorkspaceId,
+    AccountName, ApprovalId, AuthProviderName, ControlName, CredentialRef, DecisionId, Environment,
+    Epoch, FileKindName, Identity, InvalidId, JobId, LintCode, OperationName, PrincipalId, RunId,
+    RunnerId, SessionId, StepKind, SurfaceKind, SurfaceName, TargetName, Verb, Version,
+    WorkspaceId,
 };
 pub use kind::{Archetype, Mode};
 pub use name::{InvalidName, UnknownName};
 pub use plan::{
-    AddressOverride, BindingPlan, Checkpoint, CodeLabel, EncodedPlan, EnvironmentKind,
-    EnvironmentPlan, ExprIndex, FailsAs, FieldBase, FieldTypeIndex, FieldTypePlan, IdentityPlan,
-    IdentityStrategy, InputIndex, InputPlan, OperationIndex, OperationPlan, OutputPlan,
-    PLAN_FORMAT, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
-    PipelinePlan, PipelineStep, Plan, PlanExpr, PlanHeader, RatePlan, SectionIndex, Sensitivity,
-    SourcePlan, Step, StepArg, SurfaceIndex, SurfacePlan, TestKind, TestPlan, ToolAnnotations,
-    ToolIndex, ToolPlan, ToolRuns, ZoneRule,
+    AddressOverride, ApproveWrites, AuthPlan, AuthSetting, BindingPlan, CaptureLevel, Checkpoint,
+    CodeLabel, CredentialUse, DecimalMark, DecisionPoint, DriftRisk, EncodedPlan, EnvironmentIndex,
+    EnvironmentKind, EnvironmentPlan, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex,
+    FieldTypePlan, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, OperationIndex,
+    OperationPlan, OutputPlan, PLAN_FORMAT, PackRef, PackSection, PermissionManifest,
+    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr, PlanHeader,
+    ProbePlan, RatePlan, SectionIndex, Sensitivity, SignInMode, SourcePlan, Stands, Step, StepArg,
+    SurfaceIndex, SurfacePlan, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex,
+    ToolPlan, ToolRuns, WhitespaceRule, ZoneRule,
 };
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,

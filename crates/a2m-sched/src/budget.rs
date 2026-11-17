@@ -69,7 +69,11 @@ fn limit_parts(limit: &RateLimit) -> Result<(i64, i64, i64), Failure> {
 
 /// Sets the limit of a budget. A new budget starts full. An existing one
 /// keeps what it holds, cut to the new capacity.
-pub(crate) fn set_limit(tx: &mut Tx<'_>, key: &BudgetKey, limit: &RateLimit) -> Result<(), Failure> {
+pub(crate) fn set_limit(
+    tx: &mut Tx<'_>,
+    key: &BudgetKey,
+    limit: &RateLimit,
+) -> Result<(), Failure> {
     let (capacity, refill, per_ms) = limit_parts(limit)?;
     let now = tx.now();
     let bucket = load(tx, key, now)?;
@@ -138,7 +142,8 @@ pub(crate) fn take(
             Some(bucket) => bucket,
             None => {
                 set_limit(tx, key, default)?;
-                load(tx, key, now)?.ok_or_else(|| failure::corrupt("a budget that was just made"))?
+                load(tx, key, now)?
+                    .ok_or_else(|| failure::corrupt("a budget that was just made"))?
             }
         };
         buckets.push((key, bucket));
@@ -175,11 +180,7 @@ pub(crate) fn take(
         let level = bucket.level - granted * bucket.per_ms;
         tx.tables(Owner::Sched).execute(
             "UPDATE budgets SET level = ?2, updated_at = ?3 WHERE budget_key = ?1",
-            &[
-                SqlValue::from(key.as_str()),
-                level.into(),
-                now.into(),
-            ],
+            &[SqlValue::from(key.as_str()), level.into(), now.into()],
         )?;
         over_ms = over_ms.max((granted * bucket.per_ms + bucket.refill - 1) / bucket.refill);
     }

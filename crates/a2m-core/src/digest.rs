@@ -176,6 +176,9 @@ mod tests {
     /// The digest of the three bytes `abc`, from the SHA-256 standard.
     const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
+    /// The digest of two named fields, worked out apart from this crate.
+    const PINNED_FIELDS: &str = "65092bca65a0160c209fceeb989606a66b868fcba9216c9d067013c1e8562172";
+
     #[test]
     fn it_gives_the_standard_answers() {
         assert_eq!(Digest::of(b"").to_string(), EMPTY);

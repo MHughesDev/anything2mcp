@@ -6,7 +6,7 @@
 //! trait object. An implementation writes `Box::pin(async move { ... })`.
 
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,7 +44,8 @@ impl Deadline {
     /// How long is left; zero when it has passed.
     #[must_use]
     pub fn remaining(self) -> Duration {
-        self.0.saturating_duration_since(tokio::time::Instant::now())
+        self.0
+            .saturating_duration_since(tokio::time::Instant::now())
     }
 
     /// Whether it has passed.
@@ -406,7 +407,7 @@ pub(crate) struct HandleFacts {
     pub mode: Mode,
     pub archetype: Archetype,
     pub steps: BTreeSet<StepKind>,
-    pub codes: BTreeSet<(FailureClass, FailureCode)>,
+    pub codes: BTreeMap<FailureCode, FailureClass>,
     pub choice: ProviderChoice,
     pub supervisor: ScopedSupervisor,
 }
@@ -475,7 +476,10 @@ impl DriverHandle {
     /// says `plan_programs`, those of `plan_programs`, which the engine
     /// takes from the published plan.
     #[must_use]
-    pub fn supervisor(&self, plan_programs: Vec<crate::supervisor::ProgramRef>) -> ScopedSupervisor {
+    pub fn supervisor(
+        &self,
+        plan_programs: Vec<crate::supervisor::ProgramRef>,
+    ) -> ScopedSupervisor {
         self.facts.supervisor.with_plan_programs(plan_programs)
     }
 
@@ -543,16 +547,16 @@ impl DriverHandle {
         let result = self.driver.act(prepared, step, input).await;
         match result {
             Err(failure) => Err(self.checked_failure(failure, Some(step))),
-            Ok(StepOutcome::Absent(_)) if !step.lookup => Err(StepFailure::answered(
-                codes::unknown_variant(
+            Ok(StepOutcome::Absent(_)) if !step.lookup => {
+                Err(StepFailure::answered(codes::unknown_variant(
                     codes::UNEXPECTED_ABSENT,
                     format!(
                         "A `{}` step that is not a lookup reported its record absent.",
                         step.kind
                     ),
                     "Report this to the provider's author; only a lookup may find nothing.",
-                ),
-            )),
+                )))
+            }
             Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed))
                 if step.commits && !observed.for_reconcile.is_empty() =>
             {
@@ -596,7 +600,10 @@ impl DriverHandle {
         let Some(guard) = prepared.guard else {
             return Err(missing("its driver was not prepared through the handle"));
         };
-        if !matches!(guard.posture, Posture::Live | Posture::Sandbox { test_records: true }) {
+        if !matches!(
+            guard.posture,
+            Posture::Live | Posture::Sandbox { test_records: true }
+        ) {
             return Err(refused(codes::policy(
                 codes::READ_ONLY_POSTURE,
                 "A step that commits was asked for where nothing may be written.",
@@ -626,10 +633,7 @@ impl DriverHandle {
     fn checked_failure(&self, failure: StepFailure, step: Option<&Step>) -> StepFailure {
         let StepFailure { failure, sent } = failure;
         let mut failure = self.redact.redact_failure(&failure);
-        let declared = self
-            .facts
-            .codes
-            .contains(&(failure.class(), failure.code().clone()))
+        let declared = self.facts.codes.get(failure.code()) == Some(&failure.class())
             || step.is_some_and(|step| {
                 step.fails_as.class == failure.class() && step.fails_as.code == *failure.code()
             })

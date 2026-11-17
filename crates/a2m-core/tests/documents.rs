@@ -310,6 +310,61 @@ fn checkpoints_are_the_ones_in_the_file_formats() {
 }
 
 #[test]
+fn sign_in_modes_are_the_ones_in_the_file_formats() {
+    let listed = format_words("## `auth.yaml`", "## `types.yaml`", "`mode` (required)");
+    assert_eq!(listed, a2m_core::SignInMode::NAMES);
+}
+
+#[test]
+fn drift_risks_are_the_ones_in_the_file_formats() {
+    let listed = format_words("## `target.yaml`", "**Surface.**", "`drift_risk`");
+    assert_eq!(listed, a2m_core::DriftRisk::NAMES);
+}
+
+#[test]
+fn whitespace_rules_and_decimal_marks_are_the_ones_in_the_file_formats() {
+    let listed = format_words(
+        "## `types.yaml`",
+        "## `screens/*.yaml`",
+        "`case`, `whitespace`",
+    );
+    assert_eq!(listed[listed.len() - 3..], *a2m_core::WhitespaceRule::NAMES);
+    let listed = format_words("## `types.yaml`", "## `screens/*.yaml`", "`decimal_mark`");
+    assert_eq!(listed[..2], *a2m_core::DecimalMark::NAMES);
+}
+
+#[test]
+fn capture_levels_are_the_ones_in_the_traces_section() {
+    let spec = document("spec/2-kernel/217-traces-evidence-and-repair.md");
+    let section = between(&spec, "## Capture levels", "**When capture fails.**");
+    assert_eq!(
+        column(section, "| Level |", 0),
+        a2m_core::CaptureLevel::NAMES
+    );
+}
+
+#[test]
+fn approval_rules_are_the_ones_the_configuration_section_lists() {
+    let spec = document("spec/2-kernel/226-configuration.md");
+    // The row of the settings table, whose second cell lists the values.
+    let row: Vec<String> = spec
+        .lines()
+        .find(|line| line.starts_with("| `policy.approve_writes` | `"))
+        .map(|line| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_owned())
+                .collect()
+        })
+        .expect("the row of `policy.approve_writes`");
+    let mut listed = code_words(&row[1]);
+    listed.sort();
+    let mut in_code: Vec<&str> = a2m_core::ApproveWrites::NAMES.to_vec();
+    in_code.sort_unstable();
+    assert_eq!(listed, in_code);
+}
+
+#[test]
 fn every_vocabulary_reads_back_what_it_writes() {
     fn round_trip<T>(all: &[T], names: &[&str])
     where
@@ -331,6 +386,15 @@ fn every_vocabulary_reads_back_what_it_writes() {
         assert!("no such value".parse::<T>().is_err());
         assert!(serde_json::from_str::<T>("\"no such value\"").is_err());
     }
+    round_trip(a2m_core::SignInMode::ALL, a2m_core::SignInMode::NAMES);
+    round_trip(a2m_core::DriftRisk::ALL, a2m_core::DriftRisk::NAMES);
+    round_trip(a2m_core::CaptureLevel::ALL, a2m_core::CaptureLevel::NAMES);
+    round_trip(a2m_core::ApproveWrites::ALL, a2m_core::ApproveWrites::NAMES);
+    round_trip(
+        a2m_core::WhitespaceRule::ALL,
+        a2m_core::WhitespaceRule::NAMES,
+    );
+    round_trip(a2m_core::DecimalMark::ALL, a2m_core::DecimalMark::NAMES);
     round_trip(Archetype::ALL, Archetype::NAMES);
     round_trip(Availability::ALL, Availability::NAMES);
     round_trip(Checkpoint::ALL, Checkpoint::NAMES);

@@ -60,7 +60,18 @@ pub struct InvalidName {
     kind: &'static str,
     name: String,
     longest: usize,
-    dotted: bool,
+    shape: Shape,
+}
+
+/// Which shape a name was held to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// One name.
+    Name,
+    /// Two names joined by one dot.
+    Dotted,
+    /// A reference to a stored credential.
+    Reference,
 }
 
 impl InvalidName {
@@ -69,11 +80,39 @@ impl InvalidName {
     pub fn kind(&self) -> &'static str {
         self.kind
     }
+
+    /// What to do about it.
+    pub(crate) fn next_step(&self) -> String {
+        match self.shape {
+            Shape::Name => format!(
+                "Write the {} name in lowercase, such as `page_http`.",
+                self.kind
+            ),
+            Shape::Dotted => format!(
+                "Write the {} as an owner and a rule, such as `kernel.no_fixed_wait`.",
+                self.kind
+            ),
+            Shape::Reference => format!(
+                "Store the value in the vault and write the {} here, such as `vault://example/service/password`.",
+                self.kind
+            ),
+        }
+    }
 }
 
 impl fmt::Display for InvalidName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.dotted {
+        if self.shape == Shape::Reference {
+            // What was written in a reference's place may be the credential
+            // itself, so it is never shown back.
+            return write!(
+                f,
+                "this is not a valid {}; it is `vault://` and one to four parts of lowercase \
+                 letters, digits, `_`, `-`, and `.`, joined by `/`, each part at most {} characters",
+                self.kind, self.longest
+            );
+        }
+        if self.shape == Shape::Dotted {
             return write!(
                 f,
                 "`{}` is not a valid {}; it is two names joined by one dot, each starting with a \
@@ -146,11 +185,7 @@ pub const fn is_dotted_name(text: &str, longest: usize) -> bool {
 /// # Errors
 ///
 /// [`InvalidName`] when `text` is not a name of at most `longest` characters.
-pub fn check_name(
-    kind: &'static str,
-    text: &str,
-    longest: usize,
-) -> Result<(), InvalidName> {
+pub fn check_name(kind: &'static str, text: &str, longest: usize) -> Result<(), InvalidName> {
     if is_name(text, longest) {
         Ok(())
     } else {
@@ -158,7 +193,7 @@ pub fn check_name(
             kind,
             name: shorten(text),
             longest,
-            dotted: false,
+            shape: Shape::Name,
         })
     }
 }
@@ -182,7 +217,44 @@ pub fn check_dotted_name(
             kind,
             name: shorten(text),
             longest,
-            dotted: true,
+            shape: Shape::Dotted,
+        })
+    }
+}
+
+/// The longest one part of a credential reference may be.
+const REFERENCE_PART: usize = 64;
+
+/// Checks the shape of a reference to a stored credential: `scheme`, then
+/// one to four parts joined by `/`, each of lowercase letters, digits, `_`,
+/// `-`, and `.`, and none of them `.` or `..`.
+pub(crate) fn check_reference(
+    kind: &'static str,
+    text: &str,
+    scheme: &str,
+) -> Result<(), InvalidName> {
+    let part_ok = |part: &str| {
+        !part.is_empty()
+            && part.len() <= REFERENCE_PART
+            && part != "."
+            && part != ".."
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'-' | b'.')
+            })
+    };
+    let well_formed = text
+        .strip_prefix(scheme)
+        .is_some_and(|path| path.split('/').count() <= 4 && path.split('/').all(part_ok));
+    if well_formed {
+        Ok(())
+    } else {
+        Err(InvalidName {
+            kind,
+            name: String::new(),
+            longest: REFERENCE_PART,
+            shape: Shape::Reference,
         })
     }
 }

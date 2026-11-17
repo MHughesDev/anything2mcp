@@ -14,8 +14,10 @@ use crate::{
     load_files,
 };
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, Mode,
-    PackPayload, Plan, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, Version,
+    ApproveWrites, CaptureLevel, DecimalMark, DriftRisk, EffectClass, FailsAs, FailureClass,
+    FailureCode, FieldFormat, FileKindName, IdentityStrategy, Mode, PackPayload, Plan, ProbePlan,
+    RecordKey, SignInMode, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName,
+    Value, Verb, Version,
 };
 
 const VERSION: Version = Version::new(1, 0, 0);
@@ -311,6 +313,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.probe_invalid",
+            Case::Edit(
+                "auth.yaml",
+                "probe: example_order_get",
+                "probe: example_line_item_upsert",
+            ),
+        ),
+        (
             "kernel.operation_without_test",
             Case::Remove("tests/order_get.yaml"),
         ),
@@ -386,6 +396,50 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
     assert_eq!(plan.packs.len(), 1);
     assert_eq!(plan.packs[0].pack, "stand");
 
+    // What the target states as a whole.
+    assert_eq!(plan.target.title, "Example order entry");
+    assert_eq!(plan.target.locale.as_deref(), Some("en-US"));
+    assert_eq!(plan.target.timezone.as_deref(), Some("UTC"));
+    assert_eq!(plan.target.drift_risk, Some(DriftRisk::Low));
+    assert!(!plan.target.exclusive_session);
+    let default = plan.default_environment().unwrap();
+    assert_eq!(default.name.as_str(), "test");
+    assert_eq!(
+        default.test_records,
+        [RecordKey::new(vec![Value::from("SO-1001")]).unwrap()]
+    );
+    assert_eq!(default.approve_writes, None);
+
+    // The sign-in, as the session keeper reads it.
+    let desk = SurfaceIndex::new(0);
+    let auth = plan.auth_of(desk).unwrap();
+    assert_eq!(auth.surfaces, [desk]);
+    assert_eq!(auth.mode, SignInMode::ManagedSession);
+    assert_eq!(auth.provider.as_str(), "form_login");
+    assert_eq!((auth.idle_ms, auth.absolute_ms), (Some(1_800_000), None));
+    assert_eq!((auth.attempt_limit, auth.movable), (1, true));
+    assert_eq!(auth.settings.len(), 1);
+    assert_eq!(
+        (
+            auth.settings[0].name.as_str(),
+            auth.settings[0].value.as_str()
+        ),
+        ("sign_in_path", "/login")
+    );
+    assert_eq!(auth.credentials[0].role, "password");
+    assert_eq!(
+        auth.credentials[0].reference.as_str(),
+        "vault://example/service/password"
+    );
+    let ProbePlan::Operation { operation, inputs } = &auth.probe else {
+        panic!("the probe is an operation");
+    };
+    assert_eq!(
+        plan.operation(*operation).unwrap().name.as_str(),
+        "example_order_get"
+    );
+    assert_eq!(inputs.get("order_id"), Some(&Value::from("SO-1001")));
+
     let upsert = plan
         .operations
         .iter()
@@ -413,6 +467,14 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         .unwrap();
     assert_eq!(length.unit.as_deref(), Some("in"));
     assert!(length.normalizer.is_some());
+    // What a driver needs to write a value, as data beside the normalizer.
+    assert_eq!(length.step.as_ref().unwrap().to_string(), "0.0625");
+    assert_eq!(
+        length.format,
+        FieldFormat::Number {
+            decimal_mark: DecimalMark::Point
+        }
+    );
 
     let pipeline = &plan.pipelines[0];
     assert_eq!(pipeline.effect, EffectClass::Write);
@@ -505,13 +567,13 @@ fn files_with_other_line_endings_and_from_memory_compile_to_the_same_plan() {
 #[test]
 fn a_broken_file_fails_with_a_file_a_line_a_column_a_code_and_a_fix() {
     let problems = problems_of(&Case::Edit(
-        ORDER_GET,
-        "title: Get an order",
-        "titel: Get an order",
+        UPSERT,
+        "title: Create or update a line item",
+        "titel: Create or update a line item",
     ));
     assert!(problems.has_errors());
     let problem = problems.find("kernel.unknown_key").unwrap();
-    assert_eq!(problem.at.file.as_str(), ORDER_GET);
+    assert_eq!(problem.at.file.as_str(), UPSERT);
     assert_eq!((problem.at.line, problem.at.column), (2, 1));
     assert_eq!(problem.level, Level::Error);
     assert_eq!(problem.fix, "Write `title`.");
@@ -526,7 +588,7 @@ fn a_broken_file_fails_with_a_file_a_line_a_column_a_code_and_a_fix() {
     assert!(
         failure
             .message()
-            .starts_with("operations/order_get.yaml:2:1")
+            .starts_with("operations/line_item_upsert.yaml:2:1")
     );
 }
 
@@ -1046,5 +1108,265 @@ fn every_schema_is_published() {
     assert_eq!(
         crate::COMPILER_VERSION.to_string(),
         env!("CARGO_PKG_VERSION")
+    );
+}
+
+/// The example target with every edit made, compiled.
+fn compiled_with(edits: &[Case]) -> Compiled {
+    let set = stand_set().unwrap();
+    let mut files = example_files();
+    for edit in edits {
+        let Case::Edit(path, find, replace) = edit else {
+            panic!("only edits");
+        };
+        let file = files
+            .iter_mut()
+            .find(|(known, _)| known.as_str() == *path)
+            .unwrap();
+        let text = String::from_utf8(file.1.clone()).unwrap();
+        assert!(text.contains(find), "`{find}` is not in {path}");
+        file.1 = text.replacen(find, replace, 1).into_bytes();
+    }
+    let sources = load_files(&TargetRoot::new("example"), &files, &set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    compile(&sources, &set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"))
+}
+
+#[test]
+fn the_plan_carries_what_the_run_time_needs_from_every_target_file() {
+    let compiled = compiled_with(&[
+        Case::Edit(
+            "target.yaml",
+            "drift_risk: low\n",
+            "drift_risk: high\nexclusive_session: true\nauthorization: wrap-2026-11\n\
+             modules: [order, line]\n\
+             defaults: {capture: full, limits: {max_duration_ms: 600000}, timeouts: {step: 2500}}\n",
+        ),
+        Case::Edit(
+            "target.yaml",
+            "    rate: {requests: 10, per_ms: 1000}\n",
+            "    rate: {requests: 10, per_ms: 1000}\n  \
+             files:\n    kind: stand\n    address: \"https://files.example.com\"\n    \
+             stands: {beneath: desk}\n    same_session_as: desk\n  \
+             vault_db:\n    kind: stand\n    address: \"https://db.example.com\"\n    stands: alone\n",
+        ),
+        Case::Edit(
+            "target.yaml",
+            "    test_records: [\"SO-1001\"]\n",
+            "    test_records: [\"SO-1001\", [\"SO-1001\", 7]]\n    approve_writes: named_approver\n",
+        ),
+        Case::Edit(
+            "auth.yaml",
+            "    attempt_limit: 1\n",
+            "    attempt_limit: 0\n    movable: false\n    sign_out: order_get\n    \
+             expiry_signals:\n      - {status: 401}\n      - {redirect_host: \"login.example.com\"}\n    \
+             timeouts: {absolute_ms: 28800000}\n",
+        ),
+        Case::Edit("auth.yaml", "    timeouts: {idle_ms: 1800000}\n", ""),
+        Case::Edit(
+            ORDER_GET,
+            "bindings:",
+            "examples:\n  - {order_id: \"SO-1001\"}\n\
+             decision_points:\n  - {name: which_order, question: \"Two orders match. Which one?\"}\n\
+             bindings:",
+        ),
+    ]);
+    let plan = &compiled.plan;
+    assert_eq!(plan.target.drift_risk, Some(DriftRisk::High));
+    assert!(plan.target.exclusive_session);
+    assert_eq!(plan.target.authorization.as_deref(), Some("wrap-2026-11"));
+    assert_eq!(plan.target.modules, ["order", "line"]);
+    assert_eq!(plan.target.capture, Some(CaptureLevel::Full));
+    // A default limit reaches the pipeline that states none; the engine applies no default.
+    assert_eq!(plan.pipelines[0].limits.max_records, Some(50));
+    assert_eq!(plan.pipelines[0].limits.max_duration_ms, Some(600_000));
+    // A tool knows its module.
+    let module = |name: &str| {
+        plan.tools
+            .iter()
+            .find(|tool| tool.name.as_str() == name)
+            .unwrap()
+            .module
+            .clone()
+    };
+    assert_eq!(module("example_order_get").as_deref(), Some("order"));
+    assert_eq!(module("example_line_item_upsert").as_deref(), Some("line"));
+
+    assert_eq!(plan.surfaces[0].stands, None);
+    assert_eq!(
+        plan.surfaces[1].stands,
+        Some(Stands::Beneath(SurfaceIndex::new(0)))
+    );
+    assert_eq!(plan.surfaces[2].stands, Some(Stands::Alone));
+    // A surface that shares a sign-in is signed in to as the other is.
+    assert_eq!(
+        plan.auth_of(SurfaceIndex::new(1)),
+        plan.auth_of(SurfaceIndex::new(0))
+    );
+    assert!(plan.auth_of(SurfaceIndex::new(2)).is_none());
+
+    let test = plan.default_environment().unwrap();
+    assert_eq!(test.approve_writes, Some(ApproveWrites::NamedApprover));
+    assert_eq!(
+        test.test_records[1],
+        RecordKey::new(vec![Value::from("SO-1001"), Value::Int(7)]).unwrap()
+    );
+
+    let auth = &plan.auth[0];
+    assert_eq!((auth.attempt_limit, auth.movable), (0, false));
+    assert_eq!((auth.idle_ms, auth.absolute_ms), (None, Some(28_800_000)));
+    assert_eq!(auth.sign_out.as_deref(), Some("order_get"));
+    assert_eq!(auth.expiry_signals.len(), 2);
+    assert_eq!(
+        auth.expiry_signals[0]
+            .decode::<serde_json::Value>()
+            .unwrap(),
+        serde_json::json!({"status": 401})
+    );
+
+    let get = plan
+        .operations
+        .iter()
+        .find(|op| op.name.as_str() == "example_order_get")
+        .unwrap();
+    assert_eq!(get.examples.len(), 1);
+    assert_eq!(
+        get.examples[0].get("order_id"),
+        Some(&Value::from("SO-1001"))
+    );
+    assert_eq!(get.decision_points[0].name, "which_order");
+    assert_eq!(
+        get.decision_points[0].question,
+        "Two orders match. Which one?"
+    );
+
+    // All of it is in the bytes, and comes back.
+    let decoded = Plan::decode(&compiled.encoded.bytes, &compiled.encoded.hash).unwrap();
+    assert_eq!(&decoded, plan);
+}
+
+#[test]
+fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
+    // A call the stand pack defines on the entry's surface.
+    let compiled = compiled_with(&[Case::Edit(
+        "auth.yaml",
+        "    probe: example_order_get\n    probe_inputs: {order_id: \"SO-1001\"}\n",
+        "    probe: line_item_get\n",
+    )]);
+    let ProbePlan::Entry(reference) = &compiled.plan.auth[0].probe else {
+        panic!("the probe is a pack's entry");
+    };
+    assert_eq!(reference.entry, "line_item_get");
+    assert_eq!(
+        compiled.plan.section(reference.section).unwrap().pack,
+        "stand"
+    );
+
+    let refused = |find: &'static str, replace: &'static str, code: &str, says: &str| {
+        let problems = problems_of(&Case::Edit("auth.yaml", find, replace));
+        let problem = problems
+            .find(code)
+            .unwrap_or_else(|| panic!("{code} was not reported:\n{problems}"));
+        assert_eq!(problem.at.file.as_str(), "auth.yaml");
+        assert!(problem.message.contains(says), "{problem}");
+    };
+    // A read that needs an input the entry does not give.
+    refused(
+        "    probe_inputs: {order_id: \"SO-1001\"}\n",
+        "",
+        "kernel.probe_invalid",
+        "order_id",
+    );
+    refused(
+        "probe_inputs: {order_id: \"SO-1001\"}",
+        "probe_inputs: {order_id: 7}",
+        "kernel.value_not_of_type",
+        "order_id",
+    );
+    refused(
+        "probe_inputs: {order_id: \"SO-1001\"}",
+        "probe_inputs: {order: \"SO-1001\"}",
+        "kernel.unknown_name",
+        "order",
+    );
+    refused(
+        "probe: example_order_get",
+        "probe: example_nothing",
+        "kernel.unknown_name",
+        "example_nothing",
+    );
+    // A surface is signed in to once.
+    refused(
+        "surfaces: [desk]",
+        "surfaces: [desk, desk]",
+        "kernel.probe_invalid",
+        "twice",
+    );
+}
+
+#[test]
+fn a_credential_written_in_the_auth_file_is_refused_and_never_shown() {
+    let problems = problems_of(&Case::Edit(
+        "auth.yaml",
+        "vault://example/service/password",
+        "correct-horse-battery",
+    ));
+    assert!(problems.find("kernel.credential_in_file").is_some());
+    assert!(!problems.to_string().contains("horse"), "{problems}");
+    // A reference that is not one the vault could resolve is refused the same way.
+    let problems = problems_of(&Case::Edit(
+        "auth.yaml",
+        "vault://example/service/password",
+        "vault://example/../password",
+    ));
+    assert!(problems.find("kernel.credential_in_file").is_some());
+}
+
+#[test]
+fn what_the_new_parts_refuse() {
+    let refused = |path: &'static str, find: &'static str, replace: &'static str, code: &str| {
+        let problems = problems_of(&Case::Edit(path, find, replace));
+        assert!(
+            problems.find(code).is_some(),
+            "{code} was not reported:\n{problems}"
+        );
+    };
+    // A viewport belongs to a surface of the kind that has one, not to the target.
+    refused(
+        "target.yaml",
+        "environment: {locale: en-US, timezone: UTC}",
+        "environment: {locale: en-US, timezone: UTC, viewport: [1440, 900]}",
+        "kernel.unknown_key",
+    );
+    refused(
+        "target.yaml",
+        "timezone: UTC",
+        "timezone: Europe/Example",
+        "kernel.unknown_value",
+    );
+    refused(
+        "target.yaml",
+        "test_records: [\"SO-1001\"]",
+        "test_records: [[\"SO-1001\", [1]]]",
+        "kernel.wrong_type",
+    );
+    refused(
+        ORDER_GET,
+        "bindings:",
+        "examples:\n  - {order: \"SO-1001\"}\nbindings:",
+        "kernel.unknown_name",
+    );
+    refused(
+        ORDER_GET,
+        "bindings:",
+        "examples:\n  - {order_id: 7}\nbindings:",
+        "kernel.value_not_of_type",
+    );
+    refused(
+        ORDER_GET,
+        "bindings:",
+        "decision_points:\n  - {name: which, question: \"Which?\"}\n  - {name: which, question: \"Which one?\"}\nbindings:",
+        "kernel.name_defined_twice",
     );
 }

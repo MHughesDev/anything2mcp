@@ -18,7 +18,8 @@
 //! form and the same [`typed`], so a value means one thing everywhere.
 //!
 //! The crates this one may depend on are set by the layering table in
-//! `docs/reference/technical-reference.md`: `a2m-core` and `a2m-expr`.
+//! `docs/reference/technical-reference.md`: `a2m-core`, `a2m-expr`, and
+//! `a2m-files`, for the source definition's types.
 
 mod csv;
 mod definition;
@@ -40,24 +41,27 @@ mod testing;
 mod tests;
 
 pub use csv::{CsvReader, field_text};
-pub use definition::{
-    FieldTyper, HiddenRule, LoadedSource, Locate, OPERATION_READER, RowField, SourceSpec,
-    TemplateVersion,
+// The source definition's types have one home, `a2m-files`, where the
+// compiler fills them. They are named here so that a caller of this crate
+// needs no second import.
+pub use a2m_files::{
+    Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, PartKind, ReaderOptions,
+    RowField, SourceSpec, TemplateVersion,
 };
+pub use definition::{FieldTyper, LoadedSource};
 pub use error::{
     FILE_TYPE_MISMATCH, FORMULA_WITHOUT_VALUE, KEY_NOT_UNIQUE, Problem, Rejected, SCHEMA_INVALID,
     SOURCE_DEFINITION_INVALID, SOURCE_ENCODING_UNSUPPORTED, SOURCE_MALFORMED, SOURCE_PROTECTED,
     SOURCE_READER_UNKNOWN, SOURCE_TEMPLATE_UNKNOWN, SOURCE_TOO_LARGE, VALUE_OUT_OF_RANGE,
 };
 pub use fingerprint::{
-    DefinedName, DropdownList, Fingerprint, FingerprintPart, PartKind, SheetStructure, Structure,
-    TableStructure,
+    DefinedName, DropdownList, SheetStructure, Structure, TableStructure, differences,
 };
 pub use json::JsonReader;
 pub use locate::{CellTable, TableColumn, locate};
 pub use model::{
     ByteSpan, Cell, CellRange, CellRef, ContentKind, Limits, Parsed, ParsedPart, PartBytes,
-    PlacedCell, RawCell, ReaderName, ReaderOptions, SourceInput, SourceReader,
+    PlacedCell, RawCell, ReaderName, SourceInput, SourceReader,
 };
 pub use read::{Description, PartSize, SourceRow, Sources, ValidatedRecords};
 pub use typing::{CellContext, typed};

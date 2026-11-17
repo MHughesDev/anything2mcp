@@ -40,12 +40,8 @@ macro_rules! words {
                 match self { $( Self::$value => $text ),+ }
             }
 
-            pub(crate) fn parse(text: &str) -> Result<Self, Failure> {
-                match text {
-                    $( $text => Ok(Self::$value), )+
-                    _ => Err(failure::corrupt("a word that is not in its list")),
-                }
-            }
+            /// Every word of the list, in order.
+            pub const ALL: &'static [Self] = &[ $( Self::$value ),+ ];
         }
 
         impl std::fmt::Display for $name {
@@ -92,6 +88,16 @@ words! {
         /// Ended without ever being worked on to an end: cancelled, or never
         /// taken within its queue limit.
         Dead => "dead",
+    }
+}
+
+impl JobState {
+    pub(crate) fn parse(text: &str) -> Result<Self, Failure> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|state| state.as_str() == text)
+            .ok_or_else(|| failure::corrupt("a job state that is not in the list"))
     }
 }
 

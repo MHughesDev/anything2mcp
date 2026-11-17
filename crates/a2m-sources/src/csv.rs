@@ -310,8 +310,8 @@ mod tests {
     use crate::error::{
         FILE_TYPE_MISMATCH, SOURCE_ENCODING_UNSUPPORTED, SOURCE_MALFORMED, SOURCE_TOO_LARGE,
     };
-    use crate::model::ReaderOptions;
     use crate::testing::LIMITS;
+    use a2m_files::ReaderOptions;
 
     fn input(bytes: &[u8]) -> SourceInput<'_> {
         SourceInput {

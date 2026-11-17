@@ -2,9 +2,9 @@
 //! a coordinate: which part, which row is the header, which column each
 //! header names, and which rows are data.
 
-use crate::definition::{HiddenRule, Locate};
 use crate::error::{Problem, SCHEMA_INVALID};
 use crate::model::{CellRange, CellRef, ContentKind, Parsed, ParsedPart, PlacedCell, RawCell};
+use a2m_files::{HiddenRule, Locate};
 
 /// One located column: its header text and its column.
 #[derive(Debug, Clone, PartialEq, Eq)]

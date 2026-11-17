@@ -105,7 +105,10 @@ fn parts(relative: &str) -> Result<Vec<&str>, Failure> {
         }
         let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
         if DEVICE_NAMES.contains(&stem.as_str()) {
-            return Err(refuse(relative, "a part names a device on one operating system"));
+            return Err(refuse(
+                relative,
+                "a part names a device on one operating system",
+            ));
         }
         found.push(part);
     }
@@ -185,7 +188,9 @@ impl Roots {
                 if !root.write {
                     return Err(codes::policy(
                         codes::EFFECT_NOT_DECLARED,
-                        format!("The root `{name}` is read only here and a provider declares it writes there."),
+                        format!(
+                            "The root `{name}` is read only here and a provider declares it writes there."
+                        ),
                         "Make the root writable in the settings, or disable the provider.",
                     ));
                 }

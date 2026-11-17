@@ -466,8 +466,8 @@ impl SourceReader for JsonReader {
 mod tests {
     use super::*;
     use crate::error::{FILE_TYPE_MISMATCH, SOURCE_MALFORMED, SOURCE_TOO_LARGE};
-    use crate::model::ReaderOptions;
     use crate::testing::LIMITS;
+    use a2m_files::ReaderOptions;
 
     fn input(bytes: &[u8]) -> SourceInput<'_> {
         SourceInput {

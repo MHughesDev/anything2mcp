@@ -13,6 +13,10 @@ macro_rules! kernel_codes {
 
         /// Every kernel code, with what its rule requires.
         pub const KERNEL_CODES: &[(&str, &str)] = &[ $( ($name, $summary) ),+ ];
+
+        /// Every code above as a lint code. A badly formed one fails the
+        /// build here, so `kernel` cannot fail when the crate runs.
+        const _: &[LintCode] = &[ $( LintCode::fixed($name) ),+ ];
     };
 }
 
@@ -63,6 +67,7 @@ kernel_codes! {
     FOR_EACH_WITHOUT_CHECKPOINT = "for_each_without_checkpoint": "A `for_each` over a write has a checkpoint.",
     WRITE_PIPELINE_WITHOUT_LIMIT = "write_pipeline_without_limit": "A pipeline that writes declares a record limit.",
     CREDENTIAL_IN_FILE = "credential_in_file": "No file holds a credential; credentials are vault references.",
+    PROBE_INVALID = "probe_invalid": "A sign-in's probe is a read that can be made as the file gives it, and no surface is signed in to twice.",
     OPERATION_WITHOUT_TEST = "operation_without_test": "Every operation and pipeline has an offline test.",
     FIXTURE_NOT_SCRUBBED = "fixture_not_scrubbed": "A fixture a test names exists and carries the scrubbed marker.",
     TOOL_NAME_SCHEME = "tool_name_scheme": "A tool name starts with the target's name, then its module where the target has modules.",
@@ -75,15 +80,11 @@ kernel_codes! {
     PLAN_NOT_ENCODABLE = "plan_not_encodable": "The plan holds together and encodes.",
 }
 
-/// The lint code for one of the constants above.
+/// The lint code for one of the constants above, each of which is checked
+/// when the crate is built.
 #[must_use]
-pub(crate) fn kernel(code: &'static str) -> LintCode {
-    // `a2m-core` gives `LintCode` no constructor that is checked when the
-    // crate is built, as `FailureCode::fixed` is. Every caller passes one of
-    // the constants above, and the test below makes a code of each, so this
-    // cannot fail in a build whose tests pass.
-    #[allow(clippy::expect_used)]
-    LintCode::new(code).expect("a kernel lint code is well formed")
+pub(crate) const fn kernel(code: &'static str) -> LintCode {
+    LintCode::fixed(code)
 }
 
 #[cfg(test)]

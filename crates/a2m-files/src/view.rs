@@ -87,6 +87,10 @@ pub(crate) struct Model {
     pub entries: BTreeMap<(FileKindName, SurfaceKind), Vec<Located<Doc>>>,
     pub owners: BTreeMap<(FileKindName, SurfaceKind), String>,
     pub sections: Vec<PackSection>,
+    /// The names pack documents define, by file kind and surface kind.
+    pub defined: BTreeMap<(FileKindName, SurfaceKind), Vec<String>>,
+    /// `defaults.timeouts` of `target.yaml`, in milliseconds by name.
+    pub default_timeouts: BTreeMap<String, u32>,
     pub exprs: RefCell<ExprTable>,
 }
 
@@ -299,6 +303,15 @@ impl<'a> TargetView<'a> {
     #[must_use]
     pub fn field_type(&self, name: &str) -> Option<FieldTypeView<'a>> {
         self.model.field_type(name)
+    }
+
+    /// A timeout the target states under `defaults.timeouts`, in
+    /// milliseconds. A lowering gives it to a step that states none of its
+    /// own, so the plan holds every step's timeout and the engine applies no
+    /// default.
+    #[must_use]
+    pub fn default_timeout_ms(&self, name: &str) -> Option<u32> {
+        self.model.default_timeouts.get(name).copied()
     }
 }
 

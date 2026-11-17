@@ -39,7 +39,7 @@ Waiting for work by long poll is how established workflow systems connect their 
 | `session-state` | Save a session's encrypted state to the vault |
 | `bye` | Announce a planned stop |
 
-A directive is `continue`, `cancel`, or `drain`.
+A directive is `continue`, `cancel`, `drain`, or `pause`. `pause` is what a job hears while a kill switch covers it: stop at the next commit point and leave the run resumable ([decision 0093](../../decisions/0093-the-schedulers-interface-as-building-it-settled-it.md)).
 
 ## Matching work to runners
 

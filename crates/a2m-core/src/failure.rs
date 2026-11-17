@@ -226,10 +226,7 @@ impl From<InvalidDigest> for Failure {
 
 impl From<InvalidName> for Failure {
     fn from(error: InvalidName) -> Self {
-        let next_step = format!(
-            "Write the {} name in lowercase, such as `page_http`.",
-            error.kind()
-        );
+        let next_step = error.next_step();
         Self::new(
             FailureClass::Input,
             FailureCode::SCHEMA_INVALID,

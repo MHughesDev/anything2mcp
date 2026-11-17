@@ -200,18 +200,18 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 
 | Class | Example codes |
 | --- | --- |
-| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared` |
+| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled` |
 | `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch` |
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
 | `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `storage_full`, `engine_degraded`, `randomness_unavailable` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable` |
 
 ## Command line
 

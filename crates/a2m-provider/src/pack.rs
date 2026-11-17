@@ -335,7 +335,11 @@ impl<'a> Registrar<'a> {
     pub fn compiler(&mut self, registrations: CompilerRegistrations) -> Result<(), Failure> {
         let manifest = self.manifest;
         for spec in &registrations.surface_kinds {
-            if !manifest.surface_kinds.iter().any(|kind| kind.name == spec.kind) {
+            if !manifest
+                .surface_kinds
+                .iter()
+                .any(|kind| kind.name == spec.kind)
+            {
                 return Err(self.undeclared(&format!("the surface kind `{}`", spec.kind)));
             }
         }
@@ -378,7 +382,9 @@ impl<'a> Registrar<'a> {
                 .iter()
                 .find(|step| !declared.steps.contains(step))
             {
-                return Err(self.undeclared(&format!("the step kind `{step}` of the mode `{mode}`")));
+                return Err(
+                    self.undeclared(&format!("the step kind `{step}` of the mode `{mode}`"))
+                );
             }
             for (kind, surface_kind) in lowering.reads() {
                 let read = manifest.reads.iter().any(|read| {

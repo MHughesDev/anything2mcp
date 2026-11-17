@@ -73,24 +73,32 @@ plain_name!(
     /// The name of a provider: a pack or a plug-in. It is the name space of
     /// its actions and lint codes, and the key of its settings group. Not to
     /// be confused with the name of an auth provider, which is `a2m-auth`'s.
-    ProviderName, "provider", 32
+    ProviderName,
+    "provider",
+    32
 );
 
 plain_name!(
     /// The name of a root: a folder the kernel resolves, such as `project`.
     /// A manifest and a caller name roots; neither ever names a free path.
-    RootName, "root", 32
+    RootName,
+    "root",
+    32
 );
 
 plain_name!(
     /// A kind of subsystem, such as `browser` or `command`. The supervisor
     /// counts running subsystems by kind.
-    SubsystemKind, "subsystem kind", 32
+    SubsystemKind,
+    "subsystem kind",
+    32
 );
 
 plain_name!(
     /// The name of a discoverer within its provider.
-    DiscovererName, "discoverer", 32
+    DiscovererName,
+    "discoverer",
+    32
 );
 
 /// The name of an action a provider adds: the provider's name, one dot, and
