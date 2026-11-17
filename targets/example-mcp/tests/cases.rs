@@ -287,9 +287,12 @@ fn stdio_a_write_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
     let first = client.request("tools/list", Value::Null)?;
     assert_eq!(first["result"]["tools"].as_array().map(Vec::len), Some(3));
     assert_eq!(names(&client.tools()?), TOOLS);
+    // One tool takes a single free-text string, for the lint that looks for such.
+    let search = &tool(&client.tools()?, "orders_search")?["inputSchema"];
+    assert_eq!(search["properties"], json!({"query": {"type": "string"}}));
     // Listing calls no tool.
     assert!(control.calls()?.is_empty());
-    assert_eq!(control.request_count("tools/list")?, 4);
+    assert_eq!(control.request_count("tools/list")?, 7);
 
     let answer = client.call("orders_update", update_note("  Dock 4  "))?;
     assert_eq!(answer["result"]["isError"], false);
@@ -885,7 +888,7 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     let refused = nobody.send(&message).await?;
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
     let challenge = refused.headers()["www-authenticate"].to_str()?.to_owned();
-    let metadata = format!("{}/.well-known/oauth-protected-resource", stand.base());
+    let metadata = format!("{}/.well-known/oauth-protected-resource/mcp", stand.base());
     assert_eq!(
         challenge,
         format!("Bearer resource_metadata=\"{metadata}\"")

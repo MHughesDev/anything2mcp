@@ -27,8 +27,12 @@ use crate::state::{Backing, Conn, Credential, State, Transport};
 
 /// The path of the MCP endpoint.
 pub const ENDPOINT_PATH: &str = "/mcp";
-/// The path of the document a 401 answer points to.
-pub const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
+/// The path of the document a 401 answer points to: the well-known path for
+/// a resource whose own path is `/mcp`. The same document is served at
+/// [`RESOURCE_METADATA_ROOT_PATH`].
+pub const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
+/// The well-known path with no resource path after it.
+pub const RESOURCE_METADATA_ROOT_PATH: &str = "/.well-known/oauth-protected-resource";
 /// The header that carries the session identifier.
 pub const SESSION_HEADER: &str = "mcp-session-id";
 
@@ -334,6 +338,7 @@ pub(crate) async fn serve(listener: TcpListener, backing: Arc<Backing>) -> io::R
             post(post_message).get(no_stream).delete(end_session),
         )
         .route(RESOURCE_METADATA_PATH, get(resource_metadata))
+        .route(RESOURCE_METADATA_ROOT_PATH, get(resource_metadata))
         .with_state(app);
     axum::serve(
         StandListener(listener),
