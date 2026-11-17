@@ -44,4 +44,4 @@ Yank it from each registry, say why in the changelog, and publish a fixed versio
 
 ## Who may release
 
-A maintainer, or an agent working for one, once the checklist above passes. An agent starts the workflow by hand; it never handles a registry token ([AGENTS.md](AGENTS.md)).
+A maintainer, or an agent working for one whose access allows it, once the checklist above passes. An agent never handles a registry token ([AGENTS.md](AGENTS.md)). An agent whose access cannot start a workflow or push a tag prepares the release and says so; a maintainer then starts it.

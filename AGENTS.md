@@ -77,7 +77,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 These act outside this repository and cannot be taken back.
 
 - **Touch a real application, account, or credential.** Rule 10. Real systems are tried at the end, with the owner.
-- **Handle a registry token.** Never ask for one to be pasted into a conversation, and never put one in a file. Releases go out only through `.github/workflows/release.yml` with short-lived credentials; see [docs/plan/publishing-setup.md](docs/plan/publishing-setup.md) and [RELEASING.md](RELEASING.md).
+- **Handle a registry token.** Never ask for one to be pasted into a conversation, and never put one in a file. Releases go out only through `.github/workflows/release.yml` with short-lived credentials, started by a version tag or by hand; see [docs/plan/publishing-setup.md](docs/plan/publishing-setup.md) and [RELEASING.md](RELEASING.md).
 - **Add a dependency under a licence that is not permissive.** The list in `deny.toml` is closed. A new permissive licence is added on purpose, with a line in the journal; anything else is not added.
 
 Everything else is yours to decide and record.
@@ -90,7 +90,7 @@ Everything else is yours to decide and record.
 - **Errors.** Library crates return typed errors that map to exactly one failure class and code from the technical reference. No `unwrap` or `expect` in library code outside tests. No panics across crate boundaries.
 - **Unsafe.** None without a comment explaining why it is sound and a test that exercises it.
 - **Async.** Tokio. No blocking calls on async threads. No fixed sleeps as waits; wait on a named condition.
-- **Types over strings.** Modes, effect classes, failure classes, evidence levels, and statuses are enums. Secrets are a wrapper type that cannot be printed or serialized.
+- **Types over strings.** Archetypes, effect classes, hazards, failure classes, evidence levels, and statuses are enums in `a2m-core`, and a test holds their names to the documents. A mode and a failure code are checked names, because packs and crates bring their own ([decision 0060](docs/decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Secrets are a wrapper type that cannot be printed or serialized.
 - **Numbers.** Decimal arithmetic for any business value. Never floats for comparison.
 - **Public interfaces.** The driver, auth-provider, source-reader, discoverer, and plug-in interfaces, and the provider manifest, are public contracts; changing one needs a decision record.
 - **Naming.** Tool names follow `{target}_{module}_{object}_{verb}`. Built-in tools are prefixed `a2m_`. Commands are subcommands of `anything2mcp`; `a2m` is a short name for the same program, and documents use the full one.

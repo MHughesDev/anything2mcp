@@ -425,7 +425,7 @@ Mechanical, and proven by the audit script and CI. No behavior changes. **Packag
 
 ### Stage B: the kernel's contracts
 
-This is slice 0.6 of core first, widened. It produces types and schemas, with tests, and no engine.
+This is slice 0.6 of core first, widened. It produces types and schemas, with tests, and no engine. **B1 was done on 2026-11-17, with the evidence levels of B2.** A mode is a registered name and not an enum ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). The subject identity of B2 remains.
 
 | # | Package | Depends on | Proof | Agent |
 | --- | --- | --- | --- | --- |

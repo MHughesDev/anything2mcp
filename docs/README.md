@@ -8,7 +8,7 @@ Everything known about Anything2MCP: the design, the reasons, the evidence, and 
 | --- | --- | --- |
 | [spec/](spec/README.md) | The system design, one section per file | 67 sections |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), [settings examples](reference/settings-example.md), and a [walkthrough](reference/walkthrough.md) | 8 |
-| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 59 |
+| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 60 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 31 open |
 | [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 5 |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 16 |

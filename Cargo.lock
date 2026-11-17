@@ -17,6 +17,10 @@ version = "0.0.1"
 [[package]]
 name = "a2m-core"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "a2m-engine"

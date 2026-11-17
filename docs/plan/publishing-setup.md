@@ -49,7 +49,7 @@ The design calls for short-lived credentials issued to the release pipeline, nev
 - **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the placeholder to be published as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)).
 - After a publish, check `pip install anything2mcp` in a clean environment and mark the name as held in the table above.
 
-A build session cannot push a tag. It can start the workflow by hand, which is why the second route exists.
+A build session could do neither on 2026-11-17: its access to GitHub does not let it push a tag or start a workflow. Both routes are therefore the owner's for now. The manual start needs no terminal: Actions, Release, Run workflow, on `main`, with the version typed in.
 
 ## Tokens
 

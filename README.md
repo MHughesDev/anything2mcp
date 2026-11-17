@@ -66,7 +66,7 @@ The [catalog of surface kinds](docs/spec/62-catalog-of-surface-kinds.md) has the
 
 ## What works today
 
-- A Cargo workspace of 24 crates with the kernel, the packs, and the product in enforced layers. They are empty apart from the product crate, whose `anything2mcp` command reports its version.
+- A Cargo workspace of 24 crates with the kernel, the packs, and the product in enforced layers. The first kernel crate holds the shared vocabulary and a secret type that cannot be printed; the product crate's `anything2mcp` command reports its version; the rest are empty.
 - A test application with a web interface, a JSON interface, a control interface that reports ground truth, and injectable faults.
 - Continuous checks on three operating systems: formatting, lints, build, tests, a closed list of dependency licences, and an audit that keeps the documents and the crates consistent with each other.
 - The design: 67 sections, the decisions behind them, the research they rest on, and a register of the bets still to be tested.

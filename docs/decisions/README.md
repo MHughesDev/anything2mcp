@@ -69,3 +69,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0057 | [The licence is MIT](0057-the-licence-is-mit.md) | Accepted (owner decision) |
 | 0058 | [A toolkit for developers, with no catalog and no preferred agent](0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) | Accepted (owner decision) |
 | 0059 | [The scout drafts and proves reads by itself, and three things stay with the developer](0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md) | Accepted (design decision) |
+| 0060 | [A mode is a registered name, and the archetype is the closed type](0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md) | Accepted (design decision) |
