@@ -135,6 +135,10 @@ Contracts that the signatures do not show:
 - **The plan stores text.** A `PlanExpr` holds canonical source, and `Program::load` refuses text that is not in the canonical spelling, so a plan's expression is exactly what the compiler wrote. If reparsing misses the plan-load budget, a cached form is added behind the same type.
 - **Host functions are the kernel's.** A pack cannot add one. A conversion the library lacks is added here, with tests, or done in a reviewed plug-in ([section 205](../../spec/2-kernel/205-target-files.md)).
 - **A failure never carries a value.** A run-time failure names the function or operator and the kind of problem. The caller that knows the expression's name in the plan adds it.
+- **No text stands for two choices** ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)). A value read from a system may be a choice's stored code or its label, so a code list is refused, when its expression is compiled and again when a plan's expression is loaded, where two labels are alike, two codes are alike, or a code is the label of another choice; "alike" is form C with whitespace collapsed. A code may be its own label. Without the rule, a write of the code `B` that failed on a record that still holds `A`, shown by its label `B`, would read back as verified. `code_for` holds the same rule where the value is read.
+- **A date format is read without guessing.** A part of one or two digits (`M`, `D`, `H`, `h`) may end the format or stand before a separator, a month's name, or `A`; a format in which digits follow it, such as `YYYYMD`, is refused, because `2026111` would be two days at once.
+- **A currency symbol is read only for a currency it is written for.** The table is fixed: the dollar sign for the dollar currencies, the pound sign for the pounds, the yen sign for `JPY` and `CNY`, and one currency each for the rest. Another currency's symbol stops, as another currency's code does; the cent sign and the general currency sign stop for every currency. This supersedes the words "one currency symbol" in [decision 0073](../../decisions/0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md).
+- **Text compared without case is compared by its capital form.** `as_text` with `insensitive`, and a boolean's two labels, are folded: the lower case of the upper case, in form C. A system that shows text in capitals turns one letter into two, and `Straße` and `STRASSE` are then one text. The function `lower` is unchanged. A character that is not seen, such as a soft hyphen or a zero-width space, is compared as written: a system that strips one gives a mismatch, which stops, and never a match.
 
 ### The language
 
@@ -198,6 +202,9 @@ Run-time failures name the host function or operator, never the value that cause
 | A value the system rounds or reformats compares equal under its field type's rule, and a different value does not | `a_value_the_system_rounds_or_reformats_compares_equal_and_another_does_not`, over every base |
 | A runaway expression stops with a named failure | `the_cost_limit_stops_a_runaway_with_a_named_failure` |
 | A plan's expression loads only when it is what the compiler wrote | `a_plan_expression_loads_only_when_it_is_what_the_compiler_wrote` |
+| A choice read back never stands for two choices: the intended value and a stale one never agree | `a_choice_read_back_never_stands_for_two_choices`; `functions::tests`, for the rule where the value is read |
+| A date format whose parts run together, another currency's symbol, and a code list in which a text stands for two choices are refused | `a_rule_the_library_does_not_know_is_refused_when_the_field_type_compiles`, `a_value_a_rule_cannot_read_stops_and_is_never_guessed`; `dates::tests`, `numbers::tests` |
+| Text a system shows in capitals compares equal to the text it was made from, and folding twice changes nothing | `text::tests`, and the case in `a_value_the_system_rounds_or_reformats_compares_equal_and_another_does_not` |
 
 ## Build order
 

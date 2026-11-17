@@ -157,10 +157,16 @@ mod tests {
     #[test]
     fn character_references_are_written_out_and_unknown_ones_are_left() {
         assert_eq!(decode_references("a&amp;b"), "a&b");
-        assert_eq!(decode_references("&lt;b&gt; &quot;x&quot; &apos;"), "<b> \"x\" '");
+        assert_eq!(
+            decode_references("&lt;b&gt; &quot;x&quot; &apos;"),
+            "<b> \"x\" '"
+        );
         assert_eq!(decode_references("k&#38;v &#x26; &#X3d;"), "k&v & =");
         // Not a reference, not closed, not a character, or not known.
-        assert_eq!(decode_references("a & b; &; &#; &#xZZ; &copy; &#0;"), "a & b; &; &#; &#xZZ; &copy; &#0;");
+        assert_eq!(
+            decode_references("a & b; &; &#; &#xZZ; &copy; &#0;"),
+            "a & b; &; &#; &#xZZ; &copy; &#0;"
+        );
         assert_eq!(decode_references("ends with &amp"), "ends with &amp");
         assert_eq!(decode_references("naïve &amp; café"), "naïve & café");
     }

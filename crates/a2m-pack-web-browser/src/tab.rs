@@ -2227,9 +2227,9 @@ pub(crate) async fn watch_windows(
                     return_by_value: true,
                     await_promise: false,
                 };
-                // On every document it would load, in the empty one it
-                // has now, and again once it runs, since a window that
-                // waits may have no script context to take it.
+                // On every document it would load, and, once it runs, in
+                // the empty one it has now: a window that waits answers no
+                // script (measured).
                 let _ = client.call(session, &PageEnable {}, deadline).await;
                 let _ = client
                     .call(
@@ -2241,7 +2241,6 @@ pub(crate) async fn watch_windows(
                         deadline,
                     )
                     .await;
-                let _ = client.call(session, &refuse, deadline).await;
                 let _ = client.call(session, &RunIfWaiting {}, deadline).await;
                 let _ = client.call(session, &refuse, deadline).await;
             }

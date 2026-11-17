@@ -1928,6 +1928,30 @@ fn a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic() {
         assert_eq!(warning.level, Level::Warning);
         assert!(!problems.to_string().contains(value), "{key}: {problems}");
     }
+    // A fixture's recorded file is looked through as well, by line.
+    for recording in [
+        "GET /orders HTTP/1.1\nauthorization: Bearer Example-Token-For-Tests-0009\n\n",
+        "{\"header\": \"basic RXhhbXBsZTpUb2tlbjAwMTA=\"}",
+        "-----BEGIN EXAMPLE KEY-----\nexample\n",
+    ] {
+        let mut files = example_files();
+        files.push((
+            RelPath::new("fixtures/order_get/exchange.txt").unwrap(),
+            recording.as_bytes().to_vec(),
+        ));
+        let problems = problems_with(&files, &set, CompileMode::Publish);
+        let problem = problems
+            .find("kernel.credential_in_file")
+            .unwrap_or_else(|| panic!("{recording}:\n{problems}"));
+        assert_eq!(problem.at.file.as_str(), "fixtures/order_get/exchange.txt");
+        assert!(!problems.to_string().contains("0009"), "{problems}");
+    }
+    let mut files = example_files();
+    files.push((
+        RelPath::new("fixtures/order_get/exchange.txt").unwrap(),
+        b"GET /orders HTTP/1.1\naccept: application/json\nx-note: basic order data\n".to_vec(),
+    ));
+    assert!(!problems_with(&files, &set, CompileMode::Publish).has_errors());
     // A secret written as a number under the word itself.
     let pin = with("pin: 48210007");
     assert!(pin.find("kernel.credential_suspected").is_some(), "{pin}");

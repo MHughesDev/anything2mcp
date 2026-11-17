@@ -183,7 +183,10 @@ impl Options {
     pub(super) fn with_user_settings(text: &str) -> Self {
         Self {
             settings: Settings::load(&a2m_actions::Sources {
-                user: Some(a2m_actions::settings::SourceFile::new("settings.toml", text)),
+                user: Some(a2m_actions::settings::SourceFile::new(
+                    "settings.toml",
+                    text,
+                )),
                 ..a2m_actions::Sources::none()
             })
             .unwrap(),
@@ -846,6 +849,22 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     assert_eq!(status["runner"]["running"], true);
     let doctor = world.ok("doctor.run", json!({})).await;
     assert_eq!(doctor["state"], "ok");
+    // The doctor says whether a person can be proved present here: this
+    // test's surface does not say, which is reported as unknown and never
+    // as a prompt that is there.
+    let presence = doctor["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check"] == "presence")
+        .expect("the doctor reports on the presence prompt");
+    assert_eq!(presence["state"], "unknown", "{presence}");
+    assert!(
+        presence["detail"]
+            .as_str()
+            .unwrap()
+            .contains("not_available")
+    );
 
     let docs = world.ok("docs.get", json!({"topic": "tool.call"})).await;
     assert!(

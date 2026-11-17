@@ -152,7 +152,8 @@ mod tests {
             max_bytes: 10,
             keep: 1,
         };
-        let mode = |path: &std::path::Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let mode =
+            |path: &std::path::Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         let mut file = RotatingFile::open(&path, rotation).unwrap();
         file.write_line(b"12345678\n").unwrap();
         assert_eq!(mode(&path), 0o600);

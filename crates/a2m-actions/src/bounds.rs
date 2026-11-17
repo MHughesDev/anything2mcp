@@ -178,12 +178,30 @@ mod tests {
     #[test]
     fn a_protected_setting_the_policy_engine_does_not_work_by_is_refused_by_name() {
         for (text, key) in [
-            ("[policy]\nmax_records_per_run = 5\n", "policy.max_records_per_run"),
-            ("[policy]\napproval_window_minutes = 5\n", "policy.approval_window_minutes"),
-            ("[policy]\napprove_writes = \"named_approver\"\n", "policy.approve_writes"),
-            ("[policy]\nagent_effect_ceiling = \"read\"\n", "policy.agent_effect_ceiling"),
-            ("[policy]\nwrites_outside_tests = false\n", "policy.writes_outside_tests"),
-            ("[policy]\ntwo_person_irreversible = true\n", "policy.two_person_irreversible"),
+            (
+                "[policy]\nmax_records_per_run = 5\n",
+                "policy.max_records_per_run",
+            ),
+            (
+                "[policy]\napproval_window_minutes = 5\n",
+                "policy.approval_window_minutes",
+            ),
+            (
+                "[policy]\napprove_writes = \"named_approver\"\n",
+                "policy.approve_writes",
+            ),
+            (
+                "[policy]\nagent_effect_ceiling = \"read\"\n",
+                "policy.agent_effect_ceiling",
+            ),
+            (
+                "[policy]\nwrites_outside_tests = false\n",
+                "policy.writes_outside_tests",
+            ),
+            (
+                "[policy]\ntwo_person_irreversible = true\n",
+                "policy.two_person_irreversible",
+            ),
         ] {
             let refused = not_in_force(&user(text), &local());
             assert_eq!(refused.len(), 1, "{key}");
@@ -196,7 +214,10 @@ mod tests {
         // The two settings that are carried are never refused.
         let carried = user("[policy]\npre_approval = false\npreview_freshness_seconds = 5\n");
         assert!(not_in_force(&carried, &local()).is_empty());
-        assert_eq!(carried.get("policy.pre_approval"), Some(&Value::Bool(false)));
+        assert_eq!(
+            carried.get("policy.pre_approval"),
+            Some(&Value::Bool(false))
+        );
     }
 
     #[test]

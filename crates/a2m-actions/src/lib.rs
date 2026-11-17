@@ -60,8 +60,8 @@ pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, S
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
     ApprovalAsk, ApprovalDesk, ApprovalPreview, PRESENCE_WINDOW_MS, PREVIEW_RECORDS,
-    PREVIEW_VALUE_CHARS, PersonSurface, PresenceAsk, PresenceProof, PreviewField, PreviewRecord, SessionAsk, SignInAsk,
-    SurfaceLink, WaitingApproval,
+    PREVIEW_VALUE_CHARS, PersonSurface, PresenceAsk, PresenceProof, PresenceReport, PreviewField,
+    PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;

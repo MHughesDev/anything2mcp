@@ -358,7 +358,8 @@ impl Control for InProcessControl {
             let diff = *diff;
             // Unknown is off: only the setting read as true lets a
             // pre-approval begin a write.
-            let pre_approval = self.kernel.settings().flag(crate::bounds::PRE_APPROVAL) == Some(true);
+            let pre_approval =
+                self.kernel.settings().flag(crate::bounds::PRE_APPROVAL) == Some(true);
             let module = self
                 .plan
                 .tool(&self.run.tool_name)
@@ -368,14 +369,17 @@ impl Control for InProcessControl {
             // without a person, so the question must carry it. A tool the
             // plan does not hold is asked about with no record count, and
             // no pre-approval rule covers a run of unknown size.
-            let hazard = self.plan.tool(&self.run.tool_name).and_then(|tool| {
-                match tool.runs {
+            let hazard = self
+                .plan
+                .tool(&self.run.tool_name)
+                .and_then(|tool| match tool.runs {
                     ToolRuns::Operation(index) => {
                         self.plan.operation(index).map(|found| found.hazard)
                     }
-                    ToolRuns::Pipeline(index) => self.plan.pipeline(index).map(|found| found.hazard),
-                }
-            });
+                    ToolRuns::Pipeline(index) => {
+                        self.plan.pipeline(index).map(|found| found.hazard)
+                    }
+                });
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
             context.hazard = hazard.unwrap_or(a2m_core::Hazard::None);

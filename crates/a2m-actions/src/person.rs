@@ -221,6 +221,44 @@ const fn is_word(text: &str) -> bool {
     true
 }
 
+/// What a person surface's presence prompt can do on this machine now, for
+/// `doctor.run`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresenceReport {
+    /// The kind of prompt: a word of the surface's, such as the name of the
+    /// operating system's own prompt, or `not_available`.
+    pub kind: &'static str,
+    /// Why it stands as it does, in a word of the surface's; `unknown`
+    /// when the surface does not say.
+    pub reason: &'static str,
+    /// What this means for approvals here, in a sentence.
+    pub message: String,
+    /// What to do about it; empty when nothing needs doing.
+    pub fix: String,
+}
+
+impl PresenceReport {
+    /// The word for a machine, or a surface, with no presence prompt.
+    pub const NOT_AVAILABLE: &'static str = "not_available";
+
+    /// The report of a surface that does not say what its prompt can do.
+    #[must_use]
+    pub fn unknown() -> Self {
+        Self {
+            kind: Self::NOT_AVAILABLE,
+            reason: "unknown",
+            message: "This engine's person surface does not say whether it can ask for proof that a person is present.".to_owned(),
+            fix: "Run the engine through `anything2mcp`, whose surface raises the operating system's own prompt.".to_owned(),
+        }
+    }
+
+    /// Whether a prompt is there that can prove a person present.
+    #[must_use]
+    pub fn available(&self) -> bool {
+        self.kind != Self::NOT_AVAILABLE
+    }
+}
+
 /// What a role supplies so that a person can be reached.
 ///
 /// Every method returns a boxed future, so that the trait can be used as a
@@ -246,6 +284,13 @@ pub trait PersonSurface: Send + Sync {
     /// Carries a request of the session keeper to the session's own person
     /// and waits for the answer.
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer>;
+
+    /// What this surface's presence prompt can do on this machine now.
+    /// `doctor.run` reports it. A surface that does not say reports
+    /// [`PresenceReport::unknown`]. Asking raises no prompt.
+    fn presence(&self) -> BoxFuture<'_, PresenceReport> {
+        Box::pin(async { PresenceReport::unknown() })
+    }
 
     /// The address a person's browser is sent back to after a link, where
     /// the surface listens: a loopback address on one machine, the

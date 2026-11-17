@@ -185,6 +185,15 @@ handler!(
                     "A valid policy set is in force.",
                     "",
                 )
+            } else if let Some(refused) = kernel.inner.not_in_force.first() {
+                // A protected setting says what the policy engine does not
+                // work by: the engine serves nothing until it is taken out.
+                check(
+                    "policy",
+                    DoctorState::ConfigDrift,
+                    refused.failure.message(),
+                    refused.failure.next_step(),
+                )
             } else {
                 check(
                     "policy",
@@ -194,6 +203,25 @@ handler!(
                 )
             },
         );
+        // Whether a person can be proved present here, which an approval,
+        // a publish, and the release of a kill switch need. The surface is
+        // asked what its prompt can do; no prompt is raised.
+        let presence = kernel.person().presence().await;
+        checks.push(check(
+            "presence",
+            if presence.available() {
+                DoctorState::Healthy
+            } else if presence.reason == "unknown" {
+                DoctorState::Unknown
+            } else {
+                DoctorState::ComponentMissing
+            },
+            format!(
+                "{} (prompt: {}, {})",
+                presence.message, presence.kind, presence.reason
+            ),
+            presence.fix,
+        ));
 
         // The providers.
         for provider in kernel.providers().listing() {

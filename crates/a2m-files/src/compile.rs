@@ -3928,6 +3928,49 @@ fn credential_shape(text: &str) -> Option<&'static str> {
         .then_some("it has the shape of a signed token")
 }
 
+/// What in a fixture's recorded file is a credential by its shape, and the
+/// line it is on: key material, an authorization header's value, a signed
+/// token. A recording is text a system sent, so it is read by line and by
+/// word, not as a document. Only what is plainly one of the three is found.
+pub(crate) fn recorded_credential(text: &str) -> Option<(u32, &'static str)> {
+    let apart = |c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | ',' | ';' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}'
+            )
+    };
+    for (number, line) in text.lines().enumerate() {
+        let found = if line.contains("-----BEGIN ") {
+            Some("it is key material")
+        } else {
+            let words: Vec<&str> = line.split(apart).filter(|word| !word.is_empty()).collect();
+            let header = words.windows(2).any(|pair| {
+                ["bearer", "basic"].contains(&pair[0].to_ascii_lowercase().as_str())
+                    && pair[1].chars().count() >= 16
+                    && !pair[1].chars().all(|c| c.is_ascii_lowercase())
+            });
+            let signed = words.iter().any(|word| {
+                word.starts_with("eyJ") && word.matches('.').count() == 2 && word.len() >= 40
+            });
+            if header {
+                Some("it is an authorization header's value")
+            } else if signed {
+                Some("it has the shape of a signed token")
+            } else {
+                None
+            }
+        };
+        if let Some(what) = found {
+            return Some((
+                u32::try_from(number).map_or(u32::MAX, |n| n.saturating_add(1)),
+                what,
+            ));
+        }
+    }
+    None
+}
+
 /// Finds the values the credential lint knows: a value under a key whose
 /// name says it is a secret, or may be one, that is not a vault reference;
 /// and text in the shape of a token, under any key. Each is reported by the

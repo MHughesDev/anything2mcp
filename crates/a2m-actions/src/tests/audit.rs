@@ -244,7 +244,13 @@ async fn a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run() {
         .unwrap();
     // The runner says hello and its loop is stopped, so that it is
     // enrolled and claims nothing.
-    world.kernel.start_runner_loop(4).await.unwrap().stop().await;
+    world
+        .kernel
+        .start_runner_loop(4)
+        .await
+        .unwrap()
+        .stop()
+        .await;
     let world = &world;
     let (unparsed, unparsed_id) = world.queue(ORDER_GET, json!({"order_id": "A-100"})).await;
     let (missing, missing_id) = world.queue(ORDER_GET, json!({"order_id": "A-101"})).await;
@@ -257,7 +263,11 @@ async fn a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run() {
         unparsed_id,
     )
     .await;
-    spoil("DELETE FROM actions_run_calls WHERE input_hash = ?1", missing_id).await;
+    spoil(
+        "DELETE FROM actions_run_calls WHERE input_hash = ?1",
+        missing_id,
+    )
+    .await;
     spoil(
         "UPDATE actions_run_calls SET caller = '{}' WHERE input_hash = ?1",
         write_id,
@@ -265,7 +275,11 @@ async fn a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run() {
     .await;
 
     world.kernel.start_runner_loop(4).await.unwrap();
-    for (run, id) in [(unparsed, unparsed_id), (missing, missing_id), (write, write_id)] {
+    for (run, id) in [
+        (unparsed, unparsed_id),
+        (missing, missing_id),
+        (write, write_id),
+    ] {
         let row = world
             .kernel
             .wait_for_rest(id, std::time::Duration::from_secs(30))
@@ -304,7 +318,11 @@ async fn the_desk_takes_a_proof_only_of_the_approver_and_of_now_and_records_what
     // a time that has not come.
     for (proof, why) in [
         (
-            PresenceProof::new(PresenceCheck::OsPrompt, PrincipalId::from_bytes([9; 16]), at(now)),
+            PresenceProof::new(
+                PresenceCheck::OsPrompt,
+                PrincipalId::from_bytes([9; 16]),
+                at(now),
+            ),
             "another person",
         ),
         (
@@ -321,7 +339,13 @@ async fn the_desk_takes_a_proof_only_of_the_approver_and_of_now_and_records_what
         ),
     ] {
         let failure = desk
-            .approve(id, waiting.diff_hash, person.clone(), Channel::LocalPrompt, proof)
+            .approve(
+                id,
+                waiting.diff_hash,
+                person.clone(),
+                Channel::LocalPrompt,
+                proof,
+            )
             .await
             .unwrap_err();
         assert_eq!((failure.class(), failure.code().to_string()), refused);
@@ -338,9 +362,15 @@ async fn the_desk_takes_a_proof_only_of_the_approver_and_of_now_and_records_what
     assert_eq!(proof.prompt(), Some("example_prompt"));
     // A name that is not a word is not kept.
     assert_eq!(proof.naming("Not a word!").prompt(), None);
-    desk.approve(id, waiting.diff_hash, person.clone(), Channel::LocalPrompt, proof)
-        .await
-        .unwrap();
+    desk.approve(
+        id,
+        waiting.diff_hash,
+        person.clone(),
+        Channel::LocalPrompt,
+        proof,
+    )
+    .await
+    .unwrap();
     let done = world.call("run.resume", json!({"run_id": run})).await;
     assert_eq!(status(&done), "completed", "{done:?}");
     assert_eq!(world.app.write_count("A-102", "L-450").await.unwrap(), 1);
@@ -367,10 +397,20 @@ async fn the_dispatcher_takes_a_proof_of_presence_only_of_its_caller_and_of_now(
     let world = World::ready().await;
     let person = world.person();
     let set = world
-        .call_as(&person, "killswitch.set", json!({"scope": "everything", "on": true}))
+        .call_as(
+            &person,
+            "killswitch.set",
+            json!({"scope": "everything", "on": true}),
+        )
         .await;
     assert!(set.ok, "{set:?}");
-    let release = || world.call_as(&person, "killswitch.set", json!({"scope": "everything", "on": false}));
+    let release = || {
+        world.call_as(
+            &person,
+            "killswitch.set",
+            json!({"scope": "everything", "on": false}),
+        )
+    };
     let refused = (FailureClass::Policy, "presence_required".to_owned());
 
     // A surface that hands back a proof it kept from ten minutes ago.
@@ -385,7 +425,10 @@ async fn the_dispatcher_takes_a_proof_of_presence_only_of_its_caller_and_of_now(
     *world.surface.proof_of.lock().unwrap() = None;
     // The switch is still set: work is refused.
     let held = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert_eq!(code_of(&held).1, "kill_switch_on", "{held:?}");
 
@@ -393,7 +436,10 @@ async fn the_dispatcher_takes_a_proof_of_presence_only_of_its_caller_and_of_now(
     let released = release().await;
     assert!(released.ok, "{released:?}");
     let read = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(read.ok, "{read:?}");
     // Setting and releasing are in the audit log, each written with the
@@ -425,11 +471,16 @@ async fn an_act_that_is_a_persons_when_it_loosens_is_asked_for_by_the_dispatcher
 
     // Setting a kill switch tightens, and an agent may: nobody is asked.
     // Releasing one loosens.
-    let on = world.call("killswitch.set", json!({"scope": "everything", "on": true})).await;
+    let on = world
+        .call("killswitch.set", json!({"scope": "everything", "on": true}))
+        .await;
     assert!(on.ok, "{on:?}");
     assert_eq!(world.surface.presence_asked.load(Ordering::SeqCst), 1);
     let off = world
-        .call("killswitch.set", json!({"scope": "everything", "on": false}))
+        .call(
+            "killswitch.set",
+            json!({"scope": "everything", "on": false}),
+        )
         .await;
     assert_eq!(code_of(&off).1, "person_required", "{off:?}");
     world.kernel.close(CloseReason::Asked).await;
@@ -438,15 +489,37 @@ async fn an_act_that_is_a_persons_when_it_loosens_is_asked_for_by_the_dispatcher
 // ---- A2: the protected settings and what is in force ---------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_shown_as_in_force() {
+async fn a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_shown_as_in_force()
+{
     for (text, key) in [
-        ("[policy]\nmax_records_per_run = 5\n", "policy.max_records_per_run"),
-        ("[policy]\nagent_effect_ceiling = \"read\"\n", "policy.agent_effect_ceiling"),
-        ("[policy]\nwrites_outside_tests = false\n", "policy.writes_outside_tests"),
-        ("[policy]\napproval_window_minutes = 1\n", "policy.approval_window_minutes"),
-        ("[policy]\ntwo_person_irreversible = true\n", "policy.two_person_irreversible"),
-        ("[profile]\npreset = \"cautious\"\n", "policy.max_records_per_run"),
-        ("[profile]\npreset = \"ci\"\n", "policy.writes_outside_tests"),
+        (
+            "[policy]\nmax_records_per_run = 5\n",
+            "policy.max_records_per_run",
+        ),
+        (
+            "[policy]\nagent_effect_ceiling = \"read\"\n",
+            "policy.agent_effect_ceiling",
+        ),
+        (
+            "[policy]\nwrites_outside_tests = false\n",
+            "policy.writes_outside_tests",
+        ),
+        (
+            "[policy]\napproval_window_minutes = 1\n",
+            "policy.approval_window_minutes",
+        ),
+        (
+            "[policy]\ntwo_person_irreversible = true\n",
+            "policy.two_person_irreversible",
+        ),
+        (
+            "[profile]\npreset = \"cautious\"\n",
+            "policy.max_records_per_run",
+        ),
+        (
+            "[profile]\npreset = \"ci\"\n",
+            "policy.writes_outside_tests",
+        ),
     ] {
         let world = world(Options::with_user_settings(text)).await;
         let health = world.kernel.health();
@@ -459,21 +532,40 @@ async fn a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_
             "{key}: {health:?}"
         );
         // Nothing is served under a limit that is reported and not kept.
-        let call = world
-            .call("tool.search", json!({}))
-            .await;
-        assert_eq!(code_of(&call), (FailureClass::Busy, "engine_degraded".to_owned()));
+        let call = world.call("tool.search", json!({})).await;
+        assert_eq!(
+            code_of(&call),
+            (FailureClass::Busy, "engine_degraded".to_owned())
+        );
         // What the engine says of itself names the setting, and
         // `config.show` marks it as not in force.
         let status = world.ok("engine.status", json!({})).await;
         assert!(status.to_string().contains(key), "{status}");
+        let doctor = world.ok("doctor.run", json!({})).await;
+        let policy = doctor["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["check"] == "policy")
+            .unwrap();
+        assert_eq!(policy["state"], "config_drift", "{policy}");
         let shown = world
             .kernel
-            .dispatch(Request::new("config.show", json!({"key": key}), world.person()))
+            .dispatch(Request::new(
+                "config.show",
+                json!({"key": key}),
+                world.person(),
+            ))
             .await;
         assert!(shown.ok, "{shown:?}");
-        assert_eq!(shown.result.as_ref().unwrap()["settings"][0]["in_force"], false);
-        assert!(shown.warnings.iter().any(|warning| warning.contains(key)), "{shown:?}");
+        assert_eq!(
+            shown.result.as_ref().unwrap()["settings"][0]["in_force"],
+            false
+        );
+        assert!(
+            shown.warnings.iter().any(|warning| warning.contains(key)),
+            "{shown:?}"
+        );
         world.kernel.close(CloseReason::Asked).await;
     }
 }
@@ -529,18 +621,28 @@ async fn a_pre_approved_write_needs_no_person_only_where_the_setting_allows_it()
 
     // The setting off, the same rule in the policy set: the write waits
     // for a person, nothing is written, and the run's event says why.
-    let off = World::ready_with(Options::with_user_settings("[policy]\npre_approval = false\n")).await;
+    let off = World::ready_with(Options::with_user_settings(
+        "[policy]\npre_approval = false\n",
+    ))
+    .await;
     off.publish(rule).await;
     let rested = off.call("tool.call", write).await;
     assert_eq!(status(&rested), "needs_approval", "{rested:?}");
     assert_eq!(rested.exit, ExitClass::PersonNeeded);
     assert_eq!(off.app.write_count("A-102", "L-460").await.unwrap(), 0);
-    let run = rested.result.unwrap()["run_id"].as_str().unwrap().to_owned();
+    let run = rested.result.unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let trace = off
         .call_as(&off.person(), "trace.show", json!({"run_id": run}))
         .await;
     assert!(
-        trace.result.unwrap().to_string().contains("policy.pre_approval"),
+        trace
+            .result
+            .unwrap()
+            .to_string()
+            .contains("policy.pre_approval"),
         "the need event names the setting"
     );
     // A person's approval carries it through, as for any write.
@@ -571,7 +673,10 @@ async fn a_write_the_policy_engine_cannot_decide_is_stopped_and_no_approval_carr
         })
         .await;
     let stopped = world
-        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": item("L-470")}))
+        .call(
+            "tool.call",
+            json!({"tool": ITEM_UPSERT, "input": item("L-470")}),
+        )
         .await;
     assert_eq!(
         code_of(&stopped),
@@ -592,11 +697,7 @@ async fn a_tool_that_is_not_the_one_the_decision_was_made_for_is_not_run() {
     let world = World::ready().await;
     // A call as the dispatcher would hand it on had the tool been a read
     // when the decision was made, and been published as a write since.
-    let decision = world
-        .call("tool.search", json!({}))
-        .await
-        .decision
-        .unwrap();
+    let decision = world.call("tool.search", json!({})).await.decision.unwrap();
     let input = json!({"tool": ITEM_UPSERT, "input": item("L-480"), "wait_seconds": 0});
     let call = crate::dispatch::Call {
         input: input.as_object().unwrap().clone(),
@@ -624,7 +725,10 @@ async fn a_tool_that_is_not_the_one_the_decision_was_made_for_is_not_run() {
         world.caller.clone(),
     );
     let printed = format!("{secret:?}");
-    assert!(printed.contains("value") && !printed.contains("example-key-shown-nowhere"), "{printed}");
+    assert!(
+        printed.contains("value") && !printed.contains("example-key-shown-nowhere"),
+        "{printed}"
+    );
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -639,7 +743,10 @@ async fn the_caller_a_stopped_engine_answers_to_is_nobody_and_holds_nothing() {
     assert_ne!(nobody.principal, world.caller.principal);
     for (action, input) in [
         ("tool.search", json!({})),
-        ("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}})),
+        (
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        ),
         ("audit.query", json!({})),
         ("killswitch.set", json!({"scope": "everything", "on": true})),
     ] {

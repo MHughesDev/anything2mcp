@@ -189,6 +189,25 @@ impl SourceFile {
         }
         let recorded = kind.as_str() == FIXTURE && path.file_name() != FIXTURE_MARKER;
         if recorded {
+            // A recording is digested, never parsed; where it is text, it
+            // is still looked through for what is plainly a credential.
+            if let Ok(text) = std::str::from_utf8(bytes)
+                && let Some((line, what)) = crate::compile::recorded_credential(text)
+            {
+                return Err(Diagnostic::error(
+                    kernel(codes::CREDENTIAL_IN_FILE),
+                    Stage::Lint,
+                    &Place {
+                        file: path,
+                        line,
+                        column: 1,
+                    },
+                    format!(
+                        "A fixture's recorded file holds what looks like a credential: {what}."
+                    ),
+                    "Scrub the recording: put a made-up value in its place. A fixture holds no secret, whatever its marker says.",
+                ));
+            }
             return Ok(Self {
                 path,
                 kind,

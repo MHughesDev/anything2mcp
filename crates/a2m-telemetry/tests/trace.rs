@@ -752,8 +752,7 @@ fn an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dr
     let mut builder = builder(1, CaptureLevel::Standard, Arc::new(KnowsOne(SECRET)));
 
     // Written out, it is redacted and the snapshot is kept.
-    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(&format!("<td>{SECRET}</td>")))
-    else {
+    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(&format!("<td>{SECRET}</td>"))) else {
         panic!("a snapshot with a secret written out is kept, redacted");
     };
     assert_eq!(kept.bytes, b"<td>[redacted]</td>");

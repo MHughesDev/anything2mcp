@@ -107,6 +107,14 @@ pub struct TraceRefused { pub signature: Digest, pub records: u32, pub limitatio
 pub const TRACE_SCHEMA: u32 = 1;
 pub enum TraceLine { Header(HeaderLine), Step(Box<StepLine>), End(EndLine) }
 pub fn read_trace(bytes: &[u8]) -> Result<Vec<TraceLine>, Failure>;
+/// Whether the lines still give the signature their end line states.
+pub enum TraceCheck { Whole, Cut, Broken }
+pub fn check_trace(lines: &[TraceLine]) -> TraceCheck;
+
+/// Text helpers: tags and hidden characters out; hidden characters out; `&amp;` and `&#38;` written out.
+pub fn clean_text(text: &str) -> String;
+pub fn strip_hidden(text: &str) -> String;
+pub fn decode_references(text: &str) -> String;
 
 /// Headers of an exchange, for every pack that records one.
 pub const RECORDED_HEADERS: &[&str];
@@ -160,7 +168,9 @@ pub struct SystemClock; pub struct ManualClock;
 Contracts that the signatures do not show:
 
 - **Redaction happens on entry, not on write.** `record` and `artifact` pass every text through the `Redact` before keeping it, so nothing unredacted is held even in memory longer than the call. Text is redacted, cleaned of markup and hidden characters, and redacted again, because cleaning can join the halves of a secret that markup had split. The redactor and the keyed digest are the vault's, given at start; this crate never makes its own.
-- **The check on the way out runs once more.** `finish` scans the finished bytes, and every text in them with the JSON escapes undone, with `Redact::contains_secret`. A hit refuses the whole trace: `finish` returns `TraceRefused`, which carries the signature and a `redacted` limitation and no bytes, and an alert is logged. A text artifact is scanned after it is redacted, and a hit drops it. The piece is never handed to the ledger.
+- **The check on the way out runs once more.** `finish` scans the finished bytes, and every text in them with the JSON escapes undone, with `Redact::contains_secret`. A hit refuses the whole trace: `finish` returns `TraceRefused`, which carries the signature and a `redacted` limitation and no bytes, and an alert is logged. The piece is never handed to the ledger.
+- **A text artifact is checked in four forms, and dropped on a hit in any** ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). The bytes that are kept are the redacted text with its markup, because a snapshot without its markup is no snapshot. So the redactor is asked about the text as it is kept, about the same text with tags and hidden characters taken out, and about both with their character references written out (`&amp;`, `&#38;`, `&#x26;`). A secret that a tag or a zero-width character splits, or that is written with a reference in a value, is found in one of those forms and the artifact is dropped, with a `redacted` limitation. A record's free text that holds a secret behind a reference is replaced whole by the redaction mark. What this crate relies on from the redactor: that `contains_secret` finds a registered secret in its own text and in the encoded forms the vault knows, wherever it stands in the text handed to it. What it does not find: a secret broken across two elements with white space between them, which reads as two words to a person as well.
+- **A debug print shows no value a driver handed over.** `StepRecord`, `TracedValue`, and `Detail` print which parts are present, never a record key, a field's name, a value, or a detail: a step record reaches the trace before anything in it was redacted.
 - **Headers and cookies.** `RECORDED_HEADERS` lists the twenty headers whose values may be kept. Every other header is recorded as present with its value masked, whatever the level. Cookies, authorization, and headers that carry an address are not on the list. A pack that builds an exchange calls `record_headers`.
 - **Labelled fields.** A value labelled `public` is kept as it is. One labelled `internal` is kept as it is at `standard` and above, and as a keyed digest at `minimal`. One labelled `restricted` is kept only as a keyed digest. Free text is cleaned, and cut at 512 characters with a mark.
 - **A record key is never written.** The record holds the workspace's keyed digest of `RecordKey::canonical_bytes()`, under the purpose `record_key`, so that it matches the name the store gives the key.
@@ -169,7 +179,8 @@ Contracts that the signatures do not show:
 - **A trace past its size limit is cut, not failed.** Later records are left out of the bytes and still enter the signature. The end line and `FinishedTrace::limitations` say `truncated`.
 - **Spans carry names, timings, and outcomes only.** A span's name and a metric's name are `&'static str`; attributes come from `Attr`, which has no constructor for text. A span's parent is given as a `TraceContext`: no current span is kept per thread. MCP spans follow the OpenTelemetry conventions for MCP, whose names are still in development, so their spelling lives in one table, `Attr::key`.
 - **Nothing leaves.** Spans and metrics are kept in memory, a buffer of 4,096 finished spans and one entry per series, for `engine.status`, tests, and the benchmark harness. There is no exporter.
-- **Logs are not the record of a run.** They say what the engine did as a program. Crates log with the `tracing` macros; a span made with those macros is ignored. A line that still holds a secret after redaction is replaced by a line that says one was dropped.
+- **Logs are not the record of a run.** They say what the engine did as a program. Crates log with the `tracing` macros; a span made with those macros is ignored. A line that still holds a secret after redaction is replaced by a line that says one was dropped. A line's text is redacted, cleared of characters nobody can see (direction overrides, line and paragraph separators, zero-width characters), and redacted again; its `<` and `>` stay, because a log line is not markup.
+- **Reading a trace back.** `check_trace` works the chain out again from the step lines' own digests and compares it with the end line: `whole`, `cut` (the trace passed its size limit, so the lines cannot give the signature), or `broken` (a line missing, added, moved, or repeated, or another signature). `trace.show` reports the word and gives no signature for a broken trace. The signature is not keyed, so this finds damage and a careless edit, not a forger who rewrites the end line too: that a stored trace is the one the engine wrote rests on the store, which seals it. A step line's own digest is taken as written, because it covers values a reader holds only as keyed digests.
 - **Time is given.** Nothing reads a clock except through `Clock`. No time enters anything that is hashed.
 
 ## The trace signature
@@ -243,7 +254,7 @@ A trace with no end line is incomplete. A change that a reader of version 1 woul
 
 ## A log line
 
-One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `level` (`error`, `warn`, `info`, `debug`, `trace`), `target`, `message`, and optionally `fields`, in the order the caller gave them. The file is `engine.log` in the folder given to `start`. When the next line would take it past the size in the settings it becomes `engine.log.1`, older files move up by one, and the oldest beyond the count kept is deleted.
+One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `level` (`error`, `warn`, `info`, `debug`, `trace`), `target`, `message`, and optionally `fields`, in the order the caller gave them. The file is `engine.log` in the folder given to `start`. When the next line would take it past the size in the settings it becomes `engine.log.1`, older files move up by one, and the oldest beyond the count kept is deleted. On Linux and macOS a log file is made with mode `0600`, and one found with wider permissions is narrowed when it is opened: a line is redacted, and it still names runs, sessions, and targets. On Windows a file takes the permissions of its folder, which is in the user's own profile.
 
 ## Used by, and uses
 
@@ -293,6 +304,9 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 | A planted secret appears in no record, span, metric, or log line | `a_planted_secret_appears_in_no_trace`, `a_secret_split_by_markup_is_still_masked`, `a_planted_secret_appears_in_no_log_line`, and the run in `a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret`. All against a test redactor; the same tests against the vault's, and against the test application's traffic, are package 2.1's |
 | A trace that holds a registered secret is refused, not written | `a_trace_that_still_holds_a_secret_is_refused` |
 | An artifact is redacted and checked, or dropped | `an_artifact_is_redacted_and_checked_or_it_is_dropped`, `artifacts_are_kept_as_the_level_says` |
+| A text artifact whose secret is split by markup, by a hidden character, or written with a character reference is dropped | `an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped` |
+| A trace with a line missing, added, moved, or repeated reads back as broken; a debug print of a step record shows no value | `a_trace_is_checked_against_its_own_chain` |
+| A log file is its owner's alone | `a_log_file_is_its_owners_alone_and_a_wider_one_is_narrowed`, on Linux and macOS |
 | No span or metric can carry a value | The `Attr` type and `&'static str` names; the run in `a_started_telemetry…` searches spans and metrics for planted values |
 | A restricted value never appears in a trace | `a_value_is_held_as_its_label_allows` |
 | A header off the list is recorded without its value | `a_header_off_the_list_is_recorded_as_present_and_masked` |
@@ -317,6 +331,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 - `ChoiceReason` is a closed list of four, written before the engine's choosing was built. The engine slice confirms or changes it; a change is a new schema version only if a reader of version 1 would misread it.
 - A trace is held in memory until `finish`. A pipeline of many thousands of rows meets the size limit first. Streaming to the store is the `EvidenceSink` weighed above.
 - Log lines are written synchronously under a lock. A writer thread, if the benchmarks ask for one.
+- A text artifact is dropped whole when any form of it holds a secret. Keeping it with the element that holds the secret cut out needs a parser of each kind of snapshot, which belongs to the pack that took it.
 - A number cannot be masked in place. A trace in which a number is a registered secret is refused whole; whether to withhold only that record's values instead.
 - How well a pack's masking of a screenshot works, which this crate cannot check.
 - Whether `full` capture is ever allowed on a production write.

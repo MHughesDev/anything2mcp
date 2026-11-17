@@ -832,7 +832,10 @@ impl Kernel {
             .map_err(|why| {
                 codes::policy(
                     a2m_policy::PRESENCE_REQUIRED,
-                    format!("`{}` is a person's act, and the proof of presence was not taken: {why}.", def.name),
+                    format!(
+                        "`{}` is a person's act, and the proof of presence was not taken: {why}.",
+                        def.name
+                    ),
                     "Run the command again and answer the prompt yourself.",
                 )
             })?;

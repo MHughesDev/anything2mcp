@@ -433,7 +433,9 @@ handler!(
         if call.decided != Some((effect, hazard)) {
             return Err(codes::busy(
                 codes::TOOL_CHANGED,
-                format!("`{name}` was published again while this call was being decided, with another effect."),
+                format!(
+                    "`{name}` was published again while this call was being decided, with another effect."
+                ),
                 "Call the tool again.",
             ));
         }

@@ -170,9 +170,10 @@ pub(crate) fn check(
         }
         if !temporary
             && let Ok(below) = folder.strip_prefix(&home)
-            && below.components().next().is_some_and(
-                |first| matches!(first, Component::Normal(part) if hidden(part)),
-            )
+            && below
+                .components()
+                .next()
+                .is_some_and(|first| matches!(first, Component::Normal(part) if hidden(part)))
         {
             return Err(
                 "it lies inside a hidden folder of the home folder, where other programs keep their data",
@@ -255,10 +256,8 @@ mod tests {
 
     impl Folder {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "a2m-actions-project-{name}-{}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("a2m-actions-project-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
             Self(std::fs::canonicalize(&path).unwrap())
@@ -266,7 +265,9 @@ mod tests {
 
         /// A folder below this one that holds a project file.
         fn project(&self, below: &[&str]) -> PathBuf {
-            let folder = below.iter().fold(self.0.clone(), |path, part| path.join(part));
+            let folder = below
+                .iter()
+                .fold(self.0.clone(), |path, part| path.join(part));
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("anything2mcp.toml"), "").unwrap();
             folder
@@ -281,7 +282,10 @@ mod tests {
 
     fn places(home: &Path, vars: &[(&str, &Path)]) -> Places {
         let mut all = vec![("HOME", home.to_str().unwrap())];
-        all.extend(vars.iter().map(|(name, path)| (*name, path.to_str().unwrap())));
+        all.extend(
+            vars.iter()
+                .map(|(name, path)| (*name, path.to_str().unwrap())),
+        );
         // No temporary folder is named: every folder of the test is under
         // the made-up home, and none is excused.
         Places::of(&Env::with(OsFamily::Linux, &all), None)

@@ -184,7 +184,10 @@ async fn the_desk_shows_the_change_a_waiting_run_would_make_and_no_other() {
     let mut masked = item("L-422");
     masked["description"] = json!("Masked rail");
     let rested = world
-        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": masked.clone()}))
+        .call(
+            "tool.call",
+            json!({"tool": ITEM_UPSERT, "input": masked.clone()}),
+        )
         .await;
     assert_eq!(status(&rested), "needs_approval", "{rested:?}");
     let masked_id: RunId = rested.result.unwrap()["run_id"]
