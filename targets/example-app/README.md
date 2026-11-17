@@ -77,7 +77,7 @@ Under `/__control`. It exists only in this application, and no fault ever applie
 | `POST /__control/auth/revoke` | Revoke `bearer_token` or `api_key` until a reset |
 | `GET /__control/traps` | How many writes each trap page caused, by name |
 
-A fault is a delay, a status, "lost after commit", or "changed shape", for the next request, a number of requests, or until cleared, on every path or on paths with a given start. "Lost after commit" (case 17) carries a request out, so its write is stored, then closes the connection without any answer; it applies only to methods other than `GET` and `HEAD`, so a read does not use it up, and it needs the application served by `example_app::serve` or the harness. "Changed shape" (case 31) renames one field wherever it appears in a JSON answer.
+A fault is a delay, a status, "lost after commit", "redirect after commit", or "changed shape", for the next request, a number of requests, or until cleared, on every path or on paths with a given start. "Lost after commit" (case 17) carries a request out, so its write is stored, then closes the connection without any answer; it applies only to methods other than `GET` and `HEAD`, so a read does not use it up, and it needs the application served by `example_app::serve` or the harness. "Changed shape" (case 31) renames one field wherever it appears in a JSON answer. "Redirect after commit" carries a request that may write out, so its write is stored, then answers `303 See Other` with the `Location` the fault gives, in place of the application's own answer: a write that was made and whose answer is not the application's verdict.
 
 ## Seed data
 

@@ -77,11 +77,11 @@ On one machine exactly one engine process runs per user, and everything else is 
 | --- | --- | --- |
 | `anything2mcp` commands | The command line used by people and coding agents | The local channel, directly |
 | MCP over stdio | What an MCP client starts for a local agent | A small proxy that copies MCP messages between standard input and output and the engine's MCP endpoint on the local channel, and adds nothing |
-| Python and TypeScript SDKs | Libraries for other software | A bridge subprocess, `anything2mcp bridge`, that carries JSON messages between the SDK and the local channel |
+| Python and TypeScript SDKs | Libraries for other software | The local channel, directly: the Python client speaks HTTP over the socket on macOS and Linux; Windows is not built ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)) |
 | Tray application, from Phase 7 | Status and prompts on a user-device runner | The local channel, directly |
 | Remote callers | Agents and software on other machines | Not the local channel; the network front doors |
 
-The stdio proxy and the SDK bridge are the same binary, started by the `bridge` process command. Keeping the channel code in Rust means no SDK in any language needs to implement sockets and pipes for three operating systems. Commands, the proxy, and the SDKs hold no engine logic and no state; they render the engine's response without branching on it.
+The stdio proxy is the binary itself, started by the `bridge` process command. An SDK that reaches the channel itself restates where the channel is and checks who owns it, as a command does; on Windows that needs calls into the operating system, which is why the Python client does not reach it there yet. Commands, the proxy, and the SDKs hold no engine logic and no state; they render the engine's response without branching on it.
 
 ### The local channel
 

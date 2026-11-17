@@ -398,8 +398,16 @@ impl DraftingRule for ToolToMapping {
         if found.get("output_schema").is_none_or(Json::is_null) {
             entry.push(("result", DraftValue::text("text")));
         }
+        // Whether the server runs the one string such a tool takes is not
+        // in its definition. It is asked, never guessed either way.
         if found.get("free_text").and_then(Json::as_bool) == Some(true) {
-            entry.push(("free_text", DraftValue::Bool(true)));
+            entry.push((
+                "free_text",
+                cx.open_question(&format!(
+                    "The whole input of the tool `{}` is one string. Does the server run it, as a command, a query, or a prompt? State `true` if it does, and the tool is never called; `false` if the string is a key or plain data.",
+                    codes::shown(tool)
+                )),
+            ));
         }
         Ok(vec![DraftDoc {
             path: RelPath::new(&format!("{}/{surface}.yaml", names::MAPPING_FOLDER))?,

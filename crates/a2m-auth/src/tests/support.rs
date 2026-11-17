@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,15 +21,19 @@ use tokio::sync::Semaphore;
 use crate::failure;
 use crate::{
     AskPerson, AuthEntry, AuthProvider, ChallengeScheme, CredentialRef, CredentialSink, ExpirySign,
-    InProcessWork, Keeper, KeeperWorker, LeaseRequest, Material, PersonAnswer, PersonAsk,
-    ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose, RawSign, RunProbe, SessionKey,
-    SessionLease, SessionRef, SessionStore, SignInContext, SignedIn, StoredCredentials, Wait,
+    InProcessWork, Keeper, KeeperJob, KeeperWork, KeeperWorker, LeaseRequest, Material,
+    PersonAnswer, PersonAsk, ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose,
+    RawSign, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, SignInContext, SignedIn,
+    StoredCredentials, Wait, Work, WorkOutcome,
 };
 
 /// The start of every test's clock.
 pub(super) const START: i64 = 1_800_000_000_000;
 
 pub(super) const HOUR: Duration = Duration::from_secs(3600);
+
+/// What a provider that breaks its contract puts into a failure.
+pub(super) const LEAKED: &str = "PLANTED-one-time-code-493817";
 
 /// What a scripted provider does when it is next asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +42,9 @@ pub(super) enum Step {
     Refused,
     WantsSecondFactor,
     Unreachable,
+    /// Fails with a sentence that holds a value the provider registered,
+    /// which the provider contract forbids.
+    Leaks,
 }
 
 /// A provider that does what the test scripts, and counts what it was asked.
@@ -82,7 +89,8 @@ impl Fake {
         self.gate.add_permits(1000);
     }
 
-    fn made(&self, step: Step, now: Timestamp) -> Result<Material, Failure> {
+    fn made(&self, step: Step, cx: &SignInContext<'_>) -> Result<Material, Failure> {
+        let now = cx.now();
         match step {
             Step::Works => {
                 let token = format!("PLANTED-fake-{}-{}", self.sign_ins(), self.refreshes());
@@ -95,6 +103,15 @@ impl Fake {
             Step::Refused => Err(failure::credential_refused("the test")),
             Step::WantsSecondFactor => Err(failure::needs_mfa()),
             Step::Unreachable => Err(failure::upstream_unavailable("the test is down")),
+            Step::Leaks => {
+                cx.register(&Secret::new(LEAKED));
+                Err(Failure::new(
+                    a2m_core::FailureClass::Transient,
+                    crate::codes::UPSTREAM_UNAVAILABLE,
+                    format!("The page answered: code {LEAKED} was not accepted."),
+                    format!("Enter {LEAKED} again."),
+                ))
+            }
         }
     }
 }
@@ -119,7 +136,7 @@ impl AuthProvider for Fake {
         Box::pin(async move {
             self.sign_ins.fetch_add(1, Ordering::SeqCst);
             let step = *self.on_sign_in.lock().unwrap();
-            self.made(step, cx.now())
+            self.made(step, cx)
         })
     }
 
@@ -147,7 +164,7 @@ impl AuthProvider for Fake {
                 let _permit = self.gate.acquire().await.unwrap();
             }
             let step = *self.on_refresh.lock().unwrap();
-            self.made(step, cx.now())
+            self.made(step, cx)
         })
     }
 
@@ -186,6 +203,12 @@ impl Gate {
         *self.held.lock().unwrap() = true;
     }
 
+    /// From now on, whatever comes here passes. What already waits goes on
+    /// waiting, until it is released.
+    pub(super) fn open(&self) {
+        *self.held.lock().unwrap() = false;
+    }
+
     /// Lets the one that has waited longest through.
     pub(super) fn release_one(&self) {
         if let Some(permits) = &self.permits {
@@ -206,6 +229,70 @@ impl Gate {
         if let (true, Some(permits)) = (held, &self.permits) {
             permits.acquire().await.unwrap().forget();
         }
+    }
+}
+
+/// The keeper's way to its worker, with a place where the test can hold a
+/// restore on its way there, and lose a sign-out.
+pub(super) struct Relay {
+    work: InProcessWork,
+    /// A restore waits here, after it is counted, while the test holds it.
+    pub(super) restores: Gate,
+    restores_seen: AtomicU32,
+    lose_sign_outs: AtomicBool,
+}
+
+impl Relay {
+    fn new(work: InProcessWork) -> Self {
+        Self {
+            work,
+            restores: Gate::new(),
+            restores_seen: AtomicU32::new(0),
+            lose_sign_outs: AtomicBool::new(false),
+        }
+    }
+
+    /// How many restores the keeper has sent.
+    pub(super) fn restores_seen(&self) -> u32 {
+        self.restores_seen.load(Ordering::SeqCst)
+    }
+
+    /// From now on a sign-out never reaches the worker, as when the home
+    /// runner cannot be reached.
+    pub(super) fn lose_sign_outs(&self) {
+        self.lose_sign_outs.store(true, Ordering::SeqCst);
+    }
+}
+
+impl KeeperWork for Relay {
+    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+        self.work.probe(session)
+    }
+
+    fn perform(&self, job: KeeperJob) -> BoxFuture<'_, WorkOutcome> {
+        Box::pin(async move {
+            match &job.work {
+                Work::Restore(_) => {
+                    self.restores_seen.fetch_add(1, Ordering::SeqCst);
+                    self.restores.pass().await;
+                }
+                Work::SignOut if self.lose_sign_outs.load(Ordering::SeqCst) => {
+                    return WorkOutcome::Failed(failure::upstream_unavailable(
+                        "the test lost the sign-out",
+                    ));
+                }
+                _ => {}
+            }
+            self.work.perform(job).await
+        })
+    }
+
+    fn ask_person<'a>(
+        &'a self,
+        session: &'a SessionRef,
+        ask: PersonAsk,
+    ) -> BoxFuture<'a, PersonAnswer> {
+        self.work.ask_person(session, ask)
     }
 }
 
@@ -446,6 +533,7 @@ pub(super) struct World {
     pub(super) person: Arc<Person>,
     pub(super) probe: Arc<Probe>,
     pub(super) worker: Arc<KeeperWorker>,
+    pub(super) relay: Arc<Relay>,
     pub(super) keeper: Keeper,
     pub(super) telemetry: Telemetry,
 }
@@ -520,11 +608,12 @@ impl World {
             Arc::new(credentials.clone()),
             clock.clone(),
         ));
-        let work = Arc::new(InProcessWork::new(
+        let relay = Arc::new(Relay::new(InProcessWork::new(
             Arc::clone(&worker),
             person.clone(),
             probe.clone(),
-        ));
+        )));
+        let work = Arc::clone(&relay) as Arc<dyn KeeperWork>;
         // The telemetry is given a redactor that knows no secret, so that a
         // secret the keeper logged would be seen by the test.
         let telemetry = Telemetry::in_memory(
@@ -547,6 +636,7 @@ impl World {
             person,
             probe,
             worker,
+            relay,
             keeper,
             telemetry,
         }

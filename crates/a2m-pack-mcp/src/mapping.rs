@@ -93,7 +93,9 @@ pub(crate) struct ToolEntry {
     pub effect: String,
     /// The mapped read tool that reads back what this tool wrote.
     pub read_back: Option<String>,
-    /// The members of the result that hold text the server's users wrote.
+    /// The members of a structured result that hold text and may be
+    /// passed on. A member that can hold text and is not named here, or
+    /// under `key` or `records`, is left out of what a step returns.
     pub untrusted_fields: Vec<String>,
     /// `structured` or `text`: where the result's values are.
     pub result: String,
@@ -108,8 +110,11 @@ pub(crate) struct ToolEntry {
     pub stamp: Option<String>,
     /// The arguments that take the parts of the record's key, in order.
     pub key_args: Vec<String>,
-    /// The reviewer's judgment of a tool whose input is one string: true
-    /// for free text, false for a key. Nothing when it was not reviewed.
+    /// What a reviewer found the server does with the text the tool is
+    /// given. `false`: it does not run it, so a tool whose whole input is
+    /// one string may be called. `true`: it runs it, as a command, a
+    /// query, or a prompt, so the tool is never called. Nothing when no one
+    /// has said: a tool whose whole input is one string is then not called.
     pub free_text: Option<bool>,
 }
 

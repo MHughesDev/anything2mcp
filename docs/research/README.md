@@ -24,6 +24,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [18-mcp-server-base.md](18-mcp-server-base.md) | What the MCP server stands on, and which protocol revisions it serves | Completed; a spike with two reference client libraries, and the specification's text read |
 | [19-desktop-accessibility-base.md](19-desktop-accessibility-base.md) | What the desktop pack stands on, on each operating system | Completed; the Linux back end was run against two small windows, the Windows and macOS programs were type-checked and not run |
 | [20-operating-system-user-presence-checks.md](20-operating-system-user-presence-checks.md) | Which prompt the operating system owns can prove a person is present, on each system; what a program running as the user can do against it; how to call each from Rust | Completed; documentation and source read, call paths type-checked for three systems, no prompt pressed |
+| [21-wheel-and-npm-packaging.md](21-wheel-and-npm-packaging.md) | How the pip wheel carries the binary and a client, the npm launcher and platform packages, the platform tags, `dist`, and the registries' rules for short-lived publishing credentials | Completed; built and installed on Linux x86-64 only, registry documentation read in its sources, nothing published |
 
 ## How to read the status
 

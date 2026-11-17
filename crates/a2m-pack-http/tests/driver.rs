@@ -470,37 +470,47 @@ async fn message(stream: &mut TcpStream) -> Vec<u8> {
     }
 }
 
+/// Carries one request to the application and its answer back. With
+/// `loses_put`, the answer to a PUT is lost after the application gave it.
+async fn carry(mut client: TcpStream, upstream: String, loses_put: bool) {
+    let request = message(&mut client).await;
+    if request.is_empty() {
+        return;
+    }
+    let mut server = TcpStream::connect(upstream).await.unwrap();
+    server.write_all(&request).await.unwrap();
+    let answer = message(&mut server).await;
+    if loses_put && request.starts_with(b"PUT ") {
+        // The application answered; the caller never hears it.
+        return;
+    }
+    // One request per connection, so that none is ever reused.
+    let text = String::from_utf8(answer).unwrap();
+    let closing = text.replacen("\r\n", "\r\nconnection: close\r\n", 1);
+    client.write_all(closing.as_bytes()).await.unwrap();
+    client.shutdown().await.unwrap();
+}
+
+/// A link in front of the application, on a listener the test made. It
+/// passes every request on. Stopping the task it returns closes the
+/// listener, so that the next connection is refused.
+fn link(listener: TcpListener, upstream: String, loses_put: bool) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let Ok((client, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(carry(client, upstream.clone(), loses_put));
+        }
+    })
+}
+
 /// A link in front of the application that passes every request on, and
 /// loses the answer to every PUT after the application has given it.
 async fn losing_link(upstream: String) -> String {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        loop {
-            let Ok((mut client, _)) = listener.accept().await else {
-                return;
-            };
-            let upstream = upstream.clone();
-            tokio::spawn(async move {
-                let request = message(&mut client).await;
-                if request.is_empty() {
-                    return;
-                }
-                let mut server = TcpStream::connect(upstream).await.unwrap();
-                server.write_all(&request).await.unwrap();
-                let answer = message(&mut server).await;
-                if request.starts_with(b"PUT ") {
-                    // The application answered; the caller never hears it.
-                    return;
-                }
-                // One request per connection, so that none is ever reused.
-                let text = String::from_utf8(answer).unwrap();
-                let closing = text.replacen("\r\n", "\r\nconnection: close\r\n", 1);
-                client.write_all(closing.as_bytes()).await.unwrap();
-                client.shutdown().await.unwrap();
-            });
-        }
-    });
+    link(listener, upstream, true);
     address
 }
 

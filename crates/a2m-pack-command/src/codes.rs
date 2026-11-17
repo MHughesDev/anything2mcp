@@ -38,6 +38,10 @@ codes! {
     ARGUMENT_UNSAFE = Input, "argument_unsafe";
     /// A value breaks its declared pattern or kind, or an exit says so.
     SCHEMA_INVALID = Input, "schema_invalid";
+    /// A step this driver cannot carry out as the plan wrote it: a command
+    /// that writes on a step that is no commit point, or a step whose
+    /// program was not started first.
+    STEP_NOT_USABLE = Input, "step_not_usable";
     /// An exit declared `rejected`.
     APP_VALIDATION_ERROR = Rejected, "app_validation_error";
     /// An exit declared `stale`.
@@ -147,7 +151,22 @@ pub(crate) fn possible_commit(what: &str) -> StepFailure {
     ))
 }
 
+/// A step the plan wrote in a way this driver cannot carry out. Nothing
+/// was started.
+pub(crate) fn not_usable(what: &str) -> StepFailure {
+    not_sent(
+        FailureClass::Input,
+        STEP_NOT_USABLE,
+        format!("The `cli` driver cannot carry out this step as the plan wrote it: {what}."),
+        "Compile the target again with the version of the command pack that is enabled.",
+    )
+}
+
 /// Text from outside, cut and cleaned before it is shown in a message.
+///
+/// The cut comes last. Text a program printed is redacted whole before it
+/// is given to this function: a secret that the cut divides leaves a part
+/// no redactor can match.
 pub(crate) fn shown(text: &str) -> String {
     const SHOWN: usize = 120;
     let clean: String = text

@@ -4,7 +4,7 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, LintCode, Mode,
-    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, Verb,
+    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb,
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
@@ -112,6 +112,33 @@ fn tool_problem(
         None => Some(unmapped(&tool.at, name, surface)),
         Some(found) if found.discovery => Some(discovery_bound(&tool.at, name, surface)),
         Some(_) => None,
+    }
+}
+
+/// The refusal of a binding that uses a tool whose mapping entry says the
+/// server runs the text it is given. Such a tool is never called, so no
+/// binding may be lowered onto it.
+fn runs_free_text(at: &Place, tool: &str) -> Diagnostic {
+    Diagnostic::error(
+        names::FREE_TEXT,
+        Stage::Lower,
+        at,
+        format!(
+            "The binding uses the tool `{}`, whose mapping entry says `free_text: true`: the server runs the text it is given. Such a tool is never called.",
+            codes::shown(tool)
+        ),
+        "Bind the operation to a tool that takes typed arguments. If a person finds that the server does not run the tool's one string, state `free_text: false` in its mapping entry.",
+    )
+}
+
+/// Whether a value of this type is or holds text. One of a field type's
+/// stored codes is not: the kernel admits only the codes.
+fn holds_text(ty: &ValueType) -> bool {
+    match ty {
+        ValueType::Text => true,
+        ValueType::List(of) => holds_text(of),
+        ValueType::Record(fields) => fields.iter().any(|field| holds_text(&field.ty)),
+        _ => false,
     }
 }
 
@@ -331,29 +358,39 @@ impl Lowering for McpLowering {
                 "State the operation's effect as the mapping judges the tool, and use a verb that writes for a tool that writes.",
             ));
         }
-        // Text the system's users wrote must arrive under a field type that
-        // marks it untrusted.
+        if entry.free_text == Some(true) {
+            problems.push(runs_free_text(&tool_doc.at, tool));
+        }
+        // Every value of the mode comes from the upstream server, whichever
+        // tool of the binding fills it: the act, the read-back, or the
+        // lookup. So every output that is or holds text must arrive under a
+        // field type that marks it untrusted.
         for output in operation
             .doc()
             .get("outputs")
             .map(Located::entries)
             .unwrap_or_default()
         {
+            let text = operation
+                .outputs()
+                .iter()
+                .find(|plan| plan.name == output.key.value)
+                .is_some_and(|plan| holds_text(&plan.ty));
             let marked = output
                 .value
                 .text("type")
                 .and_then(|name| target.field_type(name))
                 .is_some_and(|field_type| field_type.plan.untrusted);
-            if entry.untrusted_fields.contains(&output.key.value) && !marked && !entry.writes() {
+            if text && !marked {
                 problems.push(Diagnostic::error(
                     names::UNTRUSTED_UNMARKED,
                     Stage::Lower,
                     &output.key.at,
                     format!(
-                        "The output `{}` is filled from a member the mapping lists under `untrusted_fields`, and its field type is not marked untrusted.",
+                        "The output `{}` is text, and text an upstream server returns is untrusted: its field type is not marked untrusted.",
                         output.key.value
                     ),
-                    "Give the output a field type with `untrusted: true`.",
+                    "Give the output a field type with `untrusted: true`, or a type that is not text, such as a choice with its codes.",
                 ));
             }
         }
@@ -386,6 +423,9 @@ impl Lowering for McpLowering {
             match find_tool(mappings, &surface_name, read_tool).map(|found| tool_entry(found.entry))
             {
                 Some(read_entry) if !read_entry.writes() => {
+                    if read_entry.free_text == Some(true) {
+                        problems.push(runs_free_text(&tool_doc.at, read_tool));
+                    }
                     // The record's key reaches the read tool through the
                     // arguments its mapping names under `key_args`, or
                     // else through the operation's key inputs by name.
@@ -427,6 +467,9 @@ impl Lowering for McpLowering {
                 && let Some(found) = find_tool(mappings, &surface_name, name)
             {
                 let lookup_entry = tool_entry(found.entry);
+                if lookup_entry.free_text == Some(true) {
+                    problems.push(runs_free_text(&lookup_tool.at, name));
+                }
                 if lookup_entry.writes() || !lookup_entry.can_be_absent() {
                     problems.push(Diagnostic::error(
                         names::BINDING_INCOMPLETE,
@@ -568,7 +611,7 @@ impl LintRule for Rule {
                 "No binding uses a tool of a mapping whose purpose is discovery."
             }
             Self::FreeText => {
-                "A mapped tool whose input is one free-text string is reviewed before it is used."
+                "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
             }
         }
     }
@@ -669,10 +712,10 @@ impl LintRule for Rule {
                     problem(
                         at,
                         format!(
-                            "The input of the tool `{}` is one free-text string, which the server could run as a command or a query.",
+                            "The mapping says of the tool `{}` that the server runs the text it is given, as a command, a query, or a prompt. The tool is never called, and no binding may use it.",
                             codes::shown(tool)
                         ),
-                        "Review what the server does with the text. A tool that runs free text must not be mapped.",
+                        "Take the tool out of the mapping, or leave it as the record that it was reviewed and refused. State `free_text: false` only if a person finds that the server does not run the tool's one string.",
                     )
                 })
                 .collect(),

@@ -128,7 +128,7 @@ summary = "No binding uses a tool of a mapping whose purpose is discovery."
 [[lint_rules]]
 code = "mcp.free_text"
 level = "warning"
-summary = "A mapped tool whose input is one free-text string is reviewed before it is used."
+summary = "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
 
 [[drafting_rules]]
 finding_kind = "upstream_tool"

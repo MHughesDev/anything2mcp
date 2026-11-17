@@ -1070,7 +1070,9 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
     let args = || Values::new().with("query", "dock");
     let answer_with = |content: serde_json::Value| {
         control
-            .set_fault(Fault::once(FaultKind::ResultStructured { content }).on_tool("orders_search"))
+            .set_fault(
+                Fault::once(FaultKind::ResultStructured { content }).on_tool("orders_search"),
+            )
             .unwrap();
     };
     let mismatch = || {

@@ -75,8 +75,18 @@ pub struct Request {
     pub input: serde_json::Value,      // an object, or null
     pub caller: Caller,                // Principal, client label, FrontDoor, toolset, is_agent
     pub idempotency_key: Option<String>,
-    pub project: Option<PathBuf>,      // checked against the allowed roots before any use
+    pub project: Option<PathBuf>,      // as stated; the dispatcher checks it before any handler
 }
+impl Request {
+    pub fn new(action: &str, input: serde_json::Value, caller: Caller) -> Request;
+    pub fn in_project(self, project: impl Into<PathBuf>) -> Request;
+    /// What every door calls with the `ProjectFolder` its mount put on the request.
+    pub fn in_project_folder(self, project: Option<&ProjectFolder>) -> Request;
+}
+/// The project folder a request works in, as a door's mount states it. A statement,
+/// never trusted: see "The project folder" below.
+pub struct ProjectFolder(/* a path */);
+impl ProjectFolder { pub fn new(path: impl Into<PathBuf>) -> Self; pub fn as_path(&self) -> &Path; }
 pub struct Response {
     pub ok: bool, pub action: String,
     pub result: Option<serde_json::Value>, pub error: Option<ErrorBody>,
@@ -118,8 +128,12 @@ impl Kernel {
     /// The same, waiting until an event is appended, the run ends, or `wait` passes.
     pub async fn next_events(&self, caller: &Principal, run: RunId, after: u64, limit: u32,
                              wait: Duration) -> Result<RunEvents, Failure>;
+    /// The scheduler's jobs waiting or leased, and the runs resting for a person.
+    pub async fn runs_in_hand(&self) -> Result<RunsInHand, Failure>;
     pub async fn close(self, why: CloseReason);
 }
+pub struct RunsInHand { pub working: u64, pub waiting_for_person: u64 }
+impl RunsInHand { pub const fn any(&self) -> bool; }
 pub struct RunEvents { pub run: RunId, pub events: Vec<RunEventView>, pub last: u64,
                        pub state: RunState, pub working: bool, pub ended: bool }
 impl RunEvents { pub const fn settled(&self) -> bool; }   // ended, or resting with no job
@@ -226,6 +240,10 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 - **The refusal to write without a person** is a recorded decision. A `need` event of the run carries its identifier, the word `approval`, and the diff's hash.
 - **A kill switch** met when work is submitted or resumed is answered `policy`, `kill_switch_on`, by the policy engine, which records the refusal. The scheduler's `busy`, `on_hold` is not passed on.
 
+### The project folder
+
+A local command works in a project folder. The mount of a front door puts a `ProjectFolder`, a type of this crate, on each request, as an extension beside the caller, from what the client end stated; the door hands it to `Request::in_project_folder`. Nothing a caller writes in a path, a query, a body, or a tool's arguments sets it. Before the handler runs, the dispatcher checks it: this engine serves one machine; the path is a full one; it names a folder that exists; and, with symbolic links followed, the folder neither holds nor lies inside the engine's own settings, data, runtime, or cache folders. A folder that fails is not handed on: `Call::project_folder` then answers `input`, `path_not_allowed` with the reason, and an action that needs no project is served all the same. A handler reaches every file through a checked path under the folder, as before.
+
 ### A source for a pipeline
 
 `tool.call` takes `source_file`, a path inside the project folder of the request, or `source_rows`, a list of records for a small input. The dispatcher resolves the path through a checked root made from the project folder, reads the file once, off the async threads, and stores the bytes as a blob; rows are stored as the bytes of a JSON document, at most 256 KiB. The blob's name is part of the digest that makes a run the same run. The runner hands the stored bytes to every job of the run, so the engine is never given a path and a resume reads the same bytes. A tool that reads a source and is given none, or the other way about, is `input`, `schema_invalid`. Not built: rows for a source that another reader than `json` reads, which needs `a2m-engine` to take rows.
@@ -318,7 +336,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `Paths`, `PersonSurface` to implement, and the `ApprovalDesk` it is handed: `waiting`, `preview`, `approve`, `decline` |
+| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `runs_in_hand` for its idle stop, `Paths`, `PersonSurface` to implement, and the `ApprovalDesk` it is handed: `waiting`, `preview`, `approve`, `decline` |
 | `a2m-mcp` | `Registry` for tool lists, `dispatch` (`tool.search` with `full` for the published tools), `next_events` for progress |
 | `a2m-api` | `Registry` for routes and OpenAPI, `dispatch`, `next_events` for an event stream, `PersonSurface` to implement |
 | `a2m-runner` | `Paths`, `KernelSettings` for its own group; not the `Kernel`, which a runner on another machine does not open |
@@ -396,6 +414,8 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | A pipeline over a source runs from a file of the project to verified records | `a_sheet_is_entered_row_by_row_from_a_file_of_the_project` |
 | What was recorded before a commit point is handed back on resume | `a_key_assigned_before_the_commit_point_is_handed_back_when_the_run_is_resumed`: after a lost answer the record is read by the assigned code, not looked up again |
 | A record still `planned` can be recorded as failed | `lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_is_settled` |
+| A stated project folder is checked before any handler sees it | `a_stated_project_folder_is_checked_before_any_handler_sees_it` |
+| The count of work in hand follows a run from queued to its end, and a run that rests for a person | `the_kernel_says_how_much_work_it_has_in_hand` |
 | A `Control` call dropped at a wait leaves nothing half-done | By construction: one transaction a call, and a guard for the notice. Not tested with a dropped call |
 
 ## Build order

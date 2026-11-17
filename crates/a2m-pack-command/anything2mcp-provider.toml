@@ -91,6 +91,10 @@ class = "input"
 code = "schema_invalid"
 
 [[failure_codes]]
+class = "input"
+code = "step_not_usable"
+
+[[failure_codes]]
 class = "rejected"
 code = "app_validation_error"
 

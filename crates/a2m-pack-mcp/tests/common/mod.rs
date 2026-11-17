@@ -266,7 +266,16 @@ pub async fn prepare(
     lease: Option<&a2m_auth::SessionLease>,
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     let destinations = Destinations::new([surface.surface.address.clone()]);
-    prepare_reaching(registry, plan, surface, fence, posture, lease, &destinations).await
+    prepare_reaching(
+        registry,
+        plan,
+        surface,
+        fence,
+        posture,
+        lease,
+        &destinations,
+    )
+    .await
 }
 
 /// Prepares the driver for a surface through the handle, for a run that

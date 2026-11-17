@@ -128,6 +128,7 @@ A fault is a setting: `Fault::once(kind)` for the next start it applies to, `Fau
 | `Drift` | Prints every output form differently: `qty` for `quantity`, another table column, other wording for results. The version is unchanged |
 | `Prompt { text }` | Asks a question on standard output before anything else, on any command, whatever its flags. `FaultKind::prompt()` asks `Are you sure? [y/N] ` |
 | `Flood { stream, bytes }` | Prints that many bytes of filler lines on one stream first |
+| `Say { stream, text }` | Prints that text on one stream first, exactly as given. A test puts a made-up secret at a chosen place in the output with it |
 | `RoundQuantity { multiple }` | Stores a quantity rounded down, and prints the quantity asked for |
 | `UppercaseName` | Stores a new item's name in upper case, and prints it as given |
 | `ReportVersion { version }` | Reports another version |

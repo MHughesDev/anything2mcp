@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -42,13 +42,24 @@ pub enum FaultKind {
         /// Its new name.
         renamed_to: String,
     },
+    /// A write that is made and then answered with a redirect, as a posted form
+    /// often is: carry the request out as usual, so a write is stored, then answer
+    /// `303 See Other` with this `Location` in place of the application's own
+    /// answer. Like "lost after commit" it applies to requests that may write, and
+    /// a read passes by without using it up.
+    RedirectAfterCommit {
+        /// The `Location` header to answer with, sent as it is written here.
+        location: String,
+    },
 }
 
 impl FaultKind {
     /// Whether this kind of fault applies to a request with this method.
     fn applies_to(&self, method: &Method) -> bool {
         match self {
-            Self::LostAfterCommit => method != Method::GET && method != Method::HEAD,
+            Self::LostAfterCommit | Self::RedirectAfterCommit { .. } => {
+                method != Method::GET && method != Method::HEAD
+            }
             _ => true,
         }
     }
@@ -147,6 +158,21 @@ pub(crate) async fn apply(State(state): State<AppState>, request: Request, next:
         }
         Some(FaultKind::ChangedShape { field, renamed_to }) => {
             changed_shape(next.run(request).await, &field, &renamed_to).await
+        }
+        Some(FaultKind::RedirectAfterCommit { location }) => {
+            // The request is carried out first: what it wrote is stored.
+            drop(next.run(request).await);
+            match HeaderValue::from_str(&location) {
+                Ok(location) => (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response(),
+                Err(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": "fault_not_possible",
+                        "message": "The fault's location cannot be sent as a header.",
+                    })),
+                )
+                    .into_response(),
+            }
         }
         None => next.run(request).await,
     }

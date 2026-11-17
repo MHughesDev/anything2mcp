@@ -538,8 +538,17 @@ impl Run {
             self.spawn_child(lifetime_ms)?;
         }
         for fault in &self.faults {
-            if let FaultKind::Flood { stream, bytes } = fault {
-                self.flood(*stream, *bytes)?;
+            match fault {
+                FaultKind::Flood { stream, bytes } => self.flood(*stream, *bytes)?,
+                FaultKind::Say {
+                    stream: Stream::Stdout,
+                    text,
+                } => self.out(text)?,
+                FaultKind::Say {
+                    stream: Stream::Stderr,
+                    text,
+                } => self.err(text),
+                _ => {}
             }
         }
         if self.has(&FaultKind::LeakSecret)

@@ -99,14 +99,9 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(one.encoded.bytes, other.encoded.bytes);
     assert_eq!(one.encoded.hash, other.encoded.hash);
 
-    // The one warning is the reviewer's: a tool that takes free text.
-    let warnings: Vec<String> = one
-        .warnings
-        .iter()
-        .filter(|warning| warning.code.as_str().starts_with("mcp."))
-        .map(|warning| warning.code.to_string())
-        .collect();
-    assert_eq!(warnings, ["mcp.free_text"]);
+    // The pack has nothing to warn of: no mapped tool is one a reviewer
+    // found to run free text.
+    assert_eq!(pack_warnings(&one), Vec::<String>::new());
 
     // A write commits and has the mapped read tool as its read-back; a read
     // by key is a lookup; a create carries its lookup.
@@ -139,6 +134,50 @@ async fn the_fixture_pins_are_the_stands_definitions() {
         wrong.is_empty(),
         "the fixture pins other digests than the stand's definitions have: {wrong:#?}"
     );
+}
+
+/// The codes of the pack's own warnings on a compiled target.
+fn pack_warnings(compiled: &a2m_files::Compiled) -> Vec<String> {
+    compiled
+        .warnings
+        .iter()
+        .filter(|warning| warning.code.as_str().starts_with("mcp."))
+        .map(|warning| warning.code.to_string())
+        .collect()
+}
+
+const SEARCH_REVIEWED: &str = "    free_text: false\n  orders_create:";
+const SEARCH_RUNS_TEXT: &str = "    free_text: true\n  orders_create:";
+
+#[test]
+fn a_tool_that_runs_free_text_can_be_recorded_and_never_bound() {
+    // A binding to a tool whose mapping entry says the server runs the
+    // text it is given does not compile.
+    let problems = problems_after("mappings/orders.yaml", SEARCH_REVIEWED, SEARCH_RUNS_TEXT);
+    let bound = problems
+        .iter()
+        .find(|problem| {
+            problem.code.as_str() == "mcp.free_text" && problem.level == a2m_files::Level::Error
+        })
+        .expect("free_text, as an error");
+    assert_eq!(bound.at.file.as_str(), "operations/order_search.yaml");
+    assert!(bound.at.line > 1 && !bound.fix.is_empty());
+
+    // With no binding on it, the entry stands as the record of a review,
+    // and the compiler warns that the tool is never called.
+    let folder = Folder::new("free-text");
+    let registry = registry(&folder);
+    let root = folder.path().join("target");
+    write_target(&root, &|path, text| match path {
+        "mappings/orders.yaml" => text.replace(SEARCH_REVIEWED, SEARCH_RUNS_TEXT),
+        "operations/order_search.yaml" => text
+            .replace("tool: orders_search", "tool: orders_report")
+            .replace("    args: {query: input.query}\n", ""),
+        _ => text,
+    });
+    let compiled = compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)));
+    assert_eq!(pack_warnings(&compiled), ["mcp.free_text"]);
 }
 
 /// Compiles the fixture with one file changed, and gives the problems.
@@ -243,12 +282,30 @@ fn what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix() {
     );
     assert!(problems.find("mcp.effect_understated").is_some());
 
-    // Text the system's users wrote, under a field type that does not mark
-    // it untrusted.
-    let problems = problems_after(
-        "operations/order_get.yaml",
-        "  note: {type: free_text}",
-        "  note: {type: identifier}",
-    );
-    assert!(problems.find("mcp.untrusted_unmarked").is_some());
+    // Text from the server, under a field type that does not mark it
+    // untrusted: in what a read returns, in what a write returns after its
+    // read-back, and in the one value of a tool whose result is text.
+    for (file, from, to) in [
+        (
+            "operations/order_get.yaml",
+            "  note: {type: free_text}",
+            "  note: {type: identifier}",
+        ),
+        (
+            "operations/order_note_update.yaml",
+            "outputs:\n  note: {type: free_text}",
+            "outputs:\n  note: {type: identifier}",
+        ),
+        (
+            "operations/order_search.yaml",
+            "  text: {type: free_text}",
+            "  text: {type: identifier}",
+        ),
+    ] {
+        let problems = problems_after(file, from, to);
+        let unmarked = problems
+            .find("mcp.untrusted_unmarked")
+            .unwrap_or_else(|| panic!("`{file}` compiled:\n{}", shown(&problems)));
+        assert_eq!(unmarked.at.file.as_str(), file);
+    }
 }

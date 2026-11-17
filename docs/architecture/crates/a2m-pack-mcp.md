@@ -1,6 +1,6 @@
 # `a2m-pack-mcp`
 
-The MCP pack: the `mcp` driver, which reaches an MCP server that a system already provides and re-exposes chosen tools of it with this runtime's policy, approval, audit, and verification around them. A mapping file names the only tools that can be reached. The server's own tool list is a discoverer, and a change to a mapped tool stops the calls to it. The pack is designed in [spec section 304](../../spec/3-packs/304-the-mcp-pack.md); this document says how its crate is put together and what is built. It was built as package 8.2; what building it settled is in decisions [0108](../../decisions/0108-an-upstream-mcp-server-is-reached-only-through-a-pinned-mapping-by-a-client-of-the-packs-own.md) and [0109](../../decisions/0109-the-mcp-pack-as-building-it-settled-it.md).
+The MCP pack: the `mcp` driver, which reaches an MCP server that a system already provides and re-exposes chosen tools of it with this runtime's policy, approval, audit, and verification around them. A mapping file names the only tools that can be reached. The server's own tool list is a discoverer, and a change to a mapped tool stops the calls to it. The pack is designed in [spec section 304](../../spec/3-packs/304-the-mcp-pack.md); this document says how its crate is put together and what is built. It was built as package 8.2; what building it settled is in decisions [0108](../../decisions/0108-an-upstream-mcp-server-is-reached-only-through-a-pinned-mapping-by-a-client-of-the-packs-own.md) and [0109](../../decisions/0109-the-mcp-pack-as-building-it-settled-it.md), and what a reading of its code against this document then closed is in [decision 0136](../../decisions/0136-the-mcp-pack-refuses-free-text-reads-its-list-again-before-a-write-and-passes-on-only-listed-members.md).
 
 ## Facts
 
@@ -24,7 +24,7 @@ The MCP pack: the `mcp` driver, which reaches an MCP server that a system alread
 - The `upstream_mcp` auth provider: a bearer token for a remote server.
 - The discoverer over the server's tool list, its describer, and its drafting rule.
 
-It must never: reach a tool the mapping does not name; pass an upstream tool's description, or any text from the server, to a caller as anything but marked untrusted data; quote the server in a failure; believe the server's read-only marking for a write; retry; hand the server a credential beyond the one its session's lease places.
+It must never: reach a tool the mapping does not name; call a tool a reviewer found to run free text, or a tool whose whole input is one string that no reviewer has cleared; use a connection for a far end other than the one the run's plan names; pass an upstream tool's description, or any text from the server, to a caller as anything but marked untrusted data; pass on a member of a result that the mapping does not list; quote the server in a failure; believe the server's read-only marking for a write; retry; hand the server a credential beyond the one its session's lease places.
 
 ## Not here: `site_tools`
 
@@ -48,7 +48,7 @@ Spec section 605 and the roadmap's package 8.2 place the `site_tools` mode in th
 | Drafting rule | From `upstream_tool` findings to mapping entries |
 | Auth provider | `upstream_mcp` |
 | Effects | No program of its own; the plan's programs; network to the surfaces; a session for `mcp` |
-| Settings | `max_message_bytes` (4 MiB) and `max_tools` (500) |
+| Settings | `max_message_bytes` (4 MiB), `max_tools` (500), and `list_max_age_ms` (10 seconds): how old the tool list a read is compared with may be on a connection that gives no notice of a change |
 
 ### The mapping file
 
@@ -56,7 +56,7 @@ Spec section 605 and the roadmap's package 8.2 place the `site_tools` mode in th
 | --- | --- |
 | `surface` (required) | The name of the `mcp` surface the mapping is for. The address and the program are fields of that surface in `target.yaml`, so an environment can override the address |
 | `server` | The name and version the server reported when the mapping was written |
-| `tools` (required) | Map of the upstream tool's name to an entry: `digest` of its definition, `effect` (`read`, `write`, or `irreversible`) as the developer judged it, `read_back` naming a mapped read tool for a write, and `untrusted_fields`. An entry may also state `result` (`structured`, the default, or `text`), `absent_error` (the start of the tool's error text that means the record is not there), `records` (the member of a list tool's result that holds the records), `key` (the members of a result that hold a key the server assigned), `key_args` (the arguments that take the parts of a record's key, in order), `stamp` (the argument that carries a record's stamp), and `free_text` (a reviewer's statement about a tool whose whole input is one string: `false` for a key, `true` for free text) |
+| `tools` (required) | Map of the upstream tool's name to an entry: `digest` of its definition, `effect` (`read`, `write`, or `irreversible`) as the developer judged it, `read_back` naming a mapped read tool for a write, and `untrusted_fields`, the members of a structured result that hold text and may be passed on. An entry may also state `result` (`structured`, the default, or `text`), `absent_error` (the start of the tool's error text that means the record is not there), `records` (the member of a list tool's result that holds the records), `key` (the members of a result that hold a key the server assigned), `key_args` (the arguments that take the parts of a record's key, in order), `stamp` (the argument that carries a record's stamp), and `free_text` (what a reviewer found the server does with the text the tool is given: `false`, it does not run it, which a tool whose whole input is one string needs before it is called; `true`, it runs it as a command, a query, or a prompt, and the tool is never called) |
 | `purpose` | `tools`, the default, or `discovery` for a server used only as a discovery provider, whose tools can never be bound to an operation |
 
 A mapping has no `credential` field yet. A remote server is given the bearer token of the session's lease, through `upstream_mcp`; a local program is given no credential.
@@ -76,9 +76,9 @@ The first six are registered rules that look across files. The last four are rai
 | `mcp.program_unpinned` | Error | A local server program with no SHA-256 digest |
 | `mcp.write_no_readback` | Error | A tool mapped `write` that names no mapped read tool. A tool mapped `irreversible` needs none |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
-| `mcp.free_text` | Warning | A tool whose entry says `free_text: true`. A reviewer decides |
+| `mcp.free_text` | Warning at the mapping, error at a binding | A tool whose entry says `free_text: true` is never called. The entry may stand as the record of a review; a binding that uses the tool, as its act, its read-back, or its lookup, does not compile |
 | `mcp.effect_understated` | Error | An operation states less than the tool it calls, or a reading verb calls a write tool |
-| `mcp.untrusted_unmarked` | Error | An output of a read filled from a member under `untrusted_fields` whose field type is not marked untrusted |
+| `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted. Every value of the mode comes from the server, from the act, the read-back, or the lookup. A choice is not text: the kernel admits only its codes |
 | `mcp.binding_incomplete` | Error | No tool, no `mcp` surface, a lookup tool that is not a read saying how an absent record shows, or a `stamped` operation whose tool names no `stamp` |
 | `mcp.mapping_conflict` | Error | Two mapping documents of one surface state different purposes, or a mapping cannot be encoded |
 
@@ -89,7 +89,7 @@ The first six are registered rules that look across files. The last four are rai
 | A tool on the server's list, marked read-only by the server | A mapping entry with its digest and `effect: read` | Whether the marking is believed; the operation |
 | A tool not marked read-only | A mapping entry with its digest, and `effect` as an open question | The effect, the operation, its identity strategy, its read-back tool |
 
-Both also propose `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. The pass-through read operation section 304 describes is not drafted yet.
+Both also propose `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string, `free_text` is left as an open question: whether the server runs the string is not in its definition. The pass-through read operation section 304 describes is not drafted yet.
 
 ## Interface
 
@@ -132,15 +132,17 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | Part | What the driver does |
 | --- | --- |
-| Prepare | Takes the connection for the target, environment, surface, session, and epoch of its credentials, if it is still alive, or opens one; reads the server's tool list |
-| Act | Refuses, unsent, a tool the mapping does not name, any tool of a `discovery` mapping, and a write tool from a step that does not commit. Reads the list again if the server gave notice that it changed. Compares the called tool's definition with its pin. Refuses a tool whose whole input is one string when its entry has no `free_text`. Builds the arguments, checks them against the pinned input schema, and calls the tool once |
-| Confirm | Within the act: the result is not an error, and its structured content fits the pinned output schema |
+| Prepare | Works out the far end the run's surface names, and refuses an address that is not among the run's destinations, whether or not a connection is open. Takes the connection for the target, environment, surface, session, epoch of its credentials, far end, and revision, if it is still alive, or opens one; reads the server's tool list |
+| Act | Refuses, unsent, a tool the mapping does not name, any tool of a `discovery` mapping, a write tool from a step that does not commit, and a tool whose entry says `free_text: true`. Reads the list again when it must (below). Compares the called tool's definition with its pin. Refuses a tool whose whole input is one string unless its entry says `free_text: false`. Builds the arguments, checks them against the pinned input schema, and calls the tool once |
+| Confirm | Within the act: the result is not an error, its structured content fits the pinned output schema, and it holds what the mapping names |
 | Read back | The mapped read tool, called with the record's key, compared after normalization by the engine |
 | Release | Keeps the connection for the identity's next run, unless the run ended in doubt or the connection was lost; then closes it, and the program with it |
 
 **Verification is added, not borrowed.** A server's own success answer is evidence that it accepted a call, never that the record holds what was sent.
 
-**What a result becomes.** A tool's error result is `rejected`, or absent for a lookup whose error text starts with `absent_error`. A `result: text` tool gives one value, `text`, its text blocks joined. A structured result gives its members as values. A lookup through a list tool takes the one record in `records`: none is absent, more than one is `possible_commit`/`ambiguous_match`. The members under `key` give the assigned key. Every value and the capture of the whole result pass the redactor.
+**What a result becomes.** A tool's error result is `rejected`, or absent for a lookup whose error text starts with `absent_error`. A `result: text` tool gives one value, `text`, its text blocks joined. A structured result gives the members the mapping lists, and no others: the ones the entry names under `key`, `records`, or `untrusted_fields`, and the ones the pinned output schema declares as something that cannot hold free text, which is a number, a truth value, nothing, or a value from a closed list. A member that is not listed is left out. So a tool with no output schema gives only what its entry names. What the entry names must be there: the member under `records` is a list of records, and each member under `key` is text or a whole number, or the step stops as `drift`/`response_schema_mismatch`. A lookup through a list tool takes the one record in `records`: none is absent, more than one is `possible_commit`/`ambiguous_match`. The members under `key` give the assigned key. Every value and the capture of the whole result pass the redactor.
+
+**When the list is read again.** Before every call that commits, on every connection: a write is compared with a list read for it. That costs one more listing, as many requests as the list has pages, for each write. Before a read: on the server's notice, where the connection gives notice, which is a local program that said so in its handshake; and where it gives none, which is every HTTP connection and every connection with no handshake, when the list held is older than `list_max_age_ms`. A read may therefore run against a pin up to that old. A listing that fails before a call leaves the call unsent.
 
 **The schema check** covers the keywords the pack reads: `type`, `enum`, `const`, properties, required members, items, and the like. Discovery names the keywords in a schema that it does not check.
 
@@ -148,7 +150,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | What changed | Found when | Result |
 | --- | --- | --- |
-| A mapped tool's definition | Before each call: the list read at `prepare`, read again when the server gave notice of a change | Calls to that tool stop as `drift`/`upstream_tool_changed`, unsent; calls to other tools still run. Nothing lowers a binding's level yet |
+| A mapped tool's definition | Before each call: the list read at `prepare`, read again before every write, and before a read on the server's notice or when it is older than `list_max_age_ms` | Calls to that tool stop as `drift`/`upstream_tool_changed`, unsent; calls to other tools still run. Nothing lowers a binding's level yet |
 | A mapped tool is gone | The same | The same |
 | An unmapped tool is added | `mcp_tools` | A finding with `pin: unmapped`. Nothing is reachable until a person maps it |
 | The server's reported version | `mcp_tools` | An `upstream_server` finding that says whether it changed. Comparing it at `prepare` and lowering the bindings' levels is not built; a call still runs if every pin matches |
@@ -181,8 +183,8 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | State | Where |
 | --- | --- |
-| Open connections and started programs, by target, environment, surface, session, and epoch | Memory in the driver, and the supervisor's listing. A connection of an older epoch of the same session is closed when a newer one opens |
-| A run's connection, mapping, and the tool list last read | Memory, in the run's `Prepared` |
+| Open connections and started programs, by target, environment, surface, session, epoch, far end (the address, or the program with its digest, arguments, and environment), and revision | Memory in the driver, and the supervisor's listing. A connection of the same surface and session under another key is closed, and its program with it, when a newer one is asked for: its credentials were replaced, or the plan now names another far end or revision |
+| A run's connection, mapping, and the tool list last read, with when it was read | Memory, in the run's `Prepared` |
 | The mapping and its pins | The project folder, as a target file |
 | The bearer token | The keeper; the lease places it in a request header |
 
@@ -190,13 +192,13 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | Class | Codes | When | Sent |
 | --- | --- | --- | --- |
-| `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a one-string tool with no `free_text`; an address that is not among the run's destinations | Not sent |
+| `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool whose entry says `free_text: true`, a one-string tool whose entry does not say `free_text: false`; an address that is not among the run's destinations, at every `prepare` | Not sent |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema, or a value with no form a tool takes | Not sent |
 | `input` | `tls_not_enabled` | An `https://` surface | Not sent |
 | `input` | `not_built` | A local program on Windows, a credential for a local program, a credential that is not a request header, the protocol's authorization flow | Not sent |
 | `input` | `payload_unreadable` | The plan's section or a step's payload does not decode; an address that is neither `http://` nor `stdio` with a program | Not sent |
 | `drift` | `upstream_tool_changed` | A pin does not match, or the tool is gone; a server that answers a call with "invalid parameters" | Not sent; answered |
-| `drift` | `response_schema_mismatch` | A structured result that does not fit the pinned output schema, or a list lookup whose `records` is not a list of records | Answered; unknown after a write |
+| `drift` | `response_schema_mismatch` | A structured result that does not fit the pinned output schema, or that lacks what the entry names: a `records` member that is a list of records, a `key` member that is text or a whole number | Answered; unknown after a write |
 | `rejected` | `app_validation_error` | The tool's own error result | Answered |
 | `unknown_variant` | `unexpected_status` | A protocol error the pack has no rule for, another revision, a status with no rule, an answer that is not a response, an answer sent as an event stream, an answer longer than `max_message_bytes`, a list longer than `max_tools` | Answered; unknown |
 | `possible_commit` | `ambiguous_match` | A lookup found more than one record | Answered |
@@ -214,6 +216,11 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | What the mapping does not allow is refused with a file, a line, and a fix | `what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix`, in `tests/pack.rs` |
 | A digest pins the definition and not the server's words; a value is checked by the keywords the pack knows, and the others are named | `a_digest_pins_the_definition_and_not_the_servers_words`, `a_value_is_checked_by_the_keywords_the_pack_knows`, `keywords_that_are_not_checked_are_named`, in `src/json.rs` |
 | Only mapped tools are reachable | `only_mapped_tools_are_reachable`, in `tests/driver.rs`; the stand counts no call |
+| A tool that runs free text is never called, whatever compiled the plan, and no binding uses one | `a_tool_that_runs_free_text_is_never_called`, in `tests/driver.rs`; `a_tool_that_runs_free_text_can_be_recorded_and_never_bound`, in `tests/pack.rs` |
+| A connection serves only the far end and the revision the run's plan names, and a run that may not reach an address is refused although a connection to it is open | `a_connection_is_reused_only_for_the_far_end_the_plan_names`, in `tests/driver.rs`; `a_plan_published_again_with_another_program_digest_does_not_use_the_running_program`, in `tests/stdio.rs` |
+| A tool that changes within a run is not called against its old pin: never for a write, and for a read no later than the setting allows | `a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin`, `a_read_is_compared_with_a_list_no_older_than_the_setting_allows`, in `tests/driver.rs` |
+| A structured result gives only what the mapping lists, and stops when it lacks what the mapping names | `a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_against_it`, in `tests/driver.rs` |
+| An output that holds text is marked untrusted, for a read, a write, and a tool whose result is text | `what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix`, in `tests/pack.rs` |
 | A changed tool stops its calls and does not reach the stand; another tool still runs; a changed description or server version changes nothing | `a_changed_tool_is_drift_and_the_call_does_not_reach_the_stand`, in `tests/driver.rs` |
 | A read returns what the stand holds, five runs observe the same, and one connection serves the identity | `a_read_returns_what_the_stand_holds_and_five_runs_observe_the_same`, in `tests/driver.rs` |
 | A write is sent once, only with the ledger's token, and read back from the stand | `a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stand`, in `tests/driver.rs` |
@@ -223,8 +230,8 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | The revision with no handshake is spoken when the surface states it | `the_revision_with_no_handshake_is_spoken_when_the_surface_states_it`, in `tests/driver.rs` |
 | Two identities never share a connection, and no secret reaches a caller | `each_identity_has_its_own_connection_and_no_secret_reaches_a_caller`, in `tests/driver.rs` |
 | A local program is started by the supervisor from the plan, read, and written; one that exits after a commit is `possible_commit`; one whose digest is not the pinned one is not started | `a_local_server_program_is_started_by_the_supervisor_and_read_and_written`, `a_program_that_exits_after_a_commit_is_possible_commit`, `a_program_whose_digest_is_not_the_pinned_one_is_not_started`, in `tests/stdio.rs`, on Unix only |
-| Discovery calls no tool | Not yet proven by a test: no test runs `mcp_tools`, its describer, or its drafting rule |
-| A tool list read again on the server's notice | Not yet proven by a test |
+| Discovery calls no tool, nothing that writes passes its port, the describer keeps the server's words apart, and the draft guesses nothing | `discovery_lists_the_servers_tools_and_calls_none`, in `tests/discover.rs`; the stand counts no call |
+| The tool list is read again on the server's notice, once, and the changed tool is not called | `the_tool_list_is_read_again_on_the_servers_notice_that_it_changed`, in `tests/stdio.rs`, on Unix only |
 
 ## Build order
 
@@ -240,7 +247,8 @@ Not built:
 - HTTPS. `reqwest` is built without a TLS back end, and the driver's health reports an `https://` surface unavailable.
 - The protocol's authorization flow, in which a person opens a link. An auth entry that asks for it is refused.
 - A credential for a local server program, and any credential that is not a request header.
-- Answers sent as an event stream, and a notice that the tool list changed over HTTP: only a local program's notices are read.
+- Answers sent as an event stream, and a notice that the tool list changed over HTTP: only a local program's notices are read. Over HTTP the list is read again instead, before every write and when it is older than `list_max_age_ms`.
+- A declared shape for the structured result of a tool with no output schema. Such a tool gives only the members its entry names; a typed member of it that is not a key cannot be taken yet.
 - The drafting of a pass-through read operation.
 - A comparison of the server's version at `prepare`, and lowering a binding's level when a tool or the version changes.
 - The canary, and stopping an idle local program.
@@ -248,7 +256,8 @@ Not built:
 
 ## Open points
 
-- Whether a tool mapped `free_text: true` is refused outright. Today it is a warning and the tool can be called; section 304 says a tool that runs free text is refused.
+- Whether a tool mapped `free_text: true` is refused outright. Settled: it is never called, and no binding may use it ([decision 0136](../../decisions/0136-the-mcp-pack-refuses-free-text-reads-its-list-again-before-a-write-and-passes-on-only-listed-members.md)). `free_text: false` is a person's statement that the server does not run the string, as `effect` is a person's judgment; the pack cannot see what a server does with a string.
+- Whether a read should also be compared with a list read for it. Today a read may run against a pin up to `list_max_age_ms` old.
 - Where the consent link's callback lands on a server, where the person's browser cannot reach the runner.
 - Whether a mapped tool's resources and prompts are ever reachable. Not in this design: tools only.
 - Whether an upstream server that holds one shared credential may serve several identities. This design gives each identity its own connection and refuses sharing.

@@ -12,6 +12,7 @@
 
 mod compile;
 mod discovery;
+mod guards;
 mod reads;
 mod registration;
 mod writes;
