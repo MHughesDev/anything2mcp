@@ -35,7 +35,7 @@ Nothing usable yet. The project is in its foundation phase.
 - The browser engine: it starts an installed Chrome, Edge, or Chromium over the debugging pipe, locates elements by role and name, and has an observing tab that cannot write.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
 - A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start.
-- The design: a specification of 59 sections in seven parts, 113 decision records, 18 research notes, and a register of 40 hypotheses.
+- The design: a specification of 59 sections in seven parts, 113 decision records, 19 research notes, and a register of 40 hypotheses.
 - The design of configuration: eight layers, twelve scopes, presets, a group of settings for every pack, and the rules that no setting can loosen.
 - The bar: what being the best of its kind means, as twelve things that can be measured, with a scorecard.
 - The architecture: which crate defines, implements, and joins every interface, with a design for each of the 29 crates, the command, data, file, stream, and device packs among them.

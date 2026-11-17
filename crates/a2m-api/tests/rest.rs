@@ -95,6 +95,11 @@ impl World {
     /// served on a port of the loopback address with a verified caller on
     /// every request, as the local channel would put it there.
     async fn ready() -> Self {
+        Self::with(ApiSettings::default()).await
+    }
+
+    /// As [`World::ready`], with the door's limits as given.
+    async fn with(settings: ApiSettings) -> Self {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("api");
         let clock: Arc<dyn Clock> =
@@ -137,8 +142,8 @@ impl World {
             .unwrap();
         // The door is set by the router whatever the mount said.
         let caller = Caller::new(principal, FrontDoor::Mcp, true);
-        let api = router(kernel.clone(), ApiSettings::default()).unwrap();
-        let open = router(kernel.clone(), ApiSettings::default()).unwrap();
+        let api = router(kernel.clone(), settings).unwrap();
+        let open = router(kernel.clone(), settings).unwrap();
         let served = axum::Router::new()
             .nest_service("/bare", open)
             .merge(api.layer(axum::Extension(caller)));
@@ -191,6 +196,36 @@ impl World {
             "every answer is JSON"
         );
         (status, answer.json().await.unwrap())
+    }
+
+    /// How many entries the audit log holds: every request the dispatcher
+    /// is handed adds to it.
+    async fn audit_total(&self) -> u64 {
+        let (status, body) = self
+            .post("/api/v1/actions/audit.query", &json!({"limit": 1}))
+            .await;
+        assert_eq!(status, 200, "{body}");
+        body["result"]["total"].as_u64().unwrap()
+    }
+
+    /// The status line's code of a raw exchange: the bytes sent, then what
+    /// the server answers until it closes the connection.
+    async fn raw_tcp(&self, sent: &[u8]) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let address = self.base.trim_start_matches("http://");
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(sent).await.unwrap();
+        let mut answer = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        // Until the head of the answer is in: the server keeps the
+        // connection open after it while the client sends nothing more.
+        while !answer.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "the connection closed without an answer");
+            answer.extend_from_slice(&buffer[..read]);
+        }
+        let line = String::from_utf8_lossy(&answer);
+        line.split(' ').nth(1).unwrap().parse().unwrap()
     }
 
     async fn close(self) {
@@ -311,7 +346,65 @@ async fn a_refusal_carries_its_class_code_message_and_fix_and_nothing_else() {
 async fn input_that_is_not_well_formed_is_refused_at_the_door() {
     let world = World::ready().await;
     let url = format!("{}/api/v1/actions/tool.search", world.base);
-    let cases: Vec<(reqwest::RequestBuilder, u16, &str)> = vec![
+    // Within the drain ceiling (four times the 1 MiB limit), every refusal
+    // is delivered, whichever check refuses and whether the body was read.
+    let big = format!("{{\"query\": \"{}\"}}", "a".repeat(2 * 1024 * 1024));
+    let under = format!("{{\"query\": \"{}\"}}", "a".repeat(512 * 1024));
+    let json_post = |url: &str, body: &str| {
+        world
+            .http
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body.to_owned())
+    };
+    let cases: Vec<(reqwest::RequestBuilder, u16, &str, &str)> = vec![
+        (
+            world
+                .http
+                .post(&url)
+                .header("content-type", "text/plain")
+                .body(big.clone()),
+            413,
+            "input",
+            "body_too_large",
+        ),
+        (
+            world
+                .http
+                .post(&url)
+                .header("content-type", "text/plain")
+                .body(under.clone()),
+            415,
+            "input",
+            "content_type_unsupported",
+        ),
+        (
+            json_post(&format!("{url}?query=order"), &big),
+            400,
+            "input",
+            "query_invalid",
+        ),
+        (
+            json_post(&url, &big).header("idempotency-key", "two words"),
+            400,
+            "input",
+            "idempotency_key_invalid",
+        ),
+        (
+            json_post(
+                &format!("{}/bare/api/v1/actions/tool.search", world.base),
+                &big,
+            ),
+            401,
+            "policy",
+            "caller_missing",
+        ),
+        (
+            json_post(&format!("{}/api/v1/nothing/here", world.base), &big),
+            404,
+            "input",
+            "route_not_found",
+        ),
         (
             world
                 .http
@@ -319,6 +412,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .header("content-type", "application/json")
                 .body("{\"query\": "),
             400,
+            "input",
             "schema_invalid",
         ),
         (
@@ -328,6 +422,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .header("content-type", "application/json")
                 .body("[1, 2]"),
             400,
+            "input",
             "schema_invalid",
         ),
         (
@@ -337,6 +432,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .header("content-type", "text/plain")
                 .body("{}"),
             415,
+            "input",
             "content_type_unsupported",
         ),
         (
@@ -349,6 +445,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                     "a".repeat(2 * 1024 * 1024)
                 )),
             413,
+            "input",
             "body_too_large",
         ),
         (
@@ -358,6 +455,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .header("content-type", "application/json")
                 .body("{}"),
             400,
+            "input",
             "query_invalid",
         ),
         (
@@ -368,6 +466,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .header("idempotency-key", "two words")
                 .body("{}"),
             400,
+            "input",
             "idempotency_key_invalid",
         ),
         (
@@ -375,17 +474,68 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .http
                 .get(format!("{}/api/v1/tools?query=a&query=b", world.base)),
             400,
+            "input",
             "query_invalid",
         ),
     ];
-    for (request, want_status, want_code) in cases {
+    let before = world.audit_total().await;
+    for (request, want_status, want_class, want_code) in cases {
         let (status, body) = world.raw(request).await;
         assert_eq!(status, want_status, "{body}");
-        assert_refusal(&body, "input", want_code);
+        assert_refusal(&body, want_class, want_code);
         // The dispatcher records a decision for every request it is
         // handed; none was made.
         assert!(body.get("decision").is_none(), "{body}");
     }
+    // Only the audit query itself was handed to the dispatcher.
+    assert_eq!(world.audit_total().await, before + 1);
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_body_past_the_limits_is_refused_or_cut_off_and_reaches_nothing() {
+    let world = World::with(ApiSettings {
+        max_body_bytes: 1024,
+        body_timeout: std::time::Duration::from_secs(1),
+        ..ApiSettings::default()
+    })
+    .await;
+    let url = format!("{}/api/v1/actions/tool.search", world.base);
+    let before = world.audit_total().await;
+    let post = |size: usize| {
+        world
+            .http
+            .post(&url)
+            .header("content-type", "application/json")
+            .body(format!("{{\"query\": \"{}\"}}", "a".repeat(size)))
+    };
+
+    // Over the limit and within the drain ceiling: the refusal, always.
+    let (status, body) = world.raw(post(3 * 1024)).await;
+    assert_eq!(status, 413, "{body}");
+    assert_refusal(&body, "input", "body_too_large");
+
+    // Past the ceiling: the refusal, or a connection closed under the
+    // client's write. Never anything else.
+    match post(256 * 1024).send().await {
+        Ok(answer) => {
+            assert_eq!(answer.status().as_u16(), 413);
+            let body: Json = answer.json().await.unwrap();
+            assert_refusal(&body, "input", "body_too_large");
+        }
+        Err(error) => assert!(error.is_request() || error.is_body(), "{error}"),
+    }
+
+    // A body that stops arriving: refused when its time is up. The client
+    // sends ten bytes of the hundred it declared, then nothing.
+    let head = format!(
+        "POST /api/v1/actions/tool.search HTTP/1.1\r\nhost: {}\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{{\"query\": ",
+        world.base.trim_start_matches("http://")
+    );
+    assert_eq!(world.raw_tcp(head.as_bytes()).await, 408);
+
+    // None of them reached the dispatcher: only the audit query did.
+    assert_eq!(world.audit_total().await, before + 1);
     world.close().await;
 }
 

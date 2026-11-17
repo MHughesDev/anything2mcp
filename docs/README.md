@@ -13,7 +13,7 @@ Everything known about Anything2MCP: the design, the reasons, the evidence, and 
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 117 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 40 open |
 | [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 9 |
-| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 18 |
+| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 19 |
 | [references/](references/sources.md) | Every source URL cited, by document; generated | 1 |
 | [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 45 |
 | assets/ | Diagrams | 3 |
