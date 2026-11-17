@@ -502,13 +502,18 @@ impl Lowering for McpLowering {
                         }
                         None => Vec::new(),
                     };
-                    problems.extend(place_key_problem(
-                        &tool_doc.at,
-                        read_tool,
-                        &read_entry,
-                        &args,
-                        key_inputs,
-                    ));
+                    // A read-back that runs after the write is given the key
+                    // the server assigned, when the tool that wrote reports
+                    // one under `key`: then no key input is needed.
+                    if entry.key.is_empty() {
+                        problems.extend(place_key_problem(
+                            &tool_doc.at,
+                            read_tool,
+                            &read_entry,
+                            &args,
+                            key_inputs,
+                        ));
+                    }
                     read_back.extend(step(
                         Call {
                             surface: &surface_name,
