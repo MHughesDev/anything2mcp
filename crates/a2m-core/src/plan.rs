@@ -972,7 +972,7 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Date, Decimal, FailureCode};
+    use crate::{Date, Decimal};
 
     fn payload(text: &str) -> PackPayload {
         PackPayload::encode(&Values::new().with("template", text)).unwrap()

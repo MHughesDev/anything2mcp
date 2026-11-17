@@ -165,7 +165,9 @@ fn apply(drift: &Drift, tool: &mut Value) {
             add_required(&mut tool["outputSchema"], "region");
         }
         Drift::AnnotationsChanged { tool: t } if *t == name => {
-            let was = tool["annotations"]["readOnlyHint"].as_bool().unwrap_or(false);
+            let was = tool["annotations"]["readOnlyHint"]
+                .as_bool()
+                .unwrap_or(false);
             tool["annotations"]["readOnlyHint"] = json!(!was);
         }
         Drift::DescriptionChanged { tool: t } if *t == name => {

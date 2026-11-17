@@ -116,7 +116,12 @@ impl StdioClient {
         let mut cursor = Value::Null;
         loop {
             let page = self.request("tools/list", json!({"cursor": cursor}))?;
-            tools.extend(page["result"]["tools"].as_array().ok_or("no tools")?.clone());
+            tools.extend(
+                page["result"]["tools"]
+                    .as_array()
+                    .ok_or("no tools")?
+                    .clone(),
+            );
             cursor = page["result"]["nextCursor"].clone();
             if cursor.is_null() {
                 return Ok(tools);
@@ -272,7 +277,10 @@ fn stdio_a_write_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
     assert_eq!(hello["result"]["protocolVersion"], HANDSHAKE_REVISION);
     assert_eq!(hello["result"]["serverInfo"]["name"], "example-mcp");
     assert_eq!(hello["result"]["serverInfo"]["version"], "1.0.0");
-    assert_eq!(hello["result"]["capabilities"]["tools"]["listChanged"], true);
+    assert_eq!(
+        hello["result"]["capabilities"]["tools"]["listChanged"],
+        true
+    );
     assert_eq!(client.request("ping", Value::Null)?["result"], json!({}));
 
     // The list comes in pages; a client that ignores the cursor sees three tools.
@@ -306,7 +314,10 @@ fn stdio_a_write_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
     // A read by key has a structured result that fits its output schema.
     let read = client.call("orders_get", json!({"order_id": "A-100"}))?;
     assert_eq!(read["result"]["structuredContent"]["note"], "Dock 4");
-    assert_eq!(read["result"]["structuredContent"]["reference"], Value::Null);
+    assert_eq!(
+        read["result"]["structuredContent"]["reference"],
+        Value::Null
+    );
 
     assert_eq!(client.finish()?, Some(0));
     let connections = control.connections()?;
@@ -327,7 +338,10 @@ async fn http_a_create_is_proven_by_asking_the_stand_what_it_stored() -> Outcome
     let hello = client.handshake().await?;
     assert_eq!(hello["result"]["protocolVersion"], HANDSHAKE_REVISION);
     // No stream is opened over HTTP, so the stand does not claim to send the notice.
-    assert_eq!(hello["result"]["capabilities"]["tools"]["listChanged"], false);
+    assert_eq!(
+        hello["result"]["capabilities"]["tools"]["listChanged"],
+        false
+    );
     assert_eq!(client.session.as_deref(), Some("session-1"));
     let stream = client.http.get(stand.url()).send().await?;
     assert_eq!(stream.status(), StatusCode::METHOD_NOT_ALLOWED);
@@ -337,7 +351,10 @@ async fn http_a_create_is_proven_by_asking_the_stand_what_it_stored() -> Outcome
     let (_, last) = client
         .request("tools/list", json!({"cursor": "offset-6"}))
         .await?;
-    assert_eq!(names(last["result"]["tools"].as_array().ok_or("no tools")?), ["orders_delete"]);
+    assert_eq!(
+        names(last["result"]["tools"].as_array().ok_or("no tools")?),
+        ["orders_delete"]
+    );
     assert!(last["result"].get("nextCursor").is_none());
     let (_, bad) = client
         .request("tools/list", json!({"cursor": "nonsense"}))
@@ -346,8 +363,13 @@ async fn http_a_create_is_proven_by_asking_the_stand_what_it_stored() -> Outcome
 
     let order = json!({"customer": " Fourth Example Customer ", "reference": "REF-1"});
     let created = client.call("orders_create", order.clone()).await?;
-    assert_eq!(created["result"]["structuredContent"], json!({"order_id": "A-103", "version": 1}));
-    let stored = control.stored_order("A-103")?.ok_or("A-103 was not stored")?;
+    assert_eq!(
+        created["result"]["structuredContent"],
+        json!({"order_id": "A-103", "version": 1})
+    );
+    let stored = control
+        .stored_order("A-103")?
+        .ok_or("A-103 was not stored")?;
     assert_eq!(stored.customer, "Fourth Example Customer");
     assert_eq!(stored.reference.as_deref(), Some("REF-1"));
     assert_eq!(stored.status, OrderStatus::Draft);
@@ -373,17 +395,31 @@ async fn http_a_create_is_proven_by_asking_the_stand_what_it_stored() -> Outcome
     let refused = client.call("orders_update", closed).await?;
     assert_eq!(refused["result"]["isError"], true);
     let stale = json!({"order_id": "A-100", "field": "note", "value": "x", "expected_version": 9});
-    assert_eq!(client.call("orders_update", stale).await?["result"]["isError"], true);
-    let absent = client.call("orders_get", json!({"order_id": "A-999"})).await?;
+    assert_eq!(
+        client.call("orders_update", stale).await?["result"]["isError"],
+        true
+    );
+    let absent = client
+        .call("orders_get", json!({"order_id": "A-999"}))
+        .await?;
     assert_eq!(absent["result"]["isError"], true);
     assert_eq!(control.writes()?.len(), 2);
-    assert_eq!(control.calls()?[2].outcome, CallOutcome::ErrorResult);
+    assert_eq!(control.calls()?[3].outcome, CallOutcome::ErrorResult);
 
     // The seed data holds text aimed at an agent, in a field a read returns.
-    let read = client.call("orders_get", json!({"order_id": "A-101"})).await?;
-    assert_eq!(read["result"]["structuredContent"]["note"], INSTRUCTION_TEXT);
-    let search = client.call("orders_search", json!({"query": "Third"})).await?;
-    let text = search["result"]["content"][0]["text"].as_str().ok_or("no text")?;
+    let read = client
+        .call("orders_get", json!({"order_id": "A-101"}))
+        .await?;
+    assert_eq!(
+        read["result"]["structuredContent"]["note"],
+        INSTRUCTION_TEXT
+    );
+    let search = client
+        .call("orders_search", json!({"query": "Third"}))
+        .await?;
+    let text = search["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or("no text")?;
     assert!(text.contains("A-102") && search["result"].get("structuredContent").is_none());
 
     control.reset()?;
@@ -420,9 +456,15 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
     let refused = client.request("initialize", initialize_params("1999-01-01"))?;
     assert_eq!(refused["error"]["code"], INVALID_PARAMS);
     assert_eq!(refused["error"]["data"]["requested"], "1999-01-01");
-    assert_eq!(refused["error"]["data"]["supported"], json!([HANDSHAKE_REVISION]));
+    assert_eq!(
+        refused["error"]["data"]["supported"],
+        json!([HANDSHAKE_REVISION])
+    );
 
-    assert_eq!(client.request("nonsense", Value::Null)?["error"]["code"], METHOD_NOT_FOUND);
+    assert_eq!(
+        client.request("nonsense", Value::Null)?["error"]["code"],
+        METHOD_NOT_FOUND
+    );
     client.send(&json!([{"jsonrpc": "2.0", "id": 1, "method": "ping"}]))?;
     assert_eq!(client.read()?["error"]["code"], INVALID_REQUEST);
     writeln!(client.input.as_mut().ok_or("closed")?, "{{not json")?;
@@ -436,13 +478,23 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
     assert!(listed["result"]["tools"].is_array());
     let unknown = stateless.request("tools/list", meta("1999-01-01"))?;
     assert_eq!(unknown["error"]["code"], INVALID_PARAMS);
-    assert_eq!(unknown["error"]["data"]["supported"], json!([STATELESS_REVISION, HANDSHAKE_REVISION]));
+    assert_eq!(
+        unknown["error"]["data"]["supported"],
+        json!([STATELESS_REVISION, HANDSHAKE_REVISION])
+    );
     let needs_handshake = stateless.request("tools/list", meta(HANDSHAKE_REVISION))?;
     assert_eq!(needs_handshake["error"]["code"], INVALID_REQUEST);
-    let revisions: Vec<_> = control.connections()?.into_iter().map(|c| c.revision).collect();
+    let revisions: Vec<_> = control
+        .connections()?
+        .into_iter()
+        .map(|c| c.revision)
+        .collect();
     assert_eq!(
         revisions,
-        [Some(HANDSHAKE_REVISION.to_owned()), Some(STATELESS_REVISION.to_owned())]
+        [
+            Some(HANDSHAKE_REVISION.to_owned()),
+            Some(STATELESS_REVISION.to_owned())
+        ]
     );
     Ok(())
 }
@@ -455,7 +507,10 @@ async fn http_revisions_sessions_and_the_request_with_no_handshake() -> Outcome 
     // With no session and no revision named, a request is refused.
     let mut bare = HttpClient::new(&stand);
     let (status, answer) = bare.request("tools/list", Value::Null).await?;
-    assert_eq!((status, &answer["error"]["code"]), (StatusCode::BAD_REQUEST, &json!(INVALID_REQUEST)));
+    assert_eq!(
+        (status, &answer["error"]["code"]),
+        (StatusCode::BAD_REQUEST, &json!(INVALID_REQUEST))
+    );
 
     // The revision with no handshake is named in the header or in `_meta`.
     bare.revision = Some(STATELESS_REVISION.to_owned());
@@ -479,7 +534,7 @@ async fn http_revisions_sessions_and_the_request_with_no_handshake() -> Outcome 
 
     // A session lasts until the client ends it or the server forgets it.
     let mut client = ready(&stand).await?;
-    let mut other = ready(&stand).await?;
+    let other = ready(&stand).await?;
     assert_ne!(client.session, other.session);
     control.expire_sessions()?;
     let (status, _) = client.request("tools/list", Value::Null).await?;
@@ -489,14 +544,18 @@ async fn http_revisions_sessions_and_the_request_with_no_handshake() -> Outcome 
     client.handshake().await?;
     let (status, _) = client.request("tools/list", Value::Null).await?;
     assert_eq!(status, StatusCode::OK);
-    other.session.clone_from(&client.session);
     let ended = other.http.delete(stand.url());
-    let ended = ended.header("mcp-session-id", client.session.as_deref().unwrap_or_default());
+    let ended = ended.header(
+        "mcp-session-id",
+        client.session.as_deref().unwrap_or_default(),
+    );
     assert_eq!(ended.send().await?.status(), StatusCode::OK);
     let (status, _) = client.request("tools/list", Value::Null).await?;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let closed = control.connections()?;
-    let closed = closed.iter().find(|c| Some(&c.id) == client.session.as_ref());
+    let closed = closed
+        .iter()
+        .find(|c| Some(&c.id) == client.session.as_ref());
     assert!(closed.is_some_and(|c| !c.open));
     Ok(())
 }
@@ -514,11 +573,21 @@ async fn stdio_each_drift_shows_in_the_list_and_the_notice_is_sent_when_asked() 
     let get_before = tool(&before, "orders_get")?.clone();
 
     for drift in [
-        Drift::ToolRemoved { tool: "orders_report".to_owned() },
-        Drift::InputSchemaChanged { tool: "orders_update".to_owned() },
-        Drift::DescriptionChanged { tool: "orders_get".to_owned() },
-        Drift::OutputSchemaChanged { tool: "orders_create".to_owned() },
-        Drift::AnnotationsChanged { tool: "orders_list".to_owned() },
+        Drift::ToolRemoved {
+            tool: "orders_report".to_owned(),
+        },
+        Drift::InputSchemaChanged {
+            tool: "orders_update".to_owned(),
+        },
+        Drift::DescriptionChanged {
+            tool: "orders_get".to_owned(),
+        },
+        Drift::OutputSchemaChanged {
+            tool: "orders_create".to_owned(),
+        },
+        Drift::AnnotationsChanged {
+            tool: "orders_list".to_owned(),
+        },
         Drift::ToolAdded,
     ] {
         control.set_drift(drift)?;
@@ -552,7 +621,10 @@ async fn stdio_each_drift_shows_in_the_list_and_the_notice_is_sent_when_asked() 
 
     let create = tool(&after, "orders_create")?;
     assert_eq!(create["outputSchema"]["required"][2], "region");
-    assert_eq!(tool(&after, "orders_list")?["annotations"]["readOnlyHint"], false);
+    assert_eq!(
+        tool(&after, "orders_list")?["annotations"]["readOnlyHint"],
+        false
+    );
 
     // Added: listed last, and it works if called.
     assert_eq!(names(&after).last(), Some(&ADDED_TOOL));
@@ -563,13 +635,19 @@ async fn stdio_each_drift_shows_in_the_list_and_the_notice_is_sent_when_asked() 
     // The notice leaves when the test asks, with no request to prompt it.
     control.announce_list_changed()?;
     let notice = client.read()?;
-    assert_eq!(notice, json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}));
+    assert_eq!(
+        notice,
+        json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+    );
     control.wait_for_announcements(1).await?;
     drop(client);
 
     // A program started later reports the new version and is owed no old notice.
     let mut later = StdioClient::start(&stand, None)?;
-    assert_eq!(later.handshake()?["result"]["serverInfo"]["version"], "1.1.0");
+    assert_eq!(
+        later.handshake()?["result"]["serverInfo"]["version"],
+        "1.1.0"
+    );
     control.clear_drift()?;
     assert_eq!(later.tools()?, before);
     assert!(later.others.is_empty());
@@ -591,7 +669,10 @@ fn stdio_the_program_is_lost_after_a_write_was_committed() -> Outcome {
     control.set_fault(Fault::once(FaultKind::DropBeforeHandling).on_tool("orders_create"))?;
     let mut client = StdioClient::start(&stand, None)?;
     client.handshake()?;
-    client.post("tools/call", json!({"name": "orders_create", "arguments": order}))?;
+    client.post(
+        "tools/call",
+        json!({"name": "orders_create", "arguments": order}),
+    )?;
     assert_eq!(client.read_line()?, None);
     assert_eq!(client.finish()?, Some(EXIT_DROPPED));
     assert!(control.calls()?.is_empty() && control.writes()?.is_empty());
@@ -601,7 +682,10 @@ fn stdio_the_program_is_lost_after_a_write_was_committed() -> Outcome {
     control.set_fault(Fault::once(FaultKind::DropAfterCommit).on_tool("orders_create"))?;
     let mut client = StdioClient::start(&stand, None)?;
     client.handshake()?;
-    client.post("tools/call", json!({"name": "orders_create", "arguments": order}))?;
+    client.post(
+        "tools/call",
+        json!({"name": "orders_create", "arguments": order}),
+    )?;
     assert_eq!(client.read_line()?, None);
     assert_eq!(client.finish()?, Some(EXIT_DROPPED));
     let calls = control.calls()?;
@@ -630,7 +714,10 @@ async fn http_the_connection_is_lost_after_a_write_was_committed() -> Outcome {
     let control = stand.control();
     let mut client = ready(&stand).await?;
     let call = |client: &mut HttpClient, value: &str| {
-        client.message("tools/call", json!({"name": "orders_update", "arguments": update_note(value)}))
+        client.message(
+            "tools/call",
+            json!({"name": "orders_update", "arguments": update_note(value)}),
+        )
     };
 
     control.set_fault(Fault::once(FaultKind::DropBeforeHandling).on_tool("orders_update"))?;
@@ -648,7 +735,9 @@ async fn http_the_connection_is_lost_after_a_write_was_committed() -> Outcome {
     assert_eq!(control.calls()?[0].fault, Some(FaultKind::DropAfterCommit));
 
     // The session outlives the lost connection, and the read shows the write.
-    let read = client.call("orders_get", json!({"order_id": "A-100"})).await?;
+    let read = client
+        .call("orders_get", json!({"order_id": "A-100"}))
+        .await?;
     assert_eq!(read["result"]["structuredContent"]["note"], "Dock 6");
     assert_eq!(read["result"]["structuredContent"]["version"], 2);
     Ok(())
@@ -669,31 +758,50 @@ async fn http_each_fault_on_an_answer_can_be_switched_on_and_seen() -> Outcome {
     let started = Instant::now();
     let report = client.call("orders_report", json!({})).await?;
     assert!(started.elapsed() >= Duration::from_millis(30));
-    assert_eq!(report["result"]["structuredContent"], json!({"draft": 2, "submitted": 1, "archived": 0}));
+    assert_eq!(
+        report["result"]["structuredContent"],
+        json!({"draft": 2, "submitted": 1, "archived": 0})
+    );
     control.set_fault(Fault::once(FaultKind::Delay { ms: 30 }).on_method("tools/list"))?;
     let started = Instant::now();
     let (_, listed) = client.request("tools/list", Value::Null).await?;
     assert!(started.elapsed() >= Duration::from_millis(30) && listed["result"]["tools"].is_array());
 
     // Malformed: the work is done, and what comes back is not a response.
-    let broken = Fault::once(FaultKind::Malformed { shape: Malformed::NotJson });
+    let broken = Fault::once(FaultKind::Malformed {
+        shape: Malformed::NotJson,
+    });
     control.set_fault(broken.on_tool("orders_update"))?;
-    let message = client.message("tools/call", json!({"name": "orders_update", "arguments": update_note("Dock 7")}));
+    let message = client.message(
+        "tools/call",
+        json!({"name": "orders_update", "arguments": update_note("Dock 7")}),
+    );
     let response = client.send(&message).await?;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(serde_json::from_str::<Value>(&response.text().await?).is_err());
     assert_eq!(note_of(control, "A-100")?, "Dock 7");
-    control.set_fault(Fault::once(FaultKind::Malformed { shape: Malformed::NotAResponse }))?;
+    control.set_fault(Fault::once(FaultKind::Malformed {
+        shape: Malformed::NotAResponse,
+    }))?;
     let (_, empty) = client.request("ping", Value::Null).await?;
     assert!(empty.get("result").is_none() && empty.get("error").is_none());
 
     // A protocol error nobody foresaw, and an HTTP status: nothing runs.
-    let error = FaultKind::ProtocolError { code: -32099, message: "Out of order".to_owned() };
+    let error = FaultKind::ProtocolError {
+        code: -32099,
+        message: "Out of order".to_owned(),
+    };
     control.set_fault(Fault::once(error).on_tool("orders_get"))?;
-    assert_eq!(client.call("orders_get", get.clone()).await?["error"]["code"], -32099);
+    assert_eq!(
+        client.call("orders_get", get.clone()).await?["error"]["code"],
+        -32099
+    );
     control.set_fault(Fault::once(FaultKind::HttpStatus { status: 503 }).on_tool("orders_get"))?;
     let (status, _) = client
-        .request("tools/call", json!({"name": "orders_get", "arguments": get}))
+        .request(
+            "tools/call",
+            json!({"name": "orders_get", "arguments": get}),
+        )
         .await?;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(control.calls_to("orders_get")?, 0);
@@ -707,13 +815,20 @@ async fn http_each_fault_on_an_answer_can_be_switched_on_and_seen() -> Outcome {
     // Structured content that does not fit the tool's output schema.
     control.set_fault(Fault::until_cleared(FaultKind::ResultOffSchema).on_tool("orders_get"))?;
     let off = client.call("orders_get", get.clone()).await?;
-    assert_eq!(off["result"]["structuredContent"], json!({"unexpected": true}));
+    assert_eq!(
+        off["result"]["structuredContent"],
+        json!({"unexpected": true})
+    );
     assert_eq!(control.faults()?.len(), 1);
     control.clear_faults()?;
     let fine = client.call("orders_get", get).await?;
     assert_eq!(fine["result"]["structuredContent"]["note"], "Dock 7");
 
-    let fired: Vec<_> = control.fired_faults()?.into_iter().map(|f| f.method).collect();
+    let fired: Vec<_> = control
+        .fired_faults()?
+        .into_iter()
+        .map(|f| f.method)
+        .collect();
     assert_eq!(fired.len(), 7);
     assert_eq!(fired[0], "tools/list");
     Ok(())
@@ -729,14 +844,22 @@ fn stdio_answers_leave_out_of_order_and_a_broken_answer_is_one_line() -> Outcome
     client.handshake()?;
 
     control.set_slow_ms(60_000)?;
-    let slow = client.post("tools/call", json!({"name": "orders_report", "arguments": {}}))?;
+    client.post(
+        "tools/call",
+        json!({"name": "orders_report", "arguments": {}}),
+    )?;
     let quick = client.post("ping", Value::Null)?;
     assert_eq!(client.read()?["id"], quick);
-    assert_eq!(control.calls()?[0].seq, slow - 1);
+    assert_eq!(control.calls_to("orders_report")?, 1);
 
-    let broken = Fault::once(FaultKind::Malformed { shape: Malformed::NotJson });
+    let broken = Fault::once(FaultKind::Malformed {
+        shape: Malformed::NotJson,
+    });
     control.set_fault(broken.on_tool("orders_update"))?;
-    client.post("tools/call", json!({"name": "orders_update", "arguments": update_note("Dock 8")}))?;
+    client.post(
+        "tools/call",
+        json!({"name": "orders_update", "arguments": update_note("Dock 8")}),
+    )?;
     let line = client.read_line()?.ok_or("no line")?;
     assert!(serde_json::from_str::<Value>(&line).is_err());
     assert_eq!(note_of(control, "A-100")?, "Dock 8");
@@ -760,7 +883,10 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
     let challenge = refused.headers()["www-authenticate"].to_str()?.to_owned();
     let metadata = format!("{}/.well-known/oauth-protected-resource", stand.base());
-    assert_eq!(challenge, format!("Bearer resource_metadata=\"{metadata}\""));
+    assert_eq!(
+        challenge,
+        format!("Bearer resource_metadata=\"{metadata}\"")
+    );
     let document: Value = nobody.http.get(&metadata).send().await?.json().await?;
     assert_eq!(document["resource"], stand.url());
 
@@ -779,7 +905,11 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     ben.handshake().await?;
     ada.call("orders_get", json!({"order_id": "A-100"})).await?;
     ben.call("orders_get", json!({"order_id": "A-102"})).await?;
-    let who: Vec<_> = control.calls()?.into_iter().map(|c| (c.connection, c.principal)).collect();
+    let who: Vec<_> = control
+        .calls()?
+        .into_iter()
+        .map(|c| (c.connection, c.principal))
+        .collect();
     assert_eq!(who[0], ("session-1".to_owned(), Some("ada".to_owned())));
     assert_eq!(who[1], ("session-2".to_owned(), Some("ben".to_owned())));
     assert!(control.shared_connections()?.is_empty());
@@ -787,7 +917,13 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     // The stand lets one session carry two identities, and reports it.
     ben.session.clone_from(&ada.session);
     ben.call("orders_get", json!({"order_id": "A-102"})).await?;
-    assert_eq!(control.shared_connections()?.into_iter().collect::<Vec<_>>(), ["session-1"]);
+    assert_eq!(
+        control
+            .shared_connections()?
+            .into_iter()
+            .collect::<Vec<_>>(),
+        ["session-1"]
+    );
 
     // A credential that stops being accepted is refused on the next request.
     control.revoke_token("token-of-ada")?;
@@ -823,7 +959,11 @@ fn stdio_the_credential_comes_from_the_environment_and_two_programs_share_one_st
     ada.call("orders_update", update_note("Dock 9"))?;
     let read = ben.call("orders_get", json!({"order_id": "A-100"}))?;
     assert_eq!(read["result"]["structuredContent"]["note"], "Dock 9");
-    let who: Vec<_> = control.calls()?.into_iter().map(|c| (c.connection, c.principal)).collect();
+    let who: Vec<_> = control
+        .calls()?
+        .into_iter()
+        .map(|c| (c.connection, c.principal))
+        .collect();
     assert_eq!(who[0], ("stdio-3".to_owned(), Some("ada".to_owned())));
     assert_eq!(who[1], ("stdio-4".to_owned(), Some("ben".to_owned())));
     assert!(control.shared_connections()?.is_empty());

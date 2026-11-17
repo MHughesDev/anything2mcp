@@ -148,7 +148,9 @@ struct Executed {
 
 fn broken_answer(shape: Malformed, id: &Value) -> String {
     match shape {
-        Malformed::NotJson => format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"content\":[{{\"type\":\"te"),
+        Malformed::NotJson => {
+            format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"content\":[{{\"type\":\"te")
+        }
         Malformed::NotAResponse => json!({"jsonrpc": "2.0", "id": id}).to_string(),
     }
 }
@@ -169,11 +171,7 @@ pub(crate) fn announcements(state: &mut State, conn: &mut Conn) -> Vec<Value> {
     }
 }
 
-fn initialize(
-    state: &mut State,
-    conn: &mut Conn,
-    params: &Value,
-) -> Result<Executed, RpcError> {
+fn initialize(state: &mut State, conn: &mut Conn, params: &Value) -> Result<Executed, RpcError> {
     let Some(requested) = params.get("protocolVersion").and_then(Value::as_str) else {
         return Err(RpcError::new(
             INVALID_PARAMS,
@@ -384,7 +382,9 @@ pub(crate) fn dispatch(state: &mut State, conn: &mut Conn, incoming: &Incoming<'
             .status(400)
             .into_outcome(&no_id);
     };
-    let Some(object) = message.as_object().filter(|o| o.get("jsonrpc") == Some(&json!("2.0")))
+    let Some(object) = message
+        .as_object()
+        .filter(|o| o.get("jsonrpc") == Some(&json!("2.0")))
     else {
         // An array is a batch, which the revisions served do not have.
         return RpcError::new(INVALID_REQUEST, "Not a JSON-RPC 2.0 message")
@@ -419,7 +419,8 @@ pub(crate) fn dispatch(state: &mut State, conn: &mut Conn, incoming: &Incoming<'
         && method != "initialize"
         && !REVISIONS.contains(&named)
     {
-        return RpcError::unsupported_revision(named, &REVISIONS).into_outcome(id.unwrap_or(&no_id));
+        return RpcError::unsupported_revision(named, &REVISIONS)
+            .into_outcome(id.unwrap_or(&no_id));
     }
 
     let Some(id) = id else {
@@ -435,7 +436,10 @@ pub(crate) fn dispatch(state: &mut State, conn: &mut Conn, incoming: &Incoming<'
         };
     };
 
-    if matches!(incoming.credential, Credential::Missing | Credential::Refused) {
+    if matches!(
+        incoming.credential,
+        Credential::Missing | Credential::Refused
+    ) {
         state.truth.unauthorized += 1;
         return RpcError::new(
             CREDENTIAL_REFUSED,

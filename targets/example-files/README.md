@@ -99,7 +99,7 @@ Every fault is a value of `example_files::faults::Fault`, given to `set_fault`. 
 | `PartialWrite { beside, temp_name }` | Act | A file named `temp_name` appears beside the file, holding the first half of its bytes | Everywhere |
 | `LockSignal { sibling }` | Standing | An empty file with that name exists. `Fault::lock_signal_for(file)` names it `<file>.lock` | Everywhere |
 | `HeldWithoutSharing { file }` | Standing | The stand holds the file open and shares it with nobody | Windows only |
-| `ReadOnlyFile { file }` | Standing | The file is marked read-only. On Windows the mark stops an edit in place; on Unix it stops neither a replace nor the superuser | Everywhere |
+| `ReadOnlyFile { file }` | Standing | The file is marked read-only. On Windows the mark stops an edit in place by anyone. On Unix it stops an edit in place by an ordinary user, and never a replace, because the folder decides that | Everywhere |
 | `ReadOnlyFolder { folder }` | Standing | Nothing can be made, replaced, or removed in the folder: a save fails for want of permission | Unix, and not when the tests run as the superuser |
 | `LinkOut { at }` | Act | A link below the root points at the file outside it | Unix; Windows where the user may make links |
 | `FolderLinkOut { at }` | Act | A link below the root points at the folder outside it | Unix; Windows where the user may make links |

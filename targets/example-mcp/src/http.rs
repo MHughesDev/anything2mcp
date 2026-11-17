@@ -152,7 +152,9 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = value.split_once(' ')?;
-    scheme.eq_ignore_ascii_case("bearer").then_some(token.trim())
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then_some(token.trim())
 }
 
 /// Checks the credential. A request without an accepted one gets the 401
@@ -235,7 +237,12 @@ fn status(code: u16) -> StatusCode {
 
 async fn respond(answer: io::Result<Answer>, kill: &Kill) -> Response {
     let (outcome, new_session) = match answer {
-        Err(_) => return plain(StatusCode::INTERNAL_SERVER_ERROR, "The stand lost its state"),
+        Err(_) => {
+            return plain(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "The stand lost its state",
+            );
+        }
         Ok(Answer::Unauthorized(challenge)) => {
             let mut response = plain(StatusCode::UNAUTHORIZED, "Unauthorized");
             if let Ok(value) = challenge.parse() {
@@ -258,7 +265,8 @@ async fn respond(answer: io::Result<Answer>, kill: &Kill) -> Response {
         Reply::Message(message) => (status(outcome.http_status), Json(message)).into_response(),
         Reply::Raw(text) => ([(CONTENT_TYPE, "application/json")], text).into_response(),
         Reply::Status(code) => {
-            let body: Value = json!({"error": "fault", "message": "A fault was switched on for this request."});
+            let body: Value =
+                json!({"error": "fault", "message": "A fault was switched on for this request."});
             (status(code), Json(body)).into_response()
         }
         Reply::Drop => {
