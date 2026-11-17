@@ -250,6 +250,19 @@ pub struct Hooks {
     /// The next step of this kind is carried out, and then fails with this
     /// class and code, as a failure the system answered with.
     pub fails_after: Mutex<Option<(String, FailureClass, &'static str)>>,
+    /// A save takes this long before it is sent: longer, when a test says
+    /// so, than the step's time limit.
+    pub save_takes_ms: AtomicU64,
+    /// A save is carried out away from the step's future, as a driver does
+    /// that commits on a thread of its own: it goes on when the future is
+    /// dropped. It is sent once `late_gate` is opened.
+    pub detached_save: AtomicBool,
+    /// Told when a detached save is in flight.
+    pub in_flight: tokio::sync::Notify,
+    /// Opened by the test to let a detached save reach the application.
+    pub late_gate: tokio::sync::Notify,
+    /// The detached save, to wait for its end.
+    pub late: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// What one step was given.
@@ -631,12 +644,34 @@ impl Driver for AppDriver {
                     {
                         body["version"] = version.into();
                     }
-                    let sent = state
+                    let slow = hooks.save_takes_ms.load(Ordering::SeqCst);
+                    if slow > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(slow)).await;
+                    }
+                    let request = state
                         .http
                         .put(format!("{}/api/orders/{order}/items/{item}", state.base))
-                        .json(&body)
-                        .send()
-                        .await;
+                        .json(&body);
+                    let sent = if hooks.detached_save.swap(false, Ordering::SeqCst) {
+                        let (answer, answered) = tokio::sync::oneshot::channel();
+                        let gate = Arc::clone(hooks);
+                        let task = tokio::spawn(async move {
+                            gate.late_gate.notified().await;
+                            let _ = answer.send(request.send().await);
+                        });
+                        *hooks.late.lock().unwrap() = Some(task);
+                        hooks.in_flight.notify_one();
+                        match answered.await {
+                            Ok(sent) => sent,
+                            Err(_) => {
+                                return Err(StepFailure::unknown(unavailable(
+                                    "The save ended without an answer.",
+                                )));
+                            }
+                        }
+                    } else {
+                        request.send().await
+                    };
                     if hooks.lose_answer.swap(false, Ordering::SeqCst) {
                         return Err(StepFailure::unknown(unavailable(
                             "The connection was lost after the request was sent.",

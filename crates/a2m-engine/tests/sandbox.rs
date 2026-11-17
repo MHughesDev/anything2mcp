@@ -374,6 +374,44 @@ async fn a_try_of_a_write_runs_its_reads_under_the_guard_and_changes_its_test_re
 }
 
 #[tokio::test]
+async fn a_record_is_read_again_in_the_context_that_writes_it() {
+    // A driver may keep what it read of a record, such as its version,
+    // with the context it read it in. In a try, the record is looked up
+    // in one context and written in another, within one job and well
+    // inside the freshness window.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        plan.environments[0].test_records = vec![item_key("A-102", "T-1")];
+    })
+    .await;
+    let test_record = item("A-102", "T-1", "Trial", 1, "1");
+    let outcome = scene
+        .work(JobKind::Try, ITEM_UPSERT, test_record.clone())
+        .await;
+    assert!(waits(&outcome), "{outcome:?}");
+    let diff = scene.run_row().await.diff_hash.unwrap();
+    // A second run of the same call, whose diff is the same and is
+    // approved before the job starts: it previews and writes in one job.
+    scene.another_run(ITEM_UPSERT).await;
+    scene.control.approve(diff).await;
+    let before = scene.hooks.seen().len();
+    let outcome = scene.work(JobKind::Try, ITEM_UPSERT, test_record).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let log: Vec<String> = scene.hooks.seen()[before..]
+        .iter()
+        .filter(|entry| ["get_item", "lock", "intend", "put_item"].contains(&entry.as_str()))
+        .cloned()
+        .collect();
+    // Looked up for the preview; then, under the lock and before the
+    // intent, read once more in the context that writes; then written and
+    // read back.
+    assert_eq!(
+        log,
+        ["get_item", "lock", "get_item", "intend", "put_item", "get_item"]
+    );
+    assert_eq!(scene.app.write_count("A-102", "T-1").await.unwrap(), 1);
+}
+
+#[tokio::test]
 async fn a_discoverer_that_floods_is_held_to_its_declared_size_and_the_bound_is_reported() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     // The discoverer hands over far more than the bytes its manifest

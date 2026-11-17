@@ -346,11 +346,14 @@ async fn with_progress(
         // The call starts a run. It is started without the wait, and the
         // run's events are followed until it rests, ends, or the caller's
         // wait is over.
+        eprintln!("DBG start");
         let mut following = match core.start(&route, wait, asker).await {
             Ok(following) => following,
             Err(answer) => return Some(Some(answer)),
         };
+        eprintln!("DBG started");
         while following.open() {
+            eprintln!("DBG follow {following:?}");
             let notes = tokio::select! {
                 () = progress.messages.closed() => return None,
                 notes = core.follow(&mut following, asker) => notes,

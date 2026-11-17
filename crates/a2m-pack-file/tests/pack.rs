@@ -245,7 +245,6 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
             "file.beneath_application",
             "beneath",
         ),
-
     ];
     for (changes, code, says) in cases {
         let changed = Changed::new(changes);

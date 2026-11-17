@@ -268,11 +268,7 @@ fn replace(
     }
     // A replace needs only the right to write the folder. The pack asks for
     // more: the right to write the file itself. Nothing is written here.
-    drop(
-        job.target
-            .open(Open::WriteProbe)
-            .map_err(gone_is_changed)?,
-    );
+    drop(job.target.open(Open::WriteProbe).map_err(gone_is_changed)?);
     held(job)?;
 
     let (mut file, path) = create_temporary(folder, &job.name, &job.token, random)?;
@@ -332,11 +328,7 @@ fn replace(
         }
         Err(error) => {
             // The system said no. The file's own bytes say what happened.
-            match after_refusal(
-                job.target.digest(job.max_bytes),
-                job.before,
-                job.intended,
-            ) {
+            match after_refusal(job.target.digest(job.max_bytes), job.before, job.intended) {
                 Refused::Landed => {
                     folder.flush();
                     Ok(())

@@ -40,7 +40,7 @@ pub use control::{
     Clearance, Control, EngineEvent, Evidence, GuardQuestion, PassedOver, Preview, SessionWant,
 };
 pub use diff::{Diff, DiffAction, DiffCounts, DiffField, DiffRecord};
-pub use engine::{Engine, EngineDeps, EngineSettings};
+pub use engine::{Engine, EngineDeps, EngineSettings, ExclusiveNeed};
 pub use job::{
     Conditions, Directive, JobKind, JobOutcome, JobSpec, KernelHealth, LeaseClock, Parallelism,
     RecordSnapshot, RunSnapshot, ToolRef,

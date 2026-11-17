@@ -25,7 +25,7 @@ command-fds.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 a2m-files = { path = "../a2m-files", features = ["testing"] }

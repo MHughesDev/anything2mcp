@@ -3,8 +3,11 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use a2m_core::{Digest, Failure, FailureClass, KeyedDigest, Redact, RunState, Version};
-use a2m_provider::{Posture, Registry};
+use a2m_core::{
+    Digest, Failure, FailureClass, KeyedDigest, OperationName, Plan, Redact, RunState,
+    SurfaceName, ToolRuns, Version,
+};
+use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;
 use a2m_telemetry::{Clock, TraceBuilder, TraceIdentity};
 
@@ -76,6 +79,22 @@ pub struct EngineDeps {
     pub clock: Arc<dyn Clock>,
     /// The settings.
     pub settings: EngineSettings,
+}
+
+/// Something a job that writes must hold alone for as long as it is leased:
+/// what the mode of one of its bindings declares that one write holds
+/// alone, on the surface the binding acts on.
+///
+/// The engine does not take it. Whoever submits the job names it in the
+/// job's requirements, so that the scheduler takes every such key together
+/// when it leases the job, before any record lock, and passes what a lost
+/// job held to its reconcile job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExclusiveNeed {
+    /// What is held alone, as the mode's manifest words it.
+    pub kind: Exclusive,
+    /// The surface it is held on.
+    pub surface: SurfaceName,
 }
 
 /// The engine. It holds the plans it has loaded and nothing else between
@@ -162,6 +181,54 @@ impl Engine {
         }
         plans.push(Arc::clone(&loaded));
         Ok(loaded)
+    }
+
+    /// What a job that carries out `tool` must hold alone, when the tool
+    /// writes: for every binding that may write, what its mode declares
+    /// one write holds alone, on the binding's surface. In the order of
+    /// the kinds and then of the surfaces' names, each once. Empty for a
+    /// tool that only reads, and for a tool the plan does not hold.
+    ///
+    /// A binding's mode is looked up by name in the registry, as data; a
+    /// mode no enabled provider declares can never be chosen and adds
+    /// nothing.
+    #[must_use]
+    pub fn exclusive_needs(&self, plan: &Plan, tool: &OperationName) -> Vec<ExclusiveNeed> {
+        let operations: Vec<_> = match plan.tool(tool).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => plan.operation(index).into_iter().collect(),
+            Some(ToolRuns::Pipeline(index)) => plan
+                .pipeline(index)
+                .into_iter()
+                .flat_map(|pipeline| &pipeline.steps)
+                .filter_map(|step| plan.operation(step.operation))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut needs = Vec::new();
+        for binding in operations.iter().flat_map(|operation| &operation.bindings) {
+            if !binding.act.iter().any(|step| step.commits)
+                || binding.status == a2m_core::BindingStatus::Retired
+            {
+                continue;
+            }
+            let Some(defaults) = self.deps.registry.mode_defaults(&binding.mode) else {
+                continue;
+            };
+            let Some(surface) = plan.surface(binding.surface) else {
+                continue;
+            };
+            if defaults.exclusive != Exclusive::None {
+                needs.push(ExclusiveNeed {
+                    kind: defaults.exclusive,
+                    surface: surface.name.clone(),
+                });
+            }
+        }
+        needs.sort_by(|left, right| {
+            (left.kind.as_str(), &left.surface).cmp(&(right.kind.as_str(), &right.surface))
+        });
+        needs.dedup();
+        needs
     }
 
     /// The environment a job names, as its position in the plan.

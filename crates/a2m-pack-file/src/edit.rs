@@ -514,7 +514,15 @@ mod tests {
 
     #[test]
     fn text_that_a_spreadsheet_program_would_run_is_told_from_text() {
-        for text in ["=1+1", "+1", "-1", "@name", "  =1+1", "\u{FF1D}1", "\u{FF20}x"] {
+        for text in [
+            "=1+1",
+            "+1",
+            "-1",
+            "@name",
+            "  =1+1",
+            "\u{FF1D}1",
+            "\u{FF20}x",
+        ] {
             assert_eq!(leads_as_formula(text), Some(Leads::Sign), "{text:?}");
         }
         for text in ["\t=1+1", "\rtext", "\ntext"] {

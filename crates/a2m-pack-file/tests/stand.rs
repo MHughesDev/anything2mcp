@@ -10,9 +10,9 @@
 
 mod common;
 
+use a2m_core::BindingPlan;
 use a2m_core::{Decimal, Digest, FailureClass, Value, Values};
 use a2m_ledger::Store;
-use a2m_core::BindingPlan;
 use a2m_provider::{Access, DriverHandle, Posture, Prepared, Sent, StepFailure, StepOutcome};
 use common::{Granted, Scene, for_reconcile, granted, last_values, store};
 use example_files::control::EntryKind;
@@ -1275,7 +1275,15 @@ async fn text_a_spreadsheet_program_would_run_is_refused_and_never_altered() {
     for note in ["=1+1", "+1+1", "-1+1", "@total", "  =1+1", "\u{FF1D}1+1"] {
         caller += 1;
         let values = inputs(&[("item_code", text("EX-1002")), ("note", text(note))]);
-        let result = write(&scene, &store, caller, "example_stock_note_set", &values, || {}).await;
+        let result = write(
+            &scene,
+            &store,
+            caller,
+            "example_stock_note_set",
+            &values,
+            || {},
+        )
+        .await;
         is_refused(&refused(result), note);
     }
     // A new row: the same rule.
@@ -1289,10 +1297,16 @@ async fn text_a_spreadsheet_program_would_run_is_refused_and_never_altered() {
     // Nothing was written, and the value was not made safe by changing it.
     assert!(scene.stand.observe().unwrap().is_empty());
     assert!(scene.stand.strays().unwrap().is_empty());
-    assert_eq!(stored_note(&scene, "EX-1002"), ["Says \"heavy\" on the box"]);
+    assert_eq!(
+        stored_note(&scene, "EX-1002"),
+        ["Says \"heavy\" on the box"]
+    );
 
     // A sign inside a value, and a negative number, are not formulas.
-    let values = inputs(&[("item_code", text("EX-1002")), ("note", text("1+1=2 - checked"))]);
+    let values = inputs(&[
+        ("item_code", text("EX-1002")),
+        ("note", text("1+1=2 - checked")),
+    ]);
     write(&scene, &store, 21, "example_stock_note_set", &values, || {})
         .await
         .unwrap();
@@ -1329,7 +1343,10 @@ async fn text_a_spreadsheet_program_would_run_is_refused_and_never_altered() {
         .await
         .unwrap();
     assert_eq!(stored_note(&scene, "EX-1001"), [said]);
-    assert_eq!(last_values(&written.read_back).get("note"), Some(&text(said)));
+    assert_eq!(
+        last_values(&written.read_back).get("note"),
+        Some(&text(said))
+    );
     let bytes = scene.stand.bytes(seed::STOCK_CSV).unwrap().unwrap();
     let field = b"\"He said \"\"no, thanks\"\", twice\"";
     assert!(bytes.windows(field.len()).any(|window| window == field));

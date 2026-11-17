@@ -505,9 +505,157 @@ mod tests {
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::{
-        ENDED_BY_SUPERVISOR, ForeignEnds, ended_from_outside, foreign_ends, new_job, set_inherit,
+    use std::os::windows::io::{AsRawHandle, OwnedHandle};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    use tokio::process::Command;
+    use windows_sys::Win32::System::JobObjects::{
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+        QueryInformationJobObject,
     };
+
+    use super::{
+        ENDED_BY_SUPERVISOR, ForeignEnds, Program, admit, ended_from_outside, foreign_ends,
+        new_job, resume, set_inherit, spawn, start_suspended,
+    };
+
+    /// Long enough for a loaded machine; the tests wait on a condition and
+    /// not for this long.
+    const WITHIN: Duration = Duration::from_secs(60);
+
+    /// The system's own command interpreter, which every Windows has.
+    fn shell() -> PathBuf {
+        std::env::var_os("ComSpec").map_or_else(
+            || PathBuf::from(r"C:\Windows\System32\cmd.exe"),
+            PathBuf::from,
+        )
+    }
+
+    /// How many processes the job has ever held, and how many it holds now.
+    #[allow(unsafe_code)] // one call into the operating system, explained below
+    fn processes(job: &OwnedHandle) -> (u32, u32) {
+        let mut counts = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let size =
+            u32::try_from(std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>()).unwrap();
+        // SAFETY: the job handle is open and owned by `job`. The pointer is
+        // to `counts`, a live value of exactly the type the information
+        // class names, and `size` is its size. The length written is not
+        // asked for, which a null pointer says.
+        let ok = unsafe {
+            QueryInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&raw mut counts).cast(),
+                size,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(ok, 0, "the job could not be asked for its counts");
+        (counts.TotalProcesses, counts.ActiveProcesses)
+    }
+
+    /// The order that keeps a tree whole: the child exists, has run
+    /// nothing, is placed in the job, and only then runs. A program that
+    /// does nothing but exit shows it: suspended, it never exits.
+    #[tokio::test]
+    async fn a_child_runs_nothing_until_it_has_been_placed_in_its_job() {
+        let job = new_job().unwrap();
+        let mut command = Command::new(shell());
+        command.args(["/c", "exit 7"]);
+        let mut child = start_suspended(&mut command).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .is_err(),
+            "the child ran before it was placed in its job"
+        );
+        assert_eq!(processes(&job), (0, 0));
+        admit(&job, &child).unwrap();
+        assert_eq!(processes(&job).1, 1, "the suspended child is in the job");
+        resume(child.id().unwrap()).unwrap();
+        let status = tokio::time::timeout(WITHIN, child.wait())
+            .await
+            .expect("the child was not resumed")
+            .unwrap();
+        assert_eq!(status.code(), Some(7));
+    }
+
+    /// A child that starts another process at once: both are in the job,
+    /// and ending the job leaves neither. The second process would run for
+    /// ten minutes.
+    #[tokio::test]
+    async fn a_process_the_child_starts_at_once_is_in_the_job_and_ends_with_it() {
+        let shell = shell();
+        let real = std::fs::canonicalize(&shell).unwrap();
+        let mut program = Program::open(&shell, &real).unwrap();
+        program.digest().unwrap();
+        let started = spawn(
+            &program,
+            |path| {
+                let mut command = Command::new(path);
+                command
+                    .args(["/c", "ping -n 600 127.0.0.1"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                command
+            },
+            None,
+        );
+        drop(program);
+        let Ok((group, _)) = started else {
+            panic!("the interpreter did not start");
+        };
+        // Wait until the job holds the interpreter and what it started.
+        let begun = Instant::now();
+        while processes(&group.job).1 < 2 {
+            assert!(
+                begun.elapsed() < WITHIN,
+                "the process the child started is not in the job: {:?}",
+                processes(&group.job)
+            );
+            tokio::task::yield_now().await;
+        }
+        let (status, ended) = group.reap().await;
+        assert!(ended, "the job could not be ended");
+        assert!(status.is_some_and(ended_from_outside));
+        let begun = Instant::now();
+        while processes(&group.job).1 != 0 {
+            assert!(
+                begun.elapsed() < WITHIN,
+                "ending the job left a process running: {:?}",
+                processes(&group.job)
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// A program is held open so that nobody can write, rename, or delete
+    /// it between its digest and its start.
+    #[test]
+    fn a_program_cannot_be_changed_while_it_is_held_for_its_start() {
+        let folder = std::env::temp_dir().join(format!("a2m-provider-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("program.exe");
+        std::fs::write(&path, b"reviewed").unwrap();
+        let real = std::fs::canonicalize(&path).unwrap();
+        let mut program = Program::open(&path, &real).unwrap();
+        assert_eq!(program.digest().unwrap(), a2m_core::Digest::of(b"reviewed"));
+        assert!(program.still_there());
+        assert!(std::fs::write(&path, b"replaced").is_err());
+        assert!(std::fs::remove_file(&path).is_err());
+        assert!(std::fs::rename(&path, folder.join("moved.exe")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"reviewed");
+        drop(program);
+        // Released, it can be changed again, and a program someone holds
+        // open for writing is not taken.
+        let writer = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(Program::open(&path, &real).is_err());
+        drop(writer);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 
     /// The pipes of a foreign link, without a child: a thread stands for
     /// the child and uses its two ends with ordinary blocking calls, as a

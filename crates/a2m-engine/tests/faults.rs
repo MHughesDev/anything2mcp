@@ -719,6 +719,69 @@ async fn a_step_with_no_time_limit_of_its_own_is_counted_at_the_default_limit() 
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
 
+// ---- a save is never abandoned ----
+
+#[tokio::test]
+async fn a_save_that_outlasts_its_time_limit_is_waited_for_and_a_cancel_takes_effect_after_it() {
+    // The save's time limit is a fraction of the time the driver takes,
+    // and a cancel arrives while the save is under way.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        plan.operations[2].bindings[0].act[0].timeout_ms = 20;
+    })
+    .await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    scene.hooks.save_takes_ms.store(200, Ordering::SeqCst);
+    let lease = scene.lease.clone();
+    scene.hooks.on_step(move |kind| {
+        if kind == "put_item" {
+            lease.direct(Directive::Cancel);
+        }
+    });
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    // The engine did not stop waiting at the limit: the save's answer was
+    // taken, the record read back and recorded, and the job ended.
+    assert!(completed(&outcome), "{outcome:?}");
+    let log = scene.hooks.seen();
+    assert!(at(&log, "put_item") < at(&log, "acted"), "{log:?}");
+    assert!(at(&log, "acted") < at(&log, "verified"), "{log:?}");
+    assert_eq!(scene.record_states().await, [RecordState::Verified]);
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_job_dropped_during_a_save_leaves_the_record_in_doubt_and_the_late_write_is_found() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    // The driver commits away from the step's future, so the commit goes
+    // on when the future is dropped.
+    scene.hooks.detached_save.store(true, Ordering::SeqCst);
+    let job = scene.job(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    {
+        let running = scene.engine.run_job(&job, scene.control.as_ref());
+        tokio::pin!(running);
+        tokio::select! {
+            outcome = &mut running => panic!("the job ended while its save was under way: {outcome:?}"),
+            () = scene.hooks.in_flight.notified() => {}
+        }
+        // The engine's caller stops waiting here: the job's future, and
+        // with it the future of the committing step, is dropped.
+    }
+    // Nothing recorded the record as failed or as not sent. Its intent
+    // was stored before the save, so the ledger holds it in doubt.
+    assert_eq!(scene.record_states().await, [RecordState::Intent]);
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // The commit completes after the engine stopped waiting.
+    scene.hooks.late_gate.notify_one();
+    let late = scene.hooks.late.lock().unwrap().take().unwrap();
+    late.await.unwrap();
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // The next lease reads the record before it writes: the late write is
+    // found as intended, and nothing is sent a second time.
+    resumed_as_landed(&scene, "a save that landed after its job was dropped").await;
+}
+
 // ---- invariants of the design ----
 
 #[tokio::test]
