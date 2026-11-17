@@ -208,6 +208,7 @@ impl Desk {
         let mut scouted = Json::Null;
         for _ in 0..calls {
             scouted = self.ok(&args).await;
+            eprintln!("SCOUT: {scouted}");
             if scouted["result"].get("report_hash").is_some() {
                 break;
             }
@@ -340,6 +341,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     desk.write("operations/orders.yaml", SEED_OPERATION).await;
 
     let scouted = desk.scout(true, 3).await;
+    let tried_runs = desk.ok(&["run", "list", "--limit", "100"]).await; eprintln!("RUNS: {tried_runs}");
     // The named stop of today: the scout drafts the reads of the published
     // description and checks that they compile, and its try stage then
     // never ends. Each continuation submits the trials again, they
@@ -358,6 +360,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // What it drafted is in the target's folder: an endpoint and a read
     // for each read the description states.
     let drafted = files_of(&desk.project.path().join("targets").join("example"));
+    for f in &drafted { eprintln!("FILE {f}\n{}", std::fs::read_to_string(f).unwrap()); }
     for file in ["operations/api_orders_get.yaml", "endpoints/get_order.yaml"] {
         assert!(
             drafted

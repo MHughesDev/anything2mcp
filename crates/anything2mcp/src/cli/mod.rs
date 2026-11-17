@@ -617,7 +617,7 @@ async fn start_engine(
             Err(failure) => return Err(failure),
         }
         let launch = start::plan(host, paths, project, true)?;
-        client::start(&connector, paths, &launch).await
+        client::start(&connector, paths, launch).await
     };
     match started.await {
         Ok((link, started)) => {

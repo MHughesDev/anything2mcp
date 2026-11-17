@@ -378,8 +378,19 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
                 if *failure.code() != a2m_local::codes::ENGINE_UNREACHABLE {
                     return Err(failure);
                 }
-                let launch = starts.plan()?;
-                client::start(&connector, &starts.paths, &launch).await?;
+                // The settings files are read off the async threads.
+                let planning = Arc::clone(&starts);
+                let launch = tokio::task::spawn_blocking(move || planning.plan())
+                    .await
+                    .map_err(|_| {
+                        Failure::new(
+                            FailureClass::Busy,
+                            a2m_local::codes::ENGINE_UNREACHABLE,
+                            "No engine answers, and the start of one stopped before it began.",
+                            "Start the engine with `anything2mcp serve`, then try again.",
+                        )
+                    })??;
+                client::start(&connector, &starts.paths, launch).await?;
             }
             client::carry(&connector, request).await
         }

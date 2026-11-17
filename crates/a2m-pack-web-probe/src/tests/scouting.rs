@@ -710,7 +710,7 @@ async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeho
     let first = must(bench.run("web_capture", &start, &look).await);
     check(&first);
     let second = must(bench.run("web_capture", &start, &look).await);
-    let ids = |seen: &Seen| seen.findings.iter().map(|one| one.id().clone()).collect::<Vec<_>>();
+    let ids = |seen: &Seen| seen.findings.iter().map(|one| one.id()).collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
     // One request by key; neither order's own is given apart.
     assert!(first.at("exchange", "/api/orders/A-100/totals").is_empty());

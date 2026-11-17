@@ -87,7 +87,7 @@ fn changed(origin: &str, change: impl Fn(&mut serde_json::Value)) -> Finding {
     Finding::about(
         Subject::Address(address.clone()),
         FindingKind::new("exchange").unwrap(),
-        &found.to_string(),
+        found.to_string(),
         Source::LiveSystem,
         base.produced_by().clone(),
         Timestamp::from_unix_millis(0),
@@ -450,10 +450,7 @@ fn nothing_is_drafted_for_a_request_that_could_write_is_not_json_or_went_elsewhe
                 found.as_object_mut().unwrap().remove("made_by");
             }),
         ),
-        ("another origin", {
-            let other = totals_exchange("http://127.0.0.2:4010");
-            other
-        }),
+        ("another origin", totals_exchange("http://127.0.0.2:4010")),
     ];
     for (why, one) in cases {
         let folder = new_target("page-http-never", origin);

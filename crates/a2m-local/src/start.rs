@@ -21,6 +21,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_actions::Paths;
@@ -271,6 +272,17 @@ async fn engine_lock_held(paths: &Paths) -> Result<bool, Failure> {
         })?
 }
 
+/// Starts the engine on a blocking thread, which owns the `Launch`:
+/// making the output file, starting the process, and writing its input
+/// are calls that wait on the operating system, and none of them runs on
+/// an async thread.
+async fn launch_off_thread(start: &Arc<Launch>) -> std::io::Result<Child> {
+    let start = Arc::clone(start);
+    tokio::task::spawn_blocking(move || launch(&start))
+        .await
+        .unwrap_or_else(|_| Err(std::io::Error::other("the start stopped")))
+}
+
 async fn take_start_lock(paths: &Paths) -> Result<Option<StartLock>, Failure> {
     let paths = paths.clone();
     tokio::task::spawn_blocking(move || StartLock::try_take(&paths))
@@ -303,9 +315,12 @@ impl Connector {
     pub async fn connect_or_start(
         &self,
         paths: &Paths,
-        start: &Launch,
+        start: Launch,
         patience: Duration,
     ) -> Result<Started, Failure> {
+        // The launch is owned by the blocking task that starts the engine;
+        // the log's path is kept here for what the client is told.
+        let start = Arc::new(start);
         let give_up = tokio::time::Instant::now() + patience;
         let late = || tokio::time::Instant::now() >= give_up;
         // A look at the channel ends at `give_up` too: an engine that has
@@ -370,7 +385,7 @@ impl Connector {
                 if ours_ended {
                     return Err(ended_early(&start.log));
                 }
-                match launch(start) {
+                match launch_off_thread(&start).await {
                     Ok(started) => child = Some(started),
                     Err(error) => {
                         return Ok(Started::Refused(codes::unavailable(

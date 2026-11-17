@@ -87,7 +87,7 @@ pub(crate) async fn find(
     let mut refused = None;
     if let Some(launch) = launch() {
         match connector
-            .connect_or_start(paths, &launch, START_WAIT)
+            .connect_or_start(paths, launch, START_WAIT)
             .await?
         {
             Started::Found(link) | Started::Launched(link) => return Ok(Found::Engine(link)),
@@ -147,7 +147,7 @@ pub(crate) async fn find(
 pub(crate) async fn start(
     connector: &Connector,
     paths: &Paths,
-    launch: &Launch,
+    launch: Launch,
 ) -> Result<(Link, bool), Failure> {
     match connector
         .connect_or_start(paths, launch, START_WAIT)

@@ -342,3 +342,100 @@ async fn with_engine_in_process_on_nothing_is_started_unless_asked_by_name() {
     assert_eq!(started(&machine).len(), 1, "{}", log(&machine));
     stop(&machine).await;
 }
+
+/// The read of the stock files' target, by the key both projects hold.
+const STOCK_READ: [&str; 5] = [
+    "tool",
+    "call",
+    "example_stock_get",
+    "--input",
+    r#"{"item_code": "I-1"}"#,
+];
+
+/// The stock files' surface, and the same surface in the root `project`.
+const IN_FILES: &str = "    folder: prices\n";
+const IN_PROJECT: &str = "    folder: prices\n    root: project\n";
+
+/// Writes the stock file a project's surface names, with a description
+/// that says which project holds it.
+fn stock_file(project: &std::path::Path, which: &str) {
+    std::fs::create_dir_all(project.join("prices")).unwrap();
+    std::fs::write(
+        project.join("prices/stock.csv"),
+        format!("item_code,description,on_hand,note\nI-1,held in project {which},5,\n"),
+    )
+    .unwrap();
+}
+
+/// Project A, the machine's own, and project B, a second folder of the
+/// same target files, each with its own stock file; the target is
+/// published from A. Both are served by one engine, which A starts.
+async fn two_projects(change: (&str, &str)) -> (Machine, common::Folder) {
+    let a = Machine::new("stockfiles", &[change]).with_passphrase();
+    let b = common::Folder::new("project-b");
+    common::copy_changed(&common::project_source("stockfiles"), b.path(), &[change]);
+    stock_file(a.project.path(), "A");
+    stock_file(b.path(), "B");
+    let world = a.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+    (a, b)
+}
+
+/// The read, made in a project folder, through the engine of `machine`.
+async fn stock_read_in(machine: &Machine, folder: &std::path::Path) -> Json {
+    let mut command = starting(machine, &STOCK_READ);
+    command.current_dir(folder);
+    object(&output(command).await)
+}
+
+/// What a read returned, or the code it stopped with.
+fn read_or_code(response: &Json) -> String {
+    response["result"]["result"]["description"]
+        .as_str()
+        .or_else(|| response["error"]["code"].as_str())
+        .or_else(|| response["result"]["failure"]["code"].as_str())
+        .unwrap_or_else(|| panic!("neither a read nor a failure: {response}"))
+        .to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_engine_serves_two_projects_and_each_read_resolves_its_files_in_its_own_project() {
+    // The surface in the root `project`: the kernel hands each run the
+    // project folder of the request that started it.
+    let (a, b) = two_projects((IN_FILES, IN_PROJECT)).await;
+    // A starts the engine; B is served by it, and reads B's file, never A's.
+    let first = stock_read_in(&a, a.project.path()).await;
+    assert_eq!(read_or_code(&first), "held in project A", "{first}");
+    let second = stock_read_in(&a, b.path()).await;
+    assert_eq!(read_or_code(&second), "held in project B", "{second}");
+    assert_eq!(started(&a).len(), 1, "{}", log(&a));
+    stop(&a).await;
+
+    // Started from B this time, the same: neither project's reads depend
+    // on which one started the engine.
+    let first = stock_read_in(&a, b.path()).await;
+    assert_eq!(read_or_code(&first), "held in project B", "{first}");
+    let second = stock_read_in(&a, a.project.path()).await;
+    assert_eq!(read_or_code(&second), "held in project A", "{second}");
+    stop(&a).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_engine_never_resolves_a_root_against_the_project_that_started_it() {
+    // The surface in the root `files`, which the engine is handed as a
+    // folder of its own: an engine that serves every project is handed
+    // none bound to the folder it was started in, so B's read stops by
+    // name and never reads A's file (decision 0192).
+    let (a, b) = two_projects((IN_FILES, IN_FILES)).await;
+    let first = stock_read_in(&a, a.project.path()).await;
+    let second = stock_read_in(&a, b.path()).await;
+    for response in [&first, &second] {
+        // `policy`/`effect_not_declared`: the root `files` is not one the
+        // file driver has, in either project.
+        assert_eq!(read_or_code(response), "effect_not_declared", "{response}");
+        assert_eq!(response["error"]["class"], "policy", "{response}");
+    }
+    stop(&a).await;
+}

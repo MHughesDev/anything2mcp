@@ -502,7 +502,7 @@ async fn an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patien
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
     let failure = within(
         "a start on demand beside a stalled engine",
-        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(2)),
+        connector.connect_or_start(&paths, ends_at_once(&paths), Duration::from_secs(2)),
     )
     .await
     .unwrap_err();
@@ -550,7 +550,7 @@ async fn an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_lo
         let paths = paths.clone();
         async move {
             connector
-                .connect_or_start(&paths, &start, Duration::from_secs(20))
+                .connect_or_start(&paths, start, Duration::from_secs(20))
                 .await
         }
     });
@@ -581,7 +581,7 @@ async fn the_started_engines_output_is_not_written_through_a_link_and_is_kept_to
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
     let started = within(
         "a start through a planted link",
-        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(20)),
+        connector.connect_or_start(&paths, ends_at_once(&paths), Duration::from_secs(20)),
     )
     .await
     .unwrap();
@@ -595,7 +595,7 @@ async fn the_started_engines_output_is_not_written_through_a_link_and_is_kept_to
     std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
     let failure = within(
         "a start that ends at once",
-        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(20)),
+        connector.connect_or_start(&paths, ends_at_once(&paths), Duration::from_secs(20)),
     )
     .await
     .unwrap_err();

@@ -207,14 +207,39 @@ fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
     }
 }
 
+/// Whose requests an engine serves, which decides whether the packs may
+/// be handed the folder it was opened in as a root (decision 0192).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Serves {
+    /// Only its own project's: an engine a command runs inside itself, or
+    /// one a host embeds, whose every request is made in its folder.
+    OneProject,
+    /// Any project's: the local engine, which takes requests from every
+    /// client of the user, each naming its own project folder.
+    AnyProject,
+}
+
 /// The named roots the packs may be given: the project folder, under the
 /// names `project` and `files`, and two folders of the data directory the
 /// engine owns.
-fn roots(paths: &Paths, project: Option<&Path>, place: StorePlace) -> Roots {
+///
+/// An engine that serves any project's requests hands no `files` root
+/// bound to the folder it happened to be started in: a request of another
+/// project would otherwise resolve its files there (sections 502 and 224,
+/// decision 0192). Its `project` root is kept, and no pack resolves a path
+/// through it: the data and file packs resolve a path in `project` against
+/// the checked project folder the kernel hands each run, the request's own
+/// (decision 0176), and the file driver counts it as a root it has. A
+/// surface in `files` is refused by name, `policy`/`effect_not_declared`,
+/// in every project alike, until `files` is resolved for each request in
+/// the same way.
+fn roots(paths: &Paths, project: Option<&Path>, place: StorePlace, serves: Serves) -> Roots {
     let mut roots = Roots::none();
     if let Some(project) = project {
         root(&mut roots, ROOT_PROJECT, project, false);
-        root(&mut roots, ROOT_FILES, project, false);
+        if serves == Serves::OneProject {
+            root(&mut roots, ROOT_FILES, project, false);
+        }
     }
     // A store in memory leaves nothing behind, so the engine's own folders
     // are made only beside a store on disk or when they exist already.
@@ -404,7 +429,7 @@ impl Engine {
             // A store in memory is this process's alone.
             StorePlace::Memory => None,
         };
-        Self::open_loaded(options, settings, lock).await
+        Self::open_loaded(options, settings, lock, Serves::OneProject).await
     }
 
     /// The same, with the engine lock taken already: a command takes it
@@ -414,7 +439,7 @@ impl Engine {
         lock: EngineLock,
     ) -> Result<Self, Failure> {
         let settings = load_settings(&options)?;
-        Self::open_loaded(options, settings, Some(lock)).await
+        Self::open_loaded(options, settings, Some(lock), Serves::OneProject).await
     }
 
     /// Opens the engine with settings that are loaded already. The local
@@ -424,6 +449,7 @@ impl Engine {
         options: EngineOptions,
         settings: Settings,
         lock: Option<EngineLock>,
+        serves: Serves,
     ) -> Result<Self, Failure> {
         // What every HTTP client trusts is set before any pack registers
         // and before anything makes a client (decision 0166).
@@ -432,7 +458,12 @@ impl Engine {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,
         };
-        let roots = roots(&options.paths, options.project.as_deref(), options.place);
+        let roots = roots(
+            &options.paths,
+            options.project.as_deref(),
+            options.place,
+            serves,
+        );
         let prepared = Kernel::prepare(KernelParts {
             settings,
             paths: options.paths,

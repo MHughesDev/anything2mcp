@@ -157,7 +157,18 @@ mod tests {
         assert!(!format!("{made:?}").contains("A-100"));
 
         for value in [
-            "", ".", "..", "a/b", "a\\b", "a?b", "a#b", "%2e%2e", "a b", "a:b", "a\nb", "é",
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a\\b",
+            "a?b",
+            "a#b",
+            "%2e%2e",
+            "a b",
+            "a:b",
+            "a\nb",
+            "é",
             &"x".repeat(513),
         ] {
             let refused = PagePath::fill("/api/orders/{order_id}", &values(&[("order_id", value)]))
