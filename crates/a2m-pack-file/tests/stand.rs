@@ -116,12 +116,13 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
     let scene = Scene::new();
 
     // Delimited text: a row by its key. A number padded with zeros, a line
-    // break inside a field, and an empty field in quotes.
+    // break inside a field, which the text type reads as one space, and an
+    // empty field in quotes.
     let item = inputs(&[("item_code", text("EX-1003"))]);
     let found = scene.read_operation("example_stock_get", &item).await.unwrap();
     let values = last_values(&found);
     assert_eq!(values.get("on_hand"), Some(&Value::Int(40)));
-    assert_eq!(values.get("description"), Some(&text("Panel\ntwo lines")));
+    assert_eq!(values.get("description"), Some(&text("Panel two lines")));
     assert_eq!(values.get("note"), Some(&Value::Null));
 
     // Text aimed at an agent is a value like any other.

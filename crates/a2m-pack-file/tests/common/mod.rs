@@ -62,11 +62,16 @@ pub fn registry(roots: Roots) -> Registry {
     registry
 }
 
-/// The roots of a test: the stand's root, writable, under the name `files`.
+/// The roots of a test: the stand's root under the name `files`, which the
+/// pack may write, or under the name `project`, which it may only read.
 pub fn roots(stand: &FileStand, access: Access) -> Roots {
+    let name = match access {
+        Access::Write => "files",
+        Access::Read => "project",
+    };
     let mut roots = Roots::none();
     roots
-        .add(RootName::new("files").unwrap(), stand.root(), access)
+        .add(RootName::new(name).unwrap(), stand.root(), access)
         .unwrap();
     roots
 }
@@ -82,6 +87,8 @@ pub struct Scene {
     pub stand: FileStand,
     pub registry: Registry,
     pub plan: Plan,
+    /// The root the surfaces are in, when it is not the one they state.
+    root: Option<&'static str>,
 }
 
 impl Scene {
@@ -99,20 +106,27 @@ impl Scene {
             stand,
             registry,
             plan,
+            root: (access == Access::Read).then_some("project"),
         }
     }
 
     pub fn surface(&self, name: &str) -> SurfaceRef {
+        let mut surface = self
+            .plan
+            .surfaces
+            .iter()
+            .find(|surface| surface.name.as_str() == name)
+            .expect("the surface is declared")
+            .clone();
+        if let Some(root) = self.root {
+            // As a target that states `root: project` on its surfaces.
+            surface.payload =
+                a2m_core::PackPayload::encode(&Values::new().with("root", root)).unwrap();
+        }
         SurfaceRef {
             target: self.plan.header.target.clone(),
             environment: Environment::new("test").unwrap(),
-            surface: self
-                .plan
-                .surfaces
-                .iter()
-                .find(|surface| surface.name.as_str() == name)
-                .expect("the surface is declared")
-                .clone(),
+            surface,
         }
     }
 
@@ -317,7 +331,8 @@ pub struct Granted {
 /// A write run with one record planned, approved, running, and its intent
 /// stored: everything the handle asks of a committing step.
 pub async fn granted(store: &Store, caller: u8, name: &str) -> Granted {
-    let key = RecordKey::new(vec![Value::from(name)]).unwrap();
+    // One key per run: the ledger lets one run at a time hold a record.
+    let key = RecordKey::new(vec![Value::from(format!("{name}-{caller}"))]).unwrap();
     let intended = Digest::of(format!("intended {name}").as_bytes());
     let workspace = WorkspaceId::from_bytes([1; 16]);
     let planned_key = key.clone();
