@@ -326,6 +326,8 @@ pub struct Ran {
     pub for_reconcile: Values,
     pub captures: Vec<Capture>,
     pub kinds: Vec<String>,
+    /// How each step was done, from its `acting` capture, in order.
+    pub acting: Vec<a2m_telemetry::Acting>,
 }
 
 /// The right to write one record, as the engine holds it.
@@ -456,21 +458,39 @@ impl Scene {
         inputs: &Values,
         writing: Option<&Writing<'_>>,
     ) -> Result<Ran, StepFailure> {
+        self.run_recorded(handle, prepared, steps, inputs, writing, &Values::new())
+            .await
+    }
+
+    /// The same, with what the record's earlier steps gave for reconcile, as
+    /// the engine hands it on, within a pass and on a resume.
+    pub async fn run_recorded(
+        &self,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        steps: &[Step],
+        inputs: &Values,
+        writing: Option<&Writing<'_>>,
+        recorded: &Values,
+    ) -> Result<Ran, StepFailure> {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: writing.map(|writing| writing.record),
-                key: None,
-                stamp: None,
-                deadline: Deadline::after(Duration::from_millis(u64::from(step.timeout_ms))),
-            };
+            // A register has no key from an input: the record has none.
+            let mut input = StepInput::new(
+                &args,
+                Deadline::after(Duration::from_millis(u64::from(step.timeout_ms))),
+            );
+            if let Some(writing) = writing {
+                input = input.for_record(writing.record, None, None);
+            }
             let authority = match writing {
                 Some(writing) if step.commits => Authority::Write(writing.token),
                 _ => Authority::Read,
             };
-            let outcome = handle.act(prepared, step, &input, authority).await?;
+            let outcome = handle
+                .act_recorded(prepared, step, &input, authority, recorded)
+                .await?;
             let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
             ran.kinds.push(step.kind.to_string());
             for (name, value) in observed.values.iter() {
@@ -479,7 +499,13 @@ impl Scene {
             for (name, value) in observed.for_reconcile.iter() {
                 ran.for_reconcile.insert(name, value.clone());
             }
-            ran.captures.extend(observed.captures);
+            ran.acting.extend(observed.acting());
+            ran.captures.extend(
+                observed
+                    .captures
+                    .into_iter()
+                    .filter(|capture| !capture.is_acting()),
+            );
         }
         Ok(ran)
     }

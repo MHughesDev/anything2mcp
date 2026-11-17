@@ -148,16 +148,20 @@ async fn a_retained_key_reads_the_same_five_times_over_one_connection_and_takes_
     let scene = Scene::start().await;
     let steps = &scene.binding("example_order_status_get").act;
     let mut results = Vec::new();
+    let mut means = Vec::new();
     for _ in 0..5 {
         let (handle, mut prepared) = scene.reading().await;
-        results.push(done(
-            read(&handle, &mut prepared, steps, &key_arg("A-100"))
-                .await
-                .unwrap(),
-        ));
+        let outcome = read(&handle, &mut prepared, steps, &key_arg("A-100"))
+            .await
+            .unwrap();
+        // How the read was done, which the trace's signature covers.
+        means.push(means_of(&outcome));
+        results.push(done(outcome));
         assert!(handle.release(prepared, false).await.complete);
     }
     assert!(results.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(means.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_eq!(mean(&means[0], "protocol"), Some("nats"));
     assert_eq!(text(&results[0], "status"), "submitted");
     let meta = record(&results[0], "message_meta");
     assert_eq!(text(meta, "id"), "1");
@@ -1212,4 +1216,226 @@ async fn the_same_client_against_a_real_server() {
     for name in [SEED_STATUS, SEED_EVENTS, SEED_WORK] {
         raw.api(&format!("$JS.API.STREAM.DELETE.{name}"), "").await;
     }
+}
+
+// ---- what earlier steps recorded (decision 0162, point 1) ----
+
+fn means_of(outcome: &StepOutcome) -> Vec<(String, String)> {
+    let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+    observed
+        .acting()
+        .expect("how the step was done")
+        .means
+        .into_iter()
+        .map(|detail| (detail.name, detail.value))
+        .collect()
+}
+
+fn mean<'a>(means: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    means
+        .iter()
+        .find(|(found, _)| found == name)
+        .map(|(_, value)| value.as_str())
+}
+
+/// The engine's stored form of what a step gave for reconcile, read again.
+fn stored_and_read_again(for_reconcile: &Values) -> Values {
+    a2m_core::CanonicalJson::encode(for_reconcile)
+        .unwrap()
+        .decode()
+        .unwrap()
+}
+
+fn gets_since(stand: &TestNats, from: usize) -> usize {
+    api_subjects(stand)[from..]
+        .iter()
+        .filter(|subject| subject.contains("STREAM.MSG.GET"))
+        .count()
+}
+
+#[tokio::test]
+async fn a_take_in_doubt_is_settled_by_a_look_at_the_sequence_it_recorded() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_work_take");
+    let (take, look) = (&binding.act, &binding.read_back[0]);
+    let none = Values::new();
+
+    // The server carries the acknowledgement out and its answer is lost.
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let row = stored_and_read_again(&taken.for_reconcile);
+    scene.stand.set_fault(Fault::DropAckReply);
+    let mut step = write.keyless(&none);
+    step.deadline = Deadline::after(Duration::from_secs(2));
+    let doubt = failed(
+        handle
+            .act(&mut prepared, &take[2], &step, write.authority())
+            .await,
+    );
+    assert_eq!(doubt.0, "possible_commit");
+    handle.release(prepared, true).await;
+    scene.stand.clear_faults();
+    assert_eq!(scene.stand.messages(SEED_WORK).len(), 1);
+
+    // The resume looks at the one place the message was stored: it is gone,
+    // so the acknowledgement landed.
+    let (handle, mut prepared) = scene.reading().await;
+    let settled = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &write.keyless(&none),
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&settled), "look"), Some("by_position"));
+    let settled = done(settled);
+    assert_eq!(settled.get("acknowledged"), Some(&Value::Bool(true)));
+    assert_eq!(text(&settled, "message_id"), text(&row, "message_id"));
+    handle.release(prepared, false).await;
+    assert_eq!(scene.stand.acknowledgements().len(), 1);
+
+    // A take whose run ended before its acknowledgement: the message is
+    // still stored, and the record is absent.
+    let again = ledger.write("taken again").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(again.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(held) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let row = stored_and_read_again(&held.for_reconcile);
+    handle.release(prepared, true).await;
+    let (handle, mut prepared) = scene.reading().await;
+    let absent = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &again.keyless(&none),
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(absent, StepOutcome::Absent(_)), "{absent:?}");
+    handle.release(prepared, false).await;
+    assert_eq!(scene.stand.acknowledgements().len(), 1);
+    assert_eq!(scene.stand.messages(SEED_WORK).len(), 1);
+}
+
+#[tokio::test]
+async fn a_publish_in_doubt_past_the_window_is_found_by_a_scan_from_the_recorded_position() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_event_record");
+    let args = event_args("A-101", "shipped");
+    // Others have written to the stream: it holds nine messages.
+    for n in 0..6 {
+        scene.stand.publish(
+            "example.orders.events.A-102",
+            &[],
+            &format!("{{\"order_id\":\"A-102\",\"event\":\"e{n}\"}}"),
+        );
+    }
+
+    // Where the stream ends is recorded; the publish is stored and its
+    // acknowledgement is lost.
+    let write = ledger.write("A-101").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(marked) = handle
+        .act(
+            &mut prepared,
+            &binding.act[0],
+            &write.input(&args, Some("tok-late")),
+            Authority::Read,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("a position");
+    };
+    assert_eq!(marked.for_reconcile.get("scan_from"), Some(&Value::Int(10)));
+    let row = stored_and_read_again(&marked.for_reconcile);
+    scene.stand.set_fault(Fault::DropPublishAck);
+    let mut step = write.input(&args, Some("tok-late"));
+    step.deadline = Deadline::after(Duration::from_secs(2));
+    let doubt = failed(
+        handle
+            .act(&mut prepared, &binding.act[1], &step, write.authority())
+            .await,
+    );
+    assert_eq!(doubt.0, "possible_commit");
+    handle.release(prepared, true).await;
+    scene.stand.clear_faults();
+
+    // Past the window the server has forgotten the token, so a resend would
+    // store a second message. The resume reconciles first, and the scan
+    // from the recorded position finds the one stored in one look.
+    scene.stand.advance(Duration::from_secs(180));
+    let mut stamped = input(&args);
+    stamped.stamp = Some("tok-late");
+    let before = api_subjects(&scene.stand).len();
+    let (handle, mut prepared) = scene.reading().await;
+    let found = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&found), "from"), Some("recorded"));
+    assert_eq!(
+        record(&done(found), "message_meta").get("position"),
+        Some(&Value::Int(10))
+    );
+    let recorded_gets = gets_since(&scene.stand, before);
+    // From the start of the stream the same scan reads every message.
+    let before = api_subjects(&scene.stand).len();
+    let from_start = handle
+        .act(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&from_start), "from"), Some("start"));
+    assert!(matches!(from_start, StepOutcome::Done(_)));
+    let start_gets = gets_since(&scene.stand, before);
+    assert!(recorded_gets <= 2, "{recorded_gets}");
+    assert!(start_gets >= 10, "{start_gets}");
+    handle.release(prepared, false).await;
+
+    // The server stored it once; nothing was sent again.
+    let stored: Vec<_> = scene
+        .stand
+        .messages(SEED_EVENTS)
+        .into_iter()
+        .filter(|message| message.headers.get(MSG_ID).map(String::as_str) == Some("tok-late"))
+        .collect();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].seq, 10);
 }

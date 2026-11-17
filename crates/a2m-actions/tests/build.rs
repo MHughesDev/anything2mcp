@@ -1127,7 +1127,12 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
         .await;
     assert!(report.ok, "{:?}", report.error);
     let report = report.result.unwrap();
-    assert_eq!(report["scout_id"], early["scout_id"], "{early}\n{report}");
+    if early["state"] == "working" {
+        assert_eq!(report["scout_id"], early["scout_id"], "{early}\n{report}");
+    } else {
+        // The runs ended before the first call looked: it finished.
+        assert!(early["report_hash"].is_string(), "{early}");
+    }
     let content = &report["content"];
 
     // Found: one call, observed on the live system.

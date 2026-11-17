@@ -1735,3 +1735,307 @@ async fn a_sandbox_with_test_records_lifts_the_guard_only_for_the_step_that_comm
     );
     assert_eq!(scene.broker.received().len(), 1);
 }
+
+// ---- what earlier steps recorded (decision 0162, point 1) ----
+
+/// How a step was done, as `(name, value)` pairs of its `means`.
+fn means_of(outcome: &StepOutcome) -> Vec<(String, String)> {
+    let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+    observed
+        .acting()
+        .expect("how the step was done")
+        .means
+        .into_iter()
+        .map(|detail| (detail.name, detail.value))
+        .collect()
+}
+
+fn mean<'a>(means: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    means
+        .iter()
+        .find(|(found, _)| found == name)
+        .map(|(_, value)| value.as_str())
+}
+
+#[tokio::test]
+async fn a_take_in_doubt_is_settled_by_a_look_at_the_queue_for_the_message_it_recorded() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_work_take");
+    let (take, look) = (&binding.act, &binding.read_back[0]);
+    let none = Values::new();
+    let first = scene.broker.queue(WORK)[0].message.clone();
+
+    // The broker acknowledges, and the answer never arrives.
+    scene.broker.set_fault(Fault::once(FaultKind::AckThenDrop));
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let ledger_row = stored_and_read_again(&taken.for_reconcile);
+    let lost = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.keyless(&none),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The resume is handed what the record's earlier steps recorded. The
+    // look finds the message gone from the queue the runtime owns: the
+    // acknowledgement landed, and the record is found.
+    let before = scene.broker.requests().len();
+    let (handle, mut prepared) = scene.reading().await;
+    let settled = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &write.keyless(&none),
+            Authority::Read,
+            &ledger_row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&settled), "look"), Some("whole_queue"));
+    let settled = done(settled);
+    assert_eq!(settled.get("acknowledged"), Some(&Value::Bool(true)));
+    assert_eq!(text(&settled, "message_id"), first.id);
+    handle.release(prepared, false).await;
+    // The broker: the look took nothing and acknowledged nothing.
+    let looked: Vec<Op> = scene.broker.requests()[before..]
+        .iter()
+        .map(|request| request.op)
+        .filter(|op| !matches!(op, Op::Hello))
+        .collect();
+    assert_eq!(looked, [Op::Describe, Op::Browse]);
+    assert_eq!(scene.broker.acknowledgements().len(), 1);
+    assert_eq!(scene.broker.deliveries().len(), 1);
+
+    // A take whose run ended before its acknowledgement left: the message
+    // went back to the queue, and the look says the record is absent.
+    let again = ledger.write("taken again").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(again.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(held) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let row = stored_and_read_again(&held.for_reconcile);
+    handle.release(prepared, true).await;
+    scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.channels[WORK]
+                .queue
+                .iter()
+                .all(|held| held.held_by.is_none())
+        })
+        .await
+        .unwrap();
+    let (handle, mut prepared) = scene.reading().await;
+    let absent = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &again.keyless(&none),
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(absent, StepOutcome::Absent(_)), "{absent:?}");
+    // A look that does not cover the queue never says the message is gone.
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::EmptyLook { more: false }).on_channel(WORK));
+    let uncovered = failed(
+        handle
+            .act_recorded(
+                &mut prepared,
+                look,
+                &again.keyless(&none),
+                Authority::Read,
+                &row,
+            )
+            .await,
+    );
+    assert_eq!(
+        (uncovered.0.as_str(), uncovered.1.as_str()),
+        ("unknown_variant", "unexpected_reply")
+    );
+    handle.release(prepared, true).await;
+    assert_eq!(scene.broker.acknowledgements().len(), 1);
+    assert!(
+        scene
+            .broker
+            .queue(WORK)
+            .iter()
+            .any(|held| held.message.id == text(&row, "message_id"))
+    );
+
+    // Handed nothing recorded, the look has nothing to look for and sends
+    // nothing.
+    let before = scene.broker.requests().len();
+    let (handle, mut prepared) = scene.reading().await;
+    let nothing = failed(
+        handle
+            .act(&mut prepared, look, &again.keyless(&none), Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        nothing,
+        (
+            "input".to_owned(),
+            "nothing_recorded".to_owned(),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    assert!(
+        scene.broker.requests()[before..]
+            .iter()
+            .all(|request| request.op == Op::Hello)
+    );
+}
+
+#[tokio::test]
+async fn a_publish_in_doubt_is_found_by_a_scan_from_where_the_log_ended_before_it() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_event_record");
+    let args = Values::new()
+        .with("key", "A-100")
+        .with("body.order_id", "A-100")
+        .with("body.event", "shipped");
+    // Others have written to the log: it holds seven messages, positions 0
+    // to 6, and a scan from its start reads them two at a time.
+    let mut outside = scene.broker.client("outside").await.unwrap();
+    for n in 0..4 {
+        outside
+            .publish(
+                &Publish::new(EVENTS, json!({"order_id": "A-102", "event": format!("e{n}")}))
+                    .key("A-102"),
+            )
+            .await
+            .unwrap();
+    }
+
+    // The position is read and recorded before the publish; the publish
+    // lands, and its confirmation is lost.
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let step = write.input(&args, Some("tok-lost"));
+    let StepOutcome::Done(marked) = handle
+        .act(&mut prepared, &binding.act[0], &step, Authority::Read)
+        .await
+        .unwrap()
+    else {
+        panic!("a position");
+    };
+    assert_eq!(marked.for_reconcile.get("scan_from"), Some(&Value::Int(7)));
+    let row = stored_and_read_again(&marked.for_reconcile);
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenDrop));
+    let lost = failed(
+        handle
+            .act(&mut prepared, &binding.act[1], &step, write.authority())
+            .await,
+    );
+    assert_eq!(lost, in_doubt());
+    handle.release(prepared, true).await;
+
+    // The resume: the scan starts where the log ended before the publish,
+    // and one look finds the message.
+    let browses = |scene: &Scene, from: usize| {
+        scene.broker.requests()[from..]
+            .iter()
+            .filter(|request| request.op == Op::Browse)
+            .count()
+    };
+    let before = scene.broker.requests().len();
+    let mut stamped = input(&args);
+    stamped.stamp = Some("tok-lost");
+    let (handle, mut prepared) = scene.reading().await;
+    let found = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&found), "from"), Some("recorded"));
+    let found = done(found);
+    assert_eq!(
+        record(&found, "message_meta").get("position"),
+        Some(&Value::Int(7))
+    );
+    assert_eq!(browses(&scene, before), 1);
+
+    // Without what was recorded, the same scan starts at the log's start
+    // and reads it page by page.
+    let before = scene.broker.requests().len();
+    let from_start = handle
+        .act(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mean(&means_of(&from_start), "from"), Some("start"));
+    assert_eq!(browses(&scene, before), 4);
+
+    // A token that was never stored is absent from the place recorded to
+    // the log's end.
+    let mut other = input(&args);
+    other.stamp = Some("tok-never");
+    let absent = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &other,
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(absent, StepOutcome::Absent(_)));
+    handle.release(prepared, false).await;
+
+    // The broker stored the message once and was sent nothing again.
+    assert_eq!(scene.broker.received().len(), 5);
+    let stored: Vec<_> = scene
+        .broker
+        .log(EVENTS)
+        .into_iter()
+        .filter(|message| {
+            message.headers.get("idempotency-token").map(String::as_str) == Some("tok-lost")
+        })
+        .collect();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].position, Some(7));
+}

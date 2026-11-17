@@ -218,13 +218,11 @@ async fn a_value_outside_its_range_sends_no_frame() {
     let (handle, mut prepared) = scene.prepare(Some(fence), Posture::Live).await;
     let steps = &scene.binding("example_heater_limit_set").act;
     let args = Values::new().with("heater_power_limit", "90");
-    let input = a2m_provider::StepInput {
-        args: &args,
-        record: Some(record),
-        key: None,
-        stamp: None,
-        deadline: a2m_provider::Deadline::after(std::time::Duration::from_secs(5)),
-    };
+    let input = a2m_provider::StepInput::new(
+        &args,
+        a2m_provider::Deadline::after(std::time::Duration::from_secs(5)),
+    )
+    .for_record(record, None, None);
     scene
         .run(&handle, &mut prepared, &steps[..4], &wrong, None)
         .await

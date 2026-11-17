@@ -306,6 +306,8 @@ The codes are constants in the crate's `codes` module.
 | Must always hold | Proven by |
 | --- | --- |
 | Each of the nine rules of section 208 | One test per rule in `tests/rules.rs`, with no application, that breaks the rule through the calls and, where a statement can express it, through a second connection to the database file, and sees the refusal |
+| A record ends on an acknowledgement only where the run's stored diff says so, stays `acted`, is never verified, and is settled | `tests/acknowledged.rs`: each acceptance and each refusal, through the calls and through a second connection |
+| A stored failure hands back what the system said apart from its sentence | `tests/acknowledged.rs` |
 | Current state equals the state rebuilt from events | One scripted run that passes through every record state, a lost lease, and a reconcile, replayed and compared. A property test over random sequences of calls is not written |
 | No event or audit row can be updated or deleted outside retention | Tests that try, through a second connection. On SQLite only |
 | An intent returned is on disk | A second connection reads the row as soon as `store_intents` returns; the store is closed and opened again and the reconcile query finds the record. The process is not killed in a test |

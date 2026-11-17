@@ -1151,13 +1151,7 @@ mod tests {
         }
         let args = Values::new();
         for step in &steps {
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: Deadline::after(Duration::from_secs(1)),
-            };
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(1)));
             driver.act(&mut prepared, step, &input).await.unwrap();
         }
         sent.lock().unwrap().clone()

@@ -4,7 +4,7 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, LintCode, Mode,
-    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb,
+    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
@@ -318,6 +318,29 @@ impl Lowering for McpLowering {
             "create" | "update" | "upsert" => EffectClass::Write,
             "delete" | "submit" => EffectClass::Irreversible,
             _ => EffectClass::Read,
+        }
+    }
+
+    /// A call to a tool mapped `irreversible`, in an operation with no
+    /// identity to find again and a binding that names no `read_back`, has
+    /// nothing to read the result back through: the tool's own answer is
+    /// the only evidence there can be. (A tool mapped as a write that names
+    /// no read tool is refused by the lint `mcp.write_no_readback`, so an
+    /// operation declared `irreversible` here is calling a tool mapped so.)
+    /// Every other write keeps the read-back, and a binding that names a
+    /// `read_back` always keeps it. An operation with an identity and no
+    /// read-back is left to the compiler's refusal.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        let operation = binding.operation;
+        if operation.effect() == EffectClass::Irreversible
+            && operation.strategy() == IdentityStrategy::None
+            && binding.field("read_back").is_none()
+            && lowered.read_back.is_empty()
+            && lowered.act.iter().any(|step| step.commits)
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
         }
     }
 
