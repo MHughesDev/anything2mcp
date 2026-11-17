@@ -392,7 +392,7 @@ The pack masks restricted and password values in every snapshot and screenshot i
 | `session_expired` | `needs_login` | Reported through the lease, after the keeper has the signal |
 | `policy` | `surface_not_declared`, `effect_not_declared` | A navigation or in-page request to an origin the target did not declare; a browser program the pack's manifest does not declare, which the scoped supervisor refuses |
 | `busy` | `browser_unavailable` | The browser is not installed |
-| `transient` | `timeout`, `connection_lost` | Before anything was sent |
+| `transient` | `timeout`, `connection_lost` | Before anything was sent. Also a browser that was started and did not answer before the launch deadline: it is closed, and a slow start on a cold machine passes ([decision 0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md)) |
 
 `locator_ambiguous`, `unknown_platform`, and `browser_unavailable` are proposed codes, settled as the crates are built. In discovery, `unknown_platform` is not a stop: the finding says so. `edge_blocked` stops discovery of that surface, and `needs_login` is reported per surface while the scout carries on with the others.
 
