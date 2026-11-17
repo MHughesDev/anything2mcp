@@ -197,3 +197,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0193 | [The core, the contract, the compiler, and the scheduler after the kernel's second pass](0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md) | Accepted (design decision) |
 | 0194 | [The packs, the product, and the local surface take up the kernel's second pass](0194-the-packs-the-product-and-the-local-surface-take-up-the-kernels-second-pass.md) | Accepted (design decision) |
 | 0197 | [No client takes a proxy from the environment, and a stand's protocol is not shipped](0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md) | Accepted (design decision) |
+| 0191 | [The release profile builds one code unit, with whole-program optimisation, for size](0191-the-release-profile-builds-one-code-unit-with-whole-program-optimisation-for-size.md) | Accepted (design decision) |
+| 0195 | [A read never runs where the page may write, and a page keeps only its structure](0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md) | Accepted (design decision) |

@@ -46,18 +46,18 @@ The rows were built over about an hour while other agents changed the tree, so e
 
 | Rank | Crate | Bytes in symbols (baseline) |
 | ---: | --- | ---: |
-| 1 | `a2m_actions` (the generated faces of every action) | 2,879,509 |
+| 1 | `a2m-actions` (the generated faces of every action) | 2,879,509 |
 | 2 | `serde_json` (mostly instances for the workspace's own types) | 2,613,935 |
 | 3 | `tokio` | 2,026,410 |
-| 4 | `a2m_core` | 1,894,459 |
-| 5 | `a2m_engine` | 1,265,632 |
-| 6 | `a2m_ledger` | 1,101,289 |
-| 7 | `a2m_pack_web_browser` | 1,083,104 |
-| 8 | `a2m_files` | 888,140 |
-| 9 | `zbus` (the secret-service client of the vault) | 865,609 |
+| 4 | `a2m-core` | 1,894,459 |
+| 5 | `a2m-engine` | 1,265,632 |
+| 6 | `a2m-ledger` | 1,101,289 |
+| 7 | `a2m-pack-web-browser` | 1,083,104 |
+| 8 | `a2m-files` | 888,140 |
+| 9 | zbus (the secret-service client of the vault) | 865,609 |
 | 10 | `alloc` | 779,317 |
 
-After the adopted profile the order is the same, at about half each: `a2m_actions` 1.58 MB, `serde_json` 0.88 MB, `tokio` 0.65 MB, `a2m_pack_web_browser` 0.57 MB.
+After the adopted profile the order is the same, at about half each: `a2m-actions` 1.58 MB, `serde_json` 0.88 MB, `tokio` 0.65 MB, `a2m-pack-web-browser` 0.57 MB.
 
 **Speed.** The product's own benchmark harness does not call the product: its one scenario, `direct_read`, reads the test application, so it cannot see a profile's effect on the engine and is not used for this (it reads 33 to 49 microseconds run to run, noise larger than any effect). The quickest end-to-end check that takes a built binary is the program itself run in one-shot mode (`A2M_ENGINE__IN_PROCESS=true`) in a copy of the `orders` test project: `--version`, `provider list` (engine open and provider registry), and `draft lint example` (settings, files, compile). Median of 100 to 300 runs each, interleaved, in milliseconds; the machine was shared and loaded, so only same-run comparisons count.
 
@@ -90,7 +90,7 @@ Adopt, in `[profile.release]`: `lto = "fat"`, `codegen-units = 1`, `opt-level = 
 
 ## Consequences
 
-- The next levers, if the target moves or a platform comes out larger: first, `a2m_actions`, whose generated faces take the most of the product (1.6 MB after the profile) and are generated, so a table-driven face could be smaller; second, `serde_json` instances for the workspace's types (0.9 MB); third, `a2m_pack_web_browser` (0.6 MB) and `zbus` (0.5 MB), whose packs could be split into separate packages if the wheel ever has to be smaller than it is. `panic = "abort"` would be 4.5 MB, and is the lead's. None is done.
+- The next levers, if the target moves or a platform comes out larger: first, `a2m-actions`, whose generated faces take the most of the product (1.6 MB after the profile) and are generated, so a table-driven face could be smaller; second, `serde_json` instances for the workspace's types (0.9 MB); third, `a2m-pack-web-browser` (0.6 MB) and zbus (0.5 MB), whose packs could be split into separate packages if the wheel ever has to be smaller than it is. `panic = "abort"` would be 4.5 MB, and is the lead's. None is done.
 - Only the release profile changed; `dev`, `test`, and `bench` profiles are as before, and `cargo test --workspace` is unaffected.
 - The Windows and macOS wheel jobs now build with fat LTO and one unit. Their timeouts are 60 minutes; the Linux build here takes under 6.
 
