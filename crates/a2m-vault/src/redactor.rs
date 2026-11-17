@@ -129,7 +129,8 @@ impl Redactor {
     /// base32 key or a name a system may print in another case. It is
     /// masked as [`Redactor::register`] masks it, and also where its
     /// letters are written in any other case. Only the secret as it is
-    /// written is matched in another case, not its encoded forms.
+    /// written is matched in another case, not its encoded forms, and only
+    /// the letters of ASCII are folded.
     pub fn register_folded(&self, secret: &Secret) {
         self.add(secret, true);
     }

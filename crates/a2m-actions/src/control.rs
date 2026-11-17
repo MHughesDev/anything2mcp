@@ -744,19 +744,6 @@ impl InProcessControl {
             .await
     }
 
-    /// Whether the outcome leaves a record in doubt, which the scheduler
-    /// answers with a reconcile job.
-    pub(crate) async fn in_doubt(&self) -> bool {
-        let run = self.run.id;
-        match self.kernel.store() {
-            Ok(store) => store
-                .read(move |tx| tx.ledger().in_doubt(run))
-                .await
-                .is_ok_and(|records| !records.is_empty()),
-            Err(_) => false,
-        }
-    }
-
     /// Applies a job's outcome to the run, under the job's lease.
     pub(crate) async fn apply(&self, to: RunState, why: Option<Failure>) -> Result<(), Failure> {
         let fence = self.fence;

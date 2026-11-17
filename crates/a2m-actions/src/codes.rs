@@ -41,6 +41,12 @@ pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
 
 /// A step may take longer than a job's lease lasts. Class `busy`.
 pub const LEASE_TOO_SHORT: FailureCode = FailureCode::fixed("lease_too_short");
+/// What a run was called with is missing from the store or cannot be read.
+pub const RUN_CALL_UNREADABLE: FailureCode = FailureCode::fixed("run_call_unreadable");
+/// A protected setting is set to a value this build cannot put in force.
+pub const SETTING_NOT_IN_FORCE: FailureCode = FailureCode::fixed("setting_not_in_force");
+/// A published tool changed between the decision about a call and the call.
+pub const TOOL_CHANGED: FailureCode = FailureCode::fixed("tool_changed");
 
 pub(crate) fn input(
     code: FailureCode,

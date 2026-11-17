@@ -31,8 +31,19 @@ use crate::dispatch::Caller;
 use crate::health::HealthState;
 use crate::kernel::{Kernel, fact, set_fact};
 
-/// How long one claim waits for work before it asks again.
+/// How long one claim waits for work before it asks again. After a claim
+/// the store could not answer, it is also the longest the loop waits before
+/// it asks once more: the store gives no notice that it can be asked again,
+/// so this is an interval between tries and not a wait for a condition. The
+/// kernel's wake notice ends it early.
 const CLAIM_WAIT: Duration = Duration::from_secs(30);
+
+/// The most runs whose intents' modes are remembered for a later claim.
+const MODES_REMEMBERED: usize = 1024;
+
+/// The most rate budgets noted as set. Past it the notes are dropped, and a
+/// budget is set once more the next time its surface is used.
+const BUDGETS_NOTED: usize = 4096;
 
 /// The verified facts about the caller of a run, kept so that the guard's
 /// question to policy is asked about the caller that started the run. Names
@@ -210,30 +221,13 @@ pub(crate) fn keep_run_call(
     Ok(())
 }
 
-/// Keeps the facts of whoever resumes a run, in place of those of whoever
-/// started it.
-pub(crate) fn rekeep_caller(
-    tx: &mut Tx<'_>,
-    run: &RunRow,
-    caller: &CallerFacts,
-) -> Result<(), Failure> {
-    tx.tables(Owner::Actions).execute(
-        "UPDATE actions_run_calls SET caller = ?6
-         WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
-           AND target_version = ?4 AND input_hash = ?5",
-        &[
-            SqlValue::from(run.workspace.to_string()),
-            SqlValue::from(run.principal.to_string()),
-            SqlValue::from(run.tool_name.as_str()),
-            SqlValue::from(run.target_version.to_string()),
-            SqlValue::from(run.input_hash.to_string()),
-            SqlValue::from(caller.to_json().to_string()),
-        ],
-    )?;
-    Ok(())
-}
-
-fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
+/// What a run was called with, as the store holds it. `None` when the row
+/// is missing or its caller cannot be read: such a run is never run.
+///
+/// The caller's facts are written once, when the run is made, and nothing
+/// changes them afterwards: a resume never replaces who a run belongs to or
+/// what its caller was.
+pub(crate) fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
     let row = tx.tables(Owner::Actions).query_first(
         "SELECT input_ref, caller FROM actions_run_calls
          WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
@@ -476,7 +470,24 @@ impl Kernel {
 
     /// Notes that the budget is set.
     pub(crate) fn note_budget(&self, key: &BudgetKey) {
-        lock(&self.inner.runner.budgets).insert(key.as_str().to_owned());
+        let mut noted = lock(&self.inner.runner.budgets);
+        if noted.len() >= BUDGETS_NOTED {
+            noted.clear();
+        }
+        noted.insert(key.as_str().to_owned());
+    }
+
+    /// Whether a record of the run may have been written without being
+    /// read back. When the ledger cannot be asked, the answer is yes: a
+    /// write whose state cannot be read is a write in doubt.
+    pub(crate) async fn run_in_doubt(&self, run: RunId) -> bool {
+        match self.store() {
+            Ok(store) => store
+                .read(move |tx| tx.ledger().in_doubt(run))
+                .await
+                .map_or(true, |records| !records.is_empty()),
+            Err(_) => true,
+        }
     }
 
     /// Carries out one claimed job: fills it from the ledger, runs it
@@ -493,17 +504,119 @@ impl Kernel {
         self.run_changed();
         let end = match self.run_claimed(&lease, terms).await {
             Ok(end) => end,
-            Err(failure) => JobEnd::Stopped {
-                class: failure.class(),
-                code: failure.code().clone(),
-                in_doubt: false,
-            },
+            Err(failure) => {
+                // The job could not be carried through, perhaps after the
+                // engine had sent a write: the run is stopped with the
+                // failure, and whether a record is in doubt is read from
+                // the ledger, never assumed.
+                let in_doubt = match lease.fence() {
+                    Some(fence) => {
+                        self.stop_run(fence, &failure).await;
+                        self.run_in_doubt(fence.run).await
+                    }
+                    None => false,
+                };
+                JobEnd::Stopped {
+                    class: failure.class(),
+                    code: failure.code().clone(),
+                    in_doubt,
+                }
+            }
         };
+        if let Some(fence) = lease.fence() {
+            self.forget_ended(fence.run).await;
+        }
         // The job is unfinished in the scheduler's own table until this
         // commits, and that table is what a caller waiting for the run
-        // reads. It is told only afterwards.
-        let _ = sched.finish(&lease_ref, end).await;
+        // reads. It is told only afterwards. When it cannot be recorded
+        // the store cannot commit: the job stays leased until its lease
+        // ends, the scheduler's sweep then stops the run and queues its
+        // reconcile, and the health state is looked at again now.
+        if sched.finish(&lease_ref, end).await.is_err() {
+            self.recheck().await;
+        }
         self.run_changed();
+    }
+
+    /// Stops a run with a failure, under the job's lease, when the job
+    /// could not be carried through. A run that has ended stays as it
+    /// ended.
+    async fn stop_run(&self, fence: a2m_ledger::Fence, why: &Failure) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        let why = self.redact().redact_failure(why);
+        let run = fence.run;
+        // Best effort: when this cannot be written either, the lease ends
+        // and the scheduler's sweep stops the run.
+        let _ = store
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                let state = ledger.run(run)?.state;
+                if state.is_final() || state == RunState::Stopped {
+                    return Ok(());
+                }
+                ledger.set_state(&fence, RunState::Stopped, Some(&why))
+            })
+            .await;
+    }
+
+    /// Forgets what is kept in memory about a run that has ended.
+    async fn forget_ended(&self, run: RunId) {
+        let ended = match self.store() {
+            Ok(store) => store
+                .read(move |tx| Ok(tx.ledger().run(run)?.state.is_final()))
+                .await
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if ended {
+            lock(&self.inner.runner.modes).remove(&run);
+        }
+    }
+
+    /// Ends a run whose stored call is missing or cannot be read. Nothing
+    /// is known of its input or of its caller, so it is not run with an
+    /// empty input and a caller made up for it (rule 7: unknown means
+    /// stop). A run with a record in doubt stops, so that the doubt stays
+    /// in view; any other run ends as `failed`, or as `cancelled` where the
+    /// ledger allows no other end from the state it rests in.
+    async fn end_unreadable(&self, fence: a2m_ledger::Fence) -> Result<JobEnd, Failure> {
+        let why = codes::busy(
+            codes::RUN_CALL_UNREADABLE,
+            "What this run was called with is missing from the store or cannot be read, so the run was not carried out.",
+            "Call the tool again; that is a new run. Call `trace.show` with this run's identifier to see what it did before.",
+        );
+        let run = fence.run;
+        let (class, code) = (why.class(), why.code().clone());
+        self.store()?
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                let state = ledger.run(run)?.state;
+                if state.is_final() {
+                    return Ok(());
+                }
+                let ends = if ledger.in_doubt(run)?.is_empty() {
+                    [RunState::Failed, RunState::Cancelled]
+                } else {
+                    [RunState::Stopped, RunState::Stopped]
+                };
+                for to in ends {
+                    if state == to || ledger.set_state(&fence, to, Some(&why)).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+        self.run_changed();
+        // No reconcile is queued: it would be claimed, and end, the same
+        // way.
+        Ok(JobEnd::Stopped {
+            class,
+            code,
+            in_doubt: false,
+        })
     }
 
     async fn run_claimed(&self, lease: &JobLease, terms: RunnerTerms) -> Result<JobEnd, Failure> {
@@ -530,34 +643,18 @@ impl Kernel {
             })
             .await?;
         let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
-        let (input, caller, source) = match call {
-            Some(call) => {
-                let opened = store.blobs().get(&call.input).await?;
-                // The source is the stored bytes the run was called with:
-                // every lease of the run reads the same ones, whatever the
-                // file in the project holds by now.
-                let source = match &call.source {
-                    Some(blob) => Some(Arc::new(store.blobs().get(blob).await?.expose().to_vec())),
-                    None => None,
-                };
-                (decode_values(opened.expose())?, call.caller, source)
-            }
-            // A run this installation holds no call for: nothing is known
-            // of its input, and its caller is the person who started it.
-            None => (
-                Values::new(),
-                CallerFacts {
-                    principal: PrincipalRef::person(row.principal),
-                    is_agent: false,
-                    acting_for: None,
-                    toolset: None,
-                    decision: row
-                        .decision
-                        .unwrap_or_else(|| DecisionId::from_bytes([0; 16])),
-                },
-                None,
-            ),
+        let Some(call) = call else {
+            return self.end_unreadable(fence).await;
         };
+        let opened = store.blobs().get(&call.input).await?;
+        // The source is the stored bytes the run was called with: every
+        // lease of the run reads the same ones, whatever the file in the
+        // project holds by now.
+        let source = match &call.source {
+            Some(blob) => Some(Arc::new(store.blobs().get(blob).await?.expose().to_vec())),
+            None => None,
+        };
+        let (input, caller) = (decode_values(opened.expose())?, call.caller);
 
         let kind = match lease.requirements.kind {
             a2m_sched::JobKind::Preview => JobKind::Preview,
@@ -646,10 +743,18 @@ impl Kernel {
         let outcome = engine.run_job(&job, &control).await;
         beat.abort();
         let _ = beat.await;
-        lock(&self.inner.runner.modes)
-            .entry(run)
-            .or_default()
-            .extend(lock(&control.modes).drain(..));
+        {
+            let mut modes = lock(&self.inner.runner.modes);
+            modes
+                .entry(run)
+                .or_default()
+                .extend(lock(&control.modes).drain(..));
+            // Bounded: the oldest run's modes go first. A run that lost
+            // them is read once more on resume, as after a restart.
+            while modes.len() > MODES_REMEMBERED {
+                modes.pop_first();
+            }
+        }
 
         let end = match outcome {
             JobOutcome::Finished { state, failure } => {
@@ -666,7 +771,7 @@ impl Kernel {
                 JobEnd::Stopped {
                     class,
                     code,
-                    in_doubt: may_have_written(class) || control.in_doubt().await,
+                    in_doubt: may_have_written(class) || self.run_in_doubt(run).await,
                 }
             }
             JobOutcome::LeaseEnding => {
@@ -686,7 +791,7 @@ impl Kernel {
                     JobEnd::Stopped {
                         class,
                         code,
-                        in_doubt: control.in_doubt().await,
+                        in_doubt: self.run_in_doubt(run).await,
                     }
                 } else {
                     JobEnd::LeaseEnding
@@ -697,7 +802,7 @@ impl Kernel {
             JobOutcome::Left(failure) => JobEnd::Stopped {
                 class: failure.class(),
                 code: failure.code().clone(),
-                in_doubt: false,
+                in_doubt: self.run_in_doubt(run).await,
             },
         };
         Ok(end)
