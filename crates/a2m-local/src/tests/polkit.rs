@@ -7,10 +7,11 @@
 //! only on a machine that was prepared for it: see [`REAL_VARIABLE`].
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant as StdInstant};
 
 use a2m_actions::BoxFuture;
 use tokio::time::Instant;
@@ -487,6 +488,8 @@ impl Agent {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            // A group of its own, so that the whole agent can be ended.
+            .process_group(0)
             .spawn()
             .expect("`script` and `pkttyagent` are installed on a prepared machine");
         let stdout = child.stdout.take().unwrap();
@@ -518,10 +521,43 @@ impl Agent {
 
     /// Waits until the agent has said `words`.
     fn hears(&mut self, words: &str) {
+        if let Err(said) = self.hears_by(words, StdInstant::now() + Duration::from_secs(60)) {
+            panic!("the agent never said {words:?}; it said {said:?}");
+        }
+    }
+
+    /// Waits until the agent has said `words`, or fails with all it said
+    /// when its output ends or `deadline` passes.
+    fn hears_by(&mut self, words: &str, deadline: StdInstant) -> Result<(), String> {
         while !self.heard.contains(words) {
-            match self.said.recv_timeout(Duration::from_secs(60)) {
+            let left = deadline.saturating_duration_since(StdInstant::now());
+            match self.said.recv_timeout(left) {
                 Ok(more) => self.heard.push_str(&more),
-                Err(_) => panic!("the agent never said {words:?}; it said {:?}", self.heard),
+                Err(_) => return Err(self.heard.clone()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Starts an agent that is registered with polkit and has said
+    /// "Password:". polkit allows one agent for this process, and it may
+    /// still hold the one before: an agent that is told so exits, and is
+    /// replaced once it is gone, until one registers or 30 seconds pass.
+    fn started() -> Self {
+        let deadline = StdInstant::now() + Duration::from_secs(30);
+        loop {
+            let mut agent = Self::start();
+            match agent.hears_by("Password:", deadline) {
+                Ok(()) => return agent,
+                Err(said) if said.contains("already exists") => {
+                    // Dropping waits for its process to exit.
+                    drop(agent);
+                    assert!(
+                        StdInstant::now() < deadline,
+                        "polkit still has the agent before; the last agent said {said:?}"
+                    );
+                }
+                Err(said) => panic!("the agent never said \"Password:\"; it said {said:?}"),
             }
         }
     }
@@ -542,6 +578,14 @@ impl Agent {
 
 impl Drop for Agent {
     fn drop(&mut self) {
+        // The whole group, so that the text agent's bus connection is
+        // closed and polkit has no agent on record for this process.
+        if let Some(group) = i32::try_from(self.child.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -605,11 +649,11 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     }
 
     // A wrong password is not presence.
-    let mut agent = Agent::start();
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move { ask_through_agent(&prompt, far).await }
     });
+    let mut agent = tokio::task::block_in_place(Agent::started);
     tokio::task::block_in_place(|| agent.types("not-the-password-of-the-test-account"));
     let got = within("the wrong password", asking).await.unwrap();
     assert!(
@@ -619,11 +663,11 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     drop(agent);
 
     // The right one is, and it is polkit that says so.
-    let mut agent = Agent::start();
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move { ask_through_agent(&prompt, far).await }
     });
+    let mut agent = tokio::task::block_in_place(Agent::started);
     tokio::task::block_in_place(|| agent.types(REAL_PASSWORD));
     let got = within("the right password", asking).await.unwrap();
     assert_eq!(got, PromptAnswer::Present(PromptName::Polkit));
@@ -649,11 +693,11 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     // polkit holds nothing against this process from the cancelled check:
     // the next prompt is raised and passed.
     drop(agent);
-    let mut agent = Agent::start();
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move { ask_through_agent(&prompt, far).await }
     });
+    let mut agent = tokio::task::block_in_place(Agent::started);
     tokio::task::block_in_place(|| agent.types(REAL_PASSWORD));
     let got = within("the ask after a cancelled one", asking)
         .await
