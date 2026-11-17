@@ -105,3 +105,9 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0122 | [Small things the core crate gives its builders, and a secret is wiped when dropped](0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) | Accepted (design decision) |
 | 0123 | [The Linux Secret Service back end is left out until its store crate stands on maintained crates](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md) | Accepted (design decision) |
 | 0124 | [The plan declares a surface's programs, and a schema checks run-time values](0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md) | Accepted (design decision) |
+| 0096 | [The HTTP pack's endpoint entry, steps, and payload, as building them settled them](0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md) | Accepted (design decision) |
+| 0097 | [What the provider contract could not give the HTTP driver, and what the pack does instead](0097-what-the-provider-contract-could-not-give-the-http-driver-and-what-the-pack-does-instead.md) | Accepted (design decision) |
+| 0100 | [The mode `sql`, and the data pack's contract as building it settled it](0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0101 | [What the data pack refuses, and how it names it](0101-what-the-data-pack-refuses-and-how-it-names-it.md) | Accepted (design decision) |
+| 0102 | [The `file` mode, and what the file pack registers](0102-the-file-mode-and-what-the-file-pack-registers.md) | Accepted (design decision) |
+| 0103 | [The file pack, as building it settled it](0103-the-file-pack-as-building-it-settled-it.md) | Accepted (design decision) |

@@ -503,7 +503,11 @@ mod tests {
         let one = peer.request().await;
         let two = peer.request().await;
         assert_eq!(
-            (one["id"].as_u64(), one["method"].as_str(), one["sessionId"].as_str()),
+            (
+                one["id"].as_u64(),
+                one["method"].as_str(),
+                one["sessionId"].as_str()
+            ),
             (Some(1), Some("Browser.getVersion"), Some("tab"))
         );
         assert_eq!((two["id"].as_u64(), two.get("sessionId")), (Some(2), None));
@@ -552,14 +556,22 @@ mod tests {
         // A worker attaches under the tab; its events reach the tab's subscriber.
         peer.send(r#"{"method":"Target.attachedToTarget","sessionId":"tab","params":{"sessionId":"worker","targetInfo":{"type":"worker"},"waitingForDebugger":true}}"#)
             .await;
-        peer.send(r#"{"method":"Runtime.executionContextsCleared","params":{},"sessionId":"worker"}"#)
-            .await;
+        peer.send(
+            r#"{"method":"Runtime.executionContextsCleared","params":{},"sessionId":"worker"}"#,
+        )
+        .await;
         assert!(matches!(
             browser.recv().await.unwrap().kind,
             EventKind::TargetCrashed
         ));
-        assert!(matches!(tab.recv().await.unwrap().kind, EventKind::DialogClosed));
-        assert!(matches!(tab.recv().await.unwrap().kind, EventKind::Attached(_)));
+        assert!(matches!(
+            tab.recv().await.unwrap().kind,
+            EventKind::DialogClosed
+        ));
+        assert!(matches!(
+            tab.recv().await.unwrap().kind,
+            EventKind::Attached(_)
+        ));
         let from_worker = tab.recv().await.unwrap();
         assert_eq!(from_worker.session.as_deref(), Some("worker"));
         assert!(matches!(from_worker.kind, EventKind::ContextsCleared));
@@ -573,7 +585,11 @@ mod tests {
     async fn a_deadline_ends_a_call_and_its_late_reply_is_dropped() {
         let (client, mut peer) = link(4096, 4096);
         let failed = client
-            .call(None, &GetVersion {}, Deadline::after(Duration::from_secs(5)))
+            .call(
+                None,
+                &GetVersion {},
+                Deadline::after(Duration::from_secs(5)),
+            )
             .await
             .unwrap_err();
         // The peer never read it, yet the writer had handed it over whole.
@@ -641,7 +657,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_message_over_the_ceiling_closes_the_link_with_or_without_its_end() {
-        let whole = format!(r#"{{"method":"Example.big","params":{{"x":"{}"}}}}"#, "a".repeat(64));
+        let whole = format!(
+            r#"{{"method":"Example.big","params":{{"x":"{}"}}}}"#,
+            "a".repeat(64)
+        );
         let mut ended = whole.clone().into_bytes();
         ended.push(0);
         for message in [ended, whole.into_bytes()] {

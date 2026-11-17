@@ -121,8 +121,10 @@ impl Snapshot {
         limits: &SnapshotLimits,
         redact: &dyn Redact,
     ) -> Self {
-        let by_id: BTreeMap<&str, &AxNode> =
-            nodes.iter().map(|node| (node.node_id.as_str(), node)).collect();
+        let by_id: BTreeMap<&str, &AxNode> = nodes
+            .iter()
+            .map(|node| (node.node_id.as_str(), node))
+            .collect();
         let mut elements = Vec::new();
         // Depth first, in the order the tree gives its children. Each entry
         // is a node, its depth among kept elements, and whether an element
@@ -140,11 +142,19 @@ impl Snapshot {
                 break;
             }
             budget -= 1;
-            let role = node.role.as_ref().map(|role| role.text()).unwrap_or_default();
+            let role = node
+                .role
+                .as_ref()
+                .map(|role| role.text())
+                .unwrap_or_default();
             if LEFT_OUT.contains(&role.as_str()) {
                 continue;
             }
-            let name = node.name.as_ref().map(|name| name.text()).unwrap_or_default();
+            let name = node
+                .name
+                .as_ref()
+                .map(|name| name.text())
+                .unwrap_or_default();
             let transparent = node.ignored || TRANSPARENT.contains(&role.as_str());
             let text = role == "StaticText";
             let kept = !transparent && !(text && named_above) && !(text && name.trim().is_empty());
@@ -208,9 +218,16 @@ impl Snapshot {
         let mut cut = false;
         if elements.len() > limits.max_elements {
             cut = true;
-            let deepest = elements.iter().map(|element| element.depth).max().unwrap_or(0);
+            let deepest = elements
+                .iter()
+                .map(|element| element.depth)
+                .max()
+                .unwrap_or(0);
             let fits = (0..=deepest).rev().find(|level| {
-                elements.iter().filter(|element| element.depth <= *level).count()
+                elements
+                    .iter()
+                    .filter(|element| element.depth <= *level)
+                    .count()
                     <= limits.max_elements
             });
             match fits {

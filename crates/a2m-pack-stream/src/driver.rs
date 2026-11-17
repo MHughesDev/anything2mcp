@@ -156,7 +156,7 @@ fn wire_failure(error: &WireError, what: &str) -> StepFailure {
         WireErrorKind::NotAuthorized => (
             codes::NEEDS_LOGIN,
             "The broker refused the session's credentials.".to_owned(),
-            "Sign in to the broker again with `anything2mcp auth login`.",
+            "Sign in to the target again with `anything2mcp session login`.",
         ),
         WireErrorKind::ChannelMissing => (
             codes::CHANNEL_MISSING,

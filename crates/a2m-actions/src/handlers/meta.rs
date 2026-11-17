@@ -133,18 +133,26 @@ handler!(
             })
             .await;
         match (response.error, response.result) {
-            (Some(error), _) => Err(Failure::new(
+            (Some(error), None) => Err(Failure::new(
                 error.class,
                 FailureCode::new(&error.code)
                     .unwrap_or(FailureCode::SCHEMA_INVALID),
                 error.message,
                 error.fix,
             )),
-            (None, result) => Ok(Output {
+            (error, result) => Ok(Output {
                 result: result.unwrap_or(Json::Null),
                 warnings: response.warnings,
                 next: response.next,
                 exit: response.exit,
+                failure: error.map(|error| {
+                    Failure::new(
+                        error.class,
+                        FailureCode::new(&error.code).unwrap_or(FailureCode::SCHEMA_INVALID),
+                        error.message,
+                        error.fix,
+                    )
+                }),
             }),
         }
     }

@@ -9,13 +9,19 @@ async fn with_no_browser_the_failure_is_named_and_nothing_starts() {
     let mut settings = BrowserSettings::default();
     settings.program = Some(std::env::temp_dir().join("a2m-no-such-browser-program"));
     let stand = Stand::new("none", settings, &[]);
-    assert_eq!(stand.browsers.availability(), Availability::ComponentMissing);
+    assert_eq!(
+        stand.browsers.availability(),
+        Availability::ComponentMissing
+    );
     let error = stand
         .browsers
         .open(&profile("clerk"), Visibility::Background)
         .await
         .unwrap_err();
-    assert_eq!(error, BrowserError::LaunchFailed(LaunchReason::NotInstalled));
+    assert_eq!(
+        error,
+        BrowserError::LaunchFailed(LaunchReason::NotInstalled)
+    );
     assert_eq!(error.dispatch(), Dispatch::NotSent);
     let failure = error.failure().unwrap();
     assert_eq!(
@@ -44,7 +50,10 @@ async fn a_program_the_manifest_does_not_declare_is_not_started() {
     ));
     assert_eq!(
         (failure.class(), failure.code()),
-        (FailureClass::Policy, &a2m_provider::codes::EFFECT_NOT_DECLARED)
+        (
+            FailureClass::Policy,
+            &a2m_provider::codes::EFFECT_NOT_DECLARED
+        )
     );
     stand.end().await;
 }
@@ -91,7 +100,10 @@ async fn a_data_directory_that_leads_outside_the_profile_root_is_refused() {
         .await
         .unwrap_err();
     assert!(
-        matches!(error, BrowserError::LaunchFailed(LaunchReason::DataDirectory(_))),
+        matches!(
+            error,
+            BrowserError::LaunchFailed(LaunchReason::DataDirectory(_))
+        ),
         "{error}"
     );
     assert_eq!(
@@ -141,14 +153,21 @@ async fn two_identities_never_share_a_process_or_a_data_directory() {
     assert_eq!(running.len(), 2);
     assert_ne!(running[0].process, running[1].process);
     assert_ne!(running[0].place, running[1].place);
-    assert!(running.iter().all(|one| one.kind.as_str() == crate::BROWSER_KIND));
+    assert!(
+        running
+            .iter()
+            .all(|one| one.kind.as_str() == crate::BROWSER_KIND)
+    );
     assert!(running.iter().all(|one| one.link == "foreign"));
 
     // Each has its own data directory, inside the profile root.
     assert_ne!(clerk.place(), manager.place());
     let root = stand.folder.0.join("profiles");
     for key in [&clerk, &manager] {
-        let directory = key.place().split('/').fold(root.clone(), |at, part| at.join(part));
+        let directory = key
+            .place()
+            .split('/')
+            .fold(root.clone(), |at, part| at.join(part));
         assert!(directory.is_dir(), "{}", directory.display());
         assert!(std::fs::read_dir(&directory).unwrap().count() > 0);
     }

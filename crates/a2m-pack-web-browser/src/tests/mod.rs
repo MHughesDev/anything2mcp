@@ -112,7 +112,11 @@ impl Stand {
         std::fs::create_dir_all(&logs).unwrap();
         let mut roots = Roots::none();
         roots
-            .add(RootName::new(PROFILE_ROOT).unwrap(), &profiles, Access::Write)
+            .add(
+                RootName::new(PROFILE_ROOT).unwrap(),
+                &profiles,
+                Access::Write,
+            )
             .unwrap();
         let supervisor = Supervisor::new(SupervisorLimits::default());
         let host = HostServices {
@@ -193,7 +197,10 @@ fn processes_naming(folder: &Path) -> Vec<u32> {
     }
     let needle = folder.display().to_string();
     for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
-        let Some(process) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok())
+        let Some(process) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
         else {
             continue;
         };
@@ -346,7 +353,9 @@ fn every_code_has_one_class_and_the_conversions_use_them() {
     for (error, expected) in cases {
         let failure = error.failure();
         assert_eq!(
-            failure.as_ref().map(|failure| (failure.class(), failure.code().clone())),
+            failure
+                .as_ref()
+                .map(|failure| (failure.class(), failure.code().clone())),
             expected,
             "{error}"
         );

@@ -16,15 +16,27 @@ async fn a_form_is_filled_and_saved_and_the_stand_stored_exactly_one_write() {
     let stand = Stand::with_browser("acting");
     let browser = stand.open(&profile("clerk")).await;
     let tab = must(browser.acting_tab(&environment()).await);
-    must(tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
+    must(
+        tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .await,
+    );
 
     // Three strategies, each one step: an edit, the native setter, keys.
     let description = must(tab.locate(&textbox("Description"), soon()).await);
-    must(tab.input(&description, &Input::Fill("Blue rail".to_owned()), soon()).await);
+    must(
+        tab.input(&description, &Input::Fill("Blue rail".to_owned()), soon())
+            .await,
+    );
     let quantity = must(tab.locate(&textbox("Quantity"), soon()).await);
-    must(tab.input(&quantity, &Input::NativeSet("7".to_owned()), soon()).await);
+    must(
+        tab.input(&quantity, &Input::NativeSet("7".to_owned()), soon())
+            .await,
+    );
     let length = must(tab.locate(&textbox("Length"), soon()).await);
-    must(tab.input(&length, &Input::Type("12.5".to_owned()), soon()).await);
+    must(
+        tab.input(&length, &Input::Type("12.5".to_owned()), soon())
+            .await,
+    );
     assert_eq!(
         must(tab.read(&length, &ReadWhat::Value, soon()).await),
         RawValue::Text("12.5".to_owned())
@@ -32,7 +44,10 @@ async fn a_form_is_filled_and_saved_and_the_stand_stored_exactly_one_write() {
 
     // A field that cannot be edited is refused before anything is sent.
     let code = must(tab.locate(&textbox("Item code"), soon()).await);
-    let refused = tab.input(&code, &Input::Fill("L-999".to_owned()), soon()).await.unwrap_err();
+    let refused = tab
+        .input(&code, &Input::Fill("L-999".to_owned()), soon())
+        .await
+        .unwrap_err();
     assert_eq!(refused, BrowserError::NotActionable(Reason::NotEditable));
     assert_eq!(refused.dispatch(), Dispatch::NotSent);
     assert!(app.writes().await.unwrap().is_empty());
@@ -42,20 +57,30 @@ async fn a_form_is_filled_and_saved_and_the_stand_stored_exactly_one_write() {
     must(tab.input(&save, &Input::Click, soon()).await);
     let saved = Primitive::Text(
         css("#status"),
-        TextMatch { text: "Saved.".to_owned(), contains: false },
+        TextMatch {
+            text: "Saved.".to_owned(),
+            contains: false,
+        },
     );
     must(tab.wait(&saved, soon()).await);
 
     // The stand says what it stored: one write, with the three values.
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
     assert_eq!(
-        (stored.description.as_str(), stored.quantity, stored.length_sixteenths),
+        (
+            stored.description.as_str(),
+            stored.quantity,
+            stored.length_sixteenths
+        ),
         ("Blue rail", 7, 200)
     );
     assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 1);
 
     // An empty fill clears the field.
-    must(tab.input(&description, &Input::Fill(String::new()), soon()).await);
+    must(
+        tab.input(&description, &Input::Fill(String::new()), soon())
+            .await,
+    );
     assert_eq!(
         must(tab.read(&description, &ReadWhat::Value, soon()).await),
         RawValue::Text(String::new())
@@ -105,7 +130,10 @@ async fn each_control_takes_its_own_input_and_an_element_that_cannot_is_refused(
     must(tab.page.goto_text(&page, soon()).await);
 
     let colour = must(tab.locate(&Query::role("combobox", "Colour"), soon()).await);
-    must(tab.input(&colour, &Input::SelectByValue("g".to_owned()), soon()).await);
+    must(
+        tab.input(&colour, &Input::SelectByValue("g".to_owned()), soon())
+            .await,
+    );
     assert_eq!(
         must(tab.read(&colour, &ReadWhat::Value, soon()).await),
         RawValue::Text("g".to_owned())
@@ -115,11 +143,15 @@ async fn each_control_takes_its_own_input_and_an_element_that_cannot_is_refused(
         RawValue::Text("Green".to_owned())
     );
     assert_eq!(
-        tab.input(&colour, &Input::SelectByValue("b".to_owned()), soon()).await.unwrap_err(),
+        tab.input(&colour, &Input::SelectByValue("b".to_owned()), soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotActionable(Reason::NoSuchOption)
     );
     assert_eq!(
-        tab.input(&colour, &Input::Check(true), soon()).await.unwrap_err(),
+        tab.input(&colour, &Input::Check(true), soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotActionable(Reason::WrongControl)
     );
 
@@ -145,7 +177,9 @@ async fn each_control_takes_its_own_input_and_an_element_that_cannot_is_refused(
     );
     let covered = must(tab.locate(&Query::role("button", "Covered"), soon()).await);
     assert_eq!(
-        tab.input(&covered, &Input::Click, soon()).await.unwrap_err(),
+        tab.input(&covered, &Input::Click, soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotActionable(Reason::Obscured)
     );
 
@@ -154,17 +188,32 @@ async fn each_control_takes_its_own_input_and_an_element_that_cannot_is_refused(
     must(tab.input(&plain, &Input::Click, soon()).await);
     assert_eq!(must(tab.page.address_and_title(soon()).await).1, "Clicked");
     let search = must(tab.locate(&textbox("Search"), soon()).await);
-    must(tab.input(&search, &Input::Type("rails".to_owned()), soon()).await);
+    must(
+        tab.input(&search, &Input::Type("rails".to_owned()), soon())
+            .await,
+    );
     must(tab.input(&search, &Input::Press(Key::Enter), soon()).await);
-    assert_eq!(must(tab.page.address_and_title(soon()).await).1, "Submitted");
+    assert_eq!(
+        must(tab.page.address_and_title(soon()).await).1,
+        "Submitted"
+    );
 
     // A dialog nobody declared stops everything until it is answered.
     let ask = must(tab.locate(&Query::role("button", "Ask"), soon()).await);
     let stopped = tab.input(&ask, &Input::Click, soon()).await.unwrap_err();
-    assert_eq!(stopped, BrowserError::UnexpectedDialog { dispatch: Dispatch::Sent });
     assert_eq!(
-        tab.read(&colour, &ReadWhat::Value, soon()).await.unwrap_err(),
-        BrowserError::UnexpectedDialog { dispatch: Dispatch::NotSent }
+        stopped,
+        BrowserError::UnexpectedDialog {
+            dispatch: Dispatch::Sent
+        }
+    );
+    assert_eq!(
+        tab.read(&colour, &ReadWhat::Value, soon())
+            .await
+            .unwrap_err(),
+        BrowserError::UnexpectedDialog {
+            dispatch: Dispatch::NotSent
+        }
     );
     must(tab.answer_dialog(&DialogAnswer::Accept, soon()).await);
     assert_eq!(
@@ -182,7 +231,10 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     let clerk = profile("clerk");
     let browser = stand.open(&clerk).await;
     let tab = Arc::new(must(browser.acting_tab(&environment()).await));
-    must(tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
+    must(
+        tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .await,
+    );
 
     // A write the application will hold for a long time once it arrives.
     app.set_fault(&Fault::once(FaultKind::Delay { ms: 600_000 }).on_paths(ITEM))
@@ -192,11 +244,17 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
         method: "PUT".to_owned(),
         address: Address::new(&app.url(ITEM)).unwrap(),
         headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
-        body: Some(r#"{"description":"Sent before the crash","quantity":1,"length_in":"1","version":1}"#.to_owned()),
+        body: Some(
+            r#"{"description":"Sent before the crash","quantity":1,"length_in":"1","version":1}"#
+                .to_owned(),
+        ),
     };
     let pending = tokio::spawn({
         let tab = Arc::clone(&tab);
-        async move { tab.fetch(&write, Deadline::after(Duration::from_secs(120))).await }
+        async move {
+            tab.fetch(&write, Deadline::after(Duration::from_secs(120)))
+                .await
+        }
     });
     // The fault is used up when the request arrives: the stand, not a
     // guess at timing, says the write is on its way.
@@ -205,7 +263,9 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     };
-    tokio::time::timeout(Duration::from_secs(60), arrived).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(60), arrived)
+        .await
+        .unwrap();
     // A second call, written and never answered, at the level of the link.
     let mut endless = tab.page.begin_endless().unwrap();
     let description = must(tab.locate(&textbox("Description"), soon()).await);
@@ -219,18 +279,38 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     // For a write that is all the crate above needs to know that the
     // write may have happened.
     let lost = pending.await.unwrap().unwrap_err();
-    assert_eq!(lost, BrowserError::Disconnected { dispatch: Dispatch::Sent });
+    assert_eq!(
+        lost,
+        BrowserError::Disconnected {
+            dispatch: Dispatch::Sent
+        }
+    );
     assert_eq!(lost.failure(), None);
     assert!(matches!(
         endless.finish(soon()).await.unwrap_err(),
-        crate::client::ClientError::Closed { dispatch: Dispatch::Sent, .. }
+        crate::client::ClientError::Closed {
+            dispatch: Dispatch::Sent,
+            ..
+        }
     ));
     // A call after the kill was never sent, and that is transient.
-    let later = tab.input(&description, &Input::Click, soon()).await.unwrap_err();
-    assert_eq!(later, BrowserError::Disconnected { dispatch: Dispatch::NotSent });
+    let later = tab
+        .input(&description, &Input::Click, soon())
+        .await
+        .unwrap_err();
     assert_eq!(
-        tab.locate(&textbox("Description"), soon()).await.unwrap_err(),
-        BrowserError::Disconnected { dispatch: Dispatch::NotSent }
+        later,
+        BrowserError::Disconnected {
+            dispatch: Dispatch::NotSent
+        }
+    );
+    assert_eq!(
+        tab.locate(&textbox("Description"), soon())
+            .await
+            .unwrap_err(),
+        BrowserError::Disconnected {
+            dispatch: Dispatch::NotSent
+        }
     );
     assert_eq!(later.failure().unwrap().code(), &codes::CONNECTION_LOST);
     assert_eq!(browser.health(), BrowserHealth::Exited);
@@ -241,7 +321,11 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     assert_ne!(fresh.subsystem(), browser.subsystem());
     assert_eq!(stand.supervisor.list().len(), 1);
     let again = must(fresh.acting_tab(&environment()).await);
-    must(again.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
+    must(
+        again
+            .goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .await,
+    );
     must(again.locate(&textbox("Description"), soon()).await);
     drop((again, tab));
     stand.end().await;

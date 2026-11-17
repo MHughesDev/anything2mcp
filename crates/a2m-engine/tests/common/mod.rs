@@ -1258,16 +1258,35 @@ impl Control for StoreControl {
 
     fn verified<'a>(
         &'a self,
-        token: ActedToken,
+        token: &'a ActedToken,
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
             self.hooks.note("verified");
-            self.store
+            // The store's transaction runs elsewhere and owns what it is
+            // given, and the proof is borrowed: the record is settled by
+            // name, under the lease the proof was made in. The ledger makes
+            // the same comparison of digests for a record that is `acted`.
+            let record = token.record();
+            let fence = Fence {
+                run: record.run,
+                epoch: token.epoch(),
+            };
+            let settled = self
+                .store
                 .write(Durability::Synced, move |tx| {
-                    tx.ledger().mark_verified(&token, read_back)
+                    tx.ledger()
+                        .settle(&fence, record, Reconciled::Landed(read_back))
                 })
-                .await
+                .await?;
+            match settled {
+                Settled::Verified => Ok(()),
+                other => Err(failure(
+                    FailureClass::UnknownVariant,
+                    "ledger_state_unexpected",
+                    &format!("The record was settled as {other:?}, not verified."),
+                )),
+            }
         })
     }
 

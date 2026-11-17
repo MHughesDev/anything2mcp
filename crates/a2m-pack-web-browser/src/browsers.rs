@@ -255,7 +255,11 @@ impl Browsers {
     /// the profile root; or what started is not a browser the engine can
     /// own (`unknown_variant`/`browser_not_owned`), in which case it was
     /// closed.
-    pub async fn open(&self, profile: &ProfileKey, show: Visibility) -> Result<Browser, BrowserError> {
+    pub async fn open(
+        &self,
+        profile: &ProfileKey,
+        show: Visibility,
+    ) -> Result<Browser, BrowserError> {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
         let existing = shared.open().get(profile).cloned();
@@ -323,7 +327,11 @@ impl Browsers {
             Err("its digest is not one of the known digests in the settings".to_owned())
         } else {
             match client
-                .call(None, &GetVersion {}, Deadline::after(shared.settings.launch_deadline))
+                .call(
+                    None,
+                    &GetVersion {},
+                    Deadline::after(shared.settings.launch_deadline),
+                )
                 .await
             {
                 Ok(version) if version.protocol_version == PROTOCOL_VERSION => Ok(version.product),

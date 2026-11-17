@@ -1544,7 +1544,7 @@ async fn write_record(
     let after = store(run, BlobKind::Values, encode_values(&seen)?).await?;
     run.control
         .verified(
-            acted,
+            &acted,
             ReadBack {
                 digest: seen.digest(),
                 after: Some(after),

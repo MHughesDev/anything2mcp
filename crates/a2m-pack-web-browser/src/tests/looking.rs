@@ -12,14 +12,20 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
     let tab = must(browser.acting_tab(&environment()).await);
     assert_eq!(browser.health(), BrowserHealth::Busy);
 
-    let loaded = must(tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
+    let loaded = must(
+        tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .await,
+    );
     assert_eq!(loaded.status, Some(200));
     assert_eq!(loaded.address, app.url(FORM));
     assert_eq!(loaded.title, "Line item - Example Orders");
 
     // Role and name: the first choice. The stand says what it stored.
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
-    must(tab.wait(&Primitive::Visible(textbox("Description")), soon()).await);
+    must(
+        tab.wait(&Primitive::Visible(textbox("Description")), soon())
+            .await,
+    );
     let description = must(tab.locate(&textbox("Description"), soon()).await);
     for _ in 0..5 {
         assert_eq!(
@@ -28,7 +34,16 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
         );
     }
     assert_eq!(
-        must(tab.read(&description, &ReadWhat::Attribute { name: "name".to_owned() }, soon()).await),
+        must(
+            tab.read(
+                &description,
+                &ReadWhat::Attribute {
+                    name: "name".to_owned()
+                },
+                soon()
+            )
+            .await
+        ),
         RawValue::Text("description".to_owned())
     );
     assert_eq!(
@@ -45,7 +60,10 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
         must(tab.read(&quantity, &ReadWhat::Value, soon()).await),
         RawValue::Text(stored.quantity.to_string())
     );
-    let heading = must(tab.locate(&Query::role("heading", "Line Item Details"), soon()).await);
+    let heading = must(
+        tab.locate(&Query::role("heading", "Line Item Details"), soon())
+            .await,
+    );
     assert_eq!(
         must(tab.read(&heading, &ReadWhat::Text, soon()).await),
         RawValue::Text("Line Item Details".to_owned())
@@ -59,15 +77,22 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
     let within = textbox("Length").within(Query::role("group", "Dimensions"));
     must(tab.locate(&within, soon()).await);
     let nowhere = textbox("Description").within(Query::role("group", "Dimensions"));
-    assert_eq!(tab.locate(&nowhere, soon()).await.unwrap_err(), BrowserError::NotFound);
+    assert_eq!(
+        tab.locate(&nowhere, soon()).await.unwrap_err(),
+        BrowserError::NotFound
+    );
 
     // Exactly one, or a failure. The first of several is never picked.
     assert_eq!(
-        tab.locate(&css("#line-item input"), soon()).await.unwrap_err(),
+        tab.locate(&css("#line-item input"), soon())
+            .await
+            .unwrap_err(),
         BrowserError::Ambiguous { count: 4 }
     );
     assert_eq!(
-        tab.locate(&Query::role("button", "Delete"), soon()).await.unwrap_err(),
+        tab.locate(&Query::role("button", "Delete"), soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotFound
     );
     // The name is exact: a part of it matches nothing.
@@ -79,33 +104,66 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
     // The snapshot is the accessibility tree, in the reference form.
     let snapshot = must(tab.snapshot(&SnapshotLimits::default(), soon()).await);
     let text = snapshot.to_text();
-    assert!(text.starts_with(&format!("page \"Line item - Example Orders\" {}\n", app.url(FORM))), "{text}");
-    assert!(text.contains("heading \"Line Item Details\" level=2"), "{text}");
     assert!(
-        text.contains(&format!("textbox \"Description\" value=\"{}\" required", stored.description)),
+        text.starts_with(&format!(
+            "page \"Line item - Example Orders\" {}\n",
+            app.url(FORM)
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("heading \"Line Item Details\" level=2"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "textbox \"Description\" value=\"{}\" required",
+            stored.description
+        )),
         "{text}"
     );
     assert!(text.contains("button \"Save\""), "{text}");
     assert!(!snapshot.cut);
     // Twice the same page, twice the same snapshot.
-    assert_eq!(must(tab.snapshot(&SnapshotLimits::default(), soon()).await), snapshot);
+    assert_eq!(
+        must(tab.snapshot(&SnapshotLimits::default(), soon()).await),
+        snapshot
+    );
 
     // The browser says it is automated; the engine does not hide it.
-    assert_eq!(must(tab.page.as_the_page("String(navigator.webdriver)", soon()).await), "true");
+    assert_eq!(
+        must(
+            tab.page
+                .as_the_page("String(navigator.webdriver)", soon())
+                .await
+        ),
+        "true"
+    );
 
     // An element belongs to one page generation.
-    let other = must(tab.goto(&Address::new(&app.url("/orders/NOPE")).unwrap(), soon()).await);
+    let other = must(
+        tab.goto(&Address::new(&app.url("/orders/NOPE")).unwrap(), soon())
+            .await,
+    );
     assert_eq!(other.status, Some(404));
     assert_eq!(
-        tab.read(&description, &ReadWhat::Value, soon()).await.unwrap_err(),
+        tab.read(&description, &ReadWhat::Value, soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotFound
     );
     // And to one tab.
     let second = must(browser.acting_tab(&environment()).await);
-    must(second.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
+    must(
+        second
+            .goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .await,
+    );
     let theirs = must(second.locate(&textbox("Description"), soon()).await);
     assert_eq!(
-        tab.read(&theirs, &ReadWhat::Value, soon()).await.unwrap_err(),
+        tab.read(&theirs, &ReadWhat::Value, soon())
+            .await
+            .unwrap_err(),
         BrowserError::NotFound
     );
 
@@ -115,7 +173,10 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
         listener.local_addr().unwrap().port()
     };
     let refused = tab
-        .goto(&Address::new(&format!("http://127.0.0.1:{unused}/")).unwrap(), soon())
+        .goto(
+            &Address::new(&format!("http://127.0.0.1:{unused}/")).unwrap(),
+            soon(),
+        )
         .await
         .unwrap_err();
     assert!(matches!(refused, BrowserError::NotLoaded(_)), "{refused}");
@@ -139,10 +200,16 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     );
     must(tab.page.goto_text(&late, soon()).await);
     let button = Query::role("button", "Late");
-    assert_eq!(tab.locate(&button, soon()).await.unwrap_err(), BrowserError::NotFound);
+    assert_eq!(
+        tab.locate(&button, soon()).await.unwrap_err(),
+        BrowserError::NotFound
+    );
     must(
         tab.wait(
-            &Primitive::All(vec![Primitive::Visible(button.clone()), Primitive::Hidden(css("#old"))]),
+            &Primitive::All(vec![
+                Primitive::Visible(button.clone()),
+                Primitive::Hidden(css("#old")),
+            ]),
             soon(),
         )
         .await,
@@ -152,24 +219,47 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
 
     // A condition that never holds ends at its deadline, and is transient.
     let never = tab
-        .wait(&Primitive::Visible(css("#never")), Deadline::after(Duration::from_millis(300)))
+        .wait(
+            &Primitive::Visible(css("#never")),
+            Deadline::after(Duration::from_millis(300)),
+        )
         .await
         .unwrap_err();
-    assert_eq!(never, BrowserError::Timeout { dispatch: Dispatch::NotSent });
+    assert_eq!(
+        never,
+        BrowserError::Timeout {
+            dispatch: Dispatch::NotSent
+        }
+    );
     assert_eq!(never.failure().unwrap().code(), &codes::TIMEOUT);
 
     // A wait that is under way when the page moves on is re-armed in the
     // new document, by the event that replaced the old one.
-    must(tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon()).await);
     must(
-        tab.page
-            .as_the_page("setTimeout(() => { location.href = '/orders/A-100'; }, 150); 'armed'", soon())
+        tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
             .await,
     );
-    must(tab.wait(&Primitive::Visible(Query::role("table", "Line items")), soon()).await);
+    must(
+        tab.page
+            .as_the_page(
+                "setTimeout(() => { location.href = '/orders/A-100'; }, 150); 'armed'",
+                soon(),
+            )
+            .await,
+    );
     must(
         tab.wait(
-            &Primitive::Url(TextMatch { text: app.url("/orders/A-100"), contains: false }),
+            &Primitive::Visible(Query::role("table", "Line items")),
+            soon(),
+        )
+        .await,
+    );
+    must(
+        tab.wait(
+            &Primitive::Url(TextMatch {
+                text: app.url("/orders/A-100"),
+                contains: false,
+            }),
             soon(),
         )
         .await,
@@ -178,7 +268,13 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     let first_row = Query::role("link", "L-101");
     must(
         tab.wait(
-            &Primitive::Text(first_row, TextMatch { text: "L-10".to_owned(), contains: true }),
+            &Primitive::Text(
+                first_row,
+                TextMatch {
+                    text: "L-10".to_owned(),
+                    contains: true,
+                },
+            ),
             soon(),
         )
         .await,
@@ -216,19 +312,31 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
         for what in [
             ReadWhat::Value,
             ReadWhat::Text,
-            ReadWhat::Attribute { name: "value".to_owned() },
+            ReadWhat::Attribute {
+                name: "value".to_owned(),
+            },
         ] {
             let refused = tab.read(&password, &what, soon()).await.unwrap_err();
             assert_eq!(refused, BrowserError::PasswordField);
-            assert_eq!(refused.failure().unwrap().code(), &codes::PASSWORD_READ_REFUSED);
+            assert_eq!(
+                refused.failure().unwrap().code(),
+                &codes::PASSWORD_READ_REFUSED
+            );
         }
     }
     // A wait on its text does not hold either: it would be a read.
     let guessed = Primitive::Text(
         textbox("Password"),
-        TextMatch { text: "hunter2-password".to_owned(), contains: false },
+        TextMatch {
+            text: "hunter2-password".to_owned(),
+            contains: false,
+        },
     );
-    assert!(tab.wait(&guessed, Deadline::after(Duration::from_millis(300))).await.is_err());
+    assert!(
+        tab.wait(&guessed, Deadline::after(Duration::from_millis(300)))
+            .await
+            .is_err()
+    );
 
     // A value the redactor knows is replaced before it leaves the crate.
     let token = must(tab.locate(&textbox("Token"), soon()).await);

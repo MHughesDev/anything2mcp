@@ -90,7 +90,9 @@ pub fn known_places() -> impl Iterator<Item = &'static str> {
 pub(crate) fn find(named: Option<&Path>) -> Option<PathBuf> {
     match named {
         Some(program) => program.is_file().then(|| program.to_path_buf()),
-        None => known_places().map(PathBuf::from).find(|path| path.is_file()),
+        None => known_places()
+            .map(PathBuf::from)
+            .find(|path| path.is_file()),
     }
 }
 
@@ -150,7 +152,14 @@ pub(crate) fn pipe() -> ForeignPipe {
 /// a setting of the engine.
 pub(crate) fn environment() -> EnvAllowlist {
     let pass: &[&str] = if cfg!(windows) {
-        &["SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA"]
+        &[
+            "SystemRoot",
+            "SystemDrive",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+        ]
     } else if cfg!(target_os = "macos") {
         &["TMPDIR", "HOME"]
     } else {
@@ -193,10 +202,16 @@ mod tests {
             );
         }
         // The protocol travels on the pipe, and the browser says it is automated.
-        assert!(all.iter().any(|argument| argument == "--remote-debugging-pipe"));
+        assert!(
+            all.iter()
+                .any(|argument| argument == "--remote-debugging-pipe")
+        );
         assert!(all.iter().any(|argument| argument == "--enable-automation"));
         // The data directory is always named: the browser's own profile never is.
-        assert!(all.iter().any(|argument| argument == "--user-data-dir=profile"));
+        assert!(
+            all.iter()
+                .any(|argument| argument == "--user-data-dir=profile")
+        );
     }
 
     #[test]

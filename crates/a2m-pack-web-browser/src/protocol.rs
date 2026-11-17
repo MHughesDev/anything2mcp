@@ -398,7 +398,10 @@ command!(RuntimeEnable, "Runtime.enable" => Nothing);
 #[serde(rename_all = "camelCase")]
 pub(crate) enum CallArgument<'a> {
     Value(Value),
-    #[allow(dead_code, reason = "an element is passed as `this`; kept for a second element")]
+    #[allow(
+        dead_code,
+        reason = "an element is passed as `this`; kept for a second element"
+    )]
     ObjectId(&'a str),
 }
 

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{
-    DecisionId, Failure, FailureClass, Identity, Mode, PrincipalId, RunId, RunState, RunnerId,
+    DecisionId, Failure, Identity, Mode, PrincipalId, RunId, RunState, RunnerId,
     Values,
 };
 use a2m_engine::{
@@ -599,10 +599,4 @@ impl Kernel {
         let opened = self.store()?.blobs().get(&blob).await?;
         Ok(Some(decode_values(opened.expose())?))
     }
-}
-
-/// Whether a class of failure leaves the run where a person must act.
-#[allow(dead_code, reason = "kept beside the outcome mapping it documents")]
-const fn rests(class: FailureClass) -> bool {
-    matches!(class, FailureClass::SessionExpired)
 }

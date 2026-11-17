@@ -20,10 +20,10 @@ use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
 use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, BypassServiceWorker, CallArgument,
     CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld, CreateTarget,
-    DescribeNode, DispatchKey, DispatchMouse, Evaluate, GetProperties, Evaluated, Event, EventKind, FailRequest, FetchEnable,
-    GetFullAxTree, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable, PageEnable,
-    RequestPattern, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics,
-    SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind, FailRequest,
+    FetchEnable, GetFullAxTree, GetProperties, HandleDialog, InsertText, MediaFeature, Navigate,
+    NetworkEnable, PageEnable, RequestPattern, RunIfWaiting, RuntimeEnable, SetAutoAttach,
+    SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -225,13 +225,29 @@ pub enum Primitive {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Condition<'a> {
-    Visible { query: &'a Query },
-    Hidden { query: &'a Query },
-    Enabled { query: &'a Query },
-    Text { query: &'a Query, r#match: &'a TextMatch },
-    Url { text: &'a str, contains: bool },
-    All { of: Vec<Condition<'a>> },
-    Any { of: Vec<Condition<'a>> },
+    Visible {
+        query: &'a Query,
+    },
+    Hidden {
+        query: &'a Query,
+    },
+    Enabled {
+        query: &'a Query,
+    },
+    Text {
+        query: &'a Query,
+        r#match: &'a TextMatch,
+    },
+    Url {
+        text: &'a str,
+        contains: bool,
+    },
+    All {
+        of: Vec<Condition<'a>>,
+    },
+    Any {
+        of: Vec<Condition<'a>>,
+    },
 }
 
 impl<'a> From<&'a Primitive> for Condition<'a> {
@@ -470,7 +486,11 @@ enum On<'a> {
 
 fn cut(text: &str) -> String {
     const SHOWN: usize = 200;
-    let clean: String = text.chars().filter(|c| !c.is_control()).take(SHOWN).collect();
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(SHOWN)
+        .collect();
     if text.chars().count() > SHOWN {
         format!("{clean}…")
     } else {
@@ -541,11 +561,17 @@ impl Page {
         }
     }
 
-    async fn call<C: Command>(&self, command: &C, deadline: Deadline) -> Result<C::Reply, BrowserError> {
-        self.raw(command, deadline, true).await.map_err(|error| match error {
-            Ended::Browser(error) => error,
-            Ended::Client(error) => self.client_error(error),
-        })
+    async fn call<C: Command>(
+        &self,
+        command: &C,
+        deadline: Deadline,
+    ) -> Result<C::Reply, BrowserError> {
+        self.raw(command, deadline, true)
+            .await
+            .map_err(|error| match error {
+                Ended::Browser(error) => error,
+                Ended::Client(error) => self.client_error(error),
+            })
     }
 
     /// Runs one helper function and gives what it returned.
@@ -573,9 +599,7 @@ impl Page {
         let evaluated = match self.raw(&command, deadline, true).await {
             Ok(evaluated) => evaluated,
             Err(Ended::Browser(error)) => return Err(error.into()),
-            Err(Ended::Client(ClientError::Protocol { message, .. }))
-                if gone(&message) =>
-            {
+            Err(Ended::Client(ClientError::Protocol { message, .. })) if gone(&message) => {
                 return Err(CallError::Gone);
             }
             Err(Ended::Client(error)) => return Err(self.client_error(error).into()),
@@ -605,7 +629,9 @@ impl Page {
         let mut world = self.world.subscribe();
         let mut status = self.status.subscribe();
         loop {
-            if let Some(error) = Self::interrupted(*status.borrow_and_update(), true, Dispatch::NotSent) {
+            if let Some(error) =
+                Self::interrupted(*status.borrow_and_update(), true, Dispatch::NotSent)
+            {
                 return Err(error);
             }
             if let Some(found) = *world.borrow_and_update() {
@@ -635,7 +661,8 @@ impl Page {
         await_promise: bool,
         deadline: Deadline,
     ) -> Result<Evaluated, BrowserError> {
-        let shape = || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        let shape =
+            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
         loop {
             let world = self.world(deadline).await?;
             let outcome = self
@@ -704,7 +731,14 @@ impl Page {
             return Err(BrowserError::NotFound);
         }
         match self
-            .evaluate(On::Element(&element.object), function, arguments, true, false, deadline)
+            .evaluate(
+                On::Element(&element.object),
+                function,
+                arguments,
+                true,
+                false,
+                deadline,
+            )
             .await
         {
             Ok(evaluated) => Ok(evaluated),
@@ -725,7 +759,11 @@ impl Page {
         self.goto_text(address.as_str(), deadline).await
     }
 
-    pub(crate) async fn goto_text(&self, address: &str, deadline: Deadline) -> Result<Loaded, BrowserError> {
+    pub(crate) async fn goto_text(
+        &self,
+        address: &str,
+        deadline: Deadline,
+    ) -> Result<Loaded, BrowserError> {
         let mut nav = self.nav.subscribe();
         let mut status = self.status.subscribe();
         let navigated = self.call(&Navigate { url: address }, deadline).await?;
@@ -791,7 +829,10 @@ impl Page {
             )
             .await?;
         let now: Now = Self::answer(evaluated)?;
-        Ok((self.redact.redact(&now.address), self.redact.redact(&now.title)))
+        Ok((
+            self.redact.redact(&now.address),
+            self.redact.redact(&now.title),
+        ))
     }
 
     async fn locate(&self, query: &Query, deadline: Deadline) -> Result<Element, BrowserError> {
@@ -854,10 +895,18 @@ impl Page {
         match read {
             Read { stale: true, .. } => Err(BrowserError::NotFound),
             Read { password: true, .. } => Err(BrowserError::PasswordField),
-            Read { too_large: true, .. } => Err(BrowserError::TooLarge { limit: self.max_read }),
+            Read {
+                too_large: true, ..
+            } => Err(BrowserError::TooLarge {
+                limit: self.max_read,
+            }),
             Read { absent: true, .. } => Ok(RawValue::Absent),
-            Read { flag: Some(flag), .. } => Ok(RawValue::Flag(flag)),
-            Read { text: Some(text), .. } => Ok(RawValue::Text(self.redact.redact(&text))),
+            Read {
+                flag: Some(flag), ..
+            } => Ok(RawValue::Flag(flag)),
+            Read {
+                text: Some(text), ..
+            } => Ok(RawValue::Text(self.redact.redact(&text))),
             Read { .. } => Err(BrowserError::Unexpected(
                 "the helper answered a read with nothing".to_owned(),
             )),
@@ -892,7 +941,9 @@ impl Page {
         let waited: Waited = Self::answer(evaluated)?;
         match waited {
             Waited { ok: true, .. } => Ok(()),
-            Waited { error: Some(error), .. } => Err(BrowserError::Unexpected(self.shown(&error))),
+            Waited {
+                error: Some(error), ..
+            } => Err(BrowserError::Unexpected(self.shown(&error))),
             Waited { .. } => Err(BrowserError::Timeout {
                 dispatch: Dispatch::NotSent,
             }),
@@ -955,7 +1006,12 @@ impl Page {
                 .and_then(|value| value.object_id);
             if let Some(element) = element {
                 let described = self
-                    .call(&DescribeNode { object_id: &element }, deadline)
+                    .call(
+                        &DescribeNode {
+                            object_id: &element,
+                        },
+                        deadline,
+                    )
                     .await?;
                 nodes.insert(described.node.backend_node_id);
             }
@@ -972,7 +1028,9 @@ impl Page {
         arguments: Vec<CallArgument<'_>>,
         deadline: Deadline,
     ) -> Result<Checked, BrowserError> {
-        let evaluated = self.on_element(element, function, arguments, deadline).await?;
+        let evaluated = self
+            .on_element(element, function, arguments, deadline)
+            .await?;
         let checked: Checked = Self::answer(evaluated)?;
         if checked.stale {
             return Err(BrowserError::NotFound);
@@ -995,7 +1053,11 @@ impl Page {
         let (name, code, virtual_key, text) = key.parts();
         self.call(
             &DispatchKey {
-                kind: if text.is_some() { "keyDown" } else { "rawKeyDown" },
+                kind: if text.is_some() {
+                    "keyDown"
+                } else {
+                    "rawKeyDown"
+                },
                 key: name,
                 code: Some(code),
                 text,
@@ -1037,7 +1099,12 @@ impl Page {
         Ok(())
     }
 
-    async fn input(&self, element: &Element, how: &Input, deadline: Deadline) -> Result<(), BrowserError> {
+    async fn input(
+        &self,
+        element: &Element,
+        how: &Input,
+        deadline: Deadline,
+    ) -> Result<(), BrowserError> {
         const CHECK: &str = "function (need) { return __a2m.check(this, need); }";
         const PREPARE: &str = "function () { return __a2m.prepareFill(this); }";
         // Checking and focusing send nothing a system could store, so a
@@ -1124,7 +1191,11 @@ impl Page {
         }
     }
 
-    async fn fetch(&self, request: &PageRequest, deadline: Deadline) -> Result<PageResponse, BrowserError> {
+    async fn fetch(
+        &self,
+        request: &PageRequest,
+        deadline: Deadline,
+    ) -> Result<PageResponse, BrowserError> {
         #[derive(Serialize)]
         struct Spec<'a> {
             method: &'a str,
@@ -1141,7 +1212,8 @@ impl Page {
             headers: Vec<(String, String)>,
             body: String,
         }
-        let shape = || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        let shape =
+            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
         let spec = Spec {
             method: &request.method,
             address: request.address.as_str(),
@@ -1155,7 +1227,10 @@ impl Page {
             .evaluate(
                 On::World(world),
                 "function (spec, limit) { return __a2m.request(spec, limit); }",
-                vec![CallArgument::of(&spec).ok_or_else(shape)?, CallArgument::number(self.max_read)],
+                vec![
+                    CallArgument::of(&spec).ok_or_else(shape)?,
+                    CallArgument::number(self.max_read),
+                ],
                 true,
                 true,
                 deadline,
@@ -1176,7 +1251,9 @@ impl Page {
         let answer: Answer = Self::answer(evaluated)?;
         let Some(status) = answer.status else {
             return Err(if answer.too_large {
-                BrowserError::TooLarge { limit: self.max_read }
+                BrowserError::TooLarge {
+                    limit: self.max_read,
+                }
             } else {
                 BrowserError::Unexpected("the helper answered a request with no status".to_owned())
             });
@@ -1196,7 +1273,11 @@ impl Page {
         })
     }
 
-    async fn answer_dialog(&self, how: &DialogAnswer, deadline: Deadline) -> Result<(), BrowserError> {
+    async fn answer_dialog(
+        &self,
+        how: &DialogAnswer,
+        deadline: Deadline,
+    ) -> Result<(), BrowserError> {
         let command = match how {
             DialogAnswer::Accept => HandleDialog {
                 accept: true,
@@ -1224,7 +1305,11 @@ impl Page {
     /// gives its result as text. For this crate's tests only: it stands
     /// for what a page does by itself.
     #[cfg(test)]
-    pub(crate) async fn as_the_page(&self, expression: &str, deadline: Deadline) -> Result<String, BrowserError> {
+    pub(crate) async fn as_the_page(
+        &self,
+        expression: &str,
+        deadline: Deadline,
+    ) -> Result<String, BrowserError> {
         let evaluated = self
             .call(
                 &Evaluate {
@@ -1289,7 +1374,10 @@ impl Page {
     async fn guard_child(&self, session: &str, kind: &str, waiting: bool) {
         let deadline = Deadline::after(self.call_deadline);
         let client = &self.client;
-        let intercepted = match client.call(Some(session), &fetch_everything(), deadline).await {
+        let intercepted = match client
+            .call(Some(session), &fetch_everything(), deadline)
+            .await
+        {
             Ok(_) => true,
             Err(ClientError::Protocol { code, .. }) => kind == "worker" && code == METHOD_NOT_FOUND,
             Err(_) => false,
@@ -1312,7 +1400,13 @@ impl Page {
             Err(_) => false,
         };
         let _ = client
-            .call(Some(session), &AddBinding { name: REFUSED_BINDING }, deadline)
+            .call(
+                Some(session),
+                &AddBinding {
+                    name: REFUSED_BINDING,
+                },
+                deadline,
+            )
             .await;
         let sockets_refused = client
             .call(
@@ -1412,7 +1506,13 @@ impl Page {
                 if safe.allows(method, address) {
                     let _ = self
                         .client
-                        .call(session, &ContinueRequest { request_id: &paused.request_id }, deadline)
+                        .call(
+                            session,
+                            &ContinueRequest {
+                                request_id: &paused.request_id,
+                            },
+                            deadline,
+                        )
                         .await;
                 } else {
                     // Failed before it leaves the browser. If this call is
@@ -1627,7 +1727,11 @@ pub(crate) async fn open_page(
     }
 }
 
-async fn prepare(page: &Page, env: &PageEnvironment, deadline: Deadline) -> Result<(), BrowserError> {
+async fn prepare(
+    page: &Page,
+    env: &PageEnvironment,
+    deadline: Deadline,
+) -> Result<(), BrowserError> {
     if page.safe.is_some() {
         // The lock goes on before the page can do anything: requests are
         // intercepted, workers wait until they are locked too, service
@@ -1643,9 +1747,16 @@ async fn prepare(page: &Page, env: &PageEnvironment, deadline: Deadline) -> Resu
         )
         .await?;
         page.call(&NetworkEnable {}, deadline).await?;
-        page.call(&BypassServiceWorker { bypass: true }, deadline).await?;
+        page.call(&BypassServiceWorker { bypass: true }, deadline)
+            .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
-        page.call(&AddBinding { name: REFUSED_BINDING }, deadline).await?;
+        page.call(
+            &AddBinding {
+                name: REFUSED_BINDING,
+            },
+            deadline,
+        )
+        .await?;
         page.call(
             &AddScriptOnNewDocument {
                 source: REFUSE_SOCKETS,
@@ -1659,7 +1770,8 @@ async fn prepare(page: &Page, env: &PageEnvironment, deadline: Deadline) -> Resu
         page.call(&RuntimeEnable {}, deadline).await?;
     }
     page.call(&PageEnable {}, deadline).await?;
-    page.call(&SetLifecycleEvents { enabled: true }, deadline).await?;
+    page.call(&SetLifecycleEvents { enabled: true }, deadline)
+        .await?;
 
     // The fixed environment.
     let (width, height) = env.viewport;
@@ -1673,9 +1785,20 @@ async fn prepare(page: &Page, env: &PageEnvironment, deadline: Deadline) -> Resu
         deadline,
     )
     .await?;
-    page.call(&SetLocale { locale: &env.locale }, deadline).await?;
-    page.call(&SetTimezone { timezone_id: &env.time_zone }, deadline)
-        .await?;
+    page.call(
+        &SetLocale {
+            locale: &env.locale,
+        },
+        deadline,
+    )
+    .await?;
+    page.call(
+        &SetTimezone {
+            timezone_id: &env.time_zone,
+        },
+        deadline,
+    )
+    .await?;
     page.call(
         &SetEmulatedMedia {
             features: vec![
@@ -1685,7 +1808,11 @@ async fn prepare(page: &Page, env: &PageEnvironment, deadline: Deadline) -> Resu
                 },
                 MediaFeature {
                     name: "prefers-reduced-motion",
-                    value: if env.reduced_motion { "reduce" } else { "no-preference" },
+                    value: if env.reduced_motion {
+                        "reduce"
+                    } else {
+                        "no-preference"
+                    },
                 },
             ],
         },
@@ -1786,11 +1913,19 @@ pub trait Look {
 macro_rules! looks {
     ($tab:ty) => {
         impl Look for $tab {
-            async fn goto(&self, address: &Address, deadline: Deadline) -> Result<Loaded, BrowserError> {
+            async fn goto(
+                &self,
+                address: &Address,
+                deadline: Deadline,
+            ) -> Result<Loaded, BrowserError> {
                 self.page.goto(address, deadline).await.map_err(looked)
             }
 
-            async fn locate(&self, query: &Query, deadline: Deadline) -> Result<Element, BrowserError> {
+            async fn locate(
+                &self,
+                query: &Query,
+                deadline: Deadline,
+            ) -> Result<Element, BrowserError> {
                 self.page.locate(query, deadline).await.map_err(looked)
             }
 
@@ -1800,10 +1935,17 @@ macro_rules! looks {
                 what: &ReadWhat,
                 deadline: Deadline,
             ) -> Result<RawValue, BrowserError> {
-                self.page.read(element, what, deadline).await.map_err(looked)
+                self.page
+                    .read(element, what, deadline)
+                    .await
+                    .map_err(looked)
             }
 
-            async fn wait(&self, until: &Primitive, deadline: Deadline) -> Result<(), BrowserError> {
+            async fn wait(
+                &self,
+                until: &Primitive,
+                deadline: Deadline,
+            ) -> Result<(), BrowserError> {
                 self.page.wait(until, deadline).await.map_err(looked)
             }
 
@@ -1862,7 +2004,12 @@ impl ActTab {
     /// [`BrowserError::NotActionable`] and [`BrowserError::NotFound`]
     /// before anything was sent. Every other error says through
     /// [`BrowserError::dispatch`] whether input reached the page.
-    pub async fn input(&self, element: &Element, how: &Input, deadline: Deadline) -> Result<(), BrowserError> {
+    pub async fn input(
+        &self,
+        element: &Element,
+        how: &Input,
+        deadline: Deadline,
+    ) -> Result<(), BrowserError> {
         self.page.input(element, how, deadline).await
     }
 
@@ -1873,7 +2020,11 @@ impl ActTab {
     ///
     /// [`BrowserError::RequestFailed`] when the page could not complete
     /// it; whether it was sent is then not known.
-    pub async fn fetch(&self, request: &PageRequest, deadline: Deadline) -> Result<PageResponse, BrowserError> {
+    pub async fn fetch(
+        &self,
+        request: &PageRequest,
+        deadline: Deadline,
+    ) -> Result<PageResponse, BrowserError> {
         self.page.fetch(request, deadline).await
     }
 
@@ -1882,7 +2033,11 @@ impl ActTab {
     /// # Errors
     ///
     /// [`BrowserError::Unexpected`] when no dialog is open.
-    pub async fn answer_dialog(&self, how: &DialogAnswer, deadline: Deadline) -> Result<(), BrowserError> {
+    pub async fn answer_dialog(
+        &self,
+        how: &DialogAnswer,
+        deadline: Deadline,
+    ) -> Result<(), BrowserError> {
         self.page.answer_dialog(how, deadline).await
     }
 }

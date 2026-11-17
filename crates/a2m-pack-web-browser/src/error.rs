@@ -243,7 +243,9 @@ impl fmt::Display for BrowserError {
             Dispatch::Unknown => "whether the request was sent is not known",
         };
         match self {
-            Self::NotFound => f.write_str("no element matches, or the element is of an earlier page"),
+            Self::NotFound => {
+                f.write_str("no element matches, or the element is of an earlier page")
+            }
             Self::Ambiguous { count } => write!(f, "{count} elements match, and exactly one must"),
             Self::NotActionable(reason) => write!(f, "the element cannot take the input: {reason}"),
             Self::Timeout { dispatch } => write!(f, "the deadline passed; {}", sent(dispatch)),
@@ -257,7 +259,10 @@ impl fmt::Display for BrowserError {
             Self::NotLoaded(why) => write!(f, "the page did not load: {why}"),
             Self::PasswordField => f.write_str("the value of a password input is never read"),
             Self::TooLarge { limit } => {
-                write!(f, "what was read is longer than the limit of {limit} characters")
+                write!(
+                    f,
+                    "what was read is longer than the limit of {limit} characters"
+                )
             }
             Self::RequestFailed(why) => {
                 write!(f, "a request from the page did not complete: {why}")
@@ -269,7 +274,10 @@ impl fmt::Display for BrowserError {
                     write!(f, "the browser was not started: {failure}")
                 }
                 LaunchReason::NotOwned(why) => {
-                    write!(f, "the program started is not a browser the engine can own: {why}")
+                    write!(
+                        f,
+                        "the program started is not a browser the engine can own: {why}"
+                    )
                 }
             },
         }

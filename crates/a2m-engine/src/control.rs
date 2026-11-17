@@ -271,13 +271,9 @@ pub trait Control: Send + Sync {
 
     /// Marks a record `verified`, with what was read back and its evidence.
     /// The ledger compares the digests itself and releases the lock.
-    ///
-    /// The proof is given up, as the intent token is in `acted`: the store
-    /// runs its transaction elsewhere and must own what it is handed. When
-    /// the call fails the record stays `acted`, and reconcile settles it.
     fn verified<'a>(
         &'a self,
-        token: ActedToken,
+        token: &'a ActedToken,
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>>;
 

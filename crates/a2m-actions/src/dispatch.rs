@@ -368,6 +368,10 @@ pub struct Output {
     /// How the response ends. `PersonNeeded` for a run that rests waiting
     /// for a person: the result still says where it stands.
     pub exit: ExitClass,
+    /// The failure a run ended with, when the action started a run that
+    /// failed: the response then carries both the result, which names the
+    /// run, and the error.
+    pub failure: Option<Failure>,
 }
 
 impl Output {
@@ -379,7 +383,16 @@ impl Output {
             warnings: Vec::new(),
             next: None,
             exit: ExitClass::Succeeded,
+            failure: None,
         }
+    }
+
+    /// The same, ending as failed with the failure a run ended with.
+    #[must_use]
+    pub fn failed(mut self, failure: Failure) -> Self {
+        self.exit = ExitClass::Failed;
+        self.failure = Some(failure);
+        self
     }
 
     /// The same, naming what to call next.
@@ -416,7 +429,9 @@ impl Kernel {
                     ok: exit == ExitClass::Succeeded,
                     action: asked,
                     result: Some(redact_json(redact.as_ref(), &output.result)),
-                    error: None,
+                    error: output.failure.as_ref().map(|failure| {
+                        ErrorBody::of(&redact.redact_failure(failure), EffectClass::Write)
+                    }),
                     warnings: output
                         .warnings
                         .iter()
