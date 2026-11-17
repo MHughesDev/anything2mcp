@@ -87,6 +87,10 @@ def py_type(schema: Any) -> str:
     return "Any"
 
 
+#: The name of the per-call keyword every generated method already has.
+PER_CALL_KEY = "idempotency_key"
+
+
 def request_schema(operation: Dict[str, Any]) -> Tuple[List[Tuple[str, Any]], List[str]]:
     """The input fields of an operation (sorted by name) and the required ones."""
     body = operation.get("requestBody")
@@ -97,8 +101,11 @@ def request_schema(operation: Dict[str, Any]) -> Tuple[List[Tuple[str, Any]], Li
         raise GenerateError("a request body that is not an object")
     if schema.get("additionalProperties", False) not in (False,):
         raise GenerateError("a request body that takes fields it does not name")
-    properties = schema.get("properties", {})
-    return sorted(properties.items()), list(schema.get("required", []))
+    # The per-call keyword `idempotency_key` carries the key (as the header),
+    # and the dispatcher takes either, so an input field of that name is not
+    # generated a second time.
+    properties = {k: v for k, v in schema.get("properties", {}).items() if k != PER_CALL_KEY}
+    return sorted(properties.items()), [r for r in schema.get("required", []) if r != PER_CALL_KEY]
 
 
 def actions_of(document: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:

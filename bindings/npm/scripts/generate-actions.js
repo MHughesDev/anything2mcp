@@ -77,6 +77,9 @@ function tsType(schema) {
   }
 }
 
+// The name of the input field the per-call `idempotencyKey` option stands for.
+const PER_CALL_KEY = "idempotency_key";
+
 function requestSchema(operation) {
   const body = operation.requestBody;
   if (!body) return { fields: [], required: [] };
@@ -85,9 +88,14 @@ function requestSchema(operation) {
   if (schema.additionalProperties !== undefined && schema.additionalProperties !== false) {
     throw new GenerateError("a request body that takes fields it does not name");
   }
+  // The per-call option carries the key (as the header), and the dispatcher
+  // takes either, so an input field of that name is not generated again.
   const properties = schema.properties || {};
-  const fields = Object.keys(properties).sort().map((key) => [key, properties[key]]);
-  return { fields, required: schema.required || [] };
+  const fields = Object.keys(properties)
+    .filter((key) => key !== PER_CALL_KEY)
+    .sort()
+    .map((key) => [key, properties[key]]);
+  return { fields, required: (schema.required || []).filter((key) => key !== PER_CALL_KEY) };
 }
 
 function actionsOf(document) {

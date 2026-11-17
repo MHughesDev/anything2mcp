@@ -126,6 +126,22 @@ class GeneratorTests(unittest.TestCase):
             },
         }
 
+    def test_an_input_field_named_like_the_per_call_keyword_is_not_generated_twice(self) -> None:
+        text = generator.render(
+            self.document(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["idempotency_key", "name"],
+                    "properties": {"idempotency_key": {"type": "string"}, "name": {"type": "string"}},
+                }
+            )
+        )
+        self.assertEqual(text.count("idempotency_key: Optional[str] = None"), 1)
+        self.assertNotIn("idempotency_key: str", text)
+        self.assertNotIn('"idempotency_key":', text)
+        compile(text, "_actions.py", "exec")
+
     def test_types_come_from_the_schema(self) -> None:
         text = generator.render(
             self.document(

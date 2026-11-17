@@ -309,6 +309,16 @@ test("every action of the document has a method, and a type, on the client", () 
   }
 });
 
+test("an input field named like the per-call key is not generated twice", () => {
+  const schema = { type: "object", additionalProperties: false, required: ["idempotency_key"], properties: { idempotency_key: { type: "string" }, name: { type: "string" } } };
+  const document = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", summary: "S.", requestBody: { content: { "application/json": { schema } } } } } } };
+  const { js, dts } = generator.render(document);
+  assert.ok(!dts.includes("idempotency_key"), dts);
+  assert.ok(!js.includes("idempotency_key"), js);
+  assert.ok(dts.includes("name?: string;"), dts);
+  assert.deepStrictEqual(generator.requestSchema(document.paths["/api/v1/actions/a.b"].post), { fields: [["name", { type: "string" }]], required: [] });
+});
+
 test("a generator that does not understand the document stops", () => {
   const free = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", summary: "S.", requestBody: { content: { "application/json": { schema: { type: "object", additionalProperties: {}, properties: {} } } } } } } } };
   assert.throws(() => generator.render(free), generator.GenerateError);
