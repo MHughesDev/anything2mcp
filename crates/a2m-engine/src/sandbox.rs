@@ -16,7 +16,7 @@ use a2m_core::{
     SurfaceIndex,
 };
 use a2m_provider::{
-    BoxFuture, CheckedPaths, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
+    BoxFuture, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
     SandboxPort, StepFailure, StepInput, StepOutcome, SurfaceDescription,
 };
 use a2m_telemetry::ChoiceReason;
@@ -223,7 +223,9 @@ impl Engine {
             address: surface_ref.surface.address.clone(),
             facts: job.input.clone(),
         };
-        let paths = CheckedPaths::none();
+        // The project folder of the request that started the discovery, as
+        // every step of the run is handed it (decision 0196).
+        let paths = run.paths().clone();
         let mut outcome = Ok(());
         for discoverer in registry.discoverers_for(&description) {
             let declared = discoverer.declared();

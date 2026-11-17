@@ -40,7 +40,9 @@ pub use control::{
     Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
     SessionWant,
 };
-pub use diff::{Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord};
+pub use diff::{
+    Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord, NOW_CANNOT_BE_READ,
+};
 pub use engine::{Engine, EngineDeps, EngineSettings, ExclusiveNeed};
 pub use job::{
     Conditions, Directive, JobKind, JobOutcome, JobSpec, KernelHealth, LeaseClock, Parallelism,

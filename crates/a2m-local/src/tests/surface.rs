@@ -1075,3 +1075,64 @@ fn a_record_whose_binding_is_chosen_later_shows_every_binding_it_could_take_and_
         )
     );
 }
+
+/// The page a person publishes from names each surface's kind and where it
+/// leads, prints each surface notice in its fixed words, and every lint
+/// warning with its code; a record's notices stand beside it. Every word
+/// is escaped (AC-1, decisions 0193 and 0194). The values are built here,
+/// as the action registry will hand them.
+#[test]
+fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning() {
+    use crate::surface::version_shown::{
+        NoticeShown, SurfaceShown, WarningShown, notices_html, version_html,
+    };
+    let notice = NoticeShown {
+        code: a2m_core::SurfaceNotice::UnencryptedCredentials.as_str(),
+        words: a2m_core::SurfaceNotice::UnencryptedCredentials.words(),
+    };
+    let surfaces = [
+        SurfaceShown {
+            name: "api",
+            kind: "http",
+            address: "http://203.0.113.7/<b>orders</b>",
+            notices: vec![notice],
+        },
+        SurfaceShown {
+            name: "files",
+            kind: "file",
+            address: "prices",
+            notices: Vec::new(),
+        },
+    ];
+    let warnings = [WarningShown {
+        code: "http.unencrypted_credentials",
+        words: "The surface `api` accepts \"credentials\" over <http>.",
+    }];
+    let page = version_html(&surfaces, &warnings);
+    assert!(
+        page.contains("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code>."),
+        "{page}"
+    );
+    assert!(
+        page.contains("<code>files</code>, a surface of the kind <code>file</code>, leads to <code>prices</code>.</li>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            "<strong>{}</strong> (<code>unencrypted_credentials</code>)",
+            a2m_core::SurfaceNotice::UnencryptedCredentials.words()
+        )),
+        "{page}"
+    );
+    assert_eq!(page.matches("class=\"notice\"").count(), 1, "{page}");
+    assert!(
+        page.contains("<code>http.unencrypted_credentials</code>: The surface `api` accepts &quot;credentials&quot; over &lt;http&gt;."),
+        "{page}"
+    );
+    assert!(!page.contains("<b>") && !page.contains("<http>"), "{page}");
+    // Beside a record: its surfaces' notices, and nothing where none.
+    assert_eq!(notices_html(&[]), "");
+    assert!(notices_html(&[notice]).contains(notice.words));
+    // Nothing to show is nothing at all.
+    assert_eq!(version_html(&[], &[]), "");
+}

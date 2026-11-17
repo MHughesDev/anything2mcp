@@ -181,3 +181,32 @@ async fn a_credential_crosses_an_unencrypted_link_to_another_machine_only_where_
     );
     assert_eq!(app.auth_report().await.unwrap().refused_tokens, 0);
 }
+
+/// A surface that accepts an unencrypted link carries the notice a door
+/// shows a person, from its own field as the compiler kept it; one that
+/// does not carries none (decisions 0193 and 0194).
+#[test]
+fn a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_does() {
+    for (accepted, expected) in [
+        (true, vec![a2m_core::SurfaceNotice::UnencryptedCredentials]),
+        (false, Vec::new()),
+    ] {
+        let (scene, _) = scene_of(accepted, "http://192.0.2.10:9");
+        let set = scene.registry.compiler_set();
+        let api = scene
+            .plan
+            .surfaces
+            .iter()
+            .find(|surface| surface.name.as_str() == "api")
+            .unwrap();
+        assert_eq!(set.surface_notices(api), expected, "accepted: {accepted}");
+        for surface in scene
+            .plan
+            .surfaces
+            .iter()
+            .filter(|s| s.name.as_str() != "api")
+        {
+            assert!(set.surface_notices(surface).is_empty());
+        }
+    }
+}

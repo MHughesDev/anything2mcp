@@ -186,17 +186,22 @@ pub fn installed() -> Result<Trust, Failure> {
 /// is made from one of these; with the feature `tls` on, it carries its own
 /// TLS configuration, which states its provider, and an `https` request
 /// needs nothing installed for the process.
+///
+/// It takes no proxy from the environment (decision 0197): `HTTP_PROXY`,
+/// `HTTPS_PROXY`, `ALL_PROXY`, and the system's proxy settings are not
+/// read, so a request goes to the address it names and nowhere else, and
+/// whoever can set a variable of the engine's process does not choose where
+/// a credential goes. The product has no proxy setting today.
 pub fn client_builder(trust: &Trust) -> reqwest::ClientBuilder {
     #[cfg(feature = "tls")]
-    {
-        reqwest::Client::builder()
-            .tls_backend_preconfigured(rustls::ClientConfig::clone(&trust.config))
-    }
+    let builder = reqwest::Client::builder()
+        .tls_backend_preconfigured(rustls::ClientConfig::clone(&trust.config));
     #[cfg(not(feature = "tls"))]
-    {
+    let builder = {
         let _ = trust;
         reqwest::Client::builder()
-    }
+    };
+    builder.no_proxy()
 }
 
 /// The named failure for a request that failed while its connection was

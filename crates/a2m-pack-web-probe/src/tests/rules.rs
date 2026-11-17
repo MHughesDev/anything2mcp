@@ -166,6 +166,8 @@ fn get(path: &str, answer: serde_json::Value) -> Exchange {
         answer: Answer::Json(Shape::of(&answer)),
         made_by: None,
         credential_headers: Vec::new(),
+        set_headers: Vec::new(),
+        query_left_out: false,
     }
 }
 
@@ -187,6 +189,8 @@ fn tier_one_takes_identifiers_by_form_and_tier_two_only_when_asked() {
             answer: Answer::Refused,
             made_by: None,
             credential_headers: Vec::new(),
+            set_headers: Vec::new(),
+            query_left_out: false,
         },
     ];
 
@@ -355,6 +359,55 @@ fn a_screen_finding_keeps_structure_and_types_and_no_value() {
     // Only a link whose name no other link shares can be followed.
     let (names, shared) = crate::screen::link_names(&snapshot);
     assert_eq!((names, shared), (vec!["L-101", "Orders"], 0));
+
+    // A term and a definition are named only as a pair: a term that labels
+    // a definition of the same name. A list used as data keeps types.
+    let listed = Snapshot {
+        address: "http://app.example.com/timeline".to_owned(),
+        title: "Timeline".to_owned(),
+        elements: vec![
+            element("DescriptionList", "", None, 0),
+            element("term", "Status", None, 1),
+            element("definition", "Status", None, 1),
+            element("term", "Someone Example", None, 1),
+            element("definition", "", None, 1),
+            element("term", "2026-01-05", None, 1),
+            element("definition", "Shipped to the side door", None, 1),
+        ],
+        cut: false,
+    };
+    let found = crate::screen::found(&listed, "Timeline");
+    let text = found.to_string();
+    for value in ["Someone Example", "2026-01-05", "side door"] {
+        assert!(!text.contains(value), "{value} in {text}");
+    }
+    let elements = found["elements"].as_array().unwrap();
+    assert_eq!(elements[1]["name"], "Status");
+    assert_eq!(elements[2]["name"], "Status");
+    assert_eq!(elements[3]["name_type"], "text");
+    assert_eq!(elements[6]["name_type"], "text");
+}
+
+#[test]
+fn the_names_of_a_dictionary_are_values_and_are_withheld() {
+    let shape = Shape::of(&json!({
+        "order_id": "A-100",
+        "rates": {"USD": 1, "EUR": 2},
+        "by_person": {"someone@example.com": {"seen": 1}},
+    }));
+    let text = shape.to_json().to_string();
+    assert!(!text.contains("someone@example.com"), "{text}");
+    assert!(shape.withheld());
+    assert_eq!(
+        shape.to_json()["fields"]["by_person"],
+        json!({"type": "object", "names_withheld": true})
+    );
+    // Words are names: a dictionary of codes is read as structure, the
+    // stated limit of a rule by form.
+    assert_eq!(
+        shape.to_json()["fields"]["rates"]["fields"]["USD"],
+        json!({"type": "integer"})
+    );
 }
 
 #[test]

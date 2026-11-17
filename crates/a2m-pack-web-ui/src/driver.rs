@@ -1,8 +1,10 @@
-//! The driver of the `ui` mode: one tab for each run, and one step at a
-//! time on it, as the plan wrote it. A run that may act has an acting tab;
-//! a run that may only look, in discovery or in the sandbox with no test
-//! record to write, has an observing tab, in which the browser fails every
-//! request of the page that could change the system (decision 0183).
+//! The driver of the `ui` mode: the tabs of one run, and one step at a
+//! time on them, as the plan wrote it. Every run has an observing tab, in
+//! which the browser fails every request of the page that could change the
+//! system, and every read runs there, in any posture; a run that may act
+//! also opens an acting tab, in the same profile, for the steps of a write
+//! up to its commit point, which the lowering marks (decisions 0183 and
+//! 0195).
 //!
 //! What the driver never does: retry a step, pick the first of several
 //! matches, read a password, send the tab outside the surface, sign in, or
@@ -20,12 +22,14 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{
-    AccountName, Digest, Failure, FailureClass, FailureCode, Identity, Secret, Step, Value,
+    AccountName, Digest, EffectClass, Failure, FailureClass, FailureCode, Identity, Secret, Step,
+    Value,
 };
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
     ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
-    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, plain_segment,
+    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, path_by_structure,
+    plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -36,8 +40,8 @@ use a2m_telemetry::{Acting, Detail};
 use crate::codes::{self, shown};
 use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
 use crate::model::{
-    Fingerprint, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
-    ScreenSection, Segment, SetStep, SurfaceFields, WaitStep,
+    Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
+    ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
 
@@ -86,13 +90,14 @@ impl UiDriver {
     }
 }
 
-/// The tab of one run: one that may act, or one that can only look.
-enum Tab {
-    Act(ActTab),
-    Observe(ObserveTab),
+/// The tab a step acts in: one that may act, or one that can only look.
+#[derive(Clone, Copy)]
+enum Tab<'a> {
+    Act(&'a ActTab),
+    Observe(&'a ObserveTab),
 }
 
-impl Tab {
+impl Tab<'_> {
     async fn goto(&self, address: &Address, deadline: Deadline) -> Result<Loaded, BrowserError> {
         match self {
             Self::Act(tab) => tab.goto(address, deadline).await,
@@ -137,13 +142,6 @@ impl Tab {
         }
     }
 
-    fn blocked(&self) -> Vec<RequestShape> {
-        match self {
-            Self::Act(tab) => tab.blocked(),
-            Self::Observe(tab) => tab.blocked(),
-        }
-    }
-
     /// One input to one element. An observing tab has no way to give one:
     /// the posture's guard refuses the step before it gets here, and this
     /// refuses it again.
@@ -169,9 +167,34 @@ impl Tab {
     }
 }
 
-/// What one run holds: its tab, and the screens of its plan.
+/// What a session keeps to open its acting tab, once a step of a write
+/// asks for it.
+struct ToAct {
+    browsers: Browsers,
+    profile: ProfileKey,
+    environment: PageEnvironment,
+    origins: Origins,
+}
+
+/// What one run holds: its tabs, and the screens of its plan.
+///
+/// Every session has an observing tab, opened at prepare, in which the
+/// browser fails every request of the page whose method could change the
+/// system. An acting tab, in the same profile, is opened only when a
+/// `goto` of an operation that writes asks for one, and only in a posture
+/// that may act. Each `goto` says which of the two it reaches its screen
+/// in, and the steps after it act there (decision 0195).
 struct Session {
-    tab: Tab,
+    looking: ObserveTab,
+    acting: Option<ActTab>,
+    /// The tab the last `goto` chose.
+    on: TabKind,
+    /// How to open the acting tab; `None` in a posture that may only look.
+    to_act: Option<ToAct>,
+    /// For a plan whose `goto` steps do not say which tab: each `goto` of
+    /// this pack's bindings, and whether it is a step of the work of an
+    /// operation that writes.
+    gotos: Vec<(Step, bool)>,
     /// `scheme://host`, with a port when the surface has one.
     origin: String,
     sections: BTreeMap<usize, ScreenSection>,
@@ -541,22 +564,88 @@ impl Session {
     /// or a download, which was denied, is a state no screen declares.
     /// `None` when it refused nothing.
     fn refused(&self, what: &str) -> Option<Failure> {
-        refusal(&self.tab.blocked(), what)
+        let mut refused = self.looking.blocked();
+        if let Some(acting) = &self.acting {
+            refused.extend(acting.blocked());
+        }
+        refusal(&refused, what)
+    }
+
+    /// The tab the steps act in now: the acting tab only after a `goto`
+    /// that chose it, and the observing tab in every other case.
+    fn tab(&self) -> Tab<'_> {
+        match (self.on, &self.acting) {
+            (TabKind::Act, Some(acting)) => Tab::Act(acting),
+            _ => Tab::Observe(&self.looking),
+        }
+    }
+
+    /// The tab for a `goto`, opened when it is the acting tab and not open
+    /// yet. In a posture that may only look, every tab is the observing
+    /// one, whatever the step says.
+    async fn choose(&mut self, step: &Step) -> Result<(), StepFailure> {
+        let wanted = tab_for(step, &self.gotos)?;
+        let Some(to_act) = self.to_act.as_ref().filter(|_| wanted == TabKind::Act) else {
+            self.on = TabKind::Observe;
+            return Ok(());
+        };
+        if self.acting.is_none() {
+            let browser = to_act
+                .browsers
+                .open(&to_act.profile, Visibility::Background)
+                .await
+                .map_err(|error| browser_failure(&error, "the start of the browser"))?;
+            let tab = browser
+                .acting_tab(&to_act.environment, &to_act.origins)
+                .await
+                .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
+            self.acting = Some(tab);
+        }
+        self.on = TabKind::Act;
+        Ok(())
     }
 }
 
+/// Which tab a `goto` reaches its screen in. Its payload says; a plan
+/// compiled before it did is answered from the plan's `gotos`: an acting
+/// tab only when every binding that holds this very step is the work of an
+/// operation that writes, and otherwise a stop by name, never an acting tab
+/// for what may be a read.
+fn tab_for(step: &Step, gotos: &[(Step, bool)]) -> Result<TabKind, StepFailure> {
+    if !step.payload.is_none() {
+        return step
+            .payload
+            .decode::<GotoStep>()
+            .map(|goto| goto.tab)
+            .map_err(|_| codes::not_usable("its payload does not decode"));
+    }
+    let mut holders = gotos.iter().filter(|(known, _)| known == step);
+    let first = holders.next();
+    if first.is_some_and(|(_, writes)| *writes) && holders.all(|(_, writes)| *writes) {
+        Ok(TabKind::Act)
+    } else {
+        Err(codes::not_usable(
+            "its `goto` does not say which tab it reaches its screen in, and the plan does not show it to be a step of an operation that writes",
+        ))
+    }
+}
+
+/// What the browser engine reports a window it closed, and a download it
+/// denied, under.
+const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
+
 /// What a tab refused since it was last asked, as a failure: a move of the
 /// page, which the browser ended, is `policy`, `surface_not_declared`; a
-/// window the page opened, which was closed, a download, which was denied,
-/// and a request of the page that could change the system, which an
-/// observing tab failed, are a state no screen declares. `None` when it
-/// refused nothing.
+/// window the page opened, which was closed, and a download, which was
+/// denied, are a state no screen declares; a request of the page that could
+/// change the system, which an observing tab failed, is `policy`,
+/// `page_write_refused`: what was read is not read where the page may
+/// write, and a read that needs such a request cannot be made (decision
+/// 0195). `None` when it refused nothing.
 pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
     let first = refused.first()?;
-    let place = Address::new(&first.address)
-        .map(|address| address.origin())
-        .unwrap_or_default();
-    let place = shown(&place);
+    let address = Address::new(&first.address).ok();
+    let place = shown(&address.as_ref().map(Address::origin).unwrap_or_default());
     Some(if first.method == NAVIGATION {
         fail(
             FailureClass::Policy,
@@ -566,15 +655,33 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
             ),
             "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
         )
-    } else {
+    } else if LEFT_THE_PAGE.contains(&first.method.as_str()) {
         fail(
             FailureClass::UnknownVariant,
             codes::UNEXPECTED_PAGE,
             format!(
-                "The page tried something no screen declares, at {what}: a new window, a download, or, in a tab that may only look, a request that could change the system (`{}`) for `{place}`. The browser refused it.",
+                "The page tried something no screen declares, at {what}: a new window or a download (`{}`). The browser refused it.",
                 shown(&first.method)
             ),
             "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
+        )
+    } else {
+        // The path by structure: a segment that may be a token is not
+        // shown.
+        let path = address
+            .as_ref()
+            .and_then(|address| address.as_str().strip_prefix(&address.origin()))
+            .map(path_by_structure)
+            .unwrap_or_default();
+        fail(
+            FailureClass::Policy,
+            codes::PAGE_WRITE_REFUSED,
+            format!(
+                "The page sent a request that could change the system (`{}` to `{}`), at {what}, in a tab that may only read. The browser failed it before it left, and the run stops: a read is never made where the page may write.",
+                shown(&first.method),
+                shown(&format!("{place}{path}")),
+            ),
+            "Look at what the page does when it loads. A read of a page that writes by itself cannot be made by the web pack; read the record another way.",
         )
     })
 }
@@ -588,7 +695,7 @@ impl Session {
     ) -> Result<BTreeSet<String>, BrowserError> {
         let mut shown = BTreeSet::new();
         for (name, variant) in &screen.variants {
-            match self.tab.locate(&variant.when.query(), deadline).await {
+            match self.tab().locate(&variant.when.query(), deadline).await {
                 Ok(_) | Err(BrowserError::Ambiguous { .. }) => {
                     shown.insert(name.clone());
                 }
@@ -610,7 +717,7 @@ impl Session {
     ) -> Result<Option<Failure>, BrowserError> {
         loop {
             let slice = Deadline::after(HEAR_EVERY.min(deadline.remaining()));
-            match self.tab.wait(until, slice).await {
+            match self.tab().wait(until, slice).await {
                 Ok(()) => return Ok(None),
                 Err(BrowserError::Timeout { .. }) if !deadline.passed() => {
                     if let Some(failure) = self.refused(what) {
@@ -632,7 +739,7 @@ impl Session {
         deadline: Deadline,
     ) -> Result<bool, StepFailure> {
         let once = Deadline::after(LOOK_ONCE.min(deadline.remaining()));
-        match self.tab.wait(condition, once).await {
+        match self.tab().wait(condition, once).await {
             Ok(()) => Ok(true),
             Err(BrowserError::Timeout { .. }) => Ok(false),
             Err(error) => Err(browser_failure(&error, "the page's state")),
@@ -659,7 +766,7 @@ impl Session {
                     "a locator with a scope of its own also has a fingerprint",
                 ));
             }
-            let element = match self.tab.locate(&locator.query(), deadline).await {
+            let element = match self.tab().locate(&locator.query(), deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
                 Err(error) => return Err(browser_failure(&error, what)),
@@ -676,7 +783,7 @@ impl Session {
                 // The locator matched exactly one element of the page, so a
                 // match inside the section is that element.
                 match self
-                    .tab
+                    .tab()
                     .locate(&locator.query_inside(&fingerprint.section), deadline)
                     .await
                 {
@@ -695,7 +802,7 @@ impl Session {
                         within: None,
                     };
                     match self
-                        .tab
+                        .tab()
                         .locate(&near.query_inside(&fingerprint.section), deadline)
                         .await
                     {
@@ -719,7 +826,7 @@ impl Session {
         deadline: Deadline,
     ) -> Result<Option<(&'a str, Handling)>, BrowserError> {
         for (name, variant) in &screen.variants {
-            match self.tab.locate(&variant.when.query(), deadline).await {
+            match self.tab().locate(&variant.when.query(), deadline).await {
                 Ok(_) | Err(BrowserError::Ambiguous { .. }) => {
                     return Ok(Some((name.as_str(), variant.handling)));
                 }
@@ -738,11 +845,11 @@ impl Session {
         let variant = screen.variants.get(variant)?;
         let deadline = Deadline::after(LOOK_ONCE);
         let element = self
-            .tab
+            .tab()
             .locate(&variant.when.query(), deadline)
             .await
             .ok()?;
-        match self.tab.read(&element, &ReadWhat::Text, deadline).await {
+        match self.tab().read(&element, &ReadWhat::Text, deadline).await {
             Ok(RawValue::Text(text)) => Some(text),
             _ => None,
         }
@@ -751,7 +858,7 @@ impl Session {
     /// A snapshot of the page as evidence. It left the base already
     /// redacted, with every password masked.
     async fn snapshot(&self, deadline: Deadline) -> Option<Capture> {
-        let snapshot = self.tab.snapshot(&self.snapshots, deadline).await.ok()?;
+        let snapshot = self.tab().snapshot(&self.snapshots, deadline).await.ok()?;
         Some(Capture {
             name: "snapshot".to_owned(),
             media_type: "text/plain".to_owned(),
@@ -759,7 +866,12 @@ impl Session {
         })
     }
 
-    async fn goto(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
+    async fn goto(
+        &mut self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
+        self.choose(step).await?;
         let (name, screen) = self.screen(step)?;
         let mut path = String::new();
         for part in &screen.reach {
@@ -787,7 +899,7 @@ impl Session {
         let address = Address::new(&made).map_err(StepFailure::not_sent)?;
         let what = format!("the screen `{name}`");
         let loaded = self
-            .tab
+            .tab()
             .goto(&address, until(step, input))
             .await
             .map_err(|error| browser_failure(&error, &what))?;
@@ -835,7 +947,7 @@ impl Session {
                 .values()
                 .map(|variant| Primitive::Visible(variant.when.query())),
         );
-        match self.tab.wait(&Primitive::Any(any), deadline).await {
+        match self.tab().wait(&Primitive::Any(any), deadline).await {
             Ok(()) => {}
             Err(BrowserError::Timeout { .. }) => {
                 return Err(StepFailure::not_sent(fail(
@@ -905,7 +1017,7 @@ impl Session {
             let (element, locator) = self
                 .find(&what, &field.locate, field.fingerprint.as_ref(), deadline)
                 .await?;
-            let value = match self.tab.read(&element, &field.read.what(), deadline).await {
+            let value = match self.tab().read(&element, &field.read.what(), deadline).await {
                 Ok(RawValue::Text(text)) => Value::Text(text),
                 Ok(RawValue::Flag(flag)) => Value::Bool(flag),
                 Ok(RawValue::Absent) => {
@@ -932,7 +1044,7 @@ impl Session {
             let (element, locator) = self
                 .find(&what, &rows.locate, rows.fingerprint.as_ref(), deadline)
                 .await?;
-            let text = match self.tab.read(&element, &ReadWhat::Text, deadline).await {
+            let text = match self.tab().read(&element, &ReadWhat::Text, deadline).await {
                 Ok(RawValue::Text(text)) => text,
                 Ok(_) => {
                     return Err(browser_failure(
@@ -1001,14 +1113,14 @@ impl Session {
         let strategy = match rule {
             Rule::Check => {
                 let on = value.and_then(Value::as_bool).ok_or_else(wrong_value)?;
-                self.tab
+                self.tab()
                     .input(&element, &Input::Check(on), deadline, &what)
                     .await?;
                 "check"
             }
             Rule::Select => {
                 let code = widget_text(value).ok_or_else(wrong_value)?;
-                self.tab
+                self.tab()
                     .input(&element, &Input::SelectByValue(code), deadline, &what)
                     .await?;
                 "select"
@@ -1051,8 +1163,8 @@ impl Session {
             ("native_set", Input::NativeSet(text.to_owned())),
         ];
         for (name, way) in ways {
-            self.tab.input(element, &way, deadline, what).await?;
-            match self.tab.read(element, &ReadWhat::Value, deadline).await {
+            self.tab().input(element, &way, deadline, what).await?;
+            match self.tab().read(element, &ReadWhat::Value, deadline).await {
                 Ok(RawValue::Text(held)) if held == text => return Ok(name),
                 Ok(_) => {}
                 Err(BrowserError::PasswordField) => return Ok(name),
@@ -1147,7 +1259,7 @@ impl Session {
                 "Correct the action's `confirm` in the screen so that it names what the page shows only once the action is done.",
             )));
         }
-        self.tab
+        self.tab()
             .input(&element, &Input::Click, deadline, &what)
             .await?;
 
@@ -1488,37 +1600,59 @@ impl UiDriver {
             );
         }
 
-        // A run that may only look has a tab that cannot act: the browser
-        // fails every request of its page whose method could change the
-        // system, and none is marked safe.
-        let may_only_look = matches!(
+        // Every session looks through an observing tab, in which the
+        // browser fails every request of its page whose method could change
+        // the system, and none is marked safe. A read never runs anywhere
+        // else, in any posture (decision 0195).
+        let looking = self
+            .browsers
+            .observer()
+            .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
+            .await
+            .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
+        let may_act = matches!(
             cx.posture,
-            Posture::Discovery
-                | Posture::Sandbox {
-                    test_records: false
-                }
+            Posture::Live | Posture::Sandbox { test_records: true }
         );
-        let tab = if may_only_look {
-            self.browsers
-                .observer()
-                .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
-                .await
-                .map(Tab::Observe)
-                .map_err(|error| browser_failure(&error, "the opening of a tab"))?
-        } else {
-            let browser = self
-                .browsers
-                .open(&profile, Visibility::Background)
-                .await
-                .map_err(|error| browser_failure(&error, "the start of the browser"))?;
-            browser
-                .acting_tab(&environment, &origins)
-                .await
-                .map(Tab::Act)
-                .map_err(|error| browser_failure(&error, "the opening of a tab"))?
-        };
+        // For a plan compiled before a `goto` said which tab it is in:
+        // each `goto` of a binding over this pack's screens, and whether it
+        // is the work of an operation that writes.
+        let mut gotos = Vec::new();
+        for operation in &cx.plan.operations {
+            let writes = operation.effect != EffectClass::Read;
+            for binding in &operation.bindings {
+                let own = |step: &Step| {
+                    step.kind == GOTO
+                        && step
+                            .refers_to
+                            .as_ref()
+                            .is_some_and(|named| sections.contains_key(&named.section.get()))
+                };
+                for step in binding.act.iter().filter(|step| own(step)) {
+                    gotos.push((step.clone(), writes));
+                }
+                for step in binding
+                    .confirm
+                    .iter()
+                    .chain(&binding.read_back)
+                    .chain(&binding.lookup)
+                    .filter(|step| own(step))
+                {
+                    gotos.push((step.clone(), false));
+                }
+            }
+        }
         Ok(Session {
-            tab,
+            looking,
+            acting: None,
+            on: TabKind::Observe,
+            to_act: may_act.then(|| ToAct {
+                browsers: self.browsers.clone(),
+                profile,
+                environment,
+                origins,
+            }),
+            gotos,
             origin,
             sections,
             snapshots: self.snapshots.clone(),
@@ -1680,6 +1814,43 @@ mod tests {
         ] {
             assert!(!within_pattern(outside, &reach), "{outside}");
         }
+    }
+
+    #[test]
+    fn a_goto_that_does_not_say_its_tab_acts_only_when_the_plan_shows_a_write() {
+        let goto = |entry: &str| Step {
+            kind: GOTO,
+            refers_to: Some(a2m_core::PackRef {
+                section: a2m_core::SectionIndex::new(0),
+                entry: entry.to_owned(),
+            }),
+            args: Vec::new(),
+            timeout_ms: 1000,
+            fails_as: a2m_core::FailsAs {
+                class: FailureClass::UnknownVariant,
+                code: codes::UNEXPECTED_PAGE,
+            },
+            commits: false,
+            lookup: false,
+            idempotent: false,
+            when: None,
+            payload: a2m_core::PackPayload::none(),
+        };
+        let gotos = vec![
+            (goto("form"), true),
+            (goto("shared"), true),
+            (goto("shared"), false),
+            (goto("list"), false),
+        ];
+        assert!(matches!(tab_for(&goto("form"), &gotos), Ok(TabKind::Act)));
+        for stops in ["shared", "list", "unknown"] {
+            let stopped = tab_for(&goto(stops), &gotos).err().unwrap();
+            assert_eq!(*stopped.failure.code(), codes::STEP_NOT_USABLE, "{stops}");
+        }
+        // A step that says is taken at its word.
+        let mut said = goto("list");
+        said.payload = a2m_core::PackPayload::encode(&GotoStep { tab: TabKind::Observe }).unwrap();
+        assert!(matches!(tab_for(&said, &gotos), Ok(TabKind::Observe)));
     }
 
     #[test]

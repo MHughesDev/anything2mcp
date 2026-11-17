@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde_json::Value as Json;
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -538,20 +538,32 @@ pub struct PageResponse {
 /// One request the page of an observing tab made by itself, with GET, to
 /// one of the tab's origins, and its answer, by structure alone: no value
 /// of the address's query, of a header, of a cookie, or of the answer is
-/// kept (decision 0187).
+/// kept (decisions 0187 and 0195).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageExchange {
     /// The method, in capitals: `GET`.
     pub method: String,
     /// The origin, as the browser writes it.
     pub origin: String,
-    /// The path, without its query, with every known secret replaced.
+    /// The path, without its query, with every known secret replaced and
+    /// every segment that is not a plain word kept as
+    /// [`crate::PLACEHOLDER`] ([`crate::path_by_structure`]).
     pub path: String,
-    /// The names of the query's parameters, in order, each once.
+    /// The names of the query's parameters, in order, each once: only
+    /// those that are plain names ([`crate::query_names`]).
     pub query: Vec<String>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// whose whole text is a value, or one whose name is not a plain name.
+    pub query_left_out: bool,
     /// The names, in lowercase and in order, of the request's headers that
     /// carry a credential or an anti-forgery token. Never their values.
     pub credential_headers: Vec<String>,
+    /// The names, in lowercase and in order, of the request's headers that
+    /// the page's own script set: every header but those the browser sends
+    /// with any request of a script by itself ([`BROWSER_HEADERS`]), and
+    /// `accept` when it is not the browser's own `*/*`. Never their values.
+    /// A read made again from inside the page sends none of them.
+    pub set_headers: Vec<String>,
     /// The status of the answer.
     pub status: u16,
     /// The answer's media type, in lowercase, without its parameters.
@@ -564,6 +576,53 @@ pub struct PageExchange {
     /// `None` when the answer is not JSON, could not be read, or is longer
     /// than the tab reads.
     pub fields: Option<BTreeMap<String, String>>,
+    /// Whether the names of an object of the answer were withheld: it had
+    /// more names than [`crate::MOST_NAMES`], or one that is not a plain
+    /// name, and was read as a dictionary, whose names are values. Only its
+    /// own name and kind are in `fields`.
+    pub names_withheld: bool,
+}
+
+/// What [`ObserveTab::exchanges`] gives: the page's own requests answered
+/// whole, and what was not kept, said.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PageExchanges {
+    /// The exchanges, oldest first.
+    pub exchanges: Vec<PageExchange>,
+    /// How many requests of the page were left out because the tab already
+    /// held [`EXCHANGES_KEPT`].
+    pub dropped: usize,
+    /// How many requests of the page were still awaiting their answer when
+    /// the deadline came.
+    pub awaited: usize,
+}
+
+/// The request headers the browser sends by itself with a request a script
+/// of the page makes, and that the script cannot set: a read made again
+/// from inside the page sends each the same. Data, found by looking at what
+/// the browser reports for a `fetch` with no header of its own (decision
+/// 0195).
+pub const BROWSER_HEADERS: &[&str] = &[
+    "cookie",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+];
+
+/// The request headers the browser also sends by itself with every such
+/// request, and that a script may set too. Each is the browser's own when
+/// it holds what the request of the page's own document held; `referer`
+/// when it is the page's own address; `accept` when it is `*/*`. Otherwise
+/// the page set it. Data.
+pub const BROWSER_DEFAULT_HEADERS: &[&str] = &["accept-language", "user-agent"];
+
+/// What the request of the tab's own document held of the headers in
+/// [`BROWSER_DEFAULT_HEADERS`], and its address: kept in memory to tell the
+/// browser's own headers from the page's, and never recorded.
+#[derive(Debug, Clone, Default)]
+struct DocumentHeaders {
+    address: String,
+    defaults: BTreeMap<String, String>,
 }
 
 /// The words in a request header's name that say it carries a credential
@@ -588,7 +647,7 @@ struct Pending {
 }
 
 /// The most exchanges an observing tab keeps before they are taken.
-const EXCHANGES_KEPT: usize = 256;
+pub const EXCHANGES_KEPT: usize = 256;
 
 fn json_kind(value: &Json) -> &'static str {
     match value {
@@ -603,8 +662,11 @@ fn json_kind(value: &Json) -> &'static str {
 }
 
 /// The names of a JSON answer and the kinds of what they held, to one
-/// level inside an object or a list's items. No value is kept.
-pub(crate) fn fields_of(json: &Json) -> BTreeMap<String, String> {
+/// level inside an object or a list's items, and whether the names of an
+/// object were withheld. No value is kept, and the names of an object that
+/// reads as a dictionary are not either ([`crate::names_are_structure`]):
+/// only the object's own name and kind are.
+pub(crate) fn fields_of(json: &Json) -> (BTreeMap<String, String>, bool) {
     fn note(out: &mut BTreeMap<String, String>, name: String, kind: &str) {
         let entry = out.entry(name).or_insert_with(|| kind.to_owned());
         if entry != kind {
@@ -616,29 +678,35 @@ pub(crate) fn fields_of(json: &Json) -> BTreeMap<String, String> {
         prefix: &str,
         map: &serde_json::Map<String, Json>,
         inner: bool,
-    ) {
+    ) -> bool {
+        if !crate::names_are_structure(map.keys()) {
+            return true;
+        }
+        let mut withheld = false;
         for (name, value) in map {
             let at = format!("{prefix}{name}");
             note(out, at.clone(), json_kind(value));
             if inner && let Json::Object(nested) = value {
-                object(out, &format!("{at}."), nested, false);
+                withheld |= object(out, &format!("{at}."), nested, false);
             }
         }
+        withheld
     }
     let mut out = BTreeMap::new();
+    let mut withheld = false;
     match json {
-        Json::Object(map) => object(&mut out, "", map, true),
+        Json::Object(map) => withheld = object(&mut out, "", map, true),
         Json::Array(items) => {
             for item in items {
                 note(&mut out, "[]".to_owned(), json_kind(item));
                 if let Json::Object(map) = item {
-                    object(&mut out, "[].", map, false);
+                    withheld |= object(&mut out, "[].", map, false);
                 }
             }
         }
         _ => {}
     }
-    out
+    (out, withheld)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,6 +847,16 @@ pub(crate) struct Page {
     waiting: watch::Sender<usize>,
     /// The page's own requests answered whole, oldest first.
     exchanges: Mutex<Vec<PageExchange>>,
+    /// Whether the page's own requests are recorded: only once
+    /// [`ObserveTab::record_exchanges`] asked, so that a tab whose
+    /// exchanges nobody takes fetches no answer (decision 0195).
+    recording: AtomicBool,
+    /// How many requests of the page were left out at [`EXCHANGES_KEPT`]
+    /// since the exchanges were last taken.
+    dropped: AtomicUsize,
+    /// What the request of the page's own document held, for telling the
+    /// browser's headers from the page's.
+    document: Mutex<Option<DocumentHeaders>>,
     safe: Option<SafeRequests>,
     /// The origins the tab was opened for.
     origins: Origins,
@@ -2166,6 +2244,8 @@ impl Page {
                     Verdict::Pass => {
                         if own && !document {
                             self.heard_request(&paused);
+                        } else if own && paused.frame_id == self.target {
+                            self.heard_document(&paused);
                         }
                         let _ = self
                             .client
@@ -2231,6 +2311,7 @@ impl Page {
             return;
         };
         if self.safe.is_none()
+            || !self.recording.load(Ordering::SeqCst)
             || !scripted
             || request.method != "GET"
             || !self.origins.allows_reported(&request.url)
@@ -2241,46 +2322,106 @@ impl Page {
             return;
         };
         let address = without_fragment(&request.url);
-        let query: BTreeSet<String> = address
-            .split_once('?')
-            .map(|(_, query)| query)
-            .unwrap_or_default()
-            .split('&')
-            .filter(|pair| !pair.is_empty())
-            .map(|pair| pair.split_once('=').map_or(pair, |(name, _)| name))
-            .map(|name| self.redact.redact(name))
-            .collect();
-        let credential_headers: BTreeSet<String> = request
+        let (query, query_left_out) = crate::query_names(
+            address
+                .split_once('?')
+                .map(|(_, query)| query)
+                .unwrap_or_default(),
+        );
+        let names: BTreeSet<String> = request
             .headers
             .keys()
             .map(|name| name.to_ascii_lowercase())
+            .collect();
+        let credential_headers: BTreeSet<String> = names
+            .iter()
             .filter(|name| {
                 CREDENTIAL_HEADER_WORDS
                     .iter()
                     .any(|word| name.contains(word))
             })
+            .cloned()
+            .collect();
+        // A header the browser also sets is the page's when it holds what
+        // the browser would not have sent. The values are compared here and
+        // not kept.
+        let document = self.document.lock().ok().and_then(|held| held.clone());
+        let value = |name: &str| {
+            request
+                .headers
+                .iter()
+                .find(|(own, _)| own.eq_ignore_ascii_case(name))
+                .and_then(|(_, value)| value.as_str())
+        };
+        let browsers_own = |name: &str| match name {
+            "accept" => value(name) == Some("*/*"),
+            "referer" => document
+                .as_ref()
+                .is_some_and(|document| value(name) == Some(document.address.as_str())),
+            _ if BROWSER_DEFAULT_HEADERS.contains(&name) => {
+                document.as_ref().is_some_and(|document| {
+                    value(name).is_some()
+                        && value(name) == document.defaults.get(name).map(String::as_str)
+                })
+            }
+            _ => BROWSER_HEADERS.contains(&name),
+        };
+        let set_headers: BTreeSet<String> = names
+            .into_iter()
+            .filter(|name| !browsers_own(name))
             .collect();
         let exchange = PageExchange {
             method: request.method.clone(),
             origin,
-            path: self.redact.redact(path_of(address)),
-            query: query.into_iter().collect(),
+            path: crate::path_by_structure(&self.redact.redact(path_of(address))),
+            query: query.iter().map(|name| self.redact.redact(name)).collect(),
+            query_left_out,
             credential_headers: credential_headers.into_iter().collect(),
+            set_headers: set_headers.into_iter().collect(),
             status: 0,
             content_type: String::new(),
             fields: None,
+            names_withheld: false,
         };
-        if let Ok(mut pending) = self.pending.lock()
-            && pending.len() < EXCHANGES_KEPT
-        {
-            pending.insert(
-                number.to_owned(),
-                Pending {
-                    exchange,
-                    answered: false,
-                },
-            );
-            self.waiting.send_replace(pending.len());
+        if let Ok(mut pending) = self.pending.lock() {
+            if pending.len() < EXCHANGES_KEPT {
+                pending.insert(
+                    number.to_owned(),
+                    Pending {
+                        exchange,
+                        answered: false,
+                    },
+                );
+                self.waiting.send_replace(pending.len());
+            } else {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Notes what the request of the tab's own document held of the
+    /// headers the browser sets by itself, and its address.
+    fn heard_document(&self, paused: &RequestPaused) {
+        if self.safe.is_none() || !self.recording.load(Ordering::SeqCst) {
+            return;
+        }
+        let defaults = paused
+            .request
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                let name = name.to_ascii_lowercase();
+                BROWSER_DEFAULT_HEADERS
+                    .contains(&name.as_str())
+                    .then(|| Some((name, value.as_str()?.to_owned())))
+                    .flatten()
+            })
+            .collect();
+        if let Ok(mut held) = self.document.lock() {
+            *held = Some(DocumentHeaders {
+                address: without_fragment(&paused.request.url).to_owned(),
+                defaults,
+            });
         }
     }
 
@@ -2329,6 +2470,9 @@ impl Page {
         let json =
             exchange.content_type == "application/json" || exchange.content_type.ends_with("+json");
         if json {
+            // The browser keeps no answer longer than the tab reads
+            // (`Network.enable`, below), so a longer one is not fetched at
+            // all, and the length is checked again here.
             let deadline = Deadline::after(self.call_deadline);
             let body = self
                 .client
@@ -2338,34 +2482,65 @@ impl Page {
                     deadline,
                 )
                 .await;
-            exchange.fields = body
+            if let Some((fields, withheld)) = body
                 .ok()
                 .filter(|body| !body.base64_encoded && body.body.chars().count() <= self.max_read)
                 .and_then(|body| serde_json::from_str::<Json>(&body.body).ok())
-                .map(|json| {
-                    fields_of(&json)
+                .map(|json| fields_of(&json))
+            {
+                exchange.fields = Some(
+                    fields
                         .into_iter()
                         .map(|(name, kind)| (self.redact.redact(&name), kind))
-                        .collect()
-                });
+                        .collect(),
+                );
+                exchange.names_withheld = withheld;
+            }
         }
-        if let Ok(mut exchanges) = self.exchanges.lock()
-            && exchanges.len() < EXCHANGES_KEPT
-        {
-            exchanges.push(exchange);
+        if let Ok(mut exchanges) = self.exchanges.lock() {
+            if exchanges.len() < EXCHANGES_KEPT {
+                exchanges.push(exchange);
+            } else {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
         }
         self.forget(number);
     }
 
     /// The page's own requests answered whole, oldest first, taken out,
-    /// once none is awaiting its answer or the deadline has passed.
-    async fn take_exchanges(&self, deadline: Deadline) -> Vec<PageExchange> {
+    /// once none is awaiting its answer or the deadline has passed, with
+    /// how many were left out and how many were still awaited.
+    async fn take_exchanges(&self, deadline: Deadline) -> PageExchanges {
         let mut waiting = self.waiting.subscribe();
         let _ = tokio::time::timeout_at(deadline.at(), waiting.wait_for(|count| *count == 0)).await;
-        self.exchanges
-            .lock()
-            .map(|mut exchanges| std::mem::take(&mut *exchanges))
-            .unwrap_or_default()
+        let awaited = *self.waiting.borrow();
+        PageExchanges {
+            exchanges: self
+                .exchanges
+                .lock()
+                .map(|mut exchanges| std::mem::take(&mut *exchanges))
+                .unwrap_or_default(),
+            dropped: self.dropped.swap(0, Ordering::SeqCst),
+            awaited,
+        }
+    }
+
+    /// The number of a request of the page whose answer has arrived whole,
+    /// when its body is to be read: the read is made off the tab's one
+    /// stream of events, so that the events after it are not held.
+    fn answer_to_read(&self, event: &Event) -> Option<String> {
+        match &event.kind {
+            EventKind::LoadingFinished(done)
+                if event.session.as_deref() == Some(self.session.as_str())
+                    && self
+                        .pending
+                        .lock()
+                        .is_ok_and(|pending| pending.contains_key(&done.request_id)) =>
+            {
+                Some(done.request_id.clone())
+            }
+            _ => None,
+        }
     }
 
     /// The requests this observing tab refused, oldest first, taken out.
@@ -2620,6 +2795,14 @@ pub(crate) async fn watch_windows(
 
 async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
     while let Some(event) = events.recv().await {
+        // An answer's body is read off this stream, each within the tab's
+        // own time limit for a call, so that the events after it wait for
+        // nothing.
+        if let Some(number) = page.answer_to_read(&event) {
+            let page = Arc::clone(&page);
+            tokio::spawn(async move { page.finished(&number).await });
+            continue;
+        }
         page.heard(event).await;
     }
     // The subscription ended: the tab was released, or the link closed.
@@ -2694,6 +2877,9 @@ pub(crate) async fn open_page(
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
+        recording: AtomicBool::new(false),
+        dropped: AtomicUsize::new(0),
+        document: Mutex::new(None),
         safe: match posture {
             Posture::Act => None,
             Posture::Observe(safe) => Some(safe),
@@ -2742,7 +2928,8 @@ async fn prepare(
             deadline,
         )
         .await?;
-        page.call(&NetworkEnable {}, deadline).await?;
+        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+            .await?;
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
@@ -2765,7 +2952,8 @@ async fn prepare(
         // A tab that may act holds only the requests of documents: that is
         // where it is kept on the origins it was opened for.
         page.call(&fetch_documents(), deadline).await?;
-        page.call(&NetworkEnable {}, deadline).await?;
+        page.call(&NetworkEnable::keeping(page.max_read), deadline)
+            .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }
     page.call(&PageEnable {}, deadline).await?;
@@ -3094,8 +3282,17 @@ impl ObserveTab {
     /// structure alone: oldest first, once no such request is awaiting its
     /// answer, or when the deadline passes with what was answered by then.
     /// A request of any other method is refused, and is in [`Self::blocked`].
-    pub async fn exchanges(&self, deadline: Deadline) -> Vec<PageExchange> {
+    ///
+    /// Nothing is recorded until [`Self::record_exchanges`] is called.
+    pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges {
         self.page.take_exchanges(deadline).await
+    }
+
+    /// Starts recording the requests its page makes by itself, for
+    /// [`Self::exchanges`]. A tab whose exchanges nobody takes does not
+    /// record them, and fetches no answer of its page.
+    pub fn record_exchanges(&self) {
+        self.page.recording.store(true, Ordering::SeqCst);
     }
 
     /// Reads from inside the page the tab is on, with the page's own

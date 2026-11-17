@@ -18,6 +18,8 @@ let received = broker.received();                 // ground truth
 
 The broker stops, with every connection it holds, when the `TestBroker` is dropped. Two brokers in one test share nothing. There is no binary and no fixed port.
 
+Its protocol, `example-broker/1`, is spoken by the stream pack only with the pack's feature `example-protocol`, which this crate turns on: every build that has the stand as a dependency, which is the tests, speaks it, and the shipped product, which has the stand as no dependency, does not offer it ([decision 0197](../../docs/decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)). The pack dials it, as every plain TCP link, only at a loopback address written as an IP address; the stand listens on `127.0.0.1`.
+
 ## The wire protocol, and why it is our own
 
 **The choice.** The broker speaks `example-broker/1`: a line protocol of our own, JSON over TCP. Section 309 names no protocol; which one the pack speaks first is one of its open points, and it says a log with positions may need a second protocol. The stand has to hold a channel of every shape the section lists (retained, log, queue), with a look that takes nothing and a broker that can refuse a repeated token. No one small open protocol offers all of that, so an honest subset of a standard would have covered part of the pack and needed a binary codec to do it. The alternative weighed was exactly that subset; it was put off, not rejected. When the pack's first slice chooses its protocol, that protocol is added here as a second way in to the same broker: `src/server.rs` is the only file that knows the wire, and `src/state.rs` holds every rule.

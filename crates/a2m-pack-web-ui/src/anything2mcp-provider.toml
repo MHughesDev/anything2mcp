@@ -173,6 +173,10 @@ code = "surface_not_declared"
 
 [[failure_codes]]
 class = "policy"
+code = "page_write_refused"
+
+[[failure_codes]]
+class = "policy"
 code = "password_read_refused"
 
 [[failure_codes]]

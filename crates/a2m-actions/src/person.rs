@@ -387,6 +387,10 @@ pub struct ApprovalPreview {
     pub update: u32,
     /// How many already hold the intended values.
     pub unchanged: u32,
+    /// How many will be written although their binding cannot read what
+    /// they hold now (decision 0196): each field of such a record shows
+    /// [`NOW_CANNOT_BE_READ`] as its current value.
+    pub write: u32,
     /// How many records the diff holds in all.
     pub total: usize,
     /// How many records were skipped before the first one shown.
@@ -445,6 +449,10 @@ pub struct PreviewBinding {
 /// the system and never read back.
 pub const NOT_READ_BACK: &str = "accepted by the system, not read back";
 
+/// What the approval page shows as the current value of each field of a
+/// record whose binding cannot read it: the engine's fixed words.
+pub use a2m_engine::NOW_CANNOT_BE_READ;
+
 /// What the approval page shows beside a record whose binding is chosen
 /// only when it is written, when one binding it could take is accepted by
 /// the system and never read back.
@@ -462,8 +470,15 @@ pub struct PreviewField {
     /// The field's name.
     pub name: String,
     /// The value the record holds now; `None` when the record does not
-    /// exist. For a field labelled restricted, the hash of the value.
+    /// exist. For a field labelled restricted, the hash of the value. For a
+    /// record whose binding cannot read it, the fixed words
+    /// [`NOW_CANNOT_BE_READ`], and `now_cannot_be_read` is true.
     pub current: Option<String>,
+    /// True when `current` holds the fixed words [`NOW_CANNOT_BE_READ`],
+    /// not a value: the record's binding has nothing to read it with, so
+    /// what it holds now is not known (decision 0196). A page shows the
+    /// words as the product's, never as the system's value.
+    pub now_cannot_be_read: bool,
     /// The value the write would leave, or its hash when restricted.
     pub proposed: String,
     /// Whether the write would change the field.
@@ -665,11 +680,17 @@ impl ApprovalDesk {
                     .fields
                     .iter()
                     .map(|field| {
-                        let current = field.current.as_ref().map(shown);
+                        let unread = record.now_cannot_be_read();
+                        let current = if unread {
+                            Some((NOW_CANNOT_BE_READ.to_owned(), false))
+                        } else {
+                            field.current.as_ref().map(shown)
+                        };
                         let (proposed, cut) = shown(&field.proposed);
                         PreviewField {
                             name: self.redact.redact(&field.name),
                             cut: cut || current.as_ref().is_some_and(|(_, cut)| *cut),
+                            now_cannot_be_read: unread,
                             current: current.map(|(text, _)| text),
                             proposed,
                             changes: field.changes,
@@ -709,6 +730,7 @@ impl ApprovalDesk {
             create: counts.create,
             update: counts.update,
             unchanged: counts.unchanged,
+            write: counts.write,
             total: diff.records.len(),
             offset,
             records,

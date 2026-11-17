@@ -7,7 +7,7 @@ use a2m_files::JsonSchema;
 
 use crate::BoxFuture;
 use crate::name::ActionName;
-use crate::path::Roots;
+use crate::path::{CheckedPaths, Roots};
 use crate::registry::Registry;
 
 /// What an action is given: checked paths and the registry, never the
@@ -19,6 +19,11 @@ pub struct ActionContext<'a> {
     pub registry: &'a Registry,
     /// The redactor.
     pub redact: &'a dyn Redact,
+    /// The call's own checked paths: its project folder, as the
+    /// dispatcher checked it, against which a root added with
+    /// [`Roots::add_project`] resolves (`Roots::check_in`, `folder_in`).
+    /// Without a project it holds none, and such a root is refused.
+    pub paths: &'a CheckedPaths,
 }
 
 impl fmt::Debug for ActionContext<'_> {

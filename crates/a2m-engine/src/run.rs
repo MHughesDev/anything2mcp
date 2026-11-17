@@ -79,6 +79,9 @@ pub(crate) struct Candidate {
 #[derive(Clone, Copy)]
 pub(crate) struct RecordCx<'s> {
     pub record: RecordRef,
+    /// The operation the record is written or read for: what a driver's
+    /// question whether another record holds a value is bound to.
+    pub operation: &'s OperationName,
     /// The record's key as the ledger holds it, which may be its place in
     /// the run: for the trace, never for a step.
     pub ledger_key: &'s RecordKey,
@@ -755,6 +758,15 @@ impl<'a> Run<'a> {
             };
             let empty = Values::new();
             let recorded = cx.record.map_or(&empty, |record| record.recorded);
+            // The control plane's answerer, for this step and its record
+            // alone, of whether another record of the operation holds a
+            // value (decision 0193); with none, every question answers
+            // `CannotTell`.
+            let others: Arc<dyn a2m_provider::OtherRecords> = cx
+                .record
+                .as_ref()
+                .and_then(|record| self.control.other_records(record.operation, record.record))
+                .unwrap_or_else(|| Arc::new(CannotTell));
             let started = self.engine.deps.clock.elapsed();
             let held = &mut self.held[cx.held];
             let result = if cx.step.commits {
@@ -762,12 +774,13 @@ impl<'a> Run<'a> {
                 // runs to its end whatever the deadline says. The deadline
                 // is the driver's to keep.
                 let authority = cx.token.map_or(Authority::Read, Authority::Write);
-                let acting = caught(held.handle.act_recorded(
+                let acting = caught(held.handle.act_asking(
                     &mut held.prepared,
                     cx.step,
                     &input,
                     authority,
                     recorded,
+                    others,
                 ));
                 match acting.await {
                     Some(result) => result,
@@ -787,12 +800,13 @@ impl<'a> Run<'a> {
                     }
                 }
             } else {
-                let acting = caught(held.handle.act_recorded(
+                let acting = caught(held.handle.act_asking(
                     &mut held.prepared,
                     cx.step,
                     &input,
                     Authority::Read,
                     recorded,
+                    others,
                 ));
                 match tokio::time::timeout_at(deadline.at(), acting).await {
                     Ok(Some(result)) => result,
@@ -1022,6 +1036,12 @@ impl<'a> Run<'a> {
     }
 
     /// Takes a held context out of the job's hands, for the sandbox port.
+    /// The run's checked paths: the project folder of the request that
+    /// started it, checked as a root, or none.
+    pub(crate) fn paths(&self) -> &CheckedPaths {
+        &self.paths
+    }
+
     pub fn take(&mut self, held: usize) -> Prepared {
         self.held.remove(held).prepared
     }
@@ -1128,4 +1148,18 @@ pub(crate) fn operation(loaded: &Loaded, index: OperationIndex) -> Result<&Opera
         .plan
         .operation(index)
         .ok_or_else(|| codes::job_invalid("The tool names an operation the plan does not hold."))
+}
+
+/// The answerer of a step that has no record, or whose control plane gives
+/// none: it cannot tell.
+struct CannotTell;
+
+impl a2m_provider::OtherRecords for CannotTell {
+    fn holding<'a>(
+        &'a self,
+        _name: &'a str,
+        _value: a2m_core::Digest,
+    ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        Box::pin(async { a2m_provider::RecordedElsewhere::CannotTell })
+    }
 }

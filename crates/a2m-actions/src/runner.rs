@@ -715,6 +715,17 @@ impl Kernel {
             None => None,
         };
         let (input, caller) = (decode_values(opened.expose())?, call.caller);
+        // The run's project folder was checked at the request. It is checked
+        // again at every lease, a resume's days later too: a folder that no
+        // longer passes, or that now leads elsewhere, is not handed to the
+        // engine (audit finding A-4), and a pack that needs it stops by name.
+        let caller = match caller.project.clone() {
+            Some(folder) => match self.checked_project(&folder).await {
+                Ok(checked) if checked == folder => caller,
+                _ => caller.with_project(None),
+            },
+            None => caller,
+        };
 
         let kind = match lease.requirements.kind {
             a2m_sched::JobKind::Preview => JobKind::Preview,

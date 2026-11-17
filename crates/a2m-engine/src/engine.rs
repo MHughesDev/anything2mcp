@@ -267,7 +267,8 @@ impl Engine {
     }
 
     /// Runs an offline test's job: the job as [`Engine::run_job`] runs it,
-    /// with every binding handed `replay` in place of its provider's driver,
+    /// with every binding handed `replay`, a [`a2m_provider::Replay`] of
+    /// recorded answers and nothing else, in place of its provider's driver,
     /// through a handle that checks each step against the provider's
     /// declared step kinds and codes. No session is asked for and no
     /// provider's driver is prepared, so nothing leaves the machine
@@ -278,9 +279,13 @@ impl Engine {
         &self,
         job: &JobSpec,
         control: &dyn Control,
-        replay: Arc<dyn a2m_provider::Driver>,
+        replay: Arc<a2m_provider::Replay>,
     ) -> JobOutcome {
-        self.run_job_with(job, control, Some(replay)).await
+        // Typed as the replay itself, never any driver: a pack's driver
+        // handed here would let a binding not yet verified act on a live
+        // system (audit finding EN-1).
+        self.run_job_with(job, control, Some(replay as Arc<dyn a2m_provider::Driver>))
+            .await
     }
 
     async fn run_job_with(

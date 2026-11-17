@@ -52,6 +52,13 @@ pub struct Exchange {
     /// The names of the request's headers that carry a credential or an
     /// anti-forgery token. Never their values.
     pub credential_headers: Vec<String>,
+    /// For a request the page made by itself: the names of the request's
+    /// headers its script set, which a read made again from inside the
+    /// page would not send. Never their values (decision 0195).
+    pub set_headers: Vec<String>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// or one whose name is not a plain name.
+    pub query_left_out: bool,
 }
 
 impl Exchange {
@@ -62,9 +69,10 @@ impl Exchange {
     }
 
     /// The exchange as the `found` of an `exchange` finding. A request the
-    /// page made by itself also names the page, as `made_by`, and the
-    /// names of the headers that carried a credential, as
-    /// `credential_headers`.
+    /// page made by itself also names the page, as `made_by`, the names of
+    /// the headers that carried a credential, as `credential_headers`, the
+    /// names of the headers its script set, as `set_headers`, and whether
+    /// an entry of its query was left out, as `query_left_out`.
     #[must_use]
     pub fn found(&self) -> Json {
         let mut found = self.found_of_a_document();
@@ -79,6 +87,16 @@ impl Exchange {
                         .collect(),
                 ),
             );
+            fields.insert(
+                "set_headers".to_owned(),
+                Json::Array(
+                    self.set_headers
+                        .iter()
+                        .map(|name| Json::from(name.as_str()))
+                        .collect(),
+                ),
+            );
+            fields.insert("query_left_out".to_owned(), Json::Bool(self.query_left_out));
             return Json::Object(crate::shape::sorted(fields.clone()));
         }
         found

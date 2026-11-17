@@ -1094,6 +1094,32 @@ async fn a_broker_that_cannot_be_reached_or_refuses_the_session_is_named() {
     );
 }
 
+/// Plain TCP goes only to a loopback address written as an IP address
+/// (decision 0197): a surface at a documentation address, or at a name
+/// that leads to the stand itself, is refused before any connection, and
+/// the stand saw nothing.
+#[tokio::test]
+async fn plain_tcp_to_an_address_that_is_not_a_loopback_ip_is_refused_before_any_connection() {
+    let mut scene = Scene::start().await;
+    let port = scene.broker.address().port();
+    for address in [format!("localhost:{port}"), format!("192.0.2.10:{port}")] {
+        scene.surface.surface.address = address.clone();
+        scene.destinations = a2m_provider::Destinations::new([address.clone()]);
+        let refused = scene.try_prepare(Posture::Live, None).await.unwrap_err();
+        assert_eq!(
+            (
+                refused.failure.class().to_string(),
+                refused.failure.code().as_str(),
+                refused.sent
+            ),
+            ("policy".to_owned(), "transport_refused", Sent::NotSent),
+            "{address}"
+        );
+    }
+    assert!(scene.broker.requests().is_empty());
+    assert!(scene.broker.truth().connections.is_empty());
+}
+
 #[tokio::test]
 async fn a_secret_in_what_the_broker_says_reaches_no_result() {
     let scene = Scene::start().await;
@@ -2066,4 +2092,167 @@ async fn a_publish_in_doubt_is_found_by_a_scan_from_where_the_log_ended_before_i
         .collect();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].position, Some(7));
+}
+
+// ---- a message delivered again after the engine restarts (decision 0197) ----
+
+/// Waits until the broker has seen every connection end, and so taken back
+/// what it had handed out on them.
+async fn connections_closed(scene: &Scene) {
+    scene
+        .broker
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.connections.is_empty()
+        })
+        .await
+        .unwrap();
+}
+
+/// The engine that took a message first is gone, with its marks: the
+/// message comes again with a count above one. A take asks the engine
+/// whether another record holds it. "Cannot tell" (and no answerer) stops
+/// as before; "held" stops and names the record; "not held" takes it, and
+/// its acknowledgement removes it, as the stand says.
+#[tokio::test]
+async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_record_holds_it() {
+    use a2m_provider::RecordedElsewhere;
+    use common::{Answering, Folder, take_asking};
+
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let first = scene.broker.queue(WORK)[0].message.id.clone();
+
+    // The first engine's record takes the message; the engine ends before
+    // its acknowledgement is sent, and the broker takes the message back.
+    let taker = ledger.write("first").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(taker.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    assert_eq!(text(&taken.for_reconcile, "message_id"), first);
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+
+    // A second engine, with no marks.
+    let other_folder = Folder::new("restarted-engine");
+    let other = common::registry(&other_folder);
+
+    // No answerer, and an answerer that cannot tell: nothing is taken.
+    let plain = ledger.write("plain").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(plain.fence))
+        .await
+        .unwrap();
+    let stopped = failed(read(&handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(
+        stopped,
+        (
+            "busy".to_owned(),
+            "message_may_be_held".to_owned(),
+            Sent::Answered
+        )
+    );
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    let unsure = ledger.write("unsure").await;
+    let answering = Answering::new(RecordedElsewhere::CannotTell);
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(unsure.fence))
+        .await
+        .unwrap();
+    let stopped =
+        failed(take_asking(&handle, &mut prepared, take, &unsure, answering.clone()).await);
+    assert_eq!(stopped.1, "message_may_be_held");
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    assert_eq!(
+        *answering.asked.lock().unwrap(),
+        [(
+            "message_id".to_owned(),
+            a2m_provider::recorded_digest(&Value::from(first.as_str()))
+        )]
+    );
+
+    // Another record holds it: stopped, and the record is named.
+    let blocked = ledger.write("blocked").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(blocked.fence))
+        .await
+        .unwrap();
+    let held = take_asking(
+        &handle,
+        &mut prepared,
+        take,
+        &blocked,
+        Answering::new(RecordedElsewhere::Held(taker.record)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(held.failure.code().as_str(), "message_may_be_held");
+    assert!(
+        held.failure
+            .message()
+            .contains(&taker.record.run.to_string()),
+        "{}",
+        held.failure.message()
+    );
+    handle.release(prepared, true).await;
+    connections_closed(&scene).await;
+    assert!(scene.broker.acknowledgements().is_empty());
+
+    // No other record holds it: taken, and acknowledged once.
+    let free = ledger.write("free").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(free.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = take_asking(
+        &handle,
+        &mut prepared,
+        take,
+        &free,
+        Answering::new(RecordedElsewhere::NotHeld),
+    )
+    .await
+    .unwrap() else {
+        panic!("a message");
+    };
+    assert_eq!(text(&taken.for_reconcile, "message_id"), first);
+    handle
+        .act(
+            &mut prepared,
+            &take[2],
+            &free.input(&none, None),
+            free.authority(),
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let acknowledgements = scene.broker.acknowledgements();
+    assert_eq!(acknowledgements.len(), 1);
+    assert_eq!(acknowledgements[0].message, first);
+    assert!(
+        scene
+            .broker
+            .queue(WORK)
+            .iter()
+            .all(|held| held.message.id != first)
+    );
+    // The broker handed it out five times; only the last was taken.
+    let attempts: Vec<u32> = scene
+        .broker
+        .deliveries()
+        .iter()
+        .filter(|delivery| delivery.message == first)
+        .map(|delivery| delivery.attempt)
+        .collect();
+    assert_eq!(attempts, [1, 2, 3, 4, 5]);
 }

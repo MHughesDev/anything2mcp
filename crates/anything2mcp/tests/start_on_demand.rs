@@ -443,7 +443,9 @@ async fn a_served_engine_never_resolves_a_root_against_the_project_that_started_
     assert_eq!(read_or_code(&second), "held in project A", "{second}");
     for (response, other) in [(&first, "A"), (&second, "B")] {
         assert!(
-            !response.to_string().contains(&format!("held in project {other}")),
+            !response
+                .to_string()
+                .contains(&format!("held in project {other}")),
             "{response}"
         );
     }

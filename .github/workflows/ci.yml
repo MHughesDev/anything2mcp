@@ -133,7 +133,9 @@ jobs:
           python -m venv "$RUNNER_TEMP/try"
           "$RUNNER_TEMP/try/$VENV_BIN/pip" install --quiet bindings/python/dist/*.whl
           "$RUNNER_TEMP/try/$VENV_BIN/anything2mcp$EXE" --version
-          "$RUNNER_TEMP/try/$VENV_BIN/python" -c "import anything2mcp; print(anything2mcp.binary_path())"
+          # The client runs only the program its own installed distribution
+          # put in the scripts folder: an installed wheel must find it.
+          "$RUNNER_TEMP/try/$VENV_BIN/python" -c "import anything2mcp, sys; found = anything2mcp.binary_path(); print(found); sys.exit(0 if found else 1)"
           # On Windows pip makes no launcher for the a2m script (research note 21).
           if [ "$RUNNER_OS" != "Windows" ]; then "$RUNNER_TEMP/try/$VENV_BIN/a2m" --version; fi
       - name: Test the Python client, against a fake engine and the built one

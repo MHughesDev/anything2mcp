@@ -55,7 +55,11 @@ pub const RECORD_ROLES: &[&str] = &["row", "listitem", "option", "treeitem"];
 /// The roles of a labelled value: a description list's term, which is
 /// named by what it shows, its label, and a definition, which the browser
 /// names only from a label the page gives it, never from what it holds.
-/// Their names are kept outside a record, as a link's are. Data.
+/// Their names are kept outside a record, and only in pairs: a term's when
+/// a definition of the page has the same name, and a definition's when a
+/// term of the page has it, so that the term labels it. A list used as data
+/// (a date or a person's name in each term, a value as a definition's
+/// `title`) keeps them as types (decision 0195). Data.
 pub const LABELLED_ROLES: &[&str] = &["term", "definition"];
 
 /// The roles of an element that marks out a part of a page. Data.
@@ -93,12 +97,13 @@ fn state(state: ElementState) -> &'static str {
     }
 }
 
-fn element(one: &SnapshotElement, in_record: bool) -> Json {
+fn element(one: &SnapshotElement, in_record: bool, paired: bool) -> Json {
     let mut out = serde_json::Map::new();
     out.insert("depth".to_owned(), Json::from(one.depth));
     out.insert("role".to_owned(), Json::from(one.role.as_str()));
     let named = NAMED_ROLES.contains(&one.role.as_str())
-        || ((one.role == "link" || LABELLED_ROLES.contains(&one.role.as_str())) && !in_record);
+        || (one.role == "link" && !in_record)
+        || (LABELLED_ROLES.contains(&one.role.as_str()) && !in_record && paired);
     if named {
         out.insert("name".to_owned(), Json::from(one.name.as_str()));
     } else if !one.name.trim().is_empty() {
@@ -129,13 +134,35 @@ fn element(one: &SnapshotElement, in_record: bool) -> Json {
 /// The snapshot as the `found` of a `screen` finding.
 #[must_use]
 pub fn found(snapshot: &Snapshot, title: &str) -> Json {
+    // The names of the terms and of the definitions outside a record: a
+    // term and a definition are named only in a pair.
+    let mut above: Vec<&str> = Vec::new();
+    let mut terms: Vec<&str> = Vec::new();
+    let mut definitions: Vec<&str> = Vec::new();
+    for one in &snapshot.elements {
+        above.truncate(one.depth);
+        let in_record = above.iter().any(|role| RECORD_ROLES.contains(role));
+        if !in_record && !one.name.trim().is_empty() {
+            match one.role.as_str() {
+                "term" => terms.push(one.name.as_str()),
+                "definition" => definitions.push(one.name.as_str()),
+                _ => {}
+            }
+        }
+        above.push(one.role.as_str());
+    }
     // The roles above the element at hand, by depth.
     let mut above: Vec<&str> = Vec::new();
     let mut elements = Vec::new();
     for one in &snapshot.elements {
         above.truncate(one.depth);
         let in_record = above.iter().any(|role| RECORD_ROLES.contains(role));
-        elements.push(element(one, in_record));
+        let paired = match one.role.as_str() {
+            "term" => definitions.contains(&one.name.as_str()),
+            "definition" => terms.contains(&one.name.as_str()),
+            _ => false,
+        };
+        elements.push(element(one, in_record, paired));
         above.push(one.role.as_str());
     }
     object([

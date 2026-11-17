@@ -17,7 +17,19 @@ pub enum DiffAction {
     Update,
     /// The record already holds the intended values.
     Unchanged,
+    /// The record has a key, and its binding has nothing to read it with:
+    /// its only evidence is the system's acknowledgement and it has no
+    /// read-back step, such as a write-only register of a device. It will
+    /// be written; what it holds now is not known, and each field's
+    /// `current` is `None` for that reason, never because the record is
+    /// absent. A door shows [`NOW_CANNOT_BE_READ`] in its place (decision
+    /// 0196).
+    Write,
 }
+
+/// The fixed words a door shows for what a record holds now when its
+/// binding cannot read it ([`DiffAction::Write`]).
+pub const NOW_CANNOT_BE_READ: &str = "cannot be read: this binding has nothing to read the record with";
 
 impl DiffAction {
     /// The action as the diff and its hash write it.
@@ -27,6 +39,7 @@ impl DiffAction {
             Self::Create => "create",
             Self::Update => "update",
             Self::Unchanged => "unchanged",
+            Self::Write => "write",
         }
     }
 }
@@ -37,7 +50,9 @@ pub struct DiffField {
     /// The field's name.
     pub name: String,
     /// The current value after normalization; `None` when the record does
-    /// not exist. For a field labelled restricted, the hash of the value.
+    /// not exist, or, in a record whose action is [`DiffAction::Write`],
+    /// because nothing can read it. For a field labelled restricted, the
+    /// hash of the value.
     pub current: Option<Value>,
     /// The current value as the system gave it. Not in the hash, and never
     /// kept for a restricted field.
@@ -123,6 +138,13 @@ impl DiffRecord {
         self.evidence == WriteEvidence::Acknowledged
     }
 
+    /// Whether the record's binding cannot read what it holds now: the
+    /// page shows [`NOW_CANNOT_BE_READ`] for each field's current value.
+    #[must_use]
+    pub fn now_cannot_be_read(&self) -> bool {
+        self.action == DiffAction::Write
+    }
+
     /// Whether the binding that writes the record is chosen only once its
     /// key is known: the approval names every binding it could take.
     #[must_use]
@@ -150,6 +172,9 @@ pub struct DiffCounts {
     pub update: u32,
     /// Records that already hold the intended values.
     pub unchanged: u32,
+    /// Records that will be written and whose binding cannot read what
+    /// they hold now.
+    pub write: u32,
 }
 
 /// A diff.
@@ -191,6 +216,7 @@ impl Diff {
                 DiffAction::Create => counts.create += 1,
                 DiffAction::Update => counts.update += 1,
                 DiffAction::Unchanged => counts.unchanged += 1,
+                DiffAction::Write => counts.write += 1,
             }
         }
         counts

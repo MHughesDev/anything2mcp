@@ -208,8 +208,9 @@ async fn exchange(
     })
 }
 
-/// The HTTP client for one exchange. It follows no redirect: a credential
-/// goes to the address the auth file names and nowhere else.
+/// The HTTP client for one exchange. It follows no redirect and, being made
+/// by `tls::client_builder`, takes no proxy from the environment: a
+/// credential goes to the address the auth file names and nowhere else.
 fn client(url: &str) -> Result<reqwest::Client, Failure> {
     #[cfg(not(feature = "tls"))]
     if url.starts_with("https://") {

@@ -621,6 +621,20 @@ impl Control for InProcessControl {
         self.caller.project.clone()
     }
 
+    fn other_records(
+        &self,
+        operation: &a2m_core::OperationName,
+        asking: RecordRef,
+    ) -> Option<Arc<dyn a2m_provider::OtherRecords>> {
+        let store = self.kernel.store().ok()?.clone();
+        Some(Arc::new(StoredOthers {
+            store,
+            workspace: self.run.workspace,
+            operation: operation.clone(),
+            asking,
+        }))
+    }
+
     fn acknowledged<'a>(
         &'a self,
         token: &'a ActedToken,
@@ -930,4 +944,63 @@ impl InProcessControl {
 /// Whether a failure class means a write may have been sent.
 pub(crate) const fn may_have_written(class: FailureClass) -> bool {
     matches!(class, FailureClass::PossibleCommit)
+}
+
+/// The answer to a driver's question whether another record of an
+/// operation holds a value (decision 0196): the values recorded before the
+/// commit point of every other record of the operation in the workspace,
+/// as the ledger stored them, compared by [`a2m_provider::recorded_digest`].
+/// It names the record that holds the value and never hands a value out.
+/// Where any candidate's value under the name was masked by the redactor,
+/// or a stored value cannot be read, it cannot tell.
+struct StoredOthers {
+    store: a2m_ledger::Store,
+    workspace: a2m_core::WorkspaceId,
+    operation: a2m_core::OperationName,
+    asking: RecordRef,
+}
+
+impl a2m_provider::OtherRecords for StoredOthers {
+    fn holding<'a>(
+        &'a self,
+        name: &'a str,
+        value: Digest,
+    ) -> BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        use a2m_provider::RecordedElsewhere;
+        Box::pin(async move {
+            let (workspace, operation) = (self.workspace, self.operation.clone());
+            let Ok(rows) = self
+                .store
+                .read(move |tx| tx.ledger().recorded_before_commit(&workspace, &operation))
+                .await
+            else {
+                return RecordedElsewhere::CannotTell;
+            };
+            let mut held = None;
+            for (record, blob) in rows {
+                if record == self.asking {
+                    continue;
+                }
+                let Ok(opened) = self.store.blobs().get(&blob).await else {
+                    return RecordedElsewhere::CannotTell;
+                };
+                let Ok(values) = a2m_engine::decode_values(opened.expose()) else {
+                    return RecordedElsewhere::CannotTell;
+                };
+                let Some(found) = values.get(name) else {
+                    continue;
+                };
+                // A masked value names nothing that can be compared: the
+                // value asked about may be the one the mask stands for.
+                if matches!(found, a2m_core::Value::Text(text) if text.contains(a2m_core::REDACTED))
+                {
+                    return RecordedElsewhere::CannotTell;
+                }
+                if held.is_none() && a2m_provider::recorded_digest(found) == value {
+                    held = Some(record);
+                }
+            }
+            held.map_or(RecordedElsewhere::NotHeld, RecordedElsewhere::Held)
+        })
+    }
 }

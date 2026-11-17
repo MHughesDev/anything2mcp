@@ -8,6 +8,10 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Only to turn on the stream pack's protocol for this stand, in every build
+# that has the stand as a dependency: the tests. The shipped product has the
+# stand as no dependency, so it does not offer the protocol (decision 0197).
+a2m-pack-stream = { path = "../../crates/a2m-pack-stream", features = ["example-protocol"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

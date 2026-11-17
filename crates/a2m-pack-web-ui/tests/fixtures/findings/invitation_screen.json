@@ -1,0 +1,5 @@
+{
+  "found": "{\"cut\":false,\"elements\":[{\"depth\":0,\"name\":\"\",\"role\":\"main\"},{\"depth\":1,\"level\":1,\"name\":\"Accept your invitation\",\"role\":\"heading\"},{\"depth\":1,\"name\":\"Recent requests\",\"role\":\"table\"},{\"depth\":2,\"role\":\"row\"},{\"depth\":3,\"name\":\"When\",\"role\":\"columnheader\"},{\"depth\":3,\"name\":\"From\",\"role\":\"columnheader\"},{\"depth\":2,\"role\":\"row\"},{\"depth\":3,\"name_type\":\"text\",\"role\":\"cell\"},{\"depth\":3,\"name_type\":\"text\",\"role\":\"cell\"},{\"depth\":1,\"role\":\"paragraph\"},{\"depth\":2,\"name_type\":\"text\",\"role\":\"text\"}],\"format\":\"1\",\"title\":\"Accept your invitation - Example Orders\"}",
+  "kind": "screen",
+  "path": "/invitations/{value}"
+}

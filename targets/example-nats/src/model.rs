@@ -282,6 +282,8 @@ pub enum Fault {
     /// Carry out an acknowledgement, then send `-ERR 'User Authentication
     /// Expired'` and close the connection before its answer.
     ExpireAuthAfterAck,
+    /// Describe a consumer without its `ack_wait`.
+    ConsumerWithoutAckWait,
 }
 
 /// One consumer, as the control interface reports it.

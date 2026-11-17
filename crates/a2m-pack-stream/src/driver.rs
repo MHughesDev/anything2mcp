@@ -21,7 +21,7 @@ use a2m_core::{
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Prepared, RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
@@ -76,6 +76,19 @@ enum Mark {
     /// record that took it was settled as not taken: another take may have
     /// it, even delivered again.
     GivenBack,
+}
+
+/// Whether a delivery may be taken as new, by this engine's marks and the
+/// broker's count of its deliveries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MayTake {
+    /// First delivered now, or given back with no record holding it.
+    Free,
+    /// A record of this engine holds it.
+    HeldHere,
+    /// Delivered before, or with no count the broker states, and this
+    /// engine saw nothing settle it: another record may hold it.
+    DeliveredBefore,
 }
 
 /// A consumer one run takes from. Two runs of this engine never take from
@@ -246,6 +259,13 @@ pub(crate) struct StreamDriver {
     marks: Mutex<BTreeMap<MessageAt, Mark>>,
 }
 
+/// The run a `Prepared` of this driver holds.
+fn run_of(prepared: &mut Prepared) -> Result<&mut Run, StepFailure> {
+    prepared
+        .state::<Run>()
+        .ok_or_else(|| wrong_plan("the run was prepared by another driver"))
+}
+
 fn wrong_plan(what: &str) -> StepFailure {
     StepFailure::not_sent(Failure::new(
         FailureClass::Input,
@@ -332,7 +352,7 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
         WireErrorKind::Transport => (
             codes::TRANSPORT_REFUSED,
             format!("The connection to {what} was not opened: {}.", error.detail),
-            "Reach the broker on this machine's loopback address, or use a build that speaks TLS to it.",
+            "Write the broker's address as this machine's loopback IP address (127.0.0.1 or [::1]), or use a build that speaks TLS to it.",
         ),
         WireErrorKind::Unfit => (
             codes::VALUE_OUT_OF_RANGE,
@@ -682,12 +702,14 @@ impl StreamDriver {
 
     /// Whether a delivery may be taken as new: never one a record of this
     /// engine holds, and one the broker delivered before only when this
-    /// engine saw it given back with no record holding it.
-    fn may_take(&self, at: &MessageAt, attempt: Option<u64>) -> bool {
+    /// engine saw it given back with no record holding it, or the engine
+    /// answers that no other record holds it. A delivery whose count the
+    /// broker does not state counts as delivered before.
+    fn may_take(&self, at: &MessageAt, attempt: Option<u64>) -> MayTake {
         match (self.mark_of(at), attempt) {
-            (Some(Mark::Held), _) => false,
-            (mark, Some(attempt)) if attempt > 1 => mark == Some(Mark::GivenBack),
-            _ => true,
+            (Some(Mark::Held), _) => MayTake::HeldHere,
+            (_, Some(1)) | (Some(Mark::GivenBack), _) => MayTake::Free,
+            _ => MayTake::DeliveredBefore,
         }
     }
 
@@ -1090,11 +1112,14 @@ impl StreamDriver {
     )]
     async fn wait(
         &self,
-        run: &mut Run,
+        prepared: &mut Prepared,
         step: &Step,
         detail: &StepDetail,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
+        // Borrowed again after the engine is asked about another record,
+        // which needs the `Prepared` itself.
+        let mut run = run_of(prepared)?;
         let (name, entry) = run.declared(step)?;
         let Some((handle, placed, ack_wait)) = run
             .open
@@ -1179,23 +1204,54 @@ impl StreamDriver {
             let message = delivered.message;
             // A message delivered before, or one a record of this engine
             // took and has not settled, may be held by that record: it is
-            // never taken as new, and nothing is acknowledged.
+            // never taken as new, and nothing is acknowledged, unless the
+            // engine answers that no other record holds it (decision 0197).
             let taken_here = at(&message.id);
-            let free = self.may_take(&taken_here, delivered.attempt);
-            if detail.take && !free {
-                outcome = Err(stopped(
-                    Sent::Answered,
-                    codes::MESSAGE_MAY_BE_HELD,
-                    format!(
-                        "A message of the channel `{name}` was delivered before{}, and the record that took it first may hold it. Nothing was taken.",
-                        delivered
-                            .attempt
-                            .map(|attempt| format!(" ({attempt} deliveries)"))
-                            .unwrap_or_default()
-                    ),
-                    "Settle the record that took the message first; or, where none did, remove the message from the queue by hand.",
-                ));
-                break;
+            let judged = self.may_take(&taken_here, delivered.attempt);
+            if detail.take && judged != MayTake::Free {
+                let elsewhere = if judged == MayTake::DeliveredBefore {
+                    let asked = prepared
+                        .recorded_elsewhere(
+                            MESSAGE_ID,
+                            &Value::from(message.id.as_str()),
+                            input.deadline,
+                        )
+                        .await;
+                    run = run_of(prepared)?;
+                    asked
+                } else {
+                    RecordedElsewhere::CannotTell
+                };
+                match elsewhere {
+                    RecordedElsewhere::NotHeld => {}
+                    RecordedElsewhere::Held(record) => {
+                        outcome = Err(stopped(
+                            Sent::Answered,
+                            codes::MESSAGE_MAY_BE_HELD,
+                            format!(
+                                "A message of the channel `{name}` was delivered before, and the record {} of step {} of the run `{}` holds it. Nothing was taken.",
+                                record.record_seq, record.step_seq, record.run
+                            ),
+                            "Settle that record first; the message is then taken by the next run.",
+                        ));
+                        break;
+                    }
+                    RecordedElsewhere::CannotTell => {
+                        outcome = Err(stopped(
+                            Sent::Answered,
+                            codes::MESSAGE_MAY_BE_HELD,
+                            format!(
+                                "A message of the channel `{name}` was delivered before{}, and the record that took it first may hold it. Nothing was taken.",
+                                delivered.attempt.map_or_else(
+                                    || " (the broker does not say how often)".to_owned(),
+                                    |attempt| format!(" ({attempt} deliveries)")
+                                )
+                            ),
+                            "Settle the record that took the message first; or, where none did, remove the message from the queue by hand.",
+                        ));
+                        break;
+                    }
+                }
             }
             let matches = key.is_none_or(|key| message.key.as_deref() == Some(key))
                 && correlation.is_none_or(|wanted| {
@@ -1905,9 +1961,7 @@ impl Driver for StreamDriver {
             // What this record's earlier steps recorded, read before the
             // driver's own state is borrowed.
             let recorded = prepared.recorded().clone();
-            let Some(run) = prepared.state::<Run>() else {
-                return Err(wrong_plan("the run was prepared by another driver"));
-            };
+            let run = run_of(prepared)?;
             run.acting = Acting {
                 means: vec![Detail::new("protocol", run.protocol)],
                 measured: Vec::new(),
@@ -1930,7 +1984,7 @@ impl Driver for StreamDriver {
             } else if step.kind == STEP_SUBSCRIBE {
                 self.subscribe(run, step, &detail, input).await
             } else if step.kind == STEP_AWAIT {
-                self.wait(run, step, &detail, input).await
+                self.wait(prepared, step, &detail, input).await
             } else if step.kind == STEP_PUBLISH {
                 self.publish(run, step, input).await
             } else if step.kind == STEP_ACKNOWLEDGE {
@@ -1942,6 +1996,7 @@ impl Driver for StreamDriver {
             } else {
                 Err(wrong_plan("a step of a kind the driver does not carry out"))
             };
+            let run = run_of(prepared)?;
             if let Err(failed) = &result {
                 // After any failure the connection is not kept for the
                 // session's next run.
@@ -2047,13 +2102,18 @@ mod tests {
             Ok(Some(Credential::UserPassword { user, password }))
                 if user == "example-user" && password.expose() == "secret-for-tests-one"
         ));
-        assert!(crate::example_wire::ExampleProtocol.carries(&Credential::Token(Secret::new("x"))));
-        assert!(
-            !crate::example_wire::ExampleProtocol.carries(&Credential::UserPassword {
-                user: "example-user".to_owned(),
-                password: Secret::new("x"),
-            })
-        );
+        #[cfg(feature = "example-protocol")]
+        {
+            assert!(
+                crate::example_wire::ExampleProtocol.carries(&Credential::Token(Secret::new("x")))
+            );
+            assert!(
+                !crate::example_wire::ExampleProtocol.carries(&Credential::UserPassword {
+                    user: "example-user".to_owned(),
+                    password: Secret::new("x"),
+                })
+            );
+        }
 
         let mut second = CredentialPlaced::default();
         second.header("authorization", &secret);

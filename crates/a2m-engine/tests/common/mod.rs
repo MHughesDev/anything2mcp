@@ -241,6 +241,10 @@ pub struct Hooks {
     pub session_ended: AtomicBool,
     /// The posture each `prepare` was given.
     pub postures: Mutex<Vec<String>>,
+    /// A step of this kind asks, before it acts, whether another record
+    /// holds this value under this name; the answers, in order.
+    pub asks_elsewhere: Mutex<Option<(String, String, Value)>>,
+    pub elsewhere: Mutex<Vec<a2m_provider::RecordedElsewhere>>,
     /// Every step that reached a driver, with the mode it reached.
     pub by_mode: Mutex<Vec<(String, String)>>,
     /// Every step that reached a driver, with the arguments, the key, and
@@ -1010,6 +1014,15 @@ impl Driver for AppDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
+            let asks = self.hooks.asks_elsewhere.lock().unwrap().clone();
+            if let Some((kind, name, value)) = asks
+                && kind == step.kind.as_str()
+            {
+                let answer = prepared
+                    .recorded_elsewhere(&name, &value, input.deadline)
+                    .await;
+                self.hooks.elsewhere.lock().unwrap().push(answer);
+            }
             let mut done = self.act_inner(prepared, step, input).await;
             let planted = self.hooks.captures_with.lock().unwrap().clone();
             if let (Ok(StepOutcome::Done(observed)), Some((kind, text))) = (&mut done, planted)
@@ -2078,6 +2091,10 @@ pub struct StoreControl {
     pub acknowledged: Mutex<Vec<RecordRef>>,
     /// The project folder of the request that started the run.
     pub project: Mutex<Option<PathBuf>>,
+    /// The answerer `other_records` hands out, and every operation and
+    /// record it was asked for.
+    pub others: Mutex<Option<Arc<dyn a2m_provider::OtherRecords>>>,
+    pub others_asked: Mutex<Vec<(String, RecordRef)>>,
 }
 
 /// Starts the clock of the runtime again when a call that hangs is given
@@ -2565,6 +2582,18 @@ impl Control for StoreControl {
     fn project_folder(&self) -> Option<PathBuf> {
         self.project.lock().unwrap().clone()
     }
+
+    fn other_records(
+        &self,
+        operation: &a2m_core::OperationName,
+        asking: RecordRef,
+    ) -> Option<Arc<dyn a2m_provider::OtherRecords>> {
+        self.others_asked
+            .lock()
+            .unwrap()
+            .push((operation.to_string(), asking));
+        self.others.lock().unwrap().clone()
+    }
 }
 
 // ---- the engine's caller ----
@@ -2729,6 +2758,8 @@ impl Scene {
             keeps_acknowledgements: AtomicBool::new(false),
             acknowledged: Mutex::new(Vec::new()),
             project: Mutex::new(None),
+            others: Mutex::new(None),
+            others_asked: Mutex::new(Vec::new()),
         });
         Self {
             app,

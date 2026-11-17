@@ -294,3 +294,79 @@ fn every_http_client_of_the_workspace_is_made_by_one_of_the_two_helpers() {
         );
     }
 }
+
+/// The text of `fn client_builder` in `text`, up to the end of its body.
+fn helper_body(text: &str) -> Option<&str> {
+    let start = text.find("pub fn client_builder(")?;
+    let rest = &text[start..];
+    let end = rest.find("\n}\n")?;
+    Some(&rest[..end])
+}
+
+/// No client of the workspace takes a proxy from the environment (decision
+/// 0197). Every client is made by one of the two helpers (the rule above),
+/// so the helpers refuse the environment's proxy themselves, with
+/// `.no_proxy()` on what they return, and nothing anywhere names a proxy
+/// of `reqwest` or adds one to a builder. A client that could take a proxy
+/// from the environment fails one of these.
+#[test]
+fn no_http_client_of_the_workspace_takes_a_proxy_from_the_environment() {
+    let root = repository();
+    // Helpers whose owner has still to add `.no_proxy()`: listed so that the
+    // rule holds everywhere else today, and removed once the line is added.
+    let owed = ["targets/example-app/src/harness.rs"];
+    let helpers = [
+        root.join("crates")
+            .join("a2m-auth")
+            .join("src")
+            .join("tls.rs"),
+        root.join("targets")
+            .join("example-app")
+            .join("src")
+            .join("harness.rs"),
+    ];
+    let mut found = Vec::new();
+    for helper in &helpers {
+        let text = fs::read_to_string(helper).unwrap();
+        let body = helper_body(&text).unwrap();
+        let refuses = body.contains(".no_proxy()");
+        let shown = shown(helper);
+        match (refuses, owed.contains(&shown.as_str())) {
+            (false, false) => found.push(format!("{shown}: `client_builder` has no `.no_proxy()`")),
+            (true, true) => found.push(format!(
+                "{shown}: refuses the environment's proxy now: remove it from the list of what is owed"
+            )),
+            _ => {}
+        }
+    }
+    let mut sources = Vec::new();
+    for top in ["crates", "targets", "bench"] {
+        files(&root.join(top), &[".rs"], &mut sources);
+    }
+    assert!(sources.len() > 100, "the sources were not found");
+    let adds_a_proxy = [
+        concat!("reqwest::", "Proxy"),
+        concat!("Proxy", "::all("),
+        concat!("Proxy", "::http("),
+        concat!("Proxy", "::https("),
+        concat!("Proxy", "::custom("),
+        concat!(".proxy", "("),
+    ];
+    for source in &sources {
+        if is_this_file(source) {
+            continue;
+        }
+        let text = fs::read_to_string(source).unwrap();
+        if !text.contains("reqwest") {
+            continue;
+        }
+        for (number, line) in text.lines().enumerate() {
+            if adds_a_proxy.iter().any(|needle| {
+                names(line, needle) || (needle.starts_with('.') && line.contains(needle))
+            }) {
+                found.push(format!("{}:{}: a proxy", shown(source), number + 1));
+            }
+        }
+    }
+    assert!(found.is_empty(), "{found:?}");
+}

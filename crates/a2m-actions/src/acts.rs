@@ -88,6 +88,48 @@ pub struct ShownField {
     pub cut: bool,
 }
 
+/// One surface of a version a person is asked to publish, as the page shows
+/// it: where it leads, and what its pack says a person must be told of it
+/// (audit finding AC-1). Every text came from a target file, and passes the
+/// redactor; a page places each as text, never as markup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedSurface {
+    /// The surface's name.
+    pub name: String,
+    /// Its kind, which a pack registered.
+    pub kind: String,
+    /// Where it leads, in the form its kind's pack defines: by environment,
+    /// in the order the plan declares them, each `(environment, address)`.
+    pub addresses: Vec<(String, String)>,
+    /// The notices its pack registers for what its own fields state, each
+    /// `(notice, words)`: the notice's name and the fixed words a page
+    /// shows for it (decision 0193).
+    pub notices: Vec<(&'static str, &'static str)>,
+}
+
+/// One warning the compiler gave for a version a person is asked to
+/// publish (audit finding AC-1): what the page shows beside the gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishWarning {
+    /// Its code, such as `kernel.unencrypted_credentials_accepted`.
+    pub code: String,
+    /// The file it is about.
+    pub file: String,
+    /// Its message, from the compiler; it may quote a target file.
+    pub message: String,
+}
+
+/// What a person who is asked to publish reads beside the tools: every
+/// surface of the version with where it leads and its notices, and every
+/// warning the compiler gave. Empty for every other act.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PublishShown {
+    /// The surfaces, in the order the plan declares them.
+    pub surfaces: Vec<PublishedSurface>,
+    /// The warnings, in the compiler's order.
+    pub warnings: Vec<PublishWarning>,
+}
+
 /// A person's act that an agent asked for, as the person surface is given
 /// it and as [`ApprovalDesk::person_act`](crate::ApprovalDesk::person_act)
 /// reads it back: exactly what will be done.
@@ -110,6 +152,10 @@ pub struct PersonActAsk {
     /// as text: for a publish, what each tool may do, the most dangerous
     /// first.
     pub details: Vec<String>,
+    /// For a publish: each surface with where it leads and its notices,
+    /// and every warning of the compile. The same facts are among
+    /// `details` as lines, for a page that prints only those.
+    pub publish: PublishShown,
     /// Through which door and client the act was asked for.
     pub asked_through: String,
     /// When the act stops waiting, by the kernel's clock. No answer by
@@ -392,7 +438,7 @@ impl Kernel {
 
         // What the act rests on is pinned now, so that the person carries
         // out what they read and nothing changed since.
-        let (pinned, details) = self.pinned(def, caller, input.clone(), &project).await?;
+        let (pinned, details, publish) = self.pinned(def, caller, input.clone(), &project).await?;
 
         let mut bytes = [0_u8; 16];
         self.inner.random.fill(&mut bytes)?;
@@ -432,6 +478,33 @@ impl Kernel {
             summary: def.summary.clone(),
             input: fields,
             details: details.iter().map(|line| redact.redact(line)).collect(),
+            publish: PublishShown {
+                surfaces: publish
+                    .surfaces
+                    .into_iter()
+                    .map(|surface| PublishedSurface {
+                        name: redact.redact(&surface.name),
+                        kind: redact.redact(&surface.kind),
+                        addresses: surface
+                            .addresses
+                            .into_iter()
+                            .map(|(environment, address)| {
+                                (redact.redact(&environment), redact.redact(&address))
+                            })
+                            .collect(),
+                        notices: surface.notices,
+                    })
+                    .collect(),
+                warnings: publish
+                    .warnings
+                    .into_iter()
+                    .map(|warning| PublishWarning {
+                        code: redact.redact(&warning.code),
+                        file: redact.redact(&warning.file),
+                        message: redact.redact(&warning.message),
+                    })
+                    .collect(),
+            },
             asked_through: redact.redact(&format!(
                 "{} ({})",
                 caller.door.as_str(),
@@ -483,9 +556,9 @@ impl Kernel {
         caller: &Caller,
         mut input: Map<String, Json>,
         project: &(Option<PathBuf>, Option<Failure>),
-    ) -> Result<(Map<String, Json>, Vec<String>), Failure> {
+    ) -> Result<(Map<String, Json>, Vec<String>, PublishShown), Failure> {
         if def.name.as_str() != "version.publish" {
-            return Ok((input, Vec::new()));
+            return Ok((input, Vec::new(), PublishShown::default()));
         }
         let folder = match project {
             (Some(folder), _) => folder.clone(),
@@ -573,9 +646,12 @@ impl Kernel {
                 line
             })
             .chain(first_to_act)
-            .chain(gates.lines())
-            .collect();
-        Ok((input, details))
+            .collect::<Vec<String>>();
+        let shown = publish_shown(self, &compiled);
+        let mut details = details;
+        details.extend(shown_lines(&shown));
+        details.extend(gates.lines());
+        Ok((input, details, shown))
     }
 
     /// One line for each verified binding of `plan` that the target's
@@ -815,3 +891,78 @@ pub(crate) struct Performed(
     pub(crate) EffectClass,
     pub(crate) DecisionId,
 );
+
+/// Each surface of a compiled version with where it leads in each
+/// environment and the notices its pack registers, and every warning of the
+/// compile: what a person who publishes is told (audit finding AC-1).
+fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShown {
+    let plan = &compiled.plan;
+    let set = kernel.providers().compiler_set();
+    let surfaces = plan
+        .surfaces
+        .iter()
+        .enumerate()
+        .map(|(index, surface)| {
+            let addresses = plan
+                .environments
+                .iter()
+                .map(|environment| {
+                    let address = environment
+                        .addresses
+                        .iter()
+                        .find(|given| given.surface.get() == index)
+                        .map_or(surface.address.as_str(), |given| given.address.as_str());
+                    (environment.name.to_string(), address.to_owned())
+                })
+                .collect();
+            PublishedSurface {
+                name: surface.name.to_string(),
+                kind: surface.kind.to_string(),
+                addresses,
+                notices: set
+                    .surface_notices(surface)
+                    .into_iter()
+                    .map(|notice| (notice.as_str(), notice.words()))
+                    .collect(),
+            }
+        })
+        .collect();
+    let warnings = compiled
+        .warnings
+        .iter()
+        .map(|warning| PublishWarning {
+            code: warning.code.to_string(),
+            file: warning.at.file.as_str().to_owned(),
+            message: warning.message.clone(),
+        })
+        .collect();
+    PublishShown { surfaces, warnings }
+}
+
+/// The lines of [`PublishShown`], for a page that prints `details` alone.
+fn shown_lines(shown: &PublishShown) -> Vec<String> {
+    let mut lines = Vec::new();
+    for surface in &shown.surfaces {
+        let at: Vec<String> = surface
+            .addresses
+            .iter()
+            .map(|(environment, address)| format!("{address} in {environment}"))
+            .collect();
+        lines.push(format!(
+            "Surface {} ({}) leads to {}.",
+            surface.name,
+            surface.kind,
+            at.join("; ")
+        ));
+        for (notice, words) in &surface.notices {
+            lines.push(format!("Notice for surface {} ({notice}): {words}", surface.name));
+        }
+    }
+    for warning in &shown.warnings {
+        lines.push(format!(
+            "Warning {} in {}: {}",
+            warning.code, warning.file, warning.message
+        ));
+    }
+    lines
+}

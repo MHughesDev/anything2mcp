@@ -274,6 +274,19 @@ async fn a_write_whose_only_evidence_is_an_acknowledgement_ends_acted_and_is_nev
         .find_map(|bytes| Diff::decode(bytes).ok())
         .expect("the diff was stored");
     assert!(stored.records[0].not_read_back());
+    // The record has a key, and its binding has nothing to read it with:
+    // it was not read, and the diff says that what it holds now cannot be
+    // read, never that it does not exist (decision 0196).
+    assert_eq!(stored.records[0].action, a2m_engine::DiffAction::Write);
+    assert!(stored.records[0].now_cannot_be_read());
+    assert!(
+        stored.records[0]
+            .fields
+            .iter()
+            .all(|field| field.current.is_none() && field.changes)
+    );
+    assert_eq!(stored.counts().write, 1);
+    assert_eq!(scene.hooks.count("get_item"), 0);
     assert_eq!(stored.hash(), row.diff_hash.unwrap());
     scene.control.approve(row.diff_hash.unwrap()).await;
 
@@ -297,7 +310,8 @@ async fn a_write_whose_only_evidence_is_an_acknowledgement_ends_acted_and_is_nev
         "{log:?}"
     );
     assert!(!log.iter().any(|entry| entry == "verified"), "{log:?}");
-    assert_eq!(scene.hooks.count("get_item"), reads_before + 1);
+    // Nothing read it before the write either.
+    assert_eq!(scene.hooks.count("get_item"), reads_before);
     assert_eq!(scene.control.acknowledged.lock().unwrap().len(), 1);
     assert_eq!(scene.record_states().await, [RecordState::Acted]);
 }
@@ -310,6 +324,43 @@ async fn a_control_plane_that_cannot_end_an_acknowledged_record_leaves_it_in_dou
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
     let failure = outcome.failure().expect("the record is in doubt");
     assert_eq!(failure.class(), FailureClass::PossibleCommit);
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+    assert!(scene.record_states().await[0] != RecordState::Verified);
+}
+
+/// A keyed record whose binding has nothing to read it with, whose answer
+/// was lost: it stays in doubt. Even a lookup the binding declares is not
+/// asked as a read-back, and nothing is sent again (decision 0196).
+#[tokio::test]
+async fn a_keyed_record_its_binding_cannot_read_whose_answer_was_lost_stays_in_doubt_and_is_not_sent_again()
+ {
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        // The read-back's steps, kept as a lookup: one that the mode's
+        // manifest does not state can prove absence.
+        for operation in &mut plan.operations {
+            if operation.name.as_str() == ITEM_UPSERT {
+                for binding in &mut operation.bindings {
+                    binding.lookup = binding.read_back.clone();
+                }
+            }
+        }
+        acknowledged(plan);
+    })
+    .await;
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    approved(&scene, ITEM_UPSERT, &input).await;
+    assert_eq!(scene.hooks.count("get_item"), 0);
+    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let outcome = scene
+        .work(JobKind::Execute, ITEM_UPSERT, input.clone())
+        .await;
+    assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
+    scene.new_lease().await;
+    let outcome = scene.work(JobKind::Reconcile, ITEM_UPSERT, input).await;
+    let (class, code) = failed_as(&outcome);
+    assert_eq!(class, FailureClass::PossibleCommit, "{outcome:?}");
+    assert_eq!(code, "cannot_reconcile", "{outcome:?}");
+    assert_eq!(scene.hooks.count("get_item"), 0);
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
     assert!(scene.record_states().await[0] != RecordState::Verified);
 }
@@ -602,4 +653,64 @@ async fn a_list_output_is_normalized_item_by_item_and_an_item_that_fails_is_name
         !failure.message().contains("secret-for-tests"),
         "{failure:?}"
     );
+}
+
+// ---- decision 0196, point 2: another record's value ----
+
+/// Answers every question with one fixed answer.
+struct Fixed(a2m_provider::RecordedElsewhere);
+
+impl a2m_provider::OtherRecords for Fixed {
+    fn holding<'a>(
+        &'a self,
+        _name: &'a str,
+        _value: a2m_core::Digest,
+    ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        let answer = self.0;
+        Box::pin(async move { answer })
+    }
+}
+
+/// One write of the upsert whose save asks whether another record holds
+/// its item code, with `answerer` as the control plane's: what the driver
+/// was told, and the operation and record the answerer was asked for.
+async fn asked_with(
+    answerer: Option<a2m_provider::RecordedElsewhere>,
+) -> (Vec<a2m_provider::RecordedElsewhere>, Vec<(String, a2m_ledger::RecordRef)>) {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    *scene.hooks.asks_elsewhere.lock().unwrap() = Some((
+        "put_item".to_owned(),
+        "item_code".to_owned(),
+        Value::from("L-300"),
+    ));
+    *scene.control.others.lock().unwrap() =
+        answerer.map(|answer| std::sync::Arc::new(Fixed(answer)) as _);
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    approved(&scene, ITEM_UPSERT, &input).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let told = scene.hooks.elsewhere.lock().unwrap().clone();
+    let asked = scene.control.others_asked.lock().unwrap().clone();
+    (told, asked)
+}
+
+/// A step that acts for a record asks, through the engine, whether another
+/// record of its operation holds a value: the engine hands it the control
+/// plane's answerer, bound to the operation and the record, for that step
+/// alone (decision 0196). With no answerer it cannot tell.
+#[tokio::test]
+async fn a_step_asks_the_control_plane_whether_another_record_holds_a_value() {
+    use a2m_provider::RecordedElsewhere;
+    let (told, asked) = asked_with(None).await;
+    assert_eq!(told, [RecordedElsewhere::CannotTell]);
+    let (operation, asking) = asked.last().cloned().unwrap();
+    assert_eq!(operation, ITEM_UPSERT);
+    let other = a2m_ledger::RecordRef {
+        run: a2m_core::RunId::from_bytes([7; 16]),
+        ..asking
+    };
+    let (told, _) = asked_with(Some(RecordedElsewhere::Held(other))).await;
+    assert_eq!(told, [RecordedElsewhere::Held(other)]);
+    let (told, _) = asked_with(Some(RecordedElsewhere::NotHeld)).await;
+    assert_eq!(told, [RecordedElsewhere::NotHeld]);
 }

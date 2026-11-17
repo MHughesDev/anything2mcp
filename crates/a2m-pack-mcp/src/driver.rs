@@ -95,6 +95,21 @@ impl FarEnd {
                 "a surface of the kind `mcp` has an `http://` or `https://` address, or the address `stdio` with a program",
             )));
         }
+        // A user name or a password in the address is a credential the
+        // HTTP client would send on its own, in plain text over `http`,
+        // past the link check that counts only a session's credentials
+        // (decision 0188). A credential comes from a session, never from
+        // the address (MC-1, decision 0194).
+        let parsed = reqwest::Url::parse(address).map_err(|_| {
+            unsent(codes::plan_unreadable(
+                "the surface's address is not an address",
+            ))
+        })?;
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(unsent(codes::plan_unreadable(
+                "the surface's address holds a user name or a password; a credential comes from a session",
+            )));
+        }
         if !cx.destinations.contains(address) {
             return Err(unsent(codes::not_granted(
                 "The address of the upstream server is not among the addresses this run may reach.",

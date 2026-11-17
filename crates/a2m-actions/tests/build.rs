@@ -1127,6 +1127,17 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
     let ask = world.surface.acts.lock().unwrap()[0].clone();
     let page = ask.details.join("\n");
     assert!(page.contains("Gate schema_and_lint: passed."), "{page}");
+    // Where each surface leads, in each environment, is on the page, as
+    // lines and as fields a page can lay out (audit finding AC-1).
+    assert!(
+        page.contains("Surface desk (stand) leads to https://test.example.com in test;"),
+        "{page}"
+    );
+    assert_eq!(ask.publish.surfaces.len(), 1);
+    assert_eq!(
+        ask.publish.surfaces[0].addresses[0],
+        ("test".to_owned(), "https://test.example.com".to_owned())
+    );
     assert!(
         page.contains("Gate offline_replay: passed, 3 of 3 offline tests passed."),
         "{page}"
@@ -1530,6 +1541,60 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     );
     assert_eq!(failed["request_differences"][0]["field"], "length");
     std::fs::write(&request, &kept_request).unwrap();
+    // A write's test proves the save only against a recorded request: with
+    // none it is not run, and the gate is not passed (decision 0196).
+    std::fs::remove_file(&request).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let unrun = state_of(&tested, "line_item_upsert");
+    assert_eq!(unrun["state"], "not_run", "{unrun}");
+    assert_eq!(tested["passed"], false, "{tested}");
+    // A fixture whose one object answers the lookup with the values after
+    // the write finds the record unchanged, and nothing is sent. A test
+    // that says so in `expect` passes as a test of that path, and by
+    // itself does not pass the gate for the write.
+    let lookup = fixtures.join("line_item_upsert").join("line_item_get.json");
+    let kept_lookup = std::fs::read_to_string(&lookup).unwrap();
+    std::fs::write(&lookup, r#"{"length": "7' 6 1/2\""}"#).unwrap();
+    // Before decision 0196 this passed the gate, with nothing sent.
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_ne!(state_of(&tested, "line_item_upsert")["state"], "passed", "{tested}");
+    assert_eq!(tested["passed"], false, "{tested}");
+    std::fs::write(
+        &upsert_test,
+        kept_test.replace(
+            "expect: {length: \"90.5\"}",
+            "expect: {length: \"90.5\", sent: 0}",
+        ),
+    )
+    .unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let no_op = state_of(&tested, "line_item_upsert");
+    assert_eq!(no_op["state"], "passed", "{no_op}");
+    assert_eq!(no_op["path"], "nothing_sent", "{no_op}");
+    assert_eq!(tested["passed"], false, "{tested}");
+    assert!(
+        tested["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|missing| missing["state"] == "no_save_sent"),
+        "{tested}"
+    );
+    std::fs::write(&lookup, &kept_lookup).unwrap();
+    std::fs::write(&upsert_test, &kept_test).unwrap();
+    std::fs::write(&request, &kept_request).unwrap();
     // A read-back that differs from what was sent ends as the engine's own
     // mismatch, and the test that expects success fails.
     let read_back = fixtures.join("line_item_upsert").join("line_item_get.json");
@@ -1571,7 +1636,7 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     let failed = state_of(&tested, "order_sheet_enter");
     assert_eq!(failed["state"], "failed", "{failed}");
     assert_eq!(
-        failed["fixture_problem"]["file"], "../../target.yaml",
+        failed["fixture_problem"]["file"]["untrusted"], "../../target.yaml",
         "{failed}"
     );
     assert_eq!(failed["steps"], Json::Null, "{failed}");
@@ -1603,7 +1668,8 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     assert_eq!(failed["state"], "failed", "{tested}");
     assert_eq!(failed["differences"][0]["field"], "status", "{failed}");
     assert_eq!(failed["differences"][0]["expected"], "open");
-    assert_eq!(failed["differences"][0]["got"], "draft");
+    // What the fixture answered is marked as data (audit finding A-5).
+    assert_eq!(failed["differences"][0]["got"]["untrusted"], "draft");
     assert_eq!(tested["passed"], false);
     std::fs::write(&test_file, kept).unwrap();
 

@@ -23,6 +23,15 @@
 //! document and the request a JSON answer, and no one path answered both
 //! in one discovery.
 //!
+//! A read is drafted only from a request the driver can make again exactly
+//! (decision 0195): one with no query, and with no header its page's script
+//! set ([`REPRODUCED_HEADERS`] is the closed list of such headers the driver
+//! sends alike, and it is empty). For any other request the entry is drafted
+//! with an open question in place of its path, which names what the page
+//! sent that a read would not, by names alone, and no operation is drafted:
+//! a read that dropped them could be answered with another variant of the
+//! same shape, and nothing would say so.
+//!
 //! What they never draft: anything for a request whose method is not GET,
 //! whose answer is not JSON or not an object, whose status is not 200,
 //! that went to an origin that is not exactly one `web` surface of the
@@ -49,6 +58,48 @@ const FORMAT: &str = "1";
 
 /// The longest name an entry or an operation may have.
 const LONGEST: usize = 64;
+
+/// The headers a page's script may have set that a read from inside the
+/// page sends the same, so that a request that carried them can still be
+/// made again exactly. `read_from_page` sends no header of its own, so
+/// none. Data.
+pub(crate) const REPRODUCED_HEADERS: &[&str] = &[];
+
+/// The longest path a drafted entry, file, or description holds, in
+/// characters. A path is plain segments and placeholders, by the rule of a
+/// screen's address.
+const LONGEST_PATH: usize = 160;
+
+/// What the page sent with a request that a read made again from inside
+/// the page would not: the query's names, whether an entry of it was left
+/// out, and the names of the headers its script set. `None` when the
+/// finding says it sent nothing more, so that the request can be made
+/// again exactly. A finding that does not say is taken as not
+/// reproducible.
+fn not_reproduced(found: &Json) -> Option<(Vec<String>, bool, Vec<String>)> {
+    let names = |key: &str| -> Option<Vec<String>> {
+        match found.get(key)? {
+            Json::Object(map) => Some(map.keys().cloned().collect()),
+            Json::Array(list) => list
+                .iter()
+                .map(|one| one.as_str().map(str::to_owned))
+                .collect(),
+            _ => None,
+        }
+    };
+    let (Some(query), Some(left_out), Some(headers)) = (
+        names("query"),
+        found.get("query_left_out").and_then(Json::as_bool),
+        names("set_headers"),
+    ) else {
+        return Some((Vec::new(), true, Vec::new()));
+    };
+    let headers: Vec<String> = headers
+        .into_iter()
+        .filter(|name| !REPRODUCED_HEADERS.contains(&name.as_str()))
+        .collect();
+    (!query.is_empty() || left_out || !headers.is_empty()).then_some((query, left_out, headers))
+}
 
 fn unreadable() -> Failure {
     Failure::new(
@@ -154,6 +205,9 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         return Ok(out);
     };
     let path = address.path();
+    if path.chars().count() > LONGEST_PATH || page.chars().count() > LONGEST_PATH {
+        return Ok(out);
+    }
     let (Some((words, holes)), Some((_, page_holes))) =
         (words_and_holes(path), words_and_holes(page))
     else {
@@ -205,13 +259,50 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         .filter(|value| value.required)
         .map(|value| DraftValue::text(&value.name))
         .collect();
+    // A request that cannot be made again exactly is drafted with a
+    // question in place of its path, and no read over it.
+    let unmade = not_reproduced(&found);
+    let path_value = match &unmade {
+        None => DraftValue::text(path),
+        Some((query, left_out, headers)) => {
+            const ORDINALS: [&str; 3] = ["first", "second", "third"];
+            let query = query.join(", ");
+            let headers = headers.join(", ");
+            let mut words: Vec<&str> = vec![path];
+            let mut sent = Vec::new();
+            if !query.is_empty() {
+                sent.push(format!(
+                    "a query, whose names are quoted {}",
+                    ORDINALS[words.len()]
+                ));
+                words.push(&query);
+            }
+            if *left_out {
+                sent.push("an entry of a query that is a value, not kept".to_owned());
+            }
+            if !headers.is_empty() {
+                sent.push(format!(
+                    "headers its script set, whose names are quoted {}",
+                    ORDINALS[words.len()]
+                ));
+                words.push(&headers);
+            }
+            cx.open_question_quoting(
+                &format!(
+                    "The page that makes this request sent more with it than a read from inside the page sends: {}. A read that left them out could be answered with another variant of the same shape, so none is drafted. The request's path is quoted first. Which request answers what the page shows, and how is each part of it given?",
+                    sent.join("; ")
+                ),
+                &words,
+            )
+        }
+    };
     out.entries.push(DraftDoc {
         path: RelPath::new(&format!("page_requests/{words}.yaml"))?,
         body: DraftValue::map(vec![
             ("endpoint", DraftValue::text(&words)),
             ("surface", DraftValue::text(&surface)),
             ("method", DraftValue::text("GET")),
-            ("path", DraftValue::text(path)),
+            ("path", path_value),
             ("page", DraftValue::text(page)),
             ("effect", DraftValue::text("read")),
             (
@@ -225,6 +316,9 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         ]),
     });
 
+    if unmade.is_some() {
+        return Ok(out);
+    }
     let mut doc = vec![
         ("operation", DraftValue::text(&operation)),
         ("effect", DraftValue::text("read")),

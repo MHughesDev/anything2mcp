@@ -222,7 +222,18 @@ impl Scene {
         posture: Posture,
         fence: Option<Fence>,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.handle();
+        self.try_prepare_in(&self.registry, posture, fence).await
+    }
+
+    /// Prepared by the driver of `registry`: another engine's, when it is
+    /// not the scene's own.
+    pub async fn try_prepare_in(
+        &self,
+        registry: &Registry,
+        posture: Posture,
+        fence: Option<Fence>,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = registry.driver(&mode()).unwrap();
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -610,4 +621,59 @@ pub fn signature_with(
         artifacts: Vec::new(),
     });
     trace.finish().unwrap().signature
+}
+
+// ---- the engine's answer about another record (decision 0193) ----
+
+/// The pack's test control of the engine's answer to "does another record
+/// hold this value": one fixed answer, and every question it was asked.
+pub struct Answering {
+    answer: a2m_provider::RecordedElsewhere,
+    pub asked: std::sync::Mutex<Vec<(String, Digest)>>,
+}
+
+impl Answering {
+    pub fn new(answer: a2m_provider::RecordedElsewhere) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            asked: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl a2m_provider::OtherRecords for Answering {
+    fn holding<'a>(
+        &'a self,
+        name: &'a str,
+        value: Digest,
+    ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        self.asked.lock().unwrap().push((name.to_owned(), value));
+        let answer = self.answer;
+        Box::pin(async move { answer })
+    }
+}
+
+/// The first two steps of a take, for `write`'s record, its wait through
+/// the engine's answerer `others`, as the engine acts a step of a record.
+pub async fn take_asking(
+    handle: &DriverHandle,
+    prepared: &mut Prepared,
+    take: &[a2m_core::Step],
+    write: &Write,
+    others: Arc<Answering>,
+) -> Result<StepOutcome, StepFailure> {
+    let none = Values::new();
+    handle
+        .act(prepared, &take[0], &input(&none), Authority::Read)
+        .await?;
+    handle
+        .act_asking(
+            prepared,
+            &take[1],
+            &write.keyless(&none),
+            Authority::Read,
+            &Values::new(),
+            others,
+        )
+        .await
 }

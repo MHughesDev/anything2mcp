@@ -16,7 +16,7 @@ use a2m_core::{
 };
 use a2m_pack_web_browser::{
     Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
-    ProfileKey, Query, RawValue, ReadWhat, SafeRequests,
+    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, is_plain_name, path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
 use a2m_telemetry::Clock;
@@ -94,12 +94,17 @@ pub fn looks_like_an_action(text: &str) -> bool {
 }
 
 /// An address, taken apart. It holds no value of a query: only the names,
-/// each with the type of its value.
+/// each with the type of its value, and only those that are plain names; and
+/// its path is by structure, every segment that is not a plain word kept as
+/// a placeholder (decision 0195).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Place {
     pub(crate) origin: String,
     pub(crate) path: String,
     pub(crate) query: BTreeMap<String, &'static str>,
+    /// Whether the query held an entry that is not kept: one with no `=`,
+    /// whose whole text is a value, or one whose name is not a plain name.
+    pub(crate) query_left_out: bool,
 }
 
 impl Place {
@@ -117,18 +122,26 @@ impl Place {
         let tail = tail.split('#').next().unwrap_or_default();
         let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
         let mut names = BTreeMap::new();
+        let mut query_left_out = false;
         for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            names.insert(name.to_owned(), type_of_text(value));
+            match pair.split_once('=') {
+                Some((name, value)) if is_plain_name(name) => {
+                    names.insert(name.to_owned(), type_of_text(value));
+                }
+                // A bare entry is a value, and so is a name that is not a
+                // plain one: neither is kept.
+                _ => query_left_out = true,
+            }
         }
         Some(Self {
             origin: format!("{scheme}://{}", host.to_lowercase()),
             path: if path.is_empty() {
                 "/".to_owned()
             } else {
-                path.to_owned()
+                path_by_structure(path)
             },
             query: names,
+            query_left_out,
         })
     }
 

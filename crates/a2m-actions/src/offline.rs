@@ -54,13 +54,41 @@ const FIXTURE_FILE_BYTES: u64 = 1024 * 1024;
 /// file is at most 16 MiB (`a2m-files`, `file_too_large`).
 const FIXTURE_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The most files a fixture folder may hold; a folder with more is not
+/// used (audit finding A-2).
+const FIXTURE_FILES_MOST: usize = 256;
+
+/// The most bytes all the files of one fixture folder may hold together.
+const FIXTURE_BYTES_MOST: u64 = 64 * 1024 * 1024;
+
 /// The suffix of a file that records what a committing step was sent.
-const REQUEST_SUFFIX: &str = ".request.json";
+pub(crate) const REQUEST_SUFFIX: &str = ".request.json";
 
 /// The names `expect` may use for the run itself, where the result holds
 /// no field of that name: its end state, how many records were verified or
-/// found unchanged, and the code of the failure it stopped with.
-const RUN_FACTS: [&str; 3] = ["state", "records_verified", "failure"];
+/// found unchanged, the code of the failure it stopped with, and how many
+/// saves were sent.
+const RUN_FACTS: [&str; 4] = ["state", "records_verified", "failure", "sent"];
+
+/// The fact a test of a write names to say that it expects nothing to be
+/// sent: `expect: {sent: 0}`. Such a test proves the path on which the
+/// record already holds the intended values; it passes when nothing was
+/// sent, and by itself it does not satisfy the publish gate for the write
+/// (decision 0196).
+const SENT: &str = "sent";
+
+/// What a passing test of a write proved: that its save was sent, as its
+/// fixture recorded, or that nothing was sent, as it expects.
+pub(crate) const PATH_SENDS: &str = "sends";
+/// See [`PATH_SENDS`].
+pub(crate) const PATH_NOTHING_SENT: &str = "nothing_sent";
+
+/// Marks a value that came from a fixture, which may have been recorded
+/// from a system, as data a reader must not take for the product's words
+/// (audit finding A-5), as the scout's report marks the system's.
+fn untrusted(value: impl Into<Json>) -> Json {
+    json!({"untrusted": value.into()})
+}
 
 /// How one offline test ended.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,11 +125,15 @@ pub(crate) struct OfflineWorld {
 /// committing steps must be sent, and the folder, for a source a test
 /// names.
 pub(crate) struct Fixture {
-    folder: CheckedPath,
     answers: Vec<RecordedAnswer>,
     requests: Vec<(String, Json)>,
     /// Files of another kind: a file a step or a source reads.
     files: Vec<String>,
+    /// Every file of the folder that was read, by name, with its bytes:
+    /// read once, and what the test runs on. The gate holds each to the
+    /// digest the compiled plan names (audit finding AC-3), and a source a
+    /// test names is taken from here, never read again.
+    pub(crate) held: Vec<(String, Vec<u8>)>,
 }
 
 /// The ledger of one offline test of a write: a throwaway store and the run
@@ -393,7 +425,7 @@ impl Control for OfflineControl {
 /// Reads one answer file's items: an object of values, `null`, or a list of
 /// those.
 fn answer_items(file: &str, json: Json) -> Result<Vec<Recorded>, Json> {
-    let wrong = |why: &str| json!({"file": file, "problem": why});
+    let wrong = |why: &str| json!({"file": untrusted(file), "problem": why});
     let items = match json {
         Json::Array(items) => items,
         one => vec![one],
@@ -425,7 +457,7 @@ fn answer_items(file: &str, json: Json) -> Result<Vec<Recorded>, Json> {
 /// object, or a list of objects in the order the steps are sent. Any other
 /// file is one a step or a source reads.
 pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
-    let wrong = |file: &str, why: &str| json!({"file": file, "problem": why});
+    let wrong = |file: &str, why: &str| json!({"file": untrusted(file), "problem": why});
     if !folder.is_dir() {
         return Err(wrong("", "the fixture folder is not there"));
     }
@@ -433,7 +465,7 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
         .join("fixture.yaml")
         .and_then(|file| file.read(FIXTURE_FILE_BYTES))
         .map_err(|_| wrong("fixture.yaml", "the folder has no readable `fixture.yaml`"))?;
-    let marker = String::from_utf8_lossy(&marker);
+    let marker = String::from_utf8_lossy(&marker).into_owned();
     if !marker
         .lines()
         .any(|line| line.trim().replace(' ', "") == "scrubbed:true")
@@ -446,12 +478,19 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
     let (entries, _) = folder
         .list()
         .map_err(|_| wrong("", "the fixture folder cannot be listed"))?;
+    if entries.len() > FIXTURE_FILES_MOST {
+        return Err(wrong(
+            "",
+            &format!("the fixture folder holds more than {FIXTURE_FILES_MOST} entries, so it is not used"),
+        ));
+    }
     let mut fixture = Fixture {
-        folder: folder.clone(),
         answers: Vec::new(),
         requests: Vec::new(),
         files: Vec::new(),
+        held: vec![("fixture.yaml".to_owned(), marker.as_bytes().to_vec())],
     };
+    let mut total = u64::try_from(marker.len()).unwrap_or(u64::MAX);
     for entry in entries {
         let file = entry
             .relative()
@@ -459,18 +498,36 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
             .next()
             .unwrap_or_default()
             .to_owned();
-        if file == "fixture.yaml" || !matches!(entry.entry_kind(), Ok(EntryKind::File)) {
+        // A name that starts with a dot is passed over, as the compiler's
+        // loader passes over it: nothing it did not digest is used.
+        if file == "fixture.yaml"
+            || file.starts_with('.')
+            || !matches!(entry.entry_kind(), Ok(EntryKind::File))
+        {
             continue;
         }
-        let Some(stem) = file.strip_suffix(".json") else {
+        let Some(stem) = file.strip_suffix(".json").map(str::to_owned) else {
             // Another kind of recording: a file a step or a source reads,
-            // not an answer a step gives.
+            // not an answer a step gives. Read once here, and held.
+            let bytes = entry
+                .read(FIXTURE_SOURCE_BYTES)
+                .map_err(|_| wrong(&file, "the file cannot be read"))?;
+            total = total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            if total > FIXTURE_BYTES_MOST {
+                return Err(wrong("", "the fixture folder's files are larger than 64 MiB together, so it is not used"));
+            }
+            fixture.held.push((file.clone(), bytes));
             fixture.files.push(file);
             continue;
         };
         let bytes = entry
             .read(FIXTURE_FILE_BYTES)
             .map_err(|_| wrong(&file, "the file cannot be read"))?;
+        total = total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        if total > FIXTURE_BYTES_MOST {
+            return Err(wrong("", "the fixture folder's files are larger than 64 MiB together, so it is not used"));
+        }
+        fixture.held.push((file.clone(), bytes.clone()));
         let json: Json =
             serde_json::from_slice(&bytes).map_err(|_| wrong(&file, "the file is not JSON"))?;
         if let Some(name) = file.strip_suffix(REQUEST_SUFFIX) {
@@ -494,7 +551,7 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
         let repeats = !json.is_array();
         for answer in answer_items(&file, json)? {
             fixture.answers.push(RecordedAnswer {
-                name: stem.to_owned(),
+                name: stem.clone(),
                 args: None,
                 answer,
                 repeats,
@@ -536,7 +593,7 @@ fn same(expected: &Json, got: &Json) -> bool {
 /// own fact of that name ([`RUN_FACTS`]).
 fn differences(expected: &Json, got: &Json, facts: &Json) -> Vec<Json> {
     let Json::Object(wanted) = expected else {
-        return vec![json!({"field": "", "expected": expected, "got": got})];
+        return vec![json!({"field": "", "expected": expected, "got": untrusted(got.clone())})];
     };
     wanted
         .iter()
@@ -548,7 +605,7 @@ fn differences(expected: &Json, got: &Json, facts: &Json) -> Vec<Json> {
                     .flatten()
             });
             (!found.is_some_and(|found| same(value, found)))
-                .then(|| json!({"field": field, "expected": value, "got": found}))
+                .then(|| json!({"field": field, "expected": value, "got": untrusted(found.cloned().unwrap_or(Json::Null))}))
         })
         .collect()
 }
@@ -596,17 +653,18 @@ fn request_differences(recorded: &[(String, Json)], sent: &[(String, Values)]) -
                         if !equal {
                             found.push(json!({
                                 "step": name, "sent": at + 1, "field": field,
-                                "expected": expected, "got": got,
+                                "expected": untrusted(expected.cloned().unwrap_or(Json::Null)),
+                                "got": untrusted(got.cloned().unwrap_or(Json::Null)),
                             }));
                         }
                     }
                 }
                 (Some(wanted), None) => found.push(json!({
-                    "step": name, "sent": at + 1, "expected": wanted, "got": null,
+                    "step": name, "sent": at + 1, "expected": untrusted((*wanted).clone()), "got": null,
                     "problem": "the fixture records a request the engine never sent",
                 })),
                 (None, Some(given)) => found.push(json!({
-                    "step": name, "sent": at + 1, "expected": null, "got": given,
+                    "step": name, "sent": at + 1, "expected": null, "got": untrusted(given.clone()),
                     "problem": format!("the fixture records no request for this save: add `{name}{REQUEST_SUFFIX}`"),
                 })),
                 (None, None) => {}
@@ -660,13 +718,14 @@ fn source_of(
         }));
     };
     let bytes = fixture
-        .folder
-        .join(&name)
-        .and_then(|file| file.read(FIXTURE_SOURCE_BYTES))
-        .map_err(|failure| {
+        .held
+        .iter()
+        .find(|(file, _)| *file == name && !file.ends_with(".json") && file != "fixture.yaml")
+        .map(|(_, bytes)| bytes.clone())
+        .ok_or_else(|| {
             json!({
-                "file": name,
-                "problem": format!("the source cannot be read from the fixture folder: {}", failure.message()),
+                "file": untrusted(name.clone()),
+                "problem": "the source is not a file of the fixture folder",
             })
         })?;
     Ok((inputs, Some(Arc::new(bytes))))
@@ -740,7 +799,7 @@ async fn open_ledger(
 
 /// What the run itself shows, for `expect` to name: its end state, its
 /// records verified or found unchanged, and the code it stopped with.
-async fn run_facts(outcome: &JobOutcome, ledger: Option<&OfflineLedger>) -> Json {
+async fn run_facts(outcome: &JobOutcome, ledger: Option<&OfflineLedger>, sent: usize) -> Json {
     let state = match outcome {
         JobOutcome::Settled { .. } | JobOutcome::Left(_) | JobOutcome::LeaseEnding => None,
         other => other.run_state(),
@@ -748,6 +807,7 @@ async fn run_facts(outcome: &JobOutcome, ledger: Option<&OfflineLedger>) -> Json
     let mut facts = json!({
         "state": state.map(|state| state.to_string()),
         "failure": outcome.failure().map(|failure| failure.code().to_string()),
+        "sent": sent,
     });
     if let Some(ledger) = ledger {
         let run = ledger.fence.run;
@@ -805,6 +865,19 @@ pub(crate) async fn run_test(
         }
     };
     let write = writes(plan, test);
+    let expected = test.expect.decode::<Json>().unwrap_or(Json::Null);
+    // A test of a write proves its save only against a recorded request
+    // (decision 0196): without one it is not run, unless it says that it
+    // expects nothing to be sent.
+    let nothing_sent = expected.get(SENT).and_then(Json::as_u64) == Some(0);
+    if write && !nothing_sent && fixture.requests.is_empty() {
+        return TestOutcome {
+            state: "not_run",
+            detail: json!({
+                "reason": format!("A test of a write must record what its save is sent: add `<step>{REQUEST_SUFFIX}` to its fixture, or, for a test that expects the record to hold the intended values already, write `sent: 0` in its `expect`."),
+            }),
+        };
+    }
     let ledger = if write {
         match open_ledger(plan, plan_hash, test, tool, world).await {
             Ok(ledger) => Some(ledger),
@@ -861,10 +934,11 @@ pub(crate) async fn run_test(
         capture: CaptureLevel::Minimal,
     };
     let outcome = engine
-        .run_offline(&job, &control, Arc::clone(&replay) as _)
+        .run_offline(&job, &control, Arc::clone(&replay))
         .await;
     let asked = replay.asked();
-    let facts = run_facts(&outcome, control.ledger.as_ref()).await;
+    let sent = replay.sent();
+    let facts = run_facts(&outcome, control.ledger.as_ref(), sent.len()).await;
     let got = control
         .result
         .lock()
@@ -872,7 +946,6 @@ pub(crate) async fn run_test(
         .take()
         .map(|values| crate::render::plain_values(&values))
         .unwrap_or_else(|| json!({}));
-    let expected = test.expect.decode::<Json>().unwrap_or(Json::Null);
     // A test that names no state expects the run to complete.
     let expects_state = expected.get("state").is_some() && got.get("state").is_none();
     let completed = matches!(
@@ -896,13 +969,18 @@ pub(crate) async fn run_test(
     if !completed && !expects_state {
         detail["reason"] = json!("The tool did not complete against its fixture.");
         if !fixture.files.is_empty() {
-            detail["not_answers"] = json!(fixture.files);
+            detail["not_answers"] = untrusted(fixture.files.clone());
         }
         return TestOutcome::failed(detail);
     }
     let differs = differences(&expected, &got, &facts);
     if write {
-        let requests = request_differences(&fixture.requests, &replay.sent());
+        detail["path"] = json!(if nothing_sent {
+            PATH_NOTHING_SENT
+        } else {
+            PATH_SENDS
+        });
+        let requests = request_differences(&fixture.requests, &sent);
         if !requests.is_empty() {
             detail["reason"] =
                 json!("The engine did not send the save the request the fixture recorded.");
@@ -965,6 +1043,11 @@ pub(crate) struct GateRun {
     /// The offline tests that did not pass, each with its state and what
     /// to do about it.
     pub(crate) missing: Vec<Json>,
+    /// The plan the gates ran on, and the digest of every file of the
+    /// target it was compiled from, fixtures included: the bytes tested.
+    pub(crate) plan: Digest,
+    /// See `plan`.
+    pub(crate) sources: Digest,
 }
 
 impl GateRun {
@@ -975,6 +1058,8 @@ impl GateRun {
             "gates": self.gates,
             "not_run": gates_not_built(),
             "passed": self.passed,
+            "plan": self.plan.to_string(),
+            "sources": self.sources.to_string(),
         })
     }
 
@@ -986,14 +1071,25 @@ impl GateRun {
             let state = gate["state"].as_str().unwrap_or_default();
             let line = match gate["tests"].as_array() {
                 Some(tests) => {
-                    let passed = tests
+                    // A live test is excused, and said to be (audit finding
+                    // AC-4): it is not counted among the offline tests.
+                    let offline: Vec<&Json> =
+                        tests.iter().filter(|test| test["kind"] == "offline").collect();
+                    let passed = offline
                         .iter()
                         .filter(|test| test["state"] == "passed")
                         .count();
-                    format!(
+                    let live = tests.len() - offline.len();
+                    let mut line = format!(
                         "Gate {name}: {state}, {passed} of {} offline tests passed.",
-                        tests.len()
-                    )
+                        offline.len()
+                    );
+                    if live > 0 {
+                        line.push_str(&format!(
+                            " {live} live tests did not run: the write round trip they belong to is not built, and the gate excuses them."
+                        ));
+                    }
+                    line
                 }
                 None => format!("Gate {name}: {state}."),
             };
@@ -1084,6 +1180,58 @@ pub(crate) fn publish_refusal(
     )
 }
 
+/// Whether every byte the tests are about to run on is the byte of the
+/// compiled plan: the load made after the fixtures were read gives the
+/// digest the plan names for the target's files, and each file a fixture
+/// holds has, read as the compiler reads it, the digest that load found for
+/// it (audit finding AC-3).
+fn tested_as_compiled(
+    held: &[(Option<&str>, &Option<Result<Fixture, Json>>)],
+    loaded: &a2m_files::Sources,
+    sources: Digest,
+    set: &a2m_files::CompilerSet,
+) -> bool {
+    loaded.digest == sources
+        && held.iter().all(|(name, fixture)| {
+            let (Some(name), Some(Ok(fixture))) = (name, fixture) else {
+                return true;
+            };
+            fixture.held.iter().all(|(file, bytes)| {
+                let path = format!("{name}/{file}");
+                let Ok(relative) = a2m_files::RelPath::new(&path) else {
+                    return false;
+                };
+                let digest = a2m_files::SourceFile::read(relative, bytes, set)
+                    .map(|read| read.digest)
+                    .ok();
+                digest.is_some() && loaded.file(&path).map(|file| file.digest) == digest
+            })
+        })
+}
+
+/// The folder of one fixture, `fixtures/<name>` inside the target's
+/// folder, reached part by part: each part must be a folder itself, never a
+/// link, so that no fixture is read from another target's folder or from
+/// the project's sources (audit finding A-2).
+pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<CheckedPath, Json> {
+    let wrong = |problem: String| json!({"folder": untrusted(fixture), "problem": problem});
+    let mut at = target.clone();
+    for part in fixture.split('/') {
+        at = at.join(part).map_err(|failure| wrong(failure.message().to_owned()))?;
+        match at.entry_kind() {
+            Ok(EntryKind::Folder) => {}
+            Ok(EntryKind::Absent) => return Err(wrong("the fixture folder is not there".to_owned())),
+            Ok(_) => {
+                return Err(wrong(
+                    "a part of the fixture's path is a link or not a folder, so it is not used".to_owned(),
+                ));
+            }
+            Err(failure) => return Err(wrong(failure.message().to_owned())),
+        }
+    }
+    Ok(at)
+}
+
 /// Runs the publish gates this build has on a compiled target: the schema
 /// and lint gate, which compiling for publishing passed, and every offline
 /// test of the plan against its fixture.
@@ -1099,26 +1247,47 @@ pub(crate) async fn run_gates(
     compiled: &a2m_files::Compiled,
     world: OfflineWorld,
 ) -> Result<GateRun, Failure> {
+    let sources = compiled.plan.header.sources;
     use crate::handlers::build::{off_thread, problems_json, target_folder};
     let plan = Arc::new(compiled.plan.clone());
     let (named, tests) = (target.clone(), plan.tests.clone());
-    // Every fixture is read once, off the engine's threads. The compiler
-    // names a fixture by its folder inside the target's, `fixtures/<name>`.
-    let fixtures = off_thread(move || {
+    let checker = kernel.clone();
+    // Every fixture is read once, off the engine's threads, and held: the
+    // tests run on the bytes read here. The compiler names a fixture by
+    // its folder inside the target's, `fixtures/<name>`. Then the target's
+    // files are loaded once more, after that read: every byte a test runs
+    // on must be the byte the load found, and the load's digest of every
+    // file the digest the compiled plan names (audit finding AC-3), so a
+    // file changed between the compile and the tests is never published
+    // under evidence it did not earn.
+    let (fixtures, tied) = off_thread(move || {
         let folder = target_folder(&project_folder, &named)?;
-        Ok(tests
+        let fixtures: Vec<_> = tests
             .iter()
             .map(|test| {
-                test.fixture.as_deref().map(|fixture| {
-                    folder
-                        .join(fixture)
-                        .map_err(|failure| json!({"folder": fixture, "problem": failure.message()}))
-                        .and_then(read_fixture)
-                })
+                test.fixture
+                    .as_deref()
+                    .map(|fixture| fixture_folder(&folder, fixture).and_then(read_fixture))
             })
-            .collect::<Vec<_>>())
+            .collect();
+        let set = checker.providers().compiler_set();
+        let loaded = a2m_files::load(&a2m_files::TargetRoot::new(folder.as_path()), set).ok();
+        let held: Vec<_> = tests
+            .iter()
+            .map(|test| test.fixture.as_deref())
+            .zip(&fixtures)
+            .collect();
+        let tied = loaded.is_some_and(|loaded| tested_as_compiled(&held, &loaded, sources, set));
+        Ok((fixtures, tied))
     })
     .await?;
+    if !tied {
+        return Err(codes::stale(
+            codes::DRAFTS_CHANGED,
+            "The target's files changed while its offline tests were read, so the bytes tested are not the bytes compiled. Nothing was published.",
+            "Make no change to the target while it is published, and ask again.",
+        ));
+    }
     let engine = kernel.engine().await?;
     // The engine's future is not `Send`: a driver's prepared state is held
     // across its waits. So the tests run on a thread of their own, driven
@@ -1173,13 +1342,40 @@ pub(crate) async fn run_gates(
         }
         results.push(shown);
     }
+    // A write is proved by a test that sent its save: a test of the path on
+    // which nothing is sent does not by itself pass the gate for it
+    // (decision 0196).
+    let mut writing: Vec<String> = plan
+        .tests
+        .iter()
+        .filter(|test| test.kind == TestKind::Offline && writes(&plan, test))
+        .filter_map(|test| plan.tools.get(test.tool.get()))
+        .map(|tool| tool.name.to_string())
+        .collect();
+    writing.sort();
+    writing.dedup();
+    for tool in writing {
+        let sends = results.iter().any(|test| {
+            test["tool"] == tool.as_str() && test["state"] == "passed" && test["path"] == PATH_SENDS
+        });
+        let already = missing.iter().any(|test| test["tool"] == tool.as_str());
+        if !sends && !already {
+            missing.push(json!({
+                "test": "",
+                "tool": tool,
+                "state": "no_save_sent",
+                "reason": format!("No passing offline test of this write sends its save: each expects nothing to be sent. Add a test whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`."),
+                "next": {"action": "test.run", "input": {"target": target.as_str()}},
+            }));
+        }
+    }
     let offline: Vec<&Json> = results
         .iter()
         .filter(|test| test["kind"] == "offline")
         .collect();
     let replay_state = if offline.iter().any(|test| test["state"] == "failed") {
         "failed"
-    } else if offline.iter().all(|test| test["state"] == "passed") {
+    } else if offline.iter().all(|test| test["state"] == "passed") && missing.is_empty() {
         "passed"
     } else {
         "incomplete"
@@ -1189,7 +1385,66 @@ pub(crate) async fn run_gates(
             {"gate": "schema_and_lint", "state": "passed", "problems": problems_json(&compiled.warnings)},
             {"gate": "offline_replay", "state": replay_state, "tests": results},
         ]),
+        plan: compiled.encoded.hash,
+        sources,
         passed: missing.is_empty(),
         missing,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(folder: &std::path::Path, file: &str, text: &str) {
+        let path = folder.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// A fixture changed after the compile, whether or not it is put back
+    /// before the gate's own load, is never tested under the compiled
+    /// plan's digest (audit finding AC-3).
+    #[test]
+    fn the_bytes_a_gate_tests_are_the_bytes_the_plan_was_compiled_from() {
+        let folder = std::env::temp_dir().join(format!("a2m-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        write(&folder, "target.yaml", "title: Example\n");
+        write(&folder, "fixtures/one/fixture.yaml", "scrubbed: true\n");
+        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"draft\"}");
+        let set = a2m_files::CompilerSet::builder().build();
+        let root = a2m_files::TargetRoot::new(&folder);
+        let compiled = a2m_files::load(&root, &set).unwrap().digest;
+        let mut roots = a2m_provider::Roots::none();
+        let name = a2m_provider::RootName::new("target").unwrap();
+        roots.add(name.clone(), &folder, a2m_provider::Access::Read).unwrap();
+        let fixture_of = || {
+            let target = roots.folder(&name, a2m_provider::Access::Read).unwrap();
+            Some(fixture_folder(&target, "fixtures/one").and_then(read_fixture))
+        };
+        let check = |fixture: &Option<Result<Fixture, Json>>| {
+            let loaded = a2m_files::load(&root, &set).unwrap();
+            tested_as_compiled(&[(Some("fixtures/one"), fixture)], &loaded, compiled, &set)
+        };
+        // As compiled: tied.
+        assert!(check(&fixture_of()));
+        // Changed before the read and left changed: the load's digest is
+        // not the plan's.
+        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"open\"}");
+        let changed = fixture_of();
+        assert!(!check(&changed));
+        // Put back after the read: the bytes held are not the bytes loaded.
+        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"draft\"}");
+        assert!(!check(&changed));
+        assert!(check(&fixture_of()));
+        // A fixture folder that is a link is not read (audit finding A-2).
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(folder.join("fixtures/one"), folder.join("fixtures/two"))
+                .unwrap();
+            let target = roots.folder(&name, a2m_provider::Access::Read).unwrap();
+            assert!(fixture_folder(&target, "fixtures/two").is_err());
+        }
+        let _ = std::fs::remove_dir_all(&folder);
+    }
 }

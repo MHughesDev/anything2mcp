@@ -48,6 +48,13 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
             )
             .optional(UNENCRYPTED_CREDENTIALS, JsonSchema::words(&[ACCEPTED])),
     )
+    // A door shows a person that the surface sends a credential over an
+    // unencrypted link (decisions 0193 and 0194).
+    .with_notice(
+        UNENCRYPTED_CREDENTIALS,
+        ACCEPTED,
+        a2m_core::SurfaceNotice::UnencryptedCredentials,
+    )
     .with_program("program", Some("digest"))
 }
 

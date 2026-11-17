@@ -264,7 +264,9 @@ pub(crate) struct RequestPaused {
 pub(crate) struct PausedRequest {
     pub url: String,
     pub method: String,
-    /// The request's headers. Only their names are ever read.
+    /// The request's headers. Only their names are kept; the values of
+    /// the few headers the browser sets by itself are compared with the
+    /// page's own document's, and then dropped.
     #[serde(default)]
     pub headers: serde_json::Map<String, Value>,
 }
@@ -791,8 +793,33 @@ pub(crate) struct FailRequest<'a> {
 command!(FailRequest<'_>, "Fetch.failRequest" => Nothing);
 
 #[derive(Debug, Serialize)]
-pub(crate) struct NetworkEnable {}
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkEnable {
+    /// The most bytes of one answer the browser keeps for
+    /// `Network.getResponseBody`; a longer answer is not kept at all.
+    pub max_resource_buffer_size: u64,
+    /// The most bytes of answers it keeps for the tab in all.
+    pub max_total_buffer_size: u64,
+}
 command!(NetworkEnable, "Network.enable" => Nothing);
+
+impl NetworkEnable {
+    /// The bounds for a tab that reads at most `max_read` characters of an
+    /// answer: four bytes for each, the most one character takes, so that
+    /// an answer the tab could read is kept, and one far longer is not, and
+    /// never comes near the most a message of the link may hold. The whole
+    /// is four answers' worth.
+    pub(crate) fn keeping(max_read: usize) -> Self {
+        let one = u64::try_from(max_read)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(4)
+            .max(1);
+        Self {
+            max_resource_buffer_size: one,
+            max_total_buffer_size: one.saturating_mul(4),
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct BypassServiceWorker {

@@ -20,6 +20,7 @@ pub mod faults;
 pub mod harness;
 mod leaving;
 mod openapi;
+mod own_requests;
 mod pages;
 pub mod store;
 #[cfg(feature = "tls")]
@@ -96,6 +97,7 @@ pub fn router() -> Router {
         .merge(edges::routes())
         .merge(escapes::routes())
         .merge(leaving::routes())
+        .merge(own_requests::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

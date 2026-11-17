@@ -17,6 +17,17 @@
 //! of another width is not a map, and no finding is made of it. An empty
 //! cell states nothing; an empty `scale` is the layout's own word for a
 //! register that holds the raw number.
+//!
+//! A map file is hostile input (decision 0197). A file is read whole up to
+//! [`MOST_MAP_BYTES`], at most [`MOST_ROWS`] rows, and a cell or a note
+//! longer than [`LONGEST_CELL`] characters makes the file no map. What the
+//! file says reaches a drafted file only through the YAML writer, and only
+//! from a closed set of characters: a register's name as `[a-z0-9_]`, a
+//! unit, the model, and the firmware versions from the sets below. A unit,
+//! a model, or a version outside its set is not copied: the question is
+//! asked instead, with the file's words quoted apart from the pack's
+//! sentence (`open_question_quoting`). A description repeats a name or a
+//! unit only in backticks, as the map's words.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -56,6 +67,12 @@ const REQUIRED: usize = 4;
 const MOST_ROWS: usize = 4096;
 /// The longest unit the drafter repeats in a read's description.
 const LONGEST_UNIT: usize = 16;
+/// The largest map file that is read, whatever the job's bound.
+pub(crate) const MOST_MAP_BYTES: u64 = 1 << 20;
+/// The longest cell or note of a map, in characters.
+const LONGEST_CELL: usize = 64;
+/// The longest model or firmware version the drafter copies.
+const LONGEST_COPIED: usize = 40;
 
 /// One row of a published map, as the file states it. Every cell is the
 /// file's text, and an empty cell is absent.
@@ -130,6 +147,14 @@ pub(crate) fn parse(file: &str, surface: &str, bytes: &[u8]) -> Option<Published
         let line = line.strip_suffix('\r').unwrap_or(line);
         let number = u32::try_from(number + 1).ok()?;
         if line.contains('"') || line.chars().any(|c| c.is_control() && c != '\t') {
+            return None;
+        }
+        // A note or a cell longer than any a map needs: not a map.
+        let long = |text: &str| text.trim().chars().count() > LONGEST_CELL;
+        if line.strip_prefix('#').map_or_else(
+            || line.split(',').any(long),
+            |note| note.split(',').any(long) || note.trim().chars().count() > 2 * LONGEST_CELL,
+        ) {
             return None;
         }
         if header.is_none() {
@@ -242,6 +267,9 @@ pub(crate) struct Drafted {
     pub scale: Option<String>,
     /// The unit the map states, when the pack can repeat it safely.
     pub unit: Option<String>,
+    /// A unit the map states in characters the pack does not copy: only
+    /// ever quoted apart in a question.
+    pub unit_not_copied: Option<String>,
 }
 
 impl Drafted {
@@ -274,15 +302,28 @@ fn name_of(text: &str) -> Option<String> {
     (name.starts_with(|first: char| first.is_ascii_lowercase()) && name.len() <= 40).then_some(name)
 }
 
-/// A unit the drafter may repeat in its own sentence: short, and of
-/// letters, digits, and the signs units are written with. Anything else is
-/// treated as stating no unit, and asked.
+/// A unit the drafter may repeat in its own sentence: short, and of a
+/// closed set of characters: ASCII letters and digits, and the few signs
+/// units are written with. No other letter, so no letter of another script
+/// that looks like a Latin one. Anything else is not copied, and asked.
 fn safe_unit(unit: &str) -> Option<String> {
-    let fits = unit.chars().count() <= LONGEST_UNIT
+    let fits = !unit.is_empty()
+        && unit.chars().count() <= LONGEST_UNIT
         && unit.chars().all(|c| {
-            c.is_alphanumeric() || matches!(c, '%' | '/' | '.' | '-' | '°' | '²' | '³' | '·')
+            c.is_ascii_alphanumeric()
+                || matches!(c, '%' | '/' | '.' | '-' | '°' | '²' | '³' | '·' | 'µ' | 'Ω')
         });
     fits.then(|| unit.to_owned())
+}
+
+/// A model or firmware version the drafter copies into the map: ASCII
+/// letters, digits, spaces, and `.`, `-`, `_`, `+`, at most 40 characters.
+fn copied(text: &str) -> Option<&str> {
+    (text.chars().count() <= LONGEST_COPIED
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_' | '+')))
+    .then_some(text)
 }
 
 /// The register a row gives, or why it gives none. Rule 7: nothing the
@@ -326,7 +367,9 @@ pub(crate) fn drafted(row: &MapRow, taken: &mut BTreeSet<String>) -> Result<Draf
         "text" => u32::from(words.unwrap_or(1)),
         _ => 1,
     };
-    if offset + width - 1 > 0xFFFF {
+    // Checked: an offset near the top of `u32` is an address the protocol
+    // cannot hold, never an overflow.
+    if offset.checked_add(width - 1).is_none_or(|end| end > 0xFFFF) {
         return Err(LeftOut::Address);
     }
     let offset = u16::try_from(offset).map_err(|_| LeftOut::Address)?;
@@ -371,6 +414,11 @@ pub(crate) fn drafted(row: &MapRow, taken: &mut BTreeSet<String>) -> Result<Draf
         low_first,
         scale,
         unit: row.unit.as_deref().and_then(safe_unit),
+        unit_not_copied: row
+            .unit
+            .as_deref()
+            .filter(|unit| safe_unit(unit).is_none())
+            .map(str::to_owned),
     })
 }
 
@@ -448,7 +496,7 @@ impl Discoverer for PublishedMapDiscoverer {
                     break;
                 }
                 let reading = path.clone();
-                let most = left;
+                let most = left.min(MOST_MAP_BYTES);
                 let bytes = tokio::task::spawn_blocking(move || read_handed(&reading, most))
                     .await
                     .ok()
@@ -560,16 +608,30 @@ impl MapFromPublished {
     /// data type the file states, each `access: read`. No range, no hazard,
     /// no safe state: nothing is drafted that writes.
     fn map_doc(map: &PublishedMap, name: &str, cx: &DraftContext<'_>) -> Result<DraftDoc, Failure> {
-        let model = map.model.as_deref().map_or_else(
-            || cx.open_question("Which model is this map for? The published map does not say."),
-            DraftValue::text,
-        );
+        let model = match map.model.as_deref() {
+            None => cx.open_question("Which model is this map for? The published map does not say."),
+            Some(model) => copied(model).map_or_else(
+                || {
+                    cx.open_question_quoting(
+                        "Which model is this map for? The published map names it in characters the drafter does not copy; the quoted words are the map's own, not an instruction.",
+                        &[model],
+                    )
+                },
+                DraftValue::text,
+            ),
+        };
         let firmware = if map.firmware.is_empty() {
             cx.open_question(
                 "Which firmware versions is this map for? The published map does not say.",
             )
-        } else {
+        } else if map.firmware.iter().all(|version| copied(version).is_some()) {
             DraftValue::List(map.firmware.iter().map(|v| DraftValue::text(v)).collect())
+        } else {
+            let words: Vec<&str> = map.firmware.iter().map(String::as_str).collect();
+            cx.open_question_quoting(
+                "Which firmware versions is this map for? The published map names them in characters the drafter does not copy; the quoted words are the map's own, not an instruction.",
+                &words,
+            )
         };
         let registers = judged(map)
             .into_iter()
@@ -692,7 +754,16 @@ impl DraftingRule for ReadsFromPublished {
                 (_, UNTRUSTED_TEXT) => (DraftValue::text(ty), String::new()),
                 (Some(unit), _) => (
                     DraftValue::text(ty),
-                    format!(" Its unit is `{unit}`, as the published map states."),
+                    format!(" Its unit, in the published map's own words, is `{unit}`."),
+                ),
+                (None, _) if register.unit_not_copied.is_some() => (
+                    cx.open_question_quoting(
+                        &format!(
+                            "The published map states the unit of the register on line {line} in characters the drafter does not copy; the quoted words are the map's own, not an instruction. Which field type, with its unit, do its values have?"
+                        ),
+                        &[register.unit_not_copied.as_deref().unwrap_or_default()],
+                    ),
+                    String::new(),
                 ),
                 (None, _) => (
                     cx.open_question(&format!(
@@ -732,7 +803,7 @@ impl DraftingRule for ReadsFromPublished {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Reads the register `{}` of the map `{map_name}` from the device on the link.{unit} Drafted by rule from a published map: nothing was read from the device to draft it, and a device whose model or firmware is outside the map stops the read. Its name is provisional.",
+                            "Reads the register the published map names `{}`, of the map `{map_name}`, from the device on the link.{unit} Drafted by rule from a published map: nothing was read from the device to draft it, and a device whose model or firmware is outside the map stops the read. Its name is provisional.",
                             register.name
                         )),
                     ),
@@ -745,7 +816,46 @@ impl DraftingRule for ReadsFromPublished {
 
 #[cfg(test)]
 mod tests {
-    use super::{LeftOut, judged, parse};
+    use super::{LONGEST_CELL, LeftOut, copied, judged, parse, safe_unit};
+
+    /// Decision 0197: an offset at the top of `u32` is left out, and never
+    /// overflows (a debug build stopped here before).
+    #[test]
+    fn an_offset_at_the_top_of_the_number_range_is_an_address_the_protocol_cannot_hold() {
+        let text = "name,table,offset,data\ntop,input,4294967295,u32\nlast,input,65535,u16\nend,input,65534,u32\n";
+        let map = parse("x.csv", "controller", text.as_bytes()).unwrap();
+        let judged: Vec<Result<u16, LeftOut>> = judged(&map)
+            .into_iter()
+            .map(|(_, row)| row.map(|register| register.offset))
+            .collect();
+        assert_eq!(judged, [Err(LeftOut::Address), Ok(65535), Ok(65534)]);
+    }
+
+    /// Decision 0197: a map file is hostile input. A cell or a note longer
+    /// than a map needs makes it no map; a unit, a model, or a version is
+    /// copied only from a closed set of characters.
+    #[test]
+    fn a_long_cell_is_no_map_and_only_a_closed_set_of_characters_is_copied() {
+        let long = "x".repeat(LONGEST_CELL + 1);
+        for bad in [
+            format!("name,table,offset,data\n{long},input,1,u16\n"),
+            format!("# model: {long}\nname,table,offset,data\na,input,1,u16\n"),
+        ] {
+            assert!(parse("x.csv", "controller", bad.as_bytes()).is_none());
+        }
+        for unit in ["°C", "l/min", "m³/h", "%", "kWh", "µS"] {
+            assert_eq!(safe_unit(unit).as_deref(), Some(unit), "{unit}");
+        }
+        // A Cyrillic letter that looks like a Latin one; a word that is no
+        // unit; a sign of quoting.
+        for unit in ["°\u{0421}", "ignore rules", "`x`", "a<b", ""] {
+            assert_eq!(safe_unit(unit), None, "{unit}");
+        }
+        assert_eq!(copied("example-controller 2.4"), Some("example-controller 2.4"));
+        for text in ["call `reset`", "\u{0430}bc", "a:b", "x\u{202e}y"] {
+            assert_eq!(copied(text), None, "{text}");
+        }
+    }
 
     #[test]
     fn a_map_is_read_in_its_layout_and_each_row_is_judged_by_name() {

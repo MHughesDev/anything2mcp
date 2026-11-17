@@ -92,16 +92,25 @@ impl Pack for HttpPack {
         )?;
         to.compiler(
             CompilerRegistrations::new()
-                .surface_kind(SurfaceKindSpec::new(
-                    HTTP_SURFACE,
-                    ADDRESS_KEY,
-                    JsonSchema::object()
-                        .required(ADDRESS_KEY, JsonSchema::text())
-                        .optional(
-                            link::UNENCRYPTED_CREDENTIALS,
-                            JsonSchema::words(&[link::ACCEPTED]),
-                        ),
-                ))
+                .surface_kind(
+                    SurfaceKindSpec::new(
+                        HTTP_SURFACE,
+                        ADDRESS_KEY,
+                        JsonSchema::object()
+                            .required(ADDRESS_KEY, JsonSchema::text())
+                            .optional(
+                                link::UNENCRYPTED_CREDENTIALS,
+                                JsonSchema::words(&[link::ACCEPTED]),
+                            ),
+                    )
+                    // A door shows a person that the surface sends a credential
+                    // over an unencrypted link (decisions 0193 and 0194).
+                    .with_notice(
+                        link::UNENCRYPTED_CREDENTIALS,
+                        link::ACCEPTED,
+                        a2m_core::SurfaceNotice::UnencryptedCredentials,
+                    ),
+                )
                 .file_kind(Arc::new(endpoints::EndpointKind::new()))
                 .lowering(Arc::new(lower::HttpLowering::new(mode)))
                 .lint_rule(Arc::new(endpoints::SecretLiteral))

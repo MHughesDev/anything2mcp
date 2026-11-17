@@ -551,7 +551,8 @@ fn stream_info(shared: &Shared, name: &str) -> Result<J, ApiError> {
 }
 
 fn consumer_info(shared: &Shared, stream: &str, name: &str, kind: &str) -> Result<J, ApiError> {
-    let state = shared.lock();
+    let mut state = shared.lock();
+    let without_wait = state.fault(&Fault::ConsumerWithoutAckWait);
     let s = state
         .streams
         .get(stream)
@@ -569,6 +570,9 @@ fn consumer_info(shared: &Shared, stream: &str, name: &str, kind: &str) -> Resul
         "replay_policy": "instant",
         "max_waiting": 512,
     });
+    if without_wait && let Some(fields) = config.as_object_mut() {
+        fields.remove("ack_wait");
+    }
     if !c.ephemeral {
         config["durable_name"] = json!(name);
     }

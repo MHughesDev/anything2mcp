@@ -128,3 +128,14 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+
+# The release profile is what the wheel, the npm packages, and `cargo install`
+# build with. One code unit, whole-program optimisation, and size-first
+# optimisation take the stripped binary from 37.2 MB to 18.5 MB with every
+# first-party pack in it, at no measured cost in speed (decision 0191).
+# `panic` stays `unwind`: the engine's failure handling rests on it, and that
+# is the lead's to change, not a profile setting's.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"

@@ -671,6 +671,29 @@ unsafe fn forget_passphrase() {
     unsafe { std::env::remove_var(crate::PASSPHRASE_VARIABLE) };
 }
 
+/// What the program writes when a thread panics: where, never the
+/// message. A panic's message may hold a value (a dependency's assertion
+/// prints what it compared), and a started engine's standard error is its
+/// output file, which no redactor reads (PR-1 of the third audit, decision
+/// 0194).
+fn panic_report(location: Option<&std::panic::Location<'_>>) -> String {
+    let at = location.map_or_else(
+        || "an unknown place".to_owned(),
+        |at| format!("{}:{}", at.file(), at.line()),
+    );
+    format!(
+        "{PROGRAM}: an internal fault stopped a part of the program at {at}. Its message is not shown, because it may hold a value. Report this with the place.\n"
+    )
+}
+
+/// Replaces the standard panic report with [`panic_report`], for the whole
+/// process.
+fn report_panics_by_place_alone() {
+    std::panic::set_hook(Box::new(|info| {
+        let _ = std::io::stderr().write_all(panic_report(info.location()).as_bytes());
+    }));
+}
+
 /// Runs the command line with the arguments that follow the program name,
 /// in this process's surroundings.
 ///
@@ -690,6 +713,7 @@ unsafe fn forget_passphrase() {
     reason = "the program's main changes the environment before any thread starts"
 )]
 pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
+    report_panics_by_place_alone();
     let args: Vec<String> = args.into_iter().collect();
     let host = Host::of_process();
     // SAFETY: the caller holds this function's contract, which is the
@@ -714,6 +738,20 @@ pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    /// A panic is reported by its place alone: the message, which may
+    /// hold a value, is never written where the output file would keep it.
+    #[test]
+    fn a_panic_is_reported_by_its_place_and_never_its_message() {
+        let here = std::panic::Location::caller();
+        let report = super::panic_report(Some(here));
+        assert!(
+            report.contains(&format!("{}:{}", here.file(), here.line())),
+            "{report}"
+        );
+        assert!(report.starts_with("anything2mcp: "), "{report}");
+        assert!(super::panic_report(None).contains("an unknown place"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_project_file_that_others_can_change_is_never_taken_as_a_project() {

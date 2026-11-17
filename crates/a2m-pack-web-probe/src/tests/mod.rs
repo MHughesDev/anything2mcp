@@ -476,7 +476,7 @@ fn own_pages(own: Own) -> Router {
                 (
                     [(CONTENT_TYPE, "application/json")],
                     format!(
-                        "{{\"token\":\"{SECRET}\",\"{SECRET}\":1,\"items\":[{{\"id\":7,\"note\":\"{SECRET}\"}},{{\"id\":8}}]}}"
+                        "{{\"token\":\"{SECRET}\",\"by_key\":{{\"{SECRET}\":1}},\"items\":[{{\"id\":7,\"note\":\"{SECRET}\"}},{{\"id\":8}}]}}"
                     ),
                 )
                     .into_response()

@@ -489,7 +489,7 @@ impl DraftingRule for WithAnAction {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_run_that_may_only_look_has_a_tab_that_cannot_write() {
+async fn a_read_never_runs_in_a_tab_that_can_write_in_any_posture() {
     let app = TestApp::start().await.unwrap();
     let origin = app.url("");
     let folder = new_target("trap", &origin);
@@ -517,16 +517,67 @@ async fn a_run_that_may_only_look_has_a_tab_that_cannot_write() {
     let plan = compile_drafts(&stand, &folder, &DraftReport::default(), "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let scene = Scene::over(stand, plan, &origin);
-    // The browser fails the page's write before it leaves, and the run
-    // stops: the page did something no screen declares.
-    let stopped = look(&scene, "example_activity_get").await.unwrap_err();
-    assert_eq!(
-        class_and_code(&stopped),
-        (FailureClass::UnknownVariant, "unexpected_page"),
-        "{stopped}"
-    );
-    assert!(app.trap_writes().await.unwrap().is_empty());
+    // In every posture, a live run and a sandbox with test records among
+    // them, the read's tab cannot write: the browser fails the page's
+    // write before it leaves, and the run stops on it by name.
+    for posture in [
+        Posture::Live,
+        Posture::Sandbox { test_records: true },
+        Posture::Sandbox {
+            test_records: false,
+        },
+        Posture::Discovery,
+    ] {
+        let (handle, mut prepared) = scene
+            .try_prepare(None, posture)
+            .await
+            .unwrap_or_else(|failure| panic!("{failure}"));
+        let stopped = scene
+            .read(&handle, &mut prepared, "example_activity_get", &Values::new())
+            .await
+            .unwrap_err();
+        assert!(handle.release(prepared, true).await.complete);
+        assert_eq!(
+            class_and_code(&stopped),
+            (FailureClass::Policy, "page_write_refused"),
+            "{posture:?}: {stopped}"
+        );
+        // What was refused is the page's own write.
+        let said = stopped.failure.message();
+        assert!(
+            said.contains("`POST`") && said.contains("/traps/write/on-load"),
+            "{said}"
+        );
+        assert!(
+            app.trap_writes().await.unwrap().is_empty(),
+            "{posture:?}"
+        );
+    }
     assert!(app.writes().await.unwrap().is_empty());
+
+    // That the test means something: the same page reached as the step of
+    // a write before its commit point is in a tab that may write, and the
+    // page's write then reaches the application.
+    let mut goto = scene.binding("example_activity_get").act[0].clone();
+    goto.payload = a2m_core::PackPayload::encode(&serde_json::json!({"tab": "act"})).unwrap();
+    let (handle, mut prepared) = scene.try_prepare(None, Posture::Live).await.unwrap();
+    scene
+        .run(&handle, &mut prepared, &[goto], &Values::new(), None)
+        .await
+        .unwrap();
+    let stored = async {
+        for _ in 0..100 {
+            let writes = app.trap_writes().await.unwrap();
+            if !writes.is_empty() {
+                return writes;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        app.trap_writes().await.unwrap()
+    }
+    .await;
+    assert!(handle.release(prepared, false).await.complete);
+    assert_eq!(stored.get("on-load"), Some(&1), "{stored:?}");
     scene.stand.end().await;
 }
 

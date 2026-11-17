@@ -140,28 +140,79 @@ async fn a_write_that_ends_on_an_acknowledgement_is_settled_completes_and_is_nev
     };
     assert_eq!(read_back_first(&world), 0);
 
-    // The resume reads the record in doubt, skips the one acknowledged,
-    // and completes: the first line was sent once, and never read back.
+    // The resume finds the second record in doubt, and its binding has
+    // nothing to read it with: it stays in doubt, and nothing is sent
+    // again (decision 0196). The first, acknowledged, is never read.
+    let resumed = world.call("run.resume", json!({"run_id": run})).await;
+    let result = resumed.result.clone().unwrap_or_default();
+    assert_ne!(result["status"], "completed", "{resumed:?}");
+    assert_eq!(world.app.write_count("A-102", "L-601").await.unwrap(), 1);
+    assert_eq!(world.app.write_count("A-102", "L-602").await.unwrap(), 1);
+    assert_eq!(read_back_first(&world), 0);
+    let rows = world.record_rows(id).await;
+    let second = rows
+        .iter()
+        .find(|row| row.record.step_seq == 2)
+        .expect("the second line's record");
+    assert!(!second.acknowledged(), "{second:?}");
+    assert_ne!(second.state, RecordState::Verified);
+
+    // A run whose answers all arrive ends each record on its answer and
+    // completes; no record was read, before or after its save.
+    let fill = json!({
+        "order_id": "A-102",
+        "first_code": "L-701",
+        "second_code": "L-702",
+        "description": "New rail",
+        "quantity": 2,
+        "length_in": "10.5",
+    });
+    let rested = world
+        .call("tool.call", json!({"tool": ORDER_FILL, "input": fill}))
+        .await;
+    assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
+    let (run, id) = run_of(&rested);
+    let preview = world.surface.desk().preview(id, 0).await.unwrap();
+    assert_eq!(preview.write, 2, "{preview:?}");
+    assert!(
+        preview.records.iter().all(|record| record.action == "write"
+            && record.fields.iter().all(|field| field.now_cannot_be_read
+                && field.current.as_deref() == Some(a2m_actions::NOW_CANNOT_BE_READ))),
+        "{preview:?}"
+    );
+    world.approve(id).await;
     let done = world.call("run.resume", json!({"run_id": run})).await;
     assert!(done.ok, "{:?} {:?}", done.error, done.result);
     let result = done.result.clone().unwrap();
     assert_eq!(result["status"], "completed");
-    assert_eq!(result["not_read_back"], 1, "{result}");
-    assert_eq!(world.app.write_count("A-102", "L-601").await.unwrap(), 1);
-    assert_eq!(world.app.write_count("A-102", "L-602").await.unwrap(), 1);
+    assert_eq!(result["not_read_back"], 2, "{result}");
+    assert_eq!(world.app.write_count("A-102", "L-701").await.unwrap(), 1);
+    assert_eq!(world.app.write_count("A-102", "L-702").await.unwrap(), 1);
     assert_eq!(
         world
             .app
-            .stored_item("A-102", "L-601")
+            .stored_item("A-102", "L-701")
             .await
             .unwrap()
             .unwrap()
             .quantity,
         2
     );
-    assert_eq!(read_back_first(&world), 0);
     let again = world.ok("run.get", json!({"run_id": run})).await;
-    assert_eq!(again["not_read_back"], 1);
+    assert_eq!(again["not_read_back"], 2);
+    let read_any = world
+        .hooks
+        .given
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|given| {
+            given.kind == "get_item"
+                && ["L-701", "L-702"]
+                    .iter()
+                    .any(|code| given.args.get("item_code") == Some(&(*code).into()))
+        });
+    assert!(!read_any);
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -296,6 +347,33 @@ async fn each_run_is_handed_the_project_folder_of_the_request_that_started_it() 
     assert!(resumed.ok, "{:?}", resumed.error);
     assert_eq!(status(&resumed), "completed");
     assert_eq!(last_prepared(), canonical(&one));
+
+    // The folder is checked again at every lease: one replaced, after the
+    // request, by a link to one of the engine's own folders is not handed
+    // to the engine on the resume (audit finding A-4).
+    #[cfg(unix)]
+    {
+        let rested = call(
+            json!({"tool": engine::ITEM_UPSERT, "input": super::runs::item("L-612")}),
+            Some(&one),
+        )
+        .await;
+        assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
+        let (run, id) = run_of(&rested);
+        world.approve(id).await;
+        let own = world.kernel.paths().data.clone();
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::rename(&one, one.with_extension("moved")).unwrap();
+        std::os::unix::fs::symlink(&own, &one).unwrap();
+        let _ = world
+            .kernel
+            .dispatch(
+                Request::new("run.resume", json!({"run_id": run}), world.caller.clone())
+                    .in_project(&two),
+            )
+            .await;
+        assert_eq!(last_prepared(), None);
+    }
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -426,4 +504,53 @@ async fn a_record_in_doubt_is_read_by_the_values_its_own_attempt_recorded() {
     let taken = world.hooks.given("taken");
     assert_eq!(taken.len(), looks + 1, "{taken:?}");
     world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A driver asks, through the engine and the real store, whether another
+/// record of its operation holds a value its step recorded (decision 0196):
+/// the answer names the record of the earlier run that recorded it, and
+/// never the value; a value nobody recorded is not held; and the asking
+/// record's own recorded values never answer for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_driver_is_told_which_other_record_recorded_a_value_and_never_the_value() {
+    use a2m_core::Value;
+    use a2m_provider::RecordedElsewhere;
+    let world = World::ready().await;
+    // The first run's step records the code `N-001` before its save.
+    let first = slot_written(&world, "2").await;
+    let rows = world.record_rows(first).await;
+    // The second run's save asks about that code, and about one nobody
+    // recorded.
+    for (code, told) in [
+        ("N-001", RecordedElsewhere::Held(rows[0].record)),
+        ("N-777", RecordedElsewhere::NotHeld),
+    ] {
+        world.hooks.elsewhere.lock().unwrap().clear();
+        *world.hooks.asks_elsewhere.lock().unwrap() =
+            Some(("add_item".to_owned(), "item_code".to_owned(), Value::from(code)));
+        slot_written(&world, "3").await;
+        assert_eq!(*world.hooks.elsewhere.lock().unwrap(), [told], "{code}");
+    }
+    // The code the asking record itself recorded before its save is its
+    // own: the code `N-004` is recorded by this run alone.
+    world.hooks.elsewhere.lock().unwrap().clear();
+    *world.hooks.asks_elsewhere.lock().unwrap() =
+        Some(("add_item".to_owned(), "item_code".to_owned(), Value::from("N-004")));
+    slot_written(&world, "4").await;
+    assert_eq!(
+        *world.hooks.elsewhere.lock().unwrap(),
+        [RecordedElsewhere::NotHeld]
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// One write of a slot, approved and resumed to its end.
+async fn slot_written(world: &World, length: &str) -> RunId {
+    let call = json!({"tool": SLOT_ADD, "input": {"order_id": "A-102", "quantity": 1, "length_in": length}});
+    let asked = world.call("tool.call", call).await;
+    let (run, id) = run_of(&asked);
+    world.approve(id).await;
+    let done = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&done), "completed", "{done:?}");
+    id
 }

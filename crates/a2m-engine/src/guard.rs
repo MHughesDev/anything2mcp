@@ -188,4 +188,14 @@ impl Control for Timed<'_> {
     fn project_folder(&self) -> Option<std::path::PathBuf> {
         self.inner.project_folder()
     }
+
+    // Not timed here: the driver's question is held to the step's own
+    // deadline by `Prepared::recorded_elsewhere`.
+    fn other_records(
+        &self,
+        operation: &a2m_core::OperationName,
+        asking: a2m_ledger::RecordRef,
+    ) -> Option<std::sync::Arc<dyn a2m_provider::OtherRecords>> {
+        self.inner.other_records(operation, asking)
+    }
 }

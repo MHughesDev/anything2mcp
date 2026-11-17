@@ -99,6 +99,9 @@ pub struct Shape {
     items: Option<Box<Shape>>,
     /// How many names were left out at the limit.
     left_out: u64,
+    /// Whether an object's names were withheld because they read as
+    /// values: a dictionary's keys (decision 0195).
+    withheld: bool,
 }
 
 impl Shape {
@@ -147,6 +150,13 @@ impl Shape {
             Json::Object(fields) => {
                 shape.types.insert("object");
                 shape.objects = 1;
+                // An object with more names than a record has, or with a
+                // name that is not a plain one, is a dictionary: its names
+                // are values, and none is kept.
+                if !a2m_pack_web_browser::names_are_structure(fields.keys()) {
+                    shape.withheld = true;
+                    return shape;
+                }
                 let mut names: Vec<&String> = fields.keys().collect();
                 names.sort();
                 for name in names {
@@ -246,6 +256,7 @@ impl Shape {
         out.types.extend(other.types.iter().copied());
         out.objects += other.objects;
         out.left_out += other.left_out;
+        out.withheld |= other.withheld;
         for (name, (shape, seen)) in &other.fields {
             match out.fields.get_mut(name) {
                 Some((mine, count)) => {
@@ -286,6 +297,15 @@ impl Shape {
             || self.items.as_ref().is_some_and(|items| items.cut())
     }
 
+    /// Whether the names of an object were withheld as a dictionary's,
+    /// anywhere in the shape.
+    #[must_use]
+    pub fn withheld(&self) -> bool {
+        self.withheld
+            || self.fields.values().any(|(shape, _)| shape.withheld())
+            || self.items.as_ref().is_some_and(|items| items.withheld())
+    }
+
     /// The shape as JSON: `type` is one name or a sorted list of names;
     /// an object has `fields`, each with `optional` when some observations
     /// lacked it; a list has `items`.
@@ -311,6 +331,9 @@ impl Shape {
         }
         if self.left_out > 0 {
             out.insert("left_out".to_owned(), Json::from(self.left_out));
+        }
+        if self.withheld {
+            out.insert("names_withheld".to_owned(), Json::Bool(true));
         }
         let mut types: Vec<Json> = self.types.iter().map(|name| Json::from(*name)).collect();
         out.insert(

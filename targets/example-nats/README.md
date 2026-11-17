@@ -68,6 +68,7 @@ Every stream has the default window of two minutes. The topic `example.orders.no
 | `ExpireAuthAfterStore` | Stores a publish, then sends `-ERR 'User Authentication Expired'` and closes the connection before the acknowledgement |
 | `ExpireAuthAfterAck` | Carries out an acknowledgement, then sends the same `-ERR` and closes before its answer |
 | `ForeignDelivery` | Hands over deliveries whose acknowledgement subject names another consumer |
+| `ConsumerWithoutAckWait` | Describes a consumer without its `ack_wait` |
 
 ## What it leaves out
 

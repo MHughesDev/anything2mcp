@@ -33,7 +33,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::BuildHasher;
 use std::io::ErrorKind;
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use a2m_provider::{Deadline, Sent};
@@ -361,21 +360,6 @@ fn inbox_prefix() -> String {
     format!("_INBOX.{first:016x}{second:016x}")
 }
 
-async fn resolve(address: &str, deadline: Deadline) -> Result<Vec<SocketAddr>, WireError> {
-    let unreachable = || {
-        error(
-            WireErrorKind::Unreachable,
-            Sent::NotSent,
-            "the broker's address could not be resolved",
-        )
-    };
-    let found = tokio::time::timeout_at(deadline.at(), tokio::net::lookup_host(address))
-        .await
-        .map_err(|_| unreachable())?
-        .map_err(|_| unreachable())?;
-    Ok(found.collect())
-}
-
 impl Protocol for NatsProtocol {
     fn name(&self) -> &'static str {
         NAME
@@ -395,14 +379,7 @@ impl Protocol for NatsProtocol {
         Box::pin(async move {
             // Plain TCP carries the session's credentials in the clear, so it
             // goes to this machine's own loopback address and nowhere else.
-            let resolved = resolve(address, deadline).await?;
-            if resolved.is_empty() || !resolved.iter().all(|found| found.ip().is_loopback()) {
-                return Err(error(
-                    WireErrorKind::Transport,
-                    Sent::NotSent,
-                    "plain TCP is used only to this machine's loopback address",
-                ));
-            }
+            let resolved = crate::wire::plain_tcp_address(address)?;
             let unreachable = || {
                 error(
                     WireErrorKind::Unreachable,
@@ -410,7 +387,7 @@ impl Protocol for NatsProtocol {
                     "the broker did not accept a connection",
                 )
             };
-            let stream = tokio::time::timeout_at(deadline.at(), TcpStream::connect(&resolved[..]))
+            let stream = tokio::time::timeout_at(deadline.at(), TcpStream::connect(resolved))
                 .await
                 .map_err(|_| unreachable())?
                 .map_err(|_| unreachable())?;
@@ -1471,7 +1448,16 @@ impl Link for NatsLink {
                                     "the declared consumer's acknowledgement policy is not the one this read needs",
                                 ));
                             }
+                            // A work queue's consumer hands a message out
+                            // again after this wait; one that does not say
+                            // it has no rule, since an acknowledgement could
+                            // then reach the server after it.
                             let wait = match config.get("ack_wait") {
+                                None if queue => {
+                                    return Err(unexpected(
+                                        "a work queue's consumer does not state its acknowledgement wait",
+                                    ));
+                                }
                                 None => None,
                                 Some(wait) => Some(wait.as_u64().ok_or_else(|| {
                                     unexpected(

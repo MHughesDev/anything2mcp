@@ -998,6 +998,7 @@ dependencies = [
 name = "example-broker"
 version = "0.0.1"
 dependencies = [
+ "a2m-pack-stream",
  "serde",
  "serde_json",
  "sha2",

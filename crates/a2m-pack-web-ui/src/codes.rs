@@ -37,6 +37,9 @@ pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_s
 pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
 /// `policy`: a page address outside the surfaces the run may reach.
 pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
+/// `policy`: the page sent a request that could change the system while a
+/// read ran, and the tab, which cannot write, failed it (decision 0195).
+pub const PAGE_WRITE_REFUSED: FailureCode = FailureCode::fixed("page_write_refused");
 /// `policy`: a password input was asked for its value. The browser
 /// engine's code.
 pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
@@ -65,6 +68,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::Rejected, "app_validation_error"),
     (FailureClass::Policy, "surface_not_declared"),
+    (FailureClass::Policy, "page_write_refused"),
     (FailureClass::Policy, "password_read_refused"),
     (FailureClass::Busy, "browser_unavailable"),
     (FailureClass::Input, "step_not_usable"),

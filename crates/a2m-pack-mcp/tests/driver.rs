@@ -1236,6 +1236,53 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
     assert_eq!(taken.assigned_key, Some(key("A-100")));
 }
 
+/// A user name and a password in the surface's address are a credential
+/// the HTTP client would send by itself, in plain text: refused before
+/// anything is sent, with no session (MC-1).
+#[tokio::test]
+async fn an_address_that_holds_a_user_name_or_a_password_is_refused_unsent() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let plain = scene.stand.url();
+    for address in [
+        plain.replacen("http://", "http://svc:PLANTED-pw@", 1),
+        plain.replacen("http://", "http://svc@", 1),
+    ] {
+        let far = surface(&scene.plan, "orders", Some(&address));
+        let outcome = match prepare(
+            &scene.registry,
+            &scene.plan,
+            &far,
+            fence_of(7),
+            Posture::Live,
+            None,
+        )
+        .await
+        {
+            Err(refused) => refused,
+            Ok((handle, mut prepared)) => {
+                let acted = handle
+                    .act(
+                        &mut prepared,
+                        &get,
+                        &input(&args, None, None, None),
+                        Authority::Read,
+                    )
+                    .await;
+                handle.release(prepared, acted.is_err()).await;
+                acted.expect_err("an address with a user name was used")
+            }
+        };
+        assert_eq!(outcome.sent, Sent::NotSent, "{address}");
+        assert_eq!(outcome.failure.class(), FailureClass::Input, "{address}");
+        assert!(!format!("{outcome:?}").contains("PLANTED"));
+    }
+    assert_eq!(control.request_count("initialize").unwrap(), 0);
+    assert!(control.calls().unwrap().is_empty());
+}
+
 /// A credential never crosses plain `http` to another machine unless the
 /// surface accepts it (decision 0188). "Another machine" is the stand
 /// reached by the name `localhost`, which the rule never takes for a
@@ -1358,4 +1405,38 @@ async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts
         .map(|call| call.principal)
         .collect();
     assert_eq!(callers, [Some("ada".to_owned()), Some("ada".to_owned())]);
+}
+
+/// A surface that accepts an unencrypted link carries the notice a door
+/// shows a person, from its own field as the compiler kept it; one that
+/// does not carries none (decisions 0193 and 0194).
+#[test]
+fn a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_does() {
+    let folder = Folder::new("notice");
+    let registry = registry(&folder);
+    let set = registry.compiler_set();
+    let plain = compiled_fixture(&registry);
+    for surface in &plain.surfaces {
+        assert!(set.surface_notices(surface).is_empty(), "{surface:?}");
+    }
+    let root = folder.path().join("target");
+    common::write_target(&root, &|path, text| match path {
+        "target.yaml" => text.replace(
+            "    address: \"http://127.0.0.1:9/mcp\"\n",
+            "    address: \"http://127.0.0.1:9/mcp\"\n    unencrypted_credentials: accepted\n",
+        ),
+        _ => text,
+    });
+    let accepted = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+    let orders = accepted
+        .surfaces
+        .iter()
+        .find(|surface| surface.name.as_str() == "orders")
+        .unwrap();
+    assert_eq!(
+        set.surface_notices(orders),
+        [a2m_core::SurfaceNotice::UnencryptedCredentials]
+    );
 }

@@ -590,6 +590,104 @@ pub(crate) fn written_by_html(record: &PreviewRecord) -> String {
     out
 }
 
+/// What a page says of a version's surfaces and of a record's surface:
+/// each surface's kind and where it leads, each notice a pack registers
+/// for it in the notice's fixed words, and every lint warning of the
+/// version with its code and words (decisions 0193 and 0194; AC-1 of the
+/// third audit). The action registry fills the fields these read
+/// (`PreviewRecord::notices`, `PersonActAsk::surfaces`, and
+/// `PersonActAsk::warnings`); until it does, the pages have nothing to
+/// hand them, and they are proven against values a test builds.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the action registry's preview fields these print are being added in another crate; the wiring is one line at each page"
+    )
+)]
+pub(crate) mod version_shown {
+    use std::fmt::Write as _;
+
+    use super::escape;
+
+    /// A notice of a surface: its code (`SurfaceNotice::as_str`) and its
+    /// fixed words (`SurfaceNotice::words`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct NoticeShown<'a> {
+        pub code: &'a str,
+        pub words: &'a str,
+    }
+
+    /// A surface of a version, as the publish page shows it.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct SurfaceShown<'a> {
+        pub name: &'a str,
+        pub kind: &'a str,
+        /// Where it leads: its address as the plan holds it.
+        pub address: &'a str,
+        pub notices: Vec<NoticeShown<'a>>,
+    }
+
+    /// A lint warning of the version.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct WarningShown<'a> {
+        pub code: &'a str,
+        pub words: &'a str,
+    }
+
+    /// The notices of a record's surfaces, beside the record, each in its
+    /// own strong sentence. Nothing for a record whose surfaces carry none.
+    pub(crate) fn notices_html(notices: &[NoticeShown<'_>]) -> String {
+        let mut out = String::new();
+        for notice in notices {
+            let _ = write!(
+                out,
+                "<p class=\"notice\"><strong>{}</strong> (<code>{}</code>)</p>",
+                escape(notice.words),
+                escape(notice.code),
+            );
+        }
+        out
+    }
+
+    /// The surfaces of a version and its lint warnings, for the page a
+    /// person publishes from. Every surface is listed with its kind and
+    /// address, so a person sees where each leads, not only its name.
+    pub(crate) fn version_html(
+        surfaces: &[SurfaceShown<'_>],
+        warnings: &[WarningShown<'_>],
+    ) -> String {
+        let mut out = String::new();
+        if !surfaces.is_empty() {
+            out.push_str("<h2>Where it leads</h2><ul>");
+            for surface in surfaces {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>, a surface of the kind <code>{}</code>, leads to <code>{}</code>.{}</li>",
+                    escape(surface.name),
+                    escape(surface.kind),
+                    escape(surface.address),
+                    notices_html(&surface.notices),
+                );
+            }
+            out.push_str("</ul>");
+        }
+        if !warnings.is_empty() {
+            out.push_str("<h2>What the checks warn of</h2><ul>");
+            for warning in warnings {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>: {}</li>",
+                    escape(warning.code),
+                    escape(warning.words),
+                );
+            }
+            out.push_str("</ul>");
+        }
+        out
+    }
+}
+
 /// What the page says about the presence prompt of this machine.
 fn presence_html(presence: &Availability) -> String {
     if presence.proves_presence() {

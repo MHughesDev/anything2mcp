@@ -1141,6 +1141,48 @@ impl Ledger<'_, '_> {
             .collect()
     }
 
+    /// Every value set a step recorded before the commit point of a record
+    /// of `operation`, in any run of `workspace`: each `need` event of such
+    /// a record marked `before_commit`, with its evidence, in order of run,
+    /// record, and event, every attempt's alike. What answers a driver's
+    /// question whether another record holds a value (decision 0196): the
+    /// caller opens each blob and compares, and never hands a value out.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn recorded_before_commit(
+        &mut self,
+        workspace: &WorkspaceId,
+        operation: &OperationName,
+    ) -> Result<Vec<(RecordRef, BlobRef)>, Failure> {
+        let rows = self.tx.rows(
+            "SELECT e.run_id, rr.step_seq, rr.record_seq, e.evidence_ref
+             FROM run_events e
+             JOIN runs r ON r.id = e.run_id
+             JOIN run_records rr ON rr.run_id = e.run_id
+                 AND rr.step_seq = json_extract(e.payload, '$.step')
+                 AND rr.record_seq = json_extract(e.payload, '$.record')
+             WHERE r.workspace_id = ?1 AND rr.operation = ?2 AND e.kind = 'need'
+                 AND json_extract(e.payload, '$.before_commit') = 1
+                 AND e.evidence_ref IS NOT NULL
+             ORDER BY e.run_id, rr.step_seq, rr.record_seq, e.seq",
+            &[workspace.to_string().into(), operation.as_str().into()],
+        )?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    RecordRef {
+                        run: parse(row.text(0)?)?,
+                        step_seq: small(row.int(1)?)?,
+                        record_seq: small(row.int(2)?)?,
+                    },
+                    parse(row.text(3)?)?,
+                ))
+            })
+            .collect()
+    }
+
     /// Every record of the run, in step and record order.
     ///
     /// # Errors

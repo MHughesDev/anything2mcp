@@ -841,6 +841,16 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
         .unwrap();
     assert_eq!(listed.len(), 2);
     assert_eq!(listed.iter().filter(|row| row.current).count(), 1);
+    // The evidence is never changed, whoever writes to the file (decision
+    // 0196, audit finding LE-1).
+    let refused = folder
+        .raw()
+        .execute("UPDATE target_versions SET gate_evidence = '{}'", [])
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("gate evidence never changes"),
+        "{refused}"
+    );
 
     let loaded = store
         .read(move |tx| tx.versions().load(&workspace(), &target(), &first))

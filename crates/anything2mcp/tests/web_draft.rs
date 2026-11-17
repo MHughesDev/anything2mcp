@@ -119,6 +119,19 @@ fn files_of(root: &Path) -> Vec<(RelPath, Vec<u8>)> {
 /// Hands `web_snapshot` the pages of `paths`, at depth 0, and keeps what
 /// it finds.
 async fn discover(registry: &Registry, origin: &str, paths: &[&str]) -> Vec<Finding> {
+    discover_with(registry, "web_snapshot", origin, paths, None).await
+}
+
+/// Hands the probe's discoverer `name` the pages of `paths`, at depth 0,
+/// each looked at once `ready_text` shows where it is given, and keeps
+/// what it finds.
+async fn discover_with(
+    registry: &Registry,
+    name: &str,
+    origin: &str,
+    paths: &[&str],
+    ready_text: Option<&str>,
+) -> Vec<Finding> {
     let description = SurfaceDescription {
         kind: SurfaceKind::new("web").unwrap(),
         archetype: Archetype::Interface,
@@ -128,8 +141,8 @@ async fn discover(registry: &Registry, origin: &str, paths: &[&str]) -> Vec<Find
     let discoverer = registry
         .discoverers_for(&description)
         .into_iter()
-        .find(|handle| handle.declared().name.as_str() == "web_snapshot")
-        .expect("the probe's snapshot discoverer is registered");
+        .find(|handle| handle.declared().name.as_str() == name)
+        .unwrap_or_else(|| panic!("the probe's discoverer `{name}` is registered"));
     let surface = web_surface(origin);
     let mut focus = Values::new();
     focus.insert(
@@ -139,6 +152,9 @@ async fn discover(registry: &Registry, origin: &str, paths: &[&str]) -> Vec<Find
             .map(|path| Value::from(*path))
             .collect::<Vec<_>>(),
     );
+    if let Some(text) = ready_text {
+        focus.insert("ready_text", text);
+    }
     let mut bounds = discoverer.declared().bounds;
     bounds.depth = 0;
     let scope = DiscoveryScope {
@@ -213,18 +229,30 @@ async fn read_through_ui(
     name: &str,
     inputs: &Values,
 ) -> Result<Values, StepFailure> {
+    read_through(registry, plan, origin, name, "ui", inputs).await
+}
+
+/// The same, through the binding of the mode named.
+async fn read_through(
+    registry: &Registry,
+    plan: &Plan,
+    origin: &str,
+    name: &str,
+    mode: &str,
+    inputs: &Values,
+) -> Result<Values, StepFailure> {
     let read = plan
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == name)
         .unwrap_or_else(|| panic!("no `{name}` in the compiled plan"));
     assert_eq!(read.effect, a2m_core::EffectClass::Read);
-    let ui = Mode::new("ui").unwrap();
+    let ui = Mode::new(mode).unwrap();
     let binding = read
         .bindings
         .iter()
         .find(|binding| binding.mode == ui)
-        .unwrap();
+        .unwrap_or_else(|| panic!("`{name}` has no `{mode}` binding"));
     let handle = registry.driver(&ui).unwrap();
     let mut surface = plan.surfaces[binding.surface.get()].clone();
     surface.address = origin.to_owned();
@@ -456,6 +484,115 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
     }
 
     // Nothing was written.
+    assert!(app.writes().await.unwrap().is_empty());
+    world.close().await;
+}
+
+/// The totals of an order as the control interface reports what it holds.
+async fn totals_of(app: &TestApp, order: &str) -> Values {
+    let stored = app.stored_order(order).await.unwrap().unwrap();
+    let quantity: u64 = stored
+        .items
+        .values()
+        .map(|item| u64::from(item.quantity))
+        .sum();
+    let sixteenths: u64 = stored
+        .items
+        .values()
+        .map(|item| u64::from(item.quantity) * u64::from(item.length_sixteenths))
+        .sum();
+    Values::new()
+        .with("lines", i64::try_from(stored.items.len()).unwrap())
+        .with("total_quantity", i64::try_from(quantity).unwrap())
+        .with(
+            "total_length_in",
+            example_app::store::format_length_in(u32::try_from(sixteenths).unwrap()),
+        )
+}
+
+/// The `page_http` mode through the product's registry (decision 0190):
+/// the probe's `web_capture` looks at the pages of two orders' totals,
+/// which ask for the totals by themselves; the drafter writes a read of
+/// that request by key; the drafts compile, leaving out any file that
+/// holds an open question; and the read runs through the `page_http`
+/// driver in a posture that may only look, for each order, and returns
+/// what the control interface says the order holds. A key that is not one
+/// plain segment is refused before the application hears a request, and
+/// nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the_product() {
+    const TOTALS: &str = "example_api_orders_totals_get";
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let (machine, world) = product_engine(&origin).await;
+    let registry = world.engine.kernel().providers();
+
+    let found = discover_with(
+        registry,
+        "web_capture",
+        &origin,
+        &["/orders/A-100/totals", "/orders/A-101/totals"],
+        Some("Loaded."),
+    )
+    .await;
+    let exchanges: Vec<&Finding> = found
+        .iter()
+        .filter(|finding| {
+            finding.kind().as_str() == "exchange"
+                && matches!(finding.subject(), a2m_core::Subject::Address(at) if at.path() == "/api/orders/{order_id}/totals")
+        })
+        .collect();
+    assert_eq!(exchanges.len(), 1, "{found:?}");
+
+    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
+    let read = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == TOTALS)
+        .unwrap_or_else(|| panic!("no `{TOTALS}` in the compiled plan"));
+    assert_eq!(read.effect, a2m_core::EffectClass::Read);
+    assert!(
+        read.bindings
+            .iter()
+            .all(|binding| binding.act.iter().all(|step| !step.commits))
+    );
+
+    for order in ["A-100", "A-101"] {
+        let key = Values::new().with("order_id", order);
+        let before = app.seen().await.unwrap().len();
+        let values = read_through(registry, &plan, &origin, TOTALS, "page_http", &key)
+            .await
+            .unwrap_or_else(|failure| panic!("{order}: {failure}"));
+        let wanted = totals_of(&app, order).await;
+        for (name, value) in wanted.iter() {
+            assert_eq!(values.get(name), Some(value), "{order}: {values:?}");
+        }
+        let seen = app.seen().await.unwrap();
+        assert!(
+            seen[before..].contains(&format!("GET /api/orders/{order}/totals")),
+            "{seen:?}"
+        );
+        assert!(
+            seen[before..].iter().all(|line| line.starts_with("GET ")),
+            "{seen:?}"
+        );
+    }
+
+    for refused in ["A-100/x", "..", "A-100?view=all", "%2e%2e"] {
+        let before = app.seen().await.unwrap();
+        let key = Values::new().with("order_id", refused);
+        let stopped = read_through(registry, &plan, &origin, TOTALS, "page_http", &key)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (stopped.failure.class(), stopped.failure.code().as_str()),
+            (a2m_core::FailureClass::Input, "address_value_refused"),
+            "{refused:?}: {stopped}"
+        );
+        assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+    }
+
     assert!(app.writes().await.unwrap().is_empty());
     world.close().await;
 }

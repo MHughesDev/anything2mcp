@@ -911,6 +911,9 @@ impl Kernel {
                     .provider_roots(&provider)
                     .cloned()
                     .unwrap_or_else(a2m_provider::Roots::none);
+                // The call's own project folder, as the dispatcher checked
+                // it, taken before the input is.
+                let call_paths = call_paths(call.project_folder().ok());
                 let input: Values =
                     serde_json::from_value(Json::Object(call.input)).map_err(|_| {
                         codes::input(
@@ -920,10 +923,13 @@ impl Kernel {
                         )
                     })?;
                 let redact = self.redact();
+                // A provider's project root resolves in the call's own
+                // project folder and in no other (decision 0196).
                 let cx = a2m_provider::ActionContext {
                     roots: &roots,
                     registry: self.providers(),
                     redact: redact.as_ref(),
+                    paths: &call_paths,
                 };
                 let values = action.handle(&input, &cx).await?;
                 let result = serde_json::to_value(&values).map_err(|_| {
@@ -1345,4 +1351,23 @@ pub(crate) fn redact_json(redact: &dyn Redact, value: &Json) -> Json {
         ),
         other => other.clone(),
     }
+}
+
+/// The checked paths of a call: its project folder, checked as a root of
+/// its own, or none.
+pub(crate) fn call_paths(project: Option<&std::path::Path>) -> a2m_provider::CheckedPaths {
+    let mut paths = a2m_provider::CheckedPaths::none();
+    if let Some(folder) = project {
+        let mut roots = a2m_provider::Roots::none();
+        let checked = a2m_provider::RootName::new("project").ok().and_then(|name| {
+            roots
+                .add(name.clone(), folder, a2m_provider::Access::Write)
+                .ok()?;
+            roots.folder(&name, a2m_provider::Access::Write).ok()
+        });
+        if let Some(project) = checked {
+            paths = paths.with_project(project);
+        }
+    }
+    paths
 }

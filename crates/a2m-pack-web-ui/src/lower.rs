@@ -4,8 +4,8 @@
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |
-//! | `read`, `list` | `goto`, `wait`, `read` | | |
-//! | the write verbs | `goto`, `wait`, one `set` for each field, `invoke`, marked as the commit point | | `goto`, `wait`, `read` on the screen `read_back` names |
+//! | `read`, `list` | `goto` in an observing tab, `wait`, `read` | | |
+//! | the write verbs | `goto` in an acting tab, `wait`, one `set` for each field, `invoke`, marked as the commit point | | `goto` in an observing tab, `wait`, `read` on the screen `read_back` names |
 //!
 //! There is no separate `locate` step: each `read`, `set`, and `invoke`
 //! finds its own element and checks its fingerprint, because an element is
@@ -24,7 +24,8 @@ use a2m_files::{
 
 use crate::codes::{self, shown};
 use crate::model::{
-    InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep, WaitStep,
+    GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
+    TabKind, WaitStep,
 };
 use crate::screens::{SCREEN_KIND, WEB_SURFACE, problem};
 
@@ -167,8 +168,10 @@ impl<'a> Lower<'a, '_> {
     }
 
     /// The `goto` step: a value for every placeholder of the screen's
-    /// address, each the operation's input of the same name.
-    fn goto(&mut self, found: &Found<'_>) -> Step {
+    /// address, each the operation's input of the same name, and the tab
+    /// it is reached in: one that cannot write, unless the step is of a
+    /// write before its read-back (decision 0195).
+    fn goto(&mut self, found: &Found<'_>, tab: TabKind) -> Step {
         let mut args = Vec::new();
         for hole in found.screen.holes() {
             if self.cx.operation().input(hole).is_none() {
@@ -215,6 +218,7 @@ impl<'a> Lower<'a, '_> {
             },
         );
         step.args = args;
+        step.payload = self.encoded(&GotoStep { tab }, found.at);
         step
     }
 
@@ -552,7 +556,7 @@ impl Lowering for UiLowering {
             // how that looks; a list answers with the rows there are.
             let lookup = binding.verb.as_str() == "read" && found.screen.can_be_absent();
             let mut steps = vec![
-                lower.goto(&found),
+                lower.goto(&found, TabKind::Observe),
                 lower.wait(&found, false),
                 lower.read(&found),
             ];
@@ -561,7 +565,7 @@ impl Lowering for UiLowering {
             }
             lowered.act = steps;
         } else {
-            let mut act = vec![lower.goto(&found), lower.wait(&found, true)];
+            let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, true)];
             act.extend(lower.sets(&found, binding.doc));
             act.extend(lower.invoke(&found, binding.doc));
             lowered.act = act;
@@ -580,8 +584,11 @@ impl Lowering for UiLowering {
                         "Add a variant with `handling: absent` to the screen, with what the page shows then.",
                     );
                 }
+                // The read-back is a new visit, in a tab that cannot
+                // write: it, and the preview and the freshness check that
+                // run it on their own, are reads.
                 let mut steps = vec![
-                    lower.goto(&reader),
+                    lower.goto(&reader, TabKind::Observe),
                     lower.wait(&reader, false),
                     lower.read(&reader),
                 ];

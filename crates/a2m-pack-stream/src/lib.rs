@@ -11,7 +11,10 @@
 //! Two fill it: `nats`, the NATS client protocol with JetStream, the first
 //! standard one (decision 0167); and `example-broker/1`, the line protocol
 //! of the test broker under `targets/example-broker`. A surface of kind
-//! `broker` says which it speaks.
+//! `broker` says which it speaks. The second exists only to speak to that
+//! stand, so it is built only with the feature `example-protocol`, which
+//! the stand turns on for every build that has the stand as a dependency:
+//! the tests. The shipped product does not offer it (decision 0197).
 //!
 //! The product crate makes one call: [`register`].
 
@@ -20,6 +23,7 @@ pub mod codes;
 mod discover;
 mod draft;
 mod driver;
+#[cfg(feature = "example-protocol")]
 mod example_wire;
 mod json;
 mod lint;
@@ -40,8 +44,16 @@ use crate::names::{BROKER, Names};
 pub const MANIFEST: &str = include_str!("manifest.toml");
 
 /// The wire protocols this build speaks, by the name a surface of kind
-/// `broker` states under `protocol`.
+/// `broker` states under `protocol`. A surface naming another does not
+/// compile.
+#[cfg(feature = "example-protocol")]
 pub const PROTOCOLS: &[&str] = &[nats_wire::NAME, example_wire::NAME];
+/// The wire protocols this build speaks, by the name a surface of kind
+/// `broker` states under `protocol`. A surface naming another does not
+/// compile. The test broker's own protocol is not among them: it is built
+/// only with the feature `example-protocol`.
+#[cfg(not(feature = "example-protocol"))]
+pub const PROTOCOLS: &[&str] = &[nats_wire::NAME];
 
 /// The stream pack.
 #[derive(Debug, Clone, Copy, Default)]
@@ -84,10 +96,7 @@ impl Pack for StreamPack {
             names.mode.clone(),
             Arc::new(driver::StreamDriver::new(
                 Arc::clone(cx.redact()),
-                vec![
-                    Arc::new(nats_wire::NatsProtocol::new(ceiling)),
-                    Arc::new(example_wire::ExampleProtocol),
-                ],
+                protocols(ceiling),
                 idle_links,
             )),
         )?;
@@ -128,6 +137,27 @@ impl Pack for StreamPack {
     }
 }
 
+/// The wire protocols the driver speaks: those of [`PROTOCOLS`].
+fn protocols(ceiling: usize) -> Vec<Arc<dyn wire::Protocol>> {
+    let mut protocols: Vec<Arc<dyn wire::Protocol>> =
+        vec![Arc::new(nats_wire::NatsProtocol::new(ceiling))];
+    protocols.extend(stand_protocol());
+    protocols
+}
+
+/// The test broker's protocol, in a build with the feature
+/// `example-protocol`.
+#[cfg(feature = "example-protocol")]
+fn stand_protocol() -> Option<Arc<dyn wire::Protocol>> {
+    Some(Arc::new(example_wire::ExampleProtocol))
+}
+
+/// Nothing: this build does not speak the test broker's protocol.
+#[cfg(not(feature = "example-protocol"))]
+fn stand_protocol() -> Option<Arc<dyn wire::Protocol>> {
+    None
+}
+
 /// The pack's version, as its manifest states it: the text of the first
 /// `version = "..."` line.
 fn to_version(manifest: &str) -> String {
@@ -137,4 +167,47 @@ fn to_version(manifest: &str) -> String {
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or("0.0.0")
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test stops when a manifest cannot be read"
+    )]
+
+    use std::path::Path;
+
+    /// Decision 0197: the test broker's protocol is not offered by the
+    /// shipped product. Only the stand's manifest turns the feature on, and
+    /// no crate of the workspace has the stand as anything but a
+    /// development dependency (the documentation audit holds that), so a
+    /// build of the product alone never speaks it.
+    #[test]
+    fn only_the_test_broker_turns_its_protocol_on() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let mut turning_on = Vec::new();
+        for top in ["crates", "targets", "bench"] {
+            let Ok(entries) = std::fs::read_dir(root.join(top)) else {
+                continue;
+            };
+            for entry in entries {
+                let manifest = entry.unwrap().path().join("Cargo.toml");
+                let Ok(text) = std::fs::read_to_string(&manifest) else {
+                    continue;
+                };
+                let own = manifest.ends_with(Path::new("a2m-pack-stream").join("Cargo.toml"));
+                if !own && text.contains("\"example-protocol\"") {
+                    let folder = manifest.parent().unwrap();
+                    turning_on.push(folder.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
+        assert_eq!(turning_on, ["example-broker"]);
+        // In this build, a test build, the stand is a dependency.
+        assert!(super::PROTOCOLS.contains(&"example-broker/1"));
+    }
 }

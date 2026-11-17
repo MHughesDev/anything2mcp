@@ -906,6 +906,18 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
             Sent::NotSent
         )
     );
+
+    // A name is not a loopback address, even one that leads to the stand
+    // (decision 0197): refused before the stand hears anything.
+    let stand = TestNats::start().await.unwrap();
+    let named = format!("localhost:{}", stand.address().port());
+    let near = Scene::at(stand, Some(named)).await;
+    let refused = near.try_prepare(Posture::Live, None).await.err().unwrap();
+    assert_eq!(
+        (refused.failure.code().to_string(), refused.sent),
+        ("transport_refused".to_owned(), Sent::NotSent)
+    );
+    assert!(near.stand.connects().is_empty());
 }
 
 // ---- 5. discovery ----
@@ -1622,6 +1634,27 @@ async fn an_acknowledgement_in_flight_when_the_credential_expires_is_in_doubt() 
     assert_eq!(scene.stand.messages(SEED_WORK).len(), 1);
 }
 
+/// A work queue's consumer that does not state how long it waits for an
+/// acknowledgement has no rule (decision 0197): a take stops before it
+/// pulls anything.
+#[tokio::test]
+async fn a_work_queue_consumer_that_does_not_state_its_wait_is_never_pulled_from() {
+    let scene = Scene::start().await;
+    scene.stand.set_fault(Fault::ConsumerWithoutAckWait);
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let write = ledger.write("unstated").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let stopped = failed(read(&handle, &mut prepared, &take[..2], &Values::new()).await);
+    assert_eq!(stopped.1, "unexpected_reply", "{stopped:?}");
+    handle.release(prepared, true).await;
+    assert!(scene.stand.deliveries().is_empty());
+    assert!(scene.stand.acknowledgements().is_empty());
+}
+
 #[tokio::test]
 async fn a_message_delivered_again_is_never_taken_by_a_second_record() {
     let scene = Scene::start().await;
@@ -2020,4 +2053,131 @@ async fn a_publish_in_doubt_past_the_window_is_found_by_a_scan_from_the_recorded
         .collect();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].seq, 10);
+}
+
+/// Decision 0197, over NATS: the engine that took a message first is gone
+/// with its marks, and the server hands the message out again after the
+/// consumer's wait. A take asks the engine whether another record holds
+/// it: "cannot tell" stops as before, "held" stops and names the record,
+/// "not held" takes it, and its acknowledgement removes it.
+#[tokio::test]
+async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_record_holds_it() {
+    use a2m_provider::RecordedElsewhere;
+    use common::{Answering, take_asking};
+
+    let scene = Scene::start().await;
+    scene.stand.declare_consumer(
+        SEED_WORK,
+        ConsumerSpec::new(SEED_CONSUMER, AckPolicy::Explicit).ack_wait(Duration::from_millis(500)),
+    );
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+
+    // The first engine's record takes the first message and ends before
+    // its acknowledgement is sent.
+    let taker = ledger.write("first").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(taker.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let first = text(&taken.for_reconcile, "message_id").to_owned();
+    handle.release(prepared, true).await;
+
+    let other_folder = Folder::new("nats-restarted-engine");
+    let other = common::registry(&other_folder);
+    let answers = [
+        RecordedElsewhere::CannotTell,
+        RecordedElsewhere::Held(taker.record),
+    ];
+    for (at, answer) in answers.into_iter().enumerate() {
+        scene.stand.advance(Duration::from_secs(1));
+        let write = ledger.write(&format!("stopped-{at}")).await;
+        let answering = Answering::new(answer);
+        let (handle, mut prepared) = scene
+            .try_prepare_in(&other, Posture::Live, Some(write.fence))
+            .await
+            .unwrap();
+        let stopped = take_asking(&handle, &mut prepared, take, &write, answering.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(stopped.failure.code().as_str(), "message_may_be_held");
+        assert_eq!(
+            stopped
+                .failure
+                .message()
+                .contains(&taker.record.run.to_string()),
+            matches!(answer, RecordedElsewhere::Held(_))
+        );
+        assert_eq!(
+            *answering.asked.lock().unwrap(),
+            [(
+                "message_id".to_owned(),
+                a2m_provider::recorded_digest(&Value::from(first.as_str()))
+            )]
+        );
+        handle.release(prepared, true).await;
+    }
+    assert!(scene.stand.acknowledgements().is_empty());
+
+    scene.stand.advance(Duration::from_secs(1));
+    scene
+        .stand
+        .set_ack_wait(SEED_WORK, SEED_CONSUMER, Duration::from_secs(30));
+    let free = ledger.write("free").await;
+    let (handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(free.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = take_asking(
+        &handle,
+        &mut prepared,
+        take,
+        &free,
+        Answering::new(RecordedElsewhere::NotHeld),
+    )
+    .await
+    .unwrap() else {
+        panic!("a message");
+    };
+    assert_eq!(text(&taken.for_reconcile, "message_id"), first);
+    handle
+        .act(
+            &mut prepared,
+            &take[2],
+            &free.keyless(&none),
+            free.authority(),
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    // The server: one acknowledgement, of the first message, which is gone;
+    // it went out four times.
+    let acks = scene.stand.acknowledgements();
+    assert_eq!(acks.len(), 1);
+    assert_eq!(
+        (acks[0].kind, acks[0].seq.to_string()),
+        (AckKind::Ack, first.clone())
+    );
+    assert!(
+        scene
+            .stand
+            .messages(SEED_WORK)
+            .iter()
+            .all(|m| m.seq.to_string() != first)
+    );
+    let attempts: Vec<u64> = scene
+        .stand
+        .deliveries()
+        .iter()
+        .filter(|delivery| delivery.seq.to_string() == first)
+        .map(|delivery| delivery.attempt)
+        .collect();
+    assert_eq!(attempts, [1, 2, 3, 4]);
 }

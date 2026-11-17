@@ -47,6 +47,10 @@ pub(crate) enum WireErrorKind {
     /// The named subscription is not declared on the broker.
     SubscriptionMissing,
     /// Another connection holds the named subscription.
+    #[cfg_attr(
+        not(feature = "example-protocol"),
+        allow(dead_code, reason = "only the test broker's protocol says so")
+    )]
     SubscriptionInUse,
     /// The position is not one the log holds.
     PositionOutOfRange,
@@ -59,6 +63,25 @@ pub(crate) enum WireErrorKind {
     /// The protocol cannot carry what the step would send: an address, a
     /// key, or a header it has no form for.
     Unfit,
+}
+
+/// Where a plain TCP connection may go: a loopback address written as an
+/// IP address, `127.0.0.0/8` or `::1`, with its port (decision 0197, by the
+/// rule of decision 0188). A name, `localhost` included, is never one: the
+/// resolver decides where a name leads. `::ffff:127.0.0.1`, `0.0.0.0`, and
+/// `::` are not one either. Every protocol of the pack dials only what this
+/// returns, so the session's credential never crosses a plain link to
+/// another machine, and nothing is resolved or sent before the check.
+pub(crate) fn plain_tcp_address(address: &str) -> Result<std::net::SocketAddr, WireError> {
+    match address.parse::<std::net::SocketAddr>() {
+        Ok(found) if found.ip().is_loopback() => Ok(found),
+        _ => Err(WireError {
+            kind: WireErrorKind::Transport,
+            sent: Sent::NotSent,
+            detail: "plain TCP is used only to this machine's loopback address, written as an IP address"
+                .to_owned(),
+        }),
+    }
 }
 
 /// The session's credential, as a wire protocol presents it when a
@@ -157,7 +180,10 @@ pub(crate) struct Opened {
     pub position: Option<u64>,
     /// On a queue, how long the broker waits for an acknowledgement of a
     /// delivery before it hands the message out again, as the declared
-    /// consumer states it; nothing where the protocol does not say.
+    /// consumer states it. Nothing only where the protocol has no such
+    /// wait: the test broker's hands a message out again only when it is
+    /// given back or its connection ends. A protocol that has one and a
+    /// broker that does not state it is an answer with no rule.
     pub ack_wait: Option<Duration>,
 }
 
@@ -170,8 +196,8 @@ pub(crate) struct Delivered {
     pub message: Message,
     /// How many times the broker has handed this message out, this one
     /// included, as the delivery's own metadata says; nothing where the
-    /// protocol does not say. Above one, an earlier delivery may be held by
-    /// another record.
+    /// protocol does not say. Above one, or unstated, an earlier delivery
+    /// may be held by another record, and a take treats it so.
     pub attempt: Option<u64>,
 }
 
@@ -295,4 +321,35 @@ pub(crate) trait Link: Send {
 
     /// Publishes one message and waits for the broker's confirmation.
     fn publish<'a>(&'a mut self, message: &'a Outgoing, deadline: Deadline) -> Wire<'a, Receipt>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_tcp_goes_only_to_a_loopback_address_written_as_an_ip_address() {
+        for good in ["127.0.0.1:4222", "127.5.6.7:1", "[::1]:7400"] {
+            assert!(plain_tcp_address(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "localhost:4222",
+            "localhost.:4222",
+            "broker.internal:7400",
+            "[::ffff:127.0.0.1]:4222",
+            "0.0.0.0:4222",
+            "[::]:4222",
+            "127.1:4222",
+            "192.0.2.10:4222",
+            "127.0.0.1",
+            "",
+        ] {
+            let refused = plain_tcp_address(bad).unwrap_err();
+            assert_eq!(
+                (refused.kind, refused.sent),
+                (WireErrorKind::Transport, Sent::NotSent),
+                "{bad}"
+            );
+        }
+    }
 }

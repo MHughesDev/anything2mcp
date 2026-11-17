@@ -332,8 +332,17 @@ async fn an_engine_with_no_connection_and_nothing_held_stops_and_a_hold_keeps_it
     assert!(EngineLock::held(&paths).unwrap());
     let second = Channel::bind(&paths, VERSION).await.unwrap_err();
     assert_eq!(*second.code(), codes::ENGINE_RUNNING);
+    // Dropped, the lock is let go. The test waits for the lock to be free,
+    // not for a moment: a process another test starts at that instant
+    // shares the lock file's open description until it runs its program,
+    // and holds the lock that long.
     drop(lock);
-    assert!(!EngineLock::held(&paths).unwrap());
+    within("the lock let go", async {
+        while EngineLock::held(&paths).unwrap() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
 }
 
 /// A stand-in for the REST face, which the product crate composes: the

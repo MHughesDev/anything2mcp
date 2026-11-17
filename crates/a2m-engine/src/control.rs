@@ -383,4 +383,18 @@ pub trait Control: Send + Sync {
     fn project_folder(&self) -> Option<PathBuf> {
         None
     }
+
+    /// The answerer of whether another record of `operation` in the
+    /// workspace holds a value a step of `asking` recorded, which the
+    /// engine hands that one step (decision 0193). It compares digests of
+    /// the values recorded before each other record's save, never hands a
+    /// value back, and cannot tell where a value it would compare was
+    /// masked. `None` by default: every question answers `CannotTell`.
+    fn other_records(
+        &self,
+        _operation: &OperationName,
+        _asking: RecordRef,
+    ) -> Option<Arc<dyn a2m_provider::OtherRecords>> {
+        None
+    }
 }

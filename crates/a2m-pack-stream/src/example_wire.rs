@@ -66,6 +66,9 @@ impl Protocol for ExampleProtocol {
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>> {
         Box::pin(async move {
+            // The token goes in the clear, so plain TCP goes to this
+            // machine's own loopback address and nowhere else, as for NATS.
+            let address = crate::wire::plain_tcp_address(address)?;
             let unreachable = || {
                 error(
                     WireErrorKind::Unreachable,
@@ -494,7 +497,13 @@ impl Link for ExampleLink {
                             item.get("message")
                                 .ok_or_else(|| unexpected("a delivery has no message"))?,
                         )?,
-                        attempt: None,
+                        // The protocol states every delivery's count; one
+                        // it does not state has no rule.
+                        attempt: Some(
+                            number_of(item, "attempt")?
+                                .filter(|attempt| *attempt >= 1)
+                                .ok_or_else(|| unexpected("a delivery does not say its count"))?,
+                        ),
                     })
                 })
                 .collect()

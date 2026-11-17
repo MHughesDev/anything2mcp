@@ -176,6 +176,7 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
             )
             .await,
     );
+    tab.record_exchanges();
     let totals = Address::new(&app.url("/orders/A-100/totals")).unwrap();
     must(tab.goto(&totals, soon()).await);
     let loaded = crate::Primitive::Text(
@@ -186,7 +187,9 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
         },
     );
     must(tab.wait(&loaded, soon()).await);
-    let exchanges = tab.exchanges(soon()).await;
+    let taken = tab.exchanges(soon()).await;
+    assert_eq!((taken.dropped, taken.awaited), (0, 0));
+    let exchanges = taken.exchanges;
     let fields = [
         ("lines", "integer"),
         ("order_id", "string"),
@@ -203,10 +206,13 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
             origin: app.url("").trim_end_matches('/').to_owned(),
             path: "/api/orders/A-100/totals".to_owned(),
             query: vec!["lang".to_owned(), "view".to_owned()],
+            query_left_out: false,
             credential_headers: vec!["cookie".to_owned(), "x-csrf-token".to_owned()],
+            set_headers: vec!["accept".to_owned(), "x-csrf-token".to_owned()],
             status: 200,
             content_type: "application/json".to_owned(),
             fields: Some(fields),
+            names_withheld: false,
         }]
     );
     // No value of the query, the header, the cookie, or the answer.
@@ -220,7 +226,19 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
         assert!(!whole.contains(value), "{whole}");
     }
     // Taken once; the document the tab was sent to is not one.
-    assert!(tab.exchanges(soon()).await.is_empty());
+    assert!(tab.exchanges(soon()).await.exchanges.is_empty());
+    // A request with no header of the page's own names none, and a token
+    // in its path or as a bare entry of its query is kept as neither.
+    let plain = "fetch('/api/orders/A-100/totals?example-token-for-tests-7f3a9c2b1d').then((r) => 'sent:' + r.status, () => 'failed')";
+    assert_eq!(must(tab.page.as_the_page(plain, soon()).await), "sent:200");
+    let taken = tab.exchanges(soon()).await.exchanges;
+    assert_eq!(taken.len(), 1, "{taken:?}");
+    assert!(taken[0].set_headers.is_empty(), "{taken:?}");
+    assert!(
+        taken[0].query.is_empty() && taken[0].query_left_out,
+        "{taken:?}"
+    );
+    assert!(!format!("{taken:?}").contains("example-token"), "{taken:?}");
     assert!(app.writes().await.unwrap().is_empty());
     drop(tab);
     stand.end().await;
@@ -266,7 +284,8 @@ async fn an_observing_tab_reads_from_inside_its_page_with_get_alone_and_its_guar
         },
     );
     must(tab.wait(&loaded, soon()).await);
-    assert_eq!(tab.exchanges(soon()).await.len(), 1);
+    // A tab that was not asked to record keeps none.
+    assert!(tab.exchanges(soon()).await.exchanges.is_empty());
     let seen = || async {
         app.seen()
             .await
@@ -401,6 +420,25 @@ async fn a_read_from_inside_the_page_longer_than_the_limit_is_refused_whole() {
         tab.read_from_page(&path, soon()).await,
         Err(BrowserError::TooLarge { limit: 16 })
     ));
+    // An answer of the page's own longer than the tab reads is not kept by
+    // the browser, and no names are made of it; the tab goes on.
+    tab.record_exchanges();
+    must(
+        tab.goto(&Address::new(&app.url("/orders/A-100/totals")).unwrap(), soon())
+            .await,
+    );
+    let loaded = crate::Primitive::Text(
+        css("#state"),
+        crate::TextMatch {
+            text: "Loaded.".to_owned(),
+            contains: false,
+        },
+    );
+    must(tab.wait(&loaded, soon()).await);
+    let taken = tab.exchanges(soon()).await.exchanges;
+    assert_eq!(taken.len(), 1, "{taken:?}");
+    assert_eq!(taken[0].fields, None, "{taken:?}");
+    must(tab.locate(&css("#state"), soon()).await);
     drop(tab);
     stand.end().await;
 }

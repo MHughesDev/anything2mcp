@@ -164,13 +164,22 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
     assert_eq!(fields["description"], json!({"type": "text"}));
     assert_eq!(fields["quantity"], json!({"type": "integer"}));
 
-    // A name that is itself the secret is redacted; the query keeps its
-    // names and the types of its values.
-    let (_, found) = capture.one("endpoint", "/probe/secret.json");
+    // A name that is itself the secret is a value: the names of its object
+    // are withheld whole, a dictionary's (decision 0195); the query keeps
+    // its names and the types of its values.
+    let (finding, found) = capture.one("endpoint", "/probe/secret.json");
     assert_eq!(found["query"], json!({"token": "text"}));
     assert_eq!(
-        found["response"]["fields"]["[redacted]"],
-        json!({"type": "integer"})
+        found["response"]["fields"]["by_key"],
+        json!({"type": "object", "names_withheld": true})
+    );
+    assert!(
+        finding
+            .limitations()
+            .iter()
+            .any(|one| one.sentence.contains("dictionary")),
+        "{:?}",
+        finding.limitations()
     );
     assert_eq!(
         found["response"]["fields"]["items"]["items"]["fields"]["note"],
@@ -671,6 +680,8 @@ async fn a_request_the_page_makes_by_itself_is_an_exchange_of_names_and_kinds_on
             }},
             "made_by": "/orders/A-100/totals",
             "credential_headers": ["cookie", "x-csrf-token"],
+            "set_headers": ["accept", "x-csrf-token"],
+            "query_left_out": false,
         })
     );
     // No value of the query, a header, the cookie, or the answer.
@@ -690,19 +701,31 @@ async fn a_request_the_page_makes_by_itself_is_an_exchange_of_names_and_kinds_on
 }
 
 /// The `exchange` finding of the page that asks for an order's totals by
-/// itself, matched over two orders, as the web UI pack's drafting test
-/// reads it.
+/// itself, with a query and headers its script set, matched over two
+/// orders, as the web UI pack's drafting test reads it.
 fn shared_totals_exchange() -> std::path::PathBuf {
     shared_order_screen().with_file_name("order_totals_exchange.json")
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeholder() {
+/// The same, of the page that asks for them with nothing a read from
+/// inside the page would not send.
+fn shared_summary_exchange() -> std::path::PathBuf {
+    shared_order_screen().with_file_name("order_summary_exchange.json")
+}
+
+/// Discovers two pages of one screen whose own request is one read by
+/// key, and holds that it is given once, with the placeholder, and that the
+/// finding is the one kept at `file`.
+async fn matched_requests_of(name: &str, page: &str, request: &str, file: std::path::PathBuf) {
     let site = Site::start().await;
-    let bench = Bench::new("totals-matched", no_secrets());
+    let bench = Bench::new(name, no_secrets());
     let start = site.url("/");
+    let pages: Vec<&'static str> = ["A-100", "A-101"]
+        .iter()
+        .map(|order| &*Box::leak(page.replace("{order_id}", order).into_boxed_str()))
+        .collect();
     let look = Look {
-        paths: vec!["/orders/A-100/totals", "/orders/A-101/totals"],
+        paths: pages,
         depth: Some(0),
         ready_text: Some("Loaded."),
         ..Look::default()
@@ -713,13 +736,21 @@ async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeho
     let ids = |seen: &Seen| seen.findings.iter().map(|one| one.id()).collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
     // One request by key; neither order's own is given apart.
-    assert!(first.at("exchange", "/api/orders/A-100/totals").is_empty());
-    assert!(first.at("exchange", "/api/orders/A-101/totals").is_empty());
-    let (finding, found) = first.one("exchange", "/api/orders/{order_id}/totals");
-    assert_eq!(found["made_by"], "/orders/{order_id}/totals");
+    for order in ["A-100", "A-101"] {
+        assert!(
+            first
+                .at("exchange", &request.replace("{order_id}", order))
+                .is_empty()
+        );
+    }
+    let (finding, found) = first.one("exchange", request);
+    assert_eq!(found["made_by"], page);
     assert_eq!(
         found["paths"],
-        serde_json::json!(["/api/orders/A-100/totals", "/api/orders/A-101/totals"])
+        serde_json::json!([
+            request.replace("{order_id}", "A-100"),
+            request.replace("{order_id}", "A-101")
+        ])
     );
     assert!(
         finding
@@ -730,26 +761,154 @@ async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeho
     // No value of the query, a header, the cookie, or the answer.
     let whole = serde_json::to_string(&first.findings).unwrap();
     for value in [
-        "summary",
+        "view=",
         "example-token-for-tests",
         "secret-for-tests-cookie",
+        "Example Customer",
     ] {
         assert!(!whole.contains(value), "{whole}");
     }
-    let text = std::fs::read_to_string(shared_totals_exchange()).unwrap_or_default();
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
     let shared: Json = serde_json::from_str(&text).unwrap_or(Json::Null);
     let wanted = serde_json::json!({
         "kind": "exchange",
-        "path": "/api/orders/{order_id}/totals",
+        "path": request,
         "found": finding.found(),
     });
     assert_eq!(
         shared,
         wanted,
         "write this into {}:\n{}",
-        shared_totals_exchange().display(),
+        file.display(),
         serde_json::to_string_pretty(&wanted).unwrap()
     );
     assert!(site.writes().await.is_empty());
+    bench.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeholder() {
+    matched_requests_of(
+        "totals-matched",
+        "/orders/{order_id}/totals",
+        "/api/orders/{order_id}/totals",
+        shared_totals_exchange(),
+    )
+    .await;
+    matched_requests_of(
+        "summary-matched",
+        "/orders/{order_id}/summary",
+        "/api/orders/{order_id}/totals",
+        shared_summary_exchange(),
+    )
+    .await;
+}
+
+/// Where the screen finding of a page whose address holds a token is kept
+/// as data, for the web UI pack's drafting test.
+fn shared_invitation_screen() -> std::path::PathBuf {
+    shared_order_screen().with_file_name("invitation_screen.json")
+}
+
+/// A long random text, made up, as a page's address and its script carry
+/// a token.
+const TOKEN: &str = "q7Zx9kP2mW4vB8nR3tY6hJ1cF5";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_token_in_a_pages_address_or_a_bare_entry_of_its_query_reaches_no_finding() {
+    let site = Site::start().await;
+    let bench = Bench::new("token-in-address", no_secrets());
+    let start = site.url("/");
+    let page: &'static str = Box::leak(format!("/invitations/{TOKEN}").into_boxed_str());
+    let look = Look {
+        paths: vec![page],
+        depth: Some(0),
+        ready_text: Some("Loaded."),
+        ..Look::default()
+    };
+    let mut all = Vec::new();
+    for discoverer in ["web_probe", "web_snapshot", "web_capture"] {
+        let seen = must(bench.run(discoverer, &start, &look).await);
+        check(&seen);
+        all.extend(seen.findings);
+    }
+    let whole = serde_json::to_string(&all).unwrap();
+    assert!(!whole.contains(TOKEN), "{whole}");
+    let paths: Vec<String> = all
+        .iter()
+        .filter_map(|finding| match finding.subject() {
+            a2m_core::Subject::Address(address) => Some(address.path().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert!(paths.contains(&"/invitations/{value}".to_owned()), "{paths:?}");
+    assert!(
+        paths.contains(&"/api/invitations/{value}/check".to_owned()),
+        "{paths:?}"
+    );
+    // The bare entry of the query is said to have been there, and is not
+    // named.
+    let feed: Vec<&a2m_core::Finding> = all
+        .iter()
+        .filter(|finding| {
+            finding.kind().as_str() == "exchange"
+                && matches!(finding.subject(), a2m_core::Subject::Address(address) if address.path() == "/api/feed")
+        })
+        .collect();
+    assert_eq!(feed.len(), 1, "{paths:?}");
+    let found: Json = serde_json::from_str(feed[0].found()).unwrap();
+    assert_eq!(found["query"], json!({}));
+    assert_eq!(found["query_left_out"], true);
+    // What the web pack drafts from, kept as data.
+    let screen = all
+        .iter()
+        .find(|finding| {
+            finding.kind().as_str() == "screen"
+                && matches!(finding.subject(), a2m_core::Subject::Address(address) if address.path() == "/invitations/{value}")
+        })
+        .unwrap();
+    let text = std::fs::read_to_string(shared_invitation_screen()).unwrap_or_default();
+    let shared: Json = serde_json::from_str(&text).unwrap_or(Json::Null);
+    let wanted = json!({"kind": "screen", "path": "/invitations/{value}", "found": screen.found()});
+    assert_eq!(
+        shared,
+        wanted,
+        "write this into {}:\n{}",
+        shared_invitation_screen().display(),
+        serde_json::to_string_pretty(&wanted).unwrap()
+    );
+    assert!(site.writes().await.is_empty());
+    bench.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_matched_screen_keeps_what_each_of_its_pages_showed() {
+    let site = Site::start().await;
+    let bench = Bench::new("notes-matched", no_secrets());
+    let start = site.url("/");
+    let look = Look {
+        paths: vec!["/notes/N-1", "/notes/N-2"],
+        depth: Some(0),
+        ..Look::default()
+    };
+    let seen = must(bench.run("web_snapshot", &start, &look).await);
+    check(&seen);
+    let (finding, _) = seen.one("screen", "/notes/{note_id}");
+    // The page of `N-2` tried to write as it loaded; the matched screen
+    // says so, though its snapshot is of `N-1`.
+    assert!(
+        finding
+            .limitations()
+            .iter()
+            .any(|one| one.code == LimitationCode::NotExercised && one.sentence.contains("POST 1")),
+        "{:?}",
+        finding.limitations()
+    );
+    assert!(
+        site.control("/__control/traps").await["writes"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
     bench.end().await;
 }

@@ -158,6 +158,15 @@ struct Call {
     pending: bool,
 }
 
+/// Whether a binding has nothing to read its record with: its only
+/// evidence is the system's acknowledgement, and it has no read-back step
+/// (decision 0196). Such a record is never read before it is written,
+/// nothing is compared after, and a lookup is asked of it only in
+/// reconcile, for whether it landed, never for its values.
+fn cannot_read(binding: &BindingPlan) -> bool {
+    binding.evidence == WriteEvidence::Acknowledged && binding.read_back.is_empty()
+}
+
 fn writes(operation: &OperationPlan) -> bool {
     operation
         .bindings
@@ -1611,6 +1620,7 @@ async fn read_once(
     scope.record = Scope::record_of(key.as_ref());
     let cx = RecordCx {
         record: record.record,
+        operation: &found.name,
         ledger_key: &ledger_key,
         key: key.as_ref(),
         stamp: stamp.as_deref(),
@@ -1716,8 +1726,14 @@ async fn preview_record(
     // Three kinds of record have no current value to look up, and are a
     // `create` in every diff: one that cannot be found again; one found by
     // its stamp, which no record carries before this run has written it;
-    // and one whose key waits for a record that does not exist yet.
+    // and one whose key waits for a record that does not exist yet. A
+    // fourth has a key and a binding with nothing to read it with: it is
+    // not read, and the diff says that what it holds now cannot be read.
+    let unreadable = !record.pending
+        && found.identity.strategy != IdentityStrategy::None
+        && found.bindings.get(record.binding).is_some_and(cannot_read);
     let looked_up = !record.pending
+        && !unreadable
         && match found.identity.strategy {
             IdentityStrategy::None => false,
             IdentityStrategy::Stamped => record.stamp.is_some(),
@@ -1738,6 +1754,7 @@ async fn preview_record(
         .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
         .transpose()?;
     let action = match &seen {
+        None if unreadable => DiffAction::Write,
         None => DiffAction::Create,
         Some(seen) if *seen == record.intended => DiffAction::Unchanged,
         Some(_) => DiffAction::Update,
@@ -1925,40 +1942,17 @@ async fn reconcile(
         let held = snapshot.iter().find(|held| held.record == record.record);
         let found = operation(loaded, record.operation)?;
         let mode = held.and_then(|held| held.mode.clone());
-        if found.identity.strategy == IdentityStrategy::None {
-            // A record of no identity has no key to be read by: it is
-            // settled only as `reconcile_keyless` says (decision 0185).
+        if found.identity.strategy == IdentityStrategy::None
+            || found.bindings.get(record.binding).is_some_and(cannot_read)
+        {
+            // A record of no identity has no key to be read by, and a
+            // record whose binding has nothing to read it with cannot be
+            // read by its key: each is settled only as `reconcile_keyless`
+            // says (decisions 0185 and 0196), by a lookup the pack stands
+            // behind for absence, and a found record ended on an
+            // acknowledgement stays in doubt.
             reconcile_keyless(run, loaded, found, record, held).await?;
             continue;
-        }
-        let binding = found.bindings.get(record.binding);
-        if binding.is_some_and(|binding| {
-            binding.evidence == WriteEvidence::Acknowledged
-                && binding.lookup.is_empty()
-                && binding.read_back.is_empty()
-        }) {
-            // Its only evidence was the system's answer, and that answer
-            // was lost: nothing can read the record. What was recorded
-            // before the save is shown, as the system's data, for the
-            // person who settles it.
-            let mut failure = codes::fail(
-                FailureClass::PossibleCommit,
-                codes::CANNOT_RECONCILE,
-                format!(
-                    "A write of `{}` was sent, its answer was lost, and nothing can read it back.",
-                    found.name
-                ),
-                "Look at the system with what was recorded before the save, then cancel the run or settle the record by hand.",
-            );
-            if !record.recorded_values.is_empty()
-                && let Ok(bytes) = encode_values(&kept(run, &record.recorded_values))
-            {
-                failure = failure.with_said(format!(
-                    "recorded before the save: {}",
-                    String::from_utf8_lossy(&bytes)
-                ));
-            }
-            return Err(Stop::Fail(failure));
         }
         // A failure of a class that would end the run for good says only
         // that the record could not be read: it is still in doubt, and the
@@ -2554,7 +2548,7 @@ async fn commit_point(
         && record
             .seen_in
             .is_none_or(|context| context == run.serial_of(held));
-    if !fresh && found.identity.strategy != IdentityStrategy::None {
+    if !fresh && found.identity.strategy != IdentityStrategy::None && !cannot_read(binding) {
         let raw = read_record(run, found, record, held, false).await?;
         let seen = raw
             .as_ref()
@@ -2651,6 +2645,7 @@ async fn commit_point(
         scope.record = Scope::record_of(work_key.as_ref());
         let cx = RecordCx {
             record: record.record,
+            operation: &found.name,
             ledger_key: &ledger_key,
             key: work_key.as_ref(),
             stamp: Some(stamp.as_str()),
@@ -2794,6 +2789,7 @@ async fn commit_point(
     let recorded = record.recorded_values.clone();
     let cx = RecordCx {
         record: record.record,
+        operation: &found.name,
         ledger_key: &ledger_key,
         key: read_by.as_ref(),
         stamp: Some(stamp.as_str()),

@@ -281,6 +281,29 @@ pub(crate) struct Rows {
     pub columns: BTreeMap<String, u32>,
 }
 
+/// Which tab a `goto` step reaches its screen in (decision 0195). The
+/// lowering knows what each binding does, and says it here: every step of
+/// a read, and every step that reads a written record back, is in a tab
+/// that cannot write; only the steps of a write up to its commit point are
+/// in one that may.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TabKind {
+    /// An observing tab: the browser fails every request of the page whose
+    /// method could change the system.
+    Observe,
+    /// An acting tab, for the steps of an operation that writes.
+    Act,
+}
+
+/// The payload of a `goto` step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GotoStep {
+    /// The tab the screen is reached in, and the steps after it act in.
+    pub tab: TabKind,
+}
+
 /// The payload of a `wait` step: wait for the screen's `ready`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub(crate) struct WaitStep {

@@ -166,6 +166,25 @@ fn flushed(job: &SaveJob) -> Result<(), StepFailure> {
     })
 }
 
+/// After the replace: the path must lead to the very file the save wrote,
+/// so the rename acted in the folder at the path, and the folder flushed is
+/// the one whose names changed. Where it does not, the folder was swapped
+/// in the calls between: the write landed somewhere, and not at the path,
+/// so its fate is unknown, and reconcile reads the file.
+fn placed_at_the_path(job: &SaveJob, made: a2m_provider::FileIdentity) -> Result<(), StepFailure> {
+    if job.target.checked().identity().ok() != Some(made) {
+        return Err(StepFailure::unknown(unavailable(
+            "was replaced in a folder that no longer stands at its path",
+        )));
+    }
+    flushed(job)
+}
+
+/// A look of the contract at the file: one that finds it gone is a change.
+fn gone_is_changed_contract(failure: Failure) -> StepFailure {
+    gone_is_changed(from_contract(failure))
+}
+
 /// What the file's own bytes say after the operating system refused the
 /// replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,6 +234,13 @@ fn refusal(failure: Failure) -> Failure {
 
 /// Replaces the file. Blocking; never retried.
 pub(crate) fn save(job: &SaveJob) -> Result<(), StepFailure> {
+    save_with(job, || {})
+}
+
+/// The same, with `before_last_look` called once the temporary file is
+/// ready and just before the last look: where a test puts what another
+/// process may do in that moment.
+fn save_with(job: &SaveJob, before_last_look: impl FnOnce()) -> Result<(), StepFailure> {
     let folder = job.target.folder();
     // The file is looked at again, as the name itself: a regular file with
     // one name, in a folder no link leads to, that its owner did not mark
@@ -238,9 +264,22 @@ pub(crate) fn save(job: &SaveJob) -> Result<(), StepFailure> {
     }
     held(job)?;
 
+    // The file the name holds now, by identity. The temporary file is made
+    // in the folder the path leads to now, through that folder's handle,
+    // and the rename goes through the same handle; the lock signal and the
+    // digest are looked at by path. Each later look is held to this file,
+    // so that they all see the one folder the rename acts in (FI-1,
+    // decision 0194).
+    let identity = job
+        .target
+        .checked()
+        .identity()
+        .map_err(gone_is_changed_contract)?;
+
     // Dropped on any way out below before the replace, the temporary file
     // is removed, while its name still holds the file it made.
     let mut temporary = job.target.checked().create_temporary().map_err(not_made)?;
+    let made = temporary.identity().map_err(from_contract)?;
     // Owner, group, and permissions first, while the file is empty: the new
     // bytes are never readable by anyone the old file was not readable by.
     keep(&mut temporary)?;
@@ -257,18 +296,24 @@ pub(crate) fn save(job: &SaveJob) -> Result<(), StepFailure> {
     // signal, the comparison, and the replace, with nothing else between
     // them: the file at the name must still be, byte for byte, the file
     // that was read.
+    before_last_look();
     held(job)?;
     if job.target.digest(job.max_bytes) != Some(job.before) {
+        return Err(changed());
+    }
+    // The path still leads to the file the save began with: a folder
+    // moved away and a copy put at its name since is a change, unsent.
+    if job.target.checked().identity().ok() != Some(identity) {
         return Err(changed());
     }
     // The commit point: one call, and the name is the new file's. The call
     // follows no link at either name, and refuses one at the target's.
     match temporary.replace() {
-        Ok(()) => flushed(job),
+        Ok(()) => placed_at_the_path(job, made),
         Err(failure) => {
             // The system said no. The file's own bytes say what happened.
             match after_refusal(job.target.digest(job.max_bytes), job.before, job.intended) {
-                Refused::Landed => flushed(job),
+                Refused::Landed => placed_at_the_path(job, made),
                 Refused::Unknown => Err(StepFailure::unknown(unavailable(
                     "could not be replaced, and it is no longer the file that was read",
                 ))),
@@ -435,6 +480,49 @@ mod tests {
             fs::read(scratch.path.join("stock.csv")).unwrap(),
             b"the old bytes"
         );
+    }
+
+    /// A folder moved away while a save is ready, and a copy put at its
+    /// name, with the same file and the same bytes: the save stops unsent,
+    /// and neither the moved folder's file nor the copy is changed (FI-1).
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_before_the_last_look_stops_the_save_unsent() {
+        let scratch = Scratch::new();
+        let prices = scratch.path.join("prices");
+        fs::create_dir_all(&prices).unwrap();
+        fs::write(prices.join("stock.csv"), b"the old bytes").unwrap();
+        let name = RootName::new("files").unwrap();
+        let root = scratch.roots.folder(&name, Access::Write).unwrap();
+        let folder = crate::place::Folder::new(
+            scratch.roots.check(&name, "prices", Access::Write).unwrap(),
+            &root,
+        );
+        let job = SaveJob {
+            target: folder.file("stock.csv").unwrap(),
+            lock_signal: None,
+            bytes: b"the new bytes".to_vec(),
+            before: Digest::of(b"the old bytes"),
+            intended: Digest::of(b"the new bytes"),
+            max_bytes: 1024,
+        };
+        let moved = scratch.path.join("moved");
+        let stopped = save_with(&job, || {
+            fs::rename(&prices, &moved).unwrap();
+            fs::create_dir_all(&prices).unwrap();
+            fs::write(prices.join("stock.csv"), b"the old bytes").unwrap();
+        })
+        .unwrap_err();
+        assert_eq!(stopped.failure.code(), &codes::CHANGED_SINCE_PREVIEW);
+        assert_eq!(stopped.sent, Sent::NotSent);
+        assert_eq!(fs::read(moved.join("stock.csv")).unwrap(), b"the old bytes");
+        assert_eq!(
+            fs::read(prices.join("stock.csv")).unwrap(),
+            b"the old bytes"
+        );
+        // Nothing was left behind in either folder.
+        assert_eq!(fs::read_dir(&moved).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&prices).unwrap().count(), 1);
     }
 
     #[test]
