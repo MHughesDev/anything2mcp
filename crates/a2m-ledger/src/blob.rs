@@ -105,7 +105,7 @@ macro_rules! words {
                     .iter()
                     .copied()
                     .find(|value| value.as_str() == text)
-                    .ok_or_else(|| crate::failure::invalid(concat!("an unknown ", stringify!($name))))
+                    .ok_or_else(|| $crate::failure::invalid(concat!("an unknown ", stringify!($name))))
             }
         }
     };
@@ -129,6 +129,10 @@ words! {
         Input => "input",
         /// The result of a run.
         Result => "result",
+        /// A captured exchange with a system: a request and its answer.
+        Exchange => "exchange",
+        /// A captured tree of a window's controls.
+        WindowTree => "window_tree",
     }
 }
 
@@ -245,7 +249,11 @@ impl Blobs<'_> {
             item: ItemId::new(name.to_string())?,
         };
         let sealed = attached.vault.seal(&context, &new.plain).await?;
-        let key_ref = format!("{}:{}", sealed.owner_key().id, sealed.owner_key().generation);
+        let key_ref = format!(
+            "{}:{}",
+            sealed.owner_key().id,
+            sealed.owner_key().generation
+        );
         let bytes = sealed.to_bytes();
         let size = i64::try_from(new.plain.len())
             .map_err(|_| failure::invalid("a blob too large to record"))?;
@@ -257,7 +265,10 @@ impl Blobs<'_> {
                 // Two callers may keep the same content at once. The writer
                 // is one thread, so the first to arrive here writes it.
                 if tx
-                    .row("SELECT 1 FROM blobs WHERE hash = ?1", &[text.clone().into()])?
+                    .row(
+                        "SELECT 1 FROM blobs WHERE hash = ?1",
+                        &[text.clone().into()],
+                    )?
                     .is_some()
                 {
                     return Ok(name);
@@ -327,10 +338,13 @@ impl Blobs<'_> {
                 .map_err(|_| failure::corrupt("a blob's owner"))?;
                 let sealed = match (row.opt_bytes(4)?, &folder) {
                     (Some(bytes), _) => bytes.to_vec(),
-                    (None, Some(folder)) => fs::read(file_of(folder, &name))
-                        .map_err(|_| failure::corrupt("a blob's row names a file that is missing"))?,
+                    (None, Some(folder)) => fs::read(file_of(folder, &name)).map_err(|_| {
+                        failure::corrupt("a blob's row names a file that is missing")
+                    })?,
                     (None, None) => {
-                        return Err(failure::corrupt("a blob's row names a file and there is no folder"));
+                        return Err(failure::corrupt(
+                            "a blob's row names a file and there is no folder",
+                        ));
                     }
                 };
                 Ok((workspace, owner, sealed))

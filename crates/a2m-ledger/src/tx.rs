@@ -72,7 +72,9 @@ impl Owner {
     /// The owner a migration's first line names.
     #[must_use]
     pub fn from_crate_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|owner| owner.crate_name() == name)
+        Self::ALL
+            .into_iter()
+            .find(|owner| owner.crate_name() == name)
     }
 
     pub(crate) const fn index(self) -> u32 {

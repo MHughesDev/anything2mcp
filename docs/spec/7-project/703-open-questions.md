@@ -34,7 +34,7 @@ Decisions taken in this spec:
 | Who may use a user's session | Only that user and agents acting for them; no administrator override | Any caller with a grant | Owner's requirement; each person's account stays theirs |
 | Browser profiles | Always the engine's own; never the user's everyday profile | Attach to the user's browser | Chrome blocks it; it is what cookie stealers do |
 | Session sharing | Runs share one live session in separate tabs; one renewer | A copied context per run | Copies go stale; device-bound sessions cannot be copied |
-| Policy decisions | Cedar: deny by default, forbid wins; grants compile to it | An in-house rule matcher | Specified, tested semantics in a Rust crate |
+| Policy decisions | The policy crate's own evaluator: deny by default, forbid wins; grants are permits ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md)) | Cedar | Its tree fails the closed licence list and adds 107 crates and 5.5 MB |
 | Policy lifecycle | Versioned, tested, immutable; every decision recorded and explainable | Live-edited settings | A policy change is as risky as a code change |
 | Target files at run time | Compiled once into a hashed plan; never parsed during a call | Interpret YAML on each call | Speed, early errors, a hash for exactly what ran |
 | Evidence | Events, a step trace, and artifacts; redacted at capture; a trace signature for comparing runs | Logs | Gates, repair, and audit all consume it |
@@ -57,7 +57,7 @@ Open questions:
 - [ ] Is long polling fast enough for interactive reads, or is a streaming carrier needed behind the same interface?
 - [ ] Who issues runner certificates: a built-in authority or the organization's own?
 - [ ] Does a fresh engine-owned profile sign in silently through the device's account on each operating system?
-- [ ] Do Cedar's size and decision time fit the budgets?
+- [x] Do Cedar's size and decision time fit the budgets? The time does; the size and the tree's licences do not (decision 0082).
 - [ ] Which base for the browser engine: chromiumoxide, Rustwright, or a new protocol client?
 - [ ] Which MCP revision and features does Copilot Studio support today, and which network bridge will the company use?
 - [ ] Can an Entra app registration be granted delegated permission to any target's API, enabling `per_user_token`?

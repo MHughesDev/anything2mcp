@@ -122,7 +122,9 @@ mod tests {
 
     #[test]
     fn what_is_not_a_number_or_does_not_fit_is_refused() {
-        for text in ["", "-", ".", "e5", "1e", "1e+", "NaN", "INF", "1,5", "0x10", " 1", "1.2.3"] {
+        for text in [
+            "", "-", ".", "e5", "1e", "1e+", "NaN", "INF", "1,5", "0x10", " 1", "1.2.3",
+        ] {
             assert_eq!(read(text), "NotANumber", "{text:?}");
         }
         assert_eq!(read("1e400"), "OutOfRange");

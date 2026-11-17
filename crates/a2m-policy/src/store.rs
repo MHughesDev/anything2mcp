@@ -87,7 +87,8 @@ pub(crate) fn insert_decision(
     verdict: &Verdict,
     version: Option<Digest>,
 ) -> Result<(), Failure> {
-    let reasons = serde_json::to_string(&verdict.rules).map_err(|_| failure::evaluation_failed())?;
+    let reasons =
+        serde_json::to_string(&verdict.rules).map_err(|_| failure::evaluation_failed())?;
     let now = tx.now();
     tx.tables(OWNER).execute(
         "INSERT INTO decisions

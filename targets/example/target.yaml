@@ -1,0 +1,19 @@
+# The imaginary order-entry system `example`. It describes no real product.
+# Its one surface is of the kind `stand`, which the test pack in `a2m-files`
+# registers; the files here are the fixtures every crate's tests may use.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  desk:
+    kind: stand
+    address: "https://app.example.com"
+    rate: {requests: 10, per_ms: 1000}
+environments:
+  test:
+    kind: test
+    surfaces: {desk: "https://test.example.com"}
+    test_records: ["SO-1001"]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

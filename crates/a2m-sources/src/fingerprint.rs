@@ -207,7 +207,10 @@ impl Fingerprint {
                 Some(part) if part.value != known.value => {
                     problems.push(difference(
                         known,
-                        &format!("is `{}` in the template and `{}` in the input", known.value, part.value),
+                        &format!(
+                            "is `{}` in the template and `{}` in the input",
+                            known.value, part.value
+                        ),
                     ));
                 }
                 Some(_) => {}
@@ -258,7 +261,11 @@ impl Structure {
             parts.push(FingerprintPart { kind, place, value });
         };
         if let Some(system) = self.date_system {
-            push(PartKind::DateSystem, String::new(), system.as_str().to_owned());
+            push(
+                PartKind::DateSystem,
+                String::new(),
+                system.as_str().to_owned(),
+            );
         }
         if self.macros {
             push(PartKind::Macros, String::new(), "present".to_owned());
@@ -270,11 +277,14 @@ impl Structure {
                 format!("sheet {}", position + 1),
                 format!("{}|{state}", sheet.name),
             );
+            // A place is a position, not a name, so that a renamed sheet is
+            // one difference and its headers are still compared one by one.
+            let alone = self.sheets.len() == 1 && sheet.name.is_empty();
             let within = |what: String| {
-                if sheet.name.is_empty() {
+                if alone {
                     what
                 } else {
-                    format!("sheet `{}`, {what}", sheet.name)
+                    format!("sheet {}, {what}", position + 1)
                 }
             };
             for (column, header) in sheet.headers.iter().enumerate() {
@@ -302,7 +312,11 @@ impl Structure {
                 }
             }
             for list in &sheet.lists {
-                push(PartKind::List, within(list.cells.clone()), list.choices.clone());
+                push(
+                    PartKind::List,
+                    within(list.cells.clone()),
+                    list.choices.clone(),
+                );
             }
         }
         for name in &self.names {
@@ -321,7 +335,6 @@ mod date_system_name {
     use a2m_expr::DateSystem;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    #[allow(clippy::ref_option, reason = "the signature serde requires of `with`")]
     pub(super) fn serialize<S: Serializer>(
         system: &Option<DateSystem>,
         serializer: S,
@@ -365,7 +378,9 @@ mod tests {
         // operating system, fails this test.
         assert_eq!(
             print.digest.to_string(),
-            Fingerprint::of_parts(print.parts.clone()).digest.to_string()
+            Fingerprint::of_parts(print.parts.clone())
+                .digest
+                .to_string()
         );
         assert!(print.is_sound());
         assert_eq!(print.parts.len(), 3);

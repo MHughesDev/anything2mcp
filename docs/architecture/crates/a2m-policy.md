@@ -9,117 +9,159 @@ The one decider. It answers every question of the form "may this happen?" with a
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`; `a2m-ledger` for its tables; `a2m-expr` for pre-approval conditions; `a2m-telemetry`. Outside: the Cedar crate named by [decision 0033](../../decisions/0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md), its licence and size still to be verified by research brief 31 |
+| Depends on | `a2m-core`; `a2m-ledger` for its tables and for the run an approval is about; `a2m-expr` for pre-approval conditions. No outside crate beyond `serde` and `serde_json`: the decision core is this crate's own evaluator ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md)) |
 | Built in | Phase 3, group B and slice 3.2: the built-in local policy set, guardrails, limits, kill switches, approvals. Slice 3.6: approvals from the approval surface. Phase 6: grants, roles, published policy sets, standing approvals, chat and console channels. Phase 7: delegations |
-| Carries out | Spec sections [212](../../spec/2-kernel/212-policy-and-approvals.md), [214](../../spec/2-kernel/214-access-control-toolsets-and-tenancy.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (what an approval records), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (an agent cannot loosen its limits), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards raise the approval; consent); decisions 0033, 0034, and [0035](../../decisions/0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) |
+| Carries out | Spec sections [212](../../spec/2-kernel/212-policy-and-approvals.md), [214](../../spec/2-kernel/214-access-control-toolsets-and-tenancy.md), [226](../../spec/2-kernel/226-configuration.md) (the protected policy settings), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (what an approval records), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (an agent cannot loosen its limits), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards raise the approval; consent); decisions 0082, 0083, 0034, and [0035](../../decisions/0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) |
 
 ## Owns
 
 - `decide`: the seven questions of section 212, each one request in and one recorded decision out.
-- The policy set: built-in guardrails, the layers written by administrators, grants and roles compiled to Cedar, the schema that every policy is validated against, and the test table that must pass before a version is published.
+- The policy set: built-in guardrails, the layer written by administrators (roles, grants, label and option rules, pre-approval rules, quotas, the protected settings), and the test table that must pass before a version is published.
 - The limiter beside the decision core: records per run, quotas, kill switches.
-- Approvals: single-use records bound to a diff hash, and their consumption at the start of a write phase. Standing approvals.
-- Consent records, and delegations from a person to an agent.
-- Explaining a past decision, and answering "who can" and "what could" questions over a catalog.
+- Approvals: single-use records bound to a diff hash, and their consumption at the start of a write phase.
+- Explaining a past decision, and answering "who can" and "what could" questions without recording.
+- Not built yet: standing approvals, consent records, and delegations from a person to an agent.
 
-It must never: let a caller supply any part of the context; treat an error as anything but a denial; let a permit outweigh a forbid; let any setting remove a guardrail; record an approval or a consent that a person did not give through a channel the caller cannot operate; reveal the content of a rule to a denied caller.
+It must never: let a caller supply any part of the context; treat an error as anything but a denial; let a permit outweigh a forbid; let any setting remove a guardrail; record an approval that a person did not give through a channel the caller cannot operate; reveal the content of a rule to a denied caller.
 
 ## Interface
 
+The store hands a transaction to a closure on its own thread, so every call that reads or writes a table is a plain function that takes `&mut Tx`. The two `async` conveniences run a transaction of their own.
+
 ```rust
-pub struct Policy { /* the current set, swapped atomically; the limiter; the store */ }
+#[derive(Clone)]
+pub struct Policy { /* the store; the profile; the set in force as last read */ }
 impl Policy {
-    /// Loads the newest valid version. With none, every decision is a denial and health says so.
-    pub async fn open(store: &Store, built_in: BuiltIn) -> Result<Policy, Failure>;
+    /// A fresh store gets `built_in` as its first version. The second value is the one
+    /// handle that can record an approval or a decline.
+    pub async fn open(store: &Store, built_in: BuiltIn) -> Result<(Policy, ApprovalSurface), Failure>;
 
-    /// Never fails: an error while deciding is a recorded denial. The decision row is written in
-    /// `tx`; the caller commits it whether the answer was allow or deny.
-    pub async fn decide(&self, tx: &mut Tx<'_>, req: Request) -> Decision;
-    /// The same, in a transaction of its own, for callers with nothing else to commit.
+    /// Never fails: an error while deciding is a recorded denial. The decision row is written
+    /// in `tx`; the caller lets it commit whether the answer was allow or deny.
+    pub fn decide(&self, tx: &mut Tx<'_>, req: &Request) -> Decision;
+    /// The same, in a transaction of its own, which always commits.
     pub async fn decide_alone(&self, req: Request) -> Decision;
+    /// The answer a request would get, recording nothing.
+    pub fn would(&self, tx: &mut Tx<'_>, req: &Request) -> Answer;
 
-    pub fn health(&self) -> PolicyHealth;                 // Ok { version } | NoValidSet
-    pub fn kill_epoch(&self) -> u64;                       // rises with every kill switch change; sent to runners
+    pub fn health(&self, tx: &mut Tx<'_>) -> PolicyHealth;            // Ok { version } | NoValidSet
+    pub fn kill_epoch(&self, tx: &mut Tx<'_>) -> Result<u64, Failure>; // rises with every kill switch change
 }
 
-pub struct Request { pub principal: PrincipalRef, pub question: Question, pub resource: Resource, pub context: Context }
+pub struct Request {
+    pub principal: PrincipalRef, pub question: Question, pub resource: Resource, pub context: Context,
+    pub run: Option<RunId>, pub diff_hash: Option<Digest>,
+}
+pub struct PrincipalRef { pub id: PrincipalId, pub kind: PrincipalKind, pub groups: Vec<GroupName> }
+pub enum PrincipalKind { Person, Agent, Program }
 pub enum Question { UseTool, ActAs, WriteWithoutPerson, Approve, SeeLabel, SetOption, PerformAction }
-pub enum Resource { Tool(ToolRef), Action(ActionName), Identity(IdentityRef), Label(Sensitivity), Run(RunId), Option(OptionName) }
-/// Built only by a2m-actions, from verified facts and from what the engine reports through Control. Never deserialized from a caller.
+pub enum Resource {
+    Tool(ToolRef),          // target, module, tool name
+    Action(ActionRef),      // the action's name and the role its registry entry says it needs
+    Identity(Identity),     // a person's identity is that person's session
+    Label(Sensitivity),
+    Run(RunRef),            // the run and who started it
+    Option(OptionName),
+}
+/// Built only by a2m-actions, from verified facts. It can be written and never deserialized.
 pub struct Context {
     pub effect: EffectClass, pub hazard: Hazard, pub records: Option<u32>,
-    pub workspace: WorkspaceId, pub toolset: Option<ToolsetRef>, pub environment: Environment,
-    pub identity_mode: Option<IdentityMode>, pub session_owner: Option<PersonRef>,
-    pub caller_is_agent: bool, pub acting_for: Option<ActingFor>, pub client_label: String, pub at: Instant,
+    pub workspace: WorkspaceId, pub toolset: Option<ToolsetName>, pub environment: Environment,
+    pub identity_mode: Option<IdentityMode>, pub caller_is_agent: bool, pub acting_for: Option<ActingFor>,
 }
-pub enum ActingFor { LocalUser(PersonRef), TokenSubject(PersonRef), Delegation(DelegationId) }
+pub enum ActingFor { LocalUser(PrincipalId), TokenSubject(PrincipalId), Delegation(PrincipalId) }
 
-pub struct Decision { pub id: DecisionId, pub answer: Answer, pub version: Digest, pub rules: Vec<RuleId>, pub refusal: Option<Failure> }
+pub struct Decision {
+    pub id: DecisionId, pub question: Question, pub answer: Answer,
+    pub version: Option<Digest>, pub rules: Vec<RuleId>, pub refusal: Option<Failure>,
+}
 pub enum Answer { Allow, Deny }
+pub enum Outcome<'a> { Allow, NeedsApproval, Refused(&'a Failure) }
+impl Decision {
+    pub fn outcome(&self) -> Outcome<'_>;
+    /// `WriteClearance::PreApproved`, only for an allowed `WriteWithoutPerson` bound to a run and a diff.
+    pub fn clearance(&self) -> Option<WriteClearance>;
+}
 
-// Approvals. Recorded only by an approval surface, after the person has proved presence.
+// Approvals. Recorded only through the handle `Policy::open` returns.
+pub struct ApprovalSurface { /* not Clone; no public constructor */ }
 pub struct Approved {
     pub run: RunId, pub diff_hash: Digest, pub tool_version: Digest,
-    pub approver: PersonRef, pub channel: Channel, pub presence: PresenceCheck,
+    pub approver: PrincipalRef, pub channel: Channel, pub presence: PresenceCheck,
 }
+pub struct Declined { pub run: RunId, pub by: Option<PrincipalRef>, pub channel: Channel }
 pub enum Channel { LocalPrompt, ApprovalPage, ChatCard, UrlElicitation }
+pub enum PresenceCheck { OsPrompt, SignedIn, NotAvailable }
+impl ApprovalSurface {
+    pub fn record_approval(&self, tx: &mut Tx<'_>, a: &Approved) -> Result<ApprovalId, Failure>;
+    pub fn record_decline(&self, tx: &mut Tx<'_>, d: &Declined) -> Result<(), Failure>;
+    pub async fn approve(&self, a: Approved) -> Result<ApprovalId, Failure>;   // own transaction
+    pub async fn decline(&self, d: Declined) -> Result<(), Failure>;           // own transaction
+}
 impl Policy {
-    pub async fn record_approval(&self, tx: &mut Tx<'_>, a: Approved) -> Result<ApprovalId, Failure>;
-    pub async fn record_decline(&self, tx: &mut Tx<'_>, run: RunId, by: PersonRef, channel: Channel) -> Result<(), Failure>;
     /// Marks the approval used and returns the clearance a2m-ledger's begin_writes checks, in the same tx.
-    pub async fn consume(&self, tx: &mut Tx<'_>, run: RunId, diff_hash: &Digest) -> Result<WriteClearance, Failure>;
-    pub async fn grant_standing(&self, tx: &mut Tx<'_>, s: StandingApproval) -> Result<ApprovalId, Failure>;
+    pub fn consume(&self, tx: &mut Tx<'_>, run: RunId, diff_hash: &Digest) -> Result<WriteClearance, Failure>;
+    pub fn declined(&self, tx: &mut Tx<'_>, run: RunId) -> Result<bool, Failure>;
 }
 
-// Consent and delegation: statements by a person, never inferred, never on a person's behalf.
-pub enum ConsentAct { InspectTarget, Capture, InstallBridge, AttachProcess, RunTargetCode, OpenDeviceLink, EnableDeclaredProvider }
-impl Policy {
-    pub async fn record_consent(&self, tx: &mut Tx<'_>, c: Consent) -> Result<ConsentId, Failure>;
-    pub async fn consent_for(&self, tx: &mut Tx<'_>, act: ConsentAct, subject: &ConsentSubject) -> Result<Option<Consent>, Failure>;
-    pub async fn delegate(&self, tx: &mut Tx<'_>, d: Delegation) -> Result<DelegationId, Failure>;
-    pub async fn revoke_delegation(&self, tx: &mut Tx<'_>, id: DelegationId) -> Result<(), Failure>;
+// Policy sets, limits, kill switches.
+pub struct PolicyLayers {
+    pub roles: Vec<RoleBinding>, pub grants: Vec<Grant>, pub labels: Vec<LabelGrant>,
+    pub options: Vec<OptionGrant>, pub pre_approvals: Vec<PreApproval>, pub quotas: Vec<Quota>,
+    pub settings: Settings, pub tests: Vec<PolicyTest>,
 }
-
-// Policy sets, grants, limits.
-pub struct Grant { pub principal: PrincipalRef, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
-pub enum Scope { Target(TargetName), Module(TargetName, String), Pattern(String) }
-impl Policy {
-    pub fn compile(&self, layers: &PolicyLayers) -> Result<CandidateSet, Failure>;   // grants to permits; guardrails added
-    pub fn test(&self, c: &CandidateSet) -> TestReport;                                // policy.test
-    pub async fn publish(&self, tx: &mut Tx<'_>, c: CandidateSet, by: PrincipalRef, proof: PublishProof) -> Result<Digest, Failure>;
-    pub async fn explain(&self, id: DecisionId) -> Result<Explanation, Failure>;         // policy.explain
-    pub async fn check_limits(&self, tx: &mut Tx<'_>, l: LimitCheck) -> Result<(), Failure>;
-    pub async fn set_kill_switch(&self, tx: &mut Tx<'_>, k: KillSwitch) -> Result<(), Failure>;
+pub enum Subject { Principal(PrincipalId), Group(GroupName), Anyone }
+pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
+pub enum Scope { Target(TargetName), Module(TargetName, ModuleName), Pattern(String) }
+pub struct Settings { pub approve_writes: ApproveWrites, pub max_records_per_run: u32, pub approval_window_minutes: u32 }
+impl BuiltIn { pub fn local(user: PrincipalId, workspace: WorkspaceId) -> BuiltIn; pub fn server() -> BuiltIn; }
+impl CandidateSet {
+    pub fn compile(layers: &PolicyLayers, profile: Profile) -> Result<CandidateSet, Failure>;
+    pub fn test(&self) -> TestReport;
+    pub fn loosens(&self, current: &PolicyLayers) -> bool;
 }
+impl Policy {
+    pub fn compile(&self, layers: &PolicyLayers) -> Result<CandidateSet, Failure>;
+    pub fn test(&self, c: &CandidateSet) -> TestReport;                                   // policy.test
+    pub fn publish(&self, tx: &mut Tx<'_>, c: &CandidateSet, by: &PrincipalRef, proof: PublishProof) -> Result<Digest, Failure>;
+    pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId) -> Result<Explanation, Failure>; // policy.explain
+    pub fn check_limits(&self, tx: &mut Tx<'_>, l: &LimitCheck) -> Result<(), Failure>;
+    pub fn set_kill_switch(&self, tx: &mut Tx<'_>, k: &KillSwitch) -> Result<u64, Failure>;
+}
+pub enum KillScope { Everything, Workspace(WorkspaceId), Target(TargetName), Operation(OperationName) }
 ```
 
 Contracts that the signatures do not show:
 
-- **The order of evaluation is section 212's, and kill switches come first.** `decide` consults the kill switches before the decision core on every question, so a switch needs no separate call.
-- **Guardrails are in every set.** `compile` appends the built-in forbids, which are Cedar text compiled into the binary with their own hash. A `CandidateSet` cannot be built without them, so no published version lacks them. The guardrails are the seven of section 212, plus the hazard rules of section 213: any hazard other than `none` forbids `WriteWithoutPerson`; `irreversible`, `device_function`, and `physical` forbid the use of a standing approval.
-- **Cedar's skipped policy is a denial.** The decision core runs the Cedar validator before publishing, and at decision time any error reported with an answer turns it into a deny with the code `policy_evaluation_failed`. If research brief 31 rules Cedar out, an in-house matcher with the same two semantics sits behind the same `decide`, and nothing outside this crate changes.
-- **Approval binds and is used once.** `record_approval` refuses unless the approver is a person and not an agent identity, the question `Approve` allows them for this run, the diff hash equals the one stored on the run, and the run is waiting at `needs_approval`. Where policy names an approver, the caller's own confirmation is refused. `consume` refuses an expired, used, or revoked approval, or one for another diff, and marks it used in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. One transaction, so rule 3 of section 208 holds.
-- **There is no approve action.** `record_approval` is called by an approval surface: the loopback listener in `a2m-local` after the operating system's prompt, or a server's console page after the approver signs in. `a2m-actions` passes the surface a handle that can reach these calls and nothing else. No command, MCP tool, REST route, or SDK method is generated for them.
-- **Silence is a decline.** An approval window that ends is recorded as a decline by nobody, and the run ends `expired`.
-- **A session belongs to its owner.** `ActAs` on a resource whose `session_owner` is a person is denied unless the principal is that person or `acting_for` names them through one of the three cases of section 215. A delegation counts only while it is unrevoked and unexpired, and only for the toolset it names.
-- **Policy only narrows.** A lower layer's policy is compiled as a further restriction; `compile` refuses a target file, toolset, or workspace layer that contains a permit wider than its parent's.
-- **On one machine,** the built-in set gives the operating-system user every role, requires approval for writes, and holds the guardrails. `publish` of a tighter local set needs a `PublishProof` carrying the user-presence check, because the approval rules and record limits are protected settings. A looser local set cannot be compiled.
-- **A denial says what to ask for, not why.** The `refusal` carries a code from the table below and a next step; the determining rules are kept for `policy.explain`, which only an auditor or administrator may run.
+- **The order of evaluation is section 212's, and kill switches come first.** `decide` consults the kill switches before the decision core, so a switch needs no separate call. A switch stops the questions about work on a system: `UseTool`, `ActAs`, `WriteWithoutPerson`, and `SetOption`. It does not stop `PerformAction`, `Approve`, or `SeeLabel`: a switch must stay releasable, an approval is checked again before the write, and a result already read is still masked.
+- **Two semantics, and nothing else.** A request is denied unless a permit applies, and one matching forbid denies it whatever permits apply. The forbids are the guardrails; the permits are a set's grants, roles, label and option rules, and pre-approval rules.
+- **Guardrails are in every set.** They are functions over typed facts, compiled into the binary, with a hash over their names, their wording, and a revision number that is raised when their logic changes. A `CandidateSet` is made only by `compile`, which stamps that hash into the version, and `decide` consults the guardrails before any permit whatever the set holds. A set's data cannot name a guardrail, so no setting, file, or layer can remove one. Built: only a person approves; where an approver is named, the caller's own confirmation does not count; an `irreversible` operation and any hazard other than `none` forbid `WriteWithoutPerson`; a person's session is used only by that person or a caller proved to act for them.
+- **An error is a denial.** The only thing that can fail while deciding is a pre-approval rule's condition, an expression. A condition is checked when the set is compiled; one that still fails when it runs denies the request with the code `policy_evaluation_failed`. So does a store that cannot say which version is in force, a newest version that cannot be read, and a decision that cannot be recorded.
+- **The version in force is the newest one stored.** `decide` asks the store for the newest version on every call and loads it when it differs from the one in memory, so a version published by any process takes effect at the next decision, and a publish that was rolled back never does.
+- **A pre-approval is bound to one run and one diff.** `WriteWithoutPerson` is allowed only for a request that names a run and its diff hash. The decision row carries both, and the ledger checks them when writes begin.
+- **Approval binds and is used once.** `record_approval` reads the run from the ledger, decides and records `Approve` for the approver, and refuses unless the approver is a person, that decision allows, the run is waiting at `needs_approval`, and the diff hash equals the one stored on the run. `consume` refuses an expired, used, or revoked approval, or one for another diff, and marks it used in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. The ledger refuses an approval that was not marked used in its own transaction, so rule 3 of section 208 holds.
+- **There is no approve action, and the types say so.** `record_approval` and `record_decline` are methods of `ApprovalSurface` and of nothing else. The only `ApprovalSurface` comes out of `Policy::open`; it is not `Clone` and has no public constructor. `a2m-actions`, which opens the policy engine, hands it to the approval surface: the loopback listener in `a2m-local` after the operating system's prompt, or a server's console page after the approver signs in. Nothing in the action registry can hold it, so no command, MCP tool, REST route, or SDK method can approve.
+- **Silence is a decline.** An approval window that ends is recorded with `record_decline` by nobody, any unused approval of the run is revoked, and the caller ends the run `expired`.
+- **A session belongs to its owner.** `ActAs` on a person's identity is denied unless the principal is that person, or `acting_for` names them as the local user or the token's subject. A delegation never counts yet, because delegations are not built.
+- **On one machine,** the built-in set gives the operating-system user every role and a grant on every tool, requires a person's approval for writes, and holds the guardrails. A local set cannot name another approver.
+- **Protected settings loosen only with a person present.** The record limit, the approval window, who approves, and the pre-approval rules are the protected settings of section 226. `publish` refuses a set that is looser than the one in force on any of them unless the proof carries a user-presence check that proves presence. Tightening needs no proof. Releasing a kill switch on one machine needs the same check.
+- **A denial says what to ask for, not why.** The `refusal` carries a code from the table below and a next step; the determining rules are kept for `policy.explain`, which only an auditor or administrator may run. `a2m-actions` decides that before it calls `explain`.
+- **What `PerformAction` needs is the registry's to say.** Each action's entry names the role that may perform it; the request carries it, and the set says who holds which role.
 
 ## Used by, and uses
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-actions` | `decide` at every dispatch; approvals, consent, delegations, grants, publishing, explaining, for the actions `grant.add`, `policy.publish`, `policy.test`, `policy.explain`, `killswitch.set`, `delegation.grant`, and the approval surface |
+| `a2m-actions` | `Policy::open`; `decide` at every dispatch; `compile`, `test`, `publish`, `explain`, `set_kill_switch`, for the actions `grant.add`, `policy.publish`, `policy.test`, `policy.explain`, `killswitch.set`; passes the `ApprovalSurface` to the approval surface |
 | `a2m-actions` as the in-process `Control`, and `a2m-runner` on the control-plane side of the runner link | On the engine's behalf: `decide` at guard, before the write phase and on resume; `consume`; `check_limits`. The engine never names this crate |
 | `a2m-sched` | `kill_epoch`, to stop handing out work and to tell runners |
-| `a2m-local`, `a2m-api` | `record_approval`, `record_decline`, through the handle `a2m-actions` gives the approval surface; the person is reached through `PersonSurface` |
+| `a2m-local`, `a2m-api` | `ApprovalSurface::approve` and `decline`, through the handle `a2m-actions` gives the approval surface; the person is reached through `PersonSurface` |
 
-It uses `a2m-ledger` for its tables, `a2m-expr` to evaluate the conditions of pre-approval rules over the context, and `a2m-telemetry` for decision timing.
+It uses `a2m-ledger` for its tables and to read the run an approval is about, and `a2m-expr` to compile and evaluate the conditions of pre-approval rules.
 
 ## State
 
-Tables, through `a2m-ledger`: `principals`, `grants`, `policy_versions`, `decisions`, `approvals`, `consents`, `delegations`, `kill_switches`, `quota_counters`. In memory: the current compiled set behind an atomic swap, and a small cache of principals' groups with the bound of section 212.
+Tables, through `a2m-ledger`: `decisions`, `approvals`, `approval_declines`, `policy_versions`, `kill_switches`, `quota_counters`. Their migrations are the two files of the ledger's sequence that name this crate as owner. Not created yet: `principals`, `grants` as rows of their own (grants are part of a version's layers), `consents`, `delegations`. In memory: the compiled set in force as last read.
 
 ## Failures
 
@@ -128,39 +170,50 @@ Tables, through `a2m-ledger`: `principals`, `grants`, `policy_versions`, `decisi
 | `policy` | `not_granted` | No permit applies to the caller, the tool, or the action |
 | `policy` | `identity_not_allowed` | `ActAs` is denied, including every attempt to use another person's session |
 | `policy` | `effect_too_high` | A grant exists, with a lower highest effect class |
-| `policy` | `approval_missing` | A write reaches the write phase with no usable approval |
-| `policy` | `approval_stale` | The approval is expired, used, or for another diff |
+| `policy` | `approval_missing` | A write reaches the write phase with no approval |
+| `policy` | `approval_stale` | The approval is expired, used, revoked, or for another diff |
+| `policy` | `approval_refused` | The approver is not a person, may not approve this run, or the run is not waiting for approval |
 | `policy` | `limit_exceeded` | Records per run or a quota |
-| `policy` | `kill_switch_on` (new) | A kill switch covers the request |
-| `policy` | `policy_evaluation_failed` (new) | Cedar reported an error, or no valid set is loaded |
-| `input` | `schema_invalid` | A candidate set fails validation, or a lower layer widens a higher one |
+| `policy` | `kill_switch_on` | A kill switch covers the request |
+| `policy` | `policy_evaluation_failed` | An error while deciding, or no valid set is loaded |
+| `policy` | `presence_required` | A set that loosens a protected setting, or the release of a kill switch on one machine, without a user-presence check |
+| `input` | `schema_invalid` | A candidate set fails validation |
+| `input` | `policy_tests_failed` | A candidate set fails its own test table |
+| `input` | `decision_not_found` | `explain` of an identifier that names no decision |
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| Every action's dispatch records a decision, allow or deny | A test in `a2m-actions` over the whole registry |
-| No setting, file, or layer removes a guardrail | A test that tries each through `compile` and through the local protected settings |
-| An agent identity can never approve | A guardrail test, and a test that calls `record_approval` with one |
-| An approval is used once, and only for its diff | Rule 3 of section 208, tested together with `a2m-ledger` |
-| An evaluation error is a denial | A test with a policy that raises an error at evaluation, planted past the validator |
-| The same request on the same version gives the same answer | A property test over random requests |
-| A version that fails its test table is not published | A test that publishes one that lets a viewer write |
-| A decision is under 100 microseconds on a warm cache | A benchmark, from slice 3.2; a target until measured, hypothesis H-11 |
+| Nothing is allowed unless a rule permits it | A test that asks all seven questions of an empty set |
+| Every decision is recorded, allow or deny | A test that reads the `decisions` table through its own connection. The test over the whole action registry belongs to `a2m-actions` |
+| No policy input removes a guardrail | A test that builds the loosest set that compiles and asks what each guardrail forbids, and a property test that a matching guardrail always denies |
+| An agent identity can never approve | A guardrail test, and a test that hands `record_approval` an agent identity |
+| Only the approval handle records an approval | The types: the two methods exist on `ApprovalSurface` alone, and a test that fails to compile if the handle becomes `Clone` |
+| An approval is used once, and only for its diff, its run, and within its window | Tests with `a2m-ledger`: another diff, a second use, an expired one, a declined one, and one consumed in an earlier transaction than `begin_writes` |
+| An evaluation error is a denial | A test with a condition that passes the checker and fails when it runs |
+| The same request on the same version gives the same answer | A property test over 4,000 generated requests |
+| A version that fails its test table is not published | A test that publishes one that lets a stranger write |
+| A kill switch refuses everything it covers, and stays releasable | A test over the target, operation, and everything scopes |
+| Decisions, versions, and switches survive a restart | A test that closes and reopens the store |
+| With no valid set every decision is a recorded denial | A test that plants an unreadable newest version |
+| A decision is under 100 microseconds on a warm cache | Not a benchmark yet. Measured by hand: decision 0082 has the numbers; hypothesis H-11 |
 
 ## Build order
 
-1. The built-in local set: guardrails and "writes need approval", `decide` for `UseTool`, `WriteWithoutPerson`, and `PerformAction`, recorded decisions, with a stub approval. Slice 3.2. Cedar or the fallback is chosen first, by research brief 31.
-2. `check_limits` and kill switches. Phase 3, group B.
-3. `record_approval`, `consume`, and `record_decline`, joined with `a2m-ledger`'s rule 3. Slices 3.3 and 3.6.
-4. Protected settings on one machine.
-5. Grants, roles, layers, publishing with tests, `policy.explain`. Phase 6.
-6. Standing approvals; the server channels; delegations and `ActAs` with a delegation. Phases 6 and 7.
-7. Consent records, with the first act that needs one: inspecting a target on a server, before `scout.run` there.
+1. Done: the decision core, chosen by evidence (decision 0082). The built-in local set: guardrails and "writes need approval", `decide` for all seven questions, recorded decisions. Slice 3.2.
+2. Done: `check_limits` (records per run, quotas) and kill switches. Phase 3, group B.
+3. Done: `record_approval`, `consume`, and `record_decline`, joined with `a2m-ledger`'s rule 3. Slices 3.3 and 3.6, the policy half.
+4. Done: protected settings on one machine: a looser set, and the release of a kill switch, need a user-presence check.
+5. Done in part: roles, grants, label and option rules, pre-approval rules with conditions, versioned sets with their own tests, `publish`, `explain`, `would`. Not built: lower layers that only narrow (workspace, toolset, target files); `grant.add` as a change to one grant, which today is a new version of the whole set; a second administrator on publish; the request budget per surface; a benchmark in `bench/`; decision timing through `a2m-telemetry`.
+6. Not built: standing approvals; delegations and `ActAs` with a delegation; the guardrail that the author of a version cannot be its only publisher, and the one that an agent cannot approve a publish, which need the publish flow's facts.
+7. Not built: consent records, with the first act that needs one.
 
 ## Open points
 
-- Cedar's binary size, decision time, and whether its partial evaluation can list the tools a caller may use. Research brief 31; hypothesis H-11.
-- Whether every read's decision is stored in full, or summarized at scale as decision 0034 allows.
+- Whether every read's decision is stored in full, or summarized at scale as decision 0034 allows. Today every decision is stored in full.
 - Whether consent records belong here or with the scout. They are here because only the decider should ask whether one exists.
-- The shape of the presence proof that `a2m-local` hands in, once research brief 27 says which prompts each operating system offers.
+- The shape of the presence proof that `a2m-local` hands in, once research brief 27 says which prompts each operating system offers. Today it is one of three words, and `not_available` records an approval but proves nothing: it does not loosen a protected setting or release a kill switch.
+- A set published before the binary's guardrails change is not read by the newer binary, because its version was stamped with the old guardrails' hash. The built-in set is stored again at start; a person's set must be published again. Whether to republish it automatically is open.
+- `caller_confirms`, the third value of `policy.approve_writes` in section 226, has no meaning here yet: a person approves every write through the surface, and the set says only whether that person may be the caller.
+- Listing the tools a caller may use is `would` asked tool by tool. Whether that is fast enough for a large catalog is not measured.

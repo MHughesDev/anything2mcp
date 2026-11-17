@@ -227,18 +227,25 @@ pub struct CompilerSet {
     pub(crate) lowerings: BTreeMap<(Mode, Verb), Registered<Arc<dyn Lowering>>>,
     pub(crate) default_verbs: BTreeMap<Mode, Verb>,
     pub(crate) lint_rules: BTreeMap<LintCode, Registered<Arc<dyn LintRule>>>,
-    pub(crate) drafting_rules: BTreeMap<(FindingKind, FileKindName), Registered<Arc<dyn DraftingRule>>>,
+    pub(crate) drafting_rules:
+        BTreeMap<(FindingKind, FileKindName), Registered<Arc<dyn DraftingRule>>>,
     pub(crate) controls: BTreeMap<ControlName, String>,
 }
 
 impl fmt::Debug for CompilerSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CompilerSet")
-            .field("surface_kinds", &self.surface_kinds.keys().collect::<Vec<_>>())
+            .field(
+                "surface_kinds",
+                &self.surface_kinds.keys().collect::<Vec<_>>(),
+            )
             .field("file_kinds", &self.file_kinds.keys().collect::<Vec<_>>())
             .field("lowerings", &self.lowerings.keys().collect::<Vec<_>>())
             .field("lint_rules", &self.lint_rules.keys().collect::<Vec<_>>())
-            .field("drafting_rules", &self.drafting_rules.keys().collect::<Vec<_>>())
+            .field(
+                "drafting_rules",
+                &self.drafting_rules.keys().collect::<Vec<_>>(),
+            )
             .field("controls", &self.controls.keys().collect::<Vec<_>>())
             .finish()
     }
@@ -303,9 +310,11 @@ impl CompilerSet {
             .iter()
             .map(|(code, summary)| ((*code).to_owned(), (*summary).to_owned()))
             .collect();
-        codes.extend(self.lint_rules.iter().map(|(code, rule)| {
-            (code.as_str().to_owned(), rule.item.summary().to_owned())
-        }));
+        codes.extend(
+            self.lint_rules
+                .iter()
+                .map(|(code, rule)| (code.as_str().to_owned(), rule.item.summary().to_owned())),
+        );
         codes
     }
 
@@ -390,7 +399,11 @@ impl CompilerSetBuilder {
     /// `registration_conflict` when the kind is already registered, or its
     /// fields are not an object schema that lists the address key and none
     /// of the kernel's keys.
-    pub fn surface_kind(&mut self, pack: &str, spec: SurfaceKindSpec) -> Result<&mut Self, Failure> {
+    pub fn surface_kind(
+        &mut self,
+        pack: &str,
+        spec: SurfaceKindSpec,
+    ) -> Result<&mut Self, Failure> {
         check_pack(pack)?;
         if let Some(first) = self.set.surface_kinds.get(&spec.kind) {
             return Err(conflict(format!(
@@ -503,7 +516,11 @@ impl CompilerSetBuilder {
     ///
     /// `registration_conflict` when a mode and verb is already registered,
     /// the lowering serves no verb, or the mode already has a default verb.
-    pub fn lowering(&mut self, pack: &str, lowering: Arc<dyn Lowering>) -> Result<&mut Self, Failure> {
+    pub fn lowering(
+        &mut self,
+        pack: &str,
+        lowering: Arc<dyn Lowering>,
+    ) -> Result<&mut Self, Failure> {
         check_pack(pack)?;
         let mode = lowering.mode();
         if lowering.verbs().is_empty() {
@@ -554,7 +571,9 @@ impl CompilerSetBuilder {
             )));
         }
         if self.set.lint_rules.contains_key(&code) {
-            return Err(conflict(format!("The lint code `{code}` is registered twice.")));
+            return Err(conflict(format!(
+                "The lint code `{code}` is registered twice."
+            )));
         }
         self.set.lint_rules.insert(
             code,

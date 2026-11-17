@@ -1,6 +1,6 @@
 # 0033. Policy decisions use Cedar, with grants compiled to it
 
-**Status:** Accepted. Decided in the system design; the owner delegated these choices. Subject to a spike on size and speed.
+**Status:** Superseded by [record 0082](0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which measured Cedar and chose the policy crate's own evaluator. Decided in the system design; the owner delegated these choices.
 
 **Date:** 2026-11-15
 

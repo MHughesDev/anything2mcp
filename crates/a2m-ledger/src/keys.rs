@@ -63,7 +63,10 @@ impl KeyRecords for StoreKeyRecords {
         id: &'a KeyId,
         generation: Generation,
     ) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>> {
-        let params = vec![SqlValue::from(id.to_string()), SqlValue::from(generation.get())];
+        let params = vec![
+            SqlValue::from(id.to_string()),
+            SqlValue::from(generation.get()),
+        ];
         Box::pin(async move {
             // Read on the writing thread: a key written a moment ago must be
             // seen, and a store in memory has no other connection.

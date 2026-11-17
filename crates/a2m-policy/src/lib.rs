@@ -9,10 +9,19 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 3.
 
+mod approval;
 mod failure;
 mod model;
+mod policy;
 mod rules;
 mod set;
+mod store;
+
+pub use approval::{ApprovalSurface, Approved, Channel, Declined, PresenceCheck};
+pub use policy::{
+    Decision, Explanation, KillScope, KillSwitch, LimitCheck, Outcome, Policy, PolicyHealth,
+    PublishProof, RuleExplained,
+};
 
 pub use failure::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, DECISION_NOT_FOUND, EFFECT_TOO_HIGH,
@@ -27,6 +36,6 @@ pub use model::{
 pub use rules::Answer;
 pub use set::{
     ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, Grant, LabelGrant, OptionGrant,
-    PolicyLayers, PolicyTest, PreApproval, Profile, Quota, RoleBinding, SET_FORMAT, Scope, Settings,
-    Subject, TestFailure, TestReport,
+    PolicyLayers, PolicyTest, PreApproval, Profile, Quota, RoleBinding, SET_FORMAT, Scope,
+    Settings, Subject, TestFailure, TestReport,
 };

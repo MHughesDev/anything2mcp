@@ -25,10 +25,7 @@ impl RelPath {
     pub fn new(text: &str) -> Result<Self, Failure> {
         let fine = !text.is_empty()
             && text.split('/').all(|part| {
-                !part.is_empty()
-                    && part != "."
-                    && part != ".."
-                    && !part.contains(['\\', ':', '\0'])
+                !part.is_empty() && part != "." && part != ".." && !part.contains(['\\', ':', '\0'])
             });
         if fine {
             Ok(Self(Arc::from(text)))

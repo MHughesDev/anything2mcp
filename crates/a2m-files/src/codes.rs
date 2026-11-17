@@ -56,7 +56,6 @@ kernel_codes! {
     IDENTITY_INVALID = "identity_invalid": "An identity names inputs of the operation, and fits the operation's effect.",
     WRITE_WITHOUT_READ_BACK = "write_without_read_back": "A write binding reads the record back.",
     COMMIT_POINTS_DIFFER = "commit_points_differ": "The steps that commit in each write binding number what the operation declares.",
-    READ_COMMITS = "read_commits": "A read operation has no step that commits.",
     EFFECT_LOWER_THAN_DERIVED = "effect_lower_than_derived": "A declared effect is never lower than the derived one.",
     STEP_CYCLE = "step_cycle": "A pipeline step uses only the results of steps before it.",
     SURFACE_NOT_DECLARED = "surface_not_declared": "Nothing names a surface the target does not declare.",

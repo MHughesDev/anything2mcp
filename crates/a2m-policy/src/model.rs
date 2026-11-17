@@ -9,8 +9,8 @@
 use std::fmt;
 
 use a2m_core::{
-    EffectClass, Environment, Failure, Hazard, Identity, OperationName, PrincipalId, RunId,
-    Digest, Sensitivity, TargetName, WorkspaceId,
+    Digest, EffectClass, Environment, Failure, Hazard, Identity, OperationName, PrincipalId, RunId,
+    Sensitivity, TargetName, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -373,8 +373,6 @@ pub struct Context {
     pub caller_is_agent: bool,
     /// For whom the caller acts, where that was proved.
     pub acting_for: Option<ActingFor>,
-    /// The client's name for itself: recorded, never decided on.
-    pub client_label: String,
 }
 
 impl Context {
@@ -392,7 +390,6 @@ impl Context {
             identity_mode: None,
             caller_is_agent: false,
             acting_for: None,
-            client_label: String::new(),
         }
     }
 }

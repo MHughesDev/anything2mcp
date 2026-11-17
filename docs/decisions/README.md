@@ -42,7 +42,7 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0030 | [Where session secrets live](0030-where-session-secrets-live.md) | Accepted (design decision) |
 | 0031 | [The browser always runs with a profile the engine owns](0031-the-browser-always-runs-with-a-profile-the-engine-owns.md) | Accepted (design decision) |
 | 0032 | [One live session per identity, shared by tabs, with a single renewer](0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md) | Accepted (design decision) |
-| 0033 | [Policy decisions use Cedar, with grants compiled to it](0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md) | Accepted (design decision) |
+| 0033 | [Policy decisions use Cedar, with grants compiled to it](0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md) | Superseded by 0082 |
 | 0034 | [Policy is a versioned, tested artifact, and every decision is recorded](0034-policy-is-a-versioned-tested-artifact-and-every-decision-is-recorded.md) | Accepted (design decision) |
 | 0035 | [A user's session is used only by that user and agents acting for them](0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) | Accepted (owner decision) |
 | 0036 | [Target files are compiled into a hashed plan before anything runs](0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) | Accepted (design decision) |
@@ -87,3 +87,11 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0075 | [The vault's interface, as building it settled it](0075-the-vaults-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0070 | [The browser engine stands on its own client, over the debugging pipe](0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md) | Accepted (design decision) |
 | 0073 | [Decimals use operators, division is a function, and how a field type normalizes](0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md) | Accepted (design decision) |
+| 0078 | [Target files are read by an event parser into our own located tree, and checked by our own schema subset](0078-target-files-are-read-by-an-event-parser-into-our-own-located-tree-and-checked-by-our-own-schema-subset.md) | Accepted (design decision) |
+| 0079 | [The compiler's registration points, and the file formats, as the code settles them](0079-the-compilers-registration-points-and-the-file-formats-as-the-code-settles-them.md) | Accepted (design decision) |
+| 0080 | [The store is one SQLite file, and a crate reaches its own tables through the transaction](0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md) | Accepted (design decision) |
+| 0081 | [What the ledger holds as data: the token, doubt, locks, and rule 3](0081-what-the-ledger-holds-as-data-the-token-doubt-locks-and-rule-three.md) | Accepted (design decision) |
+| 0082 | [The decision core is the policy crate's own evaluator](0082-the-decision-core-is-the-policy-crates-own-evaluator.md) | Accepted (design decision) |
+| 0083 | [The policy engine's interface, as building it settled it](0083-the-policy-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0086 | [The source readers are our own, over one outside crate that inflates](0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md) | Accepted (design decision) |
+| 0087 | [The source readers' interface, as building it settled it](0087-the-source-readers-interface-as-building-it-settled-it.md) | Accepted (design decision) |

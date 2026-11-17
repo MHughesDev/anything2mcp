@@ -408,7 +408,9 @@ impl ParsedPart {
     /// The cells of one row, by column.
     #[must_use]
     pub fn row(&self, row: u32) -> &[PlacedCell] {
-        let start = self.cells.partition_point(|placed| placed.cell.at.row < row);
+        let start = self
+            .cells
+            .partition_point(|placed| placed.cell.at.row < row);
         let end = self
             .cells
             .partition_point(|placed| placed.cell.at.row <= row);
@@ -470,7 +472,10 @@ mod tests {
         assert_eq!(cell_from_a1("7"), None);
         assert_eq!(cell_from_a1("A0"), None);
         let range = CellRange::from_a1("$A$1:$E$4").unwrap();
-        assert_eq!((range.top, range.left, range.bottom, range.right), (1, 1, 4, 5));
+        assert_eq!(
+            (range.top, range.left, range.bottom, range.right),
+            (1, 1, 4, 5)
+        );
         assert_eq!(range.a1(), "A1:E4");
         assert_eq!(CellRange::from_a1("B2").unwrap().a1(), "B2");
         assert!(CellRange::from_a1("A:A").is_none());

@@ -118,7 +118,10 @@ pub(crate) fn unexpected(what: impl AsRef<str>) -> Failure {
     Failure::new(
         FailureClass::UnknownVariant,
         LEDGER_STATE_UNEXPECTED,
-        format!("The ledger refused a change no rule allows: {}.", what.as_ref()),
+        format!(
+            "The ledger refused a change no rule allows: {}.",
+            what.as_ref()
+        ),
         "Read the run's state again before doing anything else.",
     )
 }

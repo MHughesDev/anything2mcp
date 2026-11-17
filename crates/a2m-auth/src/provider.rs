@@ -196,10 +196,7 @@ impl SignInContext<'_> {
                 &format!("no credential is named for the role `{role}`"),
             )
         })?;
-        let secret = self
-            .credentials
-            .open(&self.session.key, reference)
-            .await?;
+        let secret = self.credentials.open(&self.session.key, reference).await?;
         self.vault.register(&secret);
         Ok(secret)
     }
@@ -314,8 +311,11 @@ pub trait AuthProvider: Send + Sync {
 
     /// The provider's own view of whether `material` still signs in at
     /// `now`. It does not reach the system; the target's probe does that.
-    fn is_signed_in<'a>(&'a self, material: &'a Material, now: Timestamp)
-    -> BoxFuture<'a, SignedIn>;
+    fn is_signed_in<'a>(
+        &'a self,
+        material: &'a Material,
+        now: Timestamp,
+    ) -> BoxFuture<'a, SignedIn>;
 
     /// Whether something a driver observed is a sign that the session has
     /// ended. `None` when it is not one this provider recognizes.

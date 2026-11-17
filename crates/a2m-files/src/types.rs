@@ -6,7 +6,7 @@ use a2m_expr::{DecimalMark, FieldRule, Whitespace};
 
 use crate::codes::{self, kernel};
 use crate::diag::{Diagnostic, Stage};
-use crate::doc::{Located, Doc, Place};
+use crate::doc::{Doc, Located, Place};
 use crate::schema::fix_for_unknown;
 use crate::view::ExprTable;
 
@@ -30,7 +30,12 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
     let sixteenth = Decimal::from_units(625, 4).unwrap_or_else(|_| Decimal::from_i64(1));
     vec![
         ("text", text(true, Whitespace::Collapse)),
-        ("integer", FieldRule::Integer { mark: DecimalMark::Point }),
+        (
+            "integer",
+            FieldRule::Integer {
+                mark: DecimalMark::Point,
+            },
+        ),
         (
             "decimal",
             FieldRule::Decimal {
@@ -39,7 +44,12 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
                 mark: DecimalMark::Point,
             },
         ),
-        ("date", FieldRule::Date { format: "YYYY-MM-DD".to_owned() }),
+        (
+            "date",
+            FieldRule::Date {
+                format: "YYYY-MM-DD".to_owned(),
+            },
+        ),
         (
             "datetime",
             FieldRule::Datetime {
@@ -47,7 +57,12 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
                 zone: "UTC".to_owned(),
             },
         ),
-        ("time", FieldRule::Time { format: "HH:mm".to_owned() }),
+        (
+            "time",
+            FieldRule::Time {
+                format: "HH:mm".to_owned(),
+            },
+        ),
         (
             "boolean",
             FieldRule::Boolean {
@@ -132,16 +147,29 @@ pub(crate) fn plan_of(
         normalizer: Some(index),
     };
     match rule {
-        FieldRule::Decimal { places, rounding, .. } => {
+        FieldRule::Decimal {
+            places, rounding, ..
+        } => {
             plan.places = Some(*places);
             plan.rounding = Some(*rounding);
         }
-        FieldRule::Money { currency, places, rounding, .. } => {
+        FieldRule::Money {
+            currency,
+            places,
+            rounding,
+            ..
+        } => {
             plan.places = Some(places.unwrap_or_else(|| a2m_expr::currency_places(currency)));
             plan.rounding = Some(*rounding);
             plan.currency = Some(currency.clone());
         }
-        FieldRule::Measurement { unit, display_unit, step, rounding, .. } => {
+        FieldRule::Measurement {
+            unit,
+            display_unit,
+            step,
+            rounding,
+            ..
+        } => {
             plan.places = Some(step.places());
             plan.rounding = Some(*rounding);
             plan.unit = Some(unit.clone());
@@ -182,7 +210,10 @@ pub(crate) fn rule_of(
     fixed_zone: &str,
 ) -> Result<(FieldRule, Labels), Vec<Diagnostic>> {
     let mut problems = Vec::new();
-    let Some(base) = doc.text("base").and_then(|base| base.parse::<FieldBase>().ok()) else {
+    let Some(base) = doc
+        .text("base")
+        .and_then(|base| base.parse::<FieldBase>().ok())
+    else {
         return Err(problems);
     };
     let allowed = keys_of(base);
@@ -343,7 +374,10 @@ pub(crate) fn rule_of(
         sensitivity: word("sensitivity")
             .and_then(|name| name.parse::<Sensitivity>().ok())
             .unwrap_or_default(),
-        untrusted: doc.get("untrusted").and_then(Located::as_bool).unwrap_or(false),
+        untrusted: doc
+            .get("untrusted")
+            .and_then(Located::as_bool)
+            .unwrap_or(false),
         zone: zone_rule,
     };
     match rule {

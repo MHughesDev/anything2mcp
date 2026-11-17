@@ -10,8 +10,7 @@ use std::collections::BTreeMap;
 use a2m_core::{
     BindingStatus, EffectClass, ExprIndex, FieldTypeIndex, FieldTypePlan, FileKindName, Hazard,
     IdentityStrategy, InputIndex, InputPlan, Mode, OperationName, PackSection, PlanExpr,
-    SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan, TargetName, ValueType,
-    Verb,
+    SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan, TargetName, ValueType, Verb,
 };
 use a2m_expr::{LibraryVersion, TypeEnv};
 
@@ -200,9 +199,10 @@ pub(crate) fn check_expr(
                 "The expression `{shown}` does not check: {} (characters {} to {} of the expression).",
                 error.message, error.at.start, error.at.end
             ),
-            error
-                .fix
-                .unwrap_or_else(|| "Correct the expression so that it reads only declared names and its types fit.".to_owned()),
+            error.fix.unwrap_or_else(|| {
+                "Correct the expression so that it reads only declared names and its types fit."
+                    .to_owned()
+            }),
         )
     };
     a2m_expr::compile(text, env, expected)
@@ -346,7 +346,9 @@ impl<'a> OperationView<'a> {
     /// The input with this name.
     #[must_use]
     pub fn input(&self, name: &str) -> Option<InputView<'a>> {
-        self.inputs().into_iter().find(|input| input.plan.name == name)
+        self.inputs()
+            .into_iter()
+            .find(|input| input.plan.name == name)
     }
 
     /// The fields of its result, in declared order.
@@ -434,7 +436,12 @@ pub(crate) fn check_site(site: &ExprSite) -> Result<PlanExpr, Diagnostic> {
         .iter()
         .map(|declared| (declared.name.as_str(), declared.ty.clone()))
         .collect();
-    check_expr(&site.text, &site.at, &type_env(&names), site.expected.as_ref())
+    check_expr(
+        &site.text,
+        &site.at,
+        &type_env(&names),
+        site.expected.as_ref(),
+    )
 }
 
 /// What a lowering sees while it lowers one binding.
@@ -478,7 +485,10 @@ impl<'a> LowerContext<'a> {
                 kernel(codes::WRONG_TYPE),
                 Stage::Lower,
                 &doc.at,
-                format!("This value is a {}, and an expression is needed.", doc.value.kind()),
+                format!(
+                    "This value is a {}, and an expression is needed.",
+                    doc.value.kind()
+                ),
                 "Write an expression, such as `input.order_id`.",
             ));
         };
@@ -529,7 +539,12 @@ impl<'a> LowerContext<'a> {
                     && &section.kind == kind
                     && &section.surface_kind == surface_kind
             })
-            .map(|position| (SectionIndex::new(index(position)), &self.model.sections[position]))
+            .map(|position| {
+                (
+                    SectionIndex::new(index(position)),
+                    &self.model.sections[position],
+                )
+            })
     }
 
     /// The validated documents of a file kind for a surface kind: one the
@@ -542,7 +557,11 @@ impl<'a> LowerContext<'a> {
         surface_kind: &SurfaceKind,
     ) -> Option<&'a [Located<Doc>]> {
         let key = (kind.clone(), surface_kind.clone());
-        let owned = self.model.owners.get(&key).is_some_and(|owner| owner == self.pack);
+        let owned = self
+            .model
+            .owners
+            .get(&key)
+            .is_some_and(|owner| owner == self.pack);
         if owned || self.reads.contains(&key) {
             Some(self.model.entries.get(&key).map_or(&[], Vec::as_slice))
         } else {
@@ -559,7 +578,11 @@ impl<'a> LowerContext<'a> {
         surface_kind: &SurfaceKind,
     ) -> Option<SectionIndex> {
         let key = (kind.clone(), surface_kind.clone());
-        let owned = self.model.owners.get(&key).is_some_and(|owner| owner == self.pack);
+        let owned = self
+            .model
+            .owners
+            .get(&key)
+            .is_some_and(|owner| owner == self.pack);
         if !(owned || self.reads.contains(&key)) {
             return None;
         }

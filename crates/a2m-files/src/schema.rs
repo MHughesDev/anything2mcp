@@ -38,7 +38,10 @@ impl Reference {
 enum Node {
     Any,
     Bool,
-    Int { min: Option<i64>, max: Option<i64> },
+    Int {
+        min: Option<i64>,
+        max: Option<i64>,
+    },
     Text,
     Scalar,
     Decimal,
@@ -46,8 +49,14 @@ enum Node {
     Words(Vec<String>),
     Refers(Reference),
     Expression,
-    List { item: Box<Node>, min: usize },
-    Object { fields: Vec<Field>, rest: Option<Box<Node>> },
+    List {
+        item: Box<Node>,
+        min: usize,
+    },
+    Object {
+        fields: Vec<Field>,
+        rest: Option<Box<Node>>,
+    },
     Either(Vec<Node>),
 }
 
@@ -126,7 +135,9 @@ impl JsonSchema {
     /// One of a closed list of words.
     #[must_use]
     pub fn words(words: &[&str]) -> Self {
-        Self(Node::Words(words.iter().map(|word| (*word).to_owned()).collect()))
+        Self(Node::Words(
+            words.iter().map(|word| (*word).to_owned()).collect(),
+        ))
     }
 
     /// A control an enabled pack registered.
@@ -220,7 +231,9 @@ impl JsonSchema {
     /// A value that fits any one of `choices`.
     #[must_use]
     pub fn either(choices: Vec<Self>) -> Self {
-        Self(Node::Either(choices.into_iter().map(|choice| choice.0).collect()))
+        Self(Node::Either(
+            choices.into_iter().map(|choice| choice.0).collect(),
+        ))
     }
 
     /// The keys an object schema lists, in the order they were added.
@@ -281,11 +294,17 @@ fn to_json(node: &Node) -> serde_json::Value {
         }
         Node::Text => json!({"type": "string"}),
         Node::Scalar => json!({"type": ["string", "integer", "boolean"]}),
-        Node::Decimal => json!({"type": ["string", "integer"], "pattern": "^-?[0-9]+(\\.[0-9]+)?$"}),
-        Node::Name => json!({"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}),
+        Node::Decimal => {
+            json!({"type": ["string", "integer"], "pattern": "^-?[0-9]+(\\.[0-9]+)?$"})
+        }
+        Node::Name => {
+            json!({"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"})
+        }
         Node::Words(words) => json!({"enum": words}),
         Node::Refers(reference) => json!({"type": "string", "x-a2m-refers-to": reference.name()}),
-        Node::Expression => json!({"type": ["string", "integer", "boolean"], "x-a2m-expression": true}),
+        Node::Expression => {
+            json!({"type": ["string", "integer", "boolean"], "x-a2m-expression": true})
+        }
         Node::List { item, min } => {
             let mut schema = json!({"type": "array", "items": to_json(item)});
             if let (true, Some(map)) = (*min > 0, schema.as_object_mut()) {
@@ -326,7 +345,9 @@ fn describe(node: &Node) -> String {
         Node::Int { .. } => "a whole number".to_owned(),
         Node::Text => "text".to_owned(),
         Node::Scalar => "text, a whole number, or true or false".to_owned(),
-        Node::Decimal => "a number, written as a whole number or as text such as \"0.25\"".to_owned(),
+        Node::Decimal => {
+            "a number, written as a whole number or as text such as \"0.25\"".to_owned()
+        }
         Node::Name => "a name".to_owned(),
         Node::Words(words) => format!("one of: {}", words.join(", ")),
         Node::Refers(Reference::Control) => "the name of a control".to_owned(),
@@ -349,7 +370,8 @@ pub(crate) fn is_dotted_name(text: &str) -> bool {
         && text.split('.').all(|part| {
             let mut bytes = part.bytes();
             bytes.next().is_some_and(|first| first.is_ascii_lowercase())
-                && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                && bytes
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         })
 }
 
@@ -358,7 +380,11 @@ fn wrong_type(node: &Node, doc: &Located<Doc>, out: &mut Checked) {
         kernel(codes::WRONG_TYPE),
         Stage::Validate,
         &doc.at,
-        format!("This value is a {}, and the schema needs {}.", doc.value.kind(), describe(node)),
+        format!(
+            "This value is a {}, and the schema needs {}.",
+            doc.value.kind(),
+            describe(node)
+        ),
         format!("Write {} here.", describe(node)),
     ));
 }
@@ -404,7 +430,10 @@ pub(crate) fn open_question(doc: &Located<Doc>) -> Option<Diagnostic> {
     let entries = doc.entries();
     let [entry] = entries else { return None };
     (entry.key.value == OPEN_QUESTION).then(|| {
-        let question = entry.value.as_text().unwrap_or("the system did not state this value");
+        let question = entry
+            .value
+            .as_text()
+            .unwrap_or("the system did not state this value");
         Diagnostic::error(
             kernel(codes::OPEN_QUESTION),
             Stage::Validate,
@@ -474,7 +503,10 @@ fn check(node: &Node, doc: &Located<Doc>, out: &mut Checked) {
                     kernel(codes::MISSING_FIELD),
                     Stage::Validate,
                     &doc.at,
-                    format!("This list has {} items and needs at least {min}.", items.len()),
+                    format!(
+                        "This list has {} items and needs at least {min}.",
+                        items.len()
+                    ),
                     "Add an item to the list.",
                 ));
             }
@@ -494,7 +526,10 @@ fn check(node: &Node, doc: &Located<Doc>, out: &mut Checked) {
                         kernel(codes::UNKNOWN_KEY),
                         Stage::Validate,
                         &entry.key.at,
-                        format!("The key `{}` is not one this map takes.", shown(&entry.key.value)),
+                        format!(
+                            "The key `{}` is not one this map takes.",
+                            shown(&entry.key.value)
+                        ),
                         fix_for_unknown(&entry.key.value, &known),
                     ));
                 }
@@ -547,7 +582,10 @@ fn unknown_word(words: &[String], text: &str, at: &Place, out: &mut Checked) {
         kernel(codes::UNKNOWN_VALUE),
         Stage::Validate,
         at,
-        format!("`{}` is not one of the words this field takes.", shown(text)),
+        format!(
+            "`{}` is not one of the words this field takes.",
+            shown(text)
+        ),
         fix_for_unknown(text, &known),
     ));
 }
@@ -576,10 +614,13 @@ mod tests {
             .optional("status", JsonSchema::words(&["draft", "verified"]))
             .optional("fields", JsonSchema::map_of(JsonSchema::expression()))
             .optional("step", JsonSchema::decimal())
-            .optional("key", JsonSchema::either(vec![
-                JsonSchema::name(),
-                JsonSchema::non_empty_list(JsonSchema::name()),
-            ]))
+            .optional(
+                "key",
+                JsonSchema::either(vec![
+                    JsonSchema::name(),
+                    JsonSchema::non_empty_list(JsonSchema::name()),
+                ]),
+            )
     }
 
     fn check(text: &str) -> super::Checked {
@@ -600,7 +641,8 @@ mod tests {
 
     #[test]
     fn an_unknown_key_a_missing_field_and_a_wrong_value_each_have_a_place_and_a_fix() {
-        let checked = check("screen: order.form\nstatuss: draft\nstatus: live\nstep: abc\nkey: {a: 1}\n");
+        let checked =
+            check("screen: order.form\nstatuss: draft\nstatus: live\nstep: abc\nkey: {a: 1}\n");
         let codes: Vec<(&str, u32)> = checked
             .diagnostics
             .iter()
@@ -611,14 +653,19 @@ mod tests {
         assert!(codes.contains(&("kernel.wrong_type", 4)), "{codes:?}");
         assert!(codes.contains(&("kernel.wrong_type", 5)), "{codes:?}");
         assert!(codes.contains(&("kernel.missing_field", 1)), "{codes:?}");
-        let unknown = checked.diagnostics.iter().find(|item| item.at.line == 2).unwrap();
+        let unknown = checked
+            .diagnostics
+            .iter()
+            .find(|item| item.at.line == 2)
+            .unwrap();
         assert_eq!(unknown.fix, "Write `status`.");
         assert!(checked.diagnostics.iter().all(|item| !item.fix.is_empty()));
     }
 
     #[test]
     fn an_open_question_is_refused_wherever_it_stands() {
-        let checked = check("screen: order.form\ncontrol: {open_question: \"Which control is this?\"}\n");
+        let checked =
+            check("screen: order.form\ncontrol: {open_question: \"Which control is this?\"}\n");
         assert_eq!(checked.diagnostics.len(), 1);
         assert_eq!(checked.diagnostics[0].code.as_str(), "kernel.open_question");
     }
@@ -629,6 +676,9 @@ mod tests {
         assert_eq!(json["type"], "object");
         assert_eq!(json["additionalProperties"], false);
         assert_eq!(json["required"], serde_json::json!(["screen", "control"]));
-        assert_eq!(json["properties"]["status"]["enum"], serde_json::json!(["draft", "verified"]));
+        assert_eq!(
+            json["properties"]["status"]["enum"],
+            serde_json::json!(["draft", "verified"])
+        );
     }
 }

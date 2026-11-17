@@ -117,7 +117,7 @@ pub(crate) fn evaluation_failed() -> Failure {
     policy(
         POLICY_EVALUATION_FAILED,
         "The policy engine could not decide, so the answer is no.",
-        "Run `doctor`; if no valid policy set is loaded, publish one.",
+        "Check the engine's status; if no valid policy set is loaded, publish one.",
     )
 }
 

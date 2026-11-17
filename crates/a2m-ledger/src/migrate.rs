@@ -58,7 +58,9 @@ fn known() -> &'static Result<Known, String> {
                 .next()
                 .and_then(|line| line.trim_end().strip_prefix(OWNER_LINE))
                 .and_then(Owner::from_crate_name)
-                .ok_or_else(|| format!("migration `{name}` does not name its owner on its first line"))?;
+                .ok_or_else(|| {
+                    format!("migration `{name}` does not name its owner on its first line")
+                })?;
             let tables = created_tables(sql);
             for table in &tables {
                 if let Some(other) = owners.insert(table.clone(), owner) {
@@ -166,20 +168,22 @@ pub(crate) fn migrate(db: &Db, now: Timestamp) -> Result<(), Failure> {
             continue;
         }
         db.begin(Some(Durability::Synced))?;
-        let done = db.run_migration(migration.owner, migration.sql).and_then(|()| {
-            db.execute(
-                Scope::Internal,
-                "INSERT INTO schema_migrations (number, name, owner, checksum, applied_at)
+        let done = db
+            .run_migration(migration.owner, migration.sql)
+            .and_then(|()| {
+                db.execute(
+                    Scope::Internal,
+                    "INSERT INTO schema_migrations (number, name, owner, checksum, applied_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                &[
-                    SqlValue::from(migration.number),
-                    SqlValue::from(migration.name),
-                    SqlValue::from(migration.owner.crate_name()),
-                    SqlValue::from(migration.checksum.to_string()),
-                    SqlValue::from(now),
-                ],
-            )
-        });
+                    &[
+                        SqlValue::from(migration.number),
+                        SqlValue::from(migration.name),
+                        SqlValue::from(migration.owner.crate_name()),
+                        SqlValue::from(migration.checksum.to_string()),
+                        SqlValue::from(now),
+                    ],
+                )
+            });
         match done {
             Ok(_) => db.end(true, true)?,
             Err(failure) => {

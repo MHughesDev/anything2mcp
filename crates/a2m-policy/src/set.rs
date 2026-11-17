@@ -79,9 +79,7 @@ impl Scope {
         match self {
             Self::Target(target) => *target == tool.target,
             Self::Module(target, module) => *target == tool.target && *module == tool.module,
-            Self::Pattern(pattern) => {
-                wildcard(pattern.as_bytes(), tool.tool.as_str().as_bytes())
-            }
+            Self::Pattern(pattern) => wildcard(pattern.as_bytes(), tool.tool.as_str().as_bytes()),
         }
     }
 }

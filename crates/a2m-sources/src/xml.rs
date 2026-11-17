@@ -69,7 +69,10 @@ impl<'a> Attributes<'a> {
 }
 
 fn bad(what: &str, at: usize) -> Failure {
-    malformed(format!("{what}, at byte {} of a part of the package", at + 1))
+    malformed(format!(
+        "{what}, at byte {} of a part of the package",
+        at + 1
+    ))
 }
 
 /// Reads the named and numbered characters of a run of text.
@@ -125,7 +128,9 @@ impl<'a> Xml<'a> {
     /// A reader over a part's bytes, which must be UTF-8.
     pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, Failure> {
         if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
-            return Err(encoding("a part of the package is UTF-16, and only UTF-8 is read"));
+            return Err(encoding(
+                "a part of the package is UTF-16, and only UTF-8 is read",
+            ));
         }
         let text = std::str::from_utf8(bytes)
             .map_err(|_| encoding("a part of the package is not UTF-8"))?;
@@ -157,8 +162,9 @@ impl<'a> Xml<'a> {
                 let length = rest.find('<').unwrap_or(rest.len());
                 self.at += length;
                 let raw = rest.get(..length).unwrap_or("");
-                let text = unescape(raw)
-                    .map_err(|()| bad("text names a character the format does not define", start))?;
+                let text = unescape(raw).map_err(|()| {
+                    bad("text names a character the format does not define", start)
+                })?;
                 return Ok(Some(Event::Text {
                     text,
                     start,
@@ -260,26 +266,47 @@ mod tests {
         let mut xml = Xml::new(part).unwrap();
         // The line break after the declaration.
         assert!(matches!(xml.next().unwrap(), Some(Event::Text { .. })));
-        let Some(Event::Open { name, attributes, closed }) = xml.next().unwrap() else {
+        let Some(Event::Open {
+            name,
+            attributes,
+            closed,
+        }) = xml.next().unwrap()
+        else {
             panic!("an element opens");
         };
         assert_eq!((name, closed), ("a", false));
         assert_eq!(attributes.get("k").as_deref(), Some("1 > 0"));
         assert_eq!(attributes.get("r:id").as_deref(), Some("rId1"));
         assert_eq!(attributes.get("id"), None);
-        assert!(matches!(xml.next().unwrap(), Some(Event::Open { name: "b", closed: true, .. })));
-        assert!(matches!(xml.next().unwrap(), Some(Event::Open { name: "c", .. })));
+        assert!(matches!(
+            xml.next().unwrap(),
+            Some(Event::Open {
+                name: "b",
+                closed: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            xml.next().unwrap(),
+            Some(Event::Open { name: "c", .. })
+        ));
         let Some(Event::Text { text, start, end }) = xml.next().unwrap() else {
             panic!("text");
         };
         assert_eq!(text, "t & AB");
         assert_eq!(&part[start..end], b"t &amp; &#x41;&#66;");
-        assert!(matches!(xml.next().unwrap(), Some(Event::Close { name: "c" })));
+        assert!(matches!(
+            xml.next().unwrap(),
+            Some(Event::Close { name: "c" })
+        ));
         let Some(Event::Text { text, .. }) = xml.next().unwrap() else {
             panic!("text");
         };
         assert_eq!(text, "<raw>");
-        assert!(matches!(xml.next().unwrap(), Some(Event::Close { name: "a" })));
+        assert!(matches!(
+            xml.next().unwrap(),
+            Some(Event::Close { name: "a" })
+        ));
         assert_eq!(xml.next().unwrap(), None);
     }
 

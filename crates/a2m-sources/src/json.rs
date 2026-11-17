@@ -55,7 +55,10 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn error(&self, what: &str) -> Failure {
-        malformed(format!("{what}, at byte {} of the JSON document", self.at + 1))
+        malformed(format!(
+            "{what}, at byte {} of the JSON document",
+            self.at + 1
+        ))
     }
 
     fn space(&mut self) {
@@ -261,7 +264,9 @@ impl Parser<'_> {
                     text.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
                 }
                 0..=0x1F => {
-                    return Err(self.error("a string holds a control character that is not escaped"));
+                    return Err(
+                        self.error("a string holds a control character that is not escaped")
+                    );
                 }
                 other => text.push(other),
             }

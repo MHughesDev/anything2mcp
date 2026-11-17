@@ -25,7 +25,8 @@ CREATE TABLE blobs (
     workspace_id TEXT NOT NULL,
     owner_kind TEXT NOT NULL CHECK (owner_kind IN ('person', 'service')),
     owner_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('values', 'diff', 'snapshot', 'trace', 'screenshot', 'input', 'result')),
+    kind TEXT NOT NULL CHECK (kind IN (
+        'values', 'diff', 'snapshot', 'trace', 'screenshot', 'input', 'result', 'exchange', 'window_tree')),
     size INTEGER NOT NULL,
     location TEXT NOT NULL CHECK (location IN ('inline', 'file')),
     sealed BLOB,

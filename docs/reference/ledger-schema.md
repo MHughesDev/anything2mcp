@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). This is a design draft: names and types are to be settled when the first migration is written in Phase 3, and any change after that is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger` and the first two of `a2m-policy` are built; their definitions in force are the migration files in `crates/a2m-ledger/migrations/`, and where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -23,7 +23,7 @@ Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on
 | `attempt` | int | Increases on each resume |
 | `lease_epoch` | bigint | Increases on each lease; the fencing number |
 | `diff_hash`, `diff_ref` | text, ref | Set when the preview is built |
-| `approval_id` | id | The approval that was used |
+| `approval_id`, `decision_id` | id, id | The approval that was used, or the recorded decision that let the run write without a person |
 | `counts` | json | Planned, unchanged, verified, failed |
 | `result_ref`, `trace_ref` | ref, ref | Result and trace |
 | `created_at`, `started_at`, `finished_at` | ts | Timings |
@@ -51,13 +51,13 @@ Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id,
 | `state` | enum | `planned`, `unchanged`, `intent`, `acted`, `verified`, `failed` |
 | `intended_hash`, `intended_ref` | text, ref | What should be stored |
 | `before_ref` | ref | Values seen before the write; used by undo and by resume |
-| `after_ref` | ref | Values read back |
+| `after_ref`, `read_back_hash` | ref, text | Values read back, and their digest; a record is `verified` only when the digest equals `intended_hash` |
 | `idempotency_token` | text | Stable for the run and key; sent where the application accepts one; the stamp for `stamped` identity |
 | `assigned_key` | text | The identifier the application assigned, stored as soon as it is known |
 | `outputs_ref` | ref | The record's result, for later steps that depend on it |
 | `skip_reason` | text | Such as `blocked_by_parent` |
 | `binding_mode` | enum | Mode that performed the write |
-| `intent_epoch` | bigint | Lease number under which the intent was stored |
+| `intent_epoch`, `intent_seq` | bigint, bigint | Lease number under which the intent was stored, and the number of its intent event |
 | `attempts` | int | Write attempts |
 | `failure_class`, `failure_code` | enum, text | When failed |
 | `evidence_ref` | ref | Trace fragment for this record |
@@ -72,11 +72,11 @@ Indexes: on `(run_id, state)`; on `record_key_hash`.
 | `run_id`, `seq` | id, bigint | Primary key; `seq` has no gaps within a run |
 | `epoch` | bigint | Lease number of the writer |
 | `at` | ts | Database time |
-| `kind` | enum | `state_changed`, `step_started`, `binding_chosen`, `intent`, `acted`, `verified`, `failed`, `reconcile_read`, `approval_bound`, `lease_granted`, `lease_lost`, `need`, `late_evidence` |
+| `kind` | enum | `state_changed`, `step_started`, `binding_chosen`, `intent`, `acted`, `verified`, `failed`, `reconcile_read`, `approval_bound`, `lease_granted`, `lease_lost`, `need`, `late_evidence`, `planned`, `diff_stored`, `lock` |
 | `payload` | json | Small; large data goes in a blob |
 | `evidence_ref` | ref | Optional |
 
-Append-only. An insert carrying an `epoch` lower than the run's current `lease_epoch` is refused, except for `late_evidence`.
+Append-only. An insert carrying an `epoch` other than the run's current `lease_epoch` is refused, except for `late_evidence`.
 
 ## approvals
 
@@ -154,8 +154,9 @@ Indexes: on `(state, priority, available_at)` where the state is `pending`; on `
 | Column | Type | Notes |
 | --- | --- | --- |
 | `hash` | text | Primary key; the keyed digest of the plain data |
-| `kind` | enum | `values`, `diff`, `snapshot`, `trace`, `screenshot`, `input`, `result` |
-| `size`, `location` | int, text | Inline, file, or object-storage key |
+| `workspace_id`, `owner_kind`, `owner_id` | id, enum, text | The workspace whose digest key named it, and the owner it is sealed for |
+| `kind` | enum | `values`, `diff`, `snapshot`, `trace`, `screenshot`, `input`, `result`, `exchange`, `window_tree` |
+| `size`, `location`, `sealed` | int, text, bytes | Inline, file, or object-storage key; the sealed bytes when inline |
 | `key_ref` | text | Which vault key encrypts it |
 | `retention_class`, `created_at` | enum, ts | Retention |
 

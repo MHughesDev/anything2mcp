@@ -1,0 +1,9 @@
+template: order_sheet_v2
+reader: csv
+fingerprint: {header: ["Code", "Length"]}
+columns: {code: "Code", length: "Length"}
+mapping:
+  code: "trim(source.code)"
+  length: "to_inches(source.length)"
+rows: 'source.code != ""'
+missing: ["n/a"]

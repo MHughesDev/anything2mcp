@@ -1,0 +1,12 @@
+call: order_get
+path: "/orders/{order_id}"
+effect: read
+accept: 'reply != ""'
+---
+call: line_item_get
+path: "/orders/{order_id}/items/{item_code}"
+effect: read
+---
+call: line_item_put
+path: "/orders/{order_id}/items/{item_code}"
+effect: write

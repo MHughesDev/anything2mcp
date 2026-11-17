@@ -37,8 +37,9 @@ pub const FIXTURE: &str = "fixture";
 pub const FIXTURE_MARKER: &str = "fixture.yaml";
 
 /// Every file kind the kernel owns.
-pub const KERNEL_FILE_KINDS: &[&str] =
-    &[TARGET, AUTH, TYPES, OPERATION, PIPELINE, SOURCE, TEST, FIXTURE];
+pub const KERNEL_FILE_KINDS: &[&str] = &[
+    TARGET, AUTH, TYPES, OPERATION, PIPELINE, SOURCE, TEST, FIXTURE,
+];
 
 /// The files the kernel owns at the top of a target folder, with the kind
 /// of each.
@@ -97,14 +98,23 @@ fn target() -> JsonSchema {
             JsonSchema::object()
                 .optional("locale", JsonSchema::text())
                 .optional("timezone", JsonSchema::text())
-                .optional("viewport", JsonSchema::list(JsonSchema::int_between(1, 100_000))),
+                .optional(
+                    "viewport",
+                    JsonSchema::list(JsonSchema::int_between(1, 100_000)),
+                ),
         )
         .optional("modules", JsonSchema::list(JsonSchema::name()))
         .optional(
             "defaults",
             JsonSchema::object()
-                .optional("timeouts", JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))))
-                .optional("limits", JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))))
+                .optional(
+                    "timeouts",
+                    JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))),
+                )
+                .optional(
+                    "limits",
+                    JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))),
+                )
                 .optional("capture", JsonSchema::name()),
         )
         .optional("exclusive_session", JsonSchema::bool())
@@ -143,7 +153,10 @@ pub(crate) fn binding() -> JsonSchema {
 
 fn auth() -> JsonSchema {
     let entry = JsonSchema::object()
-        .required("surfaces", JsonSchema::non_empty_list(JsonSchema::surface()))
+        .required(
+            "surfaces",
+            JsonSchema::non_empty_list(JsonSchema::surface()),
+        )
         .required(
             "mode",
             JsonSchema::words(&["use_existing", "managed_session", "custom"]),
@@ -179,7 +192,10 @@ fn types() -> JsonSchema {
         .optional("format", JsonSchema::text())
         .optional("timezone", JsonSchema::text())
         .optional("case", JsonSchema::words(&["sensitive", "insensitive"]))
-        .optional("whitespace", JsonSchema::words(&["collapse", "trim", "exact"]))
+        .optional(
+            "whitespace",
+            JsonSchema::words(&["collapse", "trim", "exact"]),
+        )
         .optional("decimal_mark", JsonSchema::words(&[".", ","]))
         .optional("true_text", JsonSchema::text())
         .optional("false_text", JsonSchema::text())
@@ -259,12 +275,21 @@ fn pipeline() -> JsonSchema {
         .optional(
             "limits",
             JsonSchema::object()
-                .optional("max_records", JsonSchema::int_between(1, i64::from(u32::MAX)))
+                .optional(
+                    "max_records",
+                    JsonSchema::int_between(1, i64::from(u32::MAX)),
+                )
                 .optional("max_duration_ms", JsonSchema::int_between(1, i64::MAX)),
         )
         .required("steps", JsonSchema::non_empty_list(step))
-        .required("success", JsonSchema::non_empty_list(JsonSchema::expression()))
-        .optional("headroom_ms", JsonSchema::int_between(0, i64::from(u32::MAX)))
+        .required(
+            "success",
+            JsonSchema::non_empty_list(JsonSchema::expression()),
+        )
+        .optional(
+            "headroom_ms",
+            JsonSchema::int_between(0, i64::from(u32::MAX)),
+        )
 }
 
 fn source() -> JsonSchema {

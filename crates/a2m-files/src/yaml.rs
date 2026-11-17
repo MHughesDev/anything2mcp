@@ -105,7 +105,12 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn value(&mut self, event: Event<'a>, span: Span, depth: u32) -> Result<Located<Doc>, Diagnostic> {
+    fn value(
+        &mut self,
+        event: Event<'a>,
+        span: Span,
+        depth: u32,
+    ) -> Result<Located<Doc>, Diagnostic> {
         let at = self.place(span);
         if depth > DEEPEST {
             return Err(self.malformed(at, "values are nested too deeply"));
@@ -215,7 +220,13 @@ mod tests {
         let doc = &docs[0];
         let operation = doc.get("operation").unwrap();
         assert_eq!((operation.at.line, operation.at.column), (1, 12));
-        let ty = doc.get("inputs").unwrap().get("order_id").unwrap().get("type").unwrap();
+        let ty = doc
+            .get("inputs")
+            .unwrap()
+            .get("order_id")
+            .unwrap()
+            .get("type")
+            .unwrap();
         assert_eq!((ty.at.line, ty.at.column), (3, 20));
         assert_eq!(ty.as_text(), Some("identifier"));
         let items = doc.get("list").unwrap().items();
@@ -230,7 +241,10 @@ mod tests {
         let unix = "a: 1\nb:\n  - x\n  - y\ntext: >\n  one\n  two\n";
         let windows = format!("\u{feff}{}", unix.replace('\n', "\r\n"));
         assert_eq!(normalize_text(&windows), unix);
-        assert_eq!(parse(&file(), unix).unwrap(), parse(&file(), &windows).unwrap());
+        assert_eq!(
+            parse(&file(), unix).unwrap(),
+            parse(&file(), &windows).unwrap()
+        );
     }
 
     #[test]

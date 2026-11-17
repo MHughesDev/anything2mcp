@@ -137,9 +137,8 @@ impl Diagnostics {
     }
 
     fn sort(&mut self) {
-        self.0.sort_by(|a, b| {
-            (&a.at, &a.code, &a.message).cmp(&(&b.at, &b.code, &b.message))
-        });
+        self.0
+            .sort_by(|a, b| (&a.at, &a.code, &a.message).cmp(&(&b.at, &b.code, &b.message)));
         self.0.dedup();
     }
 

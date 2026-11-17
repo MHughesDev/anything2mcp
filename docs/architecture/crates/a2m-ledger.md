@@ -9,14 +9,14 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 | Side | Kernel |
 | Layer | 3, Stores |
 | May depend on | Layers 1 and 2 |
-| Depends on | `a2m-core`; `a2m-vault` to seal blobs and to implement its `KeyRecords`; `a2m-telemetry` for spans. Outside: an SQL crate that speaks both databases, a time-ordered UUID crate, and a SHA-256 crate, each to be verified |
+| Depends on | `a2m-core`; `a2m-vault` to seal blobs, for its `RandomSource`, and to implement its `KeyRecords`; `a2m-telemetry` for its `Clock` and for spans. Outside: `rusqlite` with SQLite built in ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)), `serde_json`, and `tokio` for the channel an answer comes back on. Identifiers and SHA-256 come from `a2m-core` |
 | Built in | Phase 1, group H: runs, events, blobs, migrations, on SQLite. Phase 3, group A and slice 3.1: record rows, locks, the nine rules. Stage E, package E1: findings and open questions. Phase 6: Postgres |
 | Carries out | Spec sections [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (assigned keys and stored outputs), [217](../../spec/2-kernel/217-traces-evidence-and-repair.md) (where evidence is kept), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (no ledger, no write), [218](../../spec/2-kernel/218-discovery-and-findings.md) (the findings store and the unknowns ledger); the [ledger schema](../../reference/ledger-schema.md) |
 
 ## Owns
 
 - Opening the store, checking its integrity, and running migrations: numbered, forward-only, one sequence for the whole schema, tested on both databases.
-- Transactions. A `Tx` is the only way to read or write a table, and every crate that persists is handed one.
+- Transactions. A `Tx` is the only way to read or write a table. It lives inside one closure on the store's own thread, and every crate that persists is handed one.
 - The ledger proper: run rows, pipeline step rows, one record row per commit point, and run events, with the nine rules of section 208 enforced where the data is, not by callers' good behavior.
 - The intent token: proof, as a type, that an intent was durably stored.
 - Evidence blobs, named by the keyed digest of their plain content and sealed through the vault; their retention and legal hold.
@@ -30,192 +30,269 @@ It must never: read or write a target system; decide whether something may happe
 
 ## How a service owns its tables
 
-[Decision 0061](../../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md) says a service owns the meaning of its tables and the store owns the connection, the transactions, and the migrations. Concretely:
+[Decision 0061](../../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md) says a service owns the meaning of its tables and the store owns the connection, the transactions, and the migrations. [Decision 0080](../../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md) settles how:
 
 | Concern | Who | How |
 | --- | --- | --- |
-| The connection, pooling, the single SQLite writer, durability per commit | `a2m-ledger` | `Store` and `Tx` |
-| The migration that creates a table | `a2m-ledger` holds the file; the file's first line names the owning crate | One numbered sequence, so a store is never half one crate's version and half another's |
-| The queries on a table, its row types, its state rules | The owning crate | A module in that crate that takes `&mut Tx` |
-| Atomicity across owners | The caller that began the `Tx` | Two crates' writes in one `Tx` commit together or not at all |
+| The connection, the single SQLite writer, the readers, durability per commit | `a2m-ledger` | `Store::write` and `Store::read`, which run a closure on the store's own thread and hand it a `Tx` |
+| The migration that creates a table | `a2m-ledger` holds the file, in `crates/a2m-ledger/migrations/`; the owner writes it | A file named `NNNN-<crate>-<what>.sql` whose first line is `-- owner: a2m-<crate>`. The build script lists the folder, so adding a migration is adding one file. One numbered sequence, each file applied once, in its own transaction, with its checksum kept |
+| The queries on a table, its row types, its state rules | The owning crate | Plain functions in that crate that take `&mut Tx` and run fixed statements through `tx.tables(Owner::X)` |
+| Holding a crate to its own tables | `a2m-ledger` | The database's authorizer. A statement run through `tx.tables(Owner::X)` is refused, when it is prepared, if it names a table another crate's migration created, the database's own tables, or anything but reading and writing rows: `unknown_variant`, `table_not_owned` |
+| Atomicity across owners | The caller that began the transaction | Two crates' functions called in one closure commit together or not at all |
 
-Table owners, provisional until each table's first slice:
+Table owners. The ledger's and the policy engine's tables exist; the others are provisional until their owner's first migration:
 
 | Owner | Tables |
 | --- | --- |
-| `a2m-ledger` | `workspaces`, `runs`, `run_steps`, `run_records`, `run_events`, `record_locks`, `blobs`, `outbox`, `caller_idempotency`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations` |
-| `a2m-policy` | `principals`, `grants`, `policy_versions`, `decisions`, `approvals`, `consents`, `delegations`, `kill_switches`, `quota_counters` |
+| `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`. Not built yet: `workspaces`, `run_steps`, `outbox`, `caller_idempotency` |
+| `a2m-policy` | `decisions`, `approvals`, and the rest of what its own migrations create: `principals`, `grants`, `policy_versions`, `consents`, `delegations`, `kill_switches`, `quota_counters` |
 | `a2m-auth` | `sessions`, `session_events`, `session_state` |
 | `a2m-sched` | `jobs`, with its `session_key` column; `runners`; `budgets`; later a rate-bucket table |
 | `a2m-engine` | `bindings_health`, written through `Control` |
 | `a2m-actions` | `toolsets`, `toolset_items`; `scout_stages` (run, stage, input hash, result reference); `outbox_deliveries`, the outcomes of delivering the outbox's webhooks |
 
-A test reads every migration and fails if a table has no owner or two. A check over the source fails if SQL naming a table appears outside its owner crate. The one declared exception is the ledger's check for rule 3, which reads `approvals` and `decisions` (below).
+A test reads every migration and fails if a table has no owner or two, or if the store holds a table no migration declares. The one declared exception to "a crate's SQL names only its own tables" is the ledger's check for rule 3, which reads `approvals` and `decisions` (below); the authorizer allows the ledger those two reads and nothing else outside its own tables.
+
+A crate passes its own name to `tx.tables` and no other. The store cannot tell which crate is calling, so that one line is held by a check over the source, which the documentation audit still owes: `Owner::Policy` appears only in `a2m-policy`, and so on. The ledger's own tables carry the nine rules and are not reachable through `tx.tables` at all, only through the ledger's calls.
 
 ## Interface
 
+The database crate blocks, so no database call is made on an async thread. One thread owns the writing connection and runs one transaction at a time. A store on disk has two reading threads beside it, each with its own connection, so a read never waits for a write. A caller hands a closure to `Store::write` or `Store::read` and awaits the answer. Inside the closure everything is synchronous, and nothing can wait on anything else, so the single writer is never held by a task that went elsewhere.
+
 ```rust
 // Opening. Called once by Kernel::open in a2m-actions.
-pub struct StoreConfig { /* Sqlite { path } | Postgres { url_ref }; blob location; retention classes */ }
-pub struct Store { /* pool; the SQLite writer; the sealer; the redactor */ }
+pub struct StoreConfig { /* data directory or memory; clock; random source; telemetry */ }
+impl StoreConfig {
+    pub fn in_dir(data_dir: impl Into<PathBuf>) -> Self;   // store.sqlite3 and blobs/ inside it
+    pub fn in_memory() -> Self;                            // for tests
+    pub fn with_clock(self, clock: Arc<dyn Clock>) -> Self;
+    pub fn with_random(self, random: Arc<dyn RandomSource>) -> Self;
+    pub fn with_telemetry(self, telemetry: Telemetry) -> Self;   // a span per commit
+}
+#[derive(Clone)] pub struct Store { /* the writing thread, the reading threads, what is attached */ }
 impl Store {
-    /// Opens, checks integrity, backs up and migrates. Refuses a half-migrated or newer store.
-    pub async fn open(cfg: StoreConfig) -> Result<Store, Failure>;
+    /// Opens, checks integrity, and migrates. Refuses a store a newer engine wrote.
+    pub async fn open(config: StoreConfig) -> Result<Store, Failure>;
     /// What the vault is opened with. Reads and writes only `vault_keys`.
     pub fn key_records(&self) -> StoreKeyRecords;
-    /// Joins the opened vault. Until then, blobs, events, and audit refuse, and health says degraded.
-    pub fn attach(&self, seal: Arc<dyn Seal>, name: Arc<dyn KeyedDigest>, redact: Arc<dyn Redact>);
-    pub async fn begin(&self, durability: Durability) -> Result<Tx<'_>, Failure>;
-    pub fn health(&self) -> StoreHealth;               // can commit; evidence space; integrity
-    pub fn ledger(&self) -> Ledger<'_>;  pub fn blobs(&self) -> Blobs<'_>;
-    pub fn findings(&self) -> Findings<'_>;  pub fn audit(&self) -> Audit<'_>;  pub fn versions(&self) -> Versions<'_>;
+    /// Joins the opened vault: sealing, the keyed digest, the redactor. Until then runs, events,
+    /// records, blobs, questions, and the audit chain refuse, and health says so.
+    pub async fn attach(&self, vault: Arc<Vault>) -> Result<(), Failure>;
+    /// One writing transaction around `work`, on the writing thread. Ok commits; a failure or a panic takes all of it back.
+    pub async fn write<T, F>(&self, durability: Durability, work: F) -> Result<T, Failure>
+        where T: Send + 'static, F: FnOnce(&mut Tx<'_>) -> Result<T, Failure> + Send + 'static;
+    /// One reading transaction: one unchanging state of the store, and nothing can be changed.
+    pub async fn read<T, F>(&self, work: F) -> Result<T, Failure>
+        where T: Send + 'static, F: FnOnce(&mut Tx<'_>) -> Result<T, Failure> + Send + 'static;
+    /// Rule 1. Commits with Durability::Synced, then gives the tokens. Up to the intent window at once.
+    pub async fn store_intents(&self, fence: &Fence, intents: Vec<RecordIntent>) -> Result<Vec<IntentToken>, Failure>;
+    pub fn blobs(&self) -> Blobs<'_>;
+    pub async fn health(&self) -> StoreHealth;          // can commit; vault attached
+    pub async fn tables(&self) -> Result<Vec<(String, Option<Owner>)>, Failure>;
+    pub fn clock(&self) -> Arc<dyn Clock>;
+    pub fn blob_dir(&self) -> Option<&Path>;
 }
-pub enum Durability { Synced, Relaxed }   // Synced for intents, approvals, audit; Relaxed for read runs
-pub struct Tx<'s> { /* one database transaction; rolled back on drop unless committed */ }
+pub enum Durability { Synced, Relaxed }   // Synced for intents, approvals, keys, audit; Relaxed for read runs
+
+// The transaction, and a crate's own tables through it.
+pub struct Tx<'a> { /* one database transaction, inside one closure */ }
 impl Tx<'_> {
-    pub fn now(&self) -> Instant;                      // process clock on SQLite, database clock on Postgres
-    pub async fn exec(&mut self, q: Query<'_>) -> Result<u64, Failure>;
-    pub async fn rows<R: FromRow>(&mut self, q: Query<'_>) -> Result<Vec<R>, Failure>;
-    pub async fn commit(self) -> Result<Committed, Failure>;
+    pub fn now(&self) -> Timestamp;                    // the store's clock, read once when the transaction began
+    pub fn random(&mut self) -> Result<[u8; 10], Failure>;   // for a new identifier: XId::from_parts(tx.now(), tx.random()?)
+    pub fn writes(&self) -> bool;
+    pub fn tables(&mut self, owner: Owner) -> Tables<'_, '_>;
+    pub fn ledger(&mut self) -> Ledger<'_, '_>;
+    pub fn findings(&mut self) -> Findings<'_, '_>;
+    pub fn versions(&mut self) -> Versions<'_, '_>;
+    pub fn audit(&mut self) -> Audit<'_, '_>;
 }
+pub enum Owner { Ledger, Policy, Auth, Sched, Engine, Actions }
+impl Tables<'_, '_> {
+    // Fixed statements with numbered parameters (?1, ?2); values are bound, never written into the text.
+    pub fn execute(&mut self, sql: &'static str, params: &[SqlValue]) -> Result<u64, Failure>;
+    pub fn query(&mut self, sql: &'static str, params: &[SqlValue]) -> Result<Vec<Row>, Failure>;
+    pub fn query_first(&mut self, sql: &'static str, params: &[SqlValue]) -> Result<Option<Row>, Failure>;
+    pub fn now(&self) -> Timestamp;
+}
+pub enum SqlValue { Null, Int(i64), Text(String), Bytes(Vec<u8>) }   // From<&str>, String, i64, u32, bool, Vec<u8>, Timestamp, Option<T>
+impl Row {   // a column by its position, as the type the caller expects
+    pub fn text(&self, column: usize) -> Result<&str, Failure>;      pub fn opt_text(..) -> Result<Option<&str>, Failure>;
+    pub fn int(&self, column: usize) -> Result<i64, Failure>;        pub fn opt_int(..) -> Result<Option<i64>, Failure>;
+    pub fn bytes(&self, column: usize) -> Result<&[u8], Failure>;    pub fn opt_bytes(..) -> Result<Option<&[u8]>, Failure>;
+}
+pub fn migrations() -> Result<&'static [Migration], Failure>;   // number, name, owner, tables, checksum
+pub fn table_owner(table: &str) -> Option<Owner>;
 
-// Defined elsewhere, used here: `Seal` and `KeyRecords` in a2m-vault; `KeyedDigest` and `Redact` in a2m-core.
-// Each sealed item is bound to its context; a keyed digest names a thing without revealing it.
-pub struct StoreKeyRecords { /* the store */ }
-impl KeyRecords for StoreKeyRecords { /* get, put, list by layer, retire a generation */ }
-pub struct VaultKeyRow { pub id: KeyId, pub layer: KeyLayer, pub generation: u32, pub wrapped: Vec<u8>, pub wrapped_by: Option<KeyId> }
+// Defined elsewhere, used here: `Vault`, `KeyRecords`, `RandomSource`, `Opened` in a2m-vault; `KeyedDigest` and
+// `Redact` in a2m-core; `Clock` in a2m-telemetry.
+pub struct StoreKeyRecords { /* the store, held weakly */ }
+impl KeyRecords for StoreKeyRecords { /* get, newest, insert, replace */ }
 
-// The run store and the ledger. Every mutating call carries a Fence and appends an event
-// in the same Tx as the current-state change.
-pub struct Fence { pub run: RunId, pub epoch: u64 }
-impl Ledger<'_> {
-    pub async fn open_run(&self, tx: &mut Tx<'_>, new: NewRun) -> Result<Opened, Failure>; // Opened::New | Opened::Existing (rule 6)
-    pub async fn set_state(&self, tx: &mut Tx<'_>, f: &Fence, to: RunState, why: Option<&Failure>) -> Result<(), Failure>;
-    pub async fn store_diff(&self, tx: &mut Tx<'_>, f: &Fence, diff: BlobRef, hash: Digest) -> Result<(), Failure>;
+// The run store and the ledger: `tx.ledger()`. Every mutating call carries a Fence and appends
+// an event in the same transaction as the current-state change.
+pub struct Fence { pub run: RunId, pub epoch: Epoch }
+impl Ledger<'_, '_> {
+    pub fn open_run(&mut self, new: NewRun) -> Result<Opened, Failure>;   // Opened::New(Fence) | Opened::Existing(RunId) (rule 6)
+    pub fn new_epoch(&mut self, run: RunId) -> Result<Fence, Failure>;    // lease granted; sorts the locks of the lease that ended
+    pub fn set_state(&mut self, f: &Fence, to: RunState, why: Option<&Failure>) -> Result<(), Failure>;
+    pub fn store_diff(&mut self, f: &Fence, hash: Digest, diff: Option<BlobRef>) -> Result<(), Failure>;
     /// Rule 3. The first entry of a write run into `running`.
-    pub async fn begin_writes(&self, tx: &mut Tx<'_>, f: &Fence, c: WriteClearance) -> Result<(), Failure>;
-    pub async fn plan_records(&self, tx: &mut Tx<'_>, f: &Fence, rs: &[PlannedRecord]) -> Result<(), Failure>;
-    pub async fn take_lock(&self, tx: &mut Tx<'_>, f: &Fence, k: &LockKey) -> Result<LockHeld, Failure>;
-    /// Rule 1. Commits with Durability::Synced before returning tokens. Up to the intent window at once.
-    pub async fn store_intents(&self, f: &Fence, rs: Vec<RecordIntent>) -> Result<Vec<IntentToken>, Failure>;
-    pub async fn mark_acted(&self, tx: &mut Tx<'_>, t: IntentToken, a: Acted) -> Result<ActedToken, Failure>;
+    pub fn begin_writes(&mut self, f: &Fence, c: WriteClearance) -> Result<(), Failure>;
+    pub fn plan_records(&mut self, f: &Fence, records: &[PlannedRecord]) -> Result<(), Failure>;
+    pub fn take_lock(&mut self, f: &Fence, record: RecordRef) -> Result<LockHeld, Failure>;
+    pub fn mark_acted(&mut self, token: IntentToken, acted: Acted) -> Result<ActedToken, Failure>;
     /// Rule 2. Refuses unless the read-back digest equals the intended digest and evidence is given.
-    pub async fn mark_verified(&self, tx: &mut Tx<'_>, t: ActedToken, rb: ReadBack) -> Result<(), Failure>;
-    pub async fn mark_failed(&self, tx: &mut Tx<'_>, f: &Fence, rec: RecordRef, why: &Failure) -> Result<(), Failure>;
+    pub fn mark_verified(&mut self, token: &ActedToken, read_back: ReadBack) -> Result<(), Failure>;
+    pub fn mark_failed(&mut self, f: &Fence, record: RecordRef, why: &Failure, evidence: Option<BlobRef>) -> Result<(), Failure>;
     /// Rule 5. Records in `intent`, `acted`, or a retryable `failed`, in key order.
-    pub async fn in_doubt(&self, tx: &mut Tx<'_>, run: RunId) -> Result<Vec<DoubtfulRecord>, Failure>;
-    pub async fn settle(&self, tx: &mut Tx<'_>, f: &Fence, rec: RecordRef, seen: Reconciled) -> Result<(), Failure>;
-    pub async fn new_epoch(&self, tx: &mut Tx<'_>, run: RunId) -> Result<Fence, Failure>;   // lease granted
-    pub async fn quarantine_locks(&self, tx: &mut Tx<'_>, run: RunId) -> Result<(), Failure>;
-    pub async fn late_evidence(&self, tx: &mut Tx<'_>, run: RunId, e: BlobRef) -> Result<(), Failure>;
+    pub fn in_doubt(&mut self, run: RunId) -> Result<Vec<RecordRow>, Failure>;
+    pub fn settle(&mut self, f: &Fence, record: RecordRef, seen: Reconciled) -> Result<Settled, Failure>;
+    pub fn quarantine_locks(&mut self, run: RunId) -> Result<(), Failure>;
+    pub fn store_result(&mut self, f: &Fence, result: BlobRef) -> Result<(), Failure>;
+    pub fn store_trace(&mut self, run: RunId, trace: BlobRef) -> Result<(), Failure>;
+    pub fn append_event(&mut self, f: &Fence, kind: EventKind, payload: &serde_json::Value, evidence: Option<BlobRef>) -> Result<u64, Failure>;
+    pub fn late_evidence(&mut self, run: RunId, evidence: BlobRef) -> Result<u64, Failure>;
+    // Reading, for `run.get`, `run.trace`, and reconcile.
+    pub fn run(&mut self, run: RunId) -> Result<RunRow, Failure>;
+    pub fn events(&mut self, run: RunId, after: u64, limit: u32) -> Result<Vec<RunEvent>, Failure>;
+    pub fn records(&mut self, run: RunId) -> Result<Vec<RecordRow>, Failure>;
+    pub fn record(&mut self, record: RecordRef) -> Result<RecordRow, Failure>;
+    pub fn locks(&mut self, run: RunId) -> Result<Vec<LockRow>, Failure>;
 }
+pub struct RecordRef { pub run: RunId, pub step_seq: u32, pub record_seq: u32 }
 pub enum WriteClearance { Approval(ApprovalId), PreApproved(DecisionId) }
-pub enum Reconciled { Landed { after: BlobRef, evidence: BlobRef }, NotLanded, Neither { evidence: BlobRef } }
+pub struct ReadBack { pub digest: Digest, pub after: Option<BlobRef>, pub evidence: BlobRef }
+pub enum Reconciled { Landed(ReadBack), NotLanded, Neither { evidence: BlobRef } }
+pub enum Settled { Verified, Planned, Stale }
+pub fn replay(events: &[RunEvent]) -> Result<Replayed, Failure>;   // the state the events alone give
 
 /// Proof that one record's intent is durably stored under the current lease.
 /// No public constructor, not Clone, not Serialize, not Default.
 #[must_use]
-pub struct IntentToken { /* run, record, epoch, intended digest, idempotency token, intent event seq */ }
+pub struct IntentToken { /* run, record, key, epoch, intended digest, idempotency token, intent event seq */ }
 impl IntentToken {
-    pub fn record_key(&self) -> &RecordKey;
-    pub fn idempotency_token(&self) -> &str;   // stable per run and key; the stamp for `stamped` identity
+    pub fn run(&self) -> RunId;                 pub fn record(&self) -> RecordRef;
+    pub fn record_key(&self) -> &RecordKey;     pub fn epoch(&self) -> Epoch;
     pub fn intended(&self) -> &Digest;
-    /// Only a runner calls this, with the control plane's acknowledgement of a remote intent.
-    pub fn from_acknowledgement(ack: IntentAck) -> Result<IntentToken, Failure>;
+    pub fn idempotency_token(&self) -> &str;   // stable per run and commit point; the stamp for `stamped` identity
 }
-#[must_use] pub struct ActedToken { /* the same, after `acted` */ }
+#[must_use] pub struct ActedToken { /* record, epoch */ }
 
 // Evidence, findings, versions, audit.
 impl Blobs<'_> {
-    pub async fn put(&self, kind: BlobKind, owner: OwnerRef, plain: &[u8], class: RetentionClass) -> Result<BlobRef, Failure>;
-    pub async fn get(&self, r: &BlobRef) -> Result<Vec<u8>, Failure>;
+    pub async fn put(&self, new: NewBlob) -> Result<BlobRef, Failure>;   // workspace, owner, kind, retention class, plain bytes
+    pub async fn get(&self, blob: &BlobRef) -> Result<Opened, Failure>;
+    pub async fn exists(&self, blob: &BlobRef) -> Result<bool, Failure>;
 }
-impl Findings<'_> {
-    pub async fn put(&self, tx: &mut Tx<'_>, target: &TargetName, f: &Finding) -> Result<(), Failure>; // idempotent by id
-    pub async fn open_question(&self, tx: &mut Tx<'_>, q: NewUnknown) -> Result<UnknownId, Failure>;
-    pub async fn settle(&self, tx: &mut Tx<'_>, id: UnknownId, s: Settlement) -> Result<(), Failure>;
+impl Findings<'_, '_> {
+    pub fn put(&mut self, workspace: &WorkspaceId, target: &TargetName, f: &Finding) -> Result<(), Failure>; // idempotent by id
+    pub fn get(..) -> Result<Option<Finding>, Failure>;   pub fn list(..) -> Result<Vec<Finding>, Failure>;
+    pub fn open_question(&mut self, q: NewUnknown) -> Result<UnknownId, Failure>;
+    pub fn set_status(&mut self, id: UnknownId, status: UnknownStatus) -> Result<(), Failure>;
+    pub fn settle(&mut self, id: UnknownId, s: &Settlement) -> Result<(), Failure>;   // evidence required
+    pub fn unknown(..) -> Result<Option<UnknownRow>, Failure>;   pub fn unknowns(..) -> Result<Vec<UnknownRow>, Failure>;
 }
-impl Versions<'_> {
-    pub async fn put(&self, tx: &mut Tx<'_>, v: PublishedVersion) -> Result<(), Failure>;     // version.publish only
-    pub async fn load(&self, target: &TargetName, hash: &Digest) -> Result<PlanBytes, Failure>; // hash checked
+impl Versions<'_, '_> {
+    pub fn put(&mut self, v: &PublishedVersion) -> Result<(), Failure>;     // version.publish only
+    pub fn load(&mut self, workspace: &WorkspaceId, target: &TargetName, hash: &Digest) -> Result<EncodedPlan, Failure>; // hash checked
+    pub fn make_current(..) -> Result<(), Failure>;   pub fn current(..) -> Result<Option<Digest>, Failure>;
+    pub fn list(..) -> Result<Vec<VersionRow>, Failure>;
 }
-impl Audit<'_> {
-    pub async fn append(&self, tx: &mut Tx<'_>, e: AuditEntry) -> Result<AuditSeq, Failure>;
-    pub async fn verify(&self, ws: WorkspaceId, from: AuditSeq) -> Result<ChainCheck, Failure>;
+impl Audit<'_, '_> {
+    pub fn append(&mut self, e: &AuditEntry) -> Result<AuditSeq, Failure>;
+    pub fn entries(&mut self, workspace: &WorkspaceId, after: AuditSeq, limit: u32) -> Result<Vec<AuditRow>, Failure>;
+    pub fn verify(&mut self, workspace: &WorkspaceId) -> Result<ChainCheck, Failure>;   // Intact { entries, head } | Broken { at }
 }
 ```
 
 Contracts that the signatures do not show:
 
-- **The intent token is the write gate.** The engine receives it through `Control`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so a driver cannot be called for a write without it. In one process the type is the guard. Across the runner link, the ledger is: `mark_acted` refuses a record whose row is not in `intent` under the same epoch and intent event, so a token made from a forged or replayed acknowledgement changes nothing. A caller may read the token's fields and pass it by reference. It may not keep it past `mark_acted`, which consumes it.
-- **Rule 5 is enforced by the data.** `store_intents` refuses while any record of the run is in `intent` or `acted` with an intent epoch below the current one. There is no flag to forget to set.
-- **Rule 3 reads two policy tables.** `begin_writes` checks, in SQL and in the same `Tx`, that the approval row names this run, carries the run's diff hash, and was marked used in this transaction by `a2m-policy`; or that the decision row allowed this run to write without a person. The ledger never marks an approval used.
-- **Events and state together.** Every mutating call appends a `run_events` row with no gap in `seq` and updates the current row in the same `Tx`. A test rebuilds current state from events and compares.
-- **Append-only by trigger.** Migrations install triggers that refuse an update or delete on `run_events` and `audit`, except deletes of a run whose retention state is `purging`, which only the retention job sets.
-- **Redaction on the way in.** Event payloads, audit entries, and failure messages pass the `Redact` given at open before they are written.
-- **A blob is named by a keyed digest.** `BlobRef` is the workspace's keyed digest of the plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name.
+- **A transaction lives inside one closure.** The closure is `Send + 'static`, so it owns what it uses; it returns a value, which reaches the caller only if the commit succeeded. Code that needs to wait, such as sealing a blob, does so before or after the closure, never inside.
+- **The intent token is the write gate.** The engine receives it through `Control`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so a driver cannot be called for a write without it. A token is made only by `Store::store_intents`, and only after the transaction that stored the intent has committed with a sync to disk. `mark_acted` consumes it, and refuses a record whose row is not in `intent` under the token's lease and intent event. A caller may read the token's fields and pass it by reference.
+- **Rule 5 is enforced by the data.** `store_intents` refuses, and so does entering `running`, while any record of the run is in doubt with an intent from a lease below the current one. In doubt means `intent`, `acted`, or `failed` after an intent with a class other than `policy`, `stale`, or `input`. There is no flag to forget to set.
+- **Rule 3 reads two policy tables.** `begin_writes` checks, in SQL and in the same transaction, that the approval row names this run, carries the run's diff hash, is not revoked, is marked used, and was changed by this very transaction, which the store knows from the database's update hook; or that the decision row is a `write_without_person` that allowed this run with this diff hash. The ledger never marks an approval used. A write run with records to write cannot enter `running` any other way, and no intent is stored for a run that was never cleared.
+- **The rules are held twice.** Each call checks the rule and answers with a failure that says what was refused. The triggers of the migrations refuse the same things whoever sends the statement: a record acted without an intent, verified without a matching read-back and evidence, an intent under another lease, a change to a final run, an event out of order or from another lease, a second lock on a record, an update or delete of history.
+- **Events and state together.** Every mutating call appends a `run_events` row with no gap in `seq` and updates the current row in the same transaction. `replay` rebuilds the state from the events, and a test compares.
+- **Locks follow the record.** A lock is released in the transaction that marks its record `verified`, or `failed` with nothing in doubt. It is quarantined when a record fails after an intent with the outcome in doubt, when the run stops or needs a sign-in, and when a new lease is granted, for every record then in doubt; the run's other locks are released at the same moments. A quarantined lock is taken back only by its own run, under a new lease, on the way to `settle`.
+- **Append-only by trigger.** Triggers refuse an update or delete on `run_events` and `audit`, except deletes of a run whose retention state is `purging`, which only the retention job will set.
+- **Redaction on the way in.** Event payloads, audit entries, questions, and failure messages pass the redactor before they are written.
+- **A blob is named by a keyed digest.** `BlobRef` is the workspace's keyed digest of the plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name. A record key is named in rows and locks by the workspace's keyed digest of its canonical bytes, for the purpose `record_key`: the same construction a trace uses, so the two agree.
 - **Wrapped keys are rows, nothing more.** `vault_keys` holds what the vault hands over, already wrapped. The ledger never unwraps, chooses, or rotates a key; the vault does, through `KeyRecords`.
-- **Blobs are sealed before they are written,** with the blob's name, kind, and owner as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention.
+- **Blobs are sealed before they are written,** with the workspace, the owner, the kind `blob`, and the blob's name as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention. A row that takes a blob reference refuses one that names no blob.
 - **An `Opened::Existing` is not an error.** A second identical call gets the first run's identifier.
+- **A finding cannot be stored above `discovered`.** The type refuses to make one or to read one back, and the table refuses the row.
 
 ## Used by, and uses
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-policy`, `a2m-auth`, `a2m-sched` | `Store::begin`, `Tx`, and their own tables through it |
+| `a2m-policy`, `a2m-auth`, `a2m-sched` | `Store::write`, `Store::read`, `Tx`, and their own tables through `Tx::tables` |
 | `a2m-actions` | `Store::open`, `key_records`, `attach`; versions, audit, findings and questions, retention. As the in-process `Control`: the run-path calls (opening a run, intents, acted, verified, reconcile, locks, events, evidence) on the engine's behalf |
 | `a2m-runner`, control-plane side of the runner link | The same run-path calls, answering a runner's `need` and `event` messages |
-| `a2m-runner`, runner side | `IntentToken::from_acknowledgement` |
+| `a2m-runner`, runner side | A token rebuilt from the control plane's acknowledgement. Not built: until the runner link exists the ledger offers no way to make a token but storing an intent |
 | `a2m-engine` | The `IntentToken` type only. It never opens the store |
 | `a2m-provider` | `IntentToken`, which the driver's handle checks on every step that commits |
 | `a2m-vault` | `StoreKeyRecords`, through its own `KeyRecords` trait |
 
-It uses `a2m-vault` through `Seal`, the `Redact` and `KeyedDigest` of `a2m-core` as implemented by the vault, and `a2m-telemetry` for spans on each commit.
+It uses `a2m-vault` through `Vault::seal` and `Vault::open`, the `Redact` and `KeyedDigest` of `a2m-core` as implemented by the vault, and `a2m-telemetry` for its clock and for a span on each commit.
 
 ## State
 
-The tables in the owner table above that are its own, the migration files, and the blob directory `blobs/` in the data directory (object storage or the database on Postgres). In memory: the connection pool, and on SQLite one writer connection behind an async queue, run on a blocking thread so that no database call blocks an async thread.
+The tables in the owner table above that are its own, the migration files, the database file `store.sqlite3`, and the blob directory `blobs/` in the data directory (object storage or the database on Postgres). A store in memory, for tests, keeps its blobs sealed in the database. In memory: one thread that owns the writing connection and serves a queue of closures, and on a store on disk two reading threads with a connection each, so that no database call is made on an async thread.
 
 ## Failures
+
+The codes are constants in the crate's `codes` module.
 
 | Class | Code | When |
 | --- | --- | --- |
 | `busy` | `storage_full` | A blob or row cannot be written for lack of space |
-| `busy` | `store_unavailable` (new) | The database cannot commit. Health becomes `stopped` |
-| `busy` | `store_corrupt` (new) | The integrity check, a stored plan's hash, or the audit chain fails |
+| `busy` | `store_unavailable` | The database cannot commit, the store's threads have stopped, the code inside a transaction panicked, or no vault is attached yet |
+| `busy` | `store_corrupt` | The integrity check, a stored row that no longer reads, a stored plan's hash, a stored finding that no longer holds, or a blob's missing file |
+| `busy` | `store_version_unsupported` | The store holds a migration this engine does not carry, or carries differently |
 | `busy` | `record_locked` | Another run holds the lock |
-| `possible_commit` | `runner_lost` | A call carries an epoch older than the run's |
+| `possible_commit` | `runner_lost` | A call carries a lease number other than the run's |
+| `possible_commit` | `reconcile_required` | Rule 5: an intent or an entry into `running` while a record is in doubt from an earlier lease |
 | `policy` | `approval_missing`, `approval_stale` | Rule 3 finds no clearance, or a clearance for another diff |
-| `mismatch` | `read_back_differs` | `mark_verified` is given a digest other than the intended one |
-| `stale` | `changed_since_preview` | `settle` with `Neither` |
-| `unknown_variant` | `ledger_state_unexpected` (new) | A transition no rule allows: a final run changed, a record skipping a state |
+| `mismatch` | `read_back_differs` | `mark_verified`, or `settle` with `Landed`, is given a digest other than the intended one |
+| `stale` | `changed_since_preview` | The class and code a record is left with by `settle` with `Neither`. The call itself succeeds and answers `Settled::Stale`, so that what it recorded is not taken back with the caller's transaction |
+| `unknown_variant` | `ledger_state_unexpected` | A transition no rule allows: a final run changed, a record skipping a state, a constraint or a trigger of the tables refusing a row |
+| `unknown_variant` | `table_not_owned` | A statement through `Tx::tables` names a table of another crate, or does what only the store may |
+| `input` | `not_found` | No run, record, blob, version, or question with that identifier |
+| `input` | `schema_invalid`, `plan_hash_mismatch` | Something the store cannot keep; a plan whose hash is not the digest of its bytes |
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| Each of the nine rules of section 208 | One test per rule, with no application, that breaks the rule and sees the refusal. Slice 3.1 |
-| Current state equals the state rebuilt from events | A property test over random sequences of calls |
-| No event or audit row can be updated or deleted outside retention | A test that tries, through raw SQL, on both databases |
-| An intent returned is on disk | A test that kills the process right after `store_intents` returns and finds the rows |
-| Every table has exactly one owner, and SQL names a table only in its owner crate | The migration test and the source check |
+| Each of the nine rules of section 208 | One test per rule in `tests/rules.rs`, with no application, that breaks the rule through the calls and, where a statement can express it, through a second connection to the database file, and sees the refusal |
+| Current state equals the state rebuilt from events | One scripted run that passes through every record state, a lost lease, and a reconcile, replayed and compared. A property test over random sequences of calls is not written |
+| No event or audit row can be updated or deleted outside retention | Tests that try, through a second connection. On SQLite only |
+| An intent returned is on disk | A second connection reads the row as soon as `store_intents` returns; the store is closed and opened again and the reconcile query finds the record. The process is not killed in a test |
+| Every table has exactly one owner, and SQL names a table only in its owner crate | The migration test, and the authorizer, with a test of statements it refuses. The check over the source for `Owner::X` outside crate X is owed by the audit |
+| An intent token cannot be made or copied outside this crate | Two documentation tests that must fail to compile, and a test that compiles only while the token is neither `Clone` nor `Default` |
 | A blob is never stored in the clear, and its row never names a missing file | Tests on the blob directory |
 | A blob's name differs from the plain hash of its content, and two workspaces name the same content differently | A test with a known value |
+| A finding is never stored above `discovered` | The type's refusal, the table's refusal of the row, and a planted body refused when read |
 | The audit chain detects a removed, changed, or reordered entry | Planted tampering in a test |
+| A migration applied twice changes nothing, and a store from a newer engine is refused | A test that opens twice, then plants a later migration and a changed checksum |
 | Both databases give the same answers | The rule tests run on SQLite and Postgres in CI from Phase 6 |
 
 ## Build order
 
-1. `Store::open` on SQLite, migrations with checksums, `Tx`, `runs` and `run_events` for reads. `vault_keys` and `attach` with the first slice of `a2m-vault`; `blobs`, named by keyed digest, once it is attached. Phase 1, group H; `run.get` and `run.trace` read them.
-2. `run_records`, `record_locks`, `Fence`, the intent token, and the nine rules as tests. Slice 3.1.
-3. Reconcile: `in_doubt`, `settle`, quarantine. Slice 3.7.
-4. Assigned keys and stored outputs on record rows. Slice 3.8.
-5. Findings and the unknowns ledger. Package E1.
-6. The audit chain and the outbox, with their first writers.
-7. Postgres, with the queue patterns of section 208. Phase 6.
+1. Done: `Store::open` on SQLite, migrations with checksums, `Tx`, `runs` and `run_events`. `vault_keys` and `attach`; `blobs`, named by keyed digest. Not built: a backup before migrating, and a lock that keeps two processes off one data directory.
+2. Done: `run_records`, `record_locks`, `Fence`, the intent token, and the nine rules as tests.
+3. Done: reconcile: `in_doubt`, `settle`, quarantine. Not built: a way for a person to release the quarantined lock of a run that ended final with a record still in doubt.
+4. Done: assigned keys and stored outputs on record rows. Not built: values known before the commit point, recorded before `acted`.
+5. Done: findings and the unknowns ledger. Findings in an older format are kept and are not listed; marking them as old in a listing is not built.
+6. Done: the audit chain, and published versions with their plans. Not built: the outbox, callers' idempotency keys, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
+7. Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 
 ## Open points
 
-- Which outside SQL crate, and how per-commit durability is chosen on SQLite, where synchronous mode is a connection setting: two writer connections, or a setting changed per transaction. Measured against hypothesis H-15.
-- The open points of section 208 about locks when a run stops and which failure class ends where. The ledger stores whatever they decide; the decision is the engine's.
+- Durability per commit on SQLite is a setting changed per transaction on the one writing connection ([decision 0080](../../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). It is not measured yet against hypothesis H-15; nor is the cost of preparing another crate's statement on every call, which the authorizer requires.
+- The table of section 208 that says which failure class ends in which run state is the engine's. The ledger holds the part about locks ([decision 0081](../../decisions/0081-what-the-ledger-holds-as-data-the-token-doubt-locks-and-rule-three.md)) and takes the run state the engine gives it.
+- A write run whose diff holds nothing to write enters `running` with no clearance, because it has no `planned` record; no intent can then be stored for it. Section 208 describes that path; whether policy should record a decision for it anyway is open.
+- A run that ends in a final state with a record in doubt keeps that record's lock quarantined for good, which is safe and needs a person's action that does not exist yet.
+- A chain whose last entries were cut off still verifies. `verify` gives the head's hash so that a copy kept outside the store can show it; where that copy is kept is not designed.
 - Whether reads' decision rows and run rows are summarized at scale, as decision 0034 allows.

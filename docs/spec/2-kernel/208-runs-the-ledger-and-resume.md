@@ -229,6 +229,6 @@ Storing an intent: under 2 ms locally and under 5 ms to a control plane on the s
 - **What a write step's inputs may depend on.** A proposed value has to be known at the preview to be approved. A write step whose inputs use the result of a read step that runs after an earlier write cannot be previewed. The compiler should refuse it, and no rule says so yet. An earlier write step's assigned key is the one case section 209 already covers.
 - **The failure class to run state table** is the engine's design and has no decision record yet; slice 3.7 confirms it.
 - **The intent window across bindings** in one pipeline step, when records of two bindings interleave.
-- **Durability on SQLite,** where synchronous mode is a connection setting: two writer connections, or a setting changed per transaction. Measured against hypothesis H-15, with the choice of SQL crate.
+- **Durability on SQLite** is a setting changed per transaction on the one writing connection ([decision 0080](../../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). Its cost is still to be measured against hypothesis H-15.
 - **Whether run rows of reads are summarized at scale.** It follows the open point on sampling decisions in [section 212](212-policy-and-approvals.md).
 - A fuller check of durable-execution engines against this design remains open for Phase 3.

@@ -56,7 +56,9 @@ fn open<'a>(input: &SourceInput<'a>) -> Result<Package<'a>, Failure> {
         return Err(protected());
     }
     if !input.bytes.starts_with(b"PK\x03\x04") {
-        return Err(mismatch("the content is not a package, so it is not a workbook"));
+        return Err(mismatch(
+            "the content is not a package, so it is not a workbook",
+        ));
     }
     let package = Package::open(input.bytes, input.limits.unpacked_bytes)?;
     if !package.has(CONTENT_TYPES) || !package.has(WORKBOOK) {
@@ -77,12 +79,19 @@ impl SourceReader for XlsxReader {
     fn parse(&self, input: &SourceInput<'_>) -> Result<Parsed, Failure> {
         let mut package = open(input)?;
         let macros = package.names().any(|name| name.ends_with("vbaProject.bin"));
-        let signed = package.names().any(|name| name.starts_with("_xmlsignatures/"));
+        let signed = package
+            .names()
+            .any(|name| name.starts_with("_xmlsignatures/"));
         let workbook_bytes = required(&mut package, WORKBOOK)?;
         let workbook = read_workbook(&workbook_bytes)?;
         let relations = relations_of(&mut package, WORKBOOK)?;
-        let shared = match relations.values().find(|r| r.kind.ends_with("/sharedStrings")) {
-            Some(relation) => read_shared(&required(&mut package, &relation.target)?, &input.limits)?,
+        let shared = match relations
+            .values()
+            .find(|r| r.kind.ends_with("/sharedStrings"))
+        {
+            Some(relation) => {
+                read_shared(&required(&mut package, &relation.target)?, &input.limits)?
+            }
             None => Vec::new(),
         };
         let styles = match relations.values().find(|r| r.kind.ends_with("/styles")) {
@@ -145,7 +154,10 @@ impl SourceReader for XlsxReader {
                     });
                 }
             }
-            let rows = sheet_read.cells.last().map_or(0, |placed| placed.cell.at.row);
+            let rows = sheet_read
+                .cells
+                .last()
+                .map_or(0, |placed| placed.cell.at.row);
             parts.push(ParsedPart {
                 name: sheet.name.clone(),
                 path: relation.target.clone(),
@@ -225,7 +237,9 @@ fn relations_of(
                 attributes.get("Type"),
                 attributes.get("Target"),
             ) else {
-                return Err(malformed("a relation lacks its id, its type, or its target"));
+                return Err(malformed(
+                    "a relation lacks its id, its type, or its target",
+                ));
             };
             let target = resolve(folder, &target)
                 .ok_or_else(|| malformed("a relation points outside the package"))?;
@@ -322,7 +336,9 @@ fn read_workbook(bytes: &[u8]) -> Result<Workbook, Failure> {
                     loop {
                         match xml.next()? {
                             Some(Event::Text { text, .. }) => target.push_str(&text),
-                            Some(Event::Close { name: "definedName" }) => break,
+                            Some(Event::Close {
+                                name: "definedName",
+                            }) => break,
                             Some(_) => {}
                             None => return Err(malformed("a defined name is not closed")),
                         }
@@ -423,7 +439,10 @@ fn read_shared(bytes: &[u8], limits: &Limits) -> Result<Vec<String>, Failure> {
         } = event
         {
             if strings.len() >= limits.cells as usize {
-                return Err(too_large(format!("more than {} shared strings", limits.cells)));
+                return Err(too_large(format!(
+                    "more than {} shared strings",
+                    limits.cells
+                )));
             }
             let text = if closed {
                 String::new()
@@ -518,7 +537,10 @@ pub(crate) fn is_date_format(id: u32, code: Option<&str>) -> bool {
                     inside.push(inner);
                 }
                 // Elapsed hours, minutes, and seconds are times.
-                if matches!(inside.to_ascii_lowercase().as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
+                if matches!(
+                    inside.to_ascii_lowercase().as_str(),
+                    "h" | "hh" | "m" | "mm" | "s" | "ss"
+                ) {
                     return true;
                 }
             }
@@ -651,7 +673,9 @@ fn first_row_headers(cells: &[PlacedCell]) -> Vec<String> {
         .map(|placed| placed.cell.at.column)
         .max()
         .unwrap_or(0);
-    (1..=last).map(|column| text_at(cells, row, column)).collect()
+    (1..=last)
+        .map(|column| text_at(cells, row, column))
+        .collect()
 }
 
 /// What one cell element holds, as the walk collects it.
@@ -662,7 +686,11 @@ struct CellParts {
     inline: Option<(String, Option<ByteSpan>)>,
 }
 
-fn read_sheet(bytes: &[u8], context: &SheetContext<'_>, cells_left: &mut u32) -> Result<SheetRead, Failure> {
+fn read_sheet(
+    bytes: &[u8],
+    context: &SheetContext<'_>,
+    cells_left: &mut u32,
+) -> Result<SheetRead, Failure> {
     let mut xml = Xml::new(bytes)?;
     let mut read = SheetRead::default();
     let mut hidden_columns: Vec<(u32, u32)> = Vec::new();
@@ -737,6 +765,18 @@ fn read_sheet(bytes: &[u8], context: &SheetContext<'_>, cells_left: &mut u32) ->
                     (false, None) => continue,
                     (false, Some(raw)) => raw,
                 };
+                let length = match raw.settled() {
+                    Some(
+                        RawCell::Text(text) | RawCell::Number(text) | RawCell::DateSerial(text),
+                    ) => text.len(),
+                    _ => 0,
+                };
+                if length > context.limits.cell_bytes as usize {
+                    return Err(too_large(format!(
+                        "a cell's value is longer than {} bytes",
+                        context.limits.cell_bytes
+                    )));
+                }
                 if *cells_left == 0 {
                     return Err(too_large(format!(
                         "more than {} cells",
@@ -774,10 +814,16 @@ fn read_sheet(bytes: &[u8], context: &SheetContext<'_>, cells_left: &mut u32) ->
                     let mut inside = false;
                     loop {
                         match xml.next()? {
-                            Some(Event::Open { name: "formula1", closed: false, .. }) => inside = true,
+                            Some(Event::Open {
+                                name: "formula1",
+                                closed: false,
+                                ..
+                            }) => inside = true,
                             Some(Event::Close { name: "formula1" }) => inside = false,
                             Some(Event::Text { text, .. }) if inside => choices.push_str(&text),
-                            Some(Event::Close { name: "dataValidation" }) => break,
+                            Some(Event::Close {
+                                name: "dataValidation",
+                            }) => break,
                             Some(_) => {}
                             None => return Err(malformed("a dropdown list is not closed")),
                         }
@@ -811,7 +857,9 @@ fn cell_parts(xml: &mut Xml<'_>) -> Result<CellParts, Failure> {
     let mut parts = CellParts::default();
     loop {
         match xml.next()? {
-            Some(Event::Open { name: "f", closed, .. }) => {
+            Some(Event::Open {
+                name: "f", closed, ..
+            }) => {
                 parts.formula = true;
                 if !closed {
                     xml.skip()?;
@@ -922,9 +970,18 @@ mod tests {
 
     #[test]
     fn a_part_named_from_another_stays_inside_the_package() {
-        assert_eq!(resolve("xl", "worksheets/sheet1.xml").as_deref(), Some("xl/worksheets/sheet1.xml"));
-        assert_eq!(resolve("xl/worksheets", "../tables/table1.xml").as_deref(), Some("xl/tables/table1.xml"));
-        assert_eq!(resolve("xl", "/xl/styles.xml").as_deref(), Some("xl/styles.xml"));
+        assert_eq!(
+            resolve("xl", "worksheets/sheet1.xml").as_deref(),
+            Some("xl/worksheets/sheet1.xml")
+        );
+        assert_eq!(
+            resolve("xl/worksheets", "../tables/table1.xml").as_deref(),
+            Some("xl/tables/table1.xml")
+        );
+        assert_eq!(
+            resolve("xl", "/xl/styles.xml").as_deref(),
+            Some("xl/styles.xml")
+        );
         assert_eq!(resolve("xl", "../../outside.xml"), None);
     }
 

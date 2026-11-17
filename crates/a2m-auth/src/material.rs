@@ -113,7 +113,10 @@ impl Material {
         let parts = |name: &String, length: usize| 8 + name.len() + length;
         let size = 32
             + self.provider.as_str().len()
-            + self.profile.as_ref().map_or(0, |profile| profile.as_str().len())
+            + self
+                .profile
+                .as_ref()
+                .map_or(0, |profile| profile.as_str().len())
             + self
                 .secrets
                 .iter()

@@ -21,7 +21,7 @@ use crate::failure;
 use crate::keys::StoreKeyRecords;
 use crate::migrate;
 use crate::sqlite::{Db, Place};
-use crate::tx::{Durability, Tx};
+use crate::tx::{Durability, Owner, Tx};
 
 /// The name of the database file in the data directory.
 pub const DATABASE_FILE_NAME: &str = "store.sqlite3";
@@ -377,6 +377,29 @@ impl Store {
             can_commit,
             vault_attached: self.inner.shared.attached.get().is_some(),
         }
+    }
+
+    /// The name of every table the store holds, in order, each with the
+    /// crate that owns it; `None` for a table no migration of this engine
+    /// creates.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub async fn tables(&self) -> Result<Vec<(String, Option<Owner>)>, Failure> {
+        self.inner
+            .writer
+            .run(|db| {
+                Ok(db
+                    .table_names()?
+                    .into_iter()
+                    .map(|name| {
+                        let owner = migrate::table_owner(&name);
+                        (name, owner)
+                    })
+                    .collect())
+            })
+            .await
     }
 
     /// The clock the store stamps its rows with.

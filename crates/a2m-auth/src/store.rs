@@ -195,7 +195,11 @@ impl SessionStore {
         event: SessionEvent,
     ) -> Result<SessionRow, Failure> {
         let mut memory = self.memory();
-        if let Some(existing) = memory.by_key.get(&row.key).and_then(|id| memory.rows.get(id)) {
+        if let Some(existing) = memory
+            .by_key
+            .get(&row.key)
+            .and_then(|id| memory.rows.get(id))
+        {
             return Ok(existing.clone());
         }
         memory.by_key.insert(row.key.clone(), row.id);
@@ -234,19 +238,25 @@ impl SessionStore {
         Ok(true)
     }
 
-    /// Notes a use or a passed check, and appends its event. It changes
-    /// neither the state nor the epoch, so it needs no compare-and-set.
+    /// Notes a use or a passed check, and appends its event. A check that
+    /// confirmed the credential clears the count of unconfirmed attempts. It
+    /// changes neither the state nor the epoch, so it needs no
+    /// compare-and-set.
     pub(crate) async fn note(
         &self,
         id: SessionId,
         used_at: Option<Timestamp>,
         checked_at: Option<Timestamp>,
+        confirmed: bool,
         event: SessionEvent,
     ) -> Result<(), Failure> {
         let mut memory = self.memory();
         if let Some(row) = memory.rows.get_mut(&id) {
             row.last_used_at = used_at.or(row.last_used_at);
             row.checked_at = checked_at.or(row.checked_at);
+            if confirmed {
+                row.stored_attempts = 0;
+            }
         }
         memory.events.push(event);
         Ok(())

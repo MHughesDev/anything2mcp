@@ -5,6 +5,9 @@
 -- `scope`, `run_id`, `diff_hash`, `used_at`, and `revoked_at`; of a decision
 -- it reads `id`, `run_id`, `question`, `allowed`, and `diff_hash`. Those
 -- columns keep their meaning; the rest is the policy engine's to change.
+-- `approvals` stays a table with row numbers: the store tells which of its
+-- rows one transaction changed by them, and without that every approval is
+-- refused.
 
 CREATE TABLE approvals (
     id TEXT PRIMARY KEY,

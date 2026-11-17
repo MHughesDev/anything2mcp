@@ -322,15 +322,16 @@ pub(crate) struct StoredIntent {
 ///
 /// It cannot be built by hand:
 ///
-/// ```compile_fail
-/// fn forge(record: a2m_ledger::RecordRef) -> a2m_ledger::IntentToken {
-///     a2m_ledger::IntentToken { record }
+/// ```compile_fail,E0451
+/// fn forge(token: a2m_ledger::IntentToken) -> a2m_ledger::IntentToken {
+///     // The one field is private to the crate.
+///     a2m_ledger::IntentToken { stored: token.stored }
 /// }
 /// ```
 ///
 /// and it cannot be copied:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0599
 /// fn twice(token: a2m_ledger::IntentToken) -> (a2m_ledger::IntentToken, a2m_ledger::IntentToken) {
 ///     (token.clone(), token)
 /// }
@@ -640,7 +641,10 @@ fn idempotency_token(record: &RecordRef, key: &RecordKey) -> String {
     digest.chars().take(32).collect()
 }
 
-fn failure_of(class: Option<&str>, code: Option<&str>) -> Result<Option<(FailureClass, FailureCode)>, Failure> {
+fn failure_of(
+    class: Option<&str>,
+    code: Option<&str>,
+) -> Result<Option<(FailureClass, FailureCode)>, Failure> {
     match (class, code) {
         (Some(class), Some(code)) => Ok(Some((parse(class)?, parse(code)?))),
         _ => Ok(None),
@@ -825,7 +829,9 @@ impl Ledger<'_, '_> {
             select_records!("WHERE run_id = ?1 ORDER BY step_seq, record_seq"),
             &[run.to_string().into()],
         )?;
-        rows.iter().map(|row| record_row(row).map(|(record, _)| record)).collect()
+        rows.iter()
+            .map(|row| record_row(row).map(|(record, _)| record))
+            .collect()
     }
 
     /// One record.
@@ -854,7 +860,9 @@ impl Ledger<'_, '_> {
             ),
             &[run.to_string().into()],
         )?;
-        rows.iter().map(|row| record_row(row).map(|(record, _)| record)).collect()
+        rows.iter()
+            .map(|row| record_row(row).map(|(record, _)| record))
+            .collect()
     }
 
     /// The locks the run holds, held or quarantined.
@@ -940,7 +948,13 @@ impl Ledger<'_, '_> {
             ],
         )?;
         let epoch = Epoch::new(0);
-        self.event(run, epoch, EventKind::StateChanged, &json!({ "to": "queued" }), None)?;
+        self.event(
+            run,
+            epoch,
+            EventKind::StateChanged,
+            &json!({ "to": "queued" }),
+            None,
+        )?;
         Ok(Opened::New(Fence { run, epoch }))
     }
 
@@ -957,7 +971,9 @@ impl Ledger<'_, '_> {
     pub fn new_epoch(&mut self, run: RunId) -> Result<Fence, Failure> {
         let row = self.run(run)?;
         if row.state.is_final() {
-            return Err(failure::unexpected("a run in a final state takes no new lease"));
+            return Err(failure::unexpected(
+                "a run in a final state takes no new lease",
+            ));
         }
         let next = row
             .epoch
@@ -970,7 +986,11 @@ impl Ledger<'_, '_> {
         }
         self.tx.exec(
             "UPDATE runs SET lease_epoch = ?2, attempt = attempt + ?3 WHERE id = ?1",
-            &[run.to_string().into(), stored(next.get())?.into(), resumed.into()],
+            &[
+                run.to_string().into(),
+                stored(next.get())?.into(),
+                resumed.into(),
+            ],
         )?;
         self.event(run, next, EventKind::LeaseGranted, &json!({}), None)?;
         Ok(Fence { run, epoch: next })
@@ -1085,7 +1105,9 @@ impl Ledger<'_, '_> {
     ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
         if run.state != RunState::Validating {
-            return Err(failure::unexpected("a diff is stored while the run is `validating`"));
+            return Err(failure::unexpected(
+                "a diff is stored while the run is `validating`",
+            ));
         }
         self.event(
             run.id,
@@ -1096,7 +1118,11 @@ impl Ledger<'_, '_> {
         )?;
         self.tx.exec(
             "UPDATE runs SET diff_hash = ?2, diff_ref = ?3 WHERE id = ?1",
-            &[run.id.to_string().into(), hash.to_string().into(), diff.into()],
+            &[
+                run.id.to_string().into(),
+                hash.to_string().into(),
+                diff.into(),
+            ],
         )?;
         Ok(())
     }
@@ -1114,7 +1140,11 @@ impl Ledger<'_, '_> {
     /// another diff. `possible_commit`/`runner_lost`.
     /// `unknown_variant`/`ledger_state_unexpected` when the run is a read,
     /// is not waiting to start, or was cleared before.
-    pub fn begin_writes(&mut self, fence: &Fence, clearance: WriteClearance) -> Result<(), Failure> {
+    pub fn begin_writes(
+        &mut self,
+        fence: &Fence,
+        clearance: WriteClearance,
+    ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
         if run.effect == EffectClass::Read {
             return Err(failure::unexpected("a read needs no clearance to write"));
@@ -1142,7 +1172,9 @@ impl Ledger<'_, '_> {
                     )?
                     .ok_or_else(|| failure::approval_missing("there is no such approval"))?;
                 if row.text(1)? != "run" || row.opt_text(2)? != Some(run.id.to_string().as_str()) {
-                    return Err(failure::approval_missing("the approval is not for this run"));
+                    return Err(failure::approval_missing(
+                        "the approval is not for this run",
+                    ));
                 }
                 if row.opt_text(3)? != Some(diff_hash.as_str()) {
                     return Err(failure::approval_stale());
@@ -1184,7 +1216,13 @@ impl Ledger<'_, '_> {
                 json!({ "decision": decision.to_string() })
             }
         };
-        self.event(run.id, fence.epoch, EventKind::ApprovalBound, &payload, None)?;
+        self.event(
+            run.id,
+            fence.epoch,
+            EventKind::ApprovalBound,
+            &payload,
+            None,
+        )?;
         self.event(
             run.id,
             fence.epoch,
@@ -1284,7 +1322,13 @@ impl Ledger<'_, '_> {
     /// reference that names no blob.
     pub fn late_evidence(&mut self, run: RunId, evidence: BlobRef) -> Result<u64, Failure> {
         let row = self.run(run)?;
-        self.event(run, row.epoch, EventKind::LateEvidence, &json!({}), Some(evidence))
+        self.event(
+            run,
+            row.epoch,
+            EventKind::LateEvidence,
+            &json!({}),
+            Some(evidence),
+        )
     }
 
     // ---- records -------------------------------------------------------
@@ -1300,13 +1344,19 @@ impl Ledger<'_, '_> {
     /// `possible_commit`/`runner_lost`;
     /// `unknown_variant`/`ledger_state_unexpected` for a read, a run that is
     /// not `validating`, or a commit point planned before with other content.
-    pub fn plan_records(&mut self, fence: &Fence, records: &[PlannedRecord]) -> Result<(), Failure> {
+    pub fn plan_records(
+        &mut self,
+        fence: &Fence,
+        records: &[PlannedRecord],
+    ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
         if run.effect == EffectClass::Read {
             return Err(failure::unexpected("a read has no records"));
         }
         if run.state != RunState::Validating {
-            return Err(failure::unexpected("records are planned while the run is `validating`"));
+            return Err(failure::unexpected(
+                "records are planned while the run is `validating`",
+            ));
         }
         let digest = std::sync::Arc::clone(&self.tx.shared.attached()?.digest);
         let mut planned = Vec::new();
@@ -1317,7 +1367,11 @@ impl Ledger<'_, '_> {
                 record_seq: record.record_seq,
             };
             let key_hash = digest
-                .keyed_digest(&run.workspace, DigestPurpose::RecordKey, &record.key.canonical_bytes())
+                .keyed_digest(
+                    &run.workspace,
+                    DigestPurpose::RecordKey,
+                    &record.key.canonical_bytes(),
+                )
                 .to_string();
             if let Some(row) = self.tx.row(
                 "SELECT record_key_hash, operation, intended_hash FROM run_records
@@ -1389,7 +1443,9 @@ impl Ledger<'_, '_> {
         let run = self.fenced_for(fence, record)?;
         let row = self.record(record)?;
         if matches!(row.state, RecordState::Verified | RecordState::Unchanged) {
-            return Err(failure::unexpected("a record that is verified or unchanged needs no lock"));
+            return Err(failure::unexpected(
+                "a record that is verified or unchanged needs no lock",
+            ));
         }
         let place = [
             SqlValue::from(run.workspace.to_string()),
@@ -1448,16 +1504,22 @@ impl Ledger<'_, '_> {
     ) -> Result<Vec<StoredIntent>, Failure> {
         let run = self.fenced(fence)?;
         if run.state != RunState::Running {
-            return Err(failure::unexpected("an intent is stored while the run is `running`"));
+            return Err(failure::unexpected(
+                "an intent is stored while the run is `running`",
+            ));
         }
         if !run.cleared_to_write() {
-            return Err(failure::approval_missing("no approval or decision is bound to it"));
+            return Err(failure::approval_missing(
+                "no approval or decision is bound to it",
+            ));
         }
         self.nothing_in_doubt(&run)?;
         let mut stored_intents = Vec::new();
         for intent in intents {
             if intent.record.run != run.id {
-                return Err(failure::unexpected("an intent names a record of another run"));
+                return Err(failure::unexpected(
+                    "an intent names a record of another run",
+                ));
             }
             let row = self.record(intent.record)?;
             if row.state != RecordState::Planned {
@@ -1524,7 +1586,9 @@ impl Ledger<'_, '_> {
         };
         let run = self.fenced(&fence)?;
         if run.state != RunState::Running {
-            return Err(failure::unexpected("a record is acted while the run is `running`"));
+            return Err(failure::unexpected(
+                "a record is acted while the run is `running`",
+            ));
         }
         let (row, intent_seq) = self.record_with_seq(intent.record)?;
         if row.state != RecordState::Intent
@@ -1571,7 +1635,11 @@ impl Ledger<'_, '_> {
     /// `possible_commit`/`runner_lost`.
     /// `unknown_variant`/`ledger_state_unexpected` when the record is not
     /// `acted`, or the evidence names no blob.
-    pub fn mark_verified(&mut self, token: &ActedToken, read_back: ReadBack) -> Result<(), Failure> {
+    pub fn mark_verified(
+        &mut self,
+        token: &ActedToken,
+        read_back: ReadBack,
+    ) -> Result<(), Failure> {
         let fence = Fence {
             run: token.record.run,
             epoch: token.epoch,
@@ -1681,7 +1749,13 @@ impl Ledger<'_, '_> {
         let place = record_ref_params(&record);
         match seen {
             Reconciled::Landed(read_back) => {
-                self.verify(&run, &row, fence.epoch, &read_back, EventKind::ReconcileRead)?;
+                self.verify(
+                    &run,
+                    &row,
+                    fence.epoch,
+                    &read_back,
+                    EventKind::ReconcileRead,
+                )?;
                 Ok(Settled::Verified)
             }
             Reconciled::NotLanded => {
@@ -1815,7 +1889,12 @@ impl Ledger<'_, '_> {
     }
 
     /// Refuses unless the run holds the record's lock, held, under `epoch`.
-    fn holds_lock(&mut self, run: &RunRow, record: &RecordRow, epoch: Epoch) -> Result<(), Failure> {
+    fn holds_lock(
+        &mut self,
+        run: &RunRow,
+        record: &RecordRow,
+        epoch: Epoch,
+    ) -> Result<(), Failure> {
         let row = self.tx.row(
             "SELECT run_id, epoch, state FROM record_locks
              WHERE workspace_id = ?1 AND target = ?2 AND environment = ?3 AND record_key_hash = ?4",
@@ -1876,7 +1955,12 @@ impl Ledger<'_, '_> {
     }
 
     /// Releases the run's lock on the record, or quarantines it.
-    fn end_lock(&mut self, run: &RunRow, record: &RecordRow, quarantine: bool) -> Result<(), Failure> {
+    fn end_lock(
+        &mut self,
+        run: &RunRow,
+        record: &RecordRow,
+        quarantine: bool,
+    ) -> Result<(), Failure> {
         let params = [
             SqlValue::from(run.workspace.to_string()),
             run.target.as_str().into(),
@@ -1937,7 +2021,12 @@ impl Ledger<'_, '_> {
         payload: &serde_json::Value,
         evidence: Option<BlobRef>,
     ) -> Result<u64, Failure> {
-        let text = self.tx.shared.attached()?.redact.redact(&payload.to_string());
+        let text = self
+            .tx
+            .shared
+            .attached()?
+            .redact
+            .redact(&payload.to_string());
         let seq = self
             .tx
             .row(

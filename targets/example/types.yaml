@@ -1,0 +1,12 @@
+types:
+  order_status:
+    base: choice
+    codes: {draft: "Draft", released: "Released"}
+  amount:
+    base: money
+    currency: USD
+    rounding: half_even
+  note:
+    base: text
+    untrusted: true
+    sensitivity: internal

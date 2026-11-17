@@ -35,7 +35,10 @@ pub(crate) struct Package<'a> {
 
 fn u16_at(bytes: &[u8], at: usize) -> Option<usize> {
     let pair = bytes.get(at..at + 2)?;
-    Some(usize::from(u16::from_le_bytes([*pair.first()?, *pair.get(1)?])))
+    Some(usize::from(u16::from_le_bytes([
+        *pair.first()?,
+        *pair.get(1)?,
+    ])))
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
@@ -71,7 +74,9 @@ impl<'a> Package<'a> {
             ));
         }
         if count > MOST_PARTS {
-            return Err(too_large(format!("more than {MOST_PARTS} parts in the package")));
+            return Err(too_large(format!(
+                "more than {MOST_PARTS} parts in the package"
+            )));
         }
         let mut at = usize::try_from(start).map_err(|_| cut())?;
         let mut entries: Vec<Entry> = Vec::with_capacity(count);
@@ -181,18 +186,33 @@ impl<'a> Package<'a> {
     }
 }
 
+/// The table of the CRC-32 checksum, one entry for each value of a byte.
+const CHECKSUM_TABLE: [u32; 256] = {
+    let mut table = [0_u32; 256];
+    let mut index = 0;
+    while index < 256 {
+        let mut crc = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+            bit += 1;
+        }
+        table[index] = crc;
+        index += 1;
+    }
+    table
+};
+
 /// The CRC-32 checksum a package keeps for each part.
 pub(crate) fn checksum(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let low = crc & 1;
-            crc >>= 1;
-            if low == 1 {
-                crc ^= 0xEDB8_8320;
-            }
-        }
+        let index = usize::from((crc as u8) ^ byte);
+        crc = (crc >> 8) ^ CHECKSUM_TABLE.get(index).copied().unwrap_or(0);
     }
     !crc
 }
@@ -245,7 +265,10 @@ mod tests {
 
         // A part marked as encrypted.
         let mut encrypted = stored.clone();
-        let entry = encrypted.windows(4).position(|w| w == DIRECTORY_ENTRY).unwrap();
+        let entry = encrypted
+            .windows(4)
+            .position(|w| w == DIRECTORY_ENTRY)
+            .unwrap();
         encrypted[entry + 8] |= 1;
         assert_eq!(
             Package::open(&encrypted, 100).unwrap_err().code(),
@@ -254,7 +277,9 @@ mod tests {
 
         // Cut short, and not a package at all.
         assert_eq!(
-            Package::open(&stored[..stored.len() - 30], 100).unwrap_err().code(),
+            Package::open(&stored[..stored.len() - 30], 100)
+                .unwrap_err()
+                .code(),
             &SOURCE_MALFORMED
         );
         assert_eq!(

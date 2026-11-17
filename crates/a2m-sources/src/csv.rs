@@ -95,9 +95,12 @@ impl SourceReader for CsvReader {
         // was called.
         let text = input.bytes.get(start..).unwrap_or(&[]);
         let first = text.iter().find(|byte| !byte.is_ascii_whitespace());
-        if matches!(first, Some(b'{' | b'[')) && crate::json::parse_document(text, &input.limits).is_ok()
+        if matches!(first, Some(b'{' | b'['))
+            && crate::json::parse_document(text, &input.limits).is_ok()
         {
-            return Err(mismatch("the content is a JSON document, not delimited text"));
+            return Err(mismatch(
+                "the content is a JSON document, not delimited text",
+            ));
         }
         Ok(())
     }
@@ -131,7 +134,12 @@ impl SourceReader for CsvReader {
 
 /// Reads every record. A field is kept with the span of its bytes, quotes
 /// included; an empty field is kept too, so that its place can be patched.
-fn records(bytes: &[u8], start: usize, delimiter: u8, limits: &Limits) -> Result<ParsedPart, Failure> {
+fn records(
+    bytes: &[u8],
+    start: usize,
+    delimiter: u8,
+    limits: &Limits,
+) -> Result<ParsedPart, Failure> {
     let mut cells = Vec::new();
     let mut widths = Vec::new();
     let mut at = start;
@@ -334,7 +342,8 @@ mod tests {
         // A byte-order mark, CRLF, a delimiter and a line break and a doubled
         // quote inside quotes, an empty field in quotes, a padded number, and
         // a last line with no ending.
-        let bytes = b"\xEF\xBB\xBFcode,note,qty\r\n\"EX-1,A\",\"two\nlines \"\"x\"\"\",0040\r\nEX-2,\"\",7";
+        let bytes =
+            b"\xEF\xBB\xBFcode,note,qty\r\n\"EX-1,A\",\"two\nlines \"\"x\"\"\",0040\r\nEX-2,\"\",7";
         let parsed = CsvReader::new().parse(&input(bytes)).unwrap();
         assert_eq!(
             texts(&parsed),
@@ -359,7 +368,8 @@ mod tests {
 
     #[test]
     fn every_span_covers_exactly_the_literal_of_its_value() {
-        let bytes = b"\xEF\xBB\xBFcode,note,qty\r\n\"EX-1,A\",\"say \"\"x\"\"\",0040\r\nEX-2,\"\",\r\n";
+        let bytes =
+            b"\xEF\xBB\xBFcode,note,qty\r\n\"EX-1,A\",\"say \"\"x\"\"\",0040\r\nEX-2,\"\",\r\n";
         let parsed = CsvReader::new().parse(&input(bytes)).unwrap();
         let mut rebuilt = bytes.to_vec();
         let mut last_end = 0;
@@ -375,7 +385,10 @@ mod tests {
             assert!(span.start >= last_end, "spans are in order and apart");
             last_end = span.end;
             // Writing each span's own bytes back changes nothing.
-            rebuilt.splice(span.start as usize..span.end as usize, literal.iter().copied());
+            rebuilt.splice(
+                span.start as usize..span.end as usize,
+                literal.iter().copied(),
+            );
         }
         assert_eq!(rebuilt, bytes);
     }
@@ -414,10 +427,22 @@ mod tests {
         let bytes = b"a,b\n1,2\n3,4\n";
         assert_eq!(read(bytes, LIMITS), Ok(3));
         assert_eq!(read(bytes, Limits { rows: 3, ..LIMITS }), Ok(3));
-        assert_eq!(read(bytes, Limits { rows: 2, ..LIMITS }), Err(SOURCE_TOO_LARGE));
-        assert_eq!(read(bytes, Limits { cells: 5, ..LIMITS }), Err(SOURCE_TOO_LARGE));
         assert_eq!(
-            read(b"a\nlonger than four\n", Limits { cell_bytes: 4, ..LIMITS }),
+            read(bytes, Limits { rows: 2, ..LIMITS }),
+            Err(SOURCE_TOO_LARGE)
+        );
+        assert_eq!(
+            read(bytes, Limits { cells: 5, ..LIMITS }),
+            Err(SOURCE_TOO_LARGE)
+        );
+        assert_eq!(
+            read(
+                b"a\nlonger than four\n",
+                Limits {
+                    cell_bytes: 4,
+                    ..LIMITS
+                }
+            ),
             Err(SOURCE_TOO_LARGE)
         );
     }

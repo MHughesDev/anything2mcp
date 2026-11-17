@@ -86,7 +86,9 @@ impl Sources {
 
     /// The files of one kind, in order of path.
     pub fn of_kind<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a SourceFile> {
-        self.files.iter().filter(move |file| file.kind.as_str() == kind)
+        self.files
+            .iter()
+            .filter(move |file| file.kind.as_str() == kind)
     }
 
     /// The documents of one kind, in order of path and then of place.
@@ -113,14 +115,23 @@ fn kind_of(path: &RelPath, set: &CompilerSet) -> Option<FileKindName> {
 }
 
 fn unknown_file(path: &RelPath, set: &CompilerSet) -> Diagnostic {
-    let mut known: Vec<String> = KERNEL_FILES.iter().map(|(file, _)| (*file).to_owned()).collect();
-    known.extend(KERNEL_FOLDER_KINDS.iter().map(|(folder, _)| format!("{folder}/")));
+    let mut known: Vec<String> = KERNEL_FILES
+        .iter()
+        .map(|(file, _)| (*file).to_owned())
+        .collect();
+    known.extend(
+        KERNEL_FOLDER_KINDS
+            .iter()
+            .map(|(folder, _)| format!("{folder}/")),
+    );
     known.extend(set.folders.keys().map(|folder| format!("{folder}/")));
     Diagnostic::error(
         kernel(codes::UNKNOWN_FILE),
         Stage::Parse,
         &Place::start_of(path),
-        format!("No file kind claims `{path}`: the kernel does not own it and no enabled pack registered its folder."),
+        format!(
+            "No file kind claims `{path}`: the kernel does not own it and no enabled pack registered its folder."
+        ),
         format!(
             "Move it to one of: {}; name it with the extension `.yaml`; or enable the pack that owns it.",
             known.join(", ")
@@ -270,7 +281,12 @@ fn walk(
     };
     let mut names: Vec<(String, PathBuf)> = entries
         .filter_map(Result::ok)
-        .map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path()))
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                entry.path(),
+            )
+        })
         .collect();
     names.sort();
     for (name, on_disk) in names {
@@ -284,7 +300,8 @@ fn walk(
         let Ok(path) = path else {
             problems.push(at_root(
                 codes::UNKNOWN_FILE,
-                "A file in the target folder has a name that cannot be written as a path.".to_owned(),
+                "A file in the target folder has a name that cannot be written as a path."
+                    .to_owned(),
                 "Rename the file with letters, digits, dots, and underscores.",
             ));
             continue;

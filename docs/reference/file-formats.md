@@ -34,7 +34,7 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
-| `rate` | Requests allowed per period |
+| `rate` | Requests allowed per period: `requests` and `per_ms`, the period in milliseconds |
 
 **Environment.**
 
@@ -47,7 +47,7 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 
 ## `auth.yaml`
 
-One entry per group of surfaces that share a sign-in.
+The file is a map with one key, `auth`: a list with one entry per group of surfaces that share a sign-in.
 
 | Field | Meaning |
 | --- | --- |
@@ -56,7 +56,7 @@ One entry per group of surfaces that share a sign-in.
 | `provider` (required) | An auth provider from the technical reference |
 | `probe` (required) | A cheap signed-in read: an operation name or an endpoint |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
-| `timeouts` | Declared `idle` and `absolute` durations, when known |
+| `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
 | `credentials` | For `custom`: vault references only, such as `vault://example/service/password` |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
@@ -64,7 +64,7 @@ One entry per group of surfaces that share a sign-in.
 
 ## `types.yaml`
 
-Field types say how a value is formatted, normalized, compared, and classified.
+Field types say how a value is formatted, normalized, compared, and classified. The file is a map with one key, `types`, from a field type's name to its fields. A key that means nothing for the type's base is refused.
 
 | Field | Meaning |
 | --- | --- |
@@ -76,6 +76,8 @@ Field types say how a value is formatted, normalized, compared, and classified.
 | `format` | How the application displays and accepts the value. For a number it is the decimal mark: `.` or `,` |
 | `timezone` | For dates and times: `fixed`, `user`, or a named zone. Only `UTC` and a fixed offset such as `+02:00` are built so far; a named zone or the `user` rule cannot be normalized yet |
 | `case`, `whitespace` | Text comparison rules. `case` is `sensitive` or `insensitive`; `whitespace` is `collapse`, `trim`, or `exact` |
+| `decimal_mark` | For numbers: `.` or `,`, the decimal mark the application shows; `.` unless given |
+| `true_text`, `false_text` | For booleans: the text the application shows for each; `true` and `false` unless given |
 | `codes` | For choices: map of stored code to label |
 | `sensitivity` | `public`, `internal`, or `restricted` |
 | `untrusted` | True for free text that came from the application |
@@ -177,7 +179,9 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
-| `outputs` (required) | A schema, usually a reference to an endpoint's response |
+| `outputs` (required) | Map of name to `type`, a field type, and `list`, true for a list of that type. A reference to a pack's schema is not built yet |
+| `title` | Name shown to people; the operation's name unless given |
+| `hazard` | What the operation could damage beyond its record ([spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md)); `none` unless given. Any other hazard requires the effect `irreversible` |
 | `bindings` (required) | One or more bindings (below) |
 | `description` (required) | What it does, when to prefer something else, side effects, limits |
 | `examples` | One to three example inputs |
@@ -204,13 +208,15 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | Field | Meaning |
 | --- | --- |
 | `pipeline` (required) | The tool name, for its outcome |
+| `description` (required) | As for operations |
+| `title` | Name shown to people |
 | `effect` | Derived by the compiler; may be declared higher |
 | `inputs` | As for operations |
 | `source` | `template`: the name and version of a file under `sources/`, which names the reader and the mapping. A pipeline with a source has a reserved input named `source`, of type `file`, that carries the file to read; a source whose reader is `operation` has none |
-| `limits` (required for writes) | `max_records`, and optional time and rate limits |
+| `limits` (required for writes) | `max_records`, and optionally `max_duration_ms` |
 | `steps` (required) | Ordered list of steps (below) |
-| `success` (required) | Conditions for `completed`, such as `all_records_verified`. A record found `unchanged` counts as verified |
-| `headroom` | Minimum session time left before starting |
+| `success` (required) | Conditions for `completed`: a list of expressions, each of which may read `all_records_verified`. A record found `unchanged` counts as verified |
+| `headroom_ms` | Minimum session time left before starting, in milliseconds |
 
 **Step.**
 
@@ -242,13 +248,14 @@ A step can only stop on failure. There is no continue-on-error.
 | Field | Meaning |
 | --- | --- |
 | `test` (required) | The operation or pipeline under test |
+| `name` | The test's name; the file's name unless given |
 | `kind` (required) | `offline` against a fixture, or `live` against a test record |
-| `fixture` | The fixture folder, for offline tests |
+| `fixture` | The name of the fixture's folder under `fixtures/`; required for offline tests |
 | `inputs` (required) | Inputs to call with |
 | `expect` (required) | The expected result, or the expected trace signature |
 | `restore` | For live write tests: true to put the original values back afterwards |
 
-A fixture folder holds recorded snapshots and exchanges and a marker file stating that it was scrubbed.
+A fixture folder holds recorded snapshots and exchanges and a marker file stating that it was scrubbed: `fixture.yaml`, with `scrubbed: true`.
 
 ## Expressions
 
@@ -271,5 +278,5 @@ Found by walking the sheet-entry pipeline through these formats on 2026-11-16. E
 - **A record that does not exist yet, in a `ui` binding.** The formats cannot yet say how a screen shows that a record is absent, or how an `upsert` reaches the create form when the update form is a different one. Hypothesis H-23; slice 3.8.
 - **The kind of record.** A record key is built from identity inputs only, so two operations on the same record share a lock only if they declare the same inputs in the same order. Hypothesis H-24; slice 3.8.
 - **The fields of `identity`.** Only the strategy names and the `key` short form are fixed. The long form for `stamped` and `find` is written with the first operation that needs one; slice 3.8.
-- **The type of a bare column in a mapping.** The compiler type-checks `with` against the operation's inputs, so every row field needs a type before any file is read; slice 3.9.
+- **The type of a bare column in a mapping.** Settled by [decision 0087](../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md): every row field names a field type, whether it reads a bare column or an expression, so every row field has a type before any file is read. The fields of `sources/*.yaml` that carry this, and the columns, the key, the hidden rule, and the delimiter that `a2m-sources` reads, are written into the table above with the compiler's slice.
 - **Whether `checkpoint` is still needed.** Since the ledger keeps one row per commit point, it only places snapshots. A candidate for removal in a review round with the lens "less".

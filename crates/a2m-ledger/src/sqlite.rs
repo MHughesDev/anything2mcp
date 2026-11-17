@@ -109,7 +109,9 @@ impl Db {
         let rows = Arc::clone(&watched);
         conn.update_hook(Some(move |_action, _db: &str, table: &str, rowid: i64| {
             if table == WATCHED {
-                rows.lock().unwrap_or_else(PoisonError::into_inner).push(rowid);
+                rows.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(rowid);
             }
         }))
         .map_err(map)?;
@@ -270,7 +272,9 @@ impl Db {
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             &[],
         )?;
-        rows.iter().map(|row| row.text(0).map(str::to_owned)).collect()
+        rows.iter()
+            .map(|row| row.text(0).map(str::to_owned))
+            .collect()
     }
 
     /// The ledger's own statements are prepared once and kept. A statement of
@@ -382,9 +386,9 @@ fn map(error: rusqlite::Error) -> Failure {
         ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase => {
             failure::corrupt("the database file")
         }
-        ErrorCode::AuthorizationForStatementDenied => {
-            failure::not_owned("it names a table its crate does not own, or does what only the store may")
-        }
+        ErrorCode::AuthorizationForStatementDenied => failure::not_owned(
+            "it names a table its crate does not own, or does what only the store may",
+        ),
         ErrorCode::ReadOnly => failure::unexpected("a read cannot change the store"),
         ErrorCode::ConstraintViolation => match message.strip_prefix(RULE) {
             Some(rule) => failure::unexpected(rule),
