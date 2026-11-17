@@ -2,11 +2,6 @@
 //! the same flow as the first read, through another pack and another kind
 //! of system. Target files in a project folder, lint, publish, and one
 //! value read from the pack's test stand, which is asked what it holds.
-//!
-//! Not here: the data pack. Its driver takes the store's file as a checked
-//! path the engine hands it, and nothing in a plan yet says that a
-//! surface's address is a file in a named root, so the engine has nothing
-//! to hand over.
 
 mod common;
 
@@ -15,6 +10,8 @@ use std::path::Path;
 use common::{Folder, Machine, World};
 use example_broker::harness::TestBroker;
 use example_cli::harness::Stand;
+use example_db::harness::TestDb;
+use example_db::schema::Table;
 use example_device::TestDevice;
 use example_files::harness::FileStand;
 use example_mcp::harness::HttpStand;
@@ -191,5 +188,39 @@ async fn a_file_is_read_through_the_file_pack() {
     assert_eq!(read["description"], row[1].as_str(), "{read}");
     assert_eq!(read["on_hand"].to_string(), row[2], "{read}");
     assert_eq!(stand.sha256("prices/stock.csv").unwrap(), before);
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_data_store_is_read_through_the_data_pack() {
+    // The project folder is the folder the stand keeps its store in: the
+    // root `project` of the product is the project folder, and the target
+    // names the store's file below it.
+    let stand = TestDb::start().unwrap();
+    let folder = Folder::of_another(stand.path().parent().unwrap());
+    let file = stand.path().file_name().unwrap().to_str().unwrap().to_owned();
+    let machine = Machine::in_folder("storefile", &[("example.db", &file)], folder);
+    let world = published(&machine).await;
+    let writes = stand.writes().unwrap().len();
+    let read = read_twice(
+        &world,
+        "example_customer_get",
+        r#"{"customer_id": "C-002"}"#,
+        "sql",
+    )
+    .await;
+    // The value is the row the store holds, and nothing was written.
+    let held = stand
+        .stored_row(Table::Customers, &["C-002"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(read["name"], held.text("name").unwrap(), "{read}");
+    assert_eq!(
+        read["credit_limit_cents"],
+        held.integer("credit_limit_cents").unwrap(),
+        "{read}"
+    );
+    assert_eq!(read["notes"], held.text("notes").unwrap(), "{read}");
+    assert_eq!(stand.writes().unwrap().len(), writes);
     world.close().await;
 }

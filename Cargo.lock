@@ -518,6 +518,7 @@ dependencies = [
  "example-app",
  "example-broker",
  "example-cli",
+ "example-db",
  "example-device",
  "example-files",
  "example-mcp",

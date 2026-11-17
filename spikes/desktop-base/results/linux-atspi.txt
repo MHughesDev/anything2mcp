@@ -1,37 +1,7 @@
---- gtk run 1 (2026-11-17T13:19:26Z)
-connect_ms 3
-app_found_ms 0
-app :1.0 pid 11224
-walk nodes 11 found 1 ms 14
-collection role_matches 0 named 0 ms 0
-field role Text id "" path /org/a11y/atspi/accessible/9
-before "Hinge"
-set ok true event_ms 1 (Insert 0 "Hinge, steel")
-after "Hinge, steel"
-password role PasswordText text_len 16 all_masked true
-actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
-invoke confirm_ms 1 via text-changed (Insert 0 "Saved")
-store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
-no_event ends_err true after_ms 5001
---- gtk run 2 (2026-11-17T13:19:31Z)
-connect_ms 8
-app_found_ms 0
-app :1.0 pid 13558
-walk nodes 11 found 1 ms 9
-collection role_matches 0 named 0 ms 0
-field role Text id "" path /org/a11y/atspi/accessible/9
-before "Hinge"
-set ok true event_ms 0 (Insert 0 "Hinge, steel")
-after "Hinge, steel"
-password role PasswordText text_len 16 all_masked true
-actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
-invoke confirm_ms 1 via text-changed (Insert 0 "Saved")
-store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
-no_event ends_err true after_ms 5001
---- gtk run 3 (2026-11-17T13:19:37Z)
+--- gtk run 1, session accessibility switch off (2026-11-17T13:21:04Z)
 connect_ms 2
 app_found_ms 0
-app :1.0 pid 15303
+app :1.0 pid 20720
 walk nodes 11 found 1 ms 15
 collection role_matches 0 named 0 ms 0
 field role Text id "" path /org/a11y/atspi/accessible/9
@@ -40,152 +10,22 @@ set ok true event_ms 0 (Insert 0 "Hinge, steel")
 after "Hinge, steel"
 password role PasswordText text_len 16 all_masked true
 actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
-invoke confirm_ms 0 via text-changed (Insert 0 "Saved")
-store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
-no_event ends_err true after_ms 5002
---- egui, session accessibility left off
-connect_ms 4
-app_found_ms 1
-app :1.0 pid 15935
-walk nodes 9 found 1 ms 22
-collection role_matches 0 named 0 ms 0
-field role Entry id "" path /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-before "Hinge"
-set ok true event_ms 3 (Insert 5 ", steel")
-after "Hinge, steel"
-actions [Action { name: "click", description: "", keybinding: "" }]
-invoke confirm_ms 4 via property-change (accessible-name Name("Saved"))
+invoke confirm_ms 1 via text-changed (Insert 0 "Saved")
 store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
 no_event ends_err true after_ms 5001
---- egui run 1, session accessibility switched on (2026-11-17T13:19:47Z)
-session accessibility switched on
-connect_ms 6
-  app "spike-desktop-stand-egui"
-app_found_ms 5
-app :1.0 pid 16322
-  window Frame ""
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-walk nodes 9 found 1 ms 25
-collection role_matches 0 named 0 ms 0
-field role Entry id "" path /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-before "Hinge"
-set ok true event_ms 6 (Insert 5 ", steel")
-after "Hinge, steel"
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-actions [Action { name: "click", description: "", keybinding: "" }]
-invoke confirm_ms 3 via property-change (accessible-name Name("Saved"))
-store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
-no_event ends_err true after_ms 5000
---- egui run 2, session accessibility switched on (2026-11-17T13:19:53Z)
-session accessibility switched on
-connect_ms 5
-  app "spike-desktop-stand-egui"
-app_found_ms 1
-app :1.0 pid 16478
-  window Frame ""
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-walk nodes 9 found 1 ms 28
-collection role_matches 0 named 0 ms 0
-field role Entry id "" path /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-before "Hinge"
-set ok true event_ms 4 (Insert 5 ", steel")
-after "Hinge, steel"
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-actions [Action { name: "click", description: "", keybinding: "" }]
-invoke confirm_ms 3 via property-change (accessible-name Name("Saved"))
-store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
-no_event ends_err true after_ms 5001
---- egui run 3, session accessibility switched on (2026-11-17T13:19:58Z)
-session accessibility switched on
+--- gtk run 2, session accessibility switch off (2026-11-17T13:21:09Z)
 connect_ms 3
-  app "spike-desktop-stand-egui"
 app_found_ms 1
-app :1.0 pid 16577
-  window Frame ""
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-walk nodes 9 found 1 ms 25
+app :1.0 pid 21620
+walk nodes 11 found 1 ms 20
 collection role_matches 0 named 0 ms 0
-field role Entry id "" path /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
+field role Text id "" path /org/a11y/atspi/accessible/9
 before "Hinge"
-set ok true event_ms 3 (Insert 5 ", steel")
+set ok true event_ms 11 (Insert 0 "Hinge, steel")
 after "Hinge, steel"
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-  node Frame "" /org/a11y/atspi/accessible/0/255061752147028670946904943003435008
-  node Panel "" /org/a11y/atspi/accessible/0/326830826798258095224627410377262497792
-  node Label "Not saved" /org/a11y/atspi/accessible/0/300570870228911914972980311869423091712
-  node Button "Save" /org/a11y/atspi/accessible/0/40008219277662126140762414293849210880
-  node CheckBox "Taxable" /org/a11y/atspi/accessible/0/248141729851647910787200882130192171008
-  node Entry "Quantity" /org/a11y/atspi/accessible/0/167255208243262281997214345835027890176
-  node Label "Quantity" /org/a11y/atspi/accessible/0/336135425164307612598795204363645091840
-  node Entry "Description" /org/a11y/atspi/accessible/0/258991912612837433971121656574406295552
-  node Label "Description" /org/a11y/atspi/accessible/0/159930730744236897885149167770836926464
-actions [Action { name: "click", description: "", keybinding: "" }]
-invoke confirm_ms 3 via property-change (accessible-name Name("Saved"))
+password role PasswordText text_len 16 all_masked true
+actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
+invoke confirm_ms 2 via text-changed (Insert 0 "Saved")
 store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
 no_event ends_err true after_ms 5001
+--- gtk run 3, session accessibility switch off (2026-11-17T13:21:14Z)
