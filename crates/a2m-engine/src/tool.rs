@@ -1291,9 +1291,11 @@ fn derive_step(
         };
         one_save(found, found.bindings.get(binding))?;
         if run.posture != Posture::Live {
-            // The sandbox writes only to declared test records.
+            // The sandbox writes only to declared test records. A record
+            // keyed by its place in the run is never one: that key names
+            // nothing in the system (audit finding E-6).
             let environment = &loaded.plan.environments[run.env_position];
-            if !environment.test_records.contains(&key) {
+            if place_keyed || !environment.test_records.contains(&key) {
                 return Err(Stop::Fail(not_a_test_record()));
             }
         }
@@ -2069,20 +2071,34 @@ fn keyless_in_doubt(
         ),
         "Look at the system with what was recorded before the save, then resume the run, cancel it, or settle the record by hand.",
     );
-    let mut said = Vec::new();
-    if let Ok(bytes) = encode_values(&kept(run, &record.recorded_values)) {
-        said.push(format!(
-            "recorded before the save: {}",
-            String::from_utf8_lossy(&bytes)
-        ));
+    // What `said` holds is data alone, never the product's words (audit
+    // finding E-7): the values recorded before the save, and, when a look
+    // found the record, what it found, as one canonical record whose two
+    // names the message states.
+    let mut shown = Values::new();
+    shown.insert(
+        "recorded".to_owned(),
+        Value::Record(kept(run, &record.recorded_values)),
+    );
+    if let Some(seen) = seen {
+        shown.insert("found".to_owned(), Value::Record(kept(run, seen)));
     }
-    if let Some(seen) = seen
-        && let Ok(bytes) = encode_values(&kept(run, seen))
-    {
-        said.push(format!("found: {}", String::from_utf8_lossy(&bytes)));
-    }
-    if !said.is_empty() {
-        failure = failure.with_said(said.join("; "));
+    if let Ok(bytes) = encode_values(&shown) {
+        failure = Failure::new(
+            failure.class(),
+            failure.code().clone(),
+            format!(
+                "{} What the system said holds `recorded`, the values recorded before the save{}.",
+                failure.message(),
+                if seen.is_some() {
+                    ", and `found`, what a look found"
+                } else {
+                    ""
+                }
+            ),
+            failure.next_step().to_owned(),
+        )
+        .with_said(String::from_utf8_lossy(&bytes));
     }
     Stop::Fail(failure)
 }
@@ -2461,7 +2477,7 @@ async fn commit_point(
         // checked here once more, where the write is made, and not only
         // where the records were worked out.
         let environment = &loaded.plan.environments[run.env_position];
-        if !environment.test_records.contains(&record.key) {
+        if record.place_keyed || !environment.test_records.contains(&record.key) {
             return Err(Stop::Fail(not_a_test_record()));
         }
     }

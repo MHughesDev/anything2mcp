@@ -531,7 +531,7 @@ async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the
         registry,
         "web_capture",
         &origin,
-        &["/orders/A-100/totals", "/orders/A-101/totals"],
+        &["/orders/A-100/summary", "/orders/A-101/summary"],
         Some("Loaded."),
     )
     .await;

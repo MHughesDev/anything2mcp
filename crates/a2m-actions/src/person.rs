@@ -706,12 +706,15 @@ impl ApprovalDesk {
                 .approved_bindings()
                 .into_iter()
                 .filter_map(|position| operation.bindings.get(position))
-                .filter_map(|binding| usize::try_from(binding.surface.get()).ok())
+                .map(|binding| binding.surface.get())
                 .collect();
             surfaces.sort_unstable();
             surfaces.dedup();
             let mut found: Vec<PreviewNotice> = Vec::new();
-            for surface in surfaces.into_iter().filter_map(|index| plan.surfaces.get(index)) {
+            for surface in surfaces
+                .into_iter()
+                .filter_map(|index| plan.surfaces.get(index))
+            {
                 for notice in notices_of(set, surface) {
                     if !found.contains(&notice) {
                         found.push(notice);

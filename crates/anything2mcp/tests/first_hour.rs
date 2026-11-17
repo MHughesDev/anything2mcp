@@ -5,7 +5,7 @@
 //!
 //! `init`, the target added, its surface declared, the scout and its
 //! report, the drafts not wanted removed, the read kept given its offline
-//! test and run, its first binding promoted on that evidence, the publish
+//! test recorded and run, its first binding promoted on that evidence, the publish
 //! asked for and carried out by a person on the engine's page, and the
 //! published tool called. Every command is the real program, a thin client
 //! of one served engine. The engine is the same `LocalEngine` that `serve`
@@ -13,11 +13,13 @@
 //! a test can pass; the person's press goes through its page, as in
 //! `local_engine.rs`.
 //!
-//! One hand step is left, and asserted where it is: the offline test and
-//! its fixture are written by the developer, because `fixture.record` is
-//! not built (an observed answer is the system's data until a person has
-//! scrubbed it). The whole flow is timed; the target is a first tool in
-//! under ten minutes. A second test scouts the same application with an
+//! The offline test and its fixture are recorded by `fixture.record` from
+//! one real read, every value scrubbed by rule (decision 0196). One hand
+//! step is left, and asserted where it is: the target file's surface and
+//! test environment are written by the developer, because `target.add`
+//! cannot yet ask a pack how a surface of its kind is stated from an
+//! address. The whole flow is timed; the target is a first tool in under
+//! ten minutes. A second test scouts the same application with an
 //! engine that runs inside each command.
 
 #![allow(
@@ -243,15 +245,6 @@ impl Desk {
     }
 }
 
-/// The offline test a developer writes for the read once the publish
-/// asks for one, with a fixture of synthetic values that match the test
-/// application's seed: the answer the read's endpoint gives for A-100.
-const FIXTURE: &str =
-    "scrubbed: true\nnote: \"Synthetic data, written by hand for the imaginary target.\"\n";
-const FIXTURE_ANSWER: &str =
-    r#"{"order_id":"A-100","customer":"Example Customer One","status":"draft","items":[]}"#;
-const OFFLINE_TEST: &str = "test: example_api_orders_get\nkind: offline\nfixture: api_orders_get\ninputs: {order_id: \"A-100\"}\nexpect: {status: draft, customer: \"Example Customer One\"}\n";
-
 /// The target file a developer writes once `target add` has made it: the
 /// one surface, the test application's address, and a test environment.
 fn target_file(address: &str) -> String {
@@ -446,15 +439,37 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
                 .exists()
         );
     }
-    // The hand step that is left: the offline test and its fixture of
-    // synthetic values that match the application's seed, written by the
-    // developer. It lifts when `fixture.record` scrubs an observed answer
-    // into a fixture.
-    desk.write("fixtures/api_orders_get/fixture.yaml", FIXTURE)
+    // The read's offline test and its fixture, recorded from one real read
+    // in the sandbox, every value scrubbed by rule (decision 0196).
+    let recorded = desk
+        .ok(&[
+            "fixture",
+            "record",
+            "example",
+            "--tool",
+            READ,
+            "--input",
+            ORDER_INPUT,
+        ])
         .await;
-    desk.write("fixtures/api_orders_get/get_order.json", FIXTURE_ANSWER)
-        .await;
-    desk.write("tests/api_orders_get.yaml", OFFLINE_TEST).await;
+    assert_eq!(recorded["result"]["test_state"], "passed", "{recorded}");
+    assert_eq!(
+        recorded["result"]["fixture"], "fixtures/api_orders_get",
+        "{recorded}"
+    );
+    // No value the application holds of the order is in any byte written.
+    let target_dir = desk.project.path().join("targets").join("example");
+    let mut held_values = vec![held.order_id.clone(), held.customer.clone()];
+    if let Some(status) = serde_json::to_value(held.status).unwrap().as_str() {
+        held_values.push(status.to_owned());
+    }
+    for file in recorded["result"]["files"].as_array().unwrap() {
+        let bytes = std::fs::read(target_dir.join(file.as_str().unwrap())).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        for value in &held_values {
+            assert!(!text.contains(value.as_str()), "{value} in {file}: {text}");
+        }
+    }
     let tested = desk.ok(&["test", "example"]).await;
     assert_eq!(tested["result"]["passed"], true, "{tested}");
     assert_eq!(tested["result"]["gates"][1]["state"], "passed", "{tested}");

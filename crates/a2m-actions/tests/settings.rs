@@ -504,3 +504,30 @@ fn every_key_the_crate_reads_is_one_the_schema_declares() {
     }
     assert!(read > 5, "the scan found the reads: {read}");
 }
+
+/// No outbound proxy is built: a `network.proxy` that is set is refused by
+/// name at load, where the engine starts, and never taken silently
+/// (decision 0196, for 0197).
+#[test]
+fn a_proxy_setting_is_refused_while_no_proxy_is_supported() {
+    let sources = Sources {
+        installation: file(
+            "settings.toml",
+            "[network]\nproxy = \"http://proxy.example.invalid:3128\"\n",
+        ),
+        ..Sources::none()
+    };
+    let failure = Settings::load(&sources).unwrap_err();
+    assert_eq!(failure.code().as_str(), "settings_invalid", "{failure}");
+    assert!(
+        failure
+            .message()
+            .contains("no outbound proxy is supported yet"),
+        "{failure}"
+    );
+    let (kept, problems) = Settings::load_all(&sources);
+    assert_eq!(problems.len(), 1);
+    assert_eq!(kept.text("network.proxy"), Some(""));
+    // Empty, as by default, it is no problem.
+    assert!(Settings::load(&Sources::none()).is_ok());
+}

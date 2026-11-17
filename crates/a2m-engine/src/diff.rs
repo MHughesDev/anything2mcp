@@ -29,7 +29,8 @@ pub enum DiffAction {
 
 /// The fixed words a door shows for what a record holds now when its
 /// binding cannot read it ([`DiffAction::Write`]).
-pub const NOW_CANNOT_BE_READ: &str = "cannot be read: this binding has nothing to read the record with";
+pub const NOW_CANNOT_BE_READ: &str =
+    "cannot be read: this binding has nothing to read the record with";
 
 impl DiffAction {
     /// The action as the diff and its hash write it.

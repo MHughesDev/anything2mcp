@@ -1359,12 +1359,14 @@ pub(crate) fn call_paths(project: Option<&std::path::Path>) -> a2m_provider::Che
     let mut paths = a2m_provider::CheckedPaths::none();
     if let Some(folder) = project {
         let mut roots = a2m_provider::Roots::none();
-        let checked = a2m_provider::RootName::new("project").ok().and_then(|name| {
-            roots
-                .add(name.clone(), folder, a2m_provider::Access::Write)
-                .ok()?;
-            roots.folder(&name, a2m_provider::Access::Write).ok()
-        });
+        let checked = a2m_provider::RootName::new("project")
+            .ok()
+            .and_then(|name| {
+                roots
+                    .add(name.clone(), folder, a2m_provider::Access::Write)
+                    .ok()?;
+                roots.folder(&name, a2m_provider::Access::Write).ok()
+            });
         if let Some(project) = checked {
             paths = paths.with_project(project);
         }

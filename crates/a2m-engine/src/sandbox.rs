@@ -16,8 +16,8 @@ use a2m_core::{
     SurfaceIndex,
 };
 use a2m_provider::{
-    BoxFuture, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
-    SandboxPort, StepFailure, StepInput, StepOutcome, SurfaceDescription,
+    BoxFuture, Deadline, DiscoveryScope, FindingSink, Posture, ReadOnlyPort, SandboxPort,
+    StepFailure, StepInput, StepOutcome, SurfaceDescription,
 };
 use a2m_telemetry::ChoiceReason;
 

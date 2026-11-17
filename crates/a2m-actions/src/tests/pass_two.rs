@@ -200,18 +200,12 @@ async fn a_write_that_ends_on_an_acknowledgement_is_settled_completes_and_is_nev
     );
     let again = world.ok("run.get", json!({"run_id": run})).await;
     assert_eq!(again["not_read_back"], 2);
-    let read_any = world
-        .hooks
-        .given
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|given| {
-            given.kind == "get_item"
-                && ["L-701", "L-702"]
-                    .iter()
-                    .any(|code| given.args.get("item_code") == Some(&(*code).into()))
-        });
+    let read_any = world.hooks.given.lock().unwrap().iter().any(|given| {
+        given.kind == "get_item"
+            && ["L-701", "L-702"]
+                .iter()
+                .any(|code| given.args.get("item_code") == Some(&(*code).into()))
+    });
     assert!(!read_any);
     world.kernel.close(CloseReason::Asked).await;
 }
@@ -526,20 +520,49 @@ async fn a_driver_is_told_which_other_record_recorded_a_value_and_never_the_valu
         ("N-777", RecordedElsewhere::NotHeld),
     ] {
         world.hooks.elsewhere.lock().unwrap().clear();
-        *world.hooks.asks_elsewhere.lock().unwrap() =
-            Some(("add_item".to_owned(), "item_code".to_owned(), Value::from(code)));
+        *world.hooks.asks_elsewhere.lock().unwrap() = Some((
+            "add_item".to_owned(),
+            "item_code".to_owned(),
+            Value::from(code),
+        ));
         slot_written(&world, "3").await;
         assert_eq!(*world.hooks.elsewhere.lock().unwrap(), [told], "{code}");
     }
     // The code the asking record itself recorded before its save is its
     // own: the code `N-004` is recorded by this run alone.
     world.hooks.elsewhere.lock().unwrap().clear();
-    *world.hooks.asks_elsewhere.lock().unwrap() =
-        Some(("add_item".to_owned(), "item_code".to_owned(), Value::from("N-004")));
+    *world.hooks.asks_elsewhere.lock().unwrap() = Some((
+        "add_item".to_owned(),
+        "item_code".to_owned(),
+        Value::from("N-004"),
+    ));
     slot_written(&world, "4").await;
     assert_eq!(
         *world.hooks.elsewhere.lock().unwrap(),
         [RecordedElsewhere::NotHeld]
+    );
+    // A record in doubt may have landed: what it recorded, `N-005`, is
+    // held by it.
+    *world.hooks.asks_elsewhere.lock().unwrap() = None;
+    world.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let call =
+        json!({"tool": SLOT_ADD, "input": {"order_id": "A-102", "quantity": 1, "length_in": "5"}});
+    let asked = world.call("tool.call", call).await;
+    let (run, id) = run_of(&asked);
+    world.approve(id).await;
+    let stopped = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&stopped), "stopped", "{stopped:?}");
+    let in_doubt = world.record_rows(id).await[0].record;
+    world.hooks.elsewhere.lock().unwrap().clear();
+    *world.hooks.asks_elsewhere.lock().unwrap() = Some((
+        "add_item".to_owned(),
+        "item_code".to_owned(),
+        Value::from("N-005"),
+    ));
+    slot_written(&world, "6").await;
+    assert_eq!(
+        *world.hooks.elsewhere.lock().unwrap(),
+        [RecordedElsewhere::Held(in_doubt)]
     );
     world.kernel.close(CloseReason::Asked).await;
 }
@@ -564,9 +587,9 @@ async fn a_discovery_and_a_provider_action_resolve_the_project_of_their_own_call
     let (one, two) = (world.project("one"), world.project("two"));
     let canonical = |path: &std::path::Path| std::fs::canonicalize(path).unwrap();
     let in_project = |action: &str, input: Json, project: &std::path::Path| {
-        world.kernel.dispatch(
-            Request::new(action, input, world.caller.clone()).in_project(project),
-        )
+        world
+            .kernel
+            .dispatch(Request::new(action, input, world.caller.clone()).in_project(project))
     };
     for project in [&one, &two, &one] {
         let found = in_project("example_files.folder", json!({}), project).await;
@@ -579,7 +602,11 @@ async fn a_discovery_and_a_provider_action_resolve_the_project_of_their_own_call
     // Without a project, the root is refused, by name.
     let none = world
         .kernel
-        .dispatch(Request::new("example_files.folder", json!({}), world.caller.clone()))
+        .dispatch(Request::new(
+            "example_files.folder",
+            json!({}),
+            world.caller.clone(),
+        ))
         .await;
     assert!(!none.ok);
     assert_eq!(none.error.unwrap().code, "project_folder_missing");
@@ -587,6 +614,10 @@ async fn a_discovery_and_a_provider_action_resolve_the_project_of_their_own_call
     let discovered = in_project("discover.run", json!({"target": "example"}), &two).await;
     assert!(discovered.ok, "{:?}", discovered.error);
     let seen = world.discoverer.projects.lock().unwrap().clone();
-    assert_eq!(seen.last().cloned().flatten(), Some(canonical(&two)), "{seen:?}");
+    assert_eq!(
+        seen.last().cloned().flatten(),
+        Some(canonical(&two)),
+        "{seen:?}"
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

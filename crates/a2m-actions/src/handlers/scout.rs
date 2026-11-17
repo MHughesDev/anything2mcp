@@ -519,8 +519,9 @@ pub(crate) fn project_key(call: &Call) -> String {
 
 /// The newest scout of a target by the caller's person in one project: the
 /// unfinished one to resume, or with `finished`, the newest that finished.
-/// The project a scout was made in is stored with its first stage; a scout
-/// with none stored is of no project, and is never resumed.
+/// The project a scout was made in is stored in its row, with the row
+/// (migration 0018); a scout with none stored is of no project, and is
+/// never resumed.
 fn newest_scout(
     tx: &mut Tx<'_>,
     workspace: &a2m_core::WorkspaceId,
@@ -530,24 +531,18 @@ fn newest_scout(
     finished: bool,
 ) -> Result<Option<Scout>, Failure> {
     let rows = tx.tables(Owner::Actions).query(
-        "SELECT s.scout_id, s.finished_at, g.result FROM actions_scouts s
-         LEFT JOIN actions_scout_stages g ON g.run_id = s.scout_id AND g.stage = 0
+        "SELECT s.scout_id, s.finished_at FROM actions_scouts s
          WHERE s.workspace_id = ?1 AND s.principal_id = ?2 AND s.target = ?3
+             AND s.project = ?4
          ORDER BY s.started_at DESC, s.scout_id DESC",
         &[
             SqlValue::from(workspace.to_string()),
             SqlValue::from(principal.to_string()),
             SqlValue::from(target.as_str()),
+            SqlValue::from(project),
         ],
     )?;
     for row in rows {
-        let first: Json = row
-            .opt_text(2)?
-            .and_then(|text| serde_json::from_str(text).ok())
-            .unwrap_or(Json::Null);
-        if first["project"].as_str() != Some(project) {
-            continue;
-        }
         let done = row.opt_int(1)?.is_some();
         if done == finished {
             return Ok(Some(Scout {
@@ -1520,14 +1515,15 @@ handler!(
                 let id = RunId::from_parts(tx.now(), tx.random()?)?;
                 let now = tx.now().as_unix_millis();
                 tx.tables(Owner::Actions).execute(
-                    "INSERT INTO actions_scouts (scout_id, workspace_id, principal_id, target, started_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO actions_scouts (scout_id, workspace_id, principal_id, target, started_at, project)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     &[
                         SqlValue::from(id.to_string()),
                         SqlValue::from(workspace.to_string()),
                         SqlValue::from(person.to_string()),
                         SqlValue::from(named.as_str()),
                         SqlValue::from(now),
+                        SqlValue::from(project.as_str()),
                     ],
                 )?;
                 Ok(Scout { id })

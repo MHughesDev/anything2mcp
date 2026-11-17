@@ -495,7 +495,9 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
     if entries.len() > FIXTURE_FILES_MOST {
         return Err(wrong(
             "",
-            &format!("the fixture folder holds more than {FIXTURE_FILES_MOST} entries, so it is not used"),
+            &format!(
+                "the fixture folder holds more than {FIXTURE_FILES_MOST} entries, so it is not used"
+            ),
         ));
     }
     let mut fixture = Fixture {
@@ -528,7 +530,10 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
                 .map_err(|_| wrong(&file, "the file cannot be read"))?;
             total = total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
             if total > FIXTURE_BYTES_MOST {
-                return Err(wrong("", "the fixture folder's files are larger than 64 MiB together, so it is not used"));
+                return Err(wrong(
+                    "",
+                    "the fixture folder's files are larger than 64 MiB together, so it is not used",
+                ));
             }
             fixture.held.push((file.clone(), bytes));
             fixture.files.push(file);
@@ -539,7 +544,10 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
             .map_err(|_| wrong(&file, "the file cannot be read"))?;
         total = total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         if total > FIXTURE_BYTES_MOST {
-            return Err(wrong("", "the fixture folder's files are larger than 64 MiB together, so it is not used"));
+            return Err(wrong(
+                "",
+                "the fixture folder's files are larger than 64 MiB together, so it is not used",
+            ));
         }
         fixture.held.push((file.clone(), bytes.clone()));
         let json: Json =
@@ -909,7 +917,9 @@ async fn run_body(
             ));
         }
         None => {
-            return Err(TestOutcome::failed(json!({"reason": "The offline test names no fixture."})));
+            return Err(TestOutcome::failed(
+                json!({"reason": "The offline test names no fixture."}),
+            ));
         }
     };
     let (input, source) = match source_of(plan, test, &fixture) {
@@ -1132,8 +1142,10 @@ impl GateRun {
                 Some(tests) => {
                     // A live test is excused, and said to be (audit finding
                     // AC-4): it is not counted among the offline tests.
-                    let offline: Vec<&Json> =
-                        tests.iter().filter(|test| test["kind"] == "offline").collect();
+                    let offline: Vec<&Json> = tests
+                        .iter()
+                        .filter(|test| test["kind"] == "offline")
+                        .collect();
                     let passed = offline
                         .iter()
                         .filter(|test| test["state"] == "passed")
@@ -1239,13 +1251,16 @@ pub(crate) fn publish_refusal(
     )
 }
 
+/// A test's fixture folder by name, with the fixture read from it.
+type HeldFixture<'a> = (Option<&'a str>, &'a Option<Result<Fixture, Json>>);
+
 /// Whether every byte the tests are about to run on is the byte of the
 /// compiled plan: the load made after the fixtures were read gives the
 /// digest the plan names for the target's files, and each file a fixture
 /// holds has, read as the compiler reads it, the digest that load found for
 /// it (audit finding AC-3).
 fn tested_as_compiled(
-    held: &[(Option<&str>, &Option<Result<Fixture, Json>>)],
+    held: &[HeldFixture<'_>],
     loaded: &a2m_files::Sources,
     sources: Digest,
     set: &a2m_files::CompilerSet,
@@ -1276,13 +1291,18 @@ pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<Chec
     let wrong = |problem: String| json!({"folder": untrusted(fixture), "problem": problem});
     let mut at = target.clone();
     for part in fixture.split('/') {
-        at = at.join(part).map_err(|failure| wrong(failure.message().to_owned()))?;
+        at = at
+            .join(part)
+            .map_err(|failure| wrong(failure.message().to_owned()))?;
         match at.entry_kind() {
             Ok(EntryKind::Folder) => {}
-            Ok(EntryKind::Absent) => return Err(wrong("the fixture folder is not there".to_owned())),
+            Ok(EntryKind::Absent) => {
+                return Err(wrong("the fixture folder is not there".to_owned()));
+            }
             Ok(_) => {
                 return Err(wrong(
-                    "a part of the fixture's path is a link or not a folder, so it is not used".to_owned(),
+                    "a part of the fixture's path is a link or not a folder, so it is not used"
+                        .to_owned(),
                 ));
             }
             Err(failure) => return Err(wrong(failure.message().to_owned())),
@@ -1470,13 +1490,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
         write(&folder, "target.yaml", "title: Example\n");
         write(&folder, "fixtures/one/fixture.yaml", "scrubbed: true\n");
-        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"draft\"}");
+        write(
+            &folder,
+            "fixtures/one/order_get.json",
+            "{\"status\": \"draft\"}",
+        );
         let set = a2m_files::CompilerSet::builder().build();
         let root = a2m_files::TargetRoot::new(&folder);
         let compiled = a2m_files::load(&root, &set).unwrap().digest;
         let mut roots = a2m_provider::Roots::none();
         let name = a2m_provider::RootName::new("target").unwrap();
-        roots.add(name.clone(), &folder, a2m_provider::Access::Read).unwrap();
+        roots
+            .add(name.clone(), &folder, a2m_provider::Access::Read)
+            .unwrap();
         let fixture_of = || {
             let target = roots.folder(&name, a2m_provider::Access::Read).unwrap();
             Some(fixture_folder(&target, "fixtures/one").and_then(read_fixture))
@@ -1489,11 +1515,19 @@ mod tests {
         assert!(check(&fixture_of()));
         // Changed before the read and left changed: the load's digest is
         // not the plan's.
-        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"open\"}");
+        write(
+            &folder,
+            "fixtures/one/order_get.json",
+            "{\"status\": \"open\"}",
+        );
         let changed = fixture_of();
         assert!(!check(&changed));
         // Put back after the read: the bytes held are not the bytes loaded.
-        write(&folder, "fixtures/one/order_get.json", "{\"status\": \"draft\"}");
+        write(
+            &folder,
+            "fixtures/one/order_get.json",
+            "{\"status\": \"draft\"}",
+        );
         assert!(!check(&changed));
         assert!(check(&fixture_of()));
         // A fixture folder that is a link is not read (audit finding A-2).

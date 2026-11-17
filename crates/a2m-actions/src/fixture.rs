@@ -124,12 +124,31 @@ impl Drop for Recorder<'_> {
     }
 }
 
+/// What scrubbing reads of a value's field type: what it is built on, and
+/// its declared codes for a choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypeRule {
+    base: FieldBase,
+    codes: Vec<String>,
+}
+
+impl TypeRule {
+    fn of(ty: &FieldTypePlan) -> Self {
+        Self {
+            base: ty.base,
+            codes: ty.codes.iter().map(|code| code.code.clone()).collect(),
+        }
+    }
+}
+
 /// Why a value cannot be scrubbed: no rule of its type writes a synthetic
 /// one, so nothing is written.
 fn no_rule(why: &str) -> a2m_core::Failure {
     codes::input(
         codes::FIXTURE_NO_SCRUB_RULE,
-        format!("The read's answer holds a value that no scrubbing rule covers: {why}. Nothing was written."),
+        format!(
+            "The read's answer holds a value that no scrubbing rule covers: {why}. Nothing was written."
+        ),
         "Write this fixture by hand with synthetic values, or record a read whose values are text, numbers, dates, choices, true or false, or empty.",
     )
 }
@@ -189,7 +208,7 @@ impl<'r> Scrubber<'r> {
     pub(crate) fn values(
         &mut self,
         values: &Values,
-        types: &dyn Fn(&str) -> Option<FieldTypePlan>,
+        types: &dyn Fn(&str) -> Option<TypeRule>,
     ) -> Result<Values, a2m_core::Failure> {
         let mut out = Values::new();
         for (name, value) in values.iter() {
@@ -199,11 +218,7 @@ impl<'r> Scrubber<'r> {
         Ok(out)
     }
 
-    fn value(
-        &mut self,
-        value: &Value,
-        ty: Option<&FieldTypePlan>,
-    ) -> Result<Value, a2m_core::Failure> {
+    fn value(&mut self, value: &Value, ty: Option<&TypeRule>) -> Result<Value, a2m_core::Failure> {
         Ok(match value {
             Value::Null => {
                 self.count("null kept");
@@ -217,23 +232,21 @@ impl<'r> Scrubber<'r> {
                 let text = self.redact.redact(text);
                 match ty.map(|ty| ty.base) {
                     Some(FieldBase::Choice) => {
-                        let codes = &ty.map(|ty| ty.codes.clone()).unwrap_or_default();
+                        let codes = ty.map(|ty| ty.codes.clone()).unwrap_or_default();
                         let code = codes
-                            .iter()
-                            .find(|code| code.code != text)
+                            .into_iter()
+                            .find(|code| *code != text)
                             .ok_or_else(|| no_rule("a choice with no other code"))?;
                         self.originals.insert(text);
                         self.count("choice by another declared code");
-                        Value::Text(code.code.clone())
+                        Value::Text(code)
                     }
                     None | Some(FieldBase::Text) => {
                         self.count("text by synthetic text of its length class");
                         Value::Text(self.text(&text)?)
                     }
                     Some(base) => {
-                        return Err(no_rule(&format!(
-                            "text of a field type built on `{base}`"
-                        )));
+                        return Err(no_rule(&format!("text of a field type built on `{base}`")));
                     }
                 }
             }
@@ -291,7 +304,8 @@ impl<'r> Scrubber<'r> {
             return Ok(String::new());
         }
         let lower = original.to_lowercase();
-        let free = |set: &str| -> Vec<char> { set.chars().filter(|c| !lower.contains(*c)).collect() };
+        let free =
+            |set: &str| -> Vec<char> { set.chars().filter(|c| !lower.contains(*c)).collect() };
         let mut alphabet = free(LETTERS);
         if alphabet.len() < 2 {
             alphabet = free(DIGITS);
@@ -319,14 +333,21 @@ impl<'r> Scrubber<'r> {
         if let Some(synthetic) = self.ints.get(&number) {
             return *synthetic;
         }
-        let digits = number.unsigned_abs().checked_ilog10().map_or(1, |log| log + 1);
+        let digits = number
+            .unsigned_abs()
+            .checked_ilog10()
+            .map_or(1, |log| log + 1);
         let base = 10_i64.saturating_pow(digits.saturating_sub(1));
         let sign = if number < 0 { -1 } else { 1 };
         let mut k = self
             .ints
             .keys()
             .filter(|earlier| {
-                earlier.unsigned_abs().checked_ilog10().map_or(1, |log| log + 1) == digits
+                earlier
+                    .unsigned_abs()
+                    .checked_ilog10()
+                    .map_or(1, |log| log + 1)
+                    == digits
             })
             .count();
         let synthetic = loop {
@@ -355,13 +376,19 @@ fn encode(mut index: usize, alphabet: &[char], length: usize) -> String {
 }
 
 /// An exact number of the same number of whole digits and decimal places,
-/// `1` and zeros, or `2` and zeros where that is the original.
+/// `1` and zeros, or `2` and zeros where that is the original; below one,
+/// `0.0…1` of the same places, or `0.0…2`.
 fn decimal_of_scale(number: &Decimal) -> Result<Decimal, a2m_core::Failure> {
     let text = number.to_string();
     let unsigned = text.trim_start_matches('-');
     let (whole, places) = unsigned.split_once('.').unwrap_or((unsigned, ""));
     let whole_digits = whole.trim_start_matches('0').len().max(1);
+    let fraction_only = whole.trim_start_matches('0').is_empty() && !places.is_empty();
     let make = |first: char| {
+        if fraction_only {
+            // Below one: `0.0…1`, or `0.0…2`, of the same places.
+            return format!("0.{}{first}", "0".repeat(places.len() - 1));
+        }
         let mut out = String::new();
         out.push(first);
         out.push_str(&"0".repeat(whole_digits - 1));
@@ -381,25 +408,25 @@ fn decimal_of_scale(number: &Decimal) -> Result<Decimal, a2m_core::Failure> {
 }
 
 /// The field type of each output of the operation, by name.
-fn output_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, FieldTypePlan> {
+fn output_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, TypeRule> {
     operation
         .outputs
         .iter()
         .filter_map(|output| {
             let ty = plan.field_type(output.field_type?)?;
-            Some((output.name.clone(), ty.clone()))
+            Some((output.name.clone(), TypeRule::of(ty)))
         })
         .collect()
 }
 
 /// The field type of each input of the operation, by name.
-fn input_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, FieldTypePlan> {
+fn input_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, TypeRule> {
     operation
         .inputs
         .iter()
         .filter_map(|input| {
             let ty = plan.field_type(input.field_type)?;
-            Some((input.name.clone(), ty.clone()))
+            Some((input.name.clone(), TypeRule::of(ty)))
         })
         .collect()
 }
@@ -410,7 +437,7 @@ fn input_types(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Field
 pub(crate) fn scrubbed_answers(
     scrubber: &mut Scrubber<'_>,
     observed: &[(String, Option<Values>)],
-    types: &BTreeMap<String, FieldTypePlan>,
+    types: &BTreeMap<String, TypeRule>,
 ) -> Result<Vec<(String, Json, Vec<RecordedAnswer>)>, a2m_core::Failure> {
     let mut names: Vec<&str> = Vec::new();
     for (name, _) in observed {
@@ -633,7 +660,9 @@ handler!(
                         .map(|(class, code)| format!(", {class}/{code}"))
                         .unwrap_or_default()
                 ),
-                format!("Call `run.get` with `{run}` to see why; correct the draft or the input, and record again."),
+                format!(
+                    "Call `run.get` with `{run}` to see why; correct the draft or the input, and record again."
+                ),
             ));
         }
         if observed.is_empty() || observed.len() > ANSWERS_MOST {
@@ -660,7 +689,13 @@ handler!(
             .position(|kept| kept.name == tool.name)
             .and_then(|at| u32::try_from(at).ok())
             .map(a2m_core::ToolIndex::new)
-            .ok_or_else(|| codes::input(codes::NOT_FOUND, "The tool is not in the plan.", "Report this."))?;
+            .ok_or_else(|| {
+                codes::input(
+                    codes::NOT_FOUND,
+                    "The tool is not in the plan.",
+                    "Report this.",
+                )
+            })?;
         let replayed: Vec<RecordedAnswer> = answers
             .iter()
             .flat_map(|(_, _, replayed)| replayed.iter().cloned())
@@ -736,7 +771,8 @@ handler!(
 
         // The files, and the check that no original text is in any byte.
         let inputs_json = crate::render::plain_values(&inputs);
-        let mut files: Vec<(String, Vec<u8>)> = vec![(format!("{folder}/fixture.yaml"), MARKER.as_bytes().to_vec())];
+        let mut files: Vec<(String, Vec<u8>)> =
+            vec![(format!("{folder}/fixture.yaml"), MARKER.as_bytes().to_vec())];
         for (answer, file, _) in &answers {
             let mut bytes = serde_json::to_vec_pretty(file).unwrap_or_default();
             bytes.push(b'\n');
@@ -746,11 +782,15 @@ handler!(
             test_path.clone(),
             test_file(&tool.name, &name, &inputs_json, &got).into_bytes(),
         ));
-        let leaked = scrubber.originals.iter().filter(|original| original.chars().count() >= 3).any(|original| {
-            files
-                .iter()
-                .any(|(_, bytes)| String::from_utf8_lossy(bytes).contains(original.as_str()))
-        });
+        let leaked = scrubber
+            .originals
+            .iter()
+            .filter(|original| original.chars().count() >= 3)
+            .any(|original| {
+                files
+                    .iter()
+                    .any(|(_, bytes)| String::from_utf8_lossy(bytes).contains(original.as_str()))
+            });
         if leaked {
             return Err(codes::input(
                 codes::FIXTURE_NOT_REPLAYED,
@@ -787,7 +827,8 @@ handler!(
         )
         .await?
         .map_err(a2m_core::Failure::from)?;
-        let gates = crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+        let gates =
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
         let state = gates.gates[1]["tests"]
             .as_array()
             .and_then(|tests| tests.iter().find(|shown| shown["test"] == name.as_str()))
@@ -825,3 +866,75 @@ handler!(
 );
 
 use a2m_core::Failure;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fixed rules: nothing of an original text is kept, the same
+    /// original gives the same synthetic value and two never give one,
+    /// numbers keep their scale, and a type with no rule stops.
+    #[test]
+    fn every_observed_value_is_put_in_place_of_by_a_synthetic_one_of_its_shape() {
+        let redact = a2m_core::NoSecrets;
+        let mut scrubber = Scrubber::new(&redact);
+        let observed = Values::new()
+            .with("order_id", "A-100")
+            .with("customer", "Example Customer One")
+            .with("other", "A-101")
+            .with("lines", Value::Int(57))
+            .with("open", Value::Bool(true))
+            .with("note", Value::Null)
+            .with(
+                "items",
+                Value::List(vec![Value::Text("A-100".to_owned()); 5]),
+            );
+        let scrubbed = scrubber.values(&observed, &|_| None).unwrap();
+        let text = |name: &str| match scrubbed.get(name) {
+            Some(Value::Text(text)) => text.clone(),
+            other => panic!("{other:?}"),
+        };
+        let id = text("order_id");
+        assert_eq!(id.chars().count(), 8);
+        assert!(!id.chars().any(|c| "a-100".contains(c)), "{id}");
+        assert_ne!(text("other"), id);
+        assert_eq!(text("customer").chars().count(), 32);
+        assert_eq!(scrubbed.get("lines"), Some(&Value::Int(10)));
+        assert_eq!(scrubbed.get("open"), Some(&Value::Bool(true)));
+        assert_eq!(scrubbed.get("note"), Some(&Value::Null));
+        // A list keeps its first items, and a key the same synthetic value.
+        assert_eq!(
+            scrubbed.get("items"),
+            Some(&Value::List(vec![Value::Text(id.clone()); LIST_ITEMS_KEPT]))
+        );
+        let scaled = |text: &str| decimal_of_scale(&text.parse().unwrap()).unwrap();
+        assert_eq!(scaled("125.25"), "100.00".parse().unwrap());
+        assert_eq!(scaled("100.00"), "200".parse().unwrap());
+        assert_eq!(scaled("0.75"), "0.01".parse().unwrap());
+        // Text of a field type built on a number has no rule.
+        let money = TypeRule {
+            base: FieldBase::Money,
+            codes: Vec::new(),
+        };
+        let refused = scrubber
+            .values(&Values::new().with("total", "12.50"), &|_| {
+                Some(money.clone())
+            })
+            .unwrap_err();
+        assert_eq!(refused.code(), &codes::FIXTURE_NO_SCRUB_RULE);
+        // A choice by another of its codes.
+        let choice = TypeRule {
+            base: FieldBase::Choice,
+            codes: vec!["draft".to_owned(), "submitted".to_owned()],
+        };
+        let chosen = scrubber
+            .values(&Values::new().with("status", "draft"), &|_| {
+                Some(choice.clone())
+            })
+            .unwrap();
+        assert_eq!(
+            chosen.get("status"),
+            Some(&Value::Text("submitted".to_owned()))
+        );
+    }
+}

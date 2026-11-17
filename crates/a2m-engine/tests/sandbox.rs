@@ -527,3 +527,29 @@ async fn a_second_look_reports_a_verified_record_that_reads_differently_and_chan
     assert_eq!(scene.hooks.count("put_item"), 1);
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 2);
 }
+
+/// A record with no key is keyed by its place in the run, which names
+/// nothing in the system: a test record written in that form never lets
+/// the sandbox write it (audit finding E-6).
+#[tokio::test]
+async fn a_record_keyed_by_its_place_in_the_run_is_never_a_test_record() {
+    let scene = Scene::new(common::SLOT_ADD, |plan| {
+        common::keyless_slot_add(plan);
+        plan.environments[0].test_records = vec![
+            a2m_core::RecordKey::new(vec![
+                a2m_core::Value::from(common::SLOT_ADD),
+                a2m_core::Value::Int(0),
+                a2m_core::Value::Int(0),
+            ])
+            .unwrap(),
+        ];
+    })
+    .await;
+    let input = common::slot("A-102", 4, "12");
+    let outcome = scene.work(JobKind::Try, common::SLOT_ADD, input).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Policy, "sandbox_read_only".to_owned())
+    );
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}

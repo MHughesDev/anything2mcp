@@ -1568,7 +1568,11 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         .await
         .result
         .unwrap();
-    assert_ne!(state_of(&tested, "line_item_upsert")["state"], "passed", "{tested}");
+    assert_ne!(
+        state_of(&tested, "line_item_upsert")["state"],
+        "passed",
+        "{tested}"
+    );
     assert_eq!(tested["passed"], false, "{tested}");
     std::fs::write(
         &upsert_test,

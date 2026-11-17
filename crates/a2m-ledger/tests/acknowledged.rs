@@ -421,7 +421,10 @@ async fn a_record_holds_what_it_recorded_only_while_its_write_may_have_landed() 
         .read(move |tx| tx.ledger().records(fence.run))
         .await
         .unwrap();
-    let landed: Vec<bool> = rows.iter().map(a2m_ledger::RecordRow::may_have_landed).collect();
+    let landed: Vec<bool> = rows
+        .iter()
+        .map(a2m_ledger::RecordRow::may_have_landed)
+        .collect();
     // In doubt with its intent; planned; failed with nothing sent, settled.
     assert_eq!(landed, [true, false, false], "{rows:?}");
 }

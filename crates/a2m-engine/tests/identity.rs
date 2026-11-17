@@ -504,9 +504,16 @@ async fn a_keyless_record_in_doubt_whose_look_does_not_answer_stays_in_doubt() {
     let failure = outcome.failure().expect("the record stays in doubt");
     assert_eq!(failure.class(), FailureClass::PossibleCommit);
     assert_eq!(failure.code().as_str(), "cannot_reconcile");
-    // What was recorded before the save is shown as the system's data.
-    assert!(failure.said().unwrap().contains("N-001"), "{failure:?}");
+    // What was recorded before the save is shown as the system's data,
+    // and `said` holds data alone, none of the product's words (audit
+    // finding E-7).
+    let said = failure.said().unwrap();
+    assert!(said.contains("N-001"), "{failure:?}");
+    assert!(!said.contains("recorded before the save"), "{said}");
+    let data: serde_json::Value = serde_json::from_str(said).unwrap();
+    assert!(data["recorded"].is_object(), "{said}");
     assert!(!failure.message().contains("N-001"));
+    assert!(failure.message().contains("`recorded`"));
     assert!(scene.record_states().await[0] != RecordState::Verified);
     assert_eq!(scene.hooks.count("add_item"), 1);
 }

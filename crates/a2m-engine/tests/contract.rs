@@ -676,7 +676,10 @@ impl a2m_provider::OtherRecords for Fixed {
 /// was told, and the operation and record the answerer was asked for.
 async fn asked_with(
     answerer: Option<a2m_provider::RecordedElsewhere>,
-) -> (Vec<a2m_provider::RecordedElsewhere>, Vec<(String, a2m_ledger::RecordRef)>) {
+) -> (
+    Vec<a2m_provider::RecordedElsewhere>,
+    Vec<(String, a2m_ledger::RecordRef)>,
+) {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     *scene.hooks.asks_elsewhere.lock().unwrap() = Some((
         "put_item".to_owned(),

@@ -896,7 +896,9 @@ pub(crate) struct Performed(
 fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShown {
     let plan = &compiled.plan;
     let set = kernel.providers().compiler_set();
-    let default = plan.default_environment().map(|environment| environment.name.clone());
+    let default = plan
+        .default_environment()
+        .map(|environment| environment.name.clone());
     let surfaces = plan
         .surfaces
         .iter()
@@ -906,7 +908,7 @@ fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShow
                 environment
                     .addresses
                     .iter()
-                    .find(|given| usize::try_from(given.surface.get()).ok() == Some(index))
+                    .find(|given| given.surface.get() == index)
                     .map_or(surface.address.clone(), |given| given.address.clone())
             };
             let addresses: Vec<(String, String)> = plan
