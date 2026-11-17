@@ -42,6 +42,13 @@ const DEFAULT_WAIT: u64 = 60;
 const LONGEST_WAIT: u64 = 600;
 /// How many of a run's events one read asks for.
 const EVENTS: u32 = 50;
+/// How long the first look lasts for a run whose state rests while its job
+/// is still in a runner's hands, and the longest such a look grows to. The
+/// record that the job has ended appends no event, so the kernel's wait
+/// for the next event does not end on it; the run is looked at again
+/// after this long, twice as long each time.
+const SETTLE_FIRST: Duration = Duration::from_millis(20);
+const SETTLE_LONGEST: Duration = Duration::from_secs(2);
 
 /// The key of the warnings in a result's `_meta`.
 pub(crate) const WARNINGS_KEY: &str = "anything2mcp/warnings";
@@ -137,6 +144,10 @@ pub(crate) enum Follows {
 pub(crate) enum Stand {
     /// A job for it waits or is in hand.
     Working,
+    /// Its state is a resting one, and the job that brought it there is
+    /// still in a runner's hands: it rests as soon as that job is recorded
+    /// as ended.
+    Settling,
     /// It rests or has stopped, and nothing happens until someone acts.
     Rests,
     /// It has ended.
@@ -154,6 +165,8 @@ pub(crate) struct Following {
     /// When the wait the caller asked for is over.
     until: Instant,
     pub(crate) stand: Stand,
+    /// How long the next look lasts while the run is settling.
+    settle: Duration,
     verified: u64,
     failed: u64,
     /// What the call that started the run answered: the answer, should
@@ -168,6 +181,7 @@ impl Following {
             after,
             until: Instant::now() + wait,
             stand: Stand::Working,
+            settle: SETTLE_FIRST,
             verified: 0,
             failed: 0,
             started: None,
@@ -176,7 +190,7 @@ impl Following {
 
     /// Whether the run may still say something within the caller's wait.
     pub(crate) fn open(&self) -> bool {
-        self.stand == Stand::Working && Instant::now() < self.until
+        matches!(self.stand, Stand::Working | Stand::Settling) && Instant::now() < self.until
     }
 
     /// Whether nothing more will be read of the run: it has ended, its
@@ -388,11 +402,9 @@ impl Core {
         wait: Duration,
         asker: &Asker,
     ) -> Result<Following, Called> {
-        eprintln!("DBG dispatch {} {}", route.action, without_wait(&route.input));
         let response = self
             .dispatch(&route.action, without_wait(&route.input), asker)
             .await;
-        eprintln!("DBG dispatched {response:?}");
         let called = self.called(&response, route.published);
         let run = response
             .result
@@ -445,7 +457,11 @@ impl Core {
     /// tell the caller about it. It waits on the kernel's notice that a
     /// run changed. It only reads, so it may be dropped at any moment.
     pub(crate) async fn follow(&self, following: &mut Following, asker: &Asker) -> Vec<String> {
-        let wait = following.until.saturating_duration_since(Instant::now());
+        let mut wait = following.until.saturating_duration_since(Instant::now());
+        if following.stand == Stand::Settling {
+            wait = wait.min(following.settle);
+            following.settle = (following.settle * 2).min(SETTLE_LONGEST);
+        }
         let page = self
             .kernel
             .next_events(
@@ -461,13 +477,22 @@ impl Core {
             return Vec::new();
         };
         following.after = page.last;
+        let active = matches!(
+            page.state,
+            RunState::Queued | RunState::Validating | RunState::Running
+        );
         following.stand = if page.ended {
             Stand::Ended
         } else if page.settled() {
             Stand::Rests
-        } else {
+        } else if active {
             Stand::Working
+        } else {
+            Stand::Settling
         };
+        if following.stand != Stand::Settling || !page.events.is_empty() {
+            following.settle = SETTLE_FIRST;
+        }
         following.notes(&page)
     }
 

@@ -570,7 +570,9 @@ async fn a_planted_secret_appears_in_nothing_the_door_sends() {
             // The read did happen, and its value was redacted.
             let run = &direct.only()["result"]["structuredContent"];
             assert_eq!(run["status"], "completed", "{run}");
-            assert_eq!(run["result"]["customer"], a2m_core::REDACTED);
+            // The redactor's mark stands where the value was.
+            let shown = run["result"]["customer"].as_str().unwrap();
+            assert!(shown.starts_with(a2m_core::REDACTED), "{shown}");
             let run_id = run["run_id"].clone();
             for tool in ["a2m_run_get", "a2m_trace_show"] {
                 let later = http.post(&call(9, tool, json!({"run_id": run_id}))).await;
