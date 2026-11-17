@@ -248,3 +248,83 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         }
     }
 }
+
+/// A rule that drafts what the pack's own rule never does: a statement
+/// that writes.
+struct DraftsAWrite(a2m_core::FindingKind);
+
+impl a2m_files::DraftingRule for DraftsAWrite {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        self.0.clone()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        crate::names::STATEMENT
+    }
+
+    fn draft(
+        &self,
+        _finding: &Finding,
+        _cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, Failure> {
+        use a2m_files::DraftValue;
+        let statement = |effect: &str| {
+            DraftValue::map(vec![
+                ("effect", DraftValue::text(effect)),
+                ("form", DraftValue::text("table")),
+                ("record", DraftValue::text("order_lines")),
+            ])
+        };
+        let doc = |file: &str, effect: &str| -> Result<a2m_files::DraftDoc, Failure> {
+            Ok(a2m_files::DraftDoc {
+                path: a2m_files::RelPath::new(&format!("statements/{file}.yaml"))?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("orders")),
+                    (
+                        "statements",
+                        DraftValue::map(vec![
+                            ("order_lines_by_key", statement("read")),
+                            ("order_lines_change", statement(effect)),
+                        ]),
+                    ),
+                ]),
+            })
+        };
+        Ok(vec![doc("tries_a_write", "write")?, doc("only_reads", "read")?])
+    }
+}
+
+#[tokio::test]
+async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
+    let scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (findings, _) = discover(&scene).await;
+    let kind = findings[0].kind().clone();
+    let mut builder = a2m_files::CompilerSet::builder();
+    builder
+        .file_kind(
+            crate::names::PACK,
+            std::sync::Arc::new(crate::kind::StatementKind::new(1000)),
+        )
+        .unwrap()
+        .drafting_rule(crate::names::PACK, std::sync::Arc::new(DraftsAWrite(kind)))
+        .unwrap();
+    let set = builder.build();
+    let folder = Folder::new("draft-write");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    let report = Drafter::new(&set, &TargetRoot::new(&root))
+        .draft(&findings[..1])
+        .unwrap();
+    // The file with a statement that writes is not written; the one that
+    // only reads is.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(refused, ["statements/tries_a_write.yaml"]);
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(written, ["statements/only_reads.yaml"]);
+    assert!(!root.join("statements").join("tries_a_write.yaml").exists());
+}

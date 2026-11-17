@@ -11,12 +11,12 @@
 //! `extract` of the save's own answer.
 
 use a2m_core::{
-    FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes;
@@ -583,6 +583,33 @@ impl Lowering for HttpLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// A `request` sends a read and a write alike, and which it is is the
+    /// `effect` of the endpoint it names: the lowering marks it as the
+    /// commit point exactly when the endpoint is marked `write`, and the
+    /// driver refuses a `request` whose mark and endpoint disagree. Every
+    /// other kind reads an answer already held, or is a discoverer's safe
+    /// request, and never saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == REQUEST {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// A verb that reads is a read. A verb that writes is a write when the
+    /// binding names how the record is read back, and `irreversible` when
+    /// it names nothing: what was written could then never be found again.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        if READ_VERBS.contains(&binding.verb.as_str()) {
+            EffectClass::Read
+        } else if binding.field("read_back").is_some() {
+            EffectClass::Write
+        } else {
+            EffectClass::Irreversible
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

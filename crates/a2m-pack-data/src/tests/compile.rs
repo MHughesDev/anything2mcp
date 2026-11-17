@@ -365,3 +365,31 @@ fn a_field_named_as_the_guards_parameter_is_refused() {
     assert!(problem.message.contains("`version`"), "{problem}");
     assert!(!problem.fix.is_empty());
 }
+
+#[test]
+fn a_write_never_compiles_as_a_read_and_a_delete_never_as_a_plain_write() {
+    // An update declared as a read: refused by the kernel, from what the
+    // pack says the verb does, whatever the operation's file says.
+    let problems = errors_after(
+        &["operations", "customer_credit_update.yaml"],
+        "effect: write",
+        "effect: read",
+    );
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .expect("a write declared as a read");
+    assert_eq!(
+        problem.at.file.as_str(),
+        "operations/customer_credit_update.yaml"
+    );
+    // A delete cannot be undone, so `write` is too little for it.
+    let problems = errors_after(
+        &["operations", "line_item_delete.yaml"],
+        "effect: irreversible",
+        "effect: write",
+    );
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .expect("a delete declared as a plain write");
+    assert!(problem.fix.contains("irreversible"), "{problem}");
+}

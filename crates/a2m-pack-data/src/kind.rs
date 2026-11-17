@@ -777,6 +777,17 @@ impl FileKind for StatementKind {
         Vec::new()
     }
 
+    /// A statements file describes a write when any of its statements is
+    /// not plainly `effect: read`. A statement whose effect is missing, or
+    /// is an open question, is not known to read.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("statements")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .any(|entry| entry.value.text("effect") != Some("read"))
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],

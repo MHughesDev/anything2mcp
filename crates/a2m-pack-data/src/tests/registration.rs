@@ -63,3 +63,24 @@ fn the_manifest_declares_every_code_the_driver_returns_and_no_network() {
     assert_eq!(manifest.effects.network, a2m_provider::NetworkEffect::None);
     assert!(manifest.effects.processes.is_empty());
 }
+
+#[test]
+fn commit_is_the_one_kind_that_saves_in_the_lowering_and_in_the_manifest() {
+    use a2m_files::{Lowering, StepCommits};
+
+    use crate::names::COMMIT;
+
+    let lowering = crate::lower::SqlLowering::new(mode());
+    for kind in lowering.step_kinds() {
+        let stated = lowering.commits(kind);
+        if *kind == COMMIT {
+            assert_eq!(stated, StepCommits::Always);
+        } else {
+            assert_eq!(stated, StepCommits::Never, "{kind}");
+        }
+    }
+    // The manifest lists the same kind, so the handle refuses a `commit`
+    // sent as a step that commits nothing.
+    let manifest = Manifest::parse(crate::pack().manifest()).unwrap();
+    assert_eq!(manifest.modes[0].commit_steps, vec![COMMIT]);
+}

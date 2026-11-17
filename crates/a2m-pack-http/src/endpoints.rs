@@ -516,6 +516,21 @@ impl FileKind for EndpointKind {
         Vec::new()
     }
 
+    /// An entry describes a write unless it is marked `read` and its method
+    /// is one HTTP marks safe. An effect that is an open question is not
+    /// known to read. A method that is not safe may change something
+    /// whatever the entry says: marking such a request `read` is a person's
+    /// judgment, which the lint `http.effect_method` asks them to confirm,
+    /// and a draft never makes it. The answer is the same on every surface
+    /// kind the file kind is registered for.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let safe = doc
+            .text("method")
+            .and_then(Method::from_word)
+            .is_some_and(Method::is_safe);
+        doc.text("effect") != Some("read") || !safe
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],

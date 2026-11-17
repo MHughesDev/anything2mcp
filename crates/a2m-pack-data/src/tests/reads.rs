@@ -163,7 +163,12 @@ async fn five_runs_of_one_read_do_the_same_thing() {
     }
     assert!(seen.windows(2).all(|pair| pair[0] == pair[1]));
     let (_, means) = &seen[0];
-    let shown = format!("{means:?}");
+    // The trace's own fields: a detail does not print what it holds.
+    let shown: String = means
+        .iter()
+        .flatten()
+        .map(|detail| format!("{}={};", detail.name, detail.value))
+        .collect();
     assert_eq!(means.len(), 3);
     assert!(
         shown.contains("line_item_by_key") && shown.contains("read_only"),

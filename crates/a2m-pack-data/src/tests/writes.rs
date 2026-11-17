@@ -782,3 +782,97 @@ async fn a_lost_answer_to_a_commit_is_a_possible_commit_and_never_a_second_write
     run.release().await;
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
 }
+
+/// The posture the engine gives the one context that writes a declared
+/// test record.
+const TEST_RECORDS: Posture = Posture::Sandbox { test_records: true };
+
+#[tokio::test]
+async fn a_commit_not_marked_as_the_commit_point_is_refused_and_nothing_lands() {
+    let scene = Scene::new();
+    let binding = scene.binding("example_line_item_update");
+    let wanted = update("151.25", "13.10", 1);
+    let before = scene.db.data_version().unwrap();
+    // A hand-built step: the binding's own commit, with the mark taken off.
+    let mut unmarked = binding.act[3].clone();
+    assert!(unmarked.commits);
+    unmarked.commits = false;
+
+    // Through the handle, as the engine sends it: the manifest says a
+    // `commit` always saves, so one sent as a step that commits nothing
+    // never reaches the driver.
+    let mut run = scene.prepare(TEST_RECORDS).await;
+    for step in &binding.act[..3] {
+        run.step(step, &wanted).await.unwrap();
+    }
+    let refused = run.step(&unmarked, &wanted).await;
+    assert_eq!(
+        failed(refused),
+        (
+            FailureClass::Policy,
+            contract::INTENT_MISSING,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
+
+    // At the driver itself, below the handle: its own guard is lifted for
+    // the step marked `commits` alone, in this posture as in any other.
+    let driver = crate::driver::SqlDriver::new(
+        Arc::new(NoSecrets),
+        4_000_000,
+        Arc::new(crate::store::opener),
+        a2m_provider::Roots::none(),
+    );
+    let handle = scene.handle();
+    let supervisor = handle.supervisor(Vec::new());
+    let cx = a2m_provider::PrepareContext {
+        run: a2m_core::RunId::from_bytes([7; 16]),
+        epoch: a2m_core::Epoch::new(1),
+        surface: &scene.surface,
+        plan: &scene.plan,
+        posture: TEST_RECORDS,
+        deadline: a2m_provider::Deadline::after(Duration::from_secs(30)),
+        redact: &NoSecrets,
+        destinations: &a2m_provider::Destinations::default(),
+        paths: &scene.paths,
+        supervisor: &supervisor,
+    };
+    let mut prepared = a2m_provider::Driver::prepare(&driver, &cx, None)
+        .await
+        .unwrap();
+    let mut steps = binding.act[..3].to_vec();
+    steps.push(unmarked);
+    let mut last = None;
+    for step in &steps {
+        let args = scene.args(step, &wanted);
+        let input = a2m_provider::StepInput {
+            args: &args,
+            record: None,
+            key: None,
+            stamp: None,
+            deadline: a2m_provider::Deadline::after(Duration::from_secs(30)),
+        };
+        last = Some(a2m_provider::Driver::act(&driver, &mut prepared, step, &input).await);
+    }
+    assert_eq!(
+        failed(last.unwrap()),
+        (
+            FailureClass::Policy,
+            contract::READ_ONLY_POSTURE,
+            Sent::NotSent
+        )
+    );
+    a2m_provider::Driver::release(&driver, prepared, false).await;
+
+    // The stand: the row was never written, and holds what it held.
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
+    assert_eq!(scene.db.data_version().unwrap(), before);
+    let stored = scene
+        .db
+        .stored_row(Table::OrderLines, &LINE)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.integer("row_version"), Some(1));
+}

@@ -975,6 +975,21 @@ impl Session {
         step: &Step,
         input: &StepInput<'_>,
     ) -> Result<Observed, StepFailure> {
+        if !step.commits {
+            // The driver's own guard, in every posture: a writing
+            // transaction changes nothing until it is committed, and only
+            // the step marked as the commit point commits. In a sandbox
+            // with test records this is the one step the guard is lifted
+            // for; whatever else ran in the transaction is rolled back.
+            return Err(self
+                .not_sent(failure(
+                    FailureClass::Policy,
+                    codes::READ_ONLY_POSTURE,
+                    "A commit was asked for by a step that is not marked as the commit point, so nothing was written.",
+                    "Send the commit as the binding's commit point, after its intent is stored.",
+                ))
+                .await);
+        }
         if self.open != Some(Access::ReadWrite) || !self.counted {
             // Nothing is committed whose count of rows was not checked.
             return Err(self

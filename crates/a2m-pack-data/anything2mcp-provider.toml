@@ -10,12 +10,14 @@ publisher = "Anything2MCP"
 kind = "pack"
 
 # One mode, for relational stores. `catalog` is the step the discoverer
-# sends; no lowering emits it.
+# sends; no lowering emits it. `commit` is the one step that saves, and it
+# always does: the handle refuses one sent without the mark.
 [[modes]]
 name = "sql"
 archetype = "request"
 verbs = ["read", "list", "search", "create", "update", "delete"]
 steps = ["begin", "execute", "fetch", "expect_rows", "commit", "catalog"]
+commit_steps = ["commit"]
 rank = 30
 session_reads = 4
 session_writes = 1

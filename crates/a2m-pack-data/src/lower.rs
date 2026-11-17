@@ -7,12 +7,12 @@
 //! nothing here can place one in a statement's text.
 
 use a2m_core::{
-    FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, LintCode, Mode,
-    PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb,
+    EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, LintCode,
+    Mode, PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage,
+    Possible, ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::model::{Access, Does, Returns, Section, Statement, StepDetail};
@@ -264,6 +264,30 @@ impl Lowering for SqlLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.steps
+    }
+
+    /// `commit` is the one kind that saves, and it always does: a writing
+    /// transaction changes nothing in the store until it is committed, and
+    /// no read ends in a `commit`. Every other kind never saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == COMMIT {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb, which `lower` holds to what the statement does: a
+    /// `create` or an `update` writes, and a `delete` cannot be undone.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb;
+        if *verb == DELETE {
+            EffectClass::Irreversible
+        } else if *verb == CREATE || *verb == UPDATE {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {
