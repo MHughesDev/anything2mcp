@@ -1551,6 +1551,9 @@ impl Page {
                         )
                         .await;
                 } else {
+                    // Recorded first, so that whoever sees the request fail
+                    // can already read why.
+                    self.block(method, address);
                     // Failed before it leaves the browser. If this call is
                     // lost, the request stays paused: it is never sent.
                     let _ = self
@@ -1564,7 +1567,6 @@ impl Page {
                             deadline,
                         )
                         .await;
-                    self.block(method, address);
                 }
             }
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
@@ -2101,7 +2103,10 @@ impl ObserveTab {
     /// (`SHAREDWORKER`), or a service worker (`SERVICEWORKER`) refused when
     /// the page made it; and a worker or frame that could not be locked
     /// and was not let run (`WORKER`). Each is a limitation of what was
-    /// observed.
+    /// observed. A refusal is listed once the tab has heard of it, which
+    /// can be a moment after the page did: one that is not in this answer
+    /// is in the next. After a `goto` or a `wait` that followed it, it is
+    /// there.
     #[must_use]
     pub fn blocked(&self) -> Vec<RequestShape> {
         self.page.take_blocked()

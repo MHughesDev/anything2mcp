@@ -110,7 +110,10 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
         stored
     );
 
-    // Each refusal is reported, without the query of its address.
+    // Each refusal is reported, without the query of its address. The
+    // tab hears of a refusal as an event; a navigation it has waited out
+    // came after every one of them, so all are listed by now.
+    must(tab.goto(&form, soon()).await);
     let blocked = tab.blocked();
     let puts: Vec<_> = blocked.iter().filter(|one| one.method == "PUT").collect();
     assert_eq!(puts.len(), 2, "{blocked:?}");
