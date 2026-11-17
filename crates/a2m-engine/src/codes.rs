@@ -55,6 +55,15 @@ pub const JOB_KIND_NOT_BUILT: FailureCode = FailureCode::fixed("job_kind_not_bui
 /// `busy`: evidence could not be stored, so nothing can be marked verified.
 pub const EVIDENCE_NOT_STORED: FailureCode = FailureCode::fixed("evidence_not_stored");
 
+/// `transient`: a driver was not ready within the time preparing may take.
+pub const PREPARE_TIMED_OUT: FailureCode = FailureCode::fixed("prepare_timed_out");
+/// `busy`: no rate budget was granted for a surface.
+pub const NO_RATE_BUDGET: FailureCode = FailureCode::fixed("no_rate_budget");
+/// `policy`: an intent was stored and no token came back for it.
+pub const NO_TOKEN: FailureCode = FailureCode::fixed("intent_token_missing");
+/// `unknown_variant`: a binding ended without sending its write.
+pub const COMMIT_SKIPPED: FailureCode = FailureCode::fixed("commit_skipped");
+
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -81,6 +90,10 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Policy, "sandbox_read_only"),
     (FailureClass::Busy, "job_kind_not_built"),
     (FailureClass::Busy, "evidence_not_stored"),
+    (FailureClass::Transient, "prepare_timed_out"),
+    (FailureClass::Busy, "no_rate_budget"),
+    (FailureClass::Policy, "intent_token_missing"),
+    (FailureClass::UnknownVariant, "commit_skipped"),
 ];
 
 pub(crate) fn fail(

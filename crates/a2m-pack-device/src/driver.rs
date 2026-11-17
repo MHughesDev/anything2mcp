@@ -166,7 +166,7 @@ impl DeviceDriver {
 }
 
 impl LinkState {
-    fn map(&self, step: &Step) -> Result<(usize, &str, &MapPlan), StepFailure> {
+    fn map<'a>(&'a self, step: &'a Step) -> Result<(usize, &'a str, &'a MapPlan), StepFailure> {
         let refers = step
             .refers_to
             .as_ref()

@@ -134,6 +134,8 @@ impl Scene<'_> {
         args: Vec<StepArg>,
         at: &Place,
     ) -> Option<Step> {
+        // The one step that changes the device: the frame that writes.
+        let commits = matches!(payload, StepPayload::Write { .. });
         let payload = match PackPayload::encode(payload) {
             Ok(payload) => payload,
             Err(failure) => {
@@ -146,7 +148,6 @@ impl Scene<'_> {
                 return None;
             }
         };
-        let commits = matches!(payload_kind(kind, self.names), Kind::WriteFrame) && !args.is_empty();
         Some(Step {
             kind: kind.clone(),
             refers_to: Some(PackRef {
@@ -295,20 +296,6 @@ impl Scene<'_> {
             }
         }
         (steps, registers)
-    }
-}
-
-/// Which of the four step kinds a kind is.
-enum Kind {
-    WriteFrame,
-    Other,
-}
-
-fn payload_kind(kind: &StepKind, names: &Names) -> Kind {
-    if *kind == names.write_frame {
-        Kind::WriteFrame
-    } else {
-        Kind::Other
     }
 }
 

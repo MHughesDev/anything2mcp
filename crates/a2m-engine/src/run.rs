@@ -105,6 +105,7 @@ pub(crate) struct Run<'a> {
     pub state: RunState,
     pub trace: Option<TraceBuilder>,
     pass: u32,
+    next_pass: u32,
     begins: Option<PassInfo>,
     held: Vec<Held>,
     destinations: Destinations,
@@ -170,6 +171,7 @@ impl<'a> Run<'a> {
                 .map_or(RunState::Queued, |snapshot| snapshot.state),
             trace,
             pass: 0,
+            next_pass: 0,
             begins: None,
             held: Vec::new(),
             destinations: Destinations::new(addresses),
@@ -493,10 +495,8 @@ impl<'a> Run<'a> {
         queue: Duration,
         prepare: Duration,
     ) {
-        if self.begins.is_some() || self.pass > 0 || self.trace_has_records {
-            self.pass += 1;
-        }
-        self.trace_has_records = true;
+        self.pass = self.next_pass;
+        self.next_pass += 1;
         self.begins = Some(PassInfo {
             operation: operation.clone(),
             reason,
@@ -518,7 +518,7 @@ impl<'a> Run<'a> {
             if granted == 0 {
                 return Err(codes::fail(
                     FailureClass::Busy,
-                    codes::NO_BUDGET,
+                    codes::NO_RATE_BUDGET,
                     format!("No rate budget was granted for the surface `{}`.", surface.name),
                     "Call the tool again later.",
                 ));

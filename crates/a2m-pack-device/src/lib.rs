@@ -82,14 +82,14 @@ impl Pack for DevicePack {
             )),
         )?;
         let mut compiler = CompilerRegistrations::new()
-            .surface_kind(SurfaceKindSpec {
-                kind: names.surface_kind.clone(),
-                address_key: "address".to_owned(),
-                fields: JsonSchema::object()
+            .surface_kind(SurfaceKindSpec::new(
+                names.surface_kind.clone(),
+                "address",
+                JsonSchema::object()
                     .required("address", JsonSchema::text())
                     .required("protocol", JsonSchema::words(link::PROTOCOLS))
                     .required("unit", JsonSchema::int_between(0, 255)),
-            })
+            ))
             .file_kind(Arc::new(map::RegisterKind::new(Arc::clone(&names))))
             .lowering(Arc::new(lower::DeviceLowering::new(Arc::clone(&names))))
             .drafting_rule(Arc::new(discover::MapFromIdentity::new(Arc::clone(&names))));
