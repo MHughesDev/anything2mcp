@@ -136,9 +136,21 @@ async fn a_read_returns_what_the_stand_holds_and_five_runs_observe_the_same() {
         first.values.get("note"),
         Some(&Value::from("Deliver to dock 2"))
     );
-    assert_eq!(first.captures.len(), 1);
+    // How the call was done, and what the server answered.
+    assert_eq!(first.captures.len(), 2);
+    let acting = first.acting().unwrap();
+    assert!(
+        acting
+            .means
+            .iter()
+            .any(|detail| detail.value == "orders_get")
+    );
+    assert!(!format!("{acting:?}").contains("A-100"));
+    // Five runs: the same values, the same captures, one trace signature.
     for _ in 0..4 {
-        assert_eq!(done(scene.get("A-100").await), first);
+        let again = done(scene.get("A-100").await);
+        assert_eq!(again, first);
+        assert_eq!(again.acting().unwrap().means, acting.means);
     }
     let control = scene.stand.control();
     assert_eq!(control.calls_to("orders_get").unwrap(), 5);
@@ -256,6 +268,11 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
             Authority::Write(&intent),
         )
         .await;
+    // What the tool said is carried apart from the product's sentence.
+    let refusal = rejected.as_ref().unwrap_err();
+    let said = refusal.failure.said().unwrap();
+    assert!(!said.is_empty());
+    assert!(!refusal.failure.message().contains(said));
     assert_eq!(
         failed(rejected),
         code(

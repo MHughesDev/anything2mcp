@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 
 use a2m_actions::{
     ApprovalAsk, ApprovalDesk, BoxFuture, Caller, CallerCredential, CloseReason, ExitClass,
-    FrontDoor, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof, Request,
-    Response, SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
+    FrontDoor, Kernel, KernelParts, Paths, PersonActAsk, PersonActId, PersonSurface, PresenceAsk,
+    PresenceProof, Request, Response, SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, Timestamp};
@@ -60,6 +60,16 @@ session = true
 
 [points]
 driver = ["stand"]
+discoverer = ["calls"]
+
+[[discoverers]]
+name = "calls"
+archetype = "request"
+surface_kinds = ["stand"]
+kinds = ["stand_call"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 100000, depth = 1 }
 
 [[file_kinds]]
 name = "call"
@@ -82,6 +92,10 @@ summary = "A call's path starts with a slash."
 finding_kind = "stand_call"
 file_kind = "call"
 
+[[drafting_rules]]
+finding_kind = "stand_call"
+file_kind = "operation"
+
 [[settings]]
 key = "page_budget"
 type = "int"
@@ -95,7 +109,151 @@ network = "surfaces"
 sessions = ["stand"]
 "#;
 
-struct StandPack;
+struct StandPack {
+    reached: Arc<Mutex<Vec<String>>>,
+    behaviour: Arc<Mutex<Behaviour>>,
+}
+
+/// The stand's discoverer: it tries to send a step that saves, which the
+/// sandbox refuses unsent, reads once, and finds one call that reads, as a
+/// discoverer of a live system would.
+struct CallsDiscoverer;
+
+fn stand_step(kind: &str, commits: bool) -> a2m_core::Step {
+    a2m_core::Step {
+        kind: a2m_core::StepKind::new(kind).unwrap(),
+        refers_to: None,
+        args: Vec::new(),
+        timeout_ms: 2_000,
+        fails_as: a2m_core::FailsAs {
+            class: a2m_core::FailureClass::Transient,
+            code: a2m_core::FailureCode::fixed("stand_timed_out"),
+        },
+        commits,
+        lookup: false,
+        idempotent: false,
+        when: None,
+        payload: a2m_core::PackPayload::none(),
+    }
+}
+
+impl a2m_provider::Discoverer for CallsDiscoverer {
+    fn name(&self) -> a2m_provider::DiscovererName {
+        a2m_provider::DiscovererName::new("calls").unwrap()
+    }
+
+    fn suits(&self, _surface: &a2m_provider::SurfaceDescription) -> bool {
+        true
+    }
+
+    fn discover<'a>(
+        &'a self,
+        port: &'a dyn a2m_provider::SandboxPort,
+        scope: &'a a2m_provider::DiscoveryScope<'a>,
+        out: &'a mut dyn a2m_provider::FindingSink,
+    ) -> BoxFuture<'a, Result<a2m_provider::DiscoveryReport, Failure>> {
+        Box::pin(async move {
+            let args = a2m_core::Values::new();
+            let input = a2m_provider::StepInput {
+                args: &args,
+                record: None,
+                key: None,
+                stamp: None,
+                deadline: scope.deadline,
+            };
+            let refused = port.act(&stand_step("send", true), &input).await;
+            assert!(refused.is_err(), "the sandbox sends no step that saves");
+            let _ = port.act(&stand_step("fetch", false), &input).await;
+            out.found(
+                a2m_core::Finding::about(
+                    a2m_core::Subject::Address(
+                        a2m_core::Address::new("https://test.example.com", "/orders").unwrap(),
+                    ),
+                    a2m_core::FindingKind::new("stand_call").unwrap(),
+                    "order_list /orders read",
+                    a2m_core::Source::LiveSystem,
+                    a2m_core::ProducedBy {
+                        provider: "stand".to_owned(),
+                        version: "0.1.0".to_owned(),
+                        component: None,
+                    },
+                    Timestamp::from_unix_millis(1_800_000_000_000),
+                )
+                .level(a2m_core::EvidenceLevel::Discovered)
+                .build()
+                .unwrap(),
+            )?;
+            Ok(a2m_provider::DiscoveryReport::default())
+        })
+    }
+}
+
+struct Plain;
+
+impl a2m_provider::Describer for Plain {
+    fn describe(
+        &self,
+        findings: &[a2m_core::Finding],
+        _form: a2m_provider::DescribeForm,
+    ) -> a2m_provider::Description {
+        a2m_provider::Description {
+            text: format!("{} findings", findings.len()),
+            ..a2m_provider::Description::default()
+        }
+    }
+}
+
+/// The stand's second drafting rule: a read operation for each call a
+/// finding says reads, and nothing for one that writes or does not say.
+struct OperationFromCall;
+
+impl a2m_files::DraftingRule for OperationFromCall {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new("stand_call").unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_core::FileKindName::new("operation").unwrap()
+    }
+
+    fn draft(
+        &self,
+        finding: &a2m_core::Finding,
+        cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, Failure> {
+        use a2m_files::DraftValue;
+        let parts: Vec<&str> = finding.found().split_whitespace().collect();
+        let (Some(name), Some(&"read"), Some(target)) = (parts.first(), parts.get(2), cx.target())
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(vec![a2m_files::DraftDoc {
+            path: a2m_files::RelPath::new(&format!("operations/{name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("operation", DraftValue::text(&format!("{target}_{name}"))),
+                ("title", DraftValue::text(name)),
+                ("effect", DraftValue::text("read")),
+                ("inputs", DraftValue::Map(Vec::new())),
+                (
+                    "outputs",
+                    DraftValue::map(vec![(
+                        "note",
+                        DraftValue::map(vec![("type", DraftValue::text("note"))]),
+                    )]),
+                ),
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![
+                        ("mode", DraftValue::text("stand")),
+                        ("status", DraftValue::text("verified")),
+                        ("call", DraftValue::text(name)),
+                    ])]),
+                ),
+                ("description", DraftValue::text("Drafted from a finding.")),
+            ]),
+        }])
+    }
+}
 
 impl Pack for StandPack {
     fn manifest(&self) -> &'static str {
@@ -106,10 +264,11 @@ impl Pack for StandPack {
         to.driver(
             testing::mode(),
             Arc::new(StubDriver {
-                reached: Arc::new(Mutex::new(Vec::new())),
-                behaviour: Arc::new(Mutex::new(Behaviour::Done)),
+                reached: Arc::clone(&self.reached),
+                behaviour: Arc::clone(&self.behaviour),
             }),
         )?;
+        to.discoverer(Arc::new(CallsDiscoverer), Arc::new(Plain))?;
         to.compiler(
             CompilerRegistrations::new()
                 .surface_kind(testing::surface_kind_spec())
@@ -117,21 +276,55 @@ impl Pack for StandPack {
                 .file_kind(testing::file_kind())
                 .lowering(testing::lowering())
                 .lint_rule(testing::lint_rule())
-                .drafting_rule(testing::drafting_rule()),
+                .drafting_rule(testing::drafting_rule())
+                .drafting_rule(Arc::new(OperationFromCall)),
         )
     }
 }
 
-/// A person surface whose person is always at the machine.
+/// A person surface whose person is always at the machine. It shows a
+/// person's act an agent asked for only when `pages` is set, as a surface
+/// with a page for it does.
 #[derive(Default)]
 struct Present {
-    desk: Mutex<Option<ApprovalDesk>>,
+    desk: Mutex<Option<Arc<ApprovalDesk>>>,
     asked: Mutex<Vec<String>>,
+    pages: Mutex<bool>,
+    acts: Mutex<Vec<PersonActAsk>>,
+}
+
+impl Present {
+    fn desk(&self) -> Arc<ApprovalDesk> {
+        self.desk.lock().unwrap().clone().unwrap()
+    }
 }
 
 impl PersonSurface for Present {
     fn take_desk(&self, desk: ApprovalDesk) {
-        *self.desk.lock().unwrap() = Some(desk);
+        *self.desk.lock().unwrap() = Some(Arc::new(desk));
+    }
+
+    fn shows_person_acts(&self) -> bool {
+        *self.pages.lock().unwrap()
+    }
+
+    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            if !*self.pages.lock().unwrap() {
+                return Err(Failure::new(
+                    a2m_core::FailureClass::Policy,
+                    a2m_actions::codes::PERSON_REQUIRED,
+                    "No page here.",
+                    "Run it at a terminal.",
+                ));
+            }
+            let link = format!("http://127.0.0.1/act/{}", ask.act);
+            self.acts.lock().unwrap().push(ask);
+            Ok(SurfaceLink {
+                url: Some(link),
+                text: "Open the page to carry it out.".to_owned(),
+            })
+        })
     }
 
     fn ask_approval(&self, _ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
@@ -177,6 +370,11 @@ fn repository() -> PathBuf {
 }
 
 struct World {
+    /// Every step that reached the stand's driver.
+    reached: Arc<Mutex<Vec<String>>>,
+    /// What the stand's driver answers.
+    behaviour: Arc<Mutex<Behaviour>>,
+    clock: Arc<ManualClock>,
     kernel: Kernel,
     surface: Arc<Present>,
     person: Caller,
@@ -219,14 +417,15 @@ impl World {
                 .with_flag("packs.stand.page_budget", "8"),
         )
         .unwrap();
+        let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
+            1_800_000_000_000,
+        )));
         let prepared = Kernel::prepare(KernelParts {
             settings,
             paths: Paths::under(&folder_path(&folder)),
             place: StorePlace::Memory,
             key_store: Arc::new(MemoryKeyStore::new()),
-            clock: Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
-                1_800_000_000_000,
-            ))),
+            clock: Arc::clone(&clock) as _,
             random: Arc::new(a2m_vault::OsRandom),
             os_user: "pat".to_owned(),
         })
@@ -234,7 +433,12 @@ impl World {
         let host =
             prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
-        builder.add_pack(&StandPack);
+        let reached = Arc::new(Mutex::new(Vec::new()));
+        let behaviour = Arc::new(Mutex::new(Behaviour::Done));
+        builder.add_pack(&StandPack {
+            reached: Arc::clone(&reached),
+            behaviour: Arc::clone(&behaviour),
+        });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
         // The pack was handed its own group, as the loader read it.
@@ -262,6 +466,9 @@ impl World {
                 .is_err()
         );
         Self {
+            reached,
+            behaviour,
+            clock,
             kernel,
             surface,
             person: Caller::new(principal, FrontDoor::Command, false),
@@ -453,5 +660,579 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
         )
         .await;
     assert!(linted.ok, "{:?}", linted.error);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A proof of presence from the page of `act`, of now by the engine's clock.
+fn proof_for(world: &World, act: PersonActId) -> PresenceProof {
+    PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        world.person.principal.principal().id,
+        a2m_telemetry::Clock::now(world.clock.as_ref()),
+    )
+    .for_act(act)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_persons_proof() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // The agent asks; nothing is published, and the person is shown the
+    // act on a page, with what it will store pinned.
+    let asked = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    assert!(asked.error.is_none());
+    let result = asked.result.clone().unwrap();
+    assert_eq!(result["state"], "needs_person");
+    assert!(result["link"].as_str().unwrap().contains("/act/"));
+    let next = asked.next.clone().unwrap();
+    assert_eq!(next.action, "version.publish");
+    // The result fits the action's published output schema.
+    let def = world.kernel.actions().find("version.publish").unwrap();
+    let mut shown = result.clone();
+    shown.as_object_mut().unwrap().insert("next".to_owned(), json!({"action": "version.publish", "tool": "a2m_version_publish", "args": {}, "when": "later"}));
+    def.output.check_json(&shown).unwrap();
+    assert!(
+        world.surface.asked.lock().unwrap().is_empty(),
+        "no prompt at the caller's end"
+    );
+    let ask = world.surface.acts.lock().unwrap()[0].clone();
+    let fields: Vec<(&str, &str)> = ask
+        .input
+        .iter()
+        .map(|field| (field.name.as_str(), field.value.as_str()))
+        .collect();
+    assert_eq!(fields[0], ("plan_hash", fields[0].1));
+    assert!(
+        fields.contains(&("target", "example")) && fields.contains(&("version", "1.0.0")),
+        "{fields:?}"
+    );
+    assert!(!ask.details.is_empty(), "the review summary is shown");
+    let nothing = world.call(&agent, "target.list", json!({})).await;
+    assert_eq!(
+        nothing.result.unwrap()["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| !row["versions"].as_array().unwrap().is_empty())
+            .count(),
+        0
+    );
+
+    // The same call while it waits gives back the same page.
+    let again = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(again.result.unwrap()["act"], result["act"]);
+    assert_eq!(world.surface.acts.lock().unwrap().len(), 1);
+
+    let desk = world.surface.desk();
+    let act = ask.act;
+    // A proof for no act, for another, of another person, or old does
+    // nothing, and the act goes on waiting.
+    let bare = PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        world.person.principal.principal().id,
+        a2m_telemetry::Clock::now(world.clock.as_ref()),
+    );
+    let other = PersonActId::from_bytes([7; 16]);
+    let someone = a2m_core::PrincipalId::from_bytes([9; 16]);
+    let refusals = [
+        desk.carry_out(act, bare).await,
+        desk.carry_out(act, proof_for(&world, other)).await,
+        desk.carry_out(
+            act,
+            PresenceProof::new(
+                PresenceCheck::OsPrompt,
+                someone,
+                a2m_telemetry::Clock::now(world.clock.as_ref()),
+            )
+            .for_act(act),
+        )
+        .await,
+        desk.carry_out(
+            act,
+            PresenceProof::new(
+                PresenceCheck::OsPrompt,
+                world.person.principal.principal().id,
+                Timestamp::from_unix_millis(1_799_999_000_000),
+            )
+            .for_act(act),
+        )
+        .await,
+    ];
+    for refused in refusals {
+        assert_eq!(refused.unwrap_err().code().as_str(), "presence_required");
+    }
+    assert!(desk.person_act(act).is_ok());
+
+    // The person's proof from the act's page carries it out, as them.
+    let done = desk.carry_out(act, proof_for(&world, act)).await.unwrap();
+    assert!(done.ok, "{:?}", done.error);
+    let version = done.result.unwrap();
+    assert_eq!(version["version"], "1.0.0");
+    assert_eq!(version["plan_hash"], fields[0].1);
+    // Once: a second press does nothing.
+    let second = desk.carry_out(act, proof_for(&world, act)).await;
+    assert_eq!(second.unwrap_err().code().as_str(), "not_found");
+    assert!(desk.person_act(act).is_err());
+
+    // The store holds exactly one version, published by the person.
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    let targets = listed.result.unwrap();
+    let example: Vec<&Json> = targets["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["target"] == "example")
+        .collect();
+    assert_eq!(
+        example[0]["versions"].as_array().unwrap().len(),
+        1,
+        "{targets}"
+    );
+    let audit = world.call(&world.person, "audit.query", json!({})).await;
+    let audit = audit.result.unwrap().to_string();
+    assert!(audit.contains("version.publish"), "{audit}");
+
+    // The agent's same call gives back what was done, and does nothing more.
+    let repeated = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert!(repeated.ok, "{:?}", repeated.error);
+    assert_eq!(repeated.result.unwrap()["version"], "1.0.0");
+    assert!(!repeated.warnings.is_empty());
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(
+        listed
+            .result
+            .unwrap()
+            .to_string()
+            .matches("\"version\":\"")
+            .count()
+            == 1
+    );
+
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_its_window() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // `publish.request` asks; the person decides on the page.
+    let asked = world
+        .call(&agent, "publish.request", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap()[0].clone();
+    assert_eq!(ask.action.as_str(), "version.publish");
+
+    // The drafts change after the person was shown them: the press
+    // publishes nothing.
+    let file = world
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("target.yaml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        text.replacen(
+            "title: Example order entry",
+            "title: Example order entry, changed",
+            1,
+        ),
+    )
+    .unwrap();
+    let changed = world
+        .surface
+        .desk()
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await
+        .unwrap();
+    assert_eq!(changed.error.unwrap().code, "drafts_changed");
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+
+    // A new ask, declined: nothing is published, and the same call is told.
+    let asked = world
+        .call(
+            &agent,
+            "publish.request",
+            json!({"target": "example", "version": "2.0.0"}),
+        )
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded);
+    let ask = world.surface.acts.lock().unwrap().last().unwrap().clone();
+    world.surface.desk().decline_act(ask.act, true);
+    let told = world
+        .call(
+            &agent,
+            "publish.request",
+            json!({"target": "example", "version": "2.0.0"}),
+        )
+        .await;
+    assert_eq!(told.error.unwrap().code, "approval_refused");
+
+    // An ask nobody answers ends with the window: a press after it does
+    // nothing.
+    let asked = world
+        .call(
+            &agent,
+            "publish.request",
+            json!({"target": "example", "version": "3.0.0"}),
+        )
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded);
+    let ask = world.surface.acts.lock().unwrap().last().unwrap().clone();
+    world.clock.advance(std::time::Duration::from_secs(16 * 60));
+    let late = world
+        .surface
+        .desk()
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await;
+    assert_eq!(late.unwrap_err().code().as_str(), "not_found");
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+
+    // A caller with no page to go to is refused by name, as before.
+    *world.surface.pages.lock().unwrap() = false;
+    let refused = world
+        .call(
+            &agent,
+            "version.publish",
+            json!({"target": "example", "version": "4.0.0"}),
+        )
+        .await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+
+    // The project's targets are listed, and the target's state.
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    let listed = listed.result.unwrap();
+    assert_eq!(listed["targets"][0]["target"], "example", "{listed}");
+    assert_eq!(listed["targets"][0]["in_project"], true);
+    let status = world
+        .call(&agent, "target.status", json!({"target": "example"}))
+        .await;
+    assert!(status.ok, "{:?}", status.error);
+    let status = status.result.unwrap();
+    assert_eq!(
+        (status["state"].as_str(), status["compiles"].as_bool()),
+        (Some("drafted"), Some(true)),
+        "{status}"
+    );
+
+    // A file is read as text, by its path in the target's folder.
+    let read = world
+        .call(
+            &agent,
+            "draft.read",
+            json!({"target": "example", "file": "target.yaml"}),
+        )
+        .await;
+    let read = read.result.unwrap();
+    assert!(
+        read["content"]
+            .as_str()
+            .unwrap()
+            .contains("target: example")
+    );
+    // No path leaves the target's folder, and a hidden name is not read.
+    for file in [
+        "../../anything2mcp.toml",
+        "/etc/hosts",
+        ".hidden.yaml",
+        "calls/../../x.yaml",
+    ] {
+        let refused = world
+            .call(
+                &agent,
+                "draft.read",
+                json!({"target": "example", "file": file}),
+            )
+            .await;
+        assert_eq!(refused.error.unwrap().code, "path_not_allowed", "{file}");
+    }
+    let missing = world
+        .call(
+            &agent,
+            "draft.read",
+            json!({"target": "example", "file": "calls/none.yaml"}),
+        )
+        .await;
+    assert_eq!(missing.error.unwrap().code, "not_found");
+
+    // A file that does not read as its kind is not written: the folder
+    // holds nothing new.
+    let broken = world
+        .call(
+            &agent,
+            "draft.write",
+            json!({"target": "example", "file": "calls/broken.yaml", "content": "a: [\n"}),
+        )
+        .await;
+    let broken = broken.result.unwrap();
+    assert_eq!(broken["written"], false, "{broken}");
+    assert!(!target_dir.join("calls").join("broken.yaml").exists());
+    // One that reads is written, and the file system holds what was sent.
+    let text = std::fs::read_to_string(target_dir.join("target.yaml")).unwrap();
+    let changed = text.replacen("title: Example order entry", "title: Example orders", 1);
+    let written = world
+        .call(
+            &agent,
+            "draft.write",
+            json!({"target": "example", "file": "target.yaml", "content": changed}),
+        )
+        .await;
+    let written = written.result.unwrap();
+    assert_eq!(
+        (written["written"].as_bool(), written["ok"].as_bool()),
+        (Some(true), Some(true)),
+        "{written}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target_dir.join("target.yaml")).unwrap(),
+        changed
+    );
+    // A link in the target's folder that leads out of the project is never
+    // written through.
+    #[cfg(unix)]
+    {
+        let outside = Folder::new("actions-outside");
+        let victim = outside.path().join("victim.yaml");
+        std::fs::write(&victim, "kept\n").unwrap();
+        std::os::unix::fs::symlink(&victim, target_dir.join("calls").join("linked.yaml")).unwrap();
+        let through = world
+            .call(
+                &agent,
+                "draft.write",
+                json!({"target": "example", "file": "calls/linked.yaml", "content": "calls: []\n"}),
+            )
+            .await;
+        assert!(
+            !through.ok || through.result.as_ref().unwrap()["written"] == false,
+            "{through:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "kept\n");
+        std::fs::remove_file(target_dir.join("calls").join("linked.yaml")).unwrap();
+    }
+
+    // The gates: the lint gate runs, the offline tests wait for a replay,
+    // and the result is never a pass.
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await;
+    assert!(tested.ok, "{:?}", tested.error);
+    let tested = tested.result.unwrap();
+    assert_eq!(
+        (tested["passed"].as_bool(), tested["complete"].as_bool()),
+        (Some(false), Some(false))
+    );
+    assert_eq!(tested["gates"][0]["state"], "passed", "{tested}");
+    let offline = tested["gates"][1]["tests"].as_array().unwrap();
+    assert_eq!(offline.len(), 3, "{tested}");
+    assert!(offline.iter().all(|test| test["state"] == "not_run"));
+
+    // A drafted read is tried in the sandbox as a run of its own, and
+    // nothing becomes a version.
+    let tried = world
+        .call(&agent, "draft.try", json!({"target": "example", "tool": "example_order_get", "input": {"order_id": "SO-1001"}}))
+        .await;
+    let result = tried.result.clone().unwrap_or_default();
+    assert!(result["run_id"].is_string(), "{tried:?}");
+    assert_eq!(result["tool"], "example_order_get");
+    let got = world
+        .call(&agent, "run.get", json!({"run_id": result["run_id"]}))
+        .await;
+    assert!(got.result.is_some(), "{got:?}");
+    // The trial is a run the engine carried out: here it stops where the
+    // stand's sign-in is not registered, as a call of a published tool
+    // would, and nothing reached the stand's driver.
+    assert_eq!(result["mode"], "stand", "{result}");
+    assert_eq!(
+        result["failure"]["code"], "auth_provider_unknown",
+        "{result}"
+    );
+    assert!(world.reached.lock().unwrap().is_empty());
+    let nothing = world.call(&agent, "tool.search", json!({})).await;
+    assert_eq!(
+        nothing.result.unwrap()["total"],
+        0,
+        "a trial publishes nothing"
+    );
+    // A drafted write is not tried.
+    let write = world
+        .call(
+            &agent,
+            "draft.try",
+            json!({"target": "example", "tool": "example_line_item_upsert", "input": {}}),
+        )
+        .await;
+    assert_eq!(write.error.unwrap().code, "action_not_built");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// The scout through the dispatcher, in a project: it identifies the
+/// stand's surface, runs its discoverer in the sandbox, drafts by the
+/// pack's rules into the target's folder beside the files a person wrote,
+/// compiles the drafts, tries the drafted read five times, and reports. A
+/// stopped scout continues where it stopped; two scouts of the same stand
+/// in the same state give one report, by hash; no step that saves reaches
+/// the stand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    // The target here declares no sign-in, so the stand is reached with
+    // none; and the stand answers every read with one note.
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
+    let written_by_hand = std::fs::read(target_dir.join("calls").join("orders.yaml")).unwrap();
+
+    // Asked not to wait, the scout may stop at a stage whose runs have not
+    // ended; called again, it continues the same scout.
+    let early = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "wait_seconds": 0}),
+        )
+        .await;
+    assert!(early.ok, "{:?}", early.error);
+    let early = early.result.unwrap();
+    let report = world
+        .call(&agent, "scout.run", json!({"target": "example"}))
+        .await;
+    assert!(report.ok, "{:?}", report.error);
+    let report = report.result.unwrap();
+    if early["state"] == "working" {
+        assert_eq!(report["scout_id"], early["scout_id"], "{early}\n{report}");
+    } else {
+        // The runs ended before the first call looked: it finished.
+        assert!(early["report_hash"].is_string(), "{early}");
+    }
+    let content = &report["content"];
+
+    // Found: one call, observed on the live system.
+    assert_eq!(content["surfaces"][0]["state"], "identified", "{report}");
+    assert_eq!(content["found"].as_array().unwrap().len(), 1, "{report}");
+    assert_eq!(content["found"][0]["level"], "discovered");
+    assert_eq!(
+        content["found"][0]["found"]["untrusted"],
+        "order_list /orders read"
+    );
+    // Drafted, file by file, by the pack's rules, and the drafts compile.
+    let drafted: Vec<&str> = content["drafted"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        drafted,
+        ["calls/order_list.yaml", "operations/order_list.yaml"],
+        "{report}"
+    );
+    assert_eq!(content["checked"]["compiles"], true, "{report}");
+    assert!(
+        target_dir
+            .join("operations")
+            .join("order_list.yaml")
+            .is_file()
+    );
+    // A file a person wrote is left as it was.
+    assert_eq!(
+        std::fs::read(target_dir.join("calls").join("orders.yaml")).unwrap(),
+        written_by_hand
+    );
+    // Tried: the drafted read, five times, the same each time, with the
+    // stand's own value kept apart as untrusted.
+    let tried = &content["tried"]["tools"][0];
+    assert_eq!(tried["tool"], "example_order_list", "{report}");
+    assert_eq!(tried["tries"], 5, "{report}");
+    assert_eq!(tried["state"], "proven", "{report}");
+    assert_eq!(tried["level"], "executed");
+    assert_eq!(
+        tried["result"]["untrusted"]["note"], "Kept by the stand",
+        "{report}"
+    );
+    assert_eq!(
+        report["runs"]["tried"]["example_order_list"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    // No step that saves reached the stand: the discoverer's was refused
+    // unsent, and every trial only read.
+    let reached = world.reached.lock().unwrap().clone();
+    assert!(!reached.is_empty());
+    assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
+
+    // The report is read later; a second scout of the same stand in the
+    // same state gives the same report.
+    let read = world
+        .call(&agent, "scout.report", json!({"target": "example"}))
+        .await;
+    assert_eq!(read.result.unwrap()["report_hash"], report["report_hash"]);
+    let again = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "fresh": true}),
+        )
+        .await;
+    let again = again.result.unwrap();
+    assert_ne!(again["scout_id"], report["scout_id"]);
+    assert_eq!(
+        again["report_hash"], report["report_hash"],
+        "{report}\n{again}"
+    );
+
+    // A target just added declares no surface yet: its scout reports that
+    // it looked at nothing, and why, and is not an error.
+    let added = world
+        .call(&agent, "target.add", json!({"name": "blank"}))
+        .await;
+    assert!(added.ok, "{:?}", added.error);
+    let blank = world
+        .call(&agent, "scout.run", json!({"target": "blank"}))
+        .await;
+    assert!(blank.ok, "{:?}", blank.error);
+    let blank = blank.result.unwrap();
+    assert!(
+        blank["content"]["found"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{blank}"
+    );
+    assert!(
+        blank["content"]["not_looked_at"]
+            .to_string()
+            .contains("declares no surface"),
+        "{blank}"
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

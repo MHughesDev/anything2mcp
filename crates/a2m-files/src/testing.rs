@@ -35,7 +35,7 @@ use std::sync::Arc;
 use a2m_core::{
     ControlName, EffectClass, FailsAs, Failure, FailureClass, FailureCode, FileKindName, Finding,
     FindingKind, IdentityStrategy, LintCode, Mode, PackPayload, PackRef, Step, StepArg, StepKind,
-    SurfaceKind, ValueType, Verb,
+    SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, Stage};
@@ -394,6 +394,14 @@ impl Lowering for StandLowering {
         &self.schema
     }
 
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        match binding.field("evidence").and_then(Located::as_text) {
+            Some("acknowledged") => WriteEvidence::Acknowledged,
+            _ if lowered.prefer_response => WriteEvidence::Response,
+            _ => WriteEvidence::ReadBack,
+        }
+    }
+
     fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
         match strategy {
             IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
@@ -585,7 +593,8 @@ pub fn lowering() -> Arc<dyn Lowering> {
                 JsonSchema::object()
                     .required("call", JsonSchema::name())
                     .optional("prefer", JsonSchema::words(&["response"])),
-            ),
+            )
+            .optional("evidence", JsonSchema::words(&["acknowledged"])),
         verbs: verbs(),
         reads: Vec::new(),
         step_kinds: step_kinds(),

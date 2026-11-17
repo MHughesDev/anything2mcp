@@ -15,6 +15,8 @@ mod discovery;
 mod guards;
 mod reads;
 mod registration;
+#[cfg(feature = "postgres")]
+mod server;
 mod writes;
 
 use std::path::{Path, PathBuf};
@@ -110,7 +112,7 @@ pub(crate) fn mode() -> a2m_core::Mode {
 
 // ---- a real store, for real intent tokens ----
 
-struct Counted(AtomicU64);
+pub(crate) struct Counted(AtomicU64);
 
 impl RandomSource for Counted {
     fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
@@ -123,11 +125,11 @@ impl RandomSource for Counted {
     }
 }
 
-fn counted() -> Arc<Counted> {
+pub(crate) fn counted() -> Arc<Counted> {
     Arc::new(Counted(AtomicU64::new(0)))
 }
 
-async fn ledger() -> Store {
+pub(crate) async fn ledger() -> Store {
     let config = StoreConfig::in_memory()
         .with_clock(Arc::new(ManualClock::starting_at(
             Timestamp::from_unix_millis(1_800_000_000_000),
@@ -145,7 +147,7 @@ async fn ledger() -> Store {
 
 /// A write run with one record planned, approved, and running, and the
 /// intent token of that record.
-async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
+pub(crate) async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
     let workspace = WorkspaceId::from_bytes([1; 16]);
     let intended = Digest::of(b"intended");
     let planned_key = key.clone();
@@ -310,16 +312,7 @@ impl Scene {
     /// A step's arguments, evaluated from the operation's inputs as the
     /// engine evaluates them.
     pub(crate) fn args(&self, step: &Step, inputs: &Values) -> Values {
-        let input = Value::Record(inputs.clone());
-        step.args
-            .iter()
-            .map(|arg| {
-                let expr = self.plan.expression(arg.value).unwrap();
-                let program = a2m_expr::Program::load(expr).unwrap();
-                let bindings = a2m_expr::Bindings::new().with("input", &input);
-                (arg.name.clone(), program.evaluate(&bindings).unwrap())
-            })
-            .collect()
+        args_of(&self.plan, step, inputs)
     }
 
     pub(crate) async fn prepare(&self, posture: Posture) -> Run<'_> {
@@ -337,10 +330,12 @@ impl Scene {
         let handle = self.handle();
         let prepared = self.try_prepare(&handle, posture, fence).await.unwrap();
         Run {
-            scene: self,
+            plan: &self.plan,
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: Values::new(),
         }
     }
 
@@ -349,6 +344,19 @@ impl Scene {
         handle: &DriverHandle,
         posture: Posture,
         fence: Fence,
+    ) -> Result<Prepared, StepFailure> {
+        self.try_prepare_with(handle, posture, fence, &self.paths)
+            .await
+    }
+
+    /// The same, with the checked paths the test gives: a run whose
+    /// request came from another project folder.
+    pub(crate) async fn try_prepare_with(
+        &self,
+        handle: &DriverHandle,
+        posture: Posture,
+        fence: Fence,
+        paths: &CheckedPaths,
     ) -> Result<Prepared, StepFailure> {
         let supervisor = handle.supervisor(Vec::new());
         let cx = PrepareContext {
@@ -360,7 +368,7 @@ impl Scene {
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
-            paths: &self.paths,
+            paths,
             supervisor: &supervisor,
         };
         handle.prepare(&cx, None).await
@@ -384,10 +392,34 @@ impl Scene {
     }
 }
 
+/// What a run gets from a request that came from this folder: the folder,
+/// checked as the root `project`, and no path under a surface's name.
+pub(crate) fn project_of(folder: &Path) -> CheckedPaths {
+    let root = RootName::new("project").unwrap();
+    let mut roots = Roots::none();
+    roots.add(root.clone(), folder, Access::Write).unwrap();
+    CheckedPaths::none().with_project(roots.folder(&root, Access::Write).unwrap())
+}
+
+/// A step's arguments, evaluated from the operation's inputs as the engine
+/// evaluates them.
+pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+    let input = Value::Record(inputs.clone());
+    step.args
+        .iter()
+        .map(|arg| {
+            let expr = plan.expression(arg.value).unwrap();
+            let program = a2m_expr::Program::load(expr).unwrap();
+            let bindings = a2m_expr::Bindings::new().with("input", &input);
+            (arg.name.clone(), program.evaluate(&bindings).unwrap())
+        })
+        .collect()
+}
+
 /// What a committing step carries: the commit point, its key, and the
 /// ledger's token for it.
 pub(crate) struct Write {
-    _store: Store,
+    pub(crate) _store: Store,
     pub(crate) record: RecordRef,
     pub(crate) key: RecordKey,
     pub(crate) token: IntentToken,
@@ -395,11 +427,17 @@ pub(crate) struct Write {
 
 /// One prepared driver, released when the test says so.
 pub(crate) struct Run<'a> {
-    scene: &'a Scene,
+    pub(crate) plan: &'a Plan,
     pub(crate) handle: DriverHandle,
-    prepared: Option<Prepared>,
+    pub(crate) prepared: Option<Prepared>,
     /// How long each step is given.
     pub(crate) wait: Duration,
+    /// How each step was done, as the trace takes it: from the step's
+    /// `acting` capture, in order.
+    pub(crate) acted: Vec<a2m_telemetry::Acting>,
+    /// What earlier steps of the record returned in `for_reconcile`, as the
+    /// engine hands it on, within a pass and on a resume.
+    pub(crate) recorded: Values,
 }
 
 impl Run<'_> {
@@ -409,7 +447,7 @@ impl Run<'_> {
         step: &Step,
         inputs: &Values,
     ) -> Result<StepOutcome, StepFailure> {
-        let args = self.scene.args(step, inputs);
+        let args = args_of(self.plan, step, inputs);
         self.step_with(step, &args, None).await
     }
 
@@ -421,17 +459,25 @@ impl Run<'_> {
         args: &Values,
         write: Option<&Write>,
     ) -> Result<StepOutcome, StepFailure> {
-        let input = StepInput {
-            args,
-            record: write.map(|write| write.record),
-            key: write.map(|write| &write.key),
-            stamp: None,
-            deadline: Deadline::after(self.wait),
-        };
+        let mut input = StepInput::new(args, Deadline::after(self.wait));
+        if let Some(write) = write {
+            input = input.for_record(write.record, Some(&write.key), None);
+        }
         let authority = write.map_or(Authority::Read, |write| Authority::Write(&write.token));
-        self.handle
-            .act(self.prepared.as_mut().unwrap(), step, &input, authority)
-            .await
+        let outcome = self
+            .handle
+            .act_recorded(
+                self.prepared.as_mut().unwrap(),
+                step,
+                &input,
+                authority,
+                &self.recorded,
+            )
+            .await;
+        if let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = &outcome {
+            self.acted.extend(observed.acting());
+        }
+        outcome
     }
 
     /// Every step of a list, in order, stopping at the first failure. The
@@ -444,7 +490,7 @@ impl Run<'_> {
     ) -> Result<StepOutcome, StepFailure> {
         let mut last = None;
         for step in steps {
-            let args = self.scene.args(step, inputs);
+            let args = args_of(self.plan, step, inputs);
             last = Some(
                 self.step_with(step, &args, write.filter(|_| step.commits))
                     .await?,
@@ -454,14 +500,8 @@ impl Run<'_> {
     }
 
     /// What the driver noted of each step, for the step trace.
-    pub(crate) fn acting(&mut self) -> Vec<a2m_telemetry::Acting> {
-        self.prepared
-            .as_mut()
-            .unwrap()
-            .state::<crate::driver::Session>()
-            .unwrap()
-            .acting
-            .clone()
+    pub(crate) fn acting(&self) -> Vec<a2m_telemetry::Acting> {
+        self.acted.clone()
     }
 
     pub(crate) async fn release(mut self) {

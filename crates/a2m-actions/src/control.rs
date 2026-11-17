@@ -25,9 +25,10 @@ use a2m_core::{
     Values,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
-    encode_values,
+    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
+    SessionWant, encode_values,
 };
+use a2m_telemetry::Phase;
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld,
     NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
@@ -564,6 +565,89 @@ impl Control for InProcessControl {
         })
     }
 
+    fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
+        Box::pin(async move {
+            // A step's capture is evidence of the run, of the short class:
+            // a blob in the evidence space, sealed for the run's person,
+            // kept as long as traces are (`evidence.trace_retention_days`).
+            // Its bytes passed the redactor and the run's capture level in
+            // the engine; the name is redacted again here, as everything
+            // stored is.
+            let kind = if capture.media_type.starts_with("image/") {
+                BlobKind::Screenshot
+            } else {
+                BlobKind::Exchange
+            };
+            let redact = self.kernel.redact();
+            let blob = self
+                .evidence(Evidence {
+                    kind,
+                    class: RetentionClass::Short,
+                    bytes: capture.bytes,
+                })
+                .await?;
+            // What ties it to the run: an event of the run, durable before
+            // this call returns, so that a capture taken before a
+            // committing step is in the store before that step is sent.
+            let payload = json!({
+                "capture": redact.redact(&capture.name),
+                "media_type": redact.redact(&capture.media_type),
+                "pass": capture.pass,
+                "phase": match capture.phase {
+                    Phase::Act => "act",
+                    Phase::Confirm => "confirm",
+                    Phase::ReadBack => "read_back",
+                },
+                "position": capture.step,
+                "step": capture.record.map(|record| record.step_seq),
+                "record": capture.record.map(|record| record.record_seq),
+                "digest": blob.digest().to_string(),
+            });
+            let fence = self.fence;
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger()
+                        .append_event(&fence, EventKind::Need, &payload, Some(blob))
+                        .map(|_| ())
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))?;
+            Ok(blob)
+        })
+    }
+
+    fn project_folder(&self) -> Option<std::path::PathBuf> {
+        self.caller.project.clone()
+    }
+
+    fn acknowledged<'a>(
+        &'a self,
+        token: &'a ActedToken,
+        evidence: Option<BlobRef>,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            // The ledger releases the record's lock in the transaction that
+            // ends it; a run waiting for it is told as this call ends.
+            let _notice = self.notice(token.record()).await;
+            // The ledger requires the answer's evidence: where the engine
+            // could not keep it, the record stays in doubt (decision 0172).
+            let evidence = evidence.ok_or_else(|| {
+                Failure::new(
+                    FailureClass::Busy,
+                    a2m_engine::codes::ACKNOWLEDGEMENT_NOT_KEPT,
+                    "The system's answer could not be kept, so the record cannot end on it and stays in doubt.",
+                    "Look at the system; the run stops until the record is settled.",
+                )
+            })?;
+            self.kernel
+                .store()?
+                .store_acknowledged(token, evidence)
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
     fn failed<'a>(
         &'a self,
         record: RecordRef,
@@ -713,17 +797,49 @@ impl Control for InProcessControl {
                         })
                         .await
                 }
-                EngineEvent::Discovered { findings, .. } => {
+                EngineEvent::Discovered {
+                    surface,
+                    provider,
+                    discoverer,
+                    findings,
+                    report,
+                } => {
                     // Each finding was checked against its provider's
                     // manifest by the sandbox; the store names it by the
-                    // digest of its content.
+                    // digest of its content. What the discoverer reported,
+                    // and which findings were its, is kept beside it for
+                    // the scout (decision 0170).
                     let workspace = self.run.workspace;
                     let target = self.run.target.clone();
+                    let run = self.run.id;
+                    let ids: Vec<String> = findings
+                        .iter()
+                        .map(|finding| finding.id().to_string())
+                        .collect();
+                    let ended = crate::handlers::discovery_report_json(&report);
                     store
                         .write(Durability::Synced, move |tx| {
                             for finding in &findings {
                                 tx.findings().put(&workspace, &target, finding)?;
                             }
+                            let now = tx.now().as_unix_millis();
+                            tx.tables(a2m_ledger::Owner::Actions).execute(
+                                "INSERT INTO actions_discovery_results
+                                    (run_id, provider, discoverer, surface, findings, report, sent_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                 ON CONFLICT (run_id, provider, discoverer)
+                                 DO UPDATE SET findings = excluded.findings,
+                                     report = excluded.report, sent_at = excluded.sent_at",
+                                &[
+                                    a2m_ledger::SqlValue::from(run.to_string()),
+                                    a2m_ledger::SqlValue::from(provider.as_str()),
+                                    a2m_ledger::SqlValue::from(discoverer.as_str()),
+                                    a2m_ledger::SqlValue::from(surface.as_str()),
+                                    a2m_ledger::SqlValue::from(json!(ids).to_string()),
+                                    a2m_ledger::SqlValue::from(ended.to_string()),
+                                    a2m_ledger::SqlValue::from(now),
+                                ],
+                            )?;
                             Ok(())
                         })
                         .await

@@ -26,7 +26,11 @@ use crate::json::Json;
 use crate::template::parse_path;
 
 /// The version of the shape of a `described_operation` finding's `found`.
-pub(crate) const FOUND_FORMAT: &str = "1";
+/// Format 2 adds the operation's `parameters`; a finding of format 1 is
+/// still read, as one that states none.
+pub(crate) const FOUND_FORMAT: &str = "2";
+/// The earlier format, still read.
+const FOUND_FORMAT_1: &str = "1";
 
 /// How far a chain of references is followed before it is taken to lead
 /// nowhere.
@@ -262,6 +266,23 @@ impl<'a> Walk<'a> {
             "object", "array", "string", "integer", "number", "boolean", "null",
         ];
         let kind = if known.contains(&kind) { kind } else { "any" };
+        // A schema that states no type but allows only text, by `enum` or
+        // `const`, holds text: JSON Schema's own rule, not a guess.
+        let all_text = |json: Option<&Json>| match json {
+            Some(Json::List(words)) => {
+                !words.is_empty() && words.iter().all(|word| matches!(word, Json::Text(_)))
+            }
+            Some(Json::Text(_)) => true,
+            _ => false,
+        };
+        let kind = if kind == "any"
+            && schema.get("type").is_none()
+            && (all_text(schema.get("enum")) || all_text(schema.get("const")))
+        {
+            "string"
+        } else {
+            kind
+        };
         let mut shape = vec![("type".to_owned(), text(kind))];
         if nullable {
             shape.push(("nullable".to_owned(), Json::Bool(true)));
@@ -338,6 +359,73 @@ impl<'a> Walk<'a> {
             None => Ok(None),
         }
     }
+
+    /// The parameters of one operation: the path item's, then the
+    /// operation's own, one of a name and place replacing the other as the
+    /// format says. A parameter that cannot be followed is left out.
+    fn parameters(
+        &mut self,
+        of_path: Option<&'a Json>,
+        own: Option<&'a Json>,
+    ) -> Result<Vec<Parameter>, Failure> {
+        let mut found: Vec<Parameter> = Vec::new();
+        for list in [of_path, own].into_iter().flatten() {
+            let Some(Json::List(items)) = self.resolve(list)? else {
+                continue;
+            };
+            for item in items {
+                self.step(1)?;
+                let Some(parameter) = self.resolve(item)? else {
+                    continue;
+                };
+                let (Some(name), Some(place)) = (
+                    parameter.get("name").and_then(Json::as_text),
+                    parameter.get("in").and_then(Json::as_text),
+                ) else {
+                    continue;
+                };
+                if !["path", "query", "header", "cookie"].contains(&place) {
+                    continue;
+                }
+                let schema = match parameter.get("schema") {
+                    Some(schema) => self.shape_of(schema, 0)?,
+                    None => None,
+                };
+                let kind = schema
+                    .as_ref()
+                    .and_then(|shape| shape.get("type"))
+                    .and_then(Json::as_text)
+                    .unwrap_or("any")
+                    .to_owned();
+                // The description's own example, on the parameter or on
+                // its schema: plain text or a whole number, nothing else.
+                let example = parameter
+                    .get("example")
+                    .or_else(|| parameter.get("schema").and_then(|s| s.get("example")))
+                    .filter(|example| match example {
+                        Json::Text(_) => true,
+                        number @ Json::Number(_) => number.is_whole(),
+                        _ => false,
+                    })
+                    .cloned();
+                self.write(PART_BYTES.saturating_add(length(name)))?;
+                let parameter = Parameter {
+                    name: name.to_owned(),
+                    place: place.to_owned(),
+                    // A path parameter is always required, by the format.
+                    required: place == "path"
+                        || parameter.get("required") == Some(&Json::Bool(true)),
+                    kind,
+                    example,
+                };
+                found.retain(|known| {
+                    !(known.name == parameter.name && known.place == parameter.place)
+                });
+                found.push(parameter);
+            }
+        }
+        Ok(found)
+    }
 }
 
 /// A name in the form target files use, made mechanically from the
@@ -363,10 +451,54 @@ pub(crate) fn snake(word: &str) -> String {
     out.trim_end_matches('_').to_owned()
 }
 
+/// One parameter a description states for an operation: its name as the
+/// description writes it, where it goes, whether it is required, the type
+/// of its schema in this pack's words, and the example the description
+/// gives for it, when it gives one that is plain text or a whole number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Parameter {
+    pub name: String,
+    /// `path`, `query`, `header`, or `cookie`.
+    pub place: String,
+    pub required: bool,
+    /// `string`, `integer`, `number`, `boolean`, or `any`.
+    pub kind: String,
+    pub example: Option<Json>,
+}
+
+impl Parameter {
+    fn to_json(&self) -> Json {
+        let text = |word: &str| Json::Text(word.to_owned());
+        Json::Object(vec![
+            ("name".to_owned(), text(&self.name)),
+            ("in".to_owned(), text(&self.place)),
+            ("required".to_owned(), Json::Bool(self.required)),
+            ("type".to_owned(), text(&self.kind)),
+            (
+                "example".to_owned(),
+                self.example.clone().unwrap_or(Json::Null),
+            ),
+        ])
+    }
+
+    fn from_json(json: &Json) -> Option<Self> {
+        Some(Self {
+            name: json.get("name")?.as_text()?.to_owned(),
+            place: json.get("in")?.as_text()?.to_owned(),
+            required: json.get("required")? == &Json::Bool(true),
+            kind: json.get("type")?.as_text()?.to_owned(),
+            example: json
+                .get("example")
+                .filter(|example| **example != Json::Null)
+                .cloned(),
+        })
+    }
+}
+
 /// What a description says about one operation, as the `found` of a
 /// `described_operation` finding: a JSON object with the keys `format`,
 /// `method`, `path`, `operation_id`, `safe`, `ok`, `absent`,
-/// `request_schema`, and `response_schema`.
+/// `request_schema`, `response_schema`, and `parameters`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DescribedOperation {
     pub method: String,
@@ -379,6 +511,14 @@ pub(crate) struct DescribedOperation {
     pub absent: Vec<u16>,
     pub request: Option<Json>,
     pub response: Option<Json>,
+    /// The parameters it states, in the order the description lists them:
+    /// those of the path first, then the operation's own.
+    pub parameters: Vec<Parameter>,
+    /// Whether the description says the operation needs no credential: it
+    /// states no `security`, for itself or for the whole description, or
+    /// an empty one, or one that allows no scheme. A finding of format 1
+    /// does not say, and is read as needing one.
+    pub open: bool,
 }
 
 impl DescribedOperation {
@@ -405,15 +545,29 @@ impl DescribedOperation {
                 "response_schema".to_owned(),
                 self.response.clone().unwrap_or(Json::Null),
             ),
+            (
+                "parameters".to_owned(),
+                Json::List(self.parameters.iter().map(Parameter::to_json).collect()),
+            ),
+            ("open".to_owned(), Json::Bool(self.open)),
         ])
         .to_text()
     }
 
-    fn from_found(found: &str) -> Option<Self> {
+    pub(crate) fn from_found(found: &str) -> Option<Self> {
         let json = Json::parse(found.as_bytes()).ok()?;
-        if json.get("format")?.as_text()? != FOUND_FORMAT {
+        let format = json.get("format")?.as_text()?;
+        if format != FOUND_FORMAT && format != FOUND_FORMAT_1 {
             return None;
         }
+        let parameters = match json.get("parameters") {
+            Some(Json::List(items)) => items
+                .iter()
+                .map(Parameter::from_json)
+                .collect::<Option<Vec<_>>>()?,
+            None if format == FOUND_FORMAT_1 => Vec::new(),
+            _ => return None,
+        };
         let statuses = |key: &str| -> Option<Vec<u16>> {
             match json.get(key)? {
                 Json::List(items) => items
@@ -436,6 +590,8 @@ impl DescribedOperation {
             absent: statuses("absent")?,
             request: optional("request_schema"),
             response: optional("response_schema"),
+            parameters,
+            open: json.get("open") == Some(&Json::Bool(true)),
         })
     }
 
@@ -488,7 +644,7 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
     let mut found = Vec::new();
     for (path, item) in paths {
         walk.step(1)?;
-        let Some(Json::Object(entries)) = walk.resolve(item)? else {
+        let Some(resolved @ Json::Object(entries)) = walk.resolve(item)? else {
             continue;
         };
         if !path.starts_with('/') {
@@ -523,6 +679,8 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 Some(body) => walk.body_shape(body)?,
                 None => None,
             };
+            let parameters =
+                walk.parameters(item_parameters(resolved), operation.get("parameters"))?;
             walk.write(length(path))?;
             found.push(DescribedOperation {
                 method: method.to_ascii_uppercase(),
@@ -537,10 +695,35 @@ pub(crate) fn operations(bytes: &[u8]) -> Result<Vec<DescribedOperation>, Failur
                 absent,
                 request,
                 response,
+                parameters,
+                open: needs_no_credential(
+                    operation.get("security").or_else(|| root.get("security")),
+                ),
             });
         }
     }
     Ok(found)
+}
+
+/// Whether a `security` statement lets an operation be called with no
+/// credential, by the format's rule: none stated, an empty list, or a list
+/// that holds an empty requirement.
+fn needs_no_credential(security: Option<&Json>) -> bool {
+    match security {
+        None => true,
+        Some(Json::List(items)) => {
+            items.is_empty()
+                || items
+                    .iter()
+                    .any(|item| matches!(item, Json::Object(entries) if entries.is_empty()))
+        }
+        Some(_) => false,
+    }
+}
+
+/// The parameters a path item states for every operation under it.
+fn item_parameters(item: &Json) -> Option<&Json> {
+    item.get("parameters")
 }
 
 /// The description as text with every registered secret taken out, before
@@ -654,6 +837,13 @@ impl DraftingRule for DescribedOperationRule {
             ("surface", surface),
             ("method", DraftValue::text(&operation.method)),
             ("path", path),
+        ];
+        // The description says the operation takes no credential: none is
+        // sent. Otherwise the endpoint takes the session's, the default.
+        if operation.open {
+            entry.push(("auth", DraftValue::text("none")));
+        }
+        entry.extend([
             // A read only for a method the description marks safe. Any
             // other is drafted as the write it is, and the drafter refuses
             // it: the file kind says it describes a write.
@@ -661,7 +851,7 @@ impl DraftingRule for DescribedOperationRule {
                 "effect",
                 DraftValue::text(if operation.safe { "read" } else { "write" }),
             ),
-        ];
+        ]);
         if let Some(request) = &operation.request {
             entry.push(("request_schema", draft_value(request)));
         }
@@ -849,6 +1039,51 @@ mod tests {
         let found = operations(repeated.as_bytes()).unwrap();
         let shape = found[1].response.as_ref().unwrap().to_text();
         assert_eq!(shape.matches(r#""a""#).count(), 2, "{shape}");
+    }
+
+    #[test]
+    fn a_parameter_keeps_the_descriptions_own_example_and_security_is_read_by_the_formats_rule() {
+        let described = r##"{"openapi": "3.1.0", "security": [{"key": []}], "paths": {
+          "/stock/{itemCode}": {
+            "parameters": [{"name": "itemCode", "in": "path", "required": true,
+                            "schema": {"type": "string", "example": "L-101"}}],
+            "get": {"security": [], "parameters": [
+                {"name": "unit", "in": "query", "schema": {"type": "integer"}, "example": 2.5}],
+              "responses": {"200": {"content": {"application/json": {"schema": {
+                "type": "object", "properties": {"state": {"enum": ["in", "out"]}}}}}}}},
+            "head": {"responses": {"200": {"description": "ok"}}}
+          }}}"##;
+        let found = operations(described.as_bytes()).unwrap();
+        let (get, head) = (&found[0], &found[1]);
+        assert_eq!(get.parameters.len(), 2);
+        assert_eq!(get.parameters[0].name, "itemCode");
+        assert!(get.parameters[0].required);
+        assert_eq!(
+            get.parameters[0].example,
+            Some(crate::json::Json::Text("L-101".to_owned()))
+        );
+        // An example that is not plain text or a whole number is not kept.
+        assert!(!get.parameters[1].required && get.parameters[1].example.is_none());
+        // The operation's empty `security` lifts the description's; the HEAD
+        // keeps the description's own.
+        assert!(get.open && !head.open);
+        // An `enum` of text with no `type` is text.
+        let shape = get.response.as_ref().unwrap().to_text();
+        assert!(shape.contains(r#""state":{"type":"string""#), "{shape}");
+        assert_eq!(
+            DescribedOperation::from_found(&get.found()).as_ref(),
+            Some(get)
+        );
+        // A finding of the first format is still read, as stating no
+        // parameter and needing a credential.
+        let first = get.found().replace(r#""format":"2""#, r#""format":"1""#);
+        let first = first
+            .split(r#","parameters""#)
+            .next()
+            .map(|head| format!("{head}}}"))
+            .unwrap();
+        let read = DescribedOperation::from_found(&first).unwrap();
+        assert!(read.parameters.is_empty() && !read.open);
     }
 
     #[test]

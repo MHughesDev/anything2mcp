@@ -75,6 +75,9 @@ impl Bare {
             .current_dir(self.project.path())
             .env("A2M_HOME", self.home.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
+            // The engine runs inside each command: none is started and
+            // left running by a test of the command line.
+            .env(common::IN_PROCESS_VARIABLE, "true")
             .stdin(Stdio::null());
         if self.passphrase {
             command.env(anything2mcp::PASSPHRASE_VARIABLE, common::PASSPHRASE);
@@ -138,7 +141,8 @@ fn both_names_are_the_same_program() {
         vec!["runner"],
         vec!["serve", "--help"],
         vec!["bridge", "--toolset", "admin"],
-        vec!["init"],
+        // `init` writes files, so a second run of it says what it kept:
+        // not the same output, by design.
         vec!["docs", "get", "approvals"],
     ] {
         let long = bare.run_as(COMMANDS[0], &args);
@@ -268,7 +272,10 @@ fn output_that_is_not_a_terminal_is_one_json_object_for_every_action() {
         let output = bare.run(&[&face.noun, &face.verb]);
         let json = object(&output);
         let code = output.status.code().unwrap();
-        assert!((0..=3).contains(&code), "{}: {code}", face.action);
+        // `engine start`, which this machine cannot carry out with no
+        // passphrase for its vault, ends as an engine not started.
+        let highest = if face.action == "engine.start" { 4 } else { 3 };
+        assert!((0..=highest).contains(&code), "{}: {code}", face.action);
         assert_eq!(json["ok"] == true, code == 0, "{}: {json}", face.action);
         if code == 0 {
             assert!(json["result"].is_object(), "{}: {json}", face.action);
@@ -449,14 +456,20 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
 #[test]
 fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let bare = Bare::with_passphrase();
-    // `init` has no action beneath it yet, and says what to do instead.
+    // `init` writes the project's first files beside the project file that
+    // is there, and keeps that one.
     let init = bare.run(&["init"]);
-    assert_eq!(init.status.code(), Some(1));
-    assert!(
-        object(&init)["error"]["fix"]
-            .as_str()
-            .unwrap()
-            .contains("anything2mcp.toml")
+    assert_eq!(init.status.code(), Some(0), "{init:?}");
+    let made = &object(&init)["result"];
+    assert_eq!(
+        made["kept"],
+        serde_json::json!(["anything2mcp.toml"]),
+        "{made}"
+    );
+    assert_eq!(
+        made["written"],
+        serde_json::json!(["AGENTS.md", ".gitignore", "targets"]),
+        "{made}"
     );
 
     // `add` registers the target, then stops at the first of its actions
@@ -464,14 +477,16 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
     assert_eq!(add.status.code(), Some(1), "{added}");
-    assert_eq!(added["action"], "target.probe");
+    assert_eq!(added["action"], "session.login", "{added}");
     assert_eq!(added["error"]["code"], "action_not_built");
     // The step it stopped before was never begun, and the note says what
     // was done and what was not.
     let note = added["error"]["message"].as_str().unwrap();
-    assert!(note.contains("stopped before `target.probe`"), "{note}");
-    assert!(note.contains("Done: `target.add`"), "{note}");
-    assert!(note.contains("`session.login`"), "{note}");
+    assert!(note.contains("stopped before `session.login`"), "{note}");
+    assert!(
+        note.contains("Done: `target.add`, `scout.run`, `scout.report`"),
+        "{note}"
+    );
     let file = bare
         .project
         .path()
@@ -615,4 +630,39 @@ async fn a_secret_typed_on_standard_input_is_stored_and_is_in_no_output() {
         assert!(!text(&output.stdout).contains(BEARER_TOKEN), "{output:?}");
         assert!(!text(&output.stderr).contains(BEARER_TOKEN), "{output:?}");
     }
+}
+
+#[test]
+fn init_makes_an_empty_folder_a_project_and_keeps_what_is_there() {
+    let bare = Bare::new();
+    let folder = Folder::new("init");
+    let init = |args: &[&str]| {
+        let mut command = bare.command(COMMANDS[0], args);
+        command.current_dir(folder.path());
+        command.output().unwrap()
+    };
+    let made = init(&["init"]);
+    assert_eq!(made.status.code(), Some(0), "{made:?}");
+    let result = &object(&made)["result"];
+    assert_eq!(
+        result["written"],
+        serde_json::json!(["anything2mcp.toml", "AGENTS.md", ".gitignore", "targets"]),
+        "{result}"
+    );
+    assert!(folder.path().join("targets").is_dir());
+    let guidance = std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap();
+    assert!(!guidance.trim().is_empty());
+    // The folder is a project now: a command run in it finds it.
+    let listed = init(&["draft", "lint", "--help"]);
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+
+    // Again, nothing is written over.
+    std::fs::write(folder.path().join("AGENTS.md"), "my own words").unwrap();
+    let again = init(&["init"]);
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(object(&again)["result"]["written"], serde_json::json!([]));
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap(),
+        "my own words"
+    );
 }

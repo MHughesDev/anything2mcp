@@ -101,6 +101,28 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
     assert_eq!(plan.packs.len(), 1);
     assert_eq!(plan.packs[0].pack, "command");
 
+    // The one write with no identity and no read-back states that its own
+    // end is the only evidence; every write that names a read-back keeps it.
+    let evidence = |name: &str| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .bindings[0]
+            .evidence
+    };
+    assert_eq!(
+        evidence("example_catalog_push"),
+        a2m_core::WriteEvidence::Acknowledged
+    );
+    for kept in [
+        "example_item_set_quantity",
+        "example_item_add",
+        "example_item_remove",
+    ] {
+        assert_eq!(evidence(kept), a2m_core::WriteEvidence::ReadBack, "{kept}");
+    }
+
     // A write starts its program in one committing step, sees it end and
     // reads its output to confirm, and reads the record back.
     let set_quantity = plan

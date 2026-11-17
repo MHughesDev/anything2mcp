@@ -1,6 +1,6 @@
 [package]
 name = "a2m-pack-stream"
-description = "The stream pack: the `stream` driver over queues and topics, with bounded reads and keyed publishes."
+description = "The stream pack: the `stream` driver over queues, topics, and logs, with bounded reads and keyed publishes, over NATS with JetStream or the test broker."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,13 +14,14 @@ a2m-files = { path = "../a2m-files" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 serde.workspace = true
-# The first wire protocol is lines over a socket: buffered reads and writes.
+# Both wire protocols are lines and payloads over a socket: buffered reads and writes.
 tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-broker = { path = "../../targets/example-broker" }
+example-nats = { path = "../../targets/example-nats" }
 serde_json.workspace = true
 
 [lints]

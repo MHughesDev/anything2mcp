@@ -29,7 +29,10 @@ const LONG: Duration = Duration::from_secs(900);
 const FORM: &str = "application/x-www-form-urlencoded";
 
 fn http() -> Client {
-    Client::builder().no_proxy().build().unwrap()
+    a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap()
 }
 
 /// The description the write carries: text from a system, with markup in
@@ -757,5 +760,188 @@ async fn proof_of_presence_comes_only_from_a_passed_prompt() {
     assert_eq!(PromptName::WindowsHello.as_str(), "windows_hello");
     // Nothing waited, so nothing ever listened.
     assert_eq!(world.surface.waiting(), 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A person's act that waits on its page, as its caller sees it.
+struct Asked {
+    link: String,
+    origin: String,
+}
+
+fn asked_of(response: &Response) -> Asked {
+    assert_eq!(
+        response.exit,
+        a2m_actions::ExitClass::PersonNeeded,
+        "{response:?}"
+    );
+    let result = response.result.clone().unwrap();
+    assert_eq!(result["state"], "needs_person");
+    let link = result["link"].as_str().unwrap().to_owned();
+    let origin = link[..link.find("/act/").unwrap()].to_owned();
+    Asked { link, origin }
+}
+
+async fn press_act(http: &Client, asked: &Asked, which: &str, once: &str) -> (StatusCode, String) {
+    let answer = http
+        .post(format!("{}/{which}", asked.link))
+        .header(ORIGIN, &asked.origin)
+        .header(CONTENT_TYPE, FORM)
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    (answer.status(), answer.text().await.unwrap())
+}
+
+const RELEASE: &str = "killswitch.set";
+
+fn release() -> Json {
+    json!({"scope": "everything", "on": false})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_persons_act_an_agent_asks_for_is_carried_out_once_from_its_page() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let read = || {
+        world.call(
+            "tool.call",
+            json!({"tool": super::world::engine::ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+    };
+    // An agent may stop everything; only a person releases it.
+    assert!(
+        world
+            .call(RELEASE, json!({"scope": "everything", "on": true}))
+            .await
+            .ok
+    );
+    assert!(!read().await.ok);
+
+    // The agent's ask is not refused: it is shown to the person on a page,
+    // every value as text, never as markup.
+    let marked = world
+        .call(
+            RELEASE,
+            json!({"scope": "everything", "on": false, "target": DESCRIPTION}),
+        )
+        .await;
+    let marked = asked_of(&marked);
+    let (text, once) = open(&http, &marked.link).await;
+    assert!(!text.contains("<script>alert(1)"), "{text}");
+    assert!(
+        text.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+        "{text}"
+    );
+    assert!(text.contains(RELEASE));
+    // A press from another origin, or without the page's value, does
+    // nothing and raises no prompt.
+    let foreign = http
+        .post(format!("{}/confirm", marked.link))
+        .header(ORIGIN, "http://127.0.0.1:1")
+        .header(CONTENT_TYPE, FORM)
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        press_act(&http, &marked, "confirm", "0000").await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(prompt.asked(), 0);
+    let (_, once) = open(&http, &marked.link).await;
+    assert_eq!(
+        press_act(&http, &marked, "decline", &once).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(prompt.asked(), 0);
+    assert!(!read().await.ok, "a decline does nothing");
+
+    // The ask itself: one press raises one prompt, and the act is carried
+    // out as the person, once.
+    let asked = asked_of(&world.call(RELEASE, release()).await);
+    let (text, once) = open(&http, &asked.link).await;
+    assert!(text.contains("everything"), "{text}");
+    let (status, done) = press_act(&http, &asked, "confirm", &once).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert!(done.contains("Done"), "{done}");
+    assert_eq!(prompt.asked(), 1);
+    assert!(read().await.ok, "the kill switch is released");
+    // A second press does nothing: the page is gone and no prompt rises.
+    let second = http
+        .post(format!("{}/confirm", asked.link))
+        .header(ORIGIN, &asked.origin)
+        .header(CONTENT_TYPE, FORM)
+        .body(format!("once={once}"))
+        .send()
+        .await;
+    // The listener closed with the last page, or it answers that nothing
+    // waits there.
+    if let Ok(answer) = second {
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
+    assert_eq!(prompt.asked(), 1);
+    // The agent's same call gives back what was done, and does nothing more.
+    let again = world.call(RELEASE, release()).await;
+    assert!(again.ok, "{again:?}");
+    assert_eq!(again.result.unwrap()["on"], false);
+    assert_eq!(prompt.asked(), 1);
+
+    // A prompt that is not passed carries nothing out, and the page waits.
+    assert!(
+        world
+            .call(RELEASE, json!({"scope": "everything", "on": true}))
+            .await
+            .ok
+    );
+    prompt.set(PromptAnswer::Denied);
+    let asked = asked_of(
+        &world
+            .call(
+                RELEASE,
+                json!({"scope": "everything", "on": false, "target": "x"}),
+            )
+            .await,
+    );
+    let (_, once) = open(&http, &asked.link).await;
+    assert_eq!(
+        press_act(&http, &asked, "confirm", &once).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(!read().await.ok);
+    assert_eq!(world.surface.waiting(), 1);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_persons_act_nobody_carries_out_ends_with_its_window_and_nothing_is_done() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, Duration::from_millis(50)).await;
+    let http = http();
+    assert!(
+        world
+            .call(RELEASE, json!({"scope": "everything", "on": true}))
+            .await
+            .ok
+    );
+    let asked = asked_of(&world.call(RELEASE, release()).await);
+    tokio::time::timeout(Duration::from_secs(60), world.surface.settled())
+        .await
+        .unwrap();
+    assert!(http.get(&asked.link).send().await.is_err());
+    assert_eq!(prompt.asked(), 0);
+    // The caller is told that nobody carried it out.
+    let told = world.call(RELEASE, release()).await;
+    assert_eq!(told.error.unwrap().code, "approval_refused");
+    let held = world
+        .call(
+            "tool.call",
+            json!({"tool": super::world::engine::ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(!held.ok);
     world.kernel.close(CloseReason::Asked).await;
 }

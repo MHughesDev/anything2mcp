@@ -10,7 +10,6 @@
 //! every statement it compiles, refuses whatever is not a plain read or,
 //! on a writer, a change to rows.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -24,7 +23,7 @@ use rusqlite::{Connection, ErrorCode, MAIN_DB, OpenFlags, ffi};
 use crate::model::{Access, Isolation};
 use crate::store::{
     Bound, Catalog, Cell, ColumnInfo, CommitFailed, Conn, ForeignKey, Interrupter, Opener, Ran,
-    Refusal, RunLimits, Shape, TableInfo,
+    Refusal, RunLimits, Shape, StoreAt, TableInfo,
 };
 
 /// The embedded store.
@@ -44,15 +43,25 @@ impl Opener for Sqlite {
         Some(format!("\"{}\"", identifier.replace('"', "\"\"")))
     }
 
-    fn placeholder(&self) -> &'static str {
-        "?"
+    fn placeholder(&self, _position: usize) -> String {
+        "?".to_owned()
+    }
+
+    fn dialect(&self) -> crate::shape::Dialect {
+        crate::shape::Dialect::Embedded
     }
 
     fn returns_assigned_key(&self) -> bool {
         true
     }
 
-    fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal> {
+    fn open(&self, at: &StoreAt, access: Access) -> Result<Box<dyn Conn>, Refusal> {
+        #[cfg(feature = "postgres")]
+        let StoreAt::File(file) = at else {
+            return Err(Refusal::NotGuarded);
+        };
+        #[cfg(not(feature = "postgres"))]
+        let StoreAt::File(file) = at;
         // The bundled engine is built to read a name that begins `file:` as
         // an address that may carry options, such as the right to create,
         // whether or not the URI flag is given. So only an absolute path is
@@ -217,25 +226,49 @@ fn code_of(error: &rusqlite::Error) -> Option<ffi::Error> {
     }
 }
 
+/// What the store says of the constraint, for the kinds whose message names
+/// only schema: the part after `constraint failed:`, which is the columns
+/// of a unique key or a not-null column, or the name of a check. A message
+/// of any other kind is not read.
+fn constraint_named(error: &rusqlite::Error) -> Option<String> {
+    let rusqlite::Error::SqliteFailure(_, Some(message)) = error else {
+        return None;
+    };
+    let (kind, names) = message.split_once(" constraint failed: ")?;
+    Some(format!(
+        "{} constraint failed: {names}",
+        kind.to_lowercase()
+    ))
+}
+
 /// What an error means while a statement runs.
 fn refusal(error: &rusqlite::Error) -> Refusal {
     if matches!(error, rusqlite::Error::MultipleStatement) {
         return Refusal::NotAllowed;
     }
+    let source = error;
     let Some(error) = code_of(error) else {
         return Refusal::Other(0);
     };
     match error.code {
         ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Refusal::Locked,
         ErrorCode::OperationInterrupted => Refusal::TimedOut,
-        ErrorCode::ConstraintViolation => Refusal::Constraint(match error.extended_code {
-            ffi::SQLITE_CONSTRAINT_UNIQUE | ffi::SQLITE_CONSTRAINT_PRIMARYKEY => "unique",
-            ffi::SQLITE_CONSTRAINT_CHECK => "check",
-            ffi::SQLITE_CONSTRAINT_NOTNULL => "not-null",
-            ffi::SQLITE_CONSTRAINT_FOREIGNKEY => "foreign-key",
-            ffi::SQLITE_CONSTRAINT_TRIGGER => "trigger",
-            _ => "other",
-        }),
+        ErrorCode::ConstraintViolation => {
+            let (kind, names) = match error.extended_code {
+                ffi::SQLITE_CONSTRAINT_UNIQUE | ffi::SQLITE_CONSTRAINT_PRIMARYKEY => {
+                    ("unique", true)
+                }
+                ffi::SQLITE_CONSTRAINT_CHECK => ("check", true),
+                ffi::SQLITE_CONSTRAINT_NOTNULL => ("not-null", true),
+                ffi::SQLITE_CONSTRAINT_FOREIGNKEY => ("foreign-key", false),
+                ffi::SQLITE_CONSTRAINT_TRIGGER => ("trigger", false),
+                _ => ("other", false),
+            };
+            Refusal::Constraint {
+                kind,
+                named: names.then(|| constraint_named(source)).flatten(),
+            }
+        }
         ErrorCode::ReadOnly => Refusal::ReadOnly,
         ErrorCode::PermissionDenied => Refusal::Denied,
         // Only the connection's own guard answers this.
@@ -380,6 +413,8 @@ impl SqliteConn {
             unique,
             foreign_keys: foreign_keys.into_iter().map(|(_, key)| key).collect(),
             triggers,
+            rules: Vec::new(),
+            generated: Vec::new(),
         })
     }
 }
@@ -415,7 +450,7 @@ impl Conn for SqliteConn {
         Ok(Shape {
             params: statement.parameter_count(),
             columns: statement.column_names().map(str::to_owned).collect(),
-            reads_only: statement.readonly(),
+            reads_only: Some(statement.readonly()),
         })
     }
 

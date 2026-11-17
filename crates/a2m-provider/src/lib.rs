@@ -31,6 +31,7 @@ mod name;
 mod pack;
 mod path;
 mod registry;
+mod replay;
 mod supervisor;
 
 /// The boxed future every async trait method of this crate returns. It is
@@ -56,11 +57,12 @@ pub use manifest::{
 };
 pub use name::{ActionName, DiscovererName, ProviderName, RootName, SubsystemKind};
 pub use pack::{CompilerRegistrations, Pack, PackContext, Registrar};
-pub use path::{Access, CheckedPath, CheckedPaths, EntryKind, Roots};
+pub use path::{Access, CheckedPath, CheckedPaths, EntryKind, FileIdentity, Roots, Temporary};
 pub use registry::{
-    FoundManifest, HostServices, ProviderListing, ProviderSettings, Registry, RegistryBuilder,
-    RegistryProblem, SurfaceKindEntry, current_platform,
+    FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
+    RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,
 };
+pub use replay::{Recorded, RecordedAnswer, Replay, answer_name};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe, LaunchSpec,
     Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, ProgramRef, Ran, ScopedSupervisor,

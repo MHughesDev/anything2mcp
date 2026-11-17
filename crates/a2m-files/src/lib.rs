@@ -26,6 +26,7 @@ mod source;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod types;
+pub use types::UNTRUSTED_TEXT;
 mod view;
 mod yaml;
 

@@ -526,7 +526,8 @@ async fn discovery_observes_and_cannot_write() {
     let scene = Scene::new("example", &app.url(""));
 
     // Both discoverers run against the application: the surface is seen to
-    // answer, and it serves no description, which is said and not guessed.
+    // answer, and the description it serves at `/api/openapi.json`, one of
+    // the places looked in by convention, is read as claims.
     let results = discover(&scene, &Values::new()).await;
     assert_eq!(results.len(), 2);
     for (name, result) in &results {
@@ -539,8 +540,12 @@ async fn discovery_observes_and_cannot_write() {
                     assert_eq!(finding.kind().as_str(), "endpoint");
                 }
             }
-            ("http_description", Err(failure)) => {
-                assert_eq!(failure.code().as_str(), "description_unreadable");
+            ("http_description", Ok(findings)) => {
+                assert_eq!(findings.len(), 8);
+                for finding in findings {
+                    assert_eq!(finding.level(), EvidenceLevel::Inferred);
+                    assert_eq!(finding.source(), Source::PublishedDescription);
+                }
             }
             other => panic!("{other:?}"),
         }
@@ -575,13 +580,7 @@ async fn discovery_observes_and_cannot_write() {
     ];
     for (step, class, code) in expected {
         let args = scene.args(&step, &inputs);
-        let input = StepInput {
-            args: &args,
-            record: None,
-            key: None,
-            stamp: None,
-            deadline: Deadline::after(Duration::from_secs(30)),
-        };
+        let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30)));
         let refused = port.act(&step, &input).await.unwrap_err();
         assert_eq!(class_and_code(&refused), (class, code));
         assert_eq!(refused.sent, Sent::NotSent);
@@ -637,9 +636,16 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
         .iter()
         .map(a2m_files::RelPath::as_str)
         .collect();
+    // One read operation, for the GET whose path holds no placeholder: the
+    // other GET's placeholder is a parameter the description does not
+    // state, so its read is left to the developer.
     assert_eq!(
         written,
-        ["endpoints/get_account.yaml", "endpoints/get_order.yaml"]
+        [
+            "endpoints/get_account.yaml",
+            "endpoints/get_order.yaml",
+            "operations/account_get.yaml"
+        ]
     );
     let draft =
         |name: &str| std::fs::read_to_string(folder.path().join("endpoints").join(name)).unwrap();
@@ -688,6 +694,157 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     );
     assert!(!description.text.contains("/orders"));
     assert_eq!(description.untrusted.len(), 3);
+}
+
+/// The test application's description, found where it serves it, drafted
+/// into a new target: endpoint entries and one read operation for each GET
+/// it describes, which compile in draft mode and, run through the driver's
+/// handle with the description's own example, read what the application
+/// stores. No write is drafted and nothing is written.
+#[tokio::test]
+async fn the_test_applications_description_drafts_reads_that_read_what_it_stores() {
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(findings.len(), 8, "{findings:?}");
+
+    let folder = Folder::new("drafted-reads");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &root).draft(&findings).unwrap();
+    assert!(
+        report.kept_failing.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let operations: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    assert_eq!(
+        operations,
+        [
+            "operations/api_orders_get.yaml",
+            "operations/api_orders_list.yaml",
+            "operations/api_stock_get.yaml",
+            "operations/orders_delivery_get.yaml",
+            "operations/orders_items_get.yaml",
+            "operations/orders_totals_get.yaml",
+        ]
+    );
+    // The two PUTs are writes: their entries are refused, and no operation
+    // is drafted for them.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(
+        refused,
+        ["endpoints/put_delivery.yaml", "endpoints/put_item.yaml"]
+    );
+
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    for operation in &plan.operations {
+        assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+    }
+    let examples = |name: &str| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .examples
+            .first()
+            .cloned()
+    };
+    // The list needs no input; each read by key has the description's own
+    // example, and the outputs that came as text are marked untrusted.
+    assert_eq!(examples("example_api_orders_list"), None);
+    assert_eq!(
+        examples("example_orders_items_get").unwrap(),
+        Values::new()
+            .with("order_id", "A-100")
+            .with("item_code", "L-101")
+    );
+    let item = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_orders_items_get")
+        .unwrap();
+    let description = item
+        .outputs
+        .iter()
+        .find(|output| output.name == "description")
+        .unwrap();
+    assert!(plan.field_types[description.field_type.unwrap().get()].untrusted);
+
+    let reading = Scene::over(
+        Folder::new("drafted-run"),
+        common::registry(
+            &Folder::new("drafted-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan.clone(),
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let mut got = std::collections::BTreeMap::new();
+    for name in [
+        "example_orders_items_get",
+        "example_api_orders_get",
+        "example_api_orders_list",
+    ] {
+        let inputs = examples(name).unwrap_or_default();
+        let ran = reading.read(&handle, &mut prepared, name, &inputs).await;
+        got.insert(name, ran.unwrap().values);
+    }
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    let item = &got["example_orders_items_get"];
+    assert_eq!(
+        item.get("description").and_then(Value::as_text),
+        Some(stored.description.as_str())
+    );
+    assert_eq!(
+        item.get("quantity"),
+        Some(&Value::Int(i64::from(stored.quantity)))
+    );
+    let order = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(
+        got["example_api_orders_get"]
+            .get("customer")
+            .and_then(Value::as_text),
+        Some(order.customer.as_str())
+    );
+    let listed = got["example_api_orders_list"]
+        .get("order_id")
+        .and_then(Value::as_list)
+        .unwrap();
+    assert!(listed.contains(&Value::from("A-100")), "{got:?}");
+    handle.release(prepared, false).await;
+
+    // The application was read, and nothing in it was written.
+    assert!(app.writes().await.unwrap().is_empty());
 }
 
 /// A redactor that knows one secret.

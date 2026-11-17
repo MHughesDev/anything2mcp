@@ -222,6 +222,11 @@ pub struct Lowered {
     pub act: Vec<Step>, pub confirm: Vec<Step>, pub read_back: Vec<Step>, pub lookup: Vec<Step>,
     pub settle_ms: u32, pub prefer_response: bool,
 }
+// Lowering::evidence(&self, binding, &lowered) -> WriteEvidence: what a write binding offers as evidence. Default:
+// `response` where the lowering prefers the save's answer, `read_back` otherwise. `acknowledged` makes the binding
+// `irreversible` by what it does, and such a binding needs no read-back (decision 0161).
+// LowerContext::expr also reads `current`, what the engine's last read of the record gave, by the operation's inputs,
+// each optional, and `record`, whose `key` is the record's key in the system, its parts as text (decision 0161).
 
 /// A lint rule with a stable code. Sees resolved files; cannot change them.
 pub trait LintRule: Send + Sync {
@@ -383,10 +388,13 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 
 9. Done: what the safety audit found ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)): the rules of a write the compiler holds by itself, with `StepCommits`, `Lowering::commits`, and `Lowering::least_effect`; the Scope rule's form; the drafter's writing and what it may draft, with `FileKind::writes`; the loader's bounds; the credential lint's words and what a diagnostic never quotes.
 
+10. Done ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)): a binding's evidence (`Lowering::evidence`), held to `irreversible` for `acknowledged` by the least-effect check; a binding's steps may read `current` and `record`; a draft compiled under any version but `DRAFT_VERSION` is refused, `kernel.draft_under_release_version`; and a tool's output schema allows the text `[redacted]` wherever it declares a number, a date, a moment, or a length of time.
+
+**Two rules every pack is held to** (decision 0161). *A delete is `irreversible`*, unless its binding declares how the record is restored, which no binding can declare yet: a pack's `least_effect` gives `irreversible` for every verb that deletes, and the compiler's least-effect check then holds every operation of it there. Today the file pack says `write` for its `delete`; the data, command, MCP, and HTTP packs say `irreversible`; the web, device, and stream packs have no delete. *An effect left as an open question is undecided, not a write* ([decision 0178](../../decisions/0178-an-effect-left-as-an-open-question-is-undecided-not-a-write.md), which changes this half of decision 0161): `FileKind::writes` is true for an entry declared to write and false for one whose effect is an open question, so the drafter may write it; nothing can use it, because the schema checker refuses an open question wherever it stands, and the file does not compile until a person answers. A pack may be stricter where it has evidence of its own, as the HTTP pack is for an unsafe method.
+
 Not built, in any step:
 
 - **The rest of the Scope rule.** The compiler checks the form of what an operation's `permissions` declares: one exact address, one name, once. It does not check a destination against a list a person registered for the target, because no file holds such a list; the review summary shows every destination, and confirming a new one is the publish gate's ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md)). It does not check that an upload or a download names an input of the operation or a root of the installation.
-- **A draft's mark in the plan.** `CompileMode::Draft` turns the test rules into warnings and leaves no trace in the plan, so a draft compiled under a release version has the bytes and the hash of the published plan; a test pins this. What marks a draft today is `DRAFT_VERSION`, which the caller passes. Refusing any other version for a draft is the fix, and it waits: the test helpers of nine crates compile drafts as version 1.0.0, and one of them asserts that its fixtures give no other warning, so even a warning would break a crate that cannot know why. The plan's shape is not changed for it.
 - **A secret outside what the credential lint knows.** A diagnostic never quotes a value under a key the lint knows, or one in a credential's shape. A token pasted under any other key, where a name or a word is expected, is still echoed, up to 64 characters. A fixture's recorded file is looked through by line for key material, an authorization header's value, and a signed token, and for nothing else; one that is not text is not looked through.
 
 - `lint_one` compiles the whole target again; nothing is reused by file digest.

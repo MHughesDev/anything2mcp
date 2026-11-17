@@ -251,13 +251,7 @@ impl Scene {
 }
 
 pub fn input<'a>(args: &'a Values) -> StepInput<'a> {
-    StepInput {
-        args,
-        record: None,
-        key: None,
-        stamp: None,
-        deadline: Deadline::after(Duration::from_secs(20)),
-    }
+    StepInput::new(args, Deadline::after(Duration::from_secs(20)))
 }
 
 /// Carries out the steps of a list that reads, in order, each with the
@@ -350,13 +344,21 @@ pub struct Write {
 
 impl Write {
     pub fn input<'a>(&'a self, args: &'a Values, stamp: Option<&'a str>) -> StepInput<'a> {
-        StepInput {
-            args,
-            record: Some(self.record),
-            key: Some(&self.key),
+        StepInput::new(args, Deadline::after(Duration::from_secs(20))).for_record(
+            self.record,
+            Some(&self.key),
             stamp,
-            deadline: Deadline::after(Duration::from_secs(20)),
-        }
+        )
+    }
+
+    /// The input of a step of a record that has no key in the system, such
+    /// as a take: the engine hands such a step no key (decision 0161).
+    pub fn keyless<'a>(&'a self, args: &'a Values) -> StepInput<'a> {
+        StepInput::new(args, Deadline::after(Duration::from_secs(20))).for_record(
+            self.record,
+            None,
+            None,
+        )
     }
 
     pub fn authority(&self) -> Authority<'_> {
@@ -494,6 +496,16 @@ impl a2m_core::KeyedDigest for TestKey {
 /// The trace signature of one step that read `values`, as the engine's
 /// trace would hold them.
 pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
+    signature_with(kind, values, None)
+}
+
+/// The same, with how the step was done, as the engine puts a step's
+/// `acting` capture into its trace record.
+pub fn signature_with(
+    kind: &a2m_core::StepKind,
+    values: &Values,
+    acting: Option<a2m_telemetry::Acting>,
+) -> Digest {
     let mut trace = TraceBuilder::new(
         TraceIdentity {
             workspace: WorkspaceId::from_bytes([1; 16]),
@@ -517,7 +529,7 @@ pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
         begins: None,
         took: Duration::from_millis(3),
         locating: None,
-        acting: None,
+        acting,
         values: values
             .iter()
             .map(|(name, value)| {

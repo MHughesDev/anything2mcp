@@ -1,0 +1,64 @@
+operation: example_order_status_get
+title: Get the status of an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  status: {type: text}
+bindings:
+  - mode: stream
+    verb: read
+    channel: orders.status
+    key: {order_id: input.order_id}
+description: >
+  Reads the last status the broker holds for one order.
+---
+operation: example_order_status_list
+title: List the statuses the broker holds
+effect: read
+inputs: {}
+outputs:
+  count: {type: integer}
+bindings:
+  - mode: stream
+    verb: list
+    channel: orders.status
+description: >
+  Lists the status the broker holds for every order, without taking anything.
+---
+operation: example_order_status_set
+title: Set the status of an order
+effect: write
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  status: {type: text, description: "The new status"}
+outputs:
+  status: {type: text}
+bindings:
+  - mode: stream
+    verb: publish
+    channel: orders.status
+    key: {order_id: input.order_id}
+    headers: {correlation_id: input.order_id}
+    body: {order_id: input.order_id, status: input.status}
+    read_back: {verb: read, channel: orders.status}
+description: >
+  Publishes a new status for one order and reads it back.
+---
+operation: example_order_status_await
+title: Wait for the next status of an order
+effect: read
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  arrived: {type: boolean}
+bindings:
+  - mode: stream
+    verb: await
+    channel: orders.status
+    key: {order_id: input.order_id}
+    wait: 1s
+description: >
+  Waits a short time for the next status published for one order.

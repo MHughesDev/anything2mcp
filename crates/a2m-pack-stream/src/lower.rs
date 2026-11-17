@@ -6,7 +6,7 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload,
-    PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb,
+    PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Possible,
@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::channel::{ChannelEntry, Ownership, Role, Shape, duration_ms, problem, read_channel};
 use crate::codes;
 use crate::names::{
-    BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_PUBLISH,
-    STEP_SCAN, STEP_SUBSCRIBE, VERB_AWAIT, VERB_LIST, VERB_PUBLISH, VERB_READ, VERB_TAKE,
+    BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_POSITION,
+    STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE, STEP_TAKEN, VERB_AWAIT, VERB_LIST, VERB_PUBLISH,
+    VERB_READ, VERB_TAKE,
 };
 
 /// The time a step that does not wait for a message may take, when the
@@ -105,6 +106,8 @@ impl StreamLowering {
                 STEP_PUBLISH,
                 STEP_ACKNOWLEDGE,
                 STEP_SCAN,
+                STEP_POSITION,
+                STEP_TAKEN,
             ],
             ceiling_ms,
         }
@@ -225,7 +228,7 @@ impl Work<'_, '_> {
         };
         Step {
             commits: kind == STEP_PUBLISH || kind == STEP_ACKNOWLEDGE,
-            lookup: kind == STEP_LATEST || kind == STEP_SCAN,
+            lookup: kind == STEP_LATEST || kind == STEP_SCAN || kind == STEP_TAKEN,
             idempotent: kind == STEP_PUBLISH
                 && self.entry.broker_dedupe
                 && self.entry.token_header.is_some(),
@@ -420,7 +423,11 @@ impl Work<'_, '_> {
         self.wait_steps(ceiling_ms, false)
     }
 
-    fn take(&mut self, ceiling_ms: u32) -> Vec<Step> {
+    /// The steps of a take, and its read-back: a look at the queue for the
+    /// message the take recorded before it acknowledged. The look settles
+    /// a take in doubt, and it is the take's only read: a take's evidence
+    /// is the acknowledgement (see [`Lowering::evidence`]).
+    fn take(&mut self, ceiling_ms: u32) -> (Vec<Step>, Vec<Step>) {
         for key in ["headers", "body", "from", "on_nothing", "read_back"] {
             self.no_field(key);
         }
@@ -448,7 +455,8 @@ impl Work<'_, '_> {
         }
         let mut steps = self.wait_steps(ceiling_ms, true);
         steps.push(self.step(STEP_ACKNOWLEDGE, Vec::new(), &StepDetail::default()));
-        steps
+        let look = vec![self.step(STEP_TAKEN, Vec::new(), &StepDetail::default())];
+        (steps, look)
     }
 
     /// The read-back steps a publish can have: by the latest value on a
@@ -577,11 +585,16 @@ impl Work<'_, '_> {
         } else {
             Vec::new()
         };
-        (
-            vec![self.step(STEP_PUBLISH, args, &StepDetail::default())],
-            read_back,
-            lookup,
-        )
+        // Where the publish is read back by a scan for its token, the place
+        // the log ends at is read first and recorded before the publish is
+        // sent: the message, if it was stored, is at or after it, so a scan
+        // of a resumed run starts there and not at the log's start.
+        let mut act = Vec::new();
+        if read_back.iter().any(|step| step.kind == STEP_SCAN) {
+            act.push(self.step(STEP_POSITION, Vec::new(), &StepDetail::default()));
+        }
+        act.push(self.step(STEP_PUBLISH, args, &StepDetail::default()));
+        (act, read_back, lookup)
     }
 }
 
@@ -606,7 +619,8 @@ impl Lowering for StreamLowering {
     /// a channel, the second removes one from a queue. Every other kind
     /// never does. `subscribe` and `await` only attach a consumer and hold
     /// a delivery that is given back unless a later `acknowledge` removes
-    /// it; `latest`, `browse`, and `scan` take nothing; `channels` and
+    /// it; `latest`, `browse`, `scan`, `position`, and `taken` take
+    /// nothing; `channels` and
     /// `describe` are the discoverer's looks.
     fn commits(&self, kind: &StepKind) -> StepCommits {
         if *kind == STEP_PUBLISH || *kind == STEP_ACKNOWLEDGE {
@@ -625,6 +639,29 @@ impl Lowering for StreamLowering {
             EffectClass::Write
         } else {
             EffectClass::Read
+        }
+    }
+
+    /// What a write offers as the evidence that it landed (decision 0161).
+    /// A `take`: its acknowledgement, the broker's answer that the message
+    /// is gone, which nothing can read back or compare; the message itself
+    /// is recorded before it (decision 0150). A `publish` that has no
+    /// read-back, to a queue, a topic, or a log that declares no
+    /// idempotency header: the broker's confirmation, with the identifier
+    /// and the position it stored the message at. A `publish` that is read
+    /// back, by the latest value of its key on a retained channel or by a
+    /// scan for its token on a log, keyed or not, offers the read-back: the
+    /// scan finds the very message, so it is never dropped for the
+    /// confirmation. On a log the key is only the subject's last token and
+    /// another producer may use it, so a key alone does not read a message
+    /// back.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if *binding.verb == VERB_TAKE
+            || (*binding.verb == VERB_PUBLISH && lowered.read_back.is_empty())
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
         }
     }
 
@@ -720,7 +757,8 @@ impl Lowering for StreamLowering {
         } else if *binding.verb == VERB_AWAIT {
             (work.await_(self.ceiling_ms), Vec::new(), Vec::new())
         } else if *binding.verb == VERB_TAKE {
-            (work.take(self.ceiling_ms), Vec::new(), Vec::new())
+            let (act, look) = work.take(self.ceiling_ms);
+            (act, look, Vec::new())
         } else {
             work.publish()
         };

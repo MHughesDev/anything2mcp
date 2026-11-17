@@ -322,13 +322,16 @@ pub fn input<'a>(
     key: Option<&'a RecordKey>,
     stamp: Option<&'a str>,
 ) -> StepInput<'a> {
-    StepInput {
-        args,
-        record,
-        key,
-        stamp,
-        deadline: Deadline::after(Duration::from_secs(30)),
+    let mut input = StepInput::new(args, Deadline::after(Duration::from_secs(30)));
+    match record {
+        Some(record) => input = input.for_record(record, key, stamp),
+        // A step of no record may still be given a key or a stamp.
+        None => {
+            input.key = key;
+            input.stamp = stamp;
+        }
     }
+    input
 }
 
 // ---- a real store, for real intent tokens ----

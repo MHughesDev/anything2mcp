@@ -324,7 +324,8 @@ pub struct PrepareContext<'a> {
     pub plan: &'a Plan,                                       // the published plan as data; a step's `refers_to` names an entry of a pack section
     pub posture: Posture, pub deadline: Deadline, pub redact: &'a dyn Redact,
     pub destinations: &'a Destinations,                       // the target's declared surfaces, within the manifest's network effect
-    pub paths: &'a CheckedPaths,                              // every file this run may touch, already checked; a driver resolves none
+    pub paths: &'a CheckedPaths,                              // every file this run may touch, already checked; a driver resolves none;
+                                                              // `paths.project()` / `project_folder()`: the project folder of the request that started the run
     pub supervisor: &'a ScopedSupervisor,                     // starts only what the manifest and the published plan declare
 }
 pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: SurfacePlan }   // at this environment's address
@@ -334,10 +335,12 @@ pub struct Destinations { /* addresses, compared as written */ }      // Destina
 pub struct StepInput<'a> {
     pub args: &'a Values,                                     // the step's arguments, by name, already evaluated
     pub record: Option<RecordRef>,                            // the commit point the step belongs to (`a2m-ledger`)
-    pub key: Option<&'a RecordKey>,
+    pub key: Option<&'a RecordKey>,                           // the record's key in the system; never its place in a run (decision 0161)
     pub stamp: Option<&'a str>,                               // the record's idempotency token
     pub deadline: Deadline,
-}
+}                                                             // StepInput::new(args, deadline).for_record(record, key, stamp)
+// What the record's earlier steps returned in `for_reconcile`, for the step being acted: `Prepared::recorded()`,
+// set by the handle (`DriverHandle::act_recorded`) for the one call of `act` and empty outside it (decision 0162).
 pub enum StepOutcome { Done(Observed), Absent(Observed) }
 #[derive(Default)]
 pub struct Observed {
@@ -346,7 +349,10 @@ pub struct Observed {
     pub captures: Vec<Capture>,                               // already redacted
 }
 pub struct Capture { pub name: String, pub media_type: String, pub bytes: Vec<u8> }
-pub struct StepFailure { pub failure: Failure, pub sent: Sent }       // StepFailure::not_sent(f), answered(f), unknown(f)
+// Capture::acting(&Acting): the capture named `acting`, of `application/json`, says how the step was done; the engine puts it in
+// the step's trace record (`means` in the signature, `measured` not) and keeps it as no evidence. Observed::acting() reads it.
+pub struct StepFailure { pub failure: Failure, pub sent: Sent }       // StepFailure::not_sent(f), answered(f), unknown(f);
+                                                                      // .with_said(text): what the system said, kept apart, untrusted
 pub enum Sent { NotSent, Answered, Unknown }                   // Answered: the system replied, so the outcome is known
 pub enum DriverHealth { Ready, Degraded(FailureCode), Unavailable(FailureCode) }
 
@@ -703,6 +709,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 6. Done: the supervisor for `OneShot` and `Foreign` links, `ScopedSupervisor`, and `CheckedPath`. Done after the safety audit (decision 0148): digests at every start on one opened file, the suspended start on Windows, writes that never go through a link, `entry_kind`, `create_dir`, the handle's rule for a write that was sent, its backstop redaction, `commit_steps`, and the kernel's own codes. Not built: `Framed` links with the handshake, the request queue, and joining a start for a place that is taken.
 7. Not built: ownership records through `a2m-ledger`, and leftovers recognized at start.
 8. Not built: the plug-in host and protocol version 1, and the check of a plug-in's signature. A plug-in found on the machine is listed as present and not enabled. Package F3 for listing; Phase 8 for driving.
+9. Done (decision 0162): what earlier steps recorded (`Prepared::recorded`, `DriverHandle::act_recorded`); how a step was done (`Capture::acting`, `Observed::acting`); what the system said (`StepFailure::with_said`, kept by the handle through its redaction and through a write in doubt); the project folder (`CheckedPaths::with_project`, `project`, `project_folder`, `input`/`project_folder_missing`); the save in steps, a file's identity, and `may_write`; `StepInput::new`. Tests: `tests/handle.rs`, `tests/paths.rs`.
 
 ## Open points
 
@@ -716,6 +723,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 - The Windows code of the supervisor has been compiled and linted, and has not been run. The next Windows run must show the three unit tests of `supervisor/windows.rs` named under the invariants passing, and `tests/supervisor.rs` unchanged: a time limit ends a program and the child it started, and no process is left. If a child is never resumed, every start there fails with `busy`, `start_failed`, or runs into its time limit.
 - An attacker who can write a program's file in place, and not only replace it at its path, can change it between its digest and its start on Linux and macOS, where nothing denies a write. The digest is therefore no defence against the owner of the program file. A digest remembered by the file's identity was weighed and not built (decision 0148): the times of a file can be set back by whoever may write it, on Windows all of them.
 - `CheckedPath` on Windows, and `exists`, `is_dir`, `size`, `list`, and `create_dir_all` everywhere, check and then use the path by name.
-- A save in steps is not offered: a temporary file handed back open so that the caller can set its mode, compare a digest, and then let it take the name; a file's identity; and whether the engine's user may write a file. The file pack does these itself on `as_path` today.
+- Done (decision 0162): a save in steps. `CheckedPath::create_temporary` gives a `Temporary`, made new under a random name in the target's folder and handed back open; `write`, `flush`, `read_back` for the caller's check, `replace` (only the target's name, never through a link), then `CheckedPath::flush_folder`, each a call of its own; dropped before `replace`, it is removed. `CheckedPath::identity` gives a `FileIdentity` (device and file number; volume and file identifier on Windows, by one unsafe call). `CheckedPath::may_write` opens the file for writing and closes it, writing nothing. Failures tell `busy`/`path_locked`, `busy`/`disk_full`, `input`/`path_denied`, and `input`/`path_missing` apart. The Windows half was compiled and linted from a copy and not run; on Windows `flush_folder` does nothing more, because the file system journals a folder's names.
+- The contract's additions of decision 0162 are additions only: `Prepared::recorded` and `DriverHandle::act_recorded`, not a field of `StepInput`; the `acting` capture, not a field of `Observed`; what the system said on `Failure`, not on `StepFailure`; the project folder on `CheckedPaths`, not on `PrepareContext`. Each of those structs is built field by field in the packs, and a field would have broken every one. `StepInput::new` is there so that a field can be added once the packs build their inputs through it.
 - No first-party manifest lists `commit_steps`, so the handle checks nothing there yet.
 - A mode's `exclusive` is carried by the registry and reported by the engine's `exclusive_needs`, and nothing submits it to the scheduler; see the scheduler's design.

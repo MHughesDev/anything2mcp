@@ -27,6 +27,7 @@ use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codec::{self, Unwritable};
@@ -177,6 +178,69 @@ fn budget_exceeded(what: &str) -> StepFailure {
         format!("{what} Nothing was sent."),
         "Do the work in smaller runs, or raise the device pack's setting `max_frames_per_run`.",
     ))
+}
+
+/// The bytes a hexadecimal text stands for, or `None` when it is not one.
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.is_ascii() || !text.len().is_multiple_of(2) {
+        return None;
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
+}
+
+/// What the device holds, set beside what the frame recorded for the
+/// register would have written. It is evidence, in the register's raw
+/// layout, where the engine compares the normalized values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameCheck {
+    /// The device holds what the frame carried.
+    Matches,
+    /// The device holds something else.
+    Differs,
+    /// The recorded frame is not one this link's protocol reads back into
+    /// a write of this register.
+    Unreadable,
+}
+
+impl FrameCheck {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Matches => "matches",
+            Self::Differs => "differs",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// How a step was done, as the capture the trace takes. `means` is what the
+/// trace's signature covers: the kind of step, what it does, and the
+/// register it concerns. `measured` is what it does not.
+fn acting(step: &Step, payload: &StepPayload, framed: bool, measured: Vec<Detail>) -> Capture {
+    let (what, register) = match payload {
+        StepPayload::Identify => ("identify", None),
+        StepPayload::Report => ("report", None),
+        StepPayload::AskRead { register } => ("ask_read", Some(register)),
+        StepPayload::Build { register, .. } => ("build", Some(register)),
+        StepPayload::Write { register, .. } => ("write", Some(register)),
+        StepPayload::Reply => ("reply", None),
+        StepPayload::Value { register, .. } => ("value", Some(register)),
+        StepPayload::Before { register } => ("before", Some(register)),
+        StepPayload::Acknowledged => ("acknowledged", None),
+    };
+    let mut means = vec![
+        Detail::new("step", step.kind.as_str()),
+        Detail::new("does", what),
+    ];
+    if let Some(register) = register {
+        means.push(Detail::new("register", register.as_str()));
+    }
+    if framed {
+        means.push(Detail::new("compared_with", "recorded_frame"));
+    }
+    Capture::acting(&Acting { means, measured })
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -791,11 +855,44 @@ impl DeviceDriver {
         Ok(StepOutcome::Done(Observed::default()))
     }
 
+    /// What the register holds, against what the frame recorded for it
+    /// before the write would have written. `None` when no frame was
+    /// recorded for the register, which is every plain read.
+    fn frame_check(
+        state: &LinkState,
+        found: &RegisterPlan,
+        recorded: &Values,
+        register: &str,
+        held: &Value,
+    ) -> Option<FrameCheck> {
+        let frame = recorded.get(&frame_name(register))?;
+        let would_write = frame
+            .as_text()
+            .and_then(unhex)
+            .and_then(|bytes| state.link.as_ref()?.written(&bytes))
+            .and_then(|request| match request {
+                Request::WriteWords { offset, words } if offset == found.offset => {
+                    codec::decode(found, &Reply::Words(words))
+                }
+                Request::WriteBit { offset, on } if offset == found.offset => {
+                    codec::decode(found, &Reply::Bits(vec![on]))
+                }
+                _ => None,
+            });
+        Some(match would_write {
+            None => FrameCheck::Unreadable,
+            Some(value) if value == *held => FrameCheck::Matches,
+            Some(_) => FrameCheck::Differs,
+        })
+    }
+
     fn expect(
         &self,
         state: &mut LinkState,
         step: &Step,
         payload: &StepPayload,
+        recorded: &Values,
+        measured: &mut Vec<Detail>,
     ) -> Result<StepOutcome, StepFailure> {
         let (unread, reply) = state.answer()?;
         let capture = self.capture(&unread.sent, &unread.reply);
@@ -818,11 +915,29 @@ impl DeviceDriver {
                     Some(reply) => codec::decode(&found, &reply).ok_or_else(unexpected)?,
                     None => return Err(unexpected()),
                 };
+                // A read after a write that recorded its frame: what the device
+                // holds is set beside what the frame carried. The verdict on
+                // the value is the engine's; this is evidence of it.
+                let checked = matches!(payload, StepPayload::Value { .. })
+                    .then(|| Self::frame_check(state, &found, recorded, register, &value))
+                    .flatten();
                 let value = self.redact.redact_value(&value);
                 let mut observed = Observed {
                     captures: vec![capture],
                     ..Observed::default()
                 };
+                if let Some(check) = checked {
+                    measured.push(Detail::new("frame_match", check.as_str()));
+                    let text = format!(
+                        "{{\"register\":\"{register}\",\"device_vs_frame\":\"{}\"}}",
+                        check.as_str()
+                    );
+                    observed.captures.push(Capture {
+                        name: "frame_check".to_owned(),
+                        media_type: "application/json".to_owned(),
+                        bytes: self.redact.redact(&text).into_bytes(),
+                    });
+                }
                 match payload {
                     StepPayload::Value { output, .. } => {
                         observed.values.insert(output.clone(), value);
@@ -937,6 +1052,9 @@ impl Driver for DeviceDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
+            // What this record's earlier steps gave for reconcile: the frame
+            // of a write, and the value before it.
+            let recorded = prepared.recorded().clone();
             let state = prepared
                 .state::<LinkState>()
                 .ok_or_else(|| plan_unreadable("the link was not prepared by this driver"))?;
@@ -945,7 +1063,8 @@ impl Driver for DeviceDriver {
                 .decode::<StepPayload>()
                 .map_err(|_| plan_unreadable("a step's details do not decode"))?;
             let names = &self.names;
-            if step.kind == names.open {
+            let mut measured = Vec::new();
+            let outcome = if step.kind == names.open {
                 match payload {
                     StepPayload::Identify => self.open(state, step, input, false).await,
                     StepPayload::Report => self.open(state, step, input, true).await,
@@ -975,12 +1094,30 @@ impl Driver for DeviceDriver {
                     .await?;
                 Ok(StepOutcome::Done(Observed::default()))
             } else if step.kind == names.expect {
-                self.expect(state, step, &payload)
+                self.expect(state, step, &payload, &recorded, &mut measured)
             } else {
                 Err(plan_unreadable(
                     "a step is of a kind this driver does not carry out",
                 ))
-            }
+            };
+            // How the step was done goes to the trace with what it returned.
+            let mut outcome = outcome?;
+            let framed = matches!(
+                &payload,
+                StepPayload::Value { register, .. } if recorded.get(&frame_name(register)).is_some()
+            );
+            measured.push(Detail::new(
+                "frames_sent",
+                self.defaults
+                    .max_frames
+                    .saturating_sub(state.frames_left)
+                    .to_string(),
+            ));
+            let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = &mut outcome;
+            observed
+                .captures
+                .push(acting(step, &payload, framed, measured));
+            Ok(outcome)
         })
     }
 
@@ -1151,13 +1288,7 @@ mod tests {
         }
         let args = Values::new();
         for step in &steps {
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: Deadline::after(Duration::from_secs(1)),
-            };
+            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(1)));
             driver.act(&mut prepared, step, &input).await.unwrap();
         }
         sent.lock().unwrap().clone()

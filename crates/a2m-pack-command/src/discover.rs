@@ -220,13 +220,7 @@ async fn run(
 ) -> Result<Option<Values>, Failure> {
     let step = probe_step(program, probe)?;
     let args = Values::new();
-    let input = StepInput {
-        args: &args,
-        record: None,
-        key: None,
-        stamp: None,
-        deadline: scope.deadline,
-    };
+    let input = StepInput::new(&args, scope.deadline);
     match port.act(&step, &input).await {
         Ok(StepOutcome::Done(observed)) => Ok(Some(observed.values)),
         Ok(StepOutcome::Absent(_)) => Ok(None),

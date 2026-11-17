@@ -218,13 +218,11 @@ async fn a_value_outside_its_range_sends_no_frame() {
     let (handle, mut prepared) = scene.prepare(Some(fence), Posture::Live).await;
     let steps = &scene.binding("example_heater_limit_set").act;
     let args = Values::new().with("heater_power_limit", "90");
-    let input = a2m_provider::StepInput {
-        args: &args,
-        record: Some(record),
-        key: None,
-        stamp: None,
-        deadline: a2m_provider::Deadline::after(std::time::Duration::from_secs(5)),
-    };
+    let input = a2m_provider::StepInput::new(
+        &args,
+        a2m_provider::Deadline::after(std::time::Duration::from_secs(5)),
+    )
+    .for_record(record, None, None);
     scene
         .run(&handle, &mut prepared, &steps[..4], &wrong, None)
         .await
@@ -321,6 +319,124 @@ async fn a_link_lost_after_a_write_frame_is_a_possible_commit_and_nothing_is_sen
     assert_eq!(ran.values.get("rate"), Some(&decimal("5")));
     assert_eq!(control.number("dosing_rate"), Some(500));
     handle.release(prepared, false).await;
+}
+
+/// The `frame_check` evidence a run of read-back steps kept, if any.
+fn frame_check(ran: &Ran) -> Option<serde_json::Value> {
+    ran.captures
+        .iter()
+        .find(|capture| capture.name == "frame_check")
+        .map(|capture| serde_json::from_slice(&capture.bytes).unwrap())
+}
+
+#[tokio::test]
+async fn a_resumed_write_is_read_against_the_frame_that_was_recorded() {
+    let scene = Scene::start().await;
+    let store = store().await;
+    let control = scene.device.control();
+    let read_back = &scene.binding("example_dosing_rate_set").read_back;
+
+    // The device applies the write and drops the link before the reply. The
+    // frame was recorded by the step before the one that sent it.
+    control.set_fault(Fault::once(FaultKind::DropLink { applied: true }).on(Scope::Writes));
+    let written = write(&scene, &store, 1, "example_dosing_rate_set", &rate("3.00")).await;
+    assert_eq!(
+        class_and_code(written.failure()),
+        (FailureClass::PossibleCommit, "no_confirmation")
+    );
+    let recorded = written.act.as_ref().unwrap().for_reconcile.clone();
+    assert!(recorded.get("frame_dosing_rate").is_some());
+
+    // On a resume the register is read on a new link, and the record has no
+    // key: the register is found by its address in the step's own
+    // arguments. What the device holds is the frame's value.
+    let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
+    let ran = scene
+        .run_recorded(
+            &handle,
+            &mut prepared,
+            read_back,
+            &Values::new(),
+            None,
+            &recorded,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ran.values.get("rate"), Some(&decimal("3")));
+    assert_eq!(
+        frame_check(&ran).unwrap()["device_vs_frame"],
+        "matches",
+        "the device holds what the recorded frame carried"
+    );
+    // The step said that it compared, and what it found is measured.
+    let compared = ran
+        .acting
+        .iter()
+        .find(|step| {
+            step.means
+                .iter()
+                .any(|detail| detail.name == "compared_with")
+        })
+        .unwrap();
+    assert!(
+        compared
+            .measured
+            .iter()
+            .any(|detail| detail.name == "frame_match" && detail.value == "matches")
+    );
+    // Nothing was written again: the same one frame, and the device's value.
+    assert_eq!(write_frames(&scene), 1);
+    assert_eq!(control.number("dosing_rate"), Some(300));
+
+    // The same read, with no frame recorded, compares nothing.
+    let plain = scene
+        .run(&handle, &mut prepared, read_back, &Values::new(), None)
+        .await
+        .unwrap();
+    assert!(frame_check(&plain).is_none());
+    handle.release(prepared, false).await;
+
+    // A write the device never applied: the frame carried 4.00 and the
+    // device still holds 3.00. The read says so, and does not decide.
+    control.set_fault(Fault::once(FaultKind::NoReply { applied: false }).on(Scope::Writes));
+    let written = write(&scene, &store, 2, "example_dosing_rate_set", &rate("4.00")).await;
+    assert_eq!(
+        class_and_code(written.failure()),
+        (FailureClass::PossibleCommit, "no_confirmation")
+    );
+    let recorded = written.act.as_ref().unwrap().for_reconcile.clone();
+    let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
+    let ran = scene
+        .run_recorded(
+            &handle,
+            &mut prepared,
+            read_back,
+            &Values::new(),
+            None,
+            &recorded,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ran.values.get("rate"), Some(&decimal("3")));
+    assert_eq!(frame_check(&ran).unwrap()["device_vs_frame"], "differs");
+
+    // A recorded frame that is no write of this register is read as
+    // nothing, and said so.
+    let garbled = Values::new().with("frame_dosing_rate", "00zz");
+    let ran = scene
+        .run_recorded(
+            &handle,
+            &mut prepared,
+            read_back,
+            &Values::new(),
+            None,
+            &garbled,
+        )
+        .await
+        .unwrap();
+    assert_eq!(frame_check(&ran).unwrap()["device_vs_frame"], "unreadable");
+    handle.release(prepared, false).await;
+    assert_eq!(write_frames(&scene), 2);
 }
 
 #[tokio::test]

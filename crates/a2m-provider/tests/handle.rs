@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use a2m_core::{
     Digest, EffectClass, Environment, Epoch, EvidenceLevel, Failure, FailureClass, OperationName,
-    Plan, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values, Version,
+    Plan, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values,
     WorkspaceId,
 };
 use a2m_files::CompileMode;
@@ -192,7 +192,7 @@ fn scene_of(pack: TestPack, redact: Arc<dyn a2m_core::Redact>) -> Scene {
     // test pack. Its steps are of the kinds `fetch` and `send`.
     let set = a2m_files::testing::stand_set().unwrap();
     let sources = a2m_files::load(&a2m_files::testing::example_root(), &set).unwrap();
-    let plan = a2m_files::compile(&sources, &set, CompileMode::Draft, Version::new(1, 0, 0))
+    let plan = a2m_files::compile(&sources, &set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap()
         .plan;
     let surface = SurfaceRef {
@@ -950,4 +950,79 @@ async fn a_discoverer_cannot_write() {
             .text,
         "1 findings"
     );
+}
+
+/// What a record's earlier steps recorded reaches the driver for the step
+/// it is handed with, and for no other (decision 0162).
+#[tokio::test]
+async fn what_earlier_steps_recorded_reaches_the_driver_for_its_step_alone() {
+    let scene = scene();
+    let (handle, mut prepared) = scene.prepared(None, Posture::Live).await;
+    let args = Values::new();
+    let read = input(&args, None, None);
+    let fetch = scene.step("fetch", false, false);
+    scene.behave(Behaviour::EchoRecorded);
+    let recorded = Values::new().with("message_id", "M-7");
+    let StepOutcome::Done(observed) = handle
+        .act_recorded(&mut prepared, &fetch, &read, Authority::Read, &recorded)
+        .await
+        .unwrap()
+    else {
+        panic!("done");
+    };
+    assert_eq!(observed.values, recorded);
+    assert!(prepared.recorded().is_empty());
+    let StepOutcome::Done(observed) = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap()
+    else {
+        panic!("done");
+    };
+    assert!(observed.values.is_empty());
+    assert!(handle.release(prepared, false).await.complete);
+}
+
+/// How a step was done travels as the contract's own capture, and what the
+/// system said is kept apart from the sentence, redacted, through a write
+/// in doubt as well (decision 0162).
+#[tokio::test]
+async fn how_a_step_was_done_and_what_the_system_said_pass_the_handle() {
+    const SECRET: &str = "example-token-planted-0162";
+    let scene = scene_of(TestPack::new("alpha"), Arc::new(OneSecret(SECRET)));
+    let (handle, mut prepared) = scene.prepared(None, Posture::Live).await;
+    let args = Values::new();
+    let read = input(&args, None, None);
+    let fetch = scene.step("fetch", false, false);
+    let acting = a2m_telemetry::Acting {
+        means: vec![a2m_telemetry::Detail::new("step", "fetch")],
+        measured: vec![a2m_telemetry::Detail::new("bytes", "120")],
+    };
+    scene.behave(Behaviour::Saw(a2m_provider::Observed {
+        captures: vec![a2m_provider::Capture::acting(&acting)],
+        ..a2m_provider::Observed::default()
+    }));
+    let StepOutcome::Done(observed) = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap()
+    else {
+        panic!("done");
+    };
+    assert_eq!(observed.acting(), Some(acting));
+
+    scene.behave(Behaviour::Fail(
+        StepFailure::answered(failure_of(FailureClass::Rejected, "example_refused"))
+            .with_said(format!("quantity must be positive ({SECRET})")),
+    ));
+    let failure = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        failure.failure.said(),
+        Some(format!("quantity must be positive ({})", a2m_core::REDACTED).as_str())
+    );
+    assert!(!failure.failure.message().contains("positive"));
+    assert!(handle.release(prepared, false).await.complete);
 }

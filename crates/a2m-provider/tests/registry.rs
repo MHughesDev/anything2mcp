@@ -463,3 +463,29 @@ fn a_pack_setting_that_does_not_fit_its_schema_is_refused() {
         );
     }
 }
+
+#[test]
+fn a_pack_whose_manifest_is_refused_is_named_with_its_problem_and_registers_nothing() {
+    // A code of the contract declared under another class.
+    let refused = format!(
+        "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+        manifest("alpha", "request", "")
+    );
+    let pack = TestPack::with_manifest("alpha", refused);
+    let (registry, problems) = build(&[&pack], ProviderSettings::default());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].provider, Some(name("alpha")));
+    assert_eq!(problems[0].failure.code(), &codes::MANIFEST_INVALID);
+    assert!(
+        problems[0].failure.message().contains("manifest_invalid"),
+        "{:?}",
+        problems[0].failure
+    );
+    assert!(registry.listing().is_empty());
+    let named = registry.refused();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].name.as_deref(), Some("alpha"));
+    assert_eq!(named[0].version.as_deref(), Some("0.1.0"));
+    assert_eq!(named[0].problem, problems[0].failure);
+    assert_eq!(registry.archetype(&mode()), None);
+}

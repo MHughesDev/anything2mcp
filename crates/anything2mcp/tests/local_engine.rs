@@ -216,9 +216,12 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     }
     assert_eq!(through_engine[1].0, Some(0), "{through_engine:?}");
     assert_eq!(through_engine[1].1["result"]["status"], "completed");
-    // A person's act, asked by a program: a person is needed.
+    // A person's act, asked by a program: a person is needed, on the page
+    // the engine serves for it (decision 0163).
     assert_eq!(through_engine[3].0, Some(3), "{through_engine:?}");
-    assert_eq!(through_engine[3].1["error"]["code"], "person_required");
+    assert_eq!(through_engine[3].1["result"]["state"], "needs_person");
+    let link = through_engine[3].1["result"]["link"].as_str().unwrap();
+    assert!(link.starts_with("http://127.0.0.1:"), "{link}");
     // The engine works on the project folder the command was run in.
     assert_eq!(through_engine[4].0, Some(0), "{through_engine:?}");
     assert_eq!(through_engine[4].1["result"]["ok"], true);
@@ -266,6 +269,12 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     for (args, through) in asked.iter().zip(&through_engine) {
         let done = output(machine.program(args)).await;
         assert_eq!(done.status.code(), through.0, "{args:?}");
+        if args[..2] == ["version", "publish"] {
+            // In one process there is no page: the terminal is asked, and
+            // with none the act is refused. A person is needed either way.
+            assert_eq!(object(&done)["error"]["code"], "person_required");
+            continue;
+        }
         assert_eq!(settled(object(&done)), through.1, "{args:?}");
     }
     let inside = output(machine.program(&["--in-process", "engine", "status"])).await;
@@ -497,6 +506,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
         person_at_terminal: false,
         person: None,
         key_store: None,
+        program: None,
     };
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let finished = run_with(&args, &host).await;
@@ -544,7 +554,10 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
     // The page shows the change itself, and the prompt this machine has.
-    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let page = http.get(&link).send().await.unwrap();
     assert_eq!(page.status().as_u16(), 200);
     assert_eq!(page.headers()["referrer-policy"], "same-origin");
@@ -655,7 +668,10 @@ async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its
 
     // The page says plainly that no presence prompt is available on this
     // machine, and why, before anything is pressed.
-    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let text = http.get(&link).send().await.unwrap().text().await.unwrap();
     assert!(
         text.contains("No presence prompt is available on this machine"),
@@ -757,7 +773,9 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         .await
         .unwrap();
     let response: Json = serde_json::from_slice(&body).unwrap();
-    assert_eq!(response["error"]["code"], "person_required", "{response}");
+    // Asked for, the act waits on its page; a prompt rises only when
+    // someone presses there (decision 0163).
+    assert_eq!(response["result"]["state"], "needs_person", "{response}");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
     // The command line itself, started at a terminal, is the same through
@@ -769,6 +787,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         person_at_terminal: true,
         person: None,
         key_store: None,
+        program: None,
     };
     let args: Vec<String> = ["version", "publish", "example"]
         .iter()
@@ -777,7 +796,9 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
     let finished = run_with(&args, &host).await;
     assert_eq!(finished.code, 3, "{finished:?}");
     let response: Json = serde_json::from_str(finished.stdout.trim()).unwrap();
-    assert_eq!(response["error"]["code"], "person_required", "{response}");
+    // Asked for, the act waits on its page; a prompt rises only when
+    // someone presses there (decision 0163).
+    assert_eq!(response["result"]["state"], "needs_person", "{response}");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
@@ -814,4 +835,102 @@ async fn a_project_folder_whose_name_holds_a_space_and_a_letter_outside_ascii_re
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(stop.code, 0, "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
+}
+
+/// A person's act through a running engine, end to end (decision 0163):
+/// the real program, as an agent, asks to publish the drafted target; the
+/// engine answers that a person is needed, with the page's link; a person
+/// presses Carry out on the page and passes the presence prompt; the
+/// version is published once, and the same call then gives back what
+/// became of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agents_publish_waits_on_its_page_and_a_persons_press_publishes_it_once() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    let serving = tokio::spawn(local.serve());
+    let read = ["tool", "call", ORDER_GET, "--input", READ_INPUT];
+
+    // Nothing is published yet, so the read finds no tool.
+    let before = output(machine.program(&read)).await;
+    assert_ne!(before.status.code(), Some(0), "{before:?}");
+
+    // The real program, as an agent, asks; a person is needed, on a page.
+    let publish = ["version", "publish", "example"];
+    let asked = output(machine.program(&publish)).await;
+    assert_eq!(asked.status.code(), Some(3), "{asked:?}");
+    let response = object(&asked);
+    assert_eq!(response["result"]["state"], "needs_person", "{response}");
+    let link = response["result"]["link"].as_str().unwrap().to_owned();
+    assert!(link.starts_with("http://127.0.0.1:"), "{link}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    // The page shows what will be done; a person presses Carry out, from
+    // the page's own origin, and passes the prompt.
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let page = http.get(&link).send().await.unwrap();
+    assert_eq!(page.status().as_u16(), 200);
+    let text = page.text().await.unwrap();
+    assert!(text.contains("version.publish"), "{text}");
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/act/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/confirm"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    let said = pressed.status().as_u16();
+    let body = pressed.text().await.unwrap();
+    assert_eq!(said, 200, "{body}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
+
+    // Published: the read is answered.
+    let after = output(machine.program(&read)).await;
+    assert_eq!(after.status.code(), Some(0), "{after:?}");
+    assert_eq!(object(&after)["result"]["status"], "completed");
+
+    // The same call gives back what became of the act, and publishes
+    // nothing more: no second page, and no second prompt.
+    let again = output(machine.program(&publish)).await;
+    let response = object(&again);
+    assert_ne!(response["result"]["state"], "needs_person", "{response}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
+    // A second press on the same page finds nothing to carry out: the page
+    // is refused, or its listener has closed with nothing left waiting.
+    let twice = http
+        .post(format!("{link}/confirm"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await;
+    assert!(
+        twice
+            .as_ref()
+            .map_or(true, |answer| answer.status().as_u16() != 200),
+        "{twice:?}"
+    );
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
+
+    let stop = output(machine.program(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    lock_comes_free(&machine).await;
 }

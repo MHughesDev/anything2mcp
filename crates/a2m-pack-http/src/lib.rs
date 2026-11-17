@@ -29,6 +29,7 @@
 
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod endpoints;
 mod json;
@@ -101,6 +102,9 @@ impl Pack for HttpPack {
                 .lint_rule(Arc::new(endpoints::EffectMethod))
                 .lint_rule(Arc::new(endpoints::SignedEndpoint))
                 .drafting_rule(Arc::new(openapi::DescribedOperationRule {
+                    kind: openapi::described_operation()?,
+                }))
+                .drafting_rule(Arc::new(draft::DescribedReadRule {
                     kind: openapi::described_operation()?,
                 })),
         )?;

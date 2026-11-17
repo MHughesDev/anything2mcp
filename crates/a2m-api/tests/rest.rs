@@ -166,7 +166,9 @@ impl World {
             app,
             kernel,
             base,
-            http: reqwest::Client::new(),
+            http: a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+                .build()
+                .unwrap(),
             server,
             surface,
             _folder: folder,

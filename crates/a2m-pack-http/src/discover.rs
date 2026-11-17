@@ -36,8 +36,11 @@ pub const DESCRIPTION_FILE: &str = "description";
 /// The name, in a discovery's focus, of the path a description is fetched
 /// from on the surface.
 pub const DESCRIPTION_PATH: &str = "description_path";
-/// Where a description is looked for when the focus names no path.
-const DEFAULT_DESCRIPTION_PATH: &str = "/openapi.json";
+/// Where a description is looked for when the focus names no path, in
+/// order: the places the format's own tooling serves one by convention.
+/// The first that answers with a success and a body is read; one GET each,
+/// and no other place is tried.
+const DEFAULT_DESCRIPTION_PATHS: &[&str] = &["/openapi.json", "/api/openapi.json"];
 
 /// The version of the shape of an `endpoint` finding's `found`.
 const ENDPOINT_FOUND_FORMAT: &str = "1";
@@ -75,13 +78,7 @@ impl<'a> ReadClient<'a> {
             })?,
         };
         let args = Values::new();
-        let input = StepInput {
-            args: &args,
-            record: None,
-            key: None,
-            stamp: None,
-            deadline: self.scope.deadline,
-        };
+        let input = StepInput::new(&args, self.scope.deadline);
         match self.port.act(&step, &input).await {
             Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => Ok(observed.values),
             Err(failure) => Err(failure.failure),
@@ -290,16 +287,30 @@ impl Discoverer for HttpDescription {
             let bytes = if let Some(file) = scope.paths.get(DESCRIPTION_FILE) {
                 file.read(scope.bounds.bytes)?
             } else {
-                let path = scope
-                    .focus
-                    .get(DESCRIPTION_PATH)
-                    .and_then(Value::as_text)
-                    .unwrap_or(DEFAULT_DESCRIPTION_PATH);
-                let answer = ReadClient::new(port, scope).get(path).await?;
-                let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
-                let body = answer.get("body").and_then(Value::as_text).ok_or_else(|| {
+                let named = scope.focus.get(DESCRIPTION_PATH).and_then(Value::as_text);
+                let paths =
+                    named.map_or_else(|| DEFAULT_DESCRIPTION_PATHS.to_vec(), |path| vec![path]);
+                let client = ReadClient::new(port, scope);
+                let mut statuses = Vec::new();
+                let mut read = None;
+                for path in paths {
+                    let answer = client.get(path).await?;
+                    let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
+                    let body = answer.get("body").and_then(Value::as_text);
+                    match body {
+                        // A named path is read whatever its status says; a
+                        // place tried by convention only on a success.
+                        Some(body) if named.is_some() || (200..300).contains(&status) => {
+                            read = Some(body.to_owned());
+                            break;
+                        }
+                        _ => statuses.push(status.to_string()),
+                    }
+                }
+                let body = read.ok_or_else(|| {
                     unreadable(&format!(
-                        "the surface answered the request for it with status {status}"
+                        "the surface answered the request for it with status {}",
+                        statuses.join(", then ")
                     ))
                 })?;
                 if u64::try_from(body.len()).unwrap_or(u64::MAX) > scope.bounds.bytes {
@@ -308,7 +319,7 @@ impl Discoverer for HttpDescription {
                         scope.bounds.bytes
                     )));
                 }
-                body.as_bytes().to_vec()
+                body.into_bytes()
             };
             // The redactor comes first, whichever way the description
             // arrived: before the text is parsed, cut, or quoted.

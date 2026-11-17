@@ -262,11 +262,26 @@ impl McpResultFace {
 
     fn rendered(response: &Response, next_is_listed: bool) -> Self {
         match (&response.error, &response.result) {
-            (Some(error), _) => Self {
-                is_error: true,
-                structured: None,
-                text: error.to_json().to_string(),
-            },
+            (Some(error), result) => {
+                // A run that failed names itself, and what the system said
+                // is shown in a field of its own, apart from the sentence
+                // (decision 0176): the result is dropped, so both are
+                // carried into the error's object.
+                let mut shown = error.to_json();
+                if let Some(result) = result {
+                    if let Some(run) = result.get("run_id") {
+                        shown["run_id"] = run.clone();
+                    }
+                    if let Some(said) = result.get("failure").and_then(|failure| failure.get("said")) {
+                        shown["said"] = said.clone();
+                    }
+                }
+                Self {
+                    is_error: true,
+                    structured: None,
+                    text: shown.to_string(),
+                }
+            }
             (None, Some(result)) => {
                 // The most useful following call travels inside the result
                 // (spec section 221): every output schema admits `next`.
@@ -496,11 +511,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         word: "add",
-        does: "Register a target, probe it, detect its sign-in, and ask for a sign-in.",
+        does: "Register a target, scout it, show the report, and ask for a sign-in.",
         steps: &[
             step("target.add", Some("name")),
-            step("target.probe", Some("target")),
-            step("auth.detect", Some("target")),
+            step("scout.run", Some("target")),
+            step("scout.report", Some("target")),
             step("session.login", Some("target")),
         ],
     },
@@ -587,3 +602,22 @@ pub const SHORTCUTS: &[Shortcut] = &[
 
 /// The process commands: they start a long-lived role and are not actions.
 pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "bridge"];
+
+/// The line a command prints for what the system itself said, apart from
+/// the failure's sentence and its next step, marked as the system's words.
+/// Every control character is shown as its escape, so that nothing the
+/// system said can move the cursor, ring, or rewrite the line before it.
+#[must_use]
+pub fn said_line(said: &str) -> String {
+    let mut shown = String::with_capacity(said.len() + 24);
+    shown.push_str("The system said: \"");
+    for c in said.chars() {
+        if c.is_control() || c == '"' || c == '\\' {
+            shown.extend(c.escape_default());
+        } else {
+            shown.push(c);
+        }
+    }
+    shown.push('"');
+    shown
+}

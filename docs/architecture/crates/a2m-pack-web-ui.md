@@ -156,6 +156,14 @@ What the kernel gives this crate:
 | 7 | Effects and hazards | Starts the browser, by path and digest, through the supervisor its context scopes; reads and writes the profile root and a staging folder for files; network to the target's declared web surfaces for what the engine itself sends; holds sessions for `web` surfaces; changes a person's screen only for a sign-in window. Hazards come from operations, not from the driver |
 | 8 | A record per new mode | None: these modes are from decision 0005 |
 
+### After the kernel's second pass (decisions 0161 and 0162)
+
+- Every step input is built with `StepInput::new` and `for_record`. The `acting` capture is made with `Capture::acting`; its bytes are the ones written before. Five runs of one read give one signature (the existing test).
+- A refusal the page shows, a screen variant handled `stop`, carries the text of that variant's element through `StepFailure::with_said`, read through the browser base, which redacts every text it reads. The failure's sentence names the variant and nothing the page said.
+- No write here states `acknowledged`: the package named none for this pack. `delete` is `irreversible`; a screen that declares any action counts as a write.
+- No version guard of an endpoint, and no key argument, exists in this pack: `page_http` is not built.
+- Keys: no step reads `StepInput::key`.
+
 ## Used by, and uses
 
 | Caller | Uses |

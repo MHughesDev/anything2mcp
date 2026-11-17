@@ -13,6 +13,7 @@ bindings:
   - mode: sql
     verb: create
     statement: shipment_insert
+    read_back: shipment_read_back
 description: >
   Adds a shipment to an order; the store assigns its number and returns it.
   Prefer example_shipment_get to read a shipment that exists.

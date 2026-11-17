@@ -516,3 +516,201 @@ fn a_folder_is_made_new_or_not_at_all() {
         assert!(!outside.exists(), "a folder was made outside the root");
     }
 }
+
+/// A verified save, one step at a time (decision 0162): a temporary file
+/// made new beside the target and handed back open, written, flushed, read
+/// back by the caller, and only then put in place, replacing the target and
+/// nothing else; a save dropped before that leaves nothing behind.
+#[test]
+fn a_verified_save_is_made_in_steps_the_caller_checks_between() {
+    let (folder, roots) = scene();
+    let project = folder.path().join("project").join("orders");
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    let before = one.identity().unwrap();
+    assert!(one.may_write().unwrap());
+    assert_eq!(std::fs::read(project.join("one.txt")).unwrap(), b"one");
+
+    let mut save = one.create_temporary().unwrap();
+    save.write(b"two, ").unwrap();
+    save.write(b"checked").unwrap();
+    save.flush().unwrap();
+    assert_eq!(save.read_back(1024).unwrap(), b"two, checked");
+    // Nothing is replaced while the caller checks.
+    assert_eq!(std::fs::read(project.join("one.txt")).unwrap(), b"one");
+    save.replace().unwrap();
+    one.flush_folder().unwrap();
+    assert_eq!(
+        std::fs::read(project.join("one.txt")).unwrap(),
+        b"two, checked"
+    );
+    // A file put in its place is another file.
+    assert_ne!(one.identity().unwrap(), before);
+    assert_eq!(one.identity().unwrap(), one.identity().unwrap());
+    let only = |folder: &std::path::Path| {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(only(&project), vec!["one.txt".to_owned()]);
+
+    // Dropped before it was put in place: the target is as it was, and the
+    // temporary file is gone.
+    let mut dropped = one.create_temporary().unwrap();
+    dropped.write(b"never").unwrap();
+    assert!(dropped.read_back(2).is_err());
+    drop(dropped);
+    assert_eq!(
+        std::fs::read(project.join("one.txt")).unwrap(),
+        b"two, checked"
+    );
+    assert_eq!(only(&project), vec!["one.txt".to_owned()]);
+
+    // A missing folder, a missing file, and a path checked for reading are
+    // each told apart.
+    let nowhere = roots
+        .check(&root("project"), "gone/one.txt", Access::Write)
+        .unwrap();
+    assert_eq!(
+        nowhere.create_temporary().unwrap_err().code(),
+        &codes::PATH_MISSING
+    );
+    let absent = roots
+        .check(&root("project"), "orders/none.txt", Access::Write)
+        .unwrap();
+    assert_eq!(absent.may_write().unwrap_err().code(), &codes::PATH_MISSING);
+    assert_eq!(absent.identity().unwrap_err().code(), &codes::PATH_MISSING);
+    let read_only = roots
+        .check(&root("project"), "orders/one.txt", Access::Read)
+        .unwrap();
+    assert_eq!(
+        read_only.create_temporary().unwrap_err().code(),
+        &codes::EFFECT_NOT_DECLARED
+    );
+}
+
+/// Whether the engine's user may write a file is answered without writing
+/// it; a file the user may not write says so.
+#[cfg(unix)]
+#[test]
+fn may_write_writes_nothing_and_tells_a_file_the_user_may_not_write() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (folder, roots) = scene();
+    let file = folder.path().join("project").join("orders").join("one.txt");
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    assert!(one.may_write().unwrap());
+    assert_eq!(std::fs::read(&file).unwrap(), b"one");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        modified
+    );
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // A user who may write anything, such as the superuser, is told so.
+    let anyone = std::fs::OpenOptions::new().write(true).open(&file).is_ok();
+    assert_eq!(one.may_write().unwrap(), anyone);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+/// The project folder of the run is the caller's, handed in checked; a run
+/// with none stops by name when a pack asks for it.
+#[test]
+fn the_project_folder_is_the_callers_or_a_named_stop() {
+    let (_folder, roots) = scene();
+    let none = a2m_provider::CheckedPaths::none();
+    assert!(none.project().is_none());
+    assert_eq!(
+        none.project_folder().unwrap_err().code(),
+        &codes::PROJECT_FOLDER_MISSING
+    );
+    let project = roots.folder(&root("project"), Access::Write).unwrap();
+    let paths = a2m_provider::CheckedPaths::none().with_project(project);
+    let file = paths
+        .project_folder()
+        .unwrap()
+        .join("orders/one.txt")
+        .unwrap();
+    assert_eq!(file.read(16).unwrap(), b"one");
+}
+
+/// A save's temporary file is private to the engine's user, takes the
+/// target's owner, group, and mode through its own handle, and is removed
+/// only while its name still holds the file it made (decision 0176).
+#[cfg(unix)]
+#[test]
+fn a_temporary_file_is_private_keeps_the_targets_mode_and_removes_only_itself() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    let (folder, roots) = scene();
+    let orders = folder.path().join("project").join("orders");
+    let file = orders.join("one.txt");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    let temporaries = || -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(&orders)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.file_name().unwrap().to_string_lossy().starts_with(".a2m-new-"))
+            .collect()
+    };
+
+    let mut save = one.create_temporary().unwrap();
+    let made = temporaries();
+    assert_eq!(made.len(), 1);
+    let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode(&made[0]), 0o600);
+    // Its identity, from its handle, is the identity its name gives, and
+    // an open handle's identity compares with a path's.
+    let named = roots
+        .check(
+            &root("project"),
+            &format!("orders/{}", made[0].file_name().unwrap().to_string_lossy()),
+            Access::Read,
+        )
+        .unwrap();
+    assert_eq!(save.identity().unwrap(), named.identity().unwrap());
+    let open = std::fs::File::open(&file).unwrap();
+    assert_eq!(
+        a2m_provider::FileIdentity::of_open(&open).unwrap(),
+        one.identity().unwrap()
+    );
+    assert_ne!(save.identity().unwrap(), one.identity().unwrap());
+
+    assert!(save.keep_owner_and_mode().unwrap());
+    save.write(b"kept").unwrap();
+    assert!(save.keep_owner_and_mode().unwrap());
+    let target = std::fs::metadata(&file).unwrap();
+    let made_meta = std::fs::metadata(&made[0]).unwrap();
+    assert_eq!(mode(&made[0]), 0o640);
+    assert_eq!(made_meta.uid(), target.uid());
+    assert_eq!(made_meta.gid(), target.gid());
+    save.flush().unwrap();
+    save.replace().unwrap();
+    assert_eq!(mode(&file), 0o640);
+    assert_eq!(std::fs::read(&file).unwrap(), b"kept");
+
+    // A target with a special bit is not copied: the answer says so.
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o1644)).unwrap();
+    let mut special = one.create_temporary().unwrap();
+    assert!(!special.keep_owner_and_mode().unwrap());
+    drop(special);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    // Another file put at the temporary file's name is left alone when the
+    // save is dropped.
+    let save = one.create_temporary().unwrap();
+    let name = temporaries().pop().unwrap();
+    std::fs::remove_file(&name).unwrap();
+    std::fs::write(&name, b"someone else's").unwrap();
+    drop(save);
+    assert_eq!(std::fs::read(&name).unwrap(), b"someone else's");
+    std::fs::remove_file(&name).unwrap();
+    assert!(temporaries().is_empty());
+}

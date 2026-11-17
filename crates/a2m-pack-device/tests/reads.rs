@@ -19,8 +19,8 @@ use a2m_core::{
 };
 use a2m_provider::{Destinations, Posture, Sent, StepFailure};
 use a2m_telemetry::{
-    Acting, CaptureLevel, ChoiceReason, Detail, PassStart, Phase, StepRecord, TraceBuilder,
-    TraceIdentity, TraceOutcome, TracedValue,
+    CaptureLevel, ChoiceReason, PassStart, Phase, StepRecord, TraceBuilder, TraceIdentity,
+    TraceOutcome, TracedValue,
 };
 use common::{Planted, Ran, Scene, decimal};
 use example_device::{Answer, Corruption, Fault, FaultKind, FrameKind, Scope, Version};
@@ -97,8 +97,9 @@ impl KeyedDigest for NoKey {
     }
 }
 
-/// The trace of one run of a read, as the engine would record it: what the
-/// driver sent is the means, and the size of what came back is measured.
+/// The trace of one run of a read, as the engine would record it: how each
+/// step was done is what the driver's `acting` capture says, and the frames
+/// it sent are measured.
 fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
     let handle = scene.handle();
     let operation = OperationName::new("example_pump_speed_get").unwrap();
@@ -116,20 +117,11 @@ fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
         Arc::new(a2m_core::NoSecrets),
         Arc::new(NoKey),
     );
-    let mut captures = ran.captures.iter();
     let mut values = ran.values.iter();
     for (position, kind) in ran.kinds.iter().enumerate() {
-        let acting = (kind == "open" || kind == "expect").then(|| {
-            let capture: serde_json::Value =
-                serde_json::from_slice(&captures.next().unwrap().bytes).unwrap();
-            Acting {
-                means: vec![Detail::new("sent", capture["sent"].as_str().unwrap())],
-                measured: vec![Detail::new(
-                    "reply_bytes",
-                    capture["reply_bytes"].to_string(),
-                )],
-            }
-        });
+        // How the step was done is what the driver said: its `acting`
+        // capture, one for each step.
+        let acting = Some(ran.acting[position].clone());
         let read = (kind == "expect")
             .then(|| values.next())
             .flatten()
@@ -179,6 +171,11 @@ async fn five_runs_of_one_read_give_one_trace_signature() {
         }
     }
     assert!(signatures.windows(2).all(|pair| pair[0] == pair[1]));
+    // Every step said how it was done, and what it said is not a value.
+    let first = first.unwrap();
+    assert_eq!(first.acting.len(), first.kinds.len());
+    let means: Vec<_> = first.acting.iter().map(|step| step.means.clone()).collect();
+    assert!(means.iter().all(|step| step[0].name == "step"));
 }
 
 #[tokio::test]

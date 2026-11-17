@@ -4,14 +4,15 @@
 use a2m_core::{Hazard, LintCode};
 use a2m_files::{CompileMode, Diagnostic, Doc, Level, LintRule, Located, ResolvedView, Stage};
 
-use crate::names::{DATABASE, STATEMENT, lint};
+use crate::names::{STATEMENT, lint};
 
 /// Every statement the target declares, with its body.
 fn statements<'a>(
     view: &ResolvedView<'a>,
 ) -> Vec<(&'a str, &'a Located<Doc>, &'a Located<String>)> {
-    view.entries(&STATEMENT, &DATABASE)
+    crate::names::surface_kinds()
         .iter()
+        .flat_map(|kind| view.entries(&STATEMENT, kind))
         .flat_map(|doc| {
             doc.get("statements")
                 .map(Located::entries)

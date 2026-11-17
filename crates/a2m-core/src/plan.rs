@@ -14,6 +14,7 @@ use crate::canonical::{self, CanonicalJson, PackPayload};
 use crate::decimal::{Decimal, Rounding};
 use crate::digest::Digest;
 use crate::effect::{EffectClass, Hazard};
+use crate::evidence::WriteEvidence;
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::ident::{
     AuthProviderName, CredentialRef, Environment, FileKindName, OperationName, StepKind,
@@ -797,8 +798,11 @@ pub struct BindingPlan {
     pub lookup: Vec<Step>,
     /// How long a lookup may lag behind a write, in milliseconds.
     pub settle_ms: u32,
-    /// Whether the save's own response may stand for the read-back.
-    pub prefer_response: bool,
+    /// What stands as the evidence that a write landed: the read-back, the
+    /// save's own answer, or, for an irreversible operation with nothing to
+    /// read, the committing step's acknowledgement alone. A lowering's
+    /// `prefer_response` compiles to `response`.
+    pub evidence: WriteEvidence,
     /// What must hold before the binding may be chosen.
     pub precondition: Option<ExprIndex>,
 }
@@ -1361,7 +1365,14 @@ impl Plan {
                         "has a binding whose committing steps are not its commit points",
                     );
                 }
-                if needs_read_back && binding.read_back.is_empty() {
+                if binding.evidence == WriteEvidence::Acknowledged {
+                    if operation.effect != EffectClass::Irreversible {
+                        return unsafe_plan(
+                            position,
+                            "has a binding whose only evidence is an acknowledgement and is not irreversible",
+                        );
+                    }
+                } else if needs_read_back && binding.read_back.is_empty() {
                     return unsafe_plan(position, "writes and has a binding with no read-back");
                 }
             }
@@ -1593,7 +1604,7 @@ mod tests {
                 read_back: vec![step("request", 0), step("extract", 1)],
                 lookup: vec![find],
                 settle_ms: 2_000,
-                prefer_response: false,
+                evidence: WriteEvidence::ReadBack,
                 precondition: Some(ExprIndex::new(2)),
             }],
             manifest: PermissionManifest {
@@ -1847,7 +1858,7 @@ mod tests {
     /// Windows, macOS, and Linux, in every run. If the encoding or the
     /// sample changes on purpose, this changes with it, and the plan format
     /// number says whether stored plans still load.
-    const SAMPLE_HASH: &str = "be84dc86e03c4018510b74b9e4dba718d2633d3201b0d2bc9aa9065c8d2b917f";
+    const SAMPLE_HASH: &str = "a0c8f809caff95d328419cdc02052e9ae6d4d81d7f27c7c1463c354f20e45d2a";
 
     #[test]
     fn a_plan_encodes_to_the_same_bytes_every_time_and_on_every_machine() {
@@ -2084,7 +2095,7 @@ mod tests {
     #[test]
     fn a_plan_that_breaks_a_rule_of_a_write_is_refused_on_the_way_out_and_on_the_way_in() {
         type Break = fn(&mut Plan);
-        let breaks: [(&str, Break); 13] = [
+        let breaks: [(&str, Break); 14] = [
             // A write that says it reads: nothing would be recorded first.
             ("reads and states commit points", |plan| {
                 plan.operations[0].effect = EffectClass::Read;
@@ -2130,6 +2141,11 @@ mod tests {
             ("has a hazard", |plan| {
                 plan.operations[0].hazard = Hazard::SendsOutside;
             }),
+            // An acknowledgement stands as evidence only where nothing can
+            // be undone, and so nothing can be read back.
+            ("only evidence is an acknowledgement", |plan| {
+                plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+            }),
             ("states less", |plan| {
                 plan.pipelines[0].effect = EffectClass::Read;
             }),
@@ -2157,6 +2173,15 @@ mod tests {
         let failure = decode_own(unread.as_bytes()).unwrap_err();
         assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
         assert!(failure.message().contains("commit point"), "{failure}");
+
+        // An irreversible operation may take the acknowledgement alone, and
+        // then needs no read-back.
+        let mut plan = sample();
+        plan.operations[0].effect = EffectClass::Irreversible;
+        plan.pipelines[0].effect = EffectClass::Irreversible;
+        plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+        plan.operations[0].bindings[0].read_back.clear();
+        plan.encode().unwrap();
     }
 
     #[test]

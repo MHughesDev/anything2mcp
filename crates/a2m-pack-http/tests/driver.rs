@@ -296,6 +296,9 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         (FailureClass::Rejected, "app_validation_error")
     );
     assert_eq!(refused.sent, Sent::Answered);
+    // The system's own words are carried apart from the product's sentence.
+    assert_eq!(refused.failure.said(), Some("The line item was not saved."));
+    assert!(!refused.failure.message().contains("was not saved"));
     assert_eq!(app.stored_item("A-102", "L-900").await.unwrap(), None);
 
     // A record changed by someone else since it was read: the version the

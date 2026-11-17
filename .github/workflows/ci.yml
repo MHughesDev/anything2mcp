@@ -247,6 +247,75 @@ jobs:
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
       - name: Lint with TLS on
-        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --all-targets --locked --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls -- -D warnings
+        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --features anything2mcp/tls -- -D warnings
       - name: Test with TLS on
-        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --locked --no-fail-fast --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --features anything2mcp/tls
+
+  postgres:
+    name: The data pack against a real PostgreSQL server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # A missing server fails each test instead of skipping it.
+      A2M_REQUIRE_POSTGRES: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The runner image carries PostgreSQL's programs, not started. The stand
+      # starts a server of its own from them, in a folder of its own. When
+      # the image stops carrying them, this step says so.
+      - name: The PostgreSQL programs the stand starts its own server from are here
+        run: |
+          bin=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+          test -x "$bin/initdb" && test -x "$bin/pg_ctl" && test -x "$bin/postgres"
+          "$bin/postgres" --version
+      - name: Lint with the server store on
+        run: cargo clippy -p a2m-pack-data --all-targets --locked --features postgres -- -D warnings
+      - name: Test with the server store on
+        run: cargo test -p a2m-pack-data --locked --no-fail-fast --features postgres
+
+  nats:
+    name: The stream pack against a real NATS server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      A2M_TEST_NATS: 127.0.0.1:4222
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The official image, named by its release line. It is a test's
+      # counterpart and nothing of it is shipped; pinning it by digest is owed.
+      - name: Start a real server with JetStream, reachable from this machine only
+        run: docker run -d --name nats -p 127.0.0.1:4222:4222 nats:2.12 -js
+      - name: Wait until the server greets a connection
+        run: |
+          for attempt in $(seq 1 60); do
+            if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4222 && head -c 4 <&3' 2>/dev/null | grep -q INFO; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the server did not greet a connection within a minute"
+          exit 1
+      - name: The pack's own client against the real server
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p a2m-pack-stream --locked --test nats -- the_same_client_against_a_real_server --nocapture 2>&1 | tee nats-test.log
+          # The test says so when it finds no server, and passes: that is not a pass here.
+          if grep -q "skipped:" nats-test.log; then
+            echo "the test skipped itself"
+            exit 1
+          fi
+          grep -q "test result: ok. 1 passed" nats-test.log
+      - name: Show the server's log
+        if: always()
+        run: docker logs nats

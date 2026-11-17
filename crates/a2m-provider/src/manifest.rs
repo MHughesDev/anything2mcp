@@ -1030,7 +1030,10 @@ impl Manifest {
             if other_class {
                 return Err(invalid(
                     "failure_codes",
-                    "a code of the provider contract keeps its own class",
+                    &format!(
+                        "`{}` is a code of the provider contract and keeps its own class, not `{}`",
+                        code.code, code.class
+                    ),
                 ));
             }
             if codes::is_kernel_only(&code.code) {

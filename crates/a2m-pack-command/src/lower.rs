@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
-    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb,
+    SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
@@ -286,6 +286,26 @@ impl Lowering for CliLowering {
             "create" | "update" => EffectClass::Write,
             "delete" => EffectClass::Irreversible,
             _ => EffectClass::Read,
+        }
+    }
+
+    /// An operation declared `irreversible`, with no identity to find again
+    /// and a binding that names no `read_back` command, has nothing to read
+    /// the result back through: the program's own end is the only evidence
+    /// there can be. Every other write keeps what the default says, and a
+    /// binding that names a `read_back` always keeps it. An operation with
+    /// an identity and no read-back is left to the compiler's refusal.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        let operation = binding.operation;
+        if operation.effect() == EffectClass::Irreversible
+            && operation.strategy() == IdentityStrategy::None
+            && binding.field("read_back").is_none()
+            && lowered.read_back.is_empty()
+            && lowered.act.first().is_some_and(|step| step.commits)
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
         }
     }
 

@@ -16,10 +16,11 @@ use a2m_core::{
 };
 use a2m_expr::Normalizer;
 use a2m_provider::{
-    Access, BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
-    RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
+    PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
@@ -128,6 +129,43 @@ struct State {
     /// Temporary files this driver made and may not have removed.
     temporary: Vec<Made>,
 }
+
+/// How a step is done, for its trace record: the format of the file and
+/// the part of the work the step is, never a value.
+fn means_of(spec: &StepSpec, format: Option<Format>) -> Vec<Detail> {
+    let mut means = vec![Detail::new(
+        "format",
+        format.map_or("unknown", Format::as_str),
+    )];
+    let (name, value) = match spec {
+        StepSpec::Open { for_write } => ("open_for", if *for_write { "write" } else { "read" }),
+        StepSpec::Locate { expect, .. } => (
+            "expect",
+            match expect {
+                Expect::Present => "present",
+                Expect::Absent => "absent",
+                Expect::All => "all",
+            },
+        ),
+        StepSpec::Set { change, .. } => (
+            "change",
+            match change {
+                Change::Update => "update",
+                Change::Create => "create",
+                Change::Delete => "delete",
+            },
+        ),
+        StepSpec::Save => ("save", "temporary_file_then_rename"),
+        StepSpec::Confirm => ("confirm", "digest"),
+        StepSpec::One { .. } => ("read", "one"),
+        StepSpec::List { .. } => ("read", "list"),
+    };
+    means.push(Detail::new(name, value));
+    means
+}
+
+/// The root whose folder is the caller's project folder.
+const PROJECT_ROOT: &str = "project";
 
 /// The fields a `file` surface adds beside its folder.
 #[derive(Debug, Default, Deserialize)]
@@ -309,7 +347,14 @@ fn token(stamp: &str) -> String {
 }
 
 impl FileDriver {
-    fn folder(&self, surface: &SurfaceRef) -> Result<Folder, StepFailure> {
+    /// The surface's folder. In the root `project` it is a folder of the
+    /// caller's project: the project folder of the request that started the
+    /// run, which the run's checked paths hold, and never the pack's root of
+    /// that name, which is the folder the engine was started in. A run with
+    /// no project folder stops by name. The manifest declares that the pack
+    /// reads the project and does not write it, so such a folder is for
+    /// reading alone.
+    fn folder(&self, surface: &SurfaceRef, paths: &CheckedPaths) -> Result<Folder, StepFailure> {
         let payload = &surface.surface.payload;
         let fields: SurfaceFields = if payload.is_none() {
             SurfaceFields::default()
@@ -321,6 +366,15 @@ impl FileDriver {
         let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
             .map_err(StepFailure::not_sent)?;
         let address = surface.surface.address.as_str();
+        if root.as_str() == PROJECT_ROOT {
+            let project = paths.project_folder().map_err(StepFailure::not_sent)?;
+            let folder = if address == "." {
+                project.clone()
+            } else {
+                project.join(address).map_err(StepFailure::not_sent)?
+            };
+            return Ok(Folder::reading(folder, project));
+        }
         let under = |access| {
             if address == "." {
                 self.roots.folder(&root, access)
@@ -911,7 +965,7 @@ impl Driver for FileDriver {
             if cx.surface.surface.kind != SURFACE_KIND {
                 return Err(plan_unreadable("the surface is not of the kind `file`"));
             }
-            let folder = self.folder(cx.surface)?;
+            let folder = self.folder(cx.surface, cx.paths)?;
             let section = cx.plan.packs.iter().find(|section| {
                 section.pack == PACK
                     && section.kind == DOCUMENT_KIND
@@ -962,8 +1016,15 @@ impl Driver for FileDriver {
                 .as_ref()
                 .map(|refers| refers.entry.as_str())
                 .ok_or_else(|| plan_unreadable("a step names no document"))?;
+            let means = means_of(
+                &spec,
+                state
+                    .documents
+                    .get(document)
+                    .map(|loaded| loaded.spec.format),
+            );
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
-            match spec {
+            let result = match spec {
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
                 StepSpec::Save => done(self.save(state, document, step, input).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
@@ -992,7 +1053,27 @@ impl Driver for FileDriver {
                         }
                     }
                 }
-            }
+            };
+            // How the step was done goes to its trace record: the means,
+            // which the signature covers, and what was measured, which it
+            // does not.
+            let measured = state
+                .current
+                .as_ref()
+                .filter(|current| current.document == document)
+                .map(|current| vec![Detail::new("bytes", current.open.bytes.len().to_string())])
+                .unwrap_or_default();
+            let acting = Capture::acting(&Acting { means, measured });
+            result.map(|outcome| match outcome {
+                StepOutcome::Done(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Done(observed)
+                }
+                StepOutcome::Absent(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Absent(observed)
+                }
+            })
         })
     }
 

@@ -31,11 +31,19 @@ codes! {
     PROTOCOL_UNKNOWN = Input, "protocol_unknown";
     /// The session holds a credential the wire protocol cannot present.
     CREDENTIAL_NOT_CARRIED = Input, "credential_not_carried";
+    /// A step that settles a record by what its earlier steps recorded was
+    /// given nothing recorded, or nothing of the form it needs; nothing was
+    /// sent.
+    NOTHING_RECORDED = Input, "nothing_recorded";
+    /// The connection would carry the session in plain text to an address
+    /// that is not this machine's own, or to a server that asks for TLS.
+    TRANSPORT_REFUSED = Policy, "transport_refused";
     /// An acknowledgement was asked for on a queue the runtime does not own.
     ACK_NOT_OWNED = Policy, "ack_not_owned";
     /// The broker's address is not one the run may reach.
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared";
-    /// A log holds more than a scan may read, so the scan cannot say "absent".
+    /// A log or a queue holds more than a scan may read, so the scan cannot
+    /// say whether the record's message is there.
     SCAN_LIMIT = Policy, "scan_limit";
     /// A message taken is larger than may be recorded before it is
     /// acknowledged; it was given back.

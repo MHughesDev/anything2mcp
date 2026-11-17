@@ -31,8 +31,8 @@ The scout is the mechanical half of the overlay method ([section 401](401-overla
 | 6 | Try | Each drafted read that the scout is allowed to try runs in the sandbox, five times, and the results are compared | `draft.try` |
 | 7 | Report | One report: what was found, what was drafted, what was proven, what is open, and what the developer should look at first | `scout.report` |
 
-- **It is a fixed pipeline.** There is no model in it and no choice in it. The same system in the same state gives the same report, and the report carries a hash to show it.
-- **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage.
+- **It is a fixed pipeline.** There is no model in it and no choice in it. The same system in the same state gives the same report, and the report carries a hash of its content, which leaves out the identifiers of its runs, to show it ([decision 0171](../../decisions/0171-the-scouts-report-is-hashed-data-with-the-systems-words-kept-apart.md)).
+- **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage. Identify and discover share one discovery job per surface, because the engine runs every discoverer that suits a surface in one job ([decision 0170](../../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)).
 - **It is bounded and polite.** Every stage has a limit on time, size, depth, and number of requests, and the report says which limits were hit. The scout identifies itself as automation, keeps to the target's rate limit, and stops at a block ([principle 9](../1-product/103-design-principles.md)).
 - **It needs consent like any discovery.** On one machine the person who added the target has given it. On a server the target's consent record must exist first ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
 - **It needs a session, and cannot make one.** If a surface needs a sign-in, the scout reports `needs_login` for that surface, carries on with the others, and resumes when the person has signed in.

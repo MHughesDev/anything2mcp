@@ -40,7 +40,22 @@ handler!(
     /// `provider.list`: every pack and provider, in order of name.
     provider_list,
     |kernel, _call| {
-        let providers: Vec<Json> = kernel.providers().listing().iter().map(listed).collect();
+        let registry = kernel.providers();
+        let mut providers: Vec<Json> = registry.listing().iter().map(listed).collect();
+        // A provider whose manifest was refused registers nothing and has
+        // no listing: it is named all the same, with why, as far as its
+        // manifest's text names it.
+        providers.extend(registry.refused().iter().map(|refused| {
+            json!({
+                "name": refused.name.as_deref().map_or_else(|| "(unnamed)".to_owned(), codes::shown),
+                "version": refused.version.as_deref().map(codes::shown).unwrap_or_default(),
+                "kind": kind(refused.kind),
+                "availability": "refused",
+                "registered": false,
+                "fix": refused.problem.next_step(),
+                "problems": [problem(&refused.problem)],
+            })
+        }));
         Ok(Output::ok(json!({"providers": providers})).then(Next::new(
             "provider.describe",
             json!({"provider": "<name>"}),

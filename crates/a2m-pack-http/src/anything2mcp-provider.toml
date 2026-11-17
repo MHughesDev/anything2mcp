@@ -87,6 +87,10 @@ summary = "No `http` binding names an endpoint whose requests the front end comp
 finding_kind = "described_operation"
 file_kind = "endpoint"
 
+[[drafting_rules]]
+finding_kind = "described_operation"
+file_kind = "operation"
+
 [[failure_codes]]
 class = "rejected"
 code = "app_validation_error"

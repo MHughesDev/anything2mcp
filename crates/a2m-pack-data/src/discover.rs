@@ -20,7 +20,7 @@ use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::model::SurfaceFields;
-use crate::names::{CATALOG, DATABASE, PACK, PACK_VERSION, codes};
+use crate::names::{CATALOG, PACK, PACK_VERSION, codes};
 use crate::store::Catalog;
 
 /// One column of a `table` finding.
@@ -72,6 +72,14 @@ pub(crate) struct TableFound {
     pub foreign_keys: Vec<ForeignKeyFound>,
     /// The triggers on it.
     pub triggers: Vec<String>,
+    /// The rules that rewrite a write to it. Left out where there are none,
+    /// so that a finding of the embedded store, which has none, is as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<String>,
+    /// The columns the store computes from the row's others. Left out where
+    /// there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generated: Vec<String>,
     /// The tables whose rows change when a row of this one is changed or
     /// deleted, through a cascading key.
     pub cascades_to: Vec<String>,
@@ -83,7 +91,10 @@ pub(crate) struct TableFound {
 impl TableFound {
     /// Whether a write to the table reaches data beyond the rows it names.
     pub(crate) fn reaches_elsewhere(&self) -> bool {
-        !self.triggers.is_empty() || !self.cascades_to.is_empty()
+        !self.triggers.is_empty()
+            || !self.rules.is_empty()
+            || !self.generated.is_empty()
+            || !self.cascades_to.is_empty()
     }
 }
 
@@ -129,8 +140,16 @@ pub(crate) fn catalog_values(catalog: &Catalog) -> Values {
                     )
                 })
                 .collect();
+            let mut record = Values::new();
+            // Only where there are some: the embedded store has none.
+            if !table.rules.is_empty() {
+                record = record.with("rules", texts(&table.rules));
+            }
+            if !table.generated.is_empty() {
+                record = record.with("generated", texts(&table.generated));
+            }
             Value::Record(
-                Values::new()
+                record
                     .with("name", table.name.as_str())
                     .with("view", table.view)
                     .with("columns", Value::List(columns))
@@ -218,6 +237,8 @@ fn tables_found(values: &Values, surface: &str, store: &str) -> Vec<TableFound> 
                 })
                 .collect(),
             triggers: texts_of(table.get("triggers")),
+            rules: texts_of(table.get("rules")),
+            generated: texts_of(table.get("generated")),
             cascades_to: Vec::new(),
             checks_seen: false,
         })
@@ -293,7 +314,7 @@ impl Discoverer for CatalogDiscoverer {
     }
 
     fn suits(&self, surface: &SurfaceDescription) -> bool {
-        surface.kind == DATABASE
+        crate::names::is_database(&surface.kind)
     }
 
     fn discover<'a>(
@@ -321,13 +342,7 @@ impl Discoverer for CatalogDiscoverer {
                 payload: PackPayload::none(),
             };
             let args = Values::new();
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: scope.deadline,
-            };
+            let input = StepInput::new(&args, scope.deadline);
             let observed = match port.act(&step, &input).await {
                 Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => observed,
                 Err(failed) => return Err(failed.failure),

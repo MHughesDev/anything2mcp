@@ -97,13 +97,7 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
         .find(|step| step.commits)
         .unwrap();
     let args = Values::new().with("dosing_rate", common::decimal("3"));
-    let input = StepInput {
-        args: &args,
-        record: None,
-        key: None,
-        stamp: None,
-        deadline: Deadline::after(Duration::from_secs(5)),
-    };
+    let input = StepInput::new(&args, Deadline::after(Duration::from_secs(5)));
     let refused = port.act(write, &input).await.unwrap_err();
     assert_eq!(
         (refused.failure.class(), refused.sent),

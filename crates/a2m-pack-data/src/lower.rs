@@ -9,6 +9,7 @@
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, IdentityStrategy, LintCode,
     Mode, PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb,
+    WriteEvidence,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
@@ -108,11 +109,15 @@ impl Lower<'_, '_> {
 
     /// One argument for each parameter of the statement: the expression the
     /// binding gives under `params`, or the operation's input of that name.
+    /// A key parameter that neither gives, in the read-back of a write whose
+    /// key the store assigns (`assigned`), has no argument: the driver takes
+    /// it from what the write's own steps recorded before its commit point.
     fn args(
         &self,
         name: &str,
         statement: &Statement,
         at: &Place,
+        assigned: bool,
         problems: &mut Diagnostics,
     ) -> Vec<StepArg> {
         let mut args = Vec::new();
@@ -129,6 +134,7 @@ impl Lower<'_, '_> {
                     self.cx
                         .expr_at(&format!("input.{}", param.name), at, expected.as_ref())
                 }
+                None if assigned && param.key => continue,
                 None => Err(problem(
                     &lint::PARAM_UNBOUND,
                     Stage::Resolve,
@@ -157,6 +163,7 @@ impl Lower<'_, '_> {
         name: &str,
         statement: &Statement,
         at: &Place,
+        assigned: bool,
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
         let drift = || fails(FailureClass::Drift, codes::SCHEMA_CHANGED);
@@ -172,7 +179,7 @@ impl Lower<'_, '_> {
             fails(FailureClass::Busy, codes::STORE_LOCKED),
         )?;
         let mut execute = self.step(EXECUTE, name, statement, &StepDetail::default(), drift())?;
-        execute.args = self.args(name, statement, at, problems);
+        execute.args = self.args(name, statement, at, assigned, problems);
         let mut fetch = self.step(FETCH, name, statement, &StepDetail::default(), drift())?;
         fetch.lookup = statement.returns == Returns::OneOrNone;
         Some(vec![begin, execute, fetch])
@@ -204,7 +211,7 @@ impl Lower<'_, '_> {
             &StepDetail::default(),
             fails(FailureClass::Drift, codes::SCHEMA_CHANGED),
         )?;
-        execute.args = self.args(name, statement, at, problems);
+        execute.args = self.args(name, statement, at, false, problems);
         // No row changed: the record is gone, or the guard did not hold.
         let none_changed = match (statement.does, statement.guarded) {
             (Does::Insert, _) => fails(FailureClass::UnknownVariant, codes::UNEXPECTED_STATUS),
@@ -290,6 +297,21 @@ impl Lowering for SqlLowering {
         }
     }
 
+    /// A write that names no read-back is the append of a row no one names
+    /// (`irreversible`, identity `none`): the store's count of one row, checked
+    /// before the commit, is its only evidence. Every other write is read back.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if lowered.read_back.is_empty()
+            && lowered.act.iter().any(|step| step.commits)
+            && binding.operation.effect() == EffectClass::Irreversible
+            && binding.operation.strategy() == IdentityStrategy::None
+        {
+            WriteEvidence::Acknowledged
+        } else {
+            WriteEvidence::ReadBack
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -325,9 +347,19 @@ impl Lowering for SqlLowering {
             ));
         };
         let name = named.as_text().unwrap_or_default();
-        let section = cx
-            .section(&STATEMENT, &DATABASE)
-            .and_then(|(index, section)| Some((index, section.payload.decode::<Section>().ok()?)));
+        // The statement is in the section of its surface's kind: a store in
+        // a file, or one on a server.
+        let section = crate::names::surface_kinds()
+            .iter()
+            .filter_map(|kind| cx.section(&STATEMENT, kind))
+            .filter_map(|(index, section)| Some((index, section.payload.decode::<Section>().ok()?)))
+            .find(|(_, held)| held.statements.contains_key(name))
+            .or_else(|| {
+                cx.section(&STATEMENT, &DATABASE)
+                    .and_then(|(index, section)| {
+                        Some((index, section.payload.decode::<Section>().ok()?))
+                    })
+            });
         let Some((section, statements)) = section else {
             return fail(problem(
                 &lint::UNKNOWN_STATEMENT,
@@ -415,7 +447,7 @@ impl Lowering for SqlLowering {
                 ));
             }
             lower
-                .read(name, statement, at, &mut problems)
+                .read(name, statement, at, false, &mut problems)
                 .map(|act| (act, Vec::new()))
         } else {
             // A write is allowed only where the target says the store is the
@@ -434,6 +466,24 @@ impl Lowering for SqlLowering {
                         surface.name
                     ),
                     "Declare `stands: alone` on the surface in `target.yaml` when the store is the system of record; otherwise write through the application.",
+                ));
+            }
+            // A write is read back. The one that cannot be is a row appended
+            // with no key that anyone names: the operation is `irreversible`
+            // with identity `none`, and the store's own count of exactly one
+            // row, checked before the commit, is the evidence.
+            let appends = binding.operation.effect() == EffectClass::Irreversible
+                && binding.operation.strategy() == IdentityStrategy::None;
+            if read_back_named.is_none() && !appends {
+                problems.push(problem(
+                    &lint::READ_BACK_INVALID,
+                    Stage::Lower,
+                    at,
+                    format!(
+                        "The binding writes the record `{}` and names no read-back.",
+                        statement.record
+                    ),
+                    "Add `read_back:` naming the read the pack writes by key for this record (`effect: read`, `form: table`).",
                 ));
             }
             let read_back = match read_back_named {
@@ -463,9 +513,13 @@ impl Lowering for SqlLowering {
                             ));
                             Some(Vec::new())
                         }
-                        Some(found) => {
-                            lower.read(read_back_name, found, &read_back.at, &mut problems)
-                        }
+                        Some(found) => lower.read(
+                            read_back_name,
+                            found,
+                            &read_back.at,
+                            statement.returns == Returns::AssignedKey,
+                            &mut problems,
+                        ),
                     }
                 }
             };

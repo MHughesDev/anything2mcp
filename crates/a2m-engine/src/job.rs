@@ -198,6 +198,9 @@ pub struct RecordSnapshot {
     pub mode: Option<Mode>,
     /// When `failed`, the class and code.
     pub failure: Option<(a2m_core::FailureClass, FailureCode)>,
+    /// True when the record ended `acted` on the system's acknowledgement:
+    /// settled, never read back, and skipped on a resume (decision 0172).
+    pub acknowledged: bool,
 }
 
 /// A run that has been worked on before, as the ledger holds it.

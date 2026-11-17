@@ -120,6 +120,14 @@ pub(crate) trait Link: Send {
     /// Reads the reply to the request last sent: its bytes, whole.
     fn receive(&mut self, within: Duration) -> BoxFuture<'_, Result<Vec<u8>, LinkError>>;
 
+    /// Reads a frame that [`Link::frame`] built for a write back into the
+    /// request it carries. `None` when the bytes are not a write of a form
+    /// the protocol declares, which is also what a protocol that cannot read
+    /// its own frames answers.
+    fn written(&self, _frame: &[u8]) -> Option<Request> {
+        None
+    }
+
     /// Reads a reply's bytes as the answer to `request`. `None` when the
     /// bytes are not a reply of a form the protocol declares for it.
     fn interpret(&self, request: &Request, reply: &[u8]) -> Option<Reply>;

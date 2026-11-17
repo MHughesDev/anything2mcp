@@ -19,6 +19,7 @@ mod engine;
 mod local;
 mod packs;
 mod person;
+mod trust;
 pub mod wire;
 
 pub use engine::{Engine, EngineOptions, PASSPHRASE_VARIABLE, action_registry};

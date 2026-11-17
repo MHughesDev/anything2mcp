@@ -589,7 +589,7 @@ handler!(
             input: Some(stored),
             retention: RetentionClass::Long,
         };
-        let facts = CallerFacts::of(&call.caller, call.decision);
+        let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
         let kept = run.clone();
         let to_hold = keyed.clone();
         store
@@ -677,8 +677,14 @@ handler!(
                 return Err(held(kernel, &call, &work, refused).await);
             }
         };
-        let run = match admitted {
-            Admitted::New { run, .. } | Admitted::Existing { run } => run,
+        // Rule 6: a run of this caller, tool version, and input that is
+        // unfinished, running, resting for a person, or stopped and able
+        // to be resumed, is given back instead of starting another. Only
+        // a final run, completed, failed, rejected, cancelled, or expired,
+        // lets the same call start a new one (spec section 208).
+        let (run, earlier) = match admitted {
+            Admitted::New { run, .. } => (run, false),
+            Admitted::Existing { run } => (run, true),
         };
         if let Some(keyed) = &keyed {
             let (workspace, person, key) = (
@@ -694,9 +700,25 @@ handler!(
         }
         drop(_one_at_a_time);
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
-        run_output(kernel, &call, row, Tell::Person).await
+        let output = run_output(kernel, &call, row, Tell::Person).await?;
+        if earlier {
+            return given_back(output);
+        }
+        Ok(output)
     }
 );
+
+/// Marks a run that rule 6 gave back to a call: an earlier, unfinished run
+/// of the same caller, tool version, and input.
+fn given_back(mut output: Output) -> Result<Output, Failure> {
+    let status = output.result["status"].as_str().unwrap_or_default().to_owned();
+    if let Json::Object(map) = &mut output.result {
+        map.insert("earlier_run".to_owned(), json!(true));
+    }
+    Ok(output.warn(format!(
+        "A run of this tool with the same input was started before and is not finished (`{status}`): this is that run, and no other was started. Resume it, or cancel it to start a new one."
+    )))
+}
 
 /// A call's idempotency key, and the digest of what the call asks for.
 #[derive(Clone)]
@@ -966,7 +988,7 @@ fn listed_run(kernel: &Kernel, row: &RunRow, in_doubt: bool) -> Json {
     entry
 }
 
-fn wait_of(call: &Call) -> Duration {
+pub(crate) fn wait_of(call: &Call) -> Duration {
     let seconds = call.int("wait_seconds").unwrap_or(DEFAULT_WAIT_SECONDS);
     Duration::from_secs(u64::try_from(seconds).unwrap_or(0))
 }
@@ -1130,16 +1152,28 @@ impl Kernel {
 /// them. The actions that start or continue a run may; reading a run asks
 /// nobody anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tell {
+pub(crate) enum Tell {
     /// `tool.call` and `run.resume`.
     Person,
     /// `run.get`.
     Nobody,
 }
 
+/// What the system itself said, as a failure carries it, in a field of its
+/// own and marked as the system's words: never joined into the sentence or
+/// the next step, and never an instruction (decision 0162, point 4).
+pub(crate) fn said_json(failure: &Failure) -> Option<Json> {
+    failure
+        .said()
+        .map(|said| json!({"by": SAID_BY, "text": said}))
+}
+
+/// Who `said` is the words of.
+pub(crate) const SAID_BY: &str = "system";
+
 /// The run as `tool.call`, `run.get`, and `run.resume` return it, with the
 /// next step for the state it is in.
-async fn run_output(
+pub(crate) async fn run_output(
     kernel: &Kernel,
     call: &Call,
     row: RunRow,
@@ -1150,14 +1184,6 @@ async fn run_output(
     let events = store
         .read(move |tx| tx.ledger().events(run, 0, 10_000))
         .await?;
-    // The sentence and the next step of the failure that ended or rested
-    // the run are in the event that changed its state.
-    let said = events.iter().rev().find_map(|event| {
-        let payload: Json = serde_json::from_str(&event.payload).ok()?;
-        let message = payload.get("message")?.as_str()?.to_owned();
-        let next_step = payload.get("next_step")?.as_str()?.to_owned();
-        Some((message, next_step))
-    });
     let mode = events.iter().rev().find_map(|event| {
         let payload: Json = serde_json::from_str(&event.payload).ok()?;
         payload
@@ -1166,14 +1192,24 @@ async fn run_output(
             .and_then(Json::as_str)
             .map(str::to_owned)
     });
+    // The failure that ended or rested the run, whole, as the ledger kept
+    // it: its sentence, its next step, and what the system said, apart
+    // (decision 0172). How its records ended, counted.
+    let (stored, tally) = store
+        .read(move |tx| {
+            let mut ledger = tx.ledger();
+            Ok((ledger.run_failure(run)?, ledger.tally(run)?))
+        })
+        .await?;
     let failure = row.failure.as_ref().map(|(class, code)| {
-        let (message, next_step) = said.clone().unwrap_or_else(|| {
-            (
+        stored.unwrap_or_else(|| {
+            Failure::new(
+                *class,
+                code.clone(),
                 format!("The run ended as `{}`.", row.state),
-                "Call `trace.show` with the run's identifier to see what happened.".to_owned(),
+                "Call `trace.show` with the run's identifier to see what happened.",
             )
-        });
-        Failure::new(*class, code.clone(), message, next_step)
+        })
     });
 
     let mut out = serde_json::Map::new();
@@ -1201,16 +1237,22 @@ async fn run_output(
     if let Some(trace) = row.trace {
         out.insert("trace".to_owned(), json!(format!("blob:{trace}")));
     }
+    if tally.acknowledged > 0 {
+        // Accepted by the system and never read back: never counted as
+        // verified (decision 0172).
+        out.insert("not_read_back".to_owned(), json!(tally.acknowledged));
+    }
     if let Some(failure) = &failure {
-        out.insert(
-            "failure".to_owned(),
-            json!({
-                "class": failure.class().to_string(),
-                "code": failure.code().to_string(),
-                "message": failure.message(),
-                "fix": failure.next_step(),
-            }),
-        );
+        let mut shown = json!({
+            "class": failure.class().to_string(),
+            "code": failure.code().to_string(),
+            "message": failure.message(),
+            "fix": failure.next_step(),
+        });
+        if let Some(said) = said_json(failure) {
+            shown["said"] = said;
+        }
+        out.insert("failure".to_owned(), shown);
     }
 
     let again = json!({"run_id": row.id.to_string()});
@@ -1578,5 +1620,502 @@ handler!(
             "plan_hash": hash.to_string(),
             "text": plan.show()?,
         })))
+    }
+);
+
+handler!(
+    /// `draft.try`: runs one drafted read in the engine's sandbox, as a
+    /// `Try` job of its own run, and returns its outcome as `tool.call`
+    /// would. The drafts are compiled as a draft; the plan is kept in
+    /// memory for the run and never becomes a version, so no caller can
+    /// reach it through `tool.call`. A drafted write is not tried: a trial
+    /// that writes a declared test record needs the publish gates' test
+    /// records, which are not built.
+    draft_try,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let name = OperationName::new(call.required("tool")?)?;
+        let project_folder = call.project_folder()?.to_path_buf();
+        let compiled = super::build::compile_in(
+            kernel,
+            project_folder,
+            &target,
+            a2m_files::CompileMode::Draft,
+            a2m_files::DRAFT_VERSION,
+        )
+        .await?
+        .map_err(Failure::from)?;
+        let plan = std::sync::Arc::new(compiled.plan);
+        let Some(tool) = plan.tool(&name).cloned() else {
+            return Err(codes::input(
+                codes::NOT_FOUND,
+                format!("The drafts of `{target}` hold no tool named `{name}`."),
+                "Call `draft.lint` to list the drafted tools.",
+            ));
+        };
+        let found = FoundTool {
+            target: target.clone(),
+            plan_hash: compiled.encoded.hash,
+            plan: std::sync::Arc::clone(&plan),
+            tool,
+        };
+        let (effect, _) = found.effect();
+        if effect != EffectClass::Read {
+            return Err(codes::input(
+                codes::ACTION_NOT_BUILT,
+                format!("`{name}` is a drafted {effect}, and only a drafted read is tried today."),
+                "Try the tool's reads; a write is proven by the publish gates on a declared test record.",
+            ));
+        }
+        let input: Values = match call.input.get("input") {
+            Some(given) => serde_json::from_value(given.clone()).map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The tool's input holds a value that cannot be taken.",
+                    "Use text, whole numbers, true or false, lists, and maps; write an exact number as text.",
+                )
+            })?,
+            None => Values::new(),
+        };
+        let environment = plan
+            .default_environment()
+            .map(|environment| environment.name.clone())
+            .ok_or_else(|| {
+                codes::input(
+                    codes::NOT_FOUND,
+                    "The drafted target declares no environment.",
+                    "Declare an environment in the target's files.",
+                )
+            })?;
+        kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+        let run = submit_trial(kernel, &call, &found, &input, environment).await?;
+        let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        let output = run_output(kernel, &call, row, Tell::Person).await?;
+        Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
+    }
+);
+
+/// Keeps the call of a trial of one drafted read and submits it as a `Try`
+/// job of a run of its own; the plan must be kept in memory already
+/// (`Kernel::keep_draft`). Gives the run.
+pub(crate) async fn submit_trial(
+    kernel: &Kernel,
+    call: &Call,
+    found: &FoundTool,
+    input: &Values,
+    environment: Environment,
+) -> Result<RunId, Failure> {
+    let (name, target, effect) = (
+        found.tool.name.clone(),
+        found.target.clone(),
+        found.effect().0,
+    );
+    let store = kernel.store()?;
+    let principal = &call.caller.principal;
+    let stored = store
+        .blobs()
+        .put(NewBlob {
+            workspace: principal.workspace,
+            owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
+            kind: BlobKind::Input,
+            class: RetentionClass::Long,
+            plain: encode_values(input)?,
+        })
+        .await?;
+    let run = NewRun {
+        workspace: principal.workspace,
+        principal: principal.principal.id,
+        client_label: codes::shown(&call.caller.client),
+        tool_name: name.clone(),
+        tool_kind: match found.tool.runs {
+            ToolRuns::Operation(_) => ToolKind::Operation,
+            ToolRuns::Pipeline(_) => ToolKind::Pipeline,
+        },
+        target: target.clone(),
+        target_version: found.plan_hash,
+        environment: environment.clone(),
+        identity: (principal.principal.kind == PrincipalKind::Person)
+            .then_some(Identity::Person(principal.principal.id)),
+        effect,
+        input_hash: {
+            // A trial is another run than a call of the same input.
+            let mut hasher = FieldHasher::new();
+            hasher.field("purpose", b"anything2mcp draft try 1");
+            hasher.field("input", input.digest().to_string().as_bytes());
+            hasher.finish()
+        },
+        input: Some(stored),
+        retention: RetentionClass::Long,
+    };
+    let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
+    let kept = run.clone();
+    store
+        .write(Durability::Synced, move |tx| {
+            keep_run_call(tx, &kept, stored, &facts)
+        })
+        .await?;
+    let admitted = kernel
+        .sched()?
+        .submit(Submission {
+            job: JobRequirements {
+                kind: JobKind::Try,
+                target: run.target.clone(),
+                environment,
+                modes: Vec::new(),
+                os: None,
+                acts_as: Some(run.principal),
+                session: None,
+                session_limits: SessionLimits {
+                    reads: 4,
+                    writes: 0,
+                },
+                exclusive: Vec::new(),
+                max_step: Duration::from_secs(30),
+                writes: false,
+            },
+            run,
+            priority: Priority::Interactive,
+            health: sched_health(kernel),
+            queue_wait: None,
+            budgets: Vec::new(),
+        })
+        .await?;
+    let run = match admitted {
+        Admitted::New { run, .. } | Admitted::Existing { run } => run,
+    };
+    Ok(run)
+}
+
+/// The plan a target's discovery or trial works on: its drafts, compiled
+/// as a draft and kept in memory, when the call is made in a project that
+/// holds the target; its current published version otherwise.
+pub(crate) async fn plan_to_observe(
+    kernel: &Kernel,
+    call: &Call,
+    target: &a2m_core::TargetName,
+) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::Plan>), Failure> {
+    if let Ok(folder) = call.project_folder() {
+        let folder = folder.to_path_buf();
+        let named = target.clone();
+        let present = super::build::off_thread(move || {
+            let target_folder = super::build::target_folder(&folder, &named)?;
+            Ok(target_folder.is_dir().then_some(folder))
+        })
+        .await?;
+        if let Some(folder) = present {
+            let compiled = super::build::compile_in(
+                kernel,
+                folder,
+                target,
+                a2m_files::CompileMode::Draft,
+                a2m_files::DRAFT_VERSION,
+            )
+            .await?
+            .map_err(Failure::from)?;
+            let plan = std::sync::Arc::new(compiled.plan);
+            kernel.keep_draft(target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+            return Ok((compiled.encoded.hash, plan));
+        }
+    }
+    let (plans, _) = kernel.current_plans().await?;
+    plans
+        .into_iter()
+        .find(|(name, _, _)| name == target)
+        .map(|(_, hash, plan)| (hash, plan))
+        .ok_or_else(|| {
+            codes::input(
+                codes::NOT_FOUND,
+                format!("No target named `{target}` is in the project or published."),
+                "Add it with `target.add`, or call `target.list`.",
+            )
+        })
+}
+
+/// The name a discovery run's stored call is kept under.
+pub(crate) const DISCOVER_TOOL: &str = "a2m_discover";
+
+/// Keeps the call of a discovery of one surface and submits it as a
+/// `Discover` job of a run of its own, in the engine's sandbox. Gives the
+/// run. A discovery of the same surface of the same plan by the same
+/// caller that has not ended is given back, not started again.
+pub(crate) async fn submit_discovery(
+    kernel: &Kernel,
+    call: &Call,
+    target: &a2m_core::TargetName,
+    plan_hash: a2m_core::Digest,
+    environment: &Environment,
+    surface: &a2m_core::SurfaceName,
+) -> Result<RunId, Failure> {
+    let store = kernel.store()?;
+    let principal = &call.caller.principal;
+    let tool = OperationName::new(DISCOVER_TOOL)?;
+    let input = Values::new()
+        .with(
+            crate::runner::DISCOVERY_SURFACE,
+            a2m_core::Value::Text(surface.to_string()),
+        )
+        .with(
+            crate::runner::DISCOVERY_FOCUS,
+            a2m_core::Value::Record(Values::new()),
+        );
+    let stored = store
+        .blobs()
+        .put(NewBlob {
+            workspace: principal.workspace,
+            owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
+            kind: BlobKind::Input,
+            class: RetentionClass::Long,
+            plain: encode_values(&input)?,
+        })
+        .await?;
+    let run = NewRun {
+        workspace: principal.workspace,
+        principal: principal.principal.id,
+        client_label: codes::shown(&call.caller.client),
+        tool_name: tool,
+        tool_kind: ToolKind::Operation,
+        target: target.clone(),
+        target_version: plan_hash,
+        environment: environment.clone(),
+        identity: (principal.principal.kind == PrincipalKind::Person)
+            .then_some(Identity::Person(principal.principal.id)),
+        effect: EffectClass::Read,
+        input_hash: input.digest(),
+        input: Some(stored),
+        retention: RetentionClass::Long,
+    };
+    let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
+    let kept = run.clone();
+    store
+        .write(Durability::Synced, move |tx| {
+            keep_run_call(tx, &kept, stored, &facts)
+        })
+        .await?;
+    let admitted = kernel
+        .sched()?
+        .submit(Submission {
+            job: JobRequirements {
+                kind: JobKind::Discover,
+                target: run.target.clone(),
+                environment: environment.clone(),
+                modes: Vec::new(),
+                os: None,
+                acts_as: Some(run.principal),
+                session: None,
+                session_limits: SessionLimits {
+                    reads: 4,
+                    writes: 0,
+                },
+                exclusive: Vec::new(),
+                max_step: Duration::from_secs(30),
+                writes: false,
+            },
+            run,
+            priority: Priority::Interactive,
+            health: sched_health(kernel),
+            queue_wait: None,
+            budgets: Vec::new(),
+        })
+        .await?;
+    Ok(match admitted {
+        Admitted::New { run, .. } | Admitted::Existing { run } => run,
+    })
+}
+
+handler!(
+    /// `discover.run`: one `Discover` job of its own run for each surface
+    /// of the target, or the one named, in the engine's sandbox, where a
+    /// discoverer is given only a read-only port and no intent token
+    /// exists. What the discoverers find is stored by the run's control as
+    /// it is sent; the result counts it by kind.
+    discover_run,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let (plan_hash, plan) = plan_to_observe(kernel, &call, &target).await?;
+        let surfaces: Vec<a2m_core::SurfaceName> = plan
+            .surfaces
+            .iter()
+            .map(|surface| surface.name.clone())
+            .filter(|name| {
+                call.text("surface")
+                    .is_none_or(|wanted| name.as_str() == wanted)
+            })
+            .collect();
+        if surfaces.is_empty() {
+            return Err(codes::input(
+                codes::NOT_FOUND,
+                format!("The target `{target}` declares no such surface."),
+                "Name a surface the target's files declare, or leave `surface` out.",
+            ));
+        }
+        let environment = plan
+            .default_environment()
+            .map(|environment| environment.name.clone())
+            .ok_or_else(|| {
+                codes::input(
+                    codes::NOT_FOUND,
+                    "The target declares no environment.",
+                    "Declare an environment in the target's files.",
+                )
+            })?;
+        let mut runs = Vec::new();
+        for surface in &surfaces {
+            let run =
+                submit_discovery(kernel, &call, &target, plan_hash, &environment, surface).await?;
+            runs.push((surface.clone(), run));
+        }
+        let mut shown = Vec::new();
+        let mut all_ended = true;
+        for (surface, run) in runs {
+            let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+            all_ended &= row.state.is_final();
+            let mut entry = serde_json::Map::new();
+            entry.insert("surface".to_owned(), json!(surface.as_str()));
+            entry.insert("run_id".to_owned(), json!(run.to_string()));
+            entry.insert("status".to_owned(), json!(row.state.as_str()));
+            if let Some((class, code)) = row.failure.as_ref() {
+                entry.insert(
+                    "failure".to_owned(),
+                    json!({"class": class.to_string(), "code": code.to_string()}),
+                );
+            }
+            shown.push(Json::Object(entry));
+        }
+        let workspace = call.caller.principal.workspace;
+        let listed = target.clone();
+        let findings = kernel
+            .store()?
+            .read(move |tx| tx.findings().list(&workspace, &listed))
+            .await?;
+        let mut by_kind = std::collections::BTreeMap::<String, u64>::new();
+        for finding in &findings {
+            *by_kind.entry(finding.kind().to_string()).or_default() += 1;
+        }
+        let output = Output::ok(json!({
+            "target": target.as_str(),
+            "plan_hash": plan_hash.to_string(),
+            "surfaces": shown,
+            "findings": findings.len(),
+            "by_kind": by_kind,
+            "complete": all_ended,
+        }))
+        .then(Next::new(
+            "finding.list",
+            json!({"target": target.as_str()}),
+            "to read what was found",
+        ));
+        Ok(output)
+    }
+);
+
+handler!(
+    /// `finding.list`: the stored findings about a target, in the order
+    /// they were observed, paged.
+    finding_list,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let workspace = call.caller.principal.workspace;
+        let listed = target.clone();
+        let findings = kernel
+            .store()?
+            .read(move |tx| tx.findings().list(&workspace, &listed))
+            .await?;
+        let kind = call.text("kind");
+        let chosen: Vec<&a2m_core::Finding> = findings
+            .iter()
+            .filter(|finding| kind.is_none_or(|kind| finding.kind().as_str() == kind))
+            .collect();
+        let offset = usize::try_from(call.int("offset").unwrap_or(0)).unwrap_or(0);
+        let limit = usize::try_from(call.int("limit").unwrap_or(50)).unwrap_or(50);
+        let page: Vec<Json> = chosen
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|finding| {
+                json!({
+                    "id": finding.id().to_string(),
+                    "kind": finding.kind().as_str(),
+                    "level": finding.level().as_str(),
+                    "source": finding.source().as_str(),
+                })
+            })
+            .collect();
+        let complete = offset + page.len() >= chosen.len();
+        Ok(Output::ok(json!({
+            "target": target.as_str(),
+            "findings": page,
+            "total": chosen.len(),
+            "complete": complete,
+        })))
+    }
+);
+
+handler!(
+    /// `finding.describe`: one stored finding in full.
+    finding_describe,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let id: a2m_core::Digest = call.required("finding")?.parse().map_err(|_| {
+            codes::input(
+                codes::SCHEMA_INVALID,
+                "A finding's identifier is the hexadecimal digest `finding.list` gives.",
+                "Pass an identifier from `finding.list`.",
+            )
+        })?;
+        let workspace = call.caller.principal.workspace;
+        let named = target.clone();
+        let found = kernel
+            .store()?
+            .read(move |tx| tx.findings().get(&workspace, &named, &id))
+            .await?
+            .ok_or_else(|| {
+                codes::input(
+                    codes::NOT_FOUND,
+                    format!("The target `{target}` has no finding with that identifier."),
+                    "Call `finding.list` for the identifiers.",
+                )
+            })?;
+        let whole = serde_json::to_value(&found).map_err(|_| {
+            codes::input(
+                codes::SCHEMA_INVALID,
+                "The finding could not be written as JSON.",
+                "Report this; it is a fault in the engine.",
+            )
+        })?;
+        Ok(Output::ok(
+            json!({"target": target.as_str(), "finding": whole}),
+        ))
+    }
+);
+
+handler!(
+    /// `unknown.list`: the open questions about a target, as the unknowns
+    /// ledger holds them.
+    unknown_list,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let workspace = call.caller.principal.workspace;
+        let named = target.clone();
+        let rows = kernel
+            .store()?
+            .read(move |tx| tx.findings().unknowns(&workspace, &named))
+            .await?;
+        let listed: Vec<Json> = rows
+            .iter()
+            .map(|row| {
+                json!({
+                    "id": row.id.to_string(),
+                    "question": row.question,
+                    "scope": row.scope,
+                    "why_it_matters": row.why_it_matters,
+                    "settled_by_what": row.settled_by_what,
+                    "status": row.status.to_string(),
+                    "opened_at": row.opened_at.as_unix_millis(),
+                })
+            })
+            .collect();
+        Ok(Output::ok(
+            json!({"target": target.as_str(), "unknowns": listed}),
+        ))
     }
 );
