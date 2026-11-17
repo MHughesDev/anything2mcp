@@ -119,9 +119,8 @@ impl Redactor {
             state.short += 1;
         }
         for form in forms(value) {
-            // The secret itself is always new here; a form of it may equal a
-            // form registered before.
-            if state.patterns.is_empty() || state.known.insert(form.name()) {
+            // A form of this secret may equal a form registered before.
+            if state.known.insert(form.name()) {
                 state.patterns.push(Arc::new(form));
             }
         }

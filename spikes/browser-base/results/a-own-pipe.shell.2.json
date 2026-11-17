@@ -2,38 +2,39 @@
   "candidate": "a: own client",
   "transport": "pipe, ShellExec",
   "browser_version": "Chrome/153.0.8010.12",
-  "cold_start_to_first_read_ms": 449.186,
-  "launch_to_connected_ms": 129.906,
+  "cold_start_to_first_read_ms": 407.518,
+  "launch_to_connected_ms": 215.003,
   "wait_kind": "protocol event, then an in-page observer in an isolated world",
   "field_value": "Left rail",
   "warm_reads": {
     "count": 200,
-    "median_ms": 0.137,
-    "p95_ms": 1.205,
-    "max_ms": 3.407
+    "median_ms": 0.154,
+    "p95_ms": 2.164,
+    "max_ms": 5.136
   },
   "snapshot_kind": "accessibility tree",
-  "snapshot_nodes": 60,
-  "snapshot_ms": 3.122,
+  "snapshot_nodes": 61,
+  "snapshot_ms": 2.197,
   "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
   "writes_stored_after_blocked_save": 0,
   "clean_close": {
     "checked": true,
     "remaining": 0,
-    "after_ms": 0.601
+    "after_ms": 0.51
   },
   "kill_mid_call": {
     "outcome": "Err(Disconnected { sent: true })",
-    "after_kill_ms": 29.474,
+    "after_kill_ms": 24.812,
     "leftover": {
       "checked": true,
       "remaining": 0,
-      "after_ms": 0.618
+      "after_ms": 0.583
     }
   },
   "notes": [
-    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.648 ms, p95 17.657 ms",
-    "locate by label with an in-page helper and read, one round trip: median 0.2 ms, p95 0.329 ms",
+    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.665 ms, p95 17.487 ms",
+    "locate by label with an in-page helper and read, one round trip: median 0.158 ms, p95 0.201 ms",
+    "a late element, 20 times: an in-page observer notices it 0 ms after it appears (median; max 0.1), a 50 ms poll 35.9 ms (median; max 36.6)",
     "exit after Browser.close: Ok(Ok(ExitStatus(unix_wait_status(0))))",
     "a call after the kill: Err(Disconnected { sent: false })"
   ]
