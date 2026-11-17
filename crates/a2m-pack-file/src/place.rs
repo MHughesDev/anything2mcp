@@ -209,16 +209,6 @@ fn gone(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
 }
 
-/// What a file is opened for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Open {
-    /// Reading its bytes.
-    Read,
-    /// Nothing is written through the handle: the open itself asks the
-    /// operating system whether the engine's user may write the file.
-    WriteProbe,
-}
-
 /// One file of a surface's folder, by its own name.
 #[derive(Debug, Clone)]
 pub(crate) struct Named {
@@ -292,35 +282,26 @@ impl Named {
         Ok(metadata)
     }
 
-    /// Opens the file, and proves that what was opened is the regular file
-    /// at the name: the open handle and the name show one identity. A link
-    /// put at the name between the look and the open is caught here, and
-    /// nothing is read or written through it.
-    pub(crate) fn open(&self, how: Open) -> Result<(File, Metadata), StepFailure> {
+    /// Opens the file for reading, and proves that what was opened is the
+    /// regular file at the name: the open handle and the name show one
+    /// identity. A link put at the name between the look and the open is
+    /// caught here, and nothing is read through it. Whether the engine's
+    /// user may write the file is the contract's question
+    /// (`CheckedPath::may_write`), asked at the save.
+    pub(crate) fn open(&self) -> Result<(File, Metadata), StepFailure> {
         self.regular()?;
-        let mut options = OpenOptions::new();
-        match how {
-            Open::Read => options.read(true),
-            Open::WriteProbe => options.write(true),
-        };
-        let file = options.open(&self.path).map_err(|error| {
-            if held_by_another(&error) {
-                StepFailure::not_sent(locked())
-            } else if gone(&error) {
-                missing()
-            } else if how == Open::WriteProbe
-                && matches!(
-                    error.kind(),
-                    ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
-                )
-            {
-                not_writable()
-            } else if how == Open::WriteProbe {
-                StepFailure::not_sent(unavailable("cannot be opened for writing"))
-            } else {
-                StepFailure::not_sent(unavailable("cannot be opened for reading"))
-            }
-        })?;
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&self.path)
+            .map_err(|error| {
+                if held_by_another(&error) {
+                    StepFailure::not_sent(locked())
+                } else if gone(&error) {
+                    missing()
+                } else {
+                    StepFailure::not_sent(unavailable("cannot be opened for reading"))
+                }
+            })?;
         let opened = file
             .metadata()
             .map_err(|_| StepFailure::not_sent(unavailable("cannot be looked at once open")))?;
@@ -336,7 +317,7 @@ impl Named {
     /// The whole file, read once, within `max_bytes`. Nothing when it has
     /// more.
     pub(crate) fn read(&self, max_bytes: u64) -> Result<Option<Vec<u8>>, StepFailure> {
-        let (file, metadata) = self.open(Open::Read)?;
+        let (file, metadata) = self.open()?;
         if metadata.len() > max_bytes {
             return Ok(None);
         }
