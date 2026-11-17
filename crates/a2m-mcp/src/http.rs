@@ -95,6 +95,7 @@ impl McpService {
             builtin,
             settings: settings.checked()?,
             dispatched: AtomicU64::new(0),
+            cancelled: tokio::sync::watch::channel(0).0,
         });
         Ok(Self {
             sdk: Sdk::new(Arc::clone(&core)),
@@ -321,6 +322,12 @@ impl McpService {
                 ))),
             )),
         }
+    }
+
+    /// Told each time a call stops waiting because its caller went away.
+    #[cfg(test)]
+    pub(crate) fn cancellations(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.core.cancelled.subscribe()
     }
 
     /// How many requests this endpoint has handed the dispatcher.

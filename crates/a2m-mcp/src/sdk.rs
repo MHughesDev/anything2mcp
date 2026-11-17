@@ -182,6 +182,7 @@ impl ServerHandler for Handler {
         let work = tokio::spawn(async move { core.call(&name, arguments, &caller).await });
         let called = tokio::select! {
             () = context.ct.cancelled() => {
+                self.core.cancelled.send_modify(|count| *count += 1);
                 return Err(ErrorData::internal_error("The request was cancelled.", None));
             }
             joined = work => joined.map_err(|_| {

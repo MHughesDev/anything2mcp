@@ -36,6 +36,9 @@ pub(crate) struct Core {
     /// How many requests this endpoint handed the dispatcher. Read by the
     /// tests that prove a malformed message never gets that far.
     pub(crate) dispatched: AtomicU64,
+    /// How many calls stopped waiting because their caller cancelled or
+    /// closed the stream.
+    pub(crate) cancelled: tokio::sync::watch::Sender<u64>,
 }
 
 /// One tool of a list.
