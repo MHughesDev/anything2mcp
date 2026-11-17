@@ -114,3 +114,27 @@ impl RunSignals {
             .map(|kept| kept.link.clone())
     }
 }
+
+/// One lock for each idempotency key a call is being made with now, so
+/// that two calls with one key are one at a time between the look at the
+/// key and the binding of its run. A lock nobody holds is dropped: the map
+/// holds only the keys in hand. It decides nothing: what a key means is in
+/// the store.
+#[derive(Default)]
+pub(crate) struct KeyLocks {
+    held: Mutex<BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl KeyLocks {
+    /// The lock for `name`, a name made of the caller and the key.
+    pub(crate) fn of(&self, name: String) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        let mut held = lock(&self.held);
+        held.retain(|_, kept| kept.strong_count() > 0);
+        if let Some(found) = held.get(&name).and_then(std::sync::Weak::upgrade) {
+            return found;
+        }
+        let made = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        held.insert(name, std::sync::Arc::downgrade(&made));
+        made
+    }
+}

@@ -23,6 +23,7 @@ mod failure;
 mod finding;
 mod keys;
 mod ledger;
+mod listing;
 mod migrate;
 mod sqlite;
 mod store;
@@ -42,6 +43,9 @@ pub use ledger::{
     PlannedRecord, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow, Replayed, RunEvent,
     RunRow, Settled, ToolKind, WriteClearance, replay,
 };
+pub use listing::{
+    CALLER_KEY_LONGEST, CallerKey, CallerKeyRow, IDEMPOTENCY_KEY_INVALID, RUN_PAGE_MOST, RunQuery,
+};
 pub use migrate::{Migration, migrations, table_owner};
 pub use store::{
     BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, Store, StoreConfig, StoreHealth,
@@ -56,4 +60,5 @@ pub mod codes {
         NOT_FOUND, READ_BACK_DIFFERS, RECONCILE_REQUIRED, RECORD_LOCKED, RUNNER_LOST, STORAGE_FULL,
         STORE_CORRUPT, STORE_UNAVAILABLE, STORE_VERSION_UNSUPPORTED, TABLE_NOT_OWNED,
     };
+    pub use crate::listing::IDEMPOTENCY_KEY_INVALID;
 }

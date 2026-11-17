@@ -746,6 +746,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
             );
             continue;
         }
+        if a2m_provider::is_engine_variable(name) {
+            found.bad(
+                "engine_variable",
+                &entry.key.at,
+                format!(
+                    "The variable `{}` belongs to the engine, and the engine's own variables are never handed to a program.",
+                    codes::shown(name)
+                ),
+                "Remove it. A program is given only variables of its own.",
+            );
+            continue;
+        }
         if names_a_credential(name) {
             found.bad(
                 "secret_variable",
@@ -788,6 +800,18 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         .map(Located::items)
         .unwrap_or_default()
     {
+        if a2m_provider::is_engine_variable(&scalar(name)) {
+            found.bad(
+                "engine_variable",
+                &name.at,
+                format!(
+                    "The variable `{}` belongs to the engine, and the engine's own variables are never handed to a program.",
+                    codes::shown(&scalar(name))
+                ),
+                "Remove it. A program is given only variables of its own.",
+            );
+            continue;
+        }
         if names_a_credential(&scalar(name)) {
             found.bad(
                 "secret_variable",

@@ -49,6 +49,13 @@ pub const SYSTEM_JOB_NOT_CARRIED: FailureCode = FailureCode::fixed("system_job_n
 pub const SETTING_NOT_IN_FORCE: FailureCode = FailureCode::fixed("setting_not_in_force");
 /// A published tool changed between the decision about a call and the call.
 pub const TOOL_CHANGED: FailureCode = FailureCode::fixed("tool_changed");
+/// An idempotency key that is not 1 to 200 printable characters, or two
+/// different keys on one request. Class `input`. The same code the store
+/// and the REST door answer with.
+pub const IDEMPOTENCY_KEY_INVALID: FailureCode = a2m_ledger::IDEMPOTENCY_KEY_INVALID;
+/// An idempotency key the caller already gave with another call: another
+/// tool, environment, input, or source. Class `input`.
+pub const IDEMPOTENCY_KEY_REUSED: FailureCode = FailureCode::fixed("idempotency_key_reused");
 
 pub(crate) fn input(
     code: FailureCode,

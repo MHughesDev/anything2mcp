@@ -67,6 +67,16 @@ impl FarEnd {
                     "The local server program of the surface is not one the published plan declares for it.",
                 )));
             }
+            // Whatever the plan holds, the engine's own variables and
+            // credentials never reach a program through its environment.
+            if let Some((name, why)) = fields
+                .environment
+                .keys()
+                .chain(fields.pass_environment.iter())
+                .find_map(|name| crate::mapping::refused_variable(name).map(|why| (name, why)))
+            {
+                return Err(unsent(codes::variable_refused(name, why)));
+            }
             return Ok(Self::Program {
                 path: program.to_owned(),
                 digest: fields.digest.clone(),

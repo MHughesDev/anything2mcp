@@ -408,13 +408,13 @@ mod tests {
     #[test]
     fn a_guide_says_of_each_action_it_names_whether_it_is_built() {
         let registry = ActionRegistry::kernel_only();
-        let page = "Call `run.resume`, then `run.list`, then `run.resume` again.";
+        let page = "Call `run.resume`, then `run.undo`, then `run.resume` again.";
         let text = guide_text(&registry, page);
         let built = |name: &str| registry.find(name).unwrap().built();
-        assert!(built("run.resume") && !built("run.list"));
+        assert!(built("run.resume") && !built("run.undo"));
         assert!(text.contains("- `run.resume`: built."), "{text}");
         assert!(
-            text.contains("- `run.list`: not built yet: a call answers `action_not_built`."),
+            text.contains("- `run.undo`: not built yet: a call answers `action_not_built`."),
             "{text}"
         );
         assert_eq!(text.matches("- `run.resume`").count(), 1, "{text}");

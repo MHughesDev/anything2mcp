@@ -376,3 +376,102 @@ async fn the_tool_list_is_read_again_on_the_servers_notice_that_it_changed() {
     assert_eq!(pages, listed, "the list was read again once");
     handle.release(prepared, false).await;
 }
+
+/// The local server's surface, with one more entry under `environment` or
+/// `pass_environment`, compiled: the problems that come back.
+fn compile_with_variable(list: &str, name: &str) -> String {
+    let folder = Folder::new("environment");
+    let registry = registry(&folder);
+    let root = folder.path().join("target");
+    write_target(&root, &|path, text| {
+        match path {
+        "target.yaml" if list == "environment" => text
+            .replace(
+                "environment: {EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}",
+                &format!("environment: {{EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\", {name}: elsewhere}}"),
+            ),
+        "target.yaml" => text.replace(
+            "environment: {EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}",
+            &format!(
+                "environment: {{EXAMPLE_MCP_STATE: \"/var/lib/example-mcp\"}}\n    pass_environment: [{name}]"
+            ),
+        ),
+        _ => text,
+    }
+    });
+    match compile(&registry, &root) {
+        Ok(_) => String::new(),
+        Err(problems) => problems
+            .iter()
+            .map(|problem| problem.code.as_str().to_owned())
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+#[test]
+fn a_variable_of_the_engine_or_a_credential_is_never_passed_to_a_local_server() {
+    for list in ["environment", "pass_environment"] {
+        for name in [
+            "A2M_HOME",
+            "a2m_vault_passphrase",
+            "EXAMPLE_MCP_TOKEN",
+            "example_api_key",
+            "EXAMPLE_PASSWORD",
+        ] {
+            let problems = compile_with_variable(list, name);
+            assert!(
+                problems.contains("mcp.environment_refused"),
+                "`{name}` in `{list}` compiled or was refused otherwise: {problems}"
+            );
+        }
+    }
+    // A name that only has a credential word inside it is not refused.
+    assert_eq!(
+        compile_with_variable("environment", "EXAMPLE_TOKEN_FILE"),
+        ""
+    );
+}
+
+#[tokio::test]
+async fn a_plan_that_hands_a_local_server_such_a_variable_starts_nothing() {
+    for (list, name) in [
+        ("environment", "A2M_HOME"),
+        ("pass_environment", "a2m_vault_passphrase"),
+        ("environment", "EXAMPLE_MCP_TOKEN"),
+        ("pass_environment", "EXAMPLE_API_KEY"),
+    ] {
+        let scene = scene(None);
+        let mut local = surface(&scene.plan, "orders_local", None);
+        // A plan the compiler would not make: the surface is changed by
+        // hand, as a plan altered after it was compiled would be.
+        let mut fields: serde_json::Value = local.surface.payload.decode().unwrap();
+        if list == "environment" {
+            fields["environment"][name] = serde_json::json!("elsewhere");
+        } else {
+            fields[list] = serde_json::json!([name]);
+        }
+        local.surface.payload = a2m_core::PackPayload::encode(&fields).unwrap();
+        let refused = prepare(
+            &scene.registry,
+            &scene.plan,
+            &local,
+            fence_of(7),
+            Posture::Live,
+            None,
+        )
+        .await
+        .map(|_| ())
+        .expect_err("the variable was refused");
+        assert_eq!(refused.sent, Sent::NotSent, "{list} {name}");
+        assert_eq!(refused.failure.class(), FailureClass::Input);
+        assert!(
+            !refused.failure.next_step().is_empty()
+                && refused.failure.next_step().contains("session keeper"),
+            "{:?}",
+            refused.failure
+        );
+        // The stand: no program was started, and no connection made.
+        assert!(scene.stand.control().connections().unwrap().is_empty());
+    }
+}

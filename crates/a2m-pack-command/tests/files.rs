@@ -352,6 +352,25 @@ fn no_form_of_argument_hands_a_value_to_a_flag_that_runs_it() {
 }
 
 #[test]
+fn a_variable_of_the_engine_is_never_set_or_copied_for_a_program() {
+    const FILE: &str = "commands/inventory.yaml";
+    for name in ["A2M_HOME", "a2m_vault_passphrase", "A2m_Anything"] {
+        refused(
+            FILE,
+            "TZ: UTC,",
+            &format!("TZ: UTC, {name}: elsewhere,"),
+            "command.engine_variable",
+        );
+        refused(
+            FILE,
+            "    pass: []",
+            &format!("    pass: [{name}]"),
+            "command.engine_variable",
+        );
+    }
+}
+
+#[test]
 fn a_credential_is_never_written_in_a_commands_file_or_carried_as_an_argument() {
     const FILE: &str = "commands/inventory.yaml";
     // A variable named for a credential, set or copied.

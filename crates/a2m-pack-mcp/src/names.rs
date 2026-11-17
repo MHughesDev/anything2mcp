@@ -43,6 +43,7 @@ pub(crate) const PROGRAM_UNPINNED: LintCode = LintCode::fixed("mcp.program_unpin
 pub(crate) const WRITE_NO_READBACK: LintCode = LintCode::fixed("mcp.write_no_readback");
 pub(crate) const DISCOVERY_BOUND: LintCode = LintCode::fixed("mcp.discovery_bound");
 pub(crate) const FREE_TEXT: LintCode = LintCode::fixed("mcp.free_text");
+pub(crate) const ENVIRONMENT_REFUSED: LintCode = LintCode::fixed("mcp.environment_refused");
 /// Codes of the lowering and of the mapping's own compile step.
 pub(crate) const EFFECT_UNDERSTATED: LintCode = LintCode::fixed("mcp.effect_understated");
 pub(crate) const BINDING_INCOMPLETE: LintCode = LintCode::fixed("mcp.binding_incomplete");

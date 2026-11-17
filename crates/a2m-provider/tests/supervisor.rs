@@ -711,3 +711,80 @@ async fn a_script_is_digested_and_started_by_its_path() {
     let failure = supervisor.run(spec, one_shot(60)).await.unwrap_err();
     assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
 }
+
+/// The variable the parent test sets in the child test process: the test
+/// crate may not call `set_var`, which is unsafe, so it starts itself.
+const ENGINE_VARIABLE_FOR_TEST: &str = "A2M_SOMETHING";
+
+#[test]
+fn a_name_of_the_engine_is_known_in_any_letter_case() {
+    assert!(a2m_provider::is_engine_variable("A2M_HOME"));
+    assert!(a2m_provider::is_engine_variable("a2m_vault_passphrase"));
+    assert!(a2m_provider::is_engine_variable("A2m_x"));
+    assert!(!a2m_provider::is_engine_variable("A2M"));
+    assert!(!a2m_provider::is_engine_variable("EXAMPLE_A2M_X"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_that_names_a_variable_of_the_engine_is_refused_and_nothing_starts() {
+    let stand = Stand::start().unwrap();
+    let supervisor = supervisor();
+    for (pass, set) in [
+        (vec!["a2m_vault_passphrase".to_owned()], Vec::new()),
+        (
+            Vec::new(),
+            vec![("A2M_HOME".to_owned(), OsString::from("elsewhere"))],
+        ),
+    ] {
+        let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+        launch.env.pass = pass;
+        launch.env.set.extend(set);
+        let refused = supervisor.run(launch, one_shot(60)).await.unwrap_err();
+        assert_eq!(refused.ran, Ran::NotStarted);
+        assert_eq!(refused.failure.class(), FailureClass::Policy);
+        assert_eq!(refused.failure.code(), &codes::ENGINE_VARIABLE_REFUSED);
+    }
+    assert!(stand.control().invocations().unwrap().is_empty());
+}
+
+/// Starts this test binary again with an engine variable set, running only
+/// the test below, which does its work only then.
+#[test]
+fn a_variable_of_the_engine_does_not_reach_a_program() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "the_program_started_while_a_variable_of_the_engine_is_set",
+            "--nocapture",
+        ])
+        .env(ENGINE_VARIABLE_FOR_TEST, "engine-value-for-tests")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("1 passed"),
+        "the inner test did not run: {text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_program_started_while_a_variable_of_the_engine_is_set() {
+    if std::env::var_os(ENGINE_VARIABLE_FOR_TEST).is_none() {
+        return;
+    }
+    let stand = Stand::start().unwrap();
+    let mut launch = spec(&stand, &["item", "show", "SK-1001"]);
+    launch.env.pass = vec!["PATH".to_owned()];
+    let finished = supervisor().run(launch, one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0));
+    let started = stand.control().invocations().unwrap().pop().unwrap();
+    assert!(
+        !started
+            .env
+            .keys()
+            .any(|name| name.to_ascii_uppercase().starts_with("A2M_")),
+        "{:?}",
+        started.env.keys().collect::<Vec<_>>()
+    );
+}

@@ -155,6 +155,11 @@ code = "mcp.free_text"
 level = "warning"
 summary = "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
 
+[[lint_rules]]
+code = "mcp.environment_refused"
+level = "error"
+summary = "A local server program is handed no variable of the engine's and none named for a credential."
+
 [[drafting_rules]]
 finding_kind = "upstream_tool"
 file_kind = "mapping"

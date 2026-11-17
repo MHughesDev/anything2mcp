@@ -193,6 +193,20 @@ pub(crate) fn plan_unreadable(what: &str) -> Failure {
     )
 }
 
+/// The refusal of a variable that may not be handed to a local server
+/// program, found in a plan that holds one all the same.
+pub(crate) fn variable_refused(name: &str, why: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        FailureCode::PAYLOAD_UNREADABLE,
+        format!(
+            "The published plan hands a local server program the variable `{}`, which {why}.",
+            shown(name)
+        ),
+        "Remove the variable from the surface and compile the target again. A credential for a local server program goes through the session keeper, never through its environment.",
+    )
+}
+
 /// A failure before anything was sent.
 pub(crate) fn unsent(failure: Failure) -> StepFailure {
     StepFailure::not_sent(failure)

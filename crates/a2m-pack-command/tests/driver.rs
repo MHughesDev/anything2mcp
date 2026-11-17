@@ -600,6 +600,41 @@ async fn another_version_and_another_build_are_refused_before_anything_runs() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plan_that_names_a_variable_of_the_engine_starts_nothing() {
+    for (list, name) in [
+        ("env_set", "A2M_HOME"),
+        ("env_pass", "a2m_vault_passphrase"),
+    ] {
+        let mut scene = Scene::new();
+        // A plan the compiler would never make: the section is changed by
+        // hand, as a plan altered after it was compiled would be.
+        let pack = scene
+            .plan
+            .packs
+            .iter_mut()
+            .find(|section| section.pack == "command")
+            .unwrap();
+        let mut section: serde_json::Value = pack.payload.decode().unwrap();
+        let program = &mut section["programs"][0][list];
+        if list == "env_set" {
+            program[name] = serde_json::json!("elsewhere");
+        } else {
+            program.as_array_mut().unwrap().push(name.into());
+        }
+        pack.payload = a2m_core::PackPayload::encode(&section).unwrap();
+
+        let read = scene.read("example_item_get", &sku("SK-1001")).await;
+        is(
+            &failed(read),
+            FailureClass::Input,
+            &codes::STEP_NOT_USABLE,
+            Sent::NotSent,
+        );
+        assert!(scene.starts().is_empty());
+    }
+}
+
 // ---- writes: C3 to C8, and the faults of every write ----
 
 /// A scene with one write run: its fence, and the token of its one record.

@@ -64,5 +64,5 @@ pub use registry::{
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe, LaunchSpec,
     Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, ProgramRef, Ran, ScopedSupervisor,
-    SubsystemId, SubsystemListing, Supervisor, SupervisorLimits,
+    SubsystemId, SubsystemListing, Supervisor, SupervisorLimits, is_engine_variable,
 };

@@ -61,6 +61,23 @@ fn run_output() -> JsonSchema {
         .optional("person", text())
         .optional("approved", JsonSchema::bool())
         .optional("events", JsonSchema::int())
+        .optional("repeated", JsonSchema::bool())
+}
+
+/// One run of a listing: what a caller needs to decide what to do next.
+fn listed_run() -> JsonSchema {
+    JsonSchema::object()
+        .required("run_id", text())
+        .required("tool", text())
+        .required("target", text())
+        .required("status", text())
+        .required("created_at", JsonSchema::int())
+        .optional("started_at", JsonSchema::int())
+        .optional("ended_at", JsonSchema::int())
+        .required("in_doubt", JsonSchema::bool())
+        .required("waits_for_person", JsonSchema::bool())
+        .optional("failure", any_map())
+        .required("next", any_map())
 }
 
 pub(crate) fn definitions() -> Vec<ActionDef> {
@@ -120,6 +137,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("source_rows", FieldType::MapList, "For a tool that reads a source, in place of a file: the rows themselves, for a small input. A list of records, read as a JSON document.")
             .opt("environment", TEXT, "The environment to run in. The target's first production environment when left out.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for the run to rest or end before returning its run_id.")
+            .opt("idempotency_key", TEXT, "A key of your own, 1 to 200 printable characters with no space, that makes a repeated call the same call: the same call with the same key gives back the run the first one started, unfinished or finished, and starts no other. The same key with another call is refused. Send one with every call that may write, and after a lost answer make the same call again with the same key.")
             .effect(Effect::OfTool)
             .needs(HealthNeed::Reads)
             .long_running()
@@ -132,10 +150,20 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .example(r#"{"run_id": "run_01h0000000000000000000000"}"#)
             .alias("GET", "/runs/{run_id}")
             .done(),
-        act("run.list", "The caller's recent runs, newest first.", VIEWER, No, "3", List)
+        act("run.list", "The caller's recent runs, newest first: each run's state, whether a record of it is in doubt, whether it waits for a person, and the next step. After a lost answer, list the runs since the call was sent to find its run before calling again.", VIEWER, No, "3", List)
+            .opt("state", LIST, "Only runs in these states, such as `stopped` or `needs_approval`.")
+            .opt("tool", TEXT, "Only runs of this tool, by its full name.")
             .opt("target", TEXT, TARGET)
-            .opt("limit", COUNT, LIMIT)
-            .opt("offset", OFFSET, OFFSET_HELP)
+            .opt("since", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "Only runs started at or after this moment, in whole milliseconds since 1970 in UTC.")
+            .opt("idempotency_key", TEXT, "Only the run the call with this idempotency key started.")
+            .opt("limit", FieldType::Int { min: 1, max: 100 }, "The most runs to return: 20 when left out, at most 100.")
+            .opt("after", TEXT, "The `run_id` the previous page ended with: the page starts after it.")
+            .output(JsonSchema::object()
+                .required("runs", list_of(listed_run()))
+                .required("complete", JsonSchema::bool())
+                .optional("after", text()))
+            .example(r#"{"since": 1767225600000, "tool": "example_orders_item_upsert"}"#)
+            .alias("GET", "/runs")
             .done(),
         act("run.resume", "Continue a run that rests or stopped. The engine reconciles every doubtful record first; an approved write goes on from its checkpoint.", OPERATOR, Use, "3", Change)
             .pos("run_id", TEXT, RUN)

@@ -144,6 +144,7 @@ As built, the drafter writes the mapping entry only, for either kind of tool: th
 | `mcp.program_unpinned` | Error | A local server program with no digest |
 | `mcp.write_no_readback` | Error, unless the tool is mapped `irreversible` | A write tool with no mapped read tool |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
+| `mcp.environment_refused` | Error | A local server program is handed a variable of the engine's (a name that starts with `A2M_`) or one named for a credential. The driver refuses them again at run time |
 | `mcp.free_text` | Warning at the mapping, error at a binding | A mapped tool whose entry says `free_text: true`: a reviewer found that the server runs the text it is given. The tool is never called, and a binding that uses it does not compile. The compiler sees a tool's digest and not its schema, so the driver is what refuses a one-string tool that no reviewer has cleared |
 | `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted |
 

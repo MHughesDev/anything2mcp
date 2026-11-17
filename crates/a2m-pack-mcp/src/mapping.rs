@@ -46,6 +46,61 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
     .with_program("program", Some("digest"))
 }
 
+/// Words that name a credential when they end a variable's name. A copy of
+/// `CREDENTIAL_WORDS` in `a2m-pack-command` (`src/kind.rs`): the two packs
+/// cannot share the code, so the two rules are kept word for word the same.
+const CREDENTIAL_WORDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "apikey",
+    "credential",
+    "credentials",
+];
+
+/// Words that name a credential when `key` follows them. A copy of
+/// `CREDENTIAL_KEYS` in `a2m-pack-command`.
+const CREDENTIAL_KEYS: &[&str] = &[
+    "api",
+    "access",
+    "private",
+    "secret",
+    "signing",
+    "encryption",
+];
+
+/// Whether a variable's name says that it holds a credential. A copy of
+/// `names_a_credential` in `a2m-pack-command` (`src/kind.rs`), word for
+/// word the same rule. Only the end of the name counts.
+fn names_a_credential(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    match words.as_slice() {
+        [.., last] if CREDENTIAL_WORDS.contains(last) => true,
+        [.., before, "key"] => CREDENTIAL_KEYS.contains(before),
+        _ => false,
+    }
+}
+
+/// Why a variable may not be handed to a local server program, when it may
+/// not: it is one of the engine's own, or it is named for a credential. A
+/// credential for a local server goes through the session keeper, never
+/// through the environment.
+pub(crate) fn refused_variable(name: &str) -> Option<&'static str> {
+    if a2m_provider::is_engine_variable(name) {
+        Some("belongs to the engine, whose own variables are never handed to a program")
+    } else if names_a_credential(name) {
+        Some("is named for a credential, which never goes through a program's environment")
+    } else {
+        None
+    }
+}
+
 /// What an `mcp` surface states beside its address, as the compiler put it
 /// in the surface's payload.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]

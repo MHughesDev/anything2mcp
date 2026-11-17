@@ -64,6 +64,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         codes,
         [
             "mcp.discovery_bound",
+            "mcp.environment_refused",
             "mcp.free_text",
             "mcp.program_unpinned",
             "mcp.tool_unmapped",

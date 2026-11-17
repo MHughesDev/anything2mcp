@@ -7,7 +7,9 @@ use a2m_core::{
     RunState, ToolRuns, Values,
 };
 use a2m_engine::encode_values;
-use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, RunRow, ToolKind};
+use a2m_ledger::{
+    BlobKind, CallerKey, Durability, NewBlob, NewRun, RetentionClass, RunQuery, RunRow, ToolKind,
+};
 use a2m_policy::{Context, ModuleName, PrincipalKind, Question, Resource, ToolRef};
 use a2m_provider::{Access, EntryKind, RootName, Roots};
 use a2m_sched::{
@@ -517,6 +519,47 @@ handler!(
                 hasher.finish()
             }
         };
+        // A call with an idempotency key is the same call as the first
+        // one made with it: its run is given back, unfinished or finished,
+        // and no other is started (decision 0160). Two calls with one key
+        // are one at a time from the look at the key to the binding of
+        // the run, so the second finds what the first bound.
+        let keyed = match call.idempotency_key.as_deref() {
+            Some(text) => Some(Keyed {
+                key: CallerKey::new(text)?,
+                request: request_digest(&name, &environment, &input_hash),
+            }),
+            None => None,
+        };
+        let _one_at_a_time = match &keyed {
+            Some(keyed) => Some(
+                kernel
+                    .inner
+                    .key_locks
+                    .of(keyed.lock_name(principal))
+                    .lock_owned()
+                    .await,
+            ),
+            None => None,
+        };
+        if let Some(keyed) = &keyed {
+            let looked = looked_up(kernel, principal, keyed, (&name, &environment, &input_hash)).await?;
+            match looked {
+                Looked::Free | Looked::Held => {}
+                Looked::Reused => {
+                    return Err(codes::input(
+                        codes::IDEMPOTENCY_KEY_REUSED,
+                        "This idempotency key was given before with another call: another tool, environment, input, or source. Nothing was started.",
+                        "Use a new key for a new call. To get the run of the call the key was first given with, make that call again with the key, or call `run.list` with `idempotency_key`.",
+                    ));
+                }
+                Looked::Bound(run) => {
+                    drop(_one_at_a_time);
+                    let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+                    return repeated(run_output(kernel, &call, row, Tell::Person).await?);
+                }
+            }
+        }
         let stored = store
             .blobs()
             .put(NewBlob {
@@ -547,9 +590,21 @@ handler!(
         };
         let facts = CallerFacts::of(&call.caller, call.decision);
         let kept = run.clone();
+        let to_hold = keyed.clone();
         store
             .write(Durability::Synced, move |tx| {
                 keep_run_call(tx, &kept, stored, &facts)?;
+                if let Some(held) = &to_hold {
+                    // Held before the run is admitted: a call stopped in
+                    // between leaves the key held, and the next call with
+                    // it looks for the run before it starts another.
+                    tx.ledger().hold_caller_key(
+                        &kept.workspace,
+                        &kept.principal,
+                        &held.key,
+                        &held.request,
+                    )?;
+                }
                 match &source {
                     Some(source) => keep_run_source(tx, &kept, source),
                     None => Ok(()),
@@ -596,6 +651,17 @@ handler!(
         let admitted = match admitted {
             Ok(admitted) => admitted,
             Err(refused) => {
+                // Nothing was admitted, so the key is let go: the same call
+                // may be made again with it.
+                if let Some(keyed) = &keyed {
+                    let (workspace, person, key) =
+                        (principal.workspace, principal.principal.id, keyed.key.clone());
+                    let _ = store
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger().release_caller_key(&workspace, &person, &key)
+                        })
+                        .await;
+                }
                 let work = HeldWork {
                     target: &work_target,
                     module: found.tool.module.as_deref(),
@@ -610,10 +676,274 @@ handler!(
         let run = match admitted {
             Admitted::New { run, .. } | Admitted::Existing { run } => run,
         };
+        if let Some(keyed) = &keyed {
+            let (workspace, person, key) =
+                (principal.workspace, principal.principal.id, keyed.key.clone());
+            store
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().bind_caller_key(&workspace, &person, &key, run)
+                })
+                .await?;
+        }
+        drop(_one_at_a_time);
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
         run_output(kernel, &call, row, Tell::Person).await
     }
 );
+
+/// A call's idempotency key, and the digest of what the call asks for.
+#[derive(Clone)]
+struct Keyed {
+    key: CallerKey,
+    request: a2m_core::Digest,
+}
+
+impl Keyed {
+    /// The name of the lock for this key of this caller, in memory only.
+    fn lock_name(&self, principal: &crate::dispatch::Principal) -> String {
+        let mut hasher = FieldHasher::new();
+        hasher.field("purpose", b"anything2mcp caller key lock 1");
+        hasher.field("workspace", principal.workspace.to_string().as_bytes());
+        hasher.field("principal", principal.principal.id.to_string().as_bytes());
+        hasher.field("key", self.key.as_str().as_bytes());
+        hasher.finish().to_string()
+    }
+}
+
+/// What a call asks for, as a key is held to it: the tool, the
+/// environment, and the input with its source. The version of the tool is
+/// not part of it: the same call made after a publish is still the same
+/// call, and its key still gives back its run.
+fn request_digest(
+    name: &OperationName,
+    environment: &Environment,
+    input_hash: &a2m_core::Digest,
+) -> a2m_core::Digest {
+    let mut hasher = FieldHasher::new();
+    hasher.field("purpose", b"anything2mcp keyed call 1");
+    hasher.field("tool", name.as_str().as_bytes());
+    hasher.field("environment", environment.as_str().as_bytes());
+    hasher.field("input", input_hash.to_string().as_bytes());
+    hasher.finish()
+}
+
+/// What the store holds for a call's key.
+enum Looked {
+    /// Nothing: the call is the first with this key.
+    Free,
+    /// Held by an earlier call with the same request that admitted no run.
+    Held,
+    /// Given before with another request.
+    Reused,
+    /// Bound to this run.
+    Bound(RunId),
+}
+
+/// Looks a call's key up, and binds a held key to the run its earlier call
+/// was admitted as when that call stopped before it could.
+async fn looked_up(
+    kernel: &Kernel,
+    principal: &crate::dispatch::Principal,
+    keyed: &Keyed,
+    call: (&OperationName, &Environment, &a2m_core::Digest),
+) -> Result<Looked, Failure> {
+    let (workspace, person) = (principal.workspace, principal.principal.id);
+    let (key, request) = (keyed.key.clone(), keyed.request);
+    let (tool, environment, input_hash) = (call.0.clone(), call.1.clone(), *call.2);
+    kernel
+        .store()?
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let Some(row) = ledger.caller_key(&workspace, &person, &key)? else {
+                return Ok(Looked::Free);
+            };
+            if row.request != request {
+                return Ok(Looked::Reused);
+            }
+            if let Some(run) = row.run {
+                return Ok(Looked::Bound(run));
+            }
+            match ledger.run_called_since(
+                &workspace,
+                &person,
+                (&tool, &environment, &input_hash),
+                row.held_at,
+            )? {
+                Some(run) => {
+                    ledger.bind_caller_key(&workspace, &person, &key, run)?;
+                    Ok(Looked::Bound(run))
+                }
+                None => Ok(Looked::Held),
+            }
+        })
+        .await
+}
+
+/// The output of a call that was made before with the same key: the run
+/// it started, marked as given back.
+fn repeated(mut output: Output) -> Result<Output, Failure> {
+    if let Json::Object(map) = &mut output.result {
+        map.insert("repeated".to_owned(), json!(true));
+    }
+    Ok(output.warn(
+        "This call was made before with the same idempotency key: this is the run it started, and no other was started.",
+    ))
+}
+
+/// The most runs `run.list` returns when the call names no limit.
+const LIST_PAGE: u32 = 20;
+
+handler!(
+    /// `run.list`: the caller's own runs, newest first, with what a caller
+    /// needs to decide what to do next with each.
+    run_list,
+    |kernel, call| {
+        let principal = &call.caller.principal;
+        // A run is its person's alone; a caller that is no person, and
+        // acts for none, has no runs. No role lists another person's runs:
+        // an auditor reads them through `trace.show` and the audit log.
+        let Some(person) = principal.person() else {
+            return Ok(Output::ok(json!({"runs": [], "complete": true})));
+        };
+        let invalid = |message: &str, fix: &str| codes::input(codes::SCHEMA_INVALID, message, fix);
+        let states = match call.input.get("state") {
+            Some(Json::Array(items)) => items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .and_then(|text| text.parse::<RunState>().ok())
+                        .ok_or_else(|| {
+                            invalid(
+                                "A state to list by is not a run's state.",
+                                "Use states such as `queued`, `running`, `needs_approval`, `stopped`, `completed`, or `failed`.",
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => Vec::new(),
+        };
+        let after = call
+            .text("after")
+            .map(|text| {
+                text.parse::<RunId>().map_err(|_| {
+                    invalid(
+                        "`after` is not a run's identifier.",
+                        "Pass the `after` the previous page gave.",
+                    )
+                })
+            })
+            .transpose()?;
+        let limit = call
+            .int("limit")
+            .and_then(|limit| u32::try_from(limit).ok())
+            .unwrap_or(LIST_PAGE)
+            .clamp(1, 100);
+        let query = RunQuery {
+            workspace: principal.workspace,
+            principal: person,
+            states,
+            tool: call.text("tool").map(OperationName::new).transpose()?,
+            target: call.text("target").map(a2m_core::TargetName::new).transpose()?,
+            since: call.int("since").map(a2m_core::Timestamp::from_unix_millis),
+            caller_key: call.text("idempotency_key").map(CallerKey::new).transpose()?,
+            after,
+            // One more than is shown, to know whether the list goes on.
+            limit: limit + 1,
+        };
+        let listed = kernel
+            .store()?
+            .read(move |tx| {
+                let rows = tx.ledger().runs(&query)?;
+                // Whether a record is in doubt is read from the ledger, and
+                // is yes when it cannot be read.
+                let doubts = rows
+                    .iter()
+                    .map(|row| tx.ledger().in_doubt(row.id).map_or(true, |found| !found.is_empty()))
+                    .collect::<Vec<bool>>();
+                Ok((rows, doubts))
+            })
+            .await
+            .map_err(|failure| {
+                if failure.code() == &codes::NOT_FOUND {
+                    no_such_run()
+                } else {
+                    failure
+                }
+            })?;
+        let (mut rows, doubts) = listed;
+        let complete = rows.len() <= limit as usize;
+        rows.truncate(limit as usize);
+        let runs: Vec<Json> = rows
+            .iter()
+            .zip(doubts)
+            .map(|(row, in_doubt)| listed_run(kernel, row, in_doubt))
+            .collect();
+        let mut out = json!({"runs": runs, "complete": complete});
+        let mut output = Output::ok(Json::Null);
+        if !complete && let Some(last) = rows.last() {
+            out["after"] = json!(last.id.to_string());
+            let mut args = call.input.clone();
+            args.insert("after".to_owned(), json!(last.id.to_string()));
+            output = output.then(Next::new("run.list", Json::Object(args), "for the next page"));
+        }
+        output.result = out;
+        Ok(output)
+    }
+);
+
+/// One run as `run.list` shows it.
+fn listed_run(kernel: &Kernel, row: &RunRow, in_doubt: bool) -> Json {
+    let approved = row.state == RunState::NeedsApproval
+        && row
+            .diff_hash
+            .is_some_and(|diff| kernel.inner.signals.approved(row.id, &diff));
+    let waits = matches!(
+        row.state,
+        RunState::NeedsApproval | RunState::NeedsLogin | RunState::NeedsInput
+    ) && !approved;
+    let again = json!({"run_id": row.id.to_string()});
+    let next = match row.state {
+        RunState::Queued | RunState::Validating | RunState::Running => {
+            Next::new("run.get", again, "in a few seconds")
+        }
+        RunState::NeedsApproval if approved => Next::new("run.resume", again, "now"),
+        RunState::NeedsApproval => Next::new("run.resume", again, "after the person approves"),
+        RunState::NeedsLogin => Next::new("run.resume", again, "after the person signs in"),
+        RunState::NeedsInput => Next::new("run.resume", again, "after the person answers"),
+        RunState::Stopped => Next::new(
+            "run.resume",
+            again,
+            "to continue the run; every record in doubt is read first",
+        ),
+        RunState::Completed => Next::new("run.get", again, "to read its result"),
+        RunState::Expired => Next::new(
+            "tool.call",
+            json!({"tool": row.tool_name.as_str()}),
+            "with the same input, if the write is still wanted",
+        ),
+        _ => Next::new("trace.show", again, "to see what happened"),
+    };
+    let mut entry = json!({
+        "run_id": row.id.to_string(),
+        "tool": row.tool_name.as_str(),
+        "target": row.target.as_str(),
+        "status": row.state.as_str(),
+        "created_at": row.created_at.as_unix_millis(),
+        "in_doubt": in_doubt,
+        "waits_for_person": waits,
+        "next": {"action": next.action, "args": next.args, "when": next.when},
+    });
+    if let Some(started) = row.started_at {
+        entry["started_at"] = json!(started.as_unix_millis());
+    }
+    if let Some(ended) = row.finished_at {
+        entry["ended_at"] = json!(ended.as_unix_millis());
+    }
+    if let Some((class, code)) = &row.failure {
+        entry["failure"] = json!({"class": class.to_string(), "code": code.to_string()});
+    }
+    entry
+}
 
 fn wait_of(call: &Call) -> Duration {
     let seconds = call.int("wait_seconds").unwrap_or(DEFAULT_WAIT_SECONDS);

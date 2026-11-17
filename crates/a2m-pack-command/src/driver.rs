@@ -218,6 +218,25 @@ impl CliDriver {
                 "Try again.",
             ));
         }
+        // The engine's own variables are never handed to a program, whatever
+        // a plan says: the compiler refuses them, and so does the driver.
+        if let Some(name) = program.and_then(|program| {
+            program
+                .env_set
+                .keys()
+                .chain(program.env_pass.iter())
+                .find(|name| a2m_provider::is_engine_variable(name))
+        }) {
+            return Err(not_sent(
+                FailureClass::Input,
+                codes::STEP_NOT_USABLE,
+                format!(
+                    "The plan hands the program the variable `{}`, which belongs to the engine.",
+                    name.chars().take(64).collect::<String>()
+                ),
+                "Compile the target again from files that do not name the engine's variables.",
+            ));
+        }
         let pass = passed(program);
         let set: Vec<(String, OsString)> = program
             .map(|program| {

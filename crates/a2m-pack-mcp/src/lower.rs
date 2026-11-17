@@ -629,16 +629,18 @@ pub(crate) enum Rule {
     WriteNoReadback,
     DiscoveryBound,
     FreeText,
+    EnvironmentRefused,
 }
 
 impl Rule {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::ToolUnmapped,
         Self::ToolUnpinned,
         Self::ProgramUnpinned,
         Self::WriteNoReadback,
         Self::DiscoveryBound,
         Self::FreeText,
+        Self::EnvironmentRefused,
     ];
 }
 
@@ -673,6 +675,7 @@ impl LintRule for Rule {
             Self::WriteNoReadback => names::WRITE_NO_READBACK,
             Self::DiscoveryBound => names::DISCOVERY_BOUND,
             Self::FreeText => names::FREE_TEXT,
+            Self::EnvironmentRefused => names::ENVIRONMENT_REFUSED,
         }
     }
 
@@ -696,6 +699,9 @@ impl LintRule for Rule {
             }
             Self::FreeText => {
                 "A mapped tool that a reviewer found runs free text is never called, and no binding uses it."
+            }
+            Self::EnvironmentRefused => {
+                "A local server program is handed no variable of the engine's and none named for a credential."
             }
         }
     }
@@ -765,6 +771,39 @@ impl LintRule for Rule {
                         ),
                         "Add `digest:` with the SHA-256 digest of the program that was reviewed.",
                     )
+                })
+                .collect(),
+            Self::EnvironmentRefused => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .flat_map(|surface| {
+                    let set = surface
+                        .doc
+                        .get("environment")
+                        .map(Located::entries)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|entry| (entry.key.value.clone(), entry.key.at.clone()));
+                    let passed = surface
+                        .doc
+                        .get("pass_environment")
+                        .map(Located::items)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|item| Some((item.as_text()?.to_owned(), item.at.clone())));
+                    set.chain(passed).collect::<Vec<_>>()
+                })
+                .filter_map(|(name, at)| {
+                    let why = crate::mapping::refused_variable(&name)?;
+                    Some(problem(
+                        &at,
+                        format!(
+                            "The variable `{}` {why}.",
+                            codes::shown(&name)
+                        ),
+                        "Remove it. A credential for a local server program goes through the session keeper, never through its environment.",
+                    ))
                 })
                 .collect(),
             Self::WriteNoReadback => tool_entries(mappings)

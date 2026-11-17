@@ -41,6 +41,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "tool.describe" => tools::tool_describe,
         "tool.call" => tools::tool_call,
         "run.get" => tools::run_get,
+        "run.list" => tools::run_list,
         "run.resume" => tools::run_resume,
         "run.cancel" => tools::run_cancel,
         "trace.show" => tools::trace_show,

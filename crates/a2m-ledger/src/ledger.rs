@@ -716,7 +716,7 @@ fn epoch_of(number: i64) -> Result<Epoch, Failure> {
     count(number).map(Epoch::new)
 }
 
-fn run_row(row: &Row) -> Result<RunRow, Failure> {
+pub(crate) fn run_row(row: &Row) -> Result<RunRow, Failure> {
     Ok(RunRow {
         id: parse(row.text(0)?)?,
         workspace: parse(row.text(1)?)?,
@@ -792,7 +792,7 @@ fn record_row(row: &Row) -> Result<(RecordRow, Option<u64>), Failure> {
 
 /// The run store and the ledger, inside one transaction.
 pub struct Ledger<'t, 'a> {
-    tx: &'t mut Tx<'a>,
+    pub(crate) tx: &'t mut Tx<'a>,
 }
 
 impl<'a> Tx<'a> {

@@ -43,6 +43,19 @@ use windows as os;
 /// The variable that carries the owner mark into a child's environment.
 pub const OWNER_MARK_VARIABLE: &str = "ANYTHING2MCP_OWNER_MARK";
 
+/// The prefix of the engine's own environment variables.
+const ENGINE_VARIABLE_PREFIX: &str = "A2M_";
+
+/// Whether a variable's name is one of the engine's own: it starts with
+/// `A2M_` in any letter case (names are case-insensitive on Windows). The
+/// supervisor never copies such a variable into a child and refuses a launch
+/// that names one; packs refuse it earlier.
+#[must_use]
+pub fn is_engine_variable(name: &str) -> bool {
+    name.get(..ENGINE_VARIABLE_PREFIX.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(ENGINE_VARIABLE_PREFIX))
+}
+
 /// A program to start: where it is, and the digest it must have when one
 /// was declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -511,6 +524,12 @@ fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> 
     // Nothing is inherited from the engine's environment unless listed.
     command.env_clear();
     for name in &spec.env.pass {
+        // The last line of defence: the engine's own variables are never
+        // copied into a child, whatever a launch asks for. A launch that
+        // names one is refused before this point, in `launch`.
+        if is_engine_variable(name) {
+            continue;
+        }
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
@@ -770,6 +789,23 @@ impl Supervisor {
         link: &LinkKind,
     ) -> Result<(u64, Arc<os::Group>, Option<os::Pipes>, Digest, bool), Failure> {
         self.admit(spec)?;
+        if let Some(name) = spec
+            .env
+            .pass
+            .iter()
+            .map(String::as_str)
+            .chain(spec.env.set.iter().map(|(name, _)| name.as_str()))
+            .find(|name| is_engine_variable(name))
+        {
+            return Err(codes::policy(
+                codes::ENGINE_VARIABLE_REFUSED,
+                format!(
+                    "A launch names the variable `{}`, which belongs to the engine and is never handed to a program.",
+                    name.chars().take(64).collect::<String>()
+                ),
+                "Remove the variable from the launch; a program is given only variables of its own.",
+            ));
+        }
         if !spec.program.path.is_absolute() {
             return Err(codes::input(
                 codes::PROGRAM_NOT_FOUND,

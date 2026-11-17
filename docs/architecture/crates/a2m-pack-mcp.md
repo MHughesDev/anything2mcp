@@ -79,6 +79,7 @@ The first six are registered rules that look across files. The last four are rai
 | `mcp.program_unpinned` | Error | A local server program with no SHA-256 digest |
 | `mcp.write_no_readback` | Error | A tool mapped `write` that names no mapped read tool. A tool mapped `irreversible` needs none |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
+| `mcp.environment_refused` | Error | A local server program is handed a variable that starts with `A2M_` (any letter case) or is named for a credential, in `environment` or `pass_environment`. The driver refuses the same names again before it starts the program, so a plan changed by hand starts nothing. A credential for a local server goes through the session keeper, not the environment ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md), finding P6) |
 | `mcp.free_text` | Warning at the mapping, error at a binding | A tool whose entry says `free_text: true` is never called. The entry may stand as the record of a review; a binding that uses the tool, as its act, its read-back, or its lookup, does not compile |
 | `mcp.effect_understated` | Error | An operation states less than the tool it calls, or a reading verb calls a write tool |
 | `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted. Every value of the mode comes from the server, from the act, the read-back, or the lookup. A choice is not text: the kernel admits only its codes |

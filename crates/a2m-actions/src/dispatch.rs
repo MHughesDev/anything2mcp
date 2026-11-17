@@ -661,6 +661,12 @@ impl Kernel {
             ))
         })?;
 
+        // The idempotency key: from the request, as a door carried it, or,
+        // for `tool.call`, from its own field. Two different keys on one
+        // request are refused; a key is checked before anything is decided.
+        let (input, idempotency_key) =
+            taken_key(&def, input, request.idempotency_key).map_err(Refused::malformed)?;
+
         // 3. Health.
         let health = self.health();
         let effect = self.effect_of(&def, &input).await;
@@ -743,16 +749,22 @@ impl Kernel {
             input,
             caller: request.caller,
             decision,
-            idempotency_key: request.idempotency_key,
+            idempotency_key: idempotency_key.clone(),
             project,
             project_refused,
             presence,
             decided,
         };
-        let output = self
+        let mut output = self
             .run_handler(&def, call)
             .await
             .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+        if idempotency_key.is_some() && !READS_KEY.contains(&def.name.as_str()) {
+            output = output.warn(format!(
+                "`{}` starts no run, so the idempotency key was not used.",
+                def.name
+            ));
+        }
 
         // 7. Shape: the cap. Redaction is the caller's last act, above.
         Ok((self.capped(&def, output), decision))
@@ -1112,6 +1124,51 @@ fn person_is_needed(failure: &Failure) -> bool {
 /// # Errors
 ///
 /// `input`/`schema_invalid`, naming the field and what it must be.
+/// The actions that read a request's idempotency key: `tool.call`, which
+/// starts a run, and `action.run`, which hands it to the action it runs.
+const READS_KEY: &[&str] = &["tool.call", "action.run"];
+
+/// The field of `tool.call` that carries the idempotency key, for a door
+/// that has no other place for one.
+const KEY_FIELD: &str = "idempotency_key";
+
+/// Takes the idempotency key of a request: the one the door carried, or,
+/// for `tool.call`, the one in its own field, which is taken out of the
+/// input. Both may be given only when they are the same key.
+///
+/// # Errors
+///
+/// `input`/`idempotency_key_invalid` for a key that is not 1 to 200
+/// printable characters, or for two different keys.
+fn taken_key(
+    def: &ActionDef,
+    mut input: Map<String, Json>,
+    stated: Option<String>,
+) -> Result<(Map<String, Json>, Option<String>), Failure> {
+    let given = if def.name.as_str() == "tool.call" {
+        match input.remove(KEY_FIELD) {
+            Some(Json::String(text)) => Some(text),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let key = match (given, stated) {
+        (Some(field), Some(door)) if field != door => {
+            return Err(codes::input(
+                codes::IDEMPOTENCY_KEY_INVALID,
+                "The call carries two different idempotency keys: one in its input and one beside it.",
+                "Send one key, in one place.",
+            ));
+        }
+        (field, door) => field.or(door),
+    };
+    if let Some(key) = &key {
+        a2m_ledger::CallerKey::new(key)?;
+    }
+    Ok((input, key))
+}
+
 pub(crate) fn validate(def: &ActionDef, input: Json) -> Result<Map<String, Json>, Failure> {
     let map = match input {
         Json::Null => Map::new(),
