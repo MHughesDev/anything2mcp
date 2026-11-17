@@ -14,7 +14,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [08-entra-identity.md](08-entra-identity.md) | Acting as a user or a service under Entra ID | Partial |
 | [09-rust-building-blocks.md](09-rust-building-blocks.md) | Crates and engine options | Partial; most crates unverified |
 | [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `anything2mcp` | Completed; quick reviews |
-| [11-open-research.md](11-open-research.md) | 34 research briefs | To do; briefs 1, 2, 24, 27, 32, 33, and 34 are answered by notes 17, 18, 25, 20, 22, 23, and 24 |
+| [11-open-research.md](11-open-research.md) | 34 research briefs still to run | To do; briefs 1, 2, 24, 27, 32, 33, and 34 are answered by notes 17, 18, 25, 20, 22, 23, and 24 |
 | [12-packaging-and-agent-interfaces.md](12-packaging-and-agent-interfaces.md) | Package names, pip and npm packaging, commands versus MCP tools | Partial; search results and registry checks |
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |
 | [14-sessions-and-policy-engines.md](14-sessions-and-policy-engines.md) | Browser profile limits, device-bound sessions, Entra session rules, Cedar | Partial; search results only |

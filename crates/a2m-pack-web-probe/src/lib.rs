@@ -102,7 +102,7 @@ impl Pack for WebProbePack {
         // Only the handle that looks is kept.
         let observer = self
             .shared
-            .get_or_create(cx, self.settings.clone())?
+            .get_or_create(cx, self.settings.clone().with_pack_settings(cx.settings())?)?
             .observer();
         let max_pages = cx
             .settings()

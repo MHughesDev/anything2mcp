@@ -16,6 +16,9 @@ name = "ui"
 archetype = "interface"
 verbs = ["read", "list", "create", "update", "upsert", "submit"]
 steps = ["goto", "wait", "read", "set", "invoke"]
+# No kind of step always saves: an `invoke` saves when its action is
+# declared to, and the lowering refuses a `commits` mark on any other kind.
+commit_steps = []
 rank = 60
 session_reads = 4
 session_writes = 1
@@ -154,6 +157,13 @@ default = 400
 min = 10
 max = 5000
 doc = "The most elements a snapshot kept as evidence may hold."
+
+[[settings]]
+key = "browser_digests"
+type = "list"
+default = []
+scope = "installation"
+doc = "The digests of the browser programs a person has reviewed. When the list is not empty, a browser with another digest is closed."
 
 # The places a browser is looked for: every path of the browser engine's
 # list of known places, for every operating system. The supervisor starts

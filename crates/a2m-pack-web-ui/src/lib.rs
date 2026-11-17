@@ -103,7 +103,9 @@ impl Pack for WebUiPack {
                 .and_then(Value::as_int)
                 .and_then(|number| usize::try_from(number).ok())
         };
-        let mut settings = BrowserSettings::default();
+        // The reviewed digests of the browser programs, from this pack's
+        // own settings; a value that cannot be read stops the pack.
+        let mut settings = BrowserSettings::default().with_pack_settings(cx.settings())?;
         if let Some(most) = setting("max_read_chars") {
             settings.max_read_chars = most;
         }
