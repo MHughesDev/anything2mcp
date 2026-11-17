@@ -35,8 +35,8 @@ impl OsKeyStore {
     /// # Errors
     ///
     /// `busy`/`key_store_unreachable` when this machine has no key store this
-    /// build can reach, as on Linux without a desktop session or without the
-    /// `secret-service` feature, or when the store does not answer.
+    /// build can reach, as on Linux (decision 0123), or when the store does not
+    /// answer.
     pub async fn open(installation: &InstallationName) -> Result<Self, Failure> {
         let (name, store) = blocking(platform_store).await??;
         Self::over(name, store, installation, Arc::new(OsRandom)).await
@@ -208,18 +208,7 @@ fn platform_store() -> Result<(&'static str, Arc<CredentialStore>), Failure> {
     Ok(("Windows Credential Manager", store))
 }
 
-#[cfg(all(target_os = "linux", feature = "secret-service"))]
-fn platform_store() -> Result<(&'static str, Arc<CredentialStore>), Failure> {
-    let store: Arc<CredentialStore> =
-        zbus_secret_service_keyring_store::Store::new().map_err(|error| store_failure(&error))?;
-    Ok(("Secret Service", store))
-}
-
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "windows",
-    all(target_os = "linux", feature = "secret-service")
-)))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn platform_store() -> Result<(&'static str, Arc<CredentialStore>), Failure> {
     Err(failure::unreachable(
         "this build has no operating-system key store for this machine",
@@ -314,11 +303,7 @@ mod tests {
         assert_eq!(again.health().await, StoreHealth::EntryMissing);
     }
 
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "windows",
-        all(target_os = "linux", feature = "secret-service")
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     #[tokio::test]
     async fn a_machine_with_no_key_store_says_so() {
         let installation = InstallationName::new("example-installation").unwrap();

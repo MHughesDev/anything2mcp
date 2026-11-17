@@ -103,3 +103,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0090 | [The supervisor ends a group only while its leader is unreaped, and its links are started by three calls](0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) | Accepted (design decision) |
 | 0121 | [The plan carries what the run time needs from target files](0121-the-plan-carries-what-the-run-time-needs-from-target-files.md) | Accepted (design decision) |
 | 0122 | [Small things the core crate gives its builders, and a secret is wiped when dropped](0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) | Accepted (design decision) |
+| 0123 | [The Linux Secret Service back end is left out until its store crate stands on maintained crates](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md) | Accepted (design decision) |

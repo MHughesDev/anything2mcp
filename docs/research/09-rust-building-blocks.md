@@ -53,7 +53,6 @@ Added to `Cargo.toml` in slice 0.3, on 2026-11-16, for the test application. Eac
 | `keyring-core` | 1.0.1 | MIT or Apache-2.0 | The interface over credential stores | |
 | `apple-native-keyring-store` | 1.0.2 | MIT or Apache-2.0 | macOS only: the Keychain | Feature `keychain` |
 | `windows-native-keyring-store` | 1.1.0 | MIT or Apache-2.0 | Windows only: Credential Manager | Default features off |
-| `zbus-secret-service-keyring-store` | 1.0.1 | MIT or Apache-2.0 | Linux only: the Secret Service | Feature `crypto-rust`. Only with the vault's cargo feature `secret-service` |
 | `sha1` | 0.11.0 | MIT or Apache-2.0 | SHA-1 for one-time codes in `a2m-auth` | Default features off. The reason is recorded in decision 0084 |
 | `saphyr-parser` | 0.3.4 | MIT or Apache-2.0 | The YAML parser for target files in `a2m-files` | The reason is recorded in decision 0078 |
 | `miniz_oxide` | 0.9.1 | MIT, Zlib, or Apache-2.0 | Inflate for a workbook's package in `a2m-sources` | Default features off; `with-alloc`. The reason is recorded in decision 0086 |

@@ -218,7 +218,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - A container image for servers.
 - An offline bundle for networks with no internet access: the binary, the wheels, and a pinned browser.
 
-Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. Desktop Linux builds enable the `secret-service` feature of `a2m-vault`. The feature is off by default, so that the workspace builds without the hundred or so crates it brings, and with no system library either way ([decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md)).
+Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)).
 
 ## Versions
 
