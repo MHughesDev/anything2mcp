@@ -415,6 +415,9 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Ok(Parsed::Process(globals, word, rest)) => {
             return process::run(&tree, &globals, word, &rest, host, json || globals.json).await;
         }
+        Ok(Parsed::EmptyShortcut(globals, INIT_WORD)) => {
+            return init(&tree, &globals, host, json || globals.json);
+        }
         Ok(other) => return without_engine(&tree, other, json),
         Err(failure) => return stopped(&tree, "", &failure, ExitClass::Malformed, json),
     };
@@ -529,6 +532,59 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         );
     }
     finished
+}
+
+/// The shortcut that makes a project folder. It has no action beneath it:
+/// a project file is what makes a folder a project, so the client, which
+/// runs as the person in a folder of theirs, writes the first files
+/// (decision 0164).
+const INIT_WORD: &str = "init";
+
+/// `init`: makes the folder the command was run in, or the one `--project`
+/// names, a project, with `a2m_actions::init::init_project`. A folder that
+/// others can change is not made one.
+fn init(tree: &Tree, globals: &Globals, host: &Host, json: bool) -> Finished {
+    let folder = match &globals.project {
+        Some(given) if given.is_absolute() => given.clone(),
+        Some(given) => host.cwd.join(given),
+        None => host.cwd.clone(),
+    };
+    if let Kept::Open(why) = kept(&folder) {
+        return stopped(
+            tree,
+            INIT_WORD,
+            &not_yours(&folder, why),
+            ExitClass::Malformed,
+            json,
+        );
+    }
+    match a2m_actions::init::init_project(&folder) {
+        Ok(report) => {
+            let response = a2m_actions::Response {
+                ok: true,
+                action: INIT_WORD.to_owned(),
+                result: Some(serde_json::json!({
+                    "folder": folder.display().to_string(),
+                    "written": report.written,
+                    "kept": report.kept,
+                })),
+                error: None,
+                warnings: Vec::new(),
+                next: None,
+                exit: ExitClass::Succeeded,
+                decision: None,
+            };
+            render::render(&response, tree, json)
+        }
+        Err(failure) => {
+            let exit = if failure.class() == FailureClass::Input {
+                ExitClass::Malformed
+            } else {
+                ExitClass::Failed
+            };
+            stopped(tree, INIT_WORD, &failure, exit, json)
+        }
+    }
 }
 
 /// The action that starts the local engine, carried out here, in the

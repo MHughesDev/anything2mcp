@@ -622,3 +622,38 @@ async fn a_secret_typed_on_standard_input_is_stored_and_is_in_no_output() {
         assert!(!text(&output.stderr).contains(BEARER_TOKEN), "{output:?}");
     }
 }
+
+#[test]
+fn init_makes_an_empty_folder_a_project_and_keeps_what_is_there() {
+    let bare = Bare::new();
+    let folder = Folder::new("init");
+    let init = |args: &[&str]| {
+        let mut command = bare.command(COMMANDS[0], args);
+        command.current_dir(folder.path());
+        command.output().unwrap()
+    };
+    let made = init(&["init"]);
+    assert_eq!(made.status.code(), Some(0), "{made:?}");
+    let result = &object(&made)["result"];
+    assert_eq!(
+        result["written"],
+        serde_json::json!(["anything2mcp.toml", "AGENTS.md", ".gitignore", "targets"]),
+        "{result}"
+    );
+    assert!(folder.path().join("targets").is_dir());
+    let guidance = std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap();
+    assert!(!guidance.trim().is_empty());
+    // The folder is a project now: a command run in it finds it.
+    let listed = init(&["draft", "lint", "--help"]);
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+
+    // Again, nothing is written over.
+    std::fs::write(folder.path().join("AGENTS.md"), "my own words").unwrap();
+    let again = init(&["init"]);
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(object(&again)["result"]["written"], serde_json::json!([]));
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap(),
+        "my own words"
+    );
+}
