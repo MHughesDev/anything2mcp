@@ -491,47 +491,71 @@ async fn a_page_s_requests_for_a_permission_or_a_file_are_refused_with_no_prompt
     let stand = Stand::with_browser("prompts");
     let quiet = at(&app.url("/escapes/quiet"));
     // Each request is made as if a person had just used the page, which a
-    // browser asks for before it shows a prompt. A prompt that opened
-    // would leave its request unanswered, and the call would time out.
-    let ask = "(() => { const quiet = (what, promise) => Promise.race([promise, \
-        new Promise((resolve) => setTimeout(() => resolve(what + ' unanswered'), 3000))]); \
+    // browser asks for before it shows a prompt. A prompt left open would
+    // leave its request unanswered, and the page says which.
+    let ask = "(() => { const answered = (what, promise) => Promise.race([promise, \
+        new Promise((resolve) => setTimeout(() => resolve(what + ' unanswered'), 10000))]); \
         return Promise.all([\
-        quiet('geolocation', new Promise((resolve) => navigator.geolocation.getCurrentPosition(\
+        answered('geolocation', new Promise((resolve) => navigator.geolocation.getCurrentPosition(\
             () => resolve('located'), (error) => resolve('geolocation ' + error.code)))),\
-        quiet('notifications', Notification.requestPermission().then((answer) => 'notifications ' + answer)),\
-        quiet('clipboard', navigator.clipboard.readText().then(() => 'clipboard read', (error) => 'clipboard ' + error.name)),\
-        navigator.permissions.query({name: 'geolocation'}).then((state) => 'state ' + state.state),\
-        quiet('watch', new Promise((resolve) => navigator.geolocation.watchPosition(\
-            () => resolve('watched'), (error) => resolve('watch ' + error.code)))),\
+        answered('notifications', Notification.requestPermission().then((answer) => 'notifications ' + answer)),\
+        answered('clipboard', navigator.clipboard.readText().then(() => 'clipboard read', \
+            (error) => 'clipboard ' + error.name)),\
         ]).then((answers) => answers.join(', ')); })()";
     let choose = "(() => { const input = document.createElement('input'); input.type = 'file'; \
         document.body.append(input); input.click(); return 'chosen'; })()";
+    // Geolocation is denied with the code for a refused permission.
+    let refused = "geolocation 1, notifications denied, clipboard NotAllowedError";
 
+    // And no permission is granted, or left for a prompt to grant: among
+    // them a service worker's later requests, and the clipboard. A name the
+    // browser does not know is no permission. Asking for storage of an
+    // embedded page stays a prompt, and the browser answers it alone.
+    let open = "Promise.all(['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', \
+        'clipboard-write', 'background-sync', 'background-fetch', 'periodic-background-sync', \
+        'persistent-storage', 'midi', 'accelerometer', 'gyroscope', 'magnetometer', 'screen-wake-lock', \
+        'local-fonts', 'payment-handler', 'idle-detection', 'window-management', 'storage-access']\
+        .map((name) => navigator.permissions.query({name}).then((answer) => \
+        answer.state === 'denied' || (answer.state === 'prompt' && name === 'storage-access') \
+        ? '' : name + '=' + answer.state, () => ''))).then((all) => all.filter(Boolean).join(' '))";
+    // Each tab is asked while it is the one shown: a hidden page's request
+    // for a location waits until the page is shown again.
     let browser = stand.open(&profile("clerk")).await;
     let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
-    let tab = observing(&stand, &app, "clerk").await;
     must(acting.goto(&quiet, soon()).await);
-    must(tab.goto(&quiet, soon()).await);
-    for page in [&acting.page, &tab.page] {
-        eprintln!("MEASURED {}", must(page.as_the_page_with_a_gesture(ask, soon()).await));
-        eprintln!("NO GESTURE {}", must(page.as_the_page(ask, soon()).await));
-        // A file chooser opens nothing, and the page goes on.
-        assert_eq!(
-            must(page.as_the_page_with_a_gesture(choose, soon()).await),
-            "chosen"
-        );
-    }
-    for look in [
+    assert_eq!(
+        must(acting.page.as_the_page_with_a_gesture(ask, soon()).await),
+        refused
+    );
+    assert_eq!(must(acting.page.as_the_page(open, soon()).await), "");
+    // A file chooser opens nothing, and the page goes on.
+    assert_eq!(
+        must(acting.page.as_the_page_with_a_gesture(choose, soon()).await),
+        "chosen"
+    );
+    must(
         acting
             .locate(&Query::role("heading", "Order notes"), soon())
             .await,
+    );
+    drop(acting);
+
+    let tab = observing(&stand, &app, "clerk").await;
+    must(tab.goto(&quiet, soon()).await);
+    assert_eq!(
+        must(tab.page.as_the_page_with_a_gesture(ask, soon()).await),
+        refused
+    );
+    assert_eq!(must(tab.page.as_the_page(open, soon()).await), "");
+    assert_eq!(
+        must(tab.page.as_the_page_with_a_gesture(choose, soon()).await),
+        "chosen"
+    );
+    must(
         tab.locate(&Query::role("heading", "Order notes"), soon())
             .await,
-    ] {
-        must(look);
-    }
-    assert_eq!(stand.browsers.list()[0].tabs, 2);
-    drop((tab, acting));
+    );
+    drop(tab);
     stand.end().await;
     assert_eq!(arrived(&app).await, Vec::<String>::new());
 }

@@ -16,8 +16,8 @@ use a2m_core::{
 };
 use a2m_expr::Normalizer;
 use a2m_provider::{
-    Access, BoxFuture, Cleanup, Driver, DriverHealth, Observed, PrepareContext, Prepared, RootName,
-    Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
+    RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
 use serde::Deserialize;
@@ -122,6 +122,8 @@ struct State {
     folder: Folder,
     documents: BTreeMap<String, Loaded>,
     run: String,
+    /// What the run may do: a save is refused where nothing may be written.
+    posture: Posture,
     current: Option<Current>,
     /// Temporary files this driver made and may not have removed.
     temporary: Vec<Made>,
@@ -808,8 +810,25 @@ impl FileDriver {
         &self,
         state: &mut State,
         document: &str,
+        step: &Step,
         input: &StepInput<'_>,
     ) -> Result<Observed, StepFailure> {
+        // The driver's own guard. Live, the step the plan marks `commits`.
+        // In a sandbox with test records, that one step alone: the engine
+        // cannot see what a step not marked does there. Nowhere else.
+        let allowed = match state.posture {
+            Posture::Live => step.commits,
+            Posture::Sandbox { test_records } => test_records && step.commits,
+            _ => false,
+        };
+        if !allowed {
+            return Err(StepFailure::not_sent(Failure::new(
+                FailureClass::Policy,
+                a2m_provider::codes::READ_ONLY_POSTURE,
+                "A save was asked for where nothing may be written, or by a step that is not marked as the commit point, so the file was not replaced.",
+                "Run the operation live, or against a declared test record, with the save as the binding's commit point.",
+            )));
+        }
         let loaded = state
             .documents
             .get(document)
@@ -914,6 +933,7 @@ impl Driver for FileDriver {
                 folder,
                 documents,
                 run: cx.run.to_string(),
+                posture: cx.posture,
                 current: None,
                 temporary: Vec::new(),
             }))
@@ -945,7 +965,7 @@ impl Driver for FileDriver {
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
             match spec {
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
-                StepSpec::Save => done(self.save(state, document, input).await?),
+                StepSpec::Save => done(self.save(state, document, step, input).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
                 other => {
                     let loaded = state.documents.get(document).ok_or_else(|| {

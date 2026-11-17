@@ -16,12 +16,12 @@
 //! trace: dropped in between, they leave a blob nothing names, and the call
 //! made again stores the same blob under the same name.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    Digest, Failure, FailureClass, Identity, Mode, Plan, RunState, SurfaceIndex, SurfaceName,
+    Digest, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex, SurfaceName,
     ToolRuns, Values,
 };
 use a2m_engine::{
@@ -52,8 +52,6 @@ pub(crate) struct InProcessControl {
     run: RunRow,
     plan: Arc<Plan>,
     caller: CallerFacts,
-    /// The mode each intent was stored for, for a later claim's snapshot.
-    pub(crate) modes: Mutex<Vec<(RecordRef, Mode)>>,
 }
 
 impl InProcessControl {
@@ -72,7 +70,6 @@ impl InProcessControl {
             run,
             plan,
             caller,
-            modes: Mutex::new(Vec::new()),
         }
     }
 
@@ -506,14 +503,6 @@ impl Control for InProcessControl {
         intents: Vec<RecordIntent>,
     ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
         Box::pin(async move {
-            for intent in &intents {
-                if let Some(mode) = &intent.mode {
-                    self.modes
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push((intent.record, mode.clone()));
-                }
-            }
             // Fail closed: no ledger, no write. The intents are durable
             // before a token exists.
             self.kernel

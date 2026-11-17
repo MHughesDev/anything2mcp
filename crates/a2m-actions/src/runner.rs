@@ -16,7 +16,7 @@ use a2m_engine::{
     Conditions, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
     KernelHealth, LeaseClock, Parallelism, RecordSnapshot, RunSnapshot, ToolRef, decode_values,
 };
-use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RecordRef, RunRow, SqlValue, Tx};
+use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RunRow, SqlValue, Tx};
 use a2m_policy::{ActingFor, GroupName, PrincipalKind, PrincipalRef, ToolsetName};
 use a2m_sched::{BudgetKey, JobEnd, JobLease, RunnerOffer, RunnerTerms, Slots};
 use a2m_telemetry::CaptureLevel;
@@ -37,9 +37,6 @@ use crate::kernel::{Kernel, fact, set_fact};
 /// so this is an interval between tries and not a wait for a condition. The
 /// kernel's wake notice ends it early.
 const CLAIM_WAIT: Duration = Duration::from_secs(30);
-
-/// The most runs whose intents' modes are remembered for a later claim.
-const MODES_REMEMBERED: usize = 1024;
 
 /// The most rate budgets noted as set. Past it the notes are dropped, and a
 /// budget is set once more the next time its surface is used.
@@ -275,7 +272,6 @@ pub(crate) struct RunnerState {
     pub(crate) task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
     budgets: Mutex<BTreeSet<String>>,
-    modes: Mutex<BTreeMap<RunId, Vec<(RecordRef, Mode)>>>,
 }
 
 impl Default for RunnerState {
@@ -284,7 +280,6 @@ impl Default for RunnerState {
             task: Mutex::new(None),
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
-            modes: Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -577,9 +572,6 @@ impl Kernel {
                 }
             }
         };
-        if let Some(fence) = lease.fence() {
-            self.forget_ended(fence.run).await;
-        }
         // The job is unfinished in the scheduler's own table until this
         // commits, and that table is what a caller waiting for the run
         // reads. It is told only afterwards. When it cannot be recorded
@@ -615,19 +607,6 @@ impl Kernel {
             .await;
     }
 
-    /// Forgets what is kept in memory about a run that has ended.
-    async fn forget_ended(&self, run: RunId) {
-        let ended = match self.store() {
-            Ok(store) => store
-                .read(move |tx| Ok(tx.ledger().run(run)?.state.is_final()))
-                .await
-                .unwrap_or(false),
-            Err(_) => false,
-        };
-        if ended {
-            lock(&self.inner.runner.modes).remove(&run);
-        }
-    }
 
     /// Ends a run whose stored call is missing or cannot be read. Nothing
     /// is known of its input or of its caller, so it is not run with an
@@ -804,18 +783,6 @@ impl Kernel {
         let outcome = engine.run_job(&job, &control).await;
         beat.abort();
         let _ = beat.await;
-        {
-            let mut modes = lock(&self.inner.runner.modes);
-            modes
-                .entry(run)
-                .or_default()
-                .extend(lock(&control.modes).drain(..));
-            // Bounded: the oldest run's modes go first. A run that lost
-            // them is read once more on resume, as after a restart.
-            while modes.len() > MODES_REMEMBERED {
-                modes.pop_first();
-            }
-        }
 
         let end = match outcome {
             JobOutcome::Finished { state, failure } => {
@@ -911,10 +878,6 @@ impl Kernel {
                 Ok((rows, recorded))
             })
             .await?;
-        let modes = lock(&self.inner.runner.modes)
-            .get(&run)
-            .cloned()
-            .unwrap_or_default();
         let mut records = Vec::new();
         for record in rows {
             let before = self.stored_values(record.before).await?;
@@ -938,11 +901,10 @@ impl Kernel {
                 assigned_key: record.assigned_key,
                 outputs,
                 before_commit,
-                mode: modes
-                    .iter()
-                    .rev()
-                    .find(|(held, _)| *held == record.record)
-                    .map(|(_, mode)| mode.clone()),
+                // The mode of the binding its intent was stored for, as
+                // the ledger keeps it with the record: after a restart, a
+                // record in doubt is read through the binding that wrote it.
+                mode: record.mode,
                 failure: record.failure,
             });
         }

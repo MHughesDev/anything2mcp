@@ -979,13 +979,13 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                 let from = planned.len();
                 derive_step(run, loaded, tool, position, &mut planned)?;
                 adopt(loaded, &mut planned[from..], &snapshot.records)?;
-                // A record that was found unchanged, or that reconcile found
-                // had landed, has no outputs in the ledger: it is read once
-                // more, for the steps after it and for the tool's result.
+                // A record that was found unchanged has no outputs in the
+                // ledger: it is read once more, for the steps after it and
+                // for the tool's result. One that reconcile found had
+                // landed has them, kept when it was settled.
                 for record in &mut planned[from..] {
                     let found = operation(loaded, record.operation)?;
-                    let settled =
-                        matches!(record.state, RecordState::Unchanged | RecordState::Verified);
+                    let settled = record.state == RecordState::Unchanged;
                     // A record one of whose stored values came back masked
                     // is not read by them.
                     if settled
@@ -1664,11 +1664,12 @@ async fn reconcile(
                 // the same name: the record must also never have had an
                 // intent, and nothing of it may be known. Any other record
                 // that failed with this code is read like every record in
-                // doubt.
+                // doubt. The ledger checks from its own row that no intent
+                // was stored for it.
                 run.control.lock(record.record).await?;
                 match run
                     .control
-                    .settle(record.record, Reconciled::NotLanded)
+                    .settle(record.record, Reconciled::NeverSent)
                     .await?
                 {
                     Settled::Planned => record.state = RecordState::Planned,
@@ -1741,6 +1742,12 @@ async fn reconcile(
             read => read?,
         };
         let seen_kept = seen.as_ref().map(|seen| kept(run, seen));
+        // What is known of the record with what the read gave: its outputs
+        // when it landed.
+        let mut observed = record.known.clone();
+        for (name, value) in raw.clone().unwrap_or_default() {
+            observed.insert(name, value);
+        }
         let reconciled = match &seen {
             Some(seen) if *seen == record.intended => {
                 let after = store(
@@ -1749,22 +1756,36 @@ async fn reconcile(
                     encode_values(&seen_kept.clone().unwrap_or_default())?,
                 )
                 .await?;
-                Reconciled::Landed(ReadBack {
-                    digest: seen.digest(),
-                    after: Some(after),
-                    evidence,
-                })
+                // The outputs and the assigned key are kept with the record,
+                // as on the normal path, so that a later resume has them
+                // without reading the record once more (decision 0145).
+                let outputs = if observed.is_empty() {
+                    None
+                } else {
+                    Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
+                };
+                let assigned_key = record
+                    .assigned
+                    .as_ref()
+                    .map(|key| run.engine.deps.redact.redact(&key_text(key)));
+                Reconciled::Landed {
+                    read: ReadBack {
+                        digest: seen.digest(),
+                        after: Some(after),
+                        evidence,
+                    },
+                    acted: Acted {
+                        assigned_key,
+                        outputs,
+                    },
+                }
             }
-            _ if seen_kept == record.before => Reconciled::NotLanded,
+            _ if seen_kept == record.before => Reconciled::NotLanded { evidence },
             _ => Reconciled::Neither { evidence },
         };
         match run.control.settle(record.record, reconciled).await? {
             Settled::Verified => {
                 record.state = RecordState::Verified;
-                let mut observed = record.known.clone();
-                for (name, value) in raw.unwrap_or_default() {
-                    observed.insert(name, value);
-                }
                 record.outputs = outputs_of(loaded, found, &observed, false)?;
             }
             Settled::Planned => {

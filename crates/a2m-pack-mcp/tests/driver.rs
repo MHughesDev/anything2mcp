@@ -350,6 +350,59 @@ async fn a_write_lost_in_flight_is_possible_commit_and_the_lookup_finds_the_one_
     assert_eq!(class, FailureClass::Transient);
 }
 
+/// A lookup that finds more than one record never picks one: it reports
+/// `possible_commit`, `ambiguous_match`, which the manifest declares.
+#[tokio::test]
+async fn a_lookup_that_finds_two_records_is_ambiguous_and_picks_neither() {
+    let scene = scene().await;
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["one", "two"]).await;
+    let control = scene.stand.control();
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence,
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let create = steps(&scene.plan, "example_order_create");
+    let args = Values::new()
+        .with("customer", "Same Stamp Customer")
+        .with("note", Value::Null);
+    for (at, name) in [(0, "one"), (1, "two")] {
+        let intent = token(&ledger, fence, at, name).await;
+        handle
+            .act(
+                &mut prepared,
+                &create.act,
+                &input(&args, Some(record(&fence, at)), None, Some("STAMP-DOUBLE")),
+                Authority::Write(&intent),
+            )
+            .await
+            .unwrap();
+    }
+    handle.release(prepared, false).await;
+    assert_eq!(control.stored_orders().unwrap().len(), 5);
+
+    let (handle, mut prepared) = scene.prepared().await;
+    let none = Values::new();
+    let outcome = handle
+        .act(
+            &mut prepared,
+            &create.lookup.unwrap(),
+            &input(&none, None, None, Some("STAMP-DOUBLE")),
+            Authority::Read,
+        )
+        .await;
+    let (class, code, _) = failed(outcome);
+    assert_eq!(class, FailureClass::PossibleCommit);
+    assert_eq!(code, "ambiguous_match");
+    handle.release(prepared, true).await;
+}
+
 #[tokio::test]
 async fn a_changed_tool_is_drift_and_the_call_does_not_reach_the_stand() {
     let scene = scene().await;
@@ -496,7 +549,10 @@ async fn in_the_sandbox_a_write_tool_is_called_only_by_the_step_that_commits() {
         handle.release(prepared, true).await;
     }
     assert_eq!(scene.calls_to("orders_update"), 0);
-    assert_eq!(scene.stand.control().request_count("tools/call").unwrap(), 0);
+    assert_eq!(
+        scene.stand.control().request_count("tools/call").unwrap(),
+        0
+    );
 }
 
 #[tokio::test]

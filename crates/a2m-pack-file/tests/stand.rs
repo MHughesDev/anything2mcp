@@ -1571,3 +1571,186 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     assert!(!stock.contains("writable"), "{stock}");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+// ---- the guard of the driver ----
+
+#[tokio::test]
+async fn a_save_is_carried_out_only_live_or_as_the_marked_step_on_a_test_record() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let (binding, surface) = scene.binding("example_stock_set");
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+
+    // Where nothing may be written, the marked save is refused by the
+    // driver and the stand shows the file as it was.
+    for (caller, posture) in [
+        (1, Posture::Discovery),
+        (
+            2,
+            Posture::Sandbox {
+                test_records: false,
+            },
+        ),
+    ] {
+        let grant = granted(&store, caller, "example_stock_set").await;
+        let (handle, mut prepared) = scene.prepared(&surface, Some(grant.fence), posture).await;
+        scene
+            .write(
+                &handle,
+                &mut prepared,
+                &binding.act[..commit],
+                &values,
+                &grant,
+            )
+            .await
+            .unwrap();
+        let refused = refused(
+            scene
+                .write(
+                    &handle,
+                    &mut prepared,
+                    &binding.act[commit..],
+                    &values,
+                    &grant,
+                )
+                .await
+                .map(|_| Written {
+                    act: Vec::new(),
+                    read_back: Vec::new(),
+                }),
+        );
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Policy, "read_only_posture"),
+            "{posture:?}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent);
+        assert!(handle.release(prepared, true).await.complete);
+        assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+    }
+
+    // In the sandbox that writes a test record, a hand-built save with the
+    // mark taken off is refused, and the file is as it was.
+    let mut unmarked = binding.act[commit].clone();
+    assert!(unmarked.commits);
+    unmarked.commits = false;
+    let grant = granted(&store, 3, "example_stock_set").await;
+    let (handle, mut prepared) = scene
+        .prepared(
+            &surface,
+            Some(grant.fence),
+            Posture::Sandbox { test_records: true },
+        )
+        .await;
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[..commit],
+            &values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    let refused = refused(
+        scene
+            .write(&handle, &mut prepared, &[unmarked], &values, &grant)
+            .await
+            .map(|_| Written {
+                act: Vec::new(),
+                read_back: Vec::new(),
+            }),
+    );
+    assert_eq!(refused.sent, Sent::NotSent);
+    assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+
+    // The step marked `commits` is the one the guard is lifted for there.
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[commit..],
+            &values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    assert!(handle.release(prepared, false).await.complete);
+    assert_ne!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+}
+
+#[tokio::test]
+async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_is_not_marked() {
+    use a2m_provider::{Deadline, Driver as _, PrepareContext, StepInput};
+
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let (binding, surface) = scene.binding("example_stock_set");
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    // The driver alone, with no handle before it: what the handle would
+    // refuse is not what is tested here.
+    let driver = a2m_pack_file::FileDriver::new(
+        common::roots(&scene.stand, Access::Write),
+        a2m_pack_file::FileLimits::from_settings(&Values::new()),
+    );
+    let mut unmarked = binding.act[commit].clone();
+    unmarked.commits = false;
+    let cases = [
+        (Posture::Discovery, binding.act[commit].clone()),
+        (
+            Posture::Sandbox {
+                test_records: false,
+            },
+            binding.act[commit].clone(),
+        ),
+        (Posture::Sandbox { test_records: true }, unmarked.clone()),
+        (Posture::Live, unmarked),
+    ];
+    for (caller, (posture, save)) in (1_u8..).zip(cases) {
+        let grant = granted(&store, caller, "example_stock_set").await;
+        let handle = scene
+            .registry
+            .driver(&a2m_core::Mode::new("file").unwrap())
+            .unwrap();
+        let supervisor = handle.supervisor(Vec::new());
+        let cx = PrepareContext {
+            run: grant.fence.run,
+            epoch: grant.fence.epoch,
+            surface: &surface,
+            plan: &scene.plan,
+            posture,
+            deadline: Deadline::after(std::time::Duration::from_secs(30)),
+            redact: &a2m_core::NoSecrets,
+            destinations: &a2m_provider::Destinations::default(),
+            paths: &a2m_provider::CheckedPaths::none(),
+            supervisor: &supervisor,
+        };
+        let mut prepared = driver.prepare(&cx, None).await.unwrap();
+        let mut last = None;
+        for step in binding.act[..commit].iter().chain([&save]) {
+            let args = scene.args(step, &values);
+            let input = StepInput {
+                args: &args,
+                record: Some(grant.record),
+                key: Some(&grant.key),
+                stamp: Some(&grant.stamp),
+                deadline: Deadline::after(std::time::Duration::from_secs(30)),
+            };
+            last = Some(driver.act(&mut prepared, step, &input).await);
+        }
+        let refused = last.unwrap().unwrap_err();
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Policy, "read_only_posture"),
+            "{posture:?}"
+        );
+        assert_eq!(refused.sent, Sent::NotSent);
+        driver.release(prepared, true).await;
+        assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
+        assert!(scene.stand.strays().unwrap().is_empty());
+    }
+}

@@ -295,3 +295,132 @@ fn an_authorization_key_that_names_no_record_authorizes_no_write_beneath_an_appl
     // A key with nothing in it is no record.
     assert!(refused("\" \""));
 }
+
+/// A rule that drafts what the pack's own rule never does: a document with
+/// a field a caller may write.
+struct DraftsAWrite;
+
+impl a2m_files::DraftingRule for DraftsAWrite {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_LAYOUT).unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_pack_file::DOCUMENT_KIND
+    }
+
+    fn draft(
+        &self,
+        _finding: &a2m_core::Finding,
+        _cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
+        use a2m_files::DraftValue;
+        let document =
+            |file: &str, writable: bool| -> Result<a2m_files::DraftDoc, a2m_core::Failure> {
+                let mut field = vec![
+                    ("header", DraftValue::text("price")),
+                    ("type", DraftValue::text("price")),
+                ];
+                if writable {
+                    field.push(("writable", DraftValue::Bool(true)));
+                }
+                Ok(a2m_files::DraftDoc {
+                    path: a2m_files::RelPath::new(&format!("documents/{file}.yaml"))?,
+                    body: DraftValue::map(vec![
+                        ("surface", DraftValue::text("files")),
+                        ("file", DraftValue::text("prices.csv")),
+                        ("format", DraftValue::text("delimited")),
+                        (
+                            "records",
+                            DraftValue::map(vec![(
+                                "price",
+                                DraftValue::map(vec![
+                                    ("rows", DraftValue::text("all")),
+                                    (
+                                        "fields",
+                                        DraftValue::map(vec![("price", DraftValue::map(field))]),
+                                    ),
+                                ]),
+                            )]),
+                        ),
+                    ]),
+                })
+            };
+        Ok(vec![
+            document("tries_a_write", true)?,
+            document("only_reads", false)?,
+        ])
+    }
+}
+
+#[test]
+fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
+    use a2m_core::{Coverage, Finding, ProducedBy, Source, Subject};
+    let mut builder = a2m_files::CompilerSet::builder();
+    builder
+        .file_kind(
+            a2m_pack_file::PACK,
+            std::sync::Arc::new(a2m_pack_file::DocumentKind::new()),
+        )
+        .unwrap()
+        .drafting_rule(a2m_pack_file::PACK, std::sync::Arc::new(DraftsAWrite))
+        .unwrap();
+    let set = builder.build();
+    let finding = Finding::about(
+        Subject::File {
+            digest: a2m_core::Digest::of(b"a file"),
+            format: "delimited".to_owned(),
+            part: None,
+        },
+        a2m_core::FindingKind::new(a2m_pack_file::FILE_LAYOUT).unwrap(),
+        "{}",
+        Source::LiveSystem,
+        ProducedBy {
+            provider: "file".to_owned(),
+            version: "0.0.1".to_owned(),
+            component: None,
+        },
+        a2m_core::Timestamp::from_unix_millis(0),
+    )
+    .coverage(Coverage::Complete)
+    .build()
+    .unwrap();
+    let root = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&finding))
+        .unwrap();
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert_eq!(refused, ["documents/tries_a_write.yaml"]);
+    assert_eq!(written, ["documents/only_reads.yaml"]);
+    let exists = root.join("documents").join("tries_a_write.yaml").exists();
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(!exists);
+}
+
+#[test]
+fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
+    let changed = Changed::new(&[(
+        "operations/price_set.yaml",
+        "effect: write",
+        "effect: read\n",
+    )]);
+    let registry = registry(Roots::none());
+    let problems = compile(&changed.0, registry.compiler_set()).expect_err("a read that writes");
+    assert!(
+        problems
+            .iter()
+            .any(|found| found.code.as_str() == "kernel.effect_lower_than_derived"),
+        "{problems}"
+    );
+}

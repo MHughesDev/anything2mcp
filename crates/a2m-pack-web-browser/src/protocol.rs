@@ -351,18 +351,6 @@ pub(crate) struct GrantPermissions {
 }
 command!(GrantPermissions, "Browser.grantPermissions" => Nothing);
 
-/// One permission, set for every origin.
-#[derive(Debug, Serialize)]
-pub(crate) struct SetPermission<'a> {
-    pub permission: PermissionDescriptor<'a>,
-    pub setting: &'a str,
-}
-#[derive(Debug, Serialize)]
-pub(crate) struct PermissionDescriptor<'a> {
-    pub name: &'a str,
-}
-command!(SetPermission<'_>, "Browser.setPermission" => Nothing);
-
 // ---- Target ----
 
 #[derive(Debug, Serialize)]

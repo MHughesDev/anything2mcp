@@ -309,3 +309,50 @@ fn what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix() {
         assert_eq!(unmarked.at.file.as_str(), file);
     }
 }
+
+#[test]
+fn a_write_never_compiles_as_less_than_what_its_binding_does() {
+    // A verb that writes, bound to a tool the mapping calls a read, in an
+    // operation declared a read: the pack's own check passes, and the
+    // compiler holds the operation to what the verb does.
+    let problems = problems_after("operations/order_get.yaml", "verb: read", "verb: update");
+    assert!(
+        problems.find("kernel.effect_lower_than_derived").is_some(),
+        "{}",
+        shown(&problems)
+    );
+    // A delete cannot be taken back.
+    let problems = problems_after("operations/order_get.yaml", "verb: read", "verb: delete");
+    assert!(
+        problems.find("kernel.effect_lower_than_derived").is_some(),
+        "{}",
+        shown(&problems)
+    );
+}
+
+#[test]
+fn a_key_argument_is_never_filled_from_the_place_of_a_record_in_the_run() {
+    // The create names a lookup tool whose argument takes the record's key,
+    // and the operation has no key input: the engine would hand the step the
+    // record's place in the run, which is not a key the server knows.
+    let problems = problems_after(
+        "mappings/orders.yaml",
+        "    records: orders\n    stamp: reference\n",
+        "    records: orders\n    stamp: reference\n    key_args: [order_id]\n",
+    );
+    let refused = problems
+        .iter()
+        .find(|problem| {
+            problem.code.as_str() == "mcp.binding_incomplete"
+                && problem.message.contains("place in the run")
+        })
+        .unwrap_or_else(|| panic!("no refusal:\n{}", shown(&problems)));
+    assert_eq!(refused.at.file.as_str(), "operations/order_create.yaml");
+    assert!(refused.at.line > 1 && !refused.fix.is_empty());
+
+    // A read-back after a write that reports the assigned key, and a
+    // binding that states the argument itself, are not refused: the fixture
+    // compiles with its own read-back of the created order.
+    let folder = Folder::new("place-key");
+    compiled_fixture(&registry(&folder));
+}

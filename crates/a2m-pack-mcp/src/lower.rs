@@ -145,11 +145,9 @@ fn place_key_problem(
     given: &[StepArg],
     key_inputs: usize,
 ) -> Option<Diagnostic> {
-    let unfilled = entry
-        .key_args
-        .iter()
-        .enumerate()
-        .find(|(at, argument)| *at >= key_inputs && !given.iter().any(|arg| &arg.name == *argument))?;
+    let unfilled = entry.key_args.iter().enumerate().find(|(at, argument)| {
+        *at >= key_inputs && !given.iter().any(|arg| &arg.name == *argument)
+    })?;
     Some(Diagnostic::error(
         names::BINDING_INCOMPLETE,
         Stage::Lower,

@@ -1,7 +1,7 @@
 {
   "name": "anything2mcp",
   "version": "0.0.1",
-  "description": "Turn existing software and systems into deterministic, verified MCP tools. This package starts the anything2mcp program for your platform.",
+  "description": "Turn existing software and systems into deterministic, verified MCP tools. This package starts the anything2mcp program for your platform and has a thin client of its local engine.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,9 +13,19 @@
     "anything2mcp": "bin/anything2mcp.js",
     "a2m": "bin/anything2mcp.js"
   },
+  "main": "client/index.js",
+  "types": "client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./client/index.d.ts",
+      "default": "./client/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin/",
     "lib/",
+    "client/",
     "LICENSE",
     "README.md"
   ],

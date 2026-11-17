@@ -154,3 +154,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0151 | [The doors take up the action registry's second pass](0151-the-doors-take-up-the-action-registrys-second-pass.md) | Accepted (design decision) |
 | 0152 | [The action registry and telemetry after their safety audit](0152-the-action-registry-and-telemetry-after-their-safety-audit.md) | Accepted (design decision) |
 | 0153 | [What the compiler, the plan, and the redactor hold by themselves, after the safety audit](0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md) | Accepted (design decision) |
+| 0154 | [The HTTP, command, and MCP packs state what saves, what writes, and which key is sent](0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md) | Accepted (design decision) |

@@ -16,6 +16,8 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+# The policy engine's stand-in in the tests (decision 0145).
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 # The tests ask the store's database what it holds through a connection of
 # their own; the one SQLite the workspace links.

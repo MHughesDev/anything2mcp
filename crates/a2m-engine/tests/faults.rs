@@ -285,16 +285,23 @@ async fn outputs_that_cannot_be_stored_with_the_save_stop_the_job_and_are_read_a
     assert_eq!(records[0].state, RecordState::Acted);
     assert!(records[0].outputs.is_none());
 
-    // Resumed: the record is read, found as intended, read once more for
-    // its outputs, and not written again.
+    // Resumed: the record is read once, found as intended, and not written
+    // again. What the read gave is kept with the record as it is settled,
+    // so the tool's result has its outputs without a second read, and so
+    // does any later resume (decision 0145).
+    let reads = scene.hooks.count("get_item");
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert!(completed(&outcome), "{outcome:?}");
     assert_eq!(scene.hooks.count("put_item"), 1);
+    assert_eq!(scene.hooks.count("get_item"), reads + 1);
     assert!(matches!(
         scene.last_result().get("version"),
         Some(Value::Int(_))
     ));
+    let records = scene.records().await;
+    assert_eq!(records[0].state, RecordState::Verified);
+    assert!(records[0].outputs.is_some());
 }
 
 #[tokio::test]

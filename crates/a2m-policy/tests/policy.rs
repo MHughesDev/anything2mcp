@@ -684,14 +684,30 @@ async fn a_pre_approval_needs_a_person_to_publish_and_then_clears_one_run_and_di
     assert_eq!(refused.outcome(), Outcome::NeedsApproval);
     assert_eq!(refused.clearance(), None);
 
-    let decision: Decision = stand.policy.decide_alone(request).await;
-    assert_eq!(decision.outcome(), Outcome::Allow);
-    let clearance = decision.clearance().unwrap();
-    assert_eq!(clearance, WriteClearance::PreApproved(decision.id));
-    stand
+    // A decision made in an earlier transaction does not begin writes: a
+    // kill switch or a newer set may have come between (decision 0145).
+    let earlier: Decision = stand.policy.decide_alone(request.clone()).await;
+    assert_eq!(earlier.outcome(), Outcome::Allow);
+    let stale = earlier.clearance().unwrap();
+    let refused = stand
         .store
         .write(Durability::Synced, move |tx| {
-            tx.ledger().begin_writes(&fence, clearance)
+            tx.ledger().begin_writes(&fence, stale)
+        })
+        .await;
+    assert_eq!(code(refused), APPROVAL_MISSING);
+
+    // Decided and begun in one transaction, it clears the run.
+    let policy = stand.policy.clone();
+    let clearance = stand
+        .store
+        .write(Durability::Synced, move |tx| {
+            let decision = policy.decide(tx, &request);
+            assert_eq!(decision.outcome(), Outcome::Allow);
+            let clearance = decision.clearance().unwrap();
+            assert_eq!(clearance, WriteClearance::PreApproved(decision.id));
+            tx.ledger().begin_writes(&fence, clearance)?;
+            Ok(clearance)
         })
         .await
         .unwrap();

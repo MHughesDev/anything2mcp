@@ -36,7 +36,7 @@ use a2m_engine::{
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, Whitespace};
 use a2m_ledger::{
     Acted, ActedToken, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld, LockRow,
-    NewBlob, NewRun, Opened, Owner, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
+    NewBlob, NewRun, Opened, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
     RetentionClass, RunRow, Settled, Store, StoreConfig, ToolKind, WriteClearance,
 };
 use a2m_provider::{
@@ -1824,7 +1824,9 @@ impl StoreControl {
     }
 
     /// A person approves a diff. The policy engine's stand-in: one row in
-    /// its own table.
+    /// its own table, reached through the ledger's `testing` feature, for
+    /// the run's tool version, with an expiry and a presence check, as the
+    /// policy engine writes it.
     pub async fn approve(&self, diff: Digest) {
         let run = self.fence().run;
         let id = self
@@ -1832,17 +1834,24 @@ impl StoreControl {
             .write(Durability::Synced, move |tx| {
                 let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
                 let now = tx.now();
-                tx.tables(Owner::Policy).execute(
+                let version = tx.ledger().run(run)?.target_version;
+                let expires = a2m_core::Timestamp::from_unix_millis(
+                    now.as_unix_millis().saturating_add(3_600_000),
+                );
+                tx.policy_tables_for_tests().execute(
                     "INSERT INTO approvals
-                        (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at)
-                     VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6)",
+                        (id, workspace_id, scope, run_id, diff_hash, tool_version_hash, approver_id,
+                         channel, presence_check, granted_at, expires_at)
+                     VALUES (?1, ?2, 'run', ?3, ?4, ?5, ?6, 'local_prompt', 'os_prompt', ?7, ?8)",
                     &[
                         id.to_string().into(),
                         workspace().to_string().into(),
                         run.to_string().into(),
                         diff.to_string().into(),
+                        version.to_string().into(),
                         PrincipalId::from_bytes([9; 16]).to_string().into(),
                         now.into(),
+                        expires.into(),
                     ],
                 )?;
                 Ok(id)
@@ -1935,7 +1944,7 @@ impl Control for StoreControl {
                 .store
                 .write(Durability::Synced, move |tx| {
                     let now = tx.now();
-                    tx.tables(Owner::Policy).execute(
+                    tx.policy_tables_for_tests().execute(
                         "UPDATE approvals SET used_at = ?2
                          WHERE id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
                         &[approval.to_string().into(), now.into()],
@@ -2045,7 +2054,14 @@ impl Control for StoreControl {
                 .store
                 .write(Durability::Synced, move |tx| {
                     tx.ledger()
-                        .settle(&fence, record, Reconciled::Landed(read_back))
+                        .settle(
+                        &fence,
+                        record,
+                        Reconciled::Landed {
+                            read: read_back,
+                            acted: a2m_ledger::Acted::default(),
+                        },
+                    )
                 })
                 .await?;
             match settled {

@@ -1809,7 +1809,7 @@ impl Ledger<'_, '_> {
                 "a record goes back to `planned` unread only when no intent was stored for it; this one must be read",
             ));
         }
-        if !row.in_doubt() {
+        if !matches!(seen, Reconciled::NeverSent) && !row.in_doubt() {
             return Err(failure::unexpected(format!(
                 "only a record in doubt is settled, and this one is `{}`",
                 row.state
@@ -1852,7 +1852,7 @@ impl Ledger<'_, '_> {
                     "UPDATE run_records
                      SET state = 'planned', intent_epoch = NULL, intent_seq = NULL,
                          failure_class = NULL, failure_code = NULL, evidence_ref = ?4,
-                         reconciled_at = ?5
+                         acted_at = NULL, reconciled_at = ?5
                      WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
                     &params,
                 )?;

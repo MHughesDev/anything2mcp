@@ -16,15 +16,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets,
-    OperationName, Plan, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value,
-    Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan,
+    PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_expr::{Bindings, Program};
 use a2m_files::{CompileMode, CompilerSet, Diagnostics, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
@@ -79,7 +78,7 @@ pub fn roots(stand: &FileStand, access: Access) -> Roots {
 /// Compiles the target folder at `root` with the set given.
 pub fn compile(root: &Path, set: &CompilerSet) -> Result<a2m_files::Compiled, Diagnostics> {
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The stand, the registry over it, and the compiled example target.

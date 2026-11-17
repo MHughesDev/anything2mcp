@@ -13,7 +13,8 @@ use a2m_core::{
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, OperationView, Possible, ResolvedBinding, ResolvedView, Stage, SurfaceView,
+    Lowered, Lowering, OperationView, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
+    SurfaceView,
 };
 
 use crate::codes;
@@ -278,6 +279,30 @@ impl Lowering for FileLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// `save` is the one kind that saves, and it always does: it replaces
+    /// the file. `open` reads or probes the file and writes nothing, `locate`
+    /// finds a place in what was read, `set` builds the new bytes in memory,
+    /// and `read` reads values or confirms the file. Those never save.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == SAVE {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb: `update`, `create`, and `delete` replace the file with
+    /// one that holds the change, and write. (A row removed is written by
+    /// the same replace; the old file stays only until it is replaced.)
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb;
+        if *verb == VERB_UPDATE || *verb == VERB_CREATE || *verb == VERB_DELETE {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

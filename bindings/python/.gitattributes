@@ -1,0 +1,2 @@
+# The Windows launcher must have Windows line endings to run reliably.
+wheel-data/scripts/a2m.cmd text eol=crlf

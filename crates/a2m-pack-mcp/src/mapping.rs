@@ -405,3 +405,103 @@ impl FileKind for MappingKind {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use a2m_files::{
+        CompilerSet, DraftContext, DraftDoc, DraftValue, Drafter, DraftingRule, FileKind, RelPath,
+        TargetRoot, parse_yaml,
+    };
+
+    use super::MappingKind;
+    use crate::names::{self, Names};
+
+    #[test]
+    fn a_mapping_describes_a_write_when_a_tool_is_mapped_as_anything_but_read() {
+        let kind = MappingKind::new();
+        let file = RelPath::new("mappings/one.yaml").unwrap();
+        let writes = |effects: &[&str]| {
+            let mut text = String::from("surface: orders\ntools:\n");
+            for (n, effect) in effects.iter().enumerate() {
+                text.push_str(&format!("  t{n}:\n    effect: {effect}\n"));
+            }
+            let docs = parse_yaml(&file, &text).unwrap();
+            kind.writes(&docs[0])
+        };
+        assert!(!writes(&["read", "read"]));
+        assert!(writes(&["read", "write"]));
+        assert!(writes(&["irreversible"]));
+        assert!(writes(&["\"maybe\""]));
+        // What the drafter leaves for a person states no effect.
+        assert!(!writes(&["{open_question: \"Does it write?\"}"]));
+    }
+
+    /// A rule of this pack that drafts a tool mapped as a write.
+    struct DraftsAWrite(a2m_core::FindingKind);
+
+    impl DraftingRule for DraftsAWrite {
+        fn finding_kind(&self) -> a2m_core::FindingKind {
+            self.0.clone()
+        }
+        fn file_kind(&self) -> a2m_core::FileKindName {
+            names::MAPPING_KIND
+        }
+        fn draft(
+            &self,
+            _finding: &a2m_core::Finding,
+            _cx: &DraftContext<'_>,
+        ) -> Result<Vec<DraftDoc>, a2m_core::Failure> {
+            let tool = DraftValue::map(vec![("effect", DraftValue::text("write"))]);
+            Ok(vec![DraftDoc {
+                path: RelPath::new("mappings/orders.yaml")?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("orders")),
+                    ("tools", DraftValue::map(vec![("orders_delete", tool)])),
+                ]),
+            }])
+        }
+    }
+
+    #[test]
+    fn a_drafting_rule_that_drafts_a_write_is_refused_and_nothing_is_written() {
+        let found = Names::new().unwrap().upstream_tool;
+        let mut builder = CompilerSet::builder();
+        builder
+            .file_kind(names::PACK, Arc::new(MappingKind::new()))
+            .unwrap();
+        builder
+            .drafting_rule(names::PACK, Arc::new(DraftsAWrite(found.clone())))
+            .unwrap();
+        let set = builder.build();
+        let folder =
+            std::env::temp_dir().join(format!("a2m-pack-mcp-draft-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let finding = a2m_core::Finding::about(
+            a2m_core::Subject::File {
+                digest: a2m_core::Digest::of(b"tool"),
+                format: "mcp".to_owned(),
+                part: None,
+            },
+            found,
+            "{}",
+            a2m_core::Source::LiveSystem,
+            a2m_core::ProducedBy {
+                provider: "mcp".to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            a2m_core::Timestamp::from_unix_millis(1_000),
+        )
+        .build()
+        .unwrap();
+        let root = TargetRoot::new(&folder);
+        let report = Drafter::new(&set, &root).draft(&[finding]).unwrap();
+        assert!(report.written.is_empty(), "{report:?}");
+        assert_eq!(report.refused.len(), 1, "{report:?}");
+        assert!(!folder.join("mappings").join("orders.yaml").exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+}

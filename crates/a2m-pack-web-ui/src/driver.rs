@@ -57,6 +57,11 @@ const RESERVED_PROFILES: &[&str] = &[ANONYMOUS, "discovery"];
 /// until the step's own deadline; only the hearing is this often.
 const HEAR_EVERY: Duration = Duration::from_millis(500);
 
+/// How long the page is given to say that a condition already holds, when
+/// it is asked before a click. A condition that holds is answered at
+/// once; only one that does not hold takes this long.
+const LOOK_ONCE: Duration = Duration::from_millis(250);
+
 /// The driver of the `ui` mode.
 pub(crate) struct UiDriver {
     browsers: Browsers,
@@ -505,6 +510,23 @@ impl Session {
         }
     }
 
+    /// Whether a condition holds on the page now: it is asked once, and
+    /// given [`LOOK_ONCE`] to answer. `true` only on the page's own word
+    /// that it holds; a page that has not said so within that time is
+    /// taken as not showing it.
+    async fn holds_now(
+        &self,
+        condition: &Primitive,
+        deadline: Deadline,
+    ) -> Result<bool, StepFailure> {
+        let once = Deadline::after(LOOK_ONCE.min(deadline.remaining()));
+        match self.tab.wait(condition, once).await {
+            Ok(()) => Ok(true),
+            Err(BrowserError::Timeout { .. }) => Ok(false),
+            Err(error) => Err(browser_failure(&error, "the page's state")),
+        }
+    }
+
     /// The one element a list of locators finds, and which of them found
     /// it. A locator that matches several elements, and an element that
     /// fails its fingerprint, stop the step: a later locator is tried only
@@ -939,13 +961,53 @@ impl Session {
         let (element, locator) = self
             .find(&what, &action.locate, action.fingerprint.as_ref(), deadline)
             .await?;
-        // What the page shows before the click is not its answer to it: a
-        // variant that is already there counts only if it is not, and a
-        // variant that stays cannot be told from the answer.
+        // What the page shows after the click is its answer only if it was
+        // not there before. A page that already shows a state the screen
+        // declares, or the action's confirmation, could not tell its answer
+        // from what it showed: the action is not performed (decision 0144).
         let before = self
             .variants_now(screen, deadline)
             .await
             .map_err(|error| browser_failure(&error, &what))?;
+        if let Some(shown_before) = before.iter().next() {
+            let handling = screen
+                .variants
+                .get(shown_before)
+                .map_or(Handling::Stop, |variant| variant.handling);
+            let (class, code, next) = match handling {
+                Handling::Stop => (
+                    FailureClass::Rejected,
+                    codes::APP_VALIDATION_ERROR,
+                    "Correct the values and run the tool again; the page refused them before the action was performed.",
+                ),
+                Handling::Absent => (
+                    FailureClass::UnknownVariant,
+                    codes::UNEXPECTED_PAGE,
+                    "Look at the page; the record is not where the action would act on it.",
+                ),
+            };
+            return Err(StepFailure::not_sent(fail(
+                class,
+                code,
+                format!(
+                    "Before {what}, the page shows the variant `{shown_before}`, so its answer to the action could not be told from it. The action was not performed."
+                ),
+                next,
+            )));
+        }
+        if self
+            .holds_now(&action.confirm.primitive(), deadline)
+            .await?
+        {
+            return Err(StepFailure::not_sent(fail(
+                FailureClass::UnknownVariant,
+                codes::UNEXPECTED_PAGE,
+                format!(
+                    "Before {what}, the page already shows the action's confirmation, so its answer to the action could not be told from it. The action was not performed."
+                ),
+                "Correct the action's `confirm` in the screen so that it names what the page shows only once the action is done.",
+            )));
+        }
         self.tab
             .input(&element, &Input::Click, deadline)
             .await
@@ -953,8 +1015,8 @@ impl Session {
 
         // From here the click has reached the page. What the application
         // made of it is known only when the page shows the action's
-        // confirmation, or a state the screen declares instead that was
-        // not there before the click.
+        // confirmation, or a state the screen declares instead, neither of
+        // which was there before the click.
         let no_confirmation = |why: String| {
             let (class, code) = if step.commits {
                 (
@@ -988,9 +1050,8 @@ impl Session {
         any.extend(
             screen
                 .variants
-                .iter()
-                .filter(|(name, _)| !before.contains(*name))
-                .map(|(_, variant)| Primitive::Visible(variant.when.query())),
+                .values()
+                .map(|variant| Primitive::Visible(variant.when.query())),
         );
         match self
             .wait_hearing(&Primitive::Any(any), deadline, &what)
@@ -1026,14 +1087,23 @@ impl Session {
         let now = self.variants_now(screen, deadline).await.map_err(|_| {
             no_confirmation("the page could not be asked which state it is in".to_owned())
         })?;
-        let new = screen
-            .variants
-            .iter()
-            .find(|(name, _)| now.contains(*name) && !before.contains(*name));
-        if let Some((variant, variant_of)) = new {
-            return Err(match (variant_of.handling, step.commits) {
-                // A refusal the page shows anew after the click is the
-                // application's answer to it.
+        if let Some(variant) = now.iter().next() {
+            let handling = screen
+                .variants
+                .get(variant)
+                .map_or(Handling::Stop, |variant| variant.handling);
+            // A page that shows the confirmation and a declared state at
+            // once has given no one answer.
+            let confirmed_too = self
+                .holds_now(&action.confirm.primitive(), deadline)
+                .await
+                .unwrap_or(true);
+            return Err(match (handling, step.commits) {
+                (_, true) if confirmed_too => no_confirmation(format!(
+                    "then the page showed both its confirmation and the variant `{variant}`"
+                )),
+                // A refusal the page shows after the click, which was not
+                // there before it, is the application's answer to it.
                 (Handling::Stop, _) => StepFailure::answered(fail(
                     FailureClass::Rejected,
                     codes::APP_VALIDATION_ERROR,
@@ -1053,9 +1123,9 @@ impl Session {
                 )),
             });
         }
-        // No new variant shows, so the confirmation held when the wait
-        // ended. It is asked again: one that showed for a moment and is
-        // gone is not an answer.
+        // No variant shows, so the confirmation held when the wait ended.
+        // It is asked again: one that showed for a moment and is gone is
+        // not an answer.
         match self
             .wait_hearing(&action.confirm.primitive(), deadline, &what)
             .await
@@ -1240,15 +1310,13 @@ impl UiDriver {
             .open(&profile, Visibility::Background)
             .await
             .map_err(|error| browser_failure(&error, "the start of the browser"))?;
-        // The tab may be on the origins of the run's destinations and on no
-        // other; a destination that is no web address adds none.
-        let reachable: Vec<Address> = cx
-            .destinations
-            .iter()
-            .filter_map(|address| Address::new(address).ok())
-            .collect();
+        // The tab may be on the surface's own origin and on no other. The
+        // surface's address is one of the run's destinations, checked
+        // above; another destination is another surface, whose screens
+        // this run does not hold, and a page of it is not acted on.
+        let own = Address::new(&surface.address).map_err(unsent)?;
         let tab = browser
-            .acting_tab(&environment, &Origins::of(&reachable))
+            .acting_tab(&environment, &Origins::of([&own]))
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
         Ok(Session {

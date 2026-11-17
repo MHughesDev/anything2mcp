@@ -38,8 +38,8 @@ use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar};
 
 pub use discover::{FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound, TableFound};
-pub use driver::FileLimits;
-pub use kind::{DOCUMENT_INVALID, FORMAT_NOT_BUILT, document_schema};
+pub use driver::{FileDriver, FileLimits};
+pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{
     BENEATH_APPLICATION, BINDING_INVALID, FORMAT_READ_ONLY, OPEN_UNDECLARED, OPEN_WITHOUT_SIGNAL,
     STANDS_UNDECLARED,

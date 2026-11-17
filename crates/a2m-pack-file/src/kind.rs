@@ -430,6 +430,37 @@ impl FileKind for DocumentKind {
         Vec::new()
     }
 
+    /// A document describes a write when it marks a field `writable`, or
+    /// states how the file is held open (`may_be_open`, `lock_signal`),
+    /// which only a write needs. A value that is not plainly `false` counts:
+    /// an open question is not known to be no. The drafter writes none of
+    /// these.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let writable = doc
+            .get("records")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|record| {
+                record
+                    .value
+                    .get("fields")
+                    .map(Located::entries)
+                    .unwrap_or_default()
+            })
+            .any(|field| {
+                field
+                    .value
+                    .get("writable")
+                    .is_some_and(|value| value.as_bool() != Some(false))
+            });
+        writable
+            || doc
+                .get("may_be_open")
+                .is_some_and(|value| value.as_bool() != Some(false))
+            || doc.get("lock_signal").is_some()
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],
