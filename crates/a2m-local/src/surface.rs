@@ -486,12 +486,22 @@ fn change_html(change: &Change) -> String {
     for (index, record) in change.records.iter().enumerate() {
         let _ = write!(
             out,
-            "<section><h3>{}. <code>{}</code> {}: {}</h3><table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>",
+            "<section><h3>{}. <code>{}</code> {}: {}</h3>",
             index + 1,
             escape(&record.operation),
             escape(&record.key),
             escape(record.action),
         );
+        // A write the system only acknowledges is said to be one before
+        // the person approves it (decision 0181): nothing will compare it.
+        if let Some(words) = record.not_read_back {
+            let _ = write!(
+                out,
+                "<p><strong>This write is {}.</strong> Nothing will read it back or compare it after it is sent.</p>",
+                escape(words),
+            );
+        }
+        out.push_str("<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>");
         for field in &record.fields {
             let now = field.current.as_ref().map_or_else(
                 || "<em>does not exist</em>".to_owned(),

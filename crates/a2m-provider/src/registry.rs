@@ -216,7 +216,11 @@ impl RegistryBuilder {
         let manifest = match Manifest::parse(pack.manifest()) {
             Ok(manifest) => Arc::new(manifest),
             Err(failure) => {
-                self.unnamed.push(RefusedProvider::of(pack.manifest(), ProviderKind::Pack, failure));
+                self.unnamed.push(RefusedProvider::of(
+                    pack.manifest(),
+                    ProviderKind::Pack,
+                    failure,
+                ));
                 return;
             }
         };

@@ -272,7 +272,10 @@ impl McpResultFace {
                     if let Some(run) = result.get("run_id") {
                         shown["run_id"] = run.clone();
                     }
-                    if let Some(said) = result.get("failure").and_then(|failure| failure.get("said")) {
+                    if let Some(said) = result
+                        .get("failure")
+                        .and_then(|failure| failure.get("said"))
+                    {
                         shown["said"] = said.clone();
                     }
                 }

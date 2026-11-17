@@ -173,6 +173,10 @@ impl Pack for DataPack {
                 .lint_rule(Arc::new(lint::StatementUnused))
                 .drafting_rule(Arc::new(draft::TableToStatements {
                     kind: names.table.clone(),
+                    max_rows,
+                }))
+                .drafting_rule(Arc::new(draft::TableToReads {
+                    kind: names.table.clone(),
                 })),
         )?;
         to.discoverer(

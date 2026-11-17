@@ -1023,8 +1023,10 @@ impl Temporary {
     ///
     /// `input`/`file_unavailable` where the system gave none.
     pub fn identity(&self) -> Result<FileIdentity, Failure> {
-        self.own
-            .ok_or_else(|| self.target.unavailable("has a temporary file whose identity is not known"))
+        self.own.ok_or_else(|| {
+            self.target
+                .unavailable("has a temporary file whose identity is not known")
+        })
     }
 
     /// Gives the temporary file the owner, the group, and the permission

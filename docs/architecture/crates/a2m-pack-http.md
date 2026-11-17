@@ -10,7 +10,7 @@ The HTTP pack: the `http` driver, the endpoint catalog as a file kind, and the i
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (file-kind, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, `CredentialSink`, `RawSign`), `a2m-provider` (`Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext`, `Pack`), `a2m-telemetry` (`Acting`, `record_headers`, the clock). Outside: `tokio`, `serde`, `serde_json`, and `reqwest` with only its `json` feature, all already in the workspace. In tests only: `a2m-ledger` and `a2m-vault`, for a real intent token and a real lease, and the test application |
-| Built in | Package 4.1 (`http`, reads then writes): built. Package 4.4: the OpenAPI import and its drafting rule are built; the `api` mode is not. Package E4 and the anti-forgery and edge steps of 4.1: not built |
+| Built in | Package 4.1 (`http`, reads then writes): built. Package 4.4: the OpenAPI import and its drafting rules are built; the `api` mode is not. Package E4 and the anti-forgery and edge steps of 4.1: not built |
 | Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`http`), [303](../../spec/3-packs/303-the-http-pack.md), [301](../../spec/3-packs/301-the-web-pack.md) (the request rows), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (typed templates), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes a destination), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) and [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (drafting from descriptions) |
 
 ## Owns
@@ -62,9 +62,10 @@ The file kind and the lowering refuse, as errors under the pack's own codes: `ht
 
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| An operation of a published description | One endpoint entry: its method, its path as a template, its shapes in the pack's own words, the statuses the description lists, and `effect: read` only for GET and HEAD. An operation of any other method is drafted as `effect: write`, and the drafter refuses it and writes nothing, because the file kind says it describes a write | The surface, when the target declares none at the description's address; a response shape the description does not state; every operation and every write, its endpoint entry included |
+| An operation of a published description | One endpoint entry: its method, its path as a template, its shapes in the pack's own words, the statuses the description lists, `auth: none` when the description states that the operation needs no credential, and `effect: read` only for GET and HEAD. An operation of any other method is drafted as `effect: write`, and the drafter refuses it and writes nothing, because the file kind says it describes a write | The surface, when the target declares none at the description's address; a response shape the description does not state; every write, its endpoint entry included |
+| A GET of a published description ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | One read operation, `{target}_{object}_{get or list}` from the path's last two plain words: the path's placeholders as its inputs and key; an output for each plain property of the answer, or of each item of a list answer (`verb: list`, taken by `*.name`), text as `untrusted_text`; and, when the description gives one for every placeholder, its own example | Its name in the language of the work; a nested value; a read whose placeholder the description states no parameter for, or that needs a parameter outside the path; the test and its fixture |
 
-Not built: the read operation drafted for each safe method, the OData key, and the rule for an endpoint seen in capture.
+The import reads, for each operation, its parameters with their own examples and whether it needs a credential, and with no path named it looks for the description at `/openapi.json`, then `/api/openapi.json`. Not built: the OData key, and the rule for an endpoint seen in capture.
 
 ### Discoverers
 
@@ -232,7 +233,7 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 2. Done: credentials through the lease for `api_key`, `bearer_static`, and `http_basic`; sign-in signals; limits on size and time; redirects refused; HTTPS refused by name in a build without the feature `tls`.
 3. Done: the OpenAPI import, `http_description`; `http_surface`; the drafting rule for endpoint entries.
 4. Not built: the anti-forgery bootstrap and the `token` step, case 5; the edge's answers, case 23; cases 16 and 18 to 22 and 24, which the test application does not serve yet.
-5. Not built: the `api` mode; the read operation drafted for each safe method; GraphQL and OData; the drafting rule for endpoints seen in capture, package E4.
+5. Done: the read operation drafted for each GET a description states, with the description's own example ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)), proven against the test application by `the_test_applications_description_drafts_reads_that_read_what_it_stores`. Not built: the `api` mode; GraphQL and OData; the drafting rule for endpoints seen in capture, package E4.
 6. Not built: uploads and downloads, pagers, long-running jobs, identity by a stamp or a search, the digest and integrated Windows exchanges, a client certificate.
 7. Done: the eight findings of the safety review, and three more found on the way ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): a write that was sent is never settled by an answer that is not the application's verdict; the version precondition; the bounds on reading a description; the address checked where it is sent.
 

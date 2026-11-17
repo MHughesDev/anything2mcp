@@ -51,6 +51,24 @@ pub struct RecordedAnswer {
     pub answer: Recorded,
 }
 
+/// Whether an answer of this name is for the step: the name is the entry
+/// the step refers to, or the last part of that entry after its last `/`
+/// (an entry such as `surface/tool`, whose whole name no file can carry),
+/// or, for a step that refers to none, its kind.
+#[must_use]
+pub fn answers_to(name: &str, step: &Step) -> bool {
+    match &step.refers_to {
+        Some(reference) => {
+            name == reference.entry
+                || reference
+                    .entry
+                    .rsplit_once('/')
+                    .is_some_and(|(_, last)| name == last)
+        }
+        None => name == step.kind.as_str(),
+    }
+}
+
 /// The name an answer must carry to be a step's.
 #[must_use]
 pub fn answer_name(step: &Step) -> &str {
@@ -107,7 +125,7 @@ impl Replay {
         let mut answers = self.answers.lock().unwrap_or_else(PoisonError::into_inner);
         let found = answers.iter_mut().find(|(answer, used)| {
             !*used
-                && answer.name == name
+                && answers_to(&answer.name, step)
                 && answer.args.as_ref().is_none_or(|wanted| {
                     wanted
                         .iter()

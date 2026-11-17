@@ -64,6 +64,10 @@ summary = "Every declared statement is named by a binding."
 finding_kind = "table"
 file_kind = "statement"
 
+[[drafting_rules]]
+finding_kind = "table"
+file_kind = "operation"
+
 [[failure_codes]]
 class = "transient"
 code = "upstream_unavailable"

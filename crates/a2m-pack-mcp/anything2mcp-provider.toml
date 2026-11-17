@@ -164,6 +164,10 @@ summary = "A local server program is handed no variable of the engine's and none
 finding_kind = "upstream_tool"
 file_kind = "mapping"
 
+[[drafting_rules]]
+finding_kind = "upstream_tool"
+file_kind = "operation"
+
 [effects]
 processes = []
 plan_programs = true

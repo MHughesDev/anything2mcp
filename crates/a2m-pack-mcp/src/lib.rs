@@ -33,6 +33,7 @@ mod auth;
 mod client;
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod json;
 mod lower;
@@ -96,7 +97,8 @@ impl Pack for McpPack {
             .surface_kind(mapping::surface_kind_spec())
             .file_kind(Arc::new(mapping::MappingKind::new()))
             .lowering(Arc::new(lower::McpLowering::new(names.mode.clone())))
-            .drafting_rule(Arc::new(discover::ToolToMapping::new(names.clone())));
+            .drafting_rule(Arc::new(discover::ToolToMapping::new(names.clone())))
+            .drafting_rule(Arc::new(draft::ToolToRead::new(names.clone())));
         for rule in lower::Rule::ALL {
             compiler = compiler.lint_rule(Arc::new(rule));
         }

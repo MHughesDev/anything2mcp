@@ -146,7 +146,7 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| A published description | Endpoint entries with field types from its schema, for the methods the description marks safe only: an entry for any other method describes a write, and the drafter refuses it; one read operation for each method the description marks safe: GET and HEAD in OpenAPI, a query in GraphQL, a read of an entity set in OData | Which become tools, and their names in the language of the work; every write, its endpoint entry included |
+| A published description | Endpoint entries with field types from its schema, for the methods the description marks safe only: an entry for any other method describes a write, and the drafter refuses it; one read operation for each safe method that answers with a body: GET in OpenAPI, a query in GraphQL, a read of an entity set in OData, with the description's own example of each placeholder ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Which become tools, and their names in the language of the work; every write, its endpoint entry included |
 | An entity set with a declared key, in OData | The key as the operation's `natural` identity | Nothing more about identity |
 | An endpoint seen in capture, with no description | An endpoint entry with its template tiers marked, at `inferred` | Confirming every template; all operations |
 
@@ -224,7 +224,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 ## Build order
 
-Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Built so far: the `http` mode against cases 1 to 4 and 17, credentials and sign-in signals, and the OpenAPI import with its endpoint drafts; the [crate's design](../../architecture/crates/a2m-pack-http.md) lists what is not. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
+Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Built so far: the `http` mode against cases 1 to 4 and 17, credentials and sign-in signals, and the OpenAPI import with its endpoint drafts and a read operation drafted for each GET; the [crate's design](../../architecture/crates/a2m-pack-http.md) lists what is not. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
 
 ## Open points
 

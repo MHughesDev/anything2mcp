@@ -43,12 +43,12 @@ The drafter is kernel code. Each pack registers the drafting rules for its own f
 
 | From a finding about | The drafter writes | It leaves to the developer |
 | --- | --- | --- |
-| A published API description | Endpoint entries, field types taken from the schema, and one read operation for each method the description marks safe | Which of them become tools, and their names in the language of the work |
+| A published API description | Endpoint entries, field types taken from the schema, and one read operation for each GET the description states, with the description's own example ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Which of them become tools, and their names in the language of the work |
 | Captured exchanges, with no description | Endpoint entries with two-tier path templates ([section 401](401-overlaying-tools-on-an-existing-system.md)), marked `inferred` | Confirming every template; all operations |
-| An upstream MCP server's tool list | A pass-through binding for each tool the server marks read-only | Tools not marked read-only; whether the server's marking is believed for writes |
+| An upstream MCP server's tool list | A pass-through read operation for each tool the server marks read-only, unless its whole input is one string | Tools not marked read-only; whether the server's marking is believed for writes |
 | A program's own help and version output, from only the help and version forms the target declares | Command definitions with typed arguments | Which commands read and which write. Help text does not say, so no operation is drafted |
 | An observed interface | Screen models: fields with their roles, names, and locators | Every action on a screen; what a field means |
-| A database's schema | Record kinds, field types, and a read by key for each table with a declared key | Joins, business names, and every write |
+| A database's schema | Record kinds, field types, and for each table with a declared key a read by key and a list bounded by the pack's row limit | Joins, business names, and every write |
 | The structure of a real file a target names | A document draft for the file pack: the fingerprint, and a record kind for each defined table or plainly headed sheet ([section 308](../3-packs/308-the-file-pack.md)) | The key, unless the file states one; units; names |
 | The structure of a real file a pipeline reads | A source draft: a source definition and a template fingerprint | The mapping from columns to fields |
 | A device's own description of itself | A map of its readable objects and a read for each | Units the device does not state; every write |
@@ -57,7 +57,8 @@ Every draft made this way:
 
 - is an ordinary draft at `reconstructed` ([section 219](../2-kernel/219-the-evidence-ladder.md)), and names the findings it was made from;
 - gets a mechanical name, made from the surface's own words, that is marked as provisional;
-- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled.
+- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled;
+- types an output of the system's text as `untrusted_text`, and carries an example only where the system published one about itself, such as a description's own example of a parameter. A value of the system's data is never kept as an example, and no test or fixture is drafted: a read with no example is drafted, and the report says why it was not tried ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)).
 
 ## What the scout may try
 

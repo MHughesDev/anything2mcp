@@ -90,10 +90,10 @@ The first six are registered rules that look across files. The last four are rai
 
 | From a finding of kind | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| A tool on the server's list, marked read-only by the server | A mapping entry with its digest and `effect: read` | Whether the marking is believed; the operation |
+| A tool on the server's list, marked read-only by the server | A mapping entry with its digest and `effect: read`; and, when nothing in the entry is left open, a pass-through read operation `{target}_{tool}`, its inputs the input schema's plain properties passed by name, its outputs the output schema's plain properties (text as `untrusted_text`) or `text` where it states none, and its example the schema's own `examples` or `default` for every required input ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Whether the marking is believed; a nested output; the operation's name, its test and fixture |
 | A tool not marked read-only | A mapping entry with its digest, and `effect` as an open question | The effect, the operation, its identity strategy, its read-back tool |
 
-Both also propose `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string, `free_text` is left as an open question: whether the server runs the string is not in its definition. The pass-through read operation section 304 describes is not drafted yet.
+Both also propose `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string, `free_text` is left as an open question: whether the server runs the string is not in its definition, and no read is drafted for it. An entry that holds a question is drafted into `mappings/{surface}_undecided.yaml`, apart from the settled entries in `mappings/{surface}.yaml`, so that it does not hold up the reads beside it.
 
 ## Interface
 
@@ -254,7 +254,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 1. Done: the test stand, with its control interface, at `targets/example-mcp`.
 2. Done: the mapping schema, `McpDriver` for reads against the stand over HTTP and as a local program, and change detection before a call.
 3. Done: writes with read-back, the stamp and the lookup, and the fault cases.
-4. Done: `mcp_tools`, its describer, and its drafting rule; `upstream_mcp` with a bearer token against the HTTP stand.
+4. Done: `mcp_tools`, its describer, and its drafting rule; `upstream_mcp` with a bearer token against the HTTP stand. The pass-through read operation drafted for each settled read-only tool ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)), proven against the HTTP stand by `the_stands_tool_list_drafts_reads_that_read_what_it_stores`.
 5. Package E6: a `discovery` mapping, whose results are stored as findings at `inferred` and never bound. Hypothesis H-27.
 
 Not built:
@@ -265,7 +265,6 @@ Not built:
 - A credential for a local server program, and any credential that is not a request header.
 - Answers sent as an event stream, and a notice that the tool list changed over HTTP: only a local program's notices are read. Over HTTP the list is read again instead, before every write and when it is older than `list_max_age_ms`.
 - A declared shape for the structured result of a tool with no output schema. Such a tool gives only the members its entry names; a typed member of it that is not a key cannot be taken yet.
-- The drafting of a pass-through read operation.
 - A comparison of the server's version at `prepare`, and lowering a binding's level when a tool or the version changes.
 - The canary, and stopping an idle local program.
 - The engine loop over these steps. The tests call the handle directly.

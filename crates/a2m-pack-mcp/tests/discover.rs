@@ -198,7 +198,13 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
         .iter()
         .map(a2m_files::RelPath::as_str)
         .collect();
-    assert_eq!(written, ["mappings/orders.yaml"]);
+    // The settled entries, and apart from them those left with a question.
+    // No read is drafted: of the tools still marked read-only, one answers
+    // a list of records and the others take one string.
+    assert_eq!(
+        written,
+        ["mappings/orders.yaml", "mappings/orders_undecided.yaml"]
+    );
     let draft = std::fs::read_to_string(root.join("mappings").join("orders.yaml")).unwrap();
     let digest = tools["orders_list"]["digest"].as_str().unwrap();
     assert!(draft.contains(digest), "{draft}");
@@ -223,12 +229,146 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
         .filter(|question| question.contains("one string"))
         .count();
     assert_eq!(strings, 4, "{questions:#?}");
-    assert!(!draft.contains("free_text: true") && !draft.contains("free_text: false"));
+    let undecided =
+        std::fs::read_to_string(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    for text in [&draft, &undecided] {
+        assert!(!text.contains("free_text: true") && !text.contains("free_text: false"));
+    }
     // A draft with a question left in it is not a mapping yet: it does not
     // compile until a person has answered.
-    assert_eq!(report.kept_failing.len(), 1);
+    assert!(
+        report
+            .kept_failing
+            .iter()
+            .any(|(path, _)| path.as_str() == "mappings/orders_undecided.yaml")
+    );
 
     let (handle, prepared) = port.into_parts();
     handle.release(prepared, false).await;
     assert_eq!(control.request_count("tools/call").unwrap(), 0);
+}
+
+/// The stand's tool list, drafted into a new target: a mapping entry for
+/// each tool, the settled ones apart from those left with a question, and
+/// one pass-through read for each tool the server marks read-only whose
+/// entry is settled. Without the file of questions the drafts compile, and
+/// the read with no input, run through the driver's handle, gives what the
+/// stand stores. No write is drafted, and the stand saw no write.
+#[tokio::test]
+async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
+    let folder = Folder::new("drafted-reads");
+    let registry = registry(&folder);
+    let plan = compiled_fixture(&registry);
+    let stand = HttpStand::start().await.unwrap();
+    let control = stand.control();
+    let surface = common::surface(&plan, "orders", Some(&stand.url()));
+    let (handle, prepared) = prepare(
+        &registry,
+        &plan,
+        &surface,
+        fence_of(7),
+        Posture::Discovery,
+        None,
+    )
+    .await
+    .unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let description = SurfaceDescription {
+        kind: a2m_pack_mcp::SURFACE_KIND,
+        archetype: Archetype::Request,
+        address: surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = registry.discoverers_for(&description).remove(0);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(30)),
+        paths: &CheckedPaths::none(),
+        redact: &NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture_root().join("target.yaml"), root.join("target.yaml")).unwrap();
+    let report = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    assert!(report.conflicts.is_empty() && report.refused.is_empty());
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    // `orders_report` takes nothing and answers plain counts. `orders_list`
+    // answers a list of records, which is not one output; `orders_get` and
+    // `orders_search` take one string, which the server may run, so their
+    // entries hold a question and their reads are the developer's.
+    assert_eq!(
+        written,
+        [
+            "mappings/orders.yaml",
+            "mappings/orders_undecided.yaml",
+            "operations/orders_orders_report.yaml",
+        ]
+    );
+    let mut questioned: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|open| open.file.as_str())
+        .collect();
+    questioned.dedup();
+    assert_eq!(questioned, ["mappings/orders_undecided.yaml"]);
+    std::fs::remove_file(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    let drafted = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+    for operation in &drafted.operations {
+        assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+    }
+    let surface = common::surface(&drafted, "orders", Some(&stand.url()));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &drafted,
+        &surface,
+        fence_of(8),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let report = steps(&drafted, "example_orders_report").act;
+    let args = Values::new();
+    let outcome = handle
+        .act(
+            &mut prepared,
+            &report,
+            &input(&args, None, None, None),
+            a2m_provider::Authority::Read,
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let a2m_provider::StepOutcome::Done(observed) = outcome else {
+        panic!("the report is never absent");
+    };
+    let drafts = control
+        .stored_orders()
+        .unwrap()
+        .iter()
+        .filter(|order| order.status == example_mcp::store::OrderStatus::Draft)
+        .count();
+    assert_eq!(
+        observed.values.get("draft"),
+        Some(&a2m_core::Value::Int(i64::try_from(drafts).unwrap()))
+    );
+    assert!(control.writes().unwrap().is_empty());
+    assert_eq!(control.calls_to("orders_report").unwrap(), 1);
+    assert_eq!(control.request_count("tools/call").unwrap(), 1);
 }

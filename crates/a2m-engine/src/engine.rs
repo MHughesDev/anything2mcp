@@ -263,11 +263,43 @@ impl Engine {
     /// while such a step is in flight leaves the record in doubt, to be
     /// reconciled.
     pub async fn run_job(&self, job: &JobSpec, control: &dyn Control) -> JobOutcome {
+        self.run_job_with(job, control, None).await
+    }
+
+    /// Runs an offline test's job: the job as [`Engine::run_job`] runs it,
+    /// with every binding handed `replay` in place of its provider's driver,
+    /// through a handle that checks each step against the provider's
+    /// declared step kinds and codes. No session is asked for and no
+    /// provider's driver is prepared, so nothing leaves the machine
+    /// (decision 0177). A write commits only where `replay` answers its
+    /// committing step, and the control plane decides whether it is cleared
+    /// to: a replay is never a reason to clear one.
+    pub async fn run_offline(
+        &self,
+        job: &JobSpec,
+        control: &dyn Control,
+        replay: Arc<dyn a2m_provider::Driver>,
+    ) -> JobOutcome {
+        self.run_job_with(job, control, Some(replay)).await
+    }
+
+    async fn run_job_with(
+        &self,
+        job: &JobSpec,
+        control: &dyn Control,
+        replay: Option<Arc<dyn a2m_provider::Driver>>,
+    ) -> JobOutcome {
         let claimed = job
             .snapshot
             .as_ref()
             .map_or(RunState::Queued, |snapshot| snapshot.state);
         let ToolRef::Tool(name) = &job.tool else {
+            if replay.is_some() {
+                // Discovery observes a live system; there is no replay of it.
+                return JobOutcome::Left(codes::job_invalid(
+                    "An offline test runs a tool, and this job names a surface to observe.",
+                ));
+            }
             return self.discover(job, control).await;
         };
         // A call to the control plane that never answers is given up.
@@ -333,6 +365,7 @@ impl Engine {
         );
         let mut run = Run::new(self, job, control, loaded, position, posture, Some(trace));
         run.state = claimed;
+        run.replay = replay;
         let result = tool::run_tool(&mut run, name).await;
         run.release().await;
         if let Some(trace) = run.trace.take() {

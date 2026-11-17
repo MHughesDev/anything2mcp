@@ -711,7 +711,10 @@ handler!(
 /// Marks a run that rule 6 gave back to a call: an earlier, unfinished run
 /// of the same caller, tool version, and input.
 fn given_back(mut output: Output) -> Result<Output, Failure> {
-    let status = output.result["status"].as_str().unwrap_or_default().to_owned();
+    let status = output.result["status"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     if let Json::Object(map) = &mut output.result {
         map.insert("earlier_run".to_owned(), json!(true));
     }

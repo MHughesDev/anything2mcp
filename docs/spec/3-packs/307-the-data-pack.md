@@ -217,10 +217,10 @@ The discoverer reads the store's own catalog, through the SQL standard's informa
 | The drafter writes | It leaves to the developer |
 | --- | --- |
 | One record kind per table with a declared key; field types from column types, with places and scale where the store states them and no unit | Units, business names, choice codes the store does not enumerate |
-| A `read` statement by key for each such table, and a read operation over it, provisional names from the table's words | Joins, lists, which tables matter |
+| A `read` statement by key for each such table and a list of its rows in the order of its key, bounded by the pack's row limit, and a read operation over each, provisional names from the table's words ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Joins, which tables matter |
 | Nothing for tables without a key, beyond an open question | Every write, its strategy, and whether the route is supported beneath an application |
 
-The scout tries each drafted read in the sandbox, read-only, five times. To have a key to read by, it lists one row with a limit of one; the trace stores the digests and shapes of results, not their values.
+The scout tries each drafted read in the sandbox, read-only, five times. A read by key has no example, because discovery reads no row: the drafted list is tried, and the read by key waits for a key a person gives. Whether the scout may take a key from the list it tried is open. The trace stores the digests and shapes of results, not their values.
 
 ## Failures
 

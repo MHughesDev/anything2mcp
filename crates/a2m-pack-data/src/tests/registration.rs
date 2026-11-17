@@ -45,7 +45,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         assert_eq!(first.discoverers_for(&server).len(), 1);
     }
     assert_eq!(set.verbs(&mode()).len(), 6);
-    assert_eq!(set.drafting_rules().count(), 1);
+    assert_eq!(set.drafting_rules().count(), 2);
     let surface = SurfaceDescription {
         kind: DATABASE,
         archetype: Archetype::Request,

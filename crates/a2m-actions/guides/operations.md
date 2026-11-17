@@ -107,4 +107,6 @@ inputs: {order_id: "SO-1001"}
 expect: {status: draft, total: "125.00", note: "Call before delivery"}
 ```
 
-A fixture folder holds the recording and a `fixture.yaml` that states `scrubbed: true`. Never commit recorded business data.
+A fixture folder holds a `fixture.yaml` that states `scrubbed: true`, and one file per step it answers, named after what the step refers to (the call, the endpoint, the document, or the upstream tool; or the step's kind when it refers to none): `<name>.json`, holding an object of the values the step observed, `null` for a record that is absent, or a list of those, given in order to the steps of that name. Write an exact number as text. Never commit recorded business data.
+
+`test.run` runs each offline test of a read through the engine against these answers: no system is reached, no session is used, and nothing is written. The result is compared with `expect`, field by field; a field that differs fails the test and the result names it, and a step the fixture has no answer for fails the test as `fixture_no_answer`. A passing test proves that the binding turns the recorded answers into the expected result; it does not prove the system still answers so. An offline test of a write, and a live test, are listed as `not_run`: they are not built yet.

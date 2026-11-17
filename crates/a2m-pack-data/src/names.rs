@@ -27,6 +27,8 @@ pub(crate) fn surface_kinds() -> Vec<SurfaceKind> {
 pub(crate) fn is_database(kind: &SurfaceKind) -> bool {
     surface_kinds().contains(kind)
 }
+/// The mode the pack drives, as a target file writes it.
+pub(crate) const PACK_MODE: &str = "sql";
 /// The file kind the pack owns.
 pub(crate) const STATEMENT: FileKindName = FileKindName::fixed("statement");
 /// The folder of the file kind.
@@ -65,7 +67,7 @@ pub(crate) struct Names {
 impl Names {
     pub(crate) fn new() -> Result<Self, Failure> {
         Ok(Self {
-            mode: Mode::new("sql")?,
+            mode: Mode::new(PACK_MODE)?,
             table: FindingKind::new("table")?,
         })
     }

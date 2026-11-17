@@ -32,6 +32,7 @@ mod health;
 pub mod init;
 mod keeper;
 mod kernel;
+mod offline;
 mod paths;
 mod person;
 mod project;

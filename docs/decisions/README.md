@@ -179,3 +179,6 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0173 | [The stream and file packs take up the kernel's second pass](0173-the-stream-and-file-packs-take-up-the-kernels-second-pass.md) | Accepted (design decision) |
 | 0175 | [The data and device packs take up the second pass of the provider contract](0175-the-data-and-device-packs-take-up-the-second-pass-of-the-provider-contract.md) | Accepted (design decision) |
 | 0178 | [An effect left as an open question is undecided, not a write](0178-an-effect-left-as-an-open-question-is-undecided-not-a-write.md) | Accepted (design decision) |
+| 0176 | [The action registry takes up the kernel's second pass](0176-the-action-registry-takes-up-the-kernels-second-pass.md) | Accepted (design decision) |
+| 0177 | [A target's offline tests run against a replay of their fixtures](0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md) | Accepted (design decision) |
+| 0179 | [What each pack drafts, so that a scout ends with reads that work](0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md) | Accepted (design decision) |

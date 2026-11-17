@@ -156,9 +156,10 @@ async fn a_write_that_ends_on_an_acknowledgement_is_settled_completes_and_is_nev
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_capture_before_the_committing_step_is_stored_first_and_a_secret_in_it_is_masked() {
-    let world =
-        World::ready_with(Options::with_user_settings("[evidence]\ncapture_on_writes = \"full\"\n"))
-            .await;
+    let world = World::ready_with(Options::with_user_settings(
+        "[evidence]\ncapture_on_writes = \"full\"\n",
+    ))
+    .await;
     let secret = "secret-for-tests-capture-7";
     let stored = world
         .call(
@@ -309,7 +310,12 @@ async fn what_the_system_said_is_shown_apart_and_marked_at_every_door() {
     assert_eq!(failed.result.as_ref().unwrap()["failure"]["said"], said);
     let body = failed.to_json();
     assert_eq!(body["result"]["failure"]["said"], said);
-    assert!(!body["error"]["message"].as_str().unwrap().contains("Ignore"));
+    assert!(
+        !body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Ignore")
+    );
     // In the MCP door, whose failure carries the error's object alone.
     let face: Json = serde_json::from_str(&McpResultFace::of(&failed).text).unwrap();
     assert_eq!(face["said"], said);
@@ -346,7 +352,10 @@ async fn a_call_made_again_while_its_run_is_stopped_is_given_that_run_marked_as_
     assert_eq!(result["status"], "stopped");
     assert_eq!(result["earlier_run"], true);
     assert!(
-        again.warnings.iter().any(|warning| warning.contains("started before")),
+        again
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("started before")),
         "{again:?}"
     );
     assert_eq!(again.next.as_ref().unwrap().action, "run.resume");

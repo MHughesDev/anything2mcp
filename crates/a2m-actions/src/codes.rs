@@ -65,6 +65,10 @@ pub const DRAFTS_CHANGED: FailureCode = FailureCode::fixed("drafts_changed");
 /// Class `policy`.
 pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
 
+/// An offline test asked for something that would store, lease, or clear
+/// a write; its control plane holds nothing and refuses (decision 0177).
+pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");
+
 pub(crate) fn stale(
     code: FailureCode,
     message: impl Into<String>,

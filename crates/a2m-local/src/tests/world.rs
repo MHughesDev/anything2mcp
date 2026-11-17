@@ -146,6 +146,15 @@ impl World {
     /// published, and a [`LocalSurface`] that asks `prompt` and waits
     /// `window` for an answer.
     pub(crate) async fn ready(prompt: Arc<dyn PresencePrompt>, window: Duration) -> Self {
+        Self::ready_with(prompt, window, |_| {}).await
+    }
+
+    /// The same, with the published plan changed by `change` first.
+    pub(crate) async fn ready_with(
+        prompt: Arc<dyn PresencePrompt>,
+        window: Duration,
+        change: fn(&mut a2m_core::Plan),
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let (folder, paths) = home("k");
         let clock: Arc<dyn Clock> =
@@ -194,10 +203,9 @@ impl World {
             .await
             .unwrap();
         kernel.start_runner_loop(4).await.unwrap();
-        kernel
-            .publish_plan(&engine::plan(&app.url("")))
-            .await
-            .unwrap();
+        let mut plan = engine::plan(&app.url(""));
+        change(&mut plan);
+        kernel.publish_plan(&plan).await.unwrap();
         Self {
             app,
             kernel,

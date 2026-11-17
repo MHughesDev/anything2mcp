@@ -136,6 +136,10 @@ pub(crate) struct Run<'a> {
     /// The time on the engine's clock at which the run's own time limit
     /// passes.
     pub time_limit: Option<Duration>,
+    /// For an offline test: the replay of recorded answers that every
+    /// binding is handed in place of its provider's driver. No session is
+    /// asked for, and no provider's driver is used (decision 0177).
+    pub replay: Option<Arc<dyn a2m_provider::Driver>>,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -208,6 +212,7 @@ impl<'a> Run<'a> {
             next_serial: 0,
             paths,
             time_limit: None,
+            replay: None,
             loaded,
         }
     }
@@ -340,7 +345,15 @@ impl<'a> Run<'a> {
                 pass_over(&binding.mode, no_binding(why), &mut passed_over);
                 continue;
             }
-            let handle = match self.engine.deps.registry.driver(&binding.mode) {
+            let handle = match &self.replay {
+                Some(replay) => self
+                    .engine
+                    .deps
+                    .registry
+                    .replay_driver(&binding.mode, Arc::clone(replay)),
+                None => self.engine.deps.registry.driver(&binding.mode),
+            };
+            let handle = match handle {
                 Ok(handle) => handle,
                 Err(failure) => {
                     let why = format!(
@@ -506,7 +519,9 @@ impl<'a> Run<'a> {
         }
         let waited = self.engine.deps.clock.elapsed();
         let surface_ref = self.surface_ref(binding.surface)?;
-        let lease = if self.loaded.plan.auth_of(binding.surface).is_some() {
+        // A replay uses no session: nothing reaches the system.
+        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(binding.surface).is_some()
+        {
             let want = SessionWant {
                 surface: surface_ref.surface.name.clone(),
                 headroom: None,

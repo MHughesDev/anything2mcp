@@ -84,11 +84,7 @@ fn example_of(parameter: &Parameter) -> Option<DraftValue> {
 /// The outputs of a read: each plain property of `shape`, named in the
 /// form target files use, with where it is in the answer when the name
 /// differs or the answer is a list.
-fn outputs(
-    shape: &Json,
-    listed: bool,
-    cx: &DraftContext<'_>,
-) -> (Pairs, Pairs) {
+fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) {
     let mut outputs: Pairs = Vec::new();
     let mut extract = Vec::new();
     let Some(Json::Object(properties)) = shape.get("properties") else {

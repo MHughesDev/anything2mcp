@@ -4,6 +4,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 
 | Term | Meaning |
 | --- | --- |
+| Acknowledged | The weakest proof a write can end on: the system answered the committing step and nothing could be read back. The record is `acted`, never verified, and only an operation declared `irreversible` may offer it ([decision 0172](../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)) |
 | Action | An authoring or administration function defined once in the action registry and exposed as a command, an MCP tool, a REST route, and an SDK method |
 | Application's verdict | The system's own answer to a write that was sent: it saved, or it refused or found the record changed. Only a verdict settles a sent write; an answer that is not one, such as a redirect, a reply too large to read, or a refusal made before the system looked, leaves the write in doubt until it is verified |
 | Approval | A person's decision to allow one exact diff, stored as a single-use record |
@@ -28,6 +29,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Draft | Target files not yet published; runnable only in the sandbox |
 | Drafter | The kernel code that writes a draft from a finding wherever a pack's drafting rules say how. Its drafts are ordinary drafts |
 | Driver | The code that carries out steps in one mode |
+| Earlier run | An unfinished run (running, resting for a person, or stopped and resumable) that an identical call is given back instead of a new run; the result is marked `earlier_run` ([decision 0176](../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)) |
 | Effect class | `read`, `write`, or `irreversible` |
 | Engine | The Anything2MCP process. On one machine, one per user |
 | Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
@@ -47,6 +49,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Hold | The scheduler's stop on a scope: everything, a workspace, a target, or a caller. No job in a held scope is handed out. It is how a kill switch reaches the scheduler |
 | Home runner | The runner holding a session's live state |
 | Health state | `ok`, `degraded`, or `stopped`: what the engine can currently do |
+| Idempotency key | Text a caller sends with `tool.call` so that the same call made again gives back its first run and starts no other; the same key with another call is refused ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)) |
 | Identity | Who the target sees: a person, or a dedicated account |
 | Identity strategy | How a write's record is found again: natural, composite, stamped, find, or none |
 | Identity mode | How that identity is obtained: per-user token, per-user session, per-user device, or service account |
@@ -71,6 +74,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Owner mark | A value the supervisor places in a child process's environment so that it can prove the process is its own before stopping it |
 | Pack | The crates that know one kind of system. Compiled into the binary; enabled by a setting |
 | Part | One of the seven divisions of the specification; the first digit of a section's number |
+| Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
 | Plan | The compiled, hashed form of a target version that the engine runs |
@@ -89,6 +93,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Reconcile | Reading doubtful records back to learn whether their writes landed |
 | Record | One item in the system that a run reads or writes, identified by a key. A ledger row is a commit point, which usually carries one record but can carry several, or part of one |
 | Registered name | A word whose values arrive with packs and crates, checked for shape and registered by whoever brings it: a mode, a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name, a failure code |
+| Replay | A driver of recorded answers that every pack gets from the contract; an offline test runs a tool's steps against a fixture through it, and nothing leaves the machine ([decision 0177](../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)) |
 | Review summary | The risk-ordered list a person sees before publishing or importing a version |
 | Root | A named folder a pack may reach, declared in its manifest for reading or for writing. A pack opens a file only by a checked path under one of its roots, never by a free path |
 | Run | One call of an operation or pipeline, identified by a `run_id` |

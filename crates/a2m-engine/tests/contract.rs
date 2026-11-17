@@ -432,3 +432,83 @@ async fn a_number_masked_as_a_secret_is_text_in_the_result_and_never_fails_the_r
         Some(&Value::Text(a2m_core::REDACTED.to_owned()))
     );
 }
+
+// ---- decision 0177: an offline test runs against a replay ----
+
+fn replay_of(answers: Vec<(&str, a2m_provider::Recorded)>) -> std::sync::Arc<a2m_provider::Replay> {
+    a2m_provider::Replay::new(
+        answers
+            .into_iter()
+            .map(|(name, answer)| a2m_provider::RecordedAnswer {
+                name: name.to_owned(),
+                args: None,
+                answer,
+            })
+            .collect(),
+    )
+}
+
+#[tokio::test]
+async fn an_offline_read_is_answered_by_its_fixture_and_never_reaches_a_driver() {
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    let recorded = Values::new()
+        .with("order_id", "A-900")
+        .with("customer", "Replayed Customer")
+        .with("status", "draft")
+        .with("lines", Value::Int(2));
+    let replay = replay_of(vec![("get_order", a2m_provider::Recorded::Done(recorded))]);
+    let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+    let outcome = scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay.clone())
+        .await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(text(&scene.last_result(), "customer"), "Replayed Customer");
+    assert_eq!(replay.asked(), ["get_order"]);
+    // The test pack's driver was never prepared nor asked anything.
+    assert_eq!(
+        scene.hooks.count("get_order"),
+        0,
+        "{:?}",
+        scene.hooks.seen()
+    );
+    assert!(scene.hooks.prepared_with.lock().unwrap().is_empty());
+
+    // A step its fixture has no answer for is a named failure.
+    scene.another_run(ORDER_GET).await;
+    let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+    let outcome = scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay_of(Vec::new()))
+        .await;
+    let failure = outcome.failure().expect("no answer is a failure");
+    assert_eq!(failure.code().as_str(), "fixture_no_answer", "{failure:?}");
+    assert_eq!(scene.hooks.count("get_order"), 0);
+}
+
+#[tokio::test]
+async fn an_offline_write_reaches_no_system_even_where_its_fixture_answers_the_save() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    let input = item("A-102", "L-300", "New rail", 3, "150.5");
+    let replay = replay_of(vec![
+        ("get_item", a2m_provider::Recorded::Absent),
+        ("put_item", a2m_provider::Recorded::Done(Values::new())),
+    ]);
+    let job = scene.job(JobKind::Execute, ITEM_UPSERT, input).await;
+    let outcome = scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay.clone())
+        .await;
+    // The preview was built from the fixture; nobody approved it, so the
+    // run rests, and nothing reached a driver or the application.
+    assert!(waits(&outcome), "{outcome:?}");
+    assert_eq!(replay.asked(), ["get_item"]);
+    assert!(
+        scene
+            .hooks
+            .seen()
+            .iter()
+            .all(|entry| entry != "put_item" && entry != "get_item")
+    );
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 0);
+}

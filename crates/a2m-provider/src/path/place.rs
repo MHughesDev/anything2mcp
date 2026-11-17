@@ -195,7 +195,6 @@ mod os {
     }
 
     impl Folder {
-
         /// Makes a new folder of that name. It fails when anything stands
         /// at the name, a link included.
         pub(in super::super) fn create_dir(&self, name: &OsStr) -> io::Result<()> {

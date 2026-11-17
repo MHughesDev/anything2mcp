@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_actions::{
-    ApprovalAsk, CloseReason, PersonSurface, PresenceAsk, Response, SessionAsk, SignInAsk,
+    ApprovalAsk, CloseReason, NOT_READ_BACK, PersonSurface, PresenceAsk, Response, SessionAsk,
+    SignInAsk,
 };
 use a2m_auth::{PersonAnswer, PersonAsk, PersonReason};
 use a2m_core::{Digest, EffectClass, FailureClass, Identity, RunId};
@@ -165,6 +166,9 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     );
     assert!(!text.contains("<script") && !text.contains("<b>"), "{text}");
     assert!(!text.contains("src=") && !text.contains("href="));
+    // A write that is read back after it is sent is not said to be one
+    // that is not.
+    assert!(!text.contains("not read back"), "{text}");
 
     // The listener answers its page and its two presses. Every other path
     // and method, a front door's included, answers nothing.
@@ -297,6 +301,28 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
 
     world.surface.settled().await;
     assert_eq!(world.surface.waiting(), 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_approved() {
+    let prompt = TestPrompt::answering(PromptAnswer::Dismissed);
+    let world = World::ready_with(
+        Arc::clone(&prompt) as _,
+        LONG,
+        super::world::engine::acknowledged_upsert,
+    )
+    .await;
+    let http = http();
+    let rested = rest(&world).await;
+    let (text, _) = open(&http, &rested.link).await;
+    // Beside the record, after its heading and before its fields, in the
+    // words the desk gives.
+    let said = format!(
+        "</h3><p><strong>This write is {NOT_READ_BACK}.</strong> Nothing will read it back or compare it after it is sent.</p><table>"
+    );
+    assert!(text.contains(&said), "{text}");
+    assert_eq!(prompt.asked(), 0);
     world.kernel.close(CloseReason::Asked).await;
 }
 

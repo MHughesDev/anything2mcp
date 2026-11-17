@@ -55,7 +55,7 @@ The store also holds published versions and their plans, findings, and the audit
 
 The `status` a caller sees is this state. Reads skip the preview and approval, going from `validating` straight to `running`. Writes cannot reach `running` without an approval of their diff, unless policy pre-approved them. A stopped run re-enters `running` only after reconciliation. Resume does not create a new run: the same run gets a new attempt number and a new lease.
 
-**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished gets that run back instead of starting another (rule 6). A call that carries the caller's own idempotency key goes further: the same caller making the same call with the same key gets back the run the first call started, unfinished or finished, for as long as that run is kept, and the same key with another call is refused by name. A key is scoped to its caller and workspace and kept as a keyed digest ([decision 0160](../../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)). `run.list` shows a caller its own runs, newest first, so that a caller whose answer was lost can find its run.
+**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished, a stopped run that can be resumed included, gets that run back instead of starting another, marked `earlier_run` (rule 6). A call that carries the caller's own idempotency key goes further: the same caller making the same call with the same key gets back the run the first call started, unfinished or finished, for as long as that run is kept, and the same key with another call is refused by name. A key is scoped to its caller and workspace and kept as a keyed digest ([decision 0160](../../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)). `run.list` shows a caller its own runs, newest first, so that a caller whose answer was lost can find its run.
 
 ## Record states
 
@@ -147,7 +147,7 @@ How the record is read depends on how it is found again:
 | `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches waits the settle time out once and looks again |
 | Any, once a key was assigned | By the assigned key |
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
-| `none` | Cannot be read. The run is never resumed by itself and stops for a person |
+| `none` | Read only through the binding's read-back, by the values the record's earlier steps recorded before its save, when it has both: found is landed, absent is not landed, anything else stays in doubt ([decision 0176](../../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)). Otherwise it cannot be read; the run is never resumed by itself and stops for a person |
 
 Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged`, and records that ended `acted` on an acknowledgement, are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
 

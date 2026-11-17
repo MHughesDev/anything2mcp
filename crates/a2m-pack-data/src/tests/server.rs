@@ -945,12 +945,13 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
     let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
         .draft(&[of("order_lines")])
         .unwrap();
-    assert_eq!(report.written.len(), 1);
+    // The statements file only: a column of a type the pack does not read
+    // leaves a question in the record, and no read is drafted over it.
+    assert_eq!(report.written.len(), 1, "{report:?}");
     let drafted =
         std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(drafted.contains("form: \"table\""), "{drafted}");
-    assert!(
-        !drafted.contains("SELECT") && !drafted.contains("write"),
-        "{drafted}"
-    );
+    // The one statement text is the list's, of the catalog's own names.
+    assert_eq!(drafted.matches("SELECT").count(), 1, "{drafted}");
+    assert!(!drafted.contains("write"), "{drafted}");
 }

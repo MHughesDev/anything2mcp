@@ -657,14 +657,20 @@ fn a_temporary_file_is_private_keeps_the_targets_mode_and_removes_only_itself() 
         std::fs::read_dir(&orders)
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.file_name().unwrap().to_string_lossy().starts_with(".a2m-new-"))
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".a2m-new-")
+            })
             .collect()
     };
 
     let mut save = one.create_temporary().unwrap();
     let made = temporaries();
     assert_eq!(made.len(), 1);
-    let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
     assert_eq!(mode(&made[0]), 0o600);
     // Its identity, from its handle, is the identity its name gives, and
     // an open handle's identity compares with a path's.

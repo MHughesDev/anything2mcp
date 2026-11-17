@@ -21,7 +21,7 @@ Anything2MCP puts deterministic, verified tools over an existing system. You dra
 4. Draft the target files with `draft.write`. Read them back with `draft.read`. A file that does not read as its kind is not written; one that does is written, and the lint of the whole target comes back with it.
 5. Lint: `draft.lint`. Fix every problem, then lint again.
 6. Try a drafted read: `draft.try`. It runs in the sandbox and only reads. A drafted write is not tried yet.
-7. Test: `test.run` runs the publish gates as far as they are built: the schema and lint gate, and a list of the offline tests that wait for a replay of their fixtures. It never reports a pass yet.
+7. Test: `test.run` runs the publish gates as far as they are built: the schema and lint gate, and the offline tests of reads, each against a replay of its fixture. The offline tests of writes and the other gates are listed as not run, so the result is never `complete`.
 8. Ask for review: `publish.request`. The answer is `needs_person` with a link. Give the person the link and stop. On that page the person reads exactly what will be published, and carries it out with the computer's own prompt. Call `publish.request` again afterwards to be told what was done.
 
 `target.status` says where a target stands and what to do next. States, in order: `added`, `signed_in`, `explored`, `drafted`, `tried`, `tested`, `published`. If you lose your place, ask for the status.

@@ -1048,7 +1048,71 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     assert_eq!(tested["gates"][0]["state"], "passed", "{tested}");
     let offline = tested["gates"][1]["tests"].as_array().unwrap();
     assert_eq!(offline.len(), 3, "{tested}");
-    assert!(offline.iter().all(|test| test["state"] == "not_run"));
+    // The read's test ran against its fixture and passed; nothing reached
+    // the stand's driver. The two writes' tests are not run yet.
+    let state_of = |tested: &Json, name: &str| {
+        tested["gates"][1]["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|test| test["test"] == name)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        state_of(&tested, "order_get")["state"],
+        "passed",
+        "{tested}"
+    );
+    assert_eq!(state_of(&tested, "line_item_upsert")["state"], "not_run");
+    assert_eq!(state_of(&tested, "order_sheet_enter")["state"], "not_run");
+    assert!(world.reached.lock().unwrap().is_empty());
+
+    // A result that differs from the test's fails with the difference.
+    let test_file = world
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("tests")
+        .join("order_get.yaml");
+    let kept = std::fs::read_to_string(&test_file).unwrap();
+    std::fs::write(&test_file, kept.replace("status: draft", "status: open")).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "order_get");
+    assert_eq!(failed["state"], "failed", "{tested}");
+    assert_eq!(failed["differences"][0]["field"], "status", "{failed}");
+    assert_eq!(failed["differences"][0]["expected"], "open");
+    assert_eq!(failed["differences"][0]["got"], "draft");
+    assert_eq!(tested["passed"], false);
+    std::fs::write(&test_file, kept).unwrap();
+
+    // A fixture with no answer for a step fails the test by name; nothing
+    // is sent in its place.
+    let answer = world
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("fixtures")
+        .join("order_get")
+        .join("order_get.json");
+    let recorded = std::fs::read(&answer).unwrap();
+    std::fs::remove_file(&answer).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "order_get");
+    assert_eq!(failed["state"], "failed", "{tested}");
+    assert_eq!(failed["failure"]["code"], "fixture_no_answer", "{failed}");
+    assert!(world.reached.lock().unwrap().is_empty());
+    std::fs::write(&answer, recorded).unwrap();
 
     // A drafted read is tried in the sandbox as a run of its own, and
     // nothing becomes a version.

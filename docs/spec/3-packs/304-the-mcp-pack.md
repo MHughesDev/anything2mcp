@@ -131,7 +131,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 | A tool on the server's list, marked read-only by the server | A mapping entry with its digest, and a pass-through read operation with one binding | Its name in the language of the work; whether the marking is believed |
 | A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its identity strategy, its read-back tool |
 
-As built, the drafter writes the mapping entry only, for either kind of tool: the pass-through read operation is not drafted yet. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string it leaves `free_text` as an open question.
+As built, the drafter writes the mapping entry for either kind of tool, and the pass-through read operation for a read-only tool whose entry holds no question ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)); an entry that holds one is drafted into a mapping file of its own. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema. For a tool whose whole input is one string it leaves `free_text` as an open question.
 
 `spec.import` accepts an upstream server's tool list as well as a published description. A server mapped with `purpose: discovery` is a discovery provider: its results are stored as findings at `inferred` and never bound (hypothesis H-27).
 

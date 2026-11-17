@@ -358,66 +358,137 @@ handler!(
 
 handler!(
     /// `test.run`: the publish gates on a target's drafts, as far as the
-    /// engine can run them. The schema and lint gate is the compiler's; an
-    /// offline test needs a replay of its recorded fixture through a
-    /// driver, which neither the engine nor the provider contract offers
-    /// yet, so each is listed as not run, and the result says that the
-    /// gates are not complete. Nothing is called and nothing is written.
+    /// engine can run them. The schema and lint gate is the compiler's.
+    /// Each offline test runs its tool through the engine against a replay
+    /// of its fixture's recorded answers, with no system touched (decision
+    /// 0177); a test of a write, and a live test, are listed as not run.
+    /// Nothing is called and nothing is written.
     test_run,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
         let project_folder = call.project_folder()?.to_path_buf();
         let compiled = super::build::compile_in(
             kernel,
-            project_folder,
+            project_folder.clone(),
             &target,
             CompileMode::Publish,
             DRAFT_VERSION,
         )
         .await?;
-        let (lint, tests) = match &compiled {
-            Ok(compiled) => (
-                json!({"gate": "schema_and_lint", "state": "passed", "problems": problems_json(&compiled.warnings)}),
-                compiled
-                    .plan
-                    .tests
-                    .iter()
-                    .map(|test| {
-                        let tool = compiled
-                            .plan
-                            .tools
-                            .get(test.tool.get())
-                            .map(|tool| tool.name.to_string())
-                            .unwrap_or_default();
-                        json!({
-                            "test": test.name,
-                            "tool": tool,
-                            "kind": test.kind.to_string(),
-                            "fixture": test.fixture,
-                            "state": "not_run",
-                            "reason": "No replay of a recorded fixture through a driver exists yet in the engine or the provider contract.",
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            Err(problems) => (
-                json!({"gate": "schema_and_lint", "state": "failed", "problems": problems_json(problems)}),
-                Vec::new(),
-            ),
+        let compiled = match compiled {
+            Ok(compiled) => compiled,
+            Err(problems) => {
+                return Ok(Output::ok(json!({
+                    "target": target.as_str(),
+                    "passed": false,
+                    "complete": false,
+                    "gates": [
+                        {"gate": "schema_and_lint", "state": "failed", "problems": problems_json(&problems)},
+                        {"gate": "offline_replay", "state": "not_run", "tests": []},
+                    ],
+                    "not_run": NOT_RUN_GATES,
+                }))
+                .then(Next::new(
+                    "draft.lint",
+                    json!({"target": target.as_str()}),
+                    "after correcting the files the problems name",
+                )));
+            }
         };
-        let passed_lint = compiled.is_ok();
+        let plan = std::sync::Arc::new(compiled.plan);
+        // Every fixture is read once, off the engine's threads.
+        let (named, tests) = (target.clone(), plan.tests.clone());
+        let fixtures = off_thread(move || {
+            // The compiler names a fixture by its folder inside the target's,
+            // `fixtures/<name>`.
+            let folder = target_folder(&project_folder, &named)?;
+            Ok(tests
+                .iter()
+                .map(|test| {
+                    test.fixture.as_deref().map(|fixture| {
+                        folder
+                            .join(fixture)
+                            .map_err(
+                                |failure| json!({"folder": fixture, "problem": failure.message()}),
+                            )
+                            .and_then(|folder| crate::offline::fixture_answers(&folder))
+                    })
+                })
+                .collect::<Vec<_>>())
+        })
+        .await?;
+        let engine = kernel.engine().await?;
+        let workspace = call.caller.principal.workspace;
+        // The engine's future is not `Send`: a driver's prepared state is
+        // held across its waits. So the tests run on a thread of their own,
+        // driven by this same runtime, as the runner loop runs a job.
+        let (runs_plan, hash) = (std::sync::Arc::clone(&plan), compiled.encoded.hash);
+        let runtime = tokio::runtime::Handle::current();
+        let outcomes = tokio::task::spawn_blocking(move || {
+            runtime.block_on(async move {
+                let mut outcomes = Vec::new();
+                for (test, fixture) in runs_plan.tests.iter().zip(fixtures) {
+                    outcomes.push(
+                        crate::offline::run_test(
+                            &engine, &runs_plan, hash, workspace, test, fixture,
+                        )
+                        .await,
+                    );
+                }
+                outcomes
+            })
+        })
+        .await
+        .map_err(|_| {
+            codes::busy(
+                codes::ENGINE_DEGRADED,
+                "The offline tests were interrupted.",
+                "Call `test.run` again.",
+            )
+        })?;
+        let mut results = Vec::new();
+        for (test, outcome) in plan.tests.iter().zip(outcomes) {
+            let tool = plan
+                .tools
+                .get(test.tool.get())
+                .map(|tool| tool.name.to_string())
+                .unwrap_or_default();
+            let mut shown = json!({
+                "test": test.name,
+                "tool": tool,
+                "kind": test.kind.to_string(),
+                "fixture": test.fixture,
+                "state": outcome.state,
+            });
+            if let (Json::Object(shown), Json::Object(detail)) = (&mut shown, outcome.detail) {
+                shown.extend(detail);
+            }
+            results.push(shown);
+        }
+        let all_passed = results.iter().all(|test| test["state"] == "passed");
+        let any_failed = results.iter().any(|test| test["state"] == "failed");
+        let replay_state = if any_failed {
+            "failed"
+        } else if all_passed {
+            "passed"
+        } else {
+            "incomplete"
+        };
         let output = Output::ok(json!({
             "target": target.as_str(),
-            "passed": false,
+            // Every gate that ran passed, and every offline test ran and
+            // passed. The gates listed under `not_run` are not built, so
+            // the run is never complete.
+            "passed": all_passed,
             "complete": false,
             "gates": [
-                lint,
-                {"gate": "offline_replay", "state": "not_run", "tests": tests},
+                {"gate": "schema_and_lint", "state": "passed", "problems": problems_json(&compiled.warnings)},
+                {"gate": "offline_replay", "state": replay_state, "tests": results},
             ],
-            "not_run": ["offline_replay", "contract", "determinism", "binding_equivalence", "write_round_trip", "idempotency", "resume", "fault_injection", "performance"],
+            "not_run": NOT_RUN_GATES,
         }))
-        .warn("Only the schema and lint gate runs today; the result is never a pass.");
-        Ok(output.then(if passed_lint {
+        .warn("The schema and lint gate and the offline tests of reads run; the other gates, and the offline tests of writes, are not built, so the result is never complete.");
+        Ok(output.then(if all_passed {
             Next::new(
                 "publish.request",
                 json!({"target": target.as_str()}),
@@ -425,10 +496,22 @@ handler!(
             )
         } else {
             Next::new(
-                "draft.lint",
+                "draft.read",
                 json!({"target": target.as_str()}),
-                "after correcting the files the problems name",
+                "to correct the test, its fixture, or the binding a failed test names",
             )
         }))
     }
 );
+
+/// The publish gates that are not built.
+const NOT_RUN_GATES: [&str; 8] = [
+    "contract",
+    "determinism",
+    "binding_equivalence",
+    "write_round_trip",
+    "idempotency",
+    "resume",
+    "fault_injection",
+    "performance",
+];

@@ -403,8 +403,19 @@ impl DraftingRule for ToolToMapping {
                 )),
             ));
         }
+        // An entry left with a question goes to a file of its own, beside
+        // the surface's settled entries: until a person answers it that
+        // file does not compile, and the reads beside it are not held up.
+        let undecided = entry
+            .iter()
+            .any(|(_, value)| matches!(value, DraftValue::OpenQuestion(_)));
+        let file = if undecided {
+            format!("{surface}_undecided")
+        } else {
+            surface.to_owned()
+        };
         Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("{}/{surface}.yaml", names::MAPPING_FOLDER))?,
+            path: RelPath::new(&format!("{}/{file}.yaml", names::MAPPING_FOLDER))?,
             body: DraftValue::map(vec![
                 ("surface", DraftValue::text(surface)),
                 (

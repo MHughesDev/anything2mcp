@@ -62,7 +62,7 @@ pub use registry::{
     FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
     RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,
 };
-pub use replay::{Recorded, RecordedAnswer, Replay, answer_name};
+pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe, LaunchSpec,
     Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, ProgramRef, Ran, ScopedSupervisor,

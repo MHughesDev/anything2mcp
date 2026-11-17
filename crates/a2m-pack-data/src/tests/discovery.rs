@@ -146,6 +146,142 @@ async fn the_catalog_is_found_and_nothing_is_written() {
     assert!(full.untrusted.iter().any(|name| name == "order_lines"));
 }
 
+/// The stand's whole catalog, drafted into a new target: for each keyed
+/// table a statements file and a read by key and a list over it, which
+/// compile in draft mode beside the two drafts that hold a question, and
+/// which read, through the driver's handle, what the stand stores. The
+/// read by key has no example, since discovery reads no row; the list
+/// needs no input. No write is drafted and nothing is written.
+#[tokio::test]
+async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let before = scene.db.data_version().unwrap();
+    let (findings, _) = discover(&scene).await;
+    let folder = Folder::new("drafted-reads");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    assert!(report.refused.is_empty(), "{report:?}");
+    let operations: Vec<&str> = report
+        .written
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    for table in [
+        "customers",
+        "orders",
+        "order_lines",
+        "shipments",
+        "order_notes",
+    ] {
+        for verb in ["get", "list"] {
+            let path = format!("operations/{table}_{verb}.yaml");
+            assert!(operations.contains(&path.as_str()), "{operations:?}");
+        }
+    }
+    // The table with no key and the view hold a question, and have no read.
+    // While they are in the folder no statements file compiles, since the
+    // kind's section is not made; without them, every draft does.
+    let mut questioned: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    questioned.dedup();
+    assert_eq!(
+        questioned,
+        [
+            "statements/order_status_history.yaml",
+            "statements/order_summaries.yaml"
+        ]
+    );
+    assert!(
+        !operations
+            .iter()
+            .any(|path| path.contains("history") || path.contains("summaries"))
+    );
+    for path in &questioned {
+        std::fs::remove_file(root.join(path)).unwrap();
+    }
+    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
+    let lines_get = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_lines_get")
+        .unwrap();
+    assert!(lines_get.examples.is_empty());
+    assert_eq!(lines_get.effect, a2m_core::EffectClass::Read);
+    let notes = lines_get
+        .outputs
+        .iter()
+        .find(|output| output.name == "description")
+        .unwrap();
+    assert!(plan.field_types[notes.field_type.unwrap().get()].untrusted);
+    for operation in &plan.operations {
+        assert_eq!(operation.effect, a2m_core::EffectClass::Read);
+    }
+    scene.plan = plan;
+    let binding = |name: &str| {
+        scene
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap()
+            .bindings[0]
+            .act
+            .clone()
+    };
+    let (get, list) = (
+        binding("example_order_lines_get"),
+        binding("example_customers_list"),
+    );
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let key = Values::new()
+        .with("order_id", "A-100")
+        .with("item_code", "L-101");
+    let row = super::values(run.steps(&get, &key, None).await.unwrap());
+    let stored = scene.db.stored_rows(Table::OrderLines).unwrap();
+    let left = stored
+        .iter()
+        .find(|row| row.get("item_code") == Some(&example_db::rows::Value::from("L-101")))
+        .unwrap();
+    let Some(example_db::rows::Value::Text(description)) = left.get("description") else {
+        panic!("{left:?}");
+    };
+    assert_eq!(
+        row.get("description").and_then(a2m_core::Value::as_text),
+        Some(description.as_str())
+    );
+    let all = super::values(run.steps(&list, &Values::new(), None).await.unwrap());
+    let ids: Vec<&str> = all
+        .get("rows")
+        .and_then(a2m_core::Value::as_list)
+        .unwrap()
+        .iter()
+        .map(|row| {
+            row.as_record()
+                .and_then(|row| row.get("customer_id"))
+                .and_then(a2m_core::Value::as_text)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(ids, ["C-001", "C-002", "C-003"]);
+    assert_eq!(all.get("more"), Some(&a2m_core::Value::Bool(false)));
+    run.release().await;
+    assert_eq!(scene.db.data_version().unwrap(), before);
+}
+
 #[tokio::test]
 async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_question() {
     let scene = Scene::new();
@@ -180,6 +316,8 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     assert_eq!(
         written,
         [
+            "operations/order_lines_get.yaml",
+            "operations/order_lines_list.yaml",
             "statements/order_lines.yaml",
             "statements/order_status_history.yaml"
         ]
@@ -188,12 +326,16 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
     // The read by key is one the pack writes when the file is compiled: the
-    // draft holds no statement text, and the read can read a write back.
+    // draft holds no statement text for it, and the read can read a write
+    // back. The list's text names the catalog's own columns, quoted, in
+    // the order of the key, and nothing from an input.
     assert!(lines.contains("form: \"table\""), "{lines}");
+    assert_eq!(lines.matches("text:").count(), 1, "{lines}");
     assert!(
-        !lines.contains("SELECT") && !lines.contains("text:"),
+        lines.contains(r#"FROM \"order_lines\" ORDER BY \"order_id\", \"item_code\""#),
         "{lines}"
     );
+    assert!(lines.contains("max_rows: 1000"), "{lines}");
     // No write, and no unit: a length is text until a person says more.
     assert!(
         !lines.contains("write") && !lines.contains("length_ft_in"),
@@ -236,17 +378,11 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         std::fs::read_to_string(second.join("statements").join("order_lines.yaml")).unwrap()
     );
 
-    // The keyed draft alone compiles with the pack's registrations: its
-    // read is not bound yet, which is a warning and no error.
+    // The keyed draft alone compiles with the pack's registrations, its
+    // two statements each bound by a drafted read.
     std::fs::remove_file(root.join("statements").join("order_status_history.yaml")).unwrap();
-    let compiled = compile_folder(&scene.registry, &root);
-    match compiled {
-        Ok(compiled) => assert!(compiled.warnings.find("data.statement_unused").is_some()),
-        Err(problems) => {
-            let (errors, _) = problems.split();
-            assert!(errors.is_empty(), "{errors:#?}");
-        }
-    }
+    let compiled = compile_folder(&scene.registry, &root).unwrap();
+    assert!(compiled.warnings.find("data.statement_unused").is_none());
 }
 
 /// A rule that drafts what the pack's own rule never does: a statement

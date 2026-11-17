@@ -48,7 +48,7 @@ One function hands the pack to the registry builder: this crate's `pack()` retur
 | Binding fields | `statement` (required), `params` (a map from a parameter's name to an expression), `read_back` (the name of a read statement) |
 | Finding kind | `table` |
 | Discoverer | `catalog`, with the describer below. Sources `live_system`, level `discovered`, 30 seconds, 4 MB |
-| Drafting rule | From `table` findings to `statement` files |
+| Drafting rules | From `table` findings to `statement` files, and to the read operations over them |
 | Lint rules | `data.hazard_not_declared` (error), `data.statement_unused` (warning) |
 | Settings | `packs.data.max_rows` (the most a statement's `max_rows` may ask for; 1000), `packs.data.result_bytes` (the most text one result may hold; 4 MB) |
 | Effects | Reads and writes the root `project`. No network without the feature `postgres`; with it, `network = "surfaces"` and sessions on both kinds. The manifest of that build is the embedded one with each change made in its place and three codes appended (`anything2mcp-provider-server.toml`); a test holds each change to its place |
@@ -107,7 +107,8 @@ The `found` of a `table` finding is JSON: the surface, the store, the table's na
 
 | From a `table` finding | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| A table with a primary key | One record, with a field per column and the type the declared type states: `integer`, `text`, `date`, `datetime`. One read by key, `form: table`, two seconds: the draft holds no statement text | Units, narrower types, business names, the operation, every write |
+| A table with a primary key | One record, with a field per column and the type the declared type states: `integer`, `text`, `date`, `datetime`. One read by key, `form: table`, two seconds, which holds no statement text; and `{record}_list`, every column quoted by the store's dialect in the order of the key, `returns: many`, `max_rows` the pack's setting, five seconds | Units, narrower types, business names, every write |
+| The same table, when every column has a type ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Two operations: `{target}_{record}_get` over the read by key, the key as its inputs and every other column as an output; and `{target}_{record}_list`, no input, a list output per column and `more`. Text is of the type `untrusted_text`. No example: discovery reads no row | Which tables matter, names, the test and its fixture |
 | A column whose declared type states none of those | An open question in place of the type | The type |
 | A table with no key, or a view | The record, with an open question in place of its key, and no statement | The key |
 
@@ -329,7 +330,7 @@ The tests are inside the crate, under `src/tests/`, because the fault of a lost 
 5b. Done: what the kernel holds the pack to after the safety audit ([decision 0155](../../decisions/0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md)): `commits`, `least_effect`, `commit_steps`, `writes`, and the commit guard.
 6. Done, behind the feature `postgres` ([decision 0168](../../decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md)): the server stand, and PostgreSQL through `tokio-postgres`: the surface kind `database_server`, the server dialect of the form check, numbered parameters bound as text, values read exactly from their binary form, read-only transactions read back, the isolation levels, the server's statement and lock limits, the check of the role, what a write reaches asked of the one table, `possible_commit` found by the relay, a pool per surface and session, and discovery. Proven in `src/tests/server.rs`, seventeen tests against a real server. Not built: the encrypted link (owed: a rustls configuration from the `tls` module of `a2m-auth` with the caller's ALPN), a provider for database identities (it reads `http_basic` now), and a row limit the server keeps to (a portal).
 7. Not built: `form: statement` writes, procedures and the verb `call`, `upsert`, `stamped` and `find` identity, the `before_values` guard, `returns: one` and `none` on a hand-written statement, a parent saved with its rows, writes on a surface that stands beneath an application.
-8. Not built: a drafted read operation beside the drafted statements file; the scout's five tries; the check of the store's version against the target's recorded identity; binding a moment.
+8. Done: the drafted read by key and list beside the drafted statements file, proven against the stand by `the_stands_catalog_drafts_reads_that_read_what_it_stores` ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)). Through the engine the list returns only `more`: its rows are records, and an output cannot be one yet. Not built: the scout's five tries, which are `a2m-actions`' work; the check of the store's version against the target's recorded identity; binding a moment.
 
 ## Open points
 
