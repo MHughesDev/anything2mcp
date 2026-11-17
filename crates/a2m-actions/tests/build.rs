@@ -1883,6 +1883,10 @@ async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() 
         .await;
     assert!(report.ok, "{:?}", report.error);
     let report = report.result.unwrap();
+    if !report["report_hash"].is_string() {
+        let listed = world.call(&agent, "run.list", json!({"limit": 100})).await;
+        eprintln!("DEBUG {}", listed.result.unwrap());
+    }
     assert!(report["report_hash"].is_string(), "{report}");
     let tools = report["content"]["tried"]["tools"].as_array().unwrap();
     let of = |name: &str| {

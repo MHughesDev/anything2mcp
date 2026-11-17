@@ -266,6 +266,10 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
         ),
         (
+            "kernel.acknowledged_where_read_back",
+            Case::Elsewhere("an_acknowledgement_is_evidence_only_for_an_irreversible_operation"),
+        ),
+        (
             "kernel.read_kind_not_registered",
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
         ),
@@ -706,7 +710,9 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
     for (code, case) in &cases {
         if let Case::Elsewhere(test) = case {
             assert!(
-                test.starts_with("the_loader") || test.starts_with("what_a_faulty"),
+                test.starts_with("the_loader")
+                    || test.starts_with("what_a_faulty")
+                    || *test == "an_acknowledgement_is_evidence_only_for_an_irreversible_operation",
                 "{code}"
             );
             continue;
