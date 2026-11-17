@@ -1,0 +1,19 @@
+# Throwaway. Roadmap package 0.4. Never promoted into the product.
+[package]
+name = "spike-b-chromey"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+spike-browser-common = { path = "../common" }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+futures = "0.3"
+chromey = { version = "=2.58.2" }
+
+[profile.release]
+opt-level = 3

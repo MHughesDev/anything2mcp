@@ -1,0 +1,40 @@
+{
+  "candidate": "a: own client",
+  "transport": "pipe, MappedFds",
+  "browser_version": "Chrome/153.0.8010.12",
+  "cold_start_to_first_read_ms": 398.186,
+  "launch_to_connected_ms": 130.858,
+  "wait_kind": "protocol event, then an in-page observer in an isolated world",
+  "field_value": "Left rail",
+  "warm_reads": {
+    "count": 200,
+    "median_ms": 0.127,
+    "p95_ms": 0.925,
+    "max_ms": 5.067
+  },
+  "snapshot_kind": "accessibility tree",
+  "snapshot_nodes": 60,
+  "snapshot_ms": 2.37,
+  "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
+  "writes_stored_after_blocked_save": 0,
+  "clean_close": {
+    "checked": true,
+    "remaining": 0,
+    "after_ms": 0.644
+  },
+  "kill_mid_call": {
+    "outcome": "Err(Disconnected { sent: true })",
+    "after_kill_ms": 10.845,
+    "leftover": {
+      "checked": true,
+      "remaining": 0,
+      "after_ms": 21.827
+    }
+  },
+  "notes": [
+    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.653 ms, p95 17.872 ms",
+    "locate by label with an in-page helper and read, one round trip: median 0.184 ms, p95 0.265 ms",
+    "exit after Browser.close: Ok(Ok(ExitStatus(unix_wait_status(0))))",
+    "a call after the kill: Err(Disconnected { sent: false })"
+  ]
+}

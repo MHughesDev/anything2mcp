@@ -1,0 +1,37 @@
+{
+  "server": { "name": "a2m-spike-mcp", "version": "0.0.0" },
+  "instructions": "Spike server. One read tool over the imaginary example target.",
+  "tools": [
+    {
+      "name": "example_orders_order_get",
+      "title": "Get one order",
+      "description": "Reads one order of the imaginary example target by its order id. Use it to see an order's status and total. It changes nothing. Returns the order id, its status, its total as a decimal string, its currency, and its number of lines.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "order_id": { "type": "string", "description": "The order id, for example A-1001." },
+          "wait_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "Spike only: wait this long before answering, so that progress and cancellation can be seen." }
+        },
+        "required": ["order_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "order_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["open", "shipped", "cancelled"] },
+          "total": { "type": "string", "pattern": "^[0-9]+\\.[0-9]{2}$" },
+          "currency": { "type": "string" },
+          "lines": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["order_id", "status", "total", "currency", "lines"],
+        "additionalProperties": false
+      },
+      "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+      "records": {
+        "A-1001": { "order_id": "A-1001", "status": "open", "total": "118.40", "currency": "EUR", "lines": 3 },
+        "A-1002": { "order_id": "A-1002", "status": "shipped", "total": "42.00", "currency": "EUR", "lines": 1 }
+      }
+    }
+  ]
+}

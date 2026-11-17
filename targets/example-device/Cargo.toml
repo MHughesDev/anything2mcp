@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+# `io-util` is the only feature this crate adds: reading and writing whole frames.
+tokio = { workspace = true, features = ["io-util"] }
+
 [lints]
 workspace = true

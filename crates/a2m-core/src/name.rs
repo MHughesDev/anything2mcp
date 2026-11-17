@@ -60,6 +60,7 @@ pub struct InvalidName {
     kind: &'static str,
     name: String,
     longest: usize,
+    dotted: bool,
 }
 
 impl InvalidName {
@@ -72,6 +73,15 @@ impl InvalidName {
 
 impl fmt::Display for InvalidName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.dotted {
+            return write!(
+                f,
+                "`{}` is not a valid {}; it is two names joined by one dot, each starting with a \
+                 lowercase letter and continuing with lowercase letters, digits, and underscores, \
+                 and it has at most {} characters",
+                self.name, self.kind, self.longest
+            );
+        }
         write!(
             f,
             "`{}` is not a valid {} name; a name starts with a lowercase letter, continues with \
@@ -114,9 +124,118 @@ pub(crate) fn check_name(
             kind,
             name: shorten(text),
             longest,
+            dotted: false,
         })
     }
 }
+
+/// Checks the shape of two names joined by one dot, such as
+/// `kernel.no_fixed_wait`: each part a name, the whole at most `longest`
+/// characters.
+pub(crate) fn check_dotted_name(
+    kind: &'static str,
+    text: &str,
+    longest: usize,
+) -> Result<(), InvalidName> {
+    let well_formed = text.len() <= longest
+        && text
+            .split_once('.')
+            .is_some_and(|(owner, rule)| is_name(owner, longest) && is_name(rule, longest));
+    if well_formed {
+        Ok(())
+    } else {
+        Err(InvalidName {
+            kind,
+            name: shorten(text),
+            longest,
+            dotted: true,
+        })
+    }
+}
+
+/// Defines a checked name: a word whose values arrive with packs, crates, or
+/// target files, and whose shape alone is checked here (decisions 0060 and
+/// 0062).
+///
+/// The type gets `LONGEST`, `new`, `as_str`, `Display`, `FromStr`, and serde
+/// support that refuses a badly formed name. Whether anyone registered the
+/// name is never this type's question.
+macro_rules! checked_name {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident: $kind:literal, $longest:literal;
+    ) => {
+        $crate::name::checked_name! {
+            $(#[$meta])*
+            $vis struct $name: $kind, $longest, $crate::name::check_name;
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident: $kind:literal, $longest:literal, $check:path;
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        $vis struct $name(::std::string::String);
+
+        impl $name {
+            /// The longest the name may be.
+            pub const LONGEST: usize = $longest;
+
+            /// Checks `name` and keeps it.
+            ///
+            /// # Errors
+            ///
+            /// [`InvalidName`](crate::InvalidName) when the name does not
+            /// have the shape described on the type, or is longer than
+            /// `LONGEST`.
+            pub fn new(name: &str) -> ::std::result::Result<Self, $crate::InvalidName> {
+                $check($kind, name, Self::LONGEST)?;
+                Ok(Self(name.to_owned()))
+            }
+
+            /// The name, as it is written in files and messages.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = $crate::InvalidName;
+
+            fn from_str(text: &str) -> ::std::result::Result<Self, Self::Err> {
+                Self::new(text)
+            }
+        }
+
+        impl ::serde::Serialize for $name {
+            fn serialize<S: ::serde::Serializer>(
+                &self,
+                serializer: S,
+            ) -> ::std::result::Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.0)
+            }
+        }
+
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> ::std::result::Result<Self, D::Error> {
+                let text = <::std::string::String as ::serde::Deserialize>::deserialize(deserializer)?;
+                Self::new(&text).map_err(::serde::de::Error::custom)
+            }
+        }
+    };
+}
+
+pub(crate) use checked_name;
 
 /// At most `SHOWN` characters of `text`, with a mark when it was cut.
 fn shorten(text: &str) -> String {

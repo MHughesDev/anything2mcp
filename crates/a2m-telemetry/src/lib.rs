@@ -1,4 +1,10 @@
-//! Traces, metrics, and OpenTelemetry export.
-//!
-//! Nothing is implemented yet. The crates this one may depend on are set by the
-//! layering table in `docs/reference/technical-reference.md`.
+//! wip
+mod clock;
+mod context;
+mod rotate;
+mod text;
+#[cfg(test)]
+mod testing;
+pub use clock::{Clock, ManualClock, SystemClock};
+pub use context::TraceContext;
+pub use text::{FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, limit_text};

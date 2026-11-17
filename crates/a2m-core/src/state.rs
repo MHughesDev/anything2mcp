@@ -1,4 +1,5 @@
-//! The states of a run, a record, a session, and a binding.
+//! The states of a run, a record, a session, a binding, a provider, and a
+//! subsystem.
 
 use crate::vocabulary::vocabulary;
 
@@ -98,9 +99,110 @@ vocabulary! {
     }
 }
 
+vocabulary! {
+    /// The one state an availability check ends in (spec section 203): can
+    /// this provider do its work here, now. The check inspects the machine
+    /// and starts nothing.
+    ///
+    /// A check that could not be made is `unknown`, which is the default and
+    /// is never treated as `ready`.
+    #[derive(Default)]
+    pub enum Availability: "availability state" {
+        /// Everything it needs is present and matches.
+        Ready => "ready",
+        /// Installed and switched off.
+        NotEnabled => "not_enabled",
+        /// An outside program or runtime it needs was not found.
+        ComponentMissing => "component_missing",
+        /// The program was found and its digest is not a known one.
+        ComponentUnverified => "component_unverified",
+        /// This operating system or architecture is not supported.
+        UnsupportedHost => "unsupported_host",
+        /// A needed program is present in a version the provider does not
+        /// support.
+        UnsupportedVersion => "unsupported_version",
+        /// A setting it needs is absent or wrong.
+        Misconfigured => "misconfigured",
+        /// The check could not be made.
+        #[default]
+        Unknown => "unknown",
+    }
+}
+
+impl Availability {
+    /// Whether the provider may be used. Only `ready` is; `unknown` is not.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
+vocabulary! {
+    /// The health of a long-lived connection to a subsystem (spec section
+    /// 204). The supervisor gives one with a [`SubsystemMove`].
+    pub enum SubsystemState: "subsystem state" {
+        /// Running, and serving nothing.
+        Idle => "idle",
+        /// Running, and serving a request.
+        Busy => "busy",
+        /// The process has ended.
+        Exited => "exited",
+        /// Nothing answers, and whether it still runs is not known.
+        Unreachable => "unreachable",
+    }
+}
+
+vocabulary! {
+    /// What to do about a subsystem in its present state (spec section 204).
+    pub enum SubsystemMove: "subsystem move" {
+        /// Ask again.
+        Retry => "retry",
+        /// Let the request in progress finish.
+        Wait => "wait",
+        /// Stop it and start it again.
+        Restart => "restart",
+    }
+}
+
+vocabulary! {
+    /// What `doctor.run` reports for each provider and each subsystem it
+    /// needs (spec section 204). What cannot be established is `unknown`,
+    /// which is the default and is never rounded up to `healthy`.
+    #[derive(Default)]
+    pub enum DoctorState: "doctor state" {
+        /// Present, and working.
+        Healthy => "healthy",
+        /// An outside program or runtime it needs was not found.
+        ComponentMissing => "component_missing",
+        /// It started, and failed while running.
+        RuntimeFailure => "runtime_failure",
+        /// This operating system or architecture is not supported.
+        UnsupportedHost => "unsupported_host",
+        /// The system it would reach is one it does not support.
+        UnsupportedTarget => "unsupported_target",
+        /// Its settings no longer match what was recorded.
+        ConfigDrift => "config_drift",
+        /// It could not be established.
+        #[default]
+        Unknown => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::RunState;
+    use super::{Availability, DoctorState, RunState};
+
+    #[test]
+    fn what_is_not_established_is_unknown_and_never_ready() {
+        assert_eq!(Availability::default(), Availability::Unknown);
+        assert_eq!(DoctorState::default(), DoctorState::Unknown);
+        let ready: Vec<&str> = Availability::ALL
+            .iter()
+            .filter(|state| state.is_ready())
+            .map(|state| state.as_str())
+            .collect();
+        assert_eq!(ready, ["ready"]);
+    }
 
     #[test]
     fn five_run_states_are_final() {

@@ -7,5 +7,37 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The Linux desktop key store, the Secret Service, reached over D-Bus by a
+# pure-Rust client. Off by default: it brings about a hundred crates, and a
+# machine with no desktop session has no Secret Service to reach (decision
+# 0074). Windows and macOS need no feature.
+secret-service = ["dep:zbus-secret-service-keyring-store"]
+
+[dependencies]
+a2m-core = { path = "../a2m-core" }
+aho-corasick.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+keyring-core.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

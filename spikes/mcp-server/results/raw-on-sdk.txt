@@ -1,0 +1,51 @@
+pass L01  ping before initialize is answered with an empty result
+pass L02  initialize 2025-11-25 is answered with protocolVersion 2025-11-25
+pass L03  initialize result has capabilities.tools and serverInfo name and version
+pass L04  initialize result carries no session-era surprise: no resultType needed
+pass L05  notifications/initialized gets no answer
+pass L06  ping is answered with an empty result
+pass L07  a string id comes back as the same string
+pass L08  tools/list has the tool with name, description, inputSchema of type object
+pass L09  the tool carries outputSchema of type object
+pass L10  the tool carries annotations with readOnlyHint true
+pass L11  a single page has no nextCursor
+pass L12  two tools/list answers list the same tools in the same order
+pass L13  tools/call returns structuredContent that fits the output schema
+pass L14  tools/call returns a text content item too
+pass L15  a successful call is not marked isError
+pass L16  an unknown tool is the protocol error -32602
+pass L17  bad arguments are a tool result with isError true, not a protocol error
+pass L18  a failed call is a tool result with isError true and text content
+pass L19  an unknown method is -32601
+FAIL L20  a line that is not JSON is -32700 with a null id   <- None
+pass L21  a request with no method is -32600
+pass L22  an unknown notification gets no answer
+pass L23  progress notifications carry the caller's token and rise, before the result
+pass L24  no progress is sent to a caller that did not ask
+pass L25  the server answers other requests while a call is in flight
+pass L26  a cancelled call sends no result afterwards (an error answer is tolerated by the handshake revisions)
+pass F01  every line on standard output was one JSON object
+pass F02  the server exits with status 0 when its input is closed
+pass L27  initialize asking 2024-11-05 is answered with a handshake revision the server serves
+pass L28  initialize asking 2099-01-01 is answered with a handshake revision the server serves
+pass M01  server/discover lists supportedVersions with both revisions
+pass M02  server/discover carries capabilities.tools, resultType complete, ttlMs and cacheScope
+pass M03  tools/list with per-request metadata works with no handshake
+pass M04  the modern tools/list carries resultType complete, ttlMs and cacheScope
+pass M05  the modern tools/call returns structuredContent and resultType complete
+FAIL M06  modern results name the server in _meta (a SHOULD)   <- None
+pass M07  an unserved version is -32022 with data.supported and data.requested
+pass M08  a modern request without clientCapabilities is -32602
+pass M09  ping does not exist in the modern revision: -32601
+pass M10  a request with neither a handshake nor a version is an error, never a result
+pass M11  an unknown tool is -32602 in the modern revision too
+pass M12  progress works in the modern revision, with a number token
+pass M13  a cancelled call sends nothing further (the modern revision says MUST NOT)
+pass F03  modern process: clean lines and exit status 0
+pass D01  after a handshake, the same process still answers a modern request (optional in the text)
+pass D02  after a server/discover probe, initialize still works (the dual-era client's fallback path)
+pass D03  and the handshake session then lists tools
+pass S01  modern only: initialize is an error that names the versions served
+FAIL S02  handshake only: a modern probe gets an error that is not a modern one (-32020 to -32022), so a dual-era client falls back   <- {'jsonrpc': '2.0', 'id': 1, 'error': {'code': -32022, 'message': 'Unsupported protocol version', 'data': {'requested': '2026-07-28', 'supported': ['2025-11-25']}}}
+pass S03  handshake only: initialize then works in the same process
+47 of 50 passed

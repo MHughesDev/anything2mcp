@@ -31,10 +31,32 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "json
 # stands all use this crate, because two crates that link SQLite cannot coexist.
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
+# Exact decimals for business values, wrapped by a2m-core and named nowhere
+# else (decision 0068). No features: the wrapper writes its own text form.
+rust_decimal = { version = "1.43.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = { version = "0.11.1", default-features = false }
 tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+# Unicode NFC for text normalization in a2m-expr (decision 0073). Its tables
+# fix the Unicode version, so the version is part of the expression library.
+unicode-normalization = { version = "0.1.26", default-features = false }
+# Logging macros and the subscriber interface only; a2m-telemetry writes the
+# subscriber itself (decision 0077). No attribute macros, so no proc-macro tree.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+# The vault's outside crates, each verified in decision 0074: the cipher, the
+# passphrase derivation, operating-system randomness, the keyed digest, the
+# redactor's matcher, memory wiping, and the three desktop key stores.
+aho-corasick = "1.1.5"
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+getrandom = "0.4.3"
+hmac = "0.13.0"
+keyring-core = "1.0.1"
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+zeroize = "1.9.1"
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.
