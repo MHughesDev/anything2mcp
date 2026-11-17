@@ -37,7 +37,8 @@
 
 ## Not yet verified
 
-- Tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), `outputSchema`, resources, and list-changed notifications were not re-checked against the 2026-07-28 text.
-- Whether `rmcp` 3.x can serve both the 2026-07-28 and 2025-11-25 revisions from one server.
+- Answered by [note 18](18-mcp-server-base.md), which read the 2026-07-28 text: tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), `outputSchema`, and list-changed notifications. Resources were read there only as far as resource links and caching.
+- Answered by [note 18](18-mcp-server-base.md): `rmcp` 3.x can serve both the 2026-07-28 and 2025-11-25 revisions from one server.
+- The exact name of the `_meta` key that carries the protocol version in revision 2026-07-28, as the MCP test stand assumes it (`targets/example-mcp`, see its [README](../../targets/example-mcp/README.md)). The stand was built without the text. Its key is the one note 18 later read in the text, but no client that speaks the real revision has been run against the stand, and the stand's refusal of an unserved revision uses another error code than the one note 18 read.
 - The exact Tasks extension lifecycle and how clients negotiate it.
 - Recommended mitigations for local HTTP servers (Origin and Host checks, DNS rebinding) were not researched; the spec's local-HTTP rules rest on general practice.

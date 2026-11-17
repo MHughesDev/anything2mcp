@@ -1,0 +1,328 @@
+//! The kernel's own file kinds: their names, where they live, and their
+//! schemas (spec section 205 and the file format reference).
+
+use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+use a2m_core::{
+    BindingStatus, Checkpoint, EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy,
+    Rounding, Sensitivity, TestKind,
+};
+
+use crate::schema::JsonSchema;
+
+/// The owner of the kernel's file kinds and lint codes.
+pub const KERNEL_OWNER: &str = "kernel";
+/// The schema version this compiler reads.
+pub const SCHEMA_VERSION: i64 = 1;
+
+/// The file kind of `target.yaml`.
+pub const TARGET: &str = "target";
+/// The file kind of `auth.yaml`.
+pub const AUTH: &str = "auth";
+/// The file kind of `types.yaml`.
+pub const TYPES: &str = "types";
+/// The file kind of the files under `operations/`.
+pub const OPERATION: &str = "operation";
+/// The file kind of the files under `pipelines/`.
+pub const PIPELINE: &str = "pipeline";
+/// The file kind of the files under `sources/`.
+pub const SOURCE: &str = "source";
+/// The file kind of the files under `tests/`.
+pub const TEST: &str = "test";
+/// The file kind of everything under `fixtures/`.
+pub const FIXTURE: &str = "fixture";
+
+/// The name of the marker file in a fixture folder.
+pub const FIXTURE_MARKER: &str = "fixture.yaml";
+
+/// Every file kind the kernel owns.
+pub const KERNEL_FILE_KINDS: &[&str] =
+    &[TARGET, AUTH, TYPES, OPERATION, PIPELINE, SOURCE, TEST, FIXTURE];
+
+/// The files the kernel owns at the top of a target folder, with the kind
+/// of each.
+pub const KERNEL_FILES: &[(&str, &str)] = &[
+    ("target.yaml", TARGET),
+    ("auth.yaml", AUTH),
+    ("types.yaml", TYPES),
+];
+
+/// The folders the kernel owns, with the kind of each.
+pub const KERNEL_FOLDER_KINDS: &[(&str, &str)] = &[
+    ("operations", OPERATION),
+    ("pipelines", PIPELINE),
+    ("sources", SOURCE),
+    ("tests", TEST),
+    ("fixtures", FIXTURE),
+];
+
+/// The folders the kernel owns.
+pub const KERNEL_FOLDERS: &[&str] = &["operations", "pipelines", "sources", "tests", "fixtures"];
+
+/// The keys of a surface the kernel owns; the rest are its pack's.
+pub const SURFACE_KEYS: &[&str] = &["kind", "same_session_as", "rate", "stands"];
+
+/// The keys of a binding the kernel owns; the rest are its mode's.
+pub const BINDING_KEYS: &[&str] = &["mode", "verb", "status", "precondition"];
+
+/// The name a success check reads: every record of the run was verified.
+pub const ALL_RECORDS_VERIFIED: &str = "all_records_verified";
+
+fn inputs() -> JsonSchema {
+    JsonSchema::map_of(
+        JsonSchema::object()
+            .required("type", JsonSchema::field_type())
+            .optional("description", JsonSchema::text())
+            .optional("required", JsonSchema::bool())
+            .optional("default", JsonSchema::scalar()),
+    )
+}
+
+fn target() -> JsonSchema {
+    let environment = JsonSchema::object()
+        .required("kind", JsonSchema::words(EnvironmentKind::NAMES))
+        .optional("surfaces", JsonSchema::map_of(JsonSchema::text()))
+        .optional("test_records", JsonSchema::list(JsonSchema::scalar()))
+        .optional("approve_writes", JsonSchema::any());
+    JsonSchema::object()
+        .required("schema_version", JsonSchema::int())
+        .required("target", JsonSchema::name())
+        .optional("title", JsonSchema::text())
+        .required("surfaces", JsonSchema::map_of(JsonSchema::any()))
+        .optional("environments", JsonSchema::map_of(environment))
+        .optional("default_environment", JsonSchema::name())
+        .optional(
+            "environment",
+            JsonSchema::object()
+                .optional("locale", JsonSchema::text())
+                .optional("timezone", JsonSchema::text())
+                .optional("viewport", JsonSchema::list(JsonSchema::int_between(1, 100_000))),
+        )
+        .optional("modules", JsonSchema::list(JsonSchema::name()))
+        .optional(
+            "defaults",
+            JsonSchema::object()
+                .optional("timeouts", JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))))
+                .optional("limits", JsonSchema::map_of(JsonSchema::int_between(1, i64::from(u32::MAX))))
+                .optional("capture", JsonSchema::name()),
+        )
+        .optional("exclusive_session", JsonSchema::bool())
+        .optional("drift_risk", JsonSchema::words(&["low", "medium", "high"]))
+        .optional("authorization", JsonSchema::text())
+}
+
+/// The kernel's part of a surface.
+pub(crate) fn surface() -> JsonSchema {
+    JsonSchema::object()
+        .required("kind", JsonSchema::name())
+        .optional("same_session_as", JsonSchema::surface())
+        .optional(
+            "rate",
+            JsonSchema::object()
+                .required("requests", JsonSchema::int_between(1, i64::from(u32::MAX)))
+                .required("per_ms", JsonSchema::int_between(1, i64::from(u32::MAX))),
+        )
+        .optional(
+            "stands",
+            JsonSchema::either(vec![
+                JsonSchema::words(&["alone"]),
+                JsonSchema::object().required("beneath", JsonSchema::surface()),
+            ]),
+        )
+}
+
+/// The kernel's part of a binding.
+pub(crate) fn binding() -> JsonSchema {
+    JsonSchema::object()
+        .required("mode", JsonSchema::name())
+        .optional("verb", JsonSchema::name())
+        .optional("status", JsonSchema::words(BindingStatus::NAMES))
+        .optional("precondition", JsonSchema::expression())
+}
+
+fn auth() -> JsonSchema {
+    let entry = JsonSchema::object()
+        .required("surfaces", JsonSchema::non_empty_list(JsonSchema::surface()))
+        .required(
+            "mode",
+            JsonSchema::words(&["use_existing", "managed_session", "custom"]),
+        )
+        .required("provider", JsonSchema::name())
+        .required("probe", JsonSchema::name())
+        .optional(
+            "expiry_signals",
+            JsonSchema::list(JsonSchema::map_of(JsonSchema::any())),
+        )
+        .optional(
+            "timeouts",
+            JsonSchema::object()
+                .optional("idle_ms", JsonSchema::int_between(1, i64::MAX))
+                .optional("absolute_ms", JsonSchema::int_between(1, i64::MAX)),
+        )
+        .optional("sign_out", JsonSchema::name())
+        .optional("credentials", JsonSchema::map_of(JsonSchema::text()))
+        .optional("attempt_limit", JsonSchema::int_between(0, 10))
+        .optional("movable", JsonSchema::words(&["auto", "false"]));
+    JsonSchema::object().required("auth", JsonSchema::non_empty_list(entry))
+}
+
+fn types() -> JsonSchema {
+    let field_type = JsonSchema::object()
+        .required("base", JsonSchema::words(FieldBase::NAMES))
+        .optional("unit", JsonSchema::text())
+        .optional("display_unit", JsonSchema::text())
+        .optional("step", JsonSchema::decimal())
+        .optional("places", JsonSchema::int_between(0, 28))
+        .optional("rounding", JsonSchema::words(Rounding::NAMES))
+        .optional("currency", JsonSchema::text())
+        .optional("format", JsonSchema::text())
+        .optional("timezone", JsonSchema::text())
+        .optional("case", JsonSchema::words(&["sensitive", "insensitive"]))
+        .optional("whitespace", JsonSchema::words(&["collapse", "trim", "exact"]))
+        .optional("decimal_mark", JsonSchema::words(&[".", ","]))
+        .optional("true_text", JsonSchema::text())
+        .optional("false_text", JsonSchema::text())
+        .optional("codes", JsonSchema::map_of(JsonSchema::text()))
+        .optional("sensitivity", JsonSchema::words(Sensitivity::NAMES))
+        .optional("untrusted", JsonSchema::bool());
+    JsonSchema::object().required("types", JsonSchema::map_of(field_type))
+}
+
+fn operation() -> JsonSchema {
+    JsonSchema::object()
+        .required("operation", JsonSchema::name())
+        .optional("title", JsonSchema::text())
+        .required("effect", JsonSchema::words(EffectClass::NAMES))
+        .optional("hazard", JsonSchema::words(Hazard::NAMES))
+        .optional(
+            "identity",
+            JsonSchema::object()
+                .required("strategy", JsonSchema::words(IdentityStrategy::NAMES))
+                .optional("inputs", JsonSchema::list(JsonSchema::name())),
+        )
+        .optional(
+            "key",
+            JsonSchema::either(vec![
+                JsonSchema::name(),
+                JsonSchema::non_empty_list(JsonSchema::name()),
+            ]),
+        )
+        .optional("commit_points", JsonSchema::int_between(0, 1000))
+        .required("inputs", inputs())
+        .required(
+            "outputs",
+            JsonSchema::map_of(
+                JsonSchema::object()
+                    .required("type", JsonSchema::field_type())
+                    .optional("list", JsonSchema::bool()),
+            ),
+        )
+        .required(
+            "bindings",
+            JsonSchema::non_empty_list(JsonSchema::map_of(JsonSchema::any())),
+        )
+        .required("description", JsonSchema::text())
+        .optional(
+            "examples",
+            JsonSchema::list(JsonSchema::map_of(JsonSchema::scalar())),
+        )
+        .optional(
+            "permissions",
+            JsonSchema::object()
+                .optional("uploads", JsonSchema::list(JsonSchema::text()))
+                .optional("downloads", JsonSchema::list(JsonSchema::text()))
+                .optional("destinations", JsonSchema::list(JsonSchema::text())),
+        )
+        .optional("decision_points", JsonSchema::list(JsonSchema::any()))
+}
+
+fn pipeline() -> JsonSchema {
+    let step = JsonSchema::object()
+        .required("id", JsonSchema::name())
+        .required("operation", JsonSchema::name())
+        .optional("with", JsonSchema::map_of(JsonSchema::expression()))
+        .optional("for_each", JsonSchema::expression())
+        .optional("checkpoint", JsonSchema::words(Checkpoint::NAMES))
+        .optional("when", JsonSchema::expression())
+        .optional("expect", JsonSchema::expression());
+    JsonSchema::object()
+        .required("pipeline", JsonSchema::name())
+        .optional("title", JsonSchema::text())
+        .required("description", JsonSchema::text())
+        .optional("effect", JsonSchema::words(EffectClass::NAMES))
+        .optional("inputs", inputs())
+        .optional(
+            "source",
+            JsonSchema::object().required("template", JsonSchema::name()),
+        )
+        .optional(
+            "limits",
+            JsonSchema::object()
+                .optional("max_records", JsonSchema::int_between(1, i64::from(u32::MAX)))
+                .optional("max_duration_ms", JsonSchema::int_between(1, i64::MAX)),
+        )
+        .required("steps", JsonSchema::non_empty_list(step))
+        .required("success", JsonSchema::non_empty_list(JsonSchema::expression()))
+        .optional("headroom_ms", JsonSchema::int_between(0, i64::from(u32::MAX)))
+}
+
+fn source() -> JsonSchema {
+    JsonSchema::object()
+        .required("template", JsonSchema::name())
+        .required("reader", JsonSchema::name())
+        .required("fingerprint", JsonSchema::map_of(JsonSchema::any()))
+        .optional("locate", JsonSchema::map_of(JsonSchema::any()))
+        .required("columns", JsonSchema::map_of(JsonSchema::text()))
+        .required("mapping", JsonSchema::map_of(JsonSchema::expression()))
+        .optional("rows", JsonSchema::expression())
+        .optional("missing", JsonSchema::list(JsonSchema::text()))
+}
+
+fn test() -> JsonSchema {
+    JsonSchema::object()
+        .required("test", JsonSchema::name())
+        .optional("name", JsonSchema::name())
+        .required("kind", JsonSchema::words(TestKind::NAMES))
+        .optional("fixture", JsonSchema::name())
+        .required("inputs", JsonSchema::map_of(JsonSchema::scalar()))
+        .required("expect", JsonSchema::any())
+        .optional("restore", JsonSchema::bool())
+}
+
+fn fixture() -> JsonSchema {
+    JsonSchema::object()
+        .required("scrubbed", JsonSchema::bool())
+        .optional("note", JsonSchema::text())
+}
+
+static SCHEMAS: LazyLock<BTreeMap<&'static str, JsonSchema>> = LazyLock::new(|| {
+    BTreeMap::from([
+        (TARGET, target()),
+        (AUTH, auth()),
+        (TYPES, types()),
+        (OPERATION, operation()),
+        (PIPELINE, pipeline()),
+        (SOURCE, source()),
+        (TEST, test()),
+        (FIXTURE, fixture()),
+    ])
+});
+
+/// The schema of one of the kernel's file kinds.
+#[must_use]
+pub fn schema_of(kind: &str) -> Option<&'static JsonSchema> {
+    SCHEMAS.get(kind)
+}
+
+/// The kernel's schemas as JSON Schema, by the name each is published under.
+#[must_use]
+pub fn schemas() -> BTreeMap<String, serde_json::Value> {
+    let mut all: BTreeMap<String, serde_json::Value> = SCHEMAS
+        .iter()
+        .map(|(kind, schema)| (format!("{KERNEL_OWNER}.{kind}"), schema.to_json()))
+        .collect();
+    all.insert(format!("{KERNEL_OWNER}.surface"), surface().to_json());
+    all.insert(format!("{KERNEL_OWNER}.binding"), binding().to_json());
+    all
+}

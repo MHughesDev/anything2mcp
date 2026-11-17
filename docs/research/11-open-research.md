@@ -6,8 +6,8 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 | # | Topic | Needed before | Feeds spec section |
 | --- | --- | --- | --- |
-| 1 | Browser engine base | Phase 0 | 17 |
-| 2 | MCP features and dual-revision serving | Phase 1 | 21, 22 |
+| 1 | Browser engine base. Answered by note 17 | Phase 0 | 17 |
+| 2 | MCP features and dual-revision serving. Answered by note 18 | Phase 1 | 21, 22 |
 | 3 | Locators and hard widgets on the DevTools protocol | Phase 1 | 13, technical reference |
 | 4 | Session persistence and Entra session rules | Phase 2 | 15, 16 |
 | 5 | Vault design per operating system | Phase 2 | 15, 19 |
@@ -40,9 +40,9 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 ## Briefs
 
-**1. Browser engine base.** Compare chromiumoxide, Skyvern's Rustwright core, ferrous-browser, and writing a DevTools-protocol client from scratch. Judge on: event-driven waits, accessibility-tree access, network capture and in-page fetch, launching installed Chrome or Edge with an engine-owned data directory, stability over long sessions, license, maintenance, and Windows, macOS, and Linux support. Produce a recommendation and a spike plan.
+**1. Browser engine base.** (Answered by [note 17](17-browser-engine-base.md) and [decision 0070](../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md). The brief stays so that references to it resolve.) Compare chromiumoxide, Skyvern's Rustwright core, ferrous-browser, and writing a DevTools-protocol client from scratch. Judge on: event-driven waits, accessibility-tree access, network capture and in-page fetch, launching installed Chrome or Edge with an engine-owned data directory, stability over long sessions, license, maintenance, and Windows, macOS, and Linux support. Produce a recommendation and a spike plan.
 
-**2. MCP features and dual-revision serving.** In the 2026-07-28 specification, confirm tool annotations, output schemas, resources and resource links, the Tasks extension lifecycle, Multi Round-Trip Requests, and list caching. Find out whether the `rmcp` crate can serve 2026-07-28 and 2025-11-25 clients from one server, and how.
+**2. MCP features and dual-revision serving.** (Answered by [note 18](18-mcp-server-base.md) and [decision 0071](../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md). The brief stays so that references to it resolve.) In the 2026-07-28 specification, confirm tool annotations, output schemas, resources and resource links, the Tasks extension lifecycle, Multi Round-Trip Requests, and list caching. Find out whether the `rmcp` crate can serve 2026-07-28 and 2025-11-25 clients from one server, and how.
 
 **3. Locators and hard widgets.** Best practice for locating and acting on elements through the DevTools protocol and the accessibility tree without Playwright: actionability checks, shadow DOM, iframes, virtualized grids, custom dropdowns, date pickers, rich-text editors, file uploads, and single-page navigation.
 

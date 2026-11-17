@@ -10,10 +10,10 @@ Everything known about Anything2MCP: the design, the reasons, the evidence, and 
 | [architecture/](architecture/README.md) | How the code is put together: who defines, implements, and joins every interface, and one design per crate | 26 |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), and a [walkthrough](reference/walkthrough.md) | 7 |
 | [plan/](plan/roadmap.md) | The [roadmap](plan/roadmap.md) of every work package, the [working method](plan/working-method.md), the [design review lenses](plan/design-review-lenses.md), the [test application plan](plan/test-application.md), and the [publishing setup](plan/publishing-setup.md) | 5 |
-| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 66 |
-| [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 39 open |
+| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 77 |
+| [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 40 open |
 | [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 7 |
-| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 16 |
+| [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 18 |
 | [references/](references/sources.md) | Every source URL cited, by document; generated | 1 |
 | [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 45 |
 | assets/ | Diagrams | 3 |

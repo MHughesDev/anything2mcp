@@ -279,6 +279,17 @@ def main():
     def pack_of(crate):
         return crate.split("-")[2] if crate.startswith("a2m-pack-") else None
 
+    # Every crate under targets/ is test equipment, the test application and each test stand alike.
+    stands = set()
+    for manifest_path in sorted((repo / "targets").glob("*/Cargo.toml")):
+        try:
+            stand = tomllib.loads(manifest_path.read_text(encoding="utf-8")).get("package", {}).get("name")
+        except tomllib.TOMLDecodeError as e:
+            note("layering", f"targets/{manifest_path.parent.name}/Cargo.toml cannot be parsed: {e}")
+            continue
+        if stand:
+            stands.add(stand)
+
     on_disk = {}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
@@ -292,9 +303,9 @@ def main():
         if name != folder:
             note("layering", f"crates/{folder} holds a package named {name}; the two must match")
         on_disk[folder] = internal_dependencies(manifest)
-        if "example-app" in internal_dependencies(manifest, ("dependencies", "build-dependencies")):
-            note("layering", f"{folder} depends on example-app outside its tests; "
-                             "the test application is test equipment and may only be a dev-dependency")
+        for stand in sorted(stands & internal_dependencies(manifest, ("dependencies", "build-dependencies"))):
+            note("layering", f"{folder} depends on {stand} outside its tests; "
+                             "a crate under targets/ is test equipment and may only be a dev-dependency")
     if crates_dir.is_dir():
         for c in sorted(set(on_disk) - set(layer)):
             note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")

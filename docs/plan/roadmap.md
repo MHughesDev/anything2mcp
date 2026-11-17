@@ -10,6 +10,8 @@ The order after milestone 3 is a proposal. It is reviewed at the end of every mi
 
 The engine loop, one driver, the compiler and the plan, the local engine with its command and MCP faces, the session keeper and the vault, the ledger and the policy gate, and the step trace are the core. Nothing else is deepened until the core works for reads and writes on one machine, which is milestone 3. The first goal is not a finished part: it is one read travelling through every layer, each as thin as it can be, so that the shape of the whole is proven before any part is deepened. A second kind of system is added early and on purpose, at milestone 4, to test that the kernel is neutral, and no more than one.
 
+Since 2026-11-17 the kernel is built layer by layer, with one agent per crate, and the first driver through the loop is the HTTP pack's request driver ([decision 0067](../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)). The rows below keep their proofs. A row is marked `done` when its proof is shown, whichever crate was built first.
+
 ## Reading the tables
 
 | Column | Meaning |
@@ -53,13 +55,13 @@ A package is one branch and one pull request. When it merges, its row changes to
 | AR | The architecture: who defines, implements, and joins every interface; one design per crate; the layers redrawn | Documents; the audit | A2 | The audit refuses a crate with no design and a design with no crate | done |
 | B1 | Core vocabularies, `Failure`, `Secret` | `a2m-core` | A2 | Names held to the documents by a test; a secret cannot be printed | done |
 | B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | done |
-| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | ready |
+| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused. Settled by decisions [0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) and [0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) | done |
 | B3 | The provider manifest, the registry, and a pack registering nothing but its modes | `a2m-provider` | B1 | A manifest that asks for an undeclared effect is refused with a named failure; a mode registered twice is refused | ready |
 | B4 | Target file schemas and the loader, for the file kinds the kernel owns. This is slice 0.6 | `a2m-files`, `a2m-core` | B1 | The `example` target's files validate; a broken one fails with a file, a line, and a fix | ready |
 | B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | held |
-| 0.4 | Spike: the browser engine base, with research brief 1 | `spikes/` | 0.3 | A results table per candidate and a decision record | ready |
-| 0.5 | Spike: an MCP server with one tool over stdio, with research brief 2 | `spikes/` | None | Two unrelated MCP clients call the tool; a decision record on the revisions served | ready |
-| 0.7 | The benchmark harness: measures overhead beyond the test application's own time | `bench/` | 0.3 | A sample benchmark runs in CI and stores its result | ready |
+| 0.4 | Spike: the browser engine base, with research brief 1 | `spikes/` | 0.3 | A results table per candidate and a decision record: [decision 0070](../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md) | done |
+| 0.5 | Spike: an MCP server with one tool over stdio, with research brief 2 | `spikes/` | None | Two unrelated MCP clients call the tool; a decision record on the revisions served: [decision 0071](../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md) | done |
+| 0.7 | The benchmark harness: measures overhead beyond the test application's own time | `bench/` | 0.3 | A sample benchmark runs in CI and stores its result | done |
 
 ## Milestone 1: the first read
 
@@ -115,7 +117,7 @@ Stage D. The command pack is designed in [section 306](../spec/3-packs/306-the-c
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | D1 | The design of the command pack | Documents | None | Section 306 answers every item of the entry bar | done |
-| D2 | The command-line test stand, with its control interface | `targets/` | D1 | Its own tests, on three operating systems | ready |
+| D2 | The command-line test stand, with its control interface: `targets/example-cli` | `targets/` | D1 | Its own tests, on three operating systems | done |
 | D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode | New pack crates | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
 | D4 | The result of hypothesis H-26: every kernel change the pack forced, counted | Documents | D3 | A hypothesis result file. If the kernel changed more than slightly, the boundary is redrawn before another pack starts | held |
 | D5 | Writes through the command pack: a declared read-back command, `possible_commit` on a killed process | The command pack's crates | D4, 3.7 | The test stand confirms one write after a kill and a resume | held |
@@ -168,16 +170,16 @@ One pack at a time, each through the entry bar of [section 202](../spec/2-kernel
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| G1 | The data pack's test stand: a local database with a control query | `targets/` | None | Its own tests | ready |
+| G1 | The data pack's test stand: a local database with a control query, at `targets/example-db` | `targets/` | None | Its own tests | done |
 | G2 | The data pack, reads only, with the store's own catalog as its discoverer | New pack crates | G1, D4 | A read by key; a statement that is not a read is refused by the database, not by parsing | held |
 | G3 | Writes: a required key, a rows-affected check inside the transaction, read-back by key | The data pack's crates | G2, D5 | The stand confirms one row changed; any other count rolls back | held |
-| H1 | The file pack's test stand: files in a temporary folder, with a control interface that reports the bytes on disk | `targets/` | None | Its own tests | ready |
+| H1 | The file pack's test stand: files in a temporary folder, with a control interface that reports the bytes on disk, at `targets/example-files` | `targets/` | None | Its own tests | done |
 | H2 | The file pack, reads only | New pack crates | H1, D4 | A value read from a named place in each supported format | held |
 | H3 | Writes: a new file that replaces the old one in one step; read-back by opening it again | The file pack's crates | H2, D5 | Killed mid-write and resumed: the file is the old one or the new one, never a mixture | held |
-| J1 | The stream pack's test stand: a small local broker with a control interface | `targets/` | None | Its own tests | ready |
+| J1 | The stream pack's test stand: a small local broker with a control interface, at `targets/example-broker` | `targets/` | None | Its own tests | done |
 | J2 | The stream pack, bounded reads only; discovery that never consumes | New pack crates | J1, D4 | A read ends within its limit; the stand shows no message was taken from anyone | held |
 | J3 | Publishing, with a key that makes it safe to resume | The stream pack's crates | J2, D5 | A resumed publish delivers one message, by the stand's count | held |
-| K1 | The device pack's test stand: a simulated device, with a control interface that reports every frame | `targets/` | None | Its own tests | ready |
+| K1 | The device pack's test stand: a simulated device, with a control interface that reports every frame, at `targets/example-device` | `targets/` | None | Its own tests | done |
 | K2 | The device pack, reads only | New pack crates | K1, D4 | A register read through the engine loop; the stand shows only read frames | held |
 | K3 | Writes against the simulator only: a range limit enforced before a frame is sent; approval by a person every run | The device pack's crates | K2, D5 | A value outside its range sends no frame; a lost link after a write is `possible_commit` | held |
 | K4 | Firmware: inspection as discovery through an optional provider; the update operation through the simulated device's own mechanism | The device pack's crates | K3, E1 | Findings are `inferred`; an update without a declared recovery path cannot be published | held |
@@ -205,7 +207,7 @@ Phase 8.
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | 8.1 | Spike: desktop accessibility, with research brief 19 | `spikes/` | None | A decision record choosing the base | ready |
-| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; a small MCP server as its test stand | `a2m-pack-mcp`, `targets/` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
+| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; a small MCP server as its test stand. The test stand exists at `targets/example-mcp` | `a2m-pack-mcp`, `targets/` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
 | 8.2a | Tools a site publishes, as a mode of the web pack | `a2m-pack-web-ui`, `targets/example-app` | 1.6 | A page of the test application registers a tool and it is called through the engine loop | held |
 | 8.3 | The desktop pack | `a2m-pack-desktop` | 8.1, D4 | Test application case 28 passes on three operating systems | held |
 | 8.4 | Platform profiles and the remaining widget drivers | `a2m-pack-web-ui`, `profiles/` | 1.6 | Every control in the test application is set and read back | held |
@@ -239,7 +241,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are B2a, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2a and B4 both touch `a2m-core`: run them one after the other.
+Right now, the packages marked `ready` are B3, B4, and 8.1. Package 1.1 no longer waits on 0.4, and package 1.5 no longer waits on 0.5; each is still held by the other packages it needs.
 
 ## Rules for changing this document
 

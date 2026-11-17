@@ -21,12 +21,14 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Diff | Current values against proposed values, record by record, shown before a write |
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |
 | Diff hash | A hash of a diff in canonical form; what an approval is bound to |
+| Digest key | An installation's key for keyed digests. The vault makes it at first use and keeps it wrapped by the root key; each workspace's key for digests is derived from it and never stored |
 | Draft | Target files not yet published; runnable only in the sandbox |
 | Drafter | The kernel code that writes a draft from a finding wherever a pack's drafting rules say how. Its drafts are ordinary drafts |
 | Driver | The code that carries out steps in one mode |
 | Effect class | `read`, `write`, or `irreversible` |
 | Engine | The Anything2MCP process. On one machine, one per user |
 | Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
+| Envelope | A sealed value together with what it is bound to: the owner's key and its generation, the wrapped data key, and the ciphertext. It opens only under the context it was sealed for |
 | Environment | A named instance of a target, such as test or production |
 | Evidence | Everything recorded about a run or an observation: events, step trace, artifacts, and what a discoverer saw |
 | Evidence level | How far a finding, draft, or tool has been proven: `inferred`, `discovered`, `reconstructed`, `schema_verified`, `executed`, `behavior_verified`, `approved` |
@@ -34,6 +36,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Failure class | The category of a stop, which alone decides what happens next |
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
 | Fixture | Scrubbed recorded evidence used for offline tests |
+| Generation | Which version of a key: 1 for the first, one more after each rotation |
 | Grant | A rule giving a principal access to a scope up to an effect class |
 | Guardrail | A product rule that is compiled in and that no setting, profile, or preset can loosen |
 | Hazard | What an operation could damage beyond the data it names: nothing, data elsewhere, something sent outside, a device's ability to work, or the physical world |
@@ -42,10 +45,12 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Identity | Who the target sees: a person, or a dedicated account |
 | Identity strategy | How a write's record is found again: natural, composite, stamped, find, or none |
 | Identity mode | How that identity is obtained: per-user token, per-user session, per-user device, or service account |
+| Installation name | The name of one installation, which names the root key's entry in the operating system's key store. Never a target's name |
 | Intent | A ledger entry made before a write, recording what is about to be sent |
 | Intent token | What the ledger returns when an intent is recorded. A driver's handle refuses a step that commits without one |
 | Job | A piece of a run handed to a runner under a lease |
 | Kernel | The crates that are the same whatever kind of system is integrated |
+| Key record | The stored form of one wrapped key: its identifier, layer, and generation, the wrapped key, and which key wrapped it. One per key and generation, kept by the ledger |
 | Lease | Time-limited permission for one runner to work on one job, with a number that only increases |
 | Local channel | The per-user socket or named pipe between clients and the engine on one machine |
 | Managed component | An outside program a provider needs, detected and identified by digest, never bundled and never fetched during a run |

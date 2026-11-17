@@ -60,10 +60,10 @@ The folders that are not crates (`targets/`, `bindings/`, `web/console/`, `plugi
 | --- | --- | --- |
 | Async runtime, HTTP server and client | Tokio, Axum, Hyper with rustls | Standard, fast, no OpenSSL dependency |
 | MCP protocol | `rmcp`, the official Rust SDK | Tracks the 2026-07-28 specification ([docs.rs](https://docs.rs/crate/rmcp)) |
-| Browser | Own DevTools-protocol engine, in the web pack | Evaluate chromiumoxide and Rustwright as a base first; package 0.4 decides ([decision 0004](../../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md)) |
+| Browser | Own DevTools-protocol engine, in the web pack | It stands on a protocol client of our own, over the debugging pipe. Package 0.4 weighed chromiumoxide and Rustwright as a base and chose this ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)) |
 | Desktop accessibility | [xa11y](https://docs.rs/crate/xa11y/0.3.0) or per-platform crates | xa11y offers one API over UI Automation, AXUIElement, and AT-SPI2, under MIT; package 8.1 decides |
 | Storage | SQLite for one machine, Postgres for servers | One schema, two back ends |
-| Expressions | A CEL implementation for Rust | Pre-compiled at publish |
+| Expressions | A typed subset of CEL, on the engine's own parser and evaluator ([decision 0072](../../decisions/0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md)) | Pre-compiled at publish |
 | Spreadsheets, decimals | A pure-Rust xlsx reader; a decimal arithmetic crate | Exact comparison needs decimals, never floats |
 | Key store | A cross-platform keyring crate over DPAPI, Keychain, and Secret Service | Outside secret managers on servers |
 | OAuth and OpenID Connect | Standards-based crates; no official MSAL for Rust exists | Broker sign-in handled on user devices |
@@ -213,7 +213,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - A container image for servers.
 - An offline bundle for networks with no internet access: the binary, the wheels, and a pinned browser.
 
-Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5.
+Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. Desktop Linux builds enable the `secret-service` feature of `a2m-vault`. The feature is off by default, so that the workspace builds without the hundred or so crates it brings, and with no system library either way ([decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md)).
 
 ## Versions
 

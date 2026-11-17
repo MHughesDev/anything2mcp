@@ -13,6 +13,20 @@ version = "0.0.1"
 [[package]]
 name = "a2m-auth"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-telemetry",
+ "a2m-vault",
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tokio",
+ "tracing",
+ "zeroize",
+]
 
 [[package]]
 name = "a2m-bench"
@@ -61,6 +75,14 @@ dependencies = [
 [[package]]
 name = "a2m-ledger"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-telemetry",
+ "a2m-vault",
+ "rusqlite",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-local"
@@ -97,6 +119,12 @@ version = "0.0.1"
 [[package]]
 name = "a2m-policy"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-expr",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "a2m-provider"
@@ -113,6 +141,13 @@ version = "0.0.1"
 [[package]]
 name = "a2m-sources"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-expr",
+ "example-files",
+ "miniz_oxide",
+ "serde",
+]
 
 [[package]]
 name = "a2m-telemetry"
@@ -142,6 +177,12 @@ dependencies = [
  "zbus-secret-service-keyring-store",
  "zeroize",
 ]
+
+[[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aead"
@@ -1243,6 +1284,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5848f5a9e8117cf94f2f90faac24a87ff81600ff8628c1e3deaab572e76bfa1"
 
 [[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1660,6 +1710,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

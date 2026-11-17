@@ -56,7 +56,7 @@ Redaction happens on the runner, at capture, before anything is written or sent.
 3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a keyed digest, never as a value. One labelled `internal` is kept at `standard` and above, and as a keyed digest at `minimal`. A record's key is kept only as a keyed digest. Policy may also say a labelled field is masked or left out.
 4. **Free text.** Length-limited and stripped of markup and hidden characters.
 5. **Images are masked by the pack that took them.** Only the pack knows where the password inputs and labelled fields were on its screen. It paints over them, and sends with the image a report of what it masked. An image that arrives without that report is dropped, and a limitation is recorded. The kernel never paints over an image.
-6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
+6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
 
 A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, artifact, span, metric, or log line.
 

@@ -14,12 +14,14 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [08-entra-identity.md](08-entra-identity.md) | Acting as a user or a service under Entra ID | Partial |
 | [09-rust-building-blocks.md](09-rust-building-blocks.md) | Crates and engine options | Partial; most crates unverified |
 | [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `anything2mcp` | Completed; quick reviews |
-| [11-open-research.md](11-open-research.md) | 31 research briefs still to run | To do |
+| [11-open-research.md](11-open-research.md) | 31 research briefs still to run | To do; briefs 1 and 2 are answered by notes 17 and 18 |
 | [12-packaging-and-agent-interfaces.md](12-packaging-and-agent-interfaces.md) | Package names, pip and npm packaging, commands versus MCP tools | Partial; search results and registry checks |
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |
 | [14-sessions-and-policy-engines.md](14-sessions-and-policy-engines.md) | Browser profile limits, device-bound sessions, Entra session rules, Cedar | Partial; search results only |
 | [15-traces-and-key-stores.md](15-traces-and-key-stores.md) | OpenTelemetry conventions for MCP; operating-system key stores from Rust | Partial; search results only |
 | [16-rea-methods.md](16-rea-methods.md) | How the REA project controls outside engines, records evidence, designs tools, and observes applications and firmware; what applies here | Completed; read from source at one commit |
+| [17-browser-engine-base.md](17-browser-engine-base.md) | What the browser engine stands on: a DevTools-protocol client of our own, an existing crate, or WebDriver | Completed; a spike run on Linux only, and source read |
+| [18-mcp-server-base.md](18-mcp-server-base.md) | What the MCP server stands on, and which protocol revisions it serves | Completed; a spike with two reference client libraries, and the specification's text read |
 
 ## How to read the status
 

@@ -139,6 +139,23 @@ A provider lives in `a2m-auth` when it only holds or exchanges a credential. It 
 
 Further packs bring their own where a credential is bound to their kind of connection: the data pack brings a database password provider.
 
+## Vault interface
+
+The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the interface in full. The main types:
+
+- **`Vault`** seals a plain item into a **`Sealed`** envelope under a **`SealContext`**, and opens it again only under the same context. The caller stores the envelope.
+- **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it.
+- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`Generation`**. `a2m-ledger` implements it.
+- **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`.
+
+## Telemetry interface
+
+The design of [`a2m-telemetry`](../architecture/crates/a2m-telemetry.md) gives the interface in full. The main types:
+
+- **`TraceBuilder`** takes one **`StepRecord`** per step, redacts it, and ends as a **`FinishedTrace`**: the bytes and the trace signature. A trace that still holds a secret ends as a **`TraceRefused`**.
+- **`Telemetry`**, made by `start` from **`TelemetrySettings`**, is the handle for spans, metrics, and the engine's own logs.
+- **`Clock`** is how time is given, so that a test can fix it.
+
 ## Data model
 
 The same schema runs on SQLite and Postgres. Column-level definitions for the run, ledger, scheduling, and evidence tables are in the [ledger schema](ledger-schema.md).
@@ -184,7 +201,7 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 | Class | Example codes |
 | --- | --- |
 | `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `limit_exceeded`, `surface_not_declared` |
-| `input` | `lint_failed`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range` |
+| `input` | `lint_failed`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch` |
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
@@ -194,7 +211,7 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
 | `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `storage_full`, `engine_degraded` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `storage_full`, `engine_degraded`, `randomness_unavailable` |
 
 ## Command line
 
@@ -262,7 +279,7 @@ A plug-in is a separate process that exchanges messages over standard input and 
 
 ## Benchmark matrix
 
-Each cell is measured in CI against the built-in test application and compared with the previous release.
+Each cell is measured in CI against the built-in test application and compared with the previous release. The harness in `bench/` writes one JSON result per run (its schema is named "a2m-bench-result", version 1) and has two commands, `run` and `compare`.
 
 | Scenario | Modes measured | Metric |
 | --- | --- | --- |

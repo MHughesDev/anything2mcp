@@ -54,6 +54,18 @@ The design is a set of bets. This register lists the ones that matter most: what
 | H-37 | Two interface packs can share the screen format, the control names, and the conformance suite through documents alone, with little duplicated code | The shared parts are code, and must move into the kernel or a shared crate | When the desktop pack is built, measure the code it repeats from the web pack | Decision 0062 | open |
 | H-38 | Passing one transaction between crates that each own their tables stays simple, and no crate needs another's SQL beyond the one declared exception | Real operations need joins across owners, and the ownership rule is bent case by case | Phase 3: count the places a crate reads another crate's table | Decision 0063 | open |
 | H-39 | A link or launcher named `a2m` starts within the budget for a command on every install route | A link is not possible on some routes and a launcher costs too much, so a second binary is needed | Package F4: measure the start of both names on three operating systems | Decision 0063, H-28 | open |
+| H-40 | One stateless MCP service can serve both protocol eras, the revision with a handshake and the revision without one, to any client that follows the standard | Some clients can use only a server of their own era, so two services or a setting per client are needed | Run every client at hand against one service that serves both; a client that cannot use it refutes the bet | Decision 0071, section 222 | open |
+
+## Notes on open hypotheses
+
+What the work has shown so far about a hypothesis that is still open. A note is not a result: the result file is written when the test in the register has been run.
+
+- **H-01, 2026-11-17.** Partly supported by the browser spike ([research note 17](../research/17-browser-engine-base.md)): a direct client works, is small, and meets the budgets on Linux. No sidecar was compared, no memory figure was taken, and nothing ran on Windows or macOS.
+- **H-03, 2026-11-17.** Supported on the late-element case, in the same spike. The re-render case was not measured.
+- **H-16, 2026-11-17.** Five simulated runs with differing identifiers and timings gave one signature, in the tests of `a2m-telemetry`. Open until real runs on three operating systems.
+- **H-20, 2026-11-17.** The test application's own time for a read is about 65 microseconds at the median on the build machine, by the harness in `bench/`. The budget for a request operation is about 75 times that. Nothing budgeted is measured yet.
+- **H-26, 2026-11-17.** So far supported: `a2m-core` names no mode, verb, or surface kind. The test in the register is still to run.
+- **H-40, 2026-11-17.** Supported for two reference client libraries in the MCP spike ([research note 18](../research/18-mcp-server-base.md)). Untested for other clients.
 
 ## Adding a hypothesis
 

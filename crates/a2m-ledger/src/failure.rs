@@ -149,3 +149,27 @@ pub(crate) fn invalid(what: &str) -> Failure {
         "Correct the input.",
     )
 }
+
+/// A record of the run is still in doubt from an earlier lease and has not
+/// been read back. Class `possible_commit`.
+pub const RECONCILE_REQUIRED: FailureCode = FailureCode::fixed("reconcile_required");
+/// A record no longer matches what the preview saw. Class `stale`.
+pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
+
+pub(crate) fn reconcile_required() -> Failure {
+    Failure::new(
+        FailureClass::PossibleCommit,
+        RECONCILE_REQUIRED,
+        "A record of this run may have been written under an earlier lease and has not been read back.",
+        "Reconcile the run: read each record in doubt and settle it, then continue.",
+    )
+}
+
+pub(crate) fn changed_since_preview() -> Failure {
+    Failure::new(
+        FailureClass::Stale,
+        CHANGED_SINCE_PREVIEW,
+        "The record holds neither the values intended nor the values seen before the write.",
+        "Preview again and ask for the new diff to be approved.",
+    )
+}

@@ -42,6 +42,12 @@ impl RelPath {
         }
     }
 
+    /// The path of `target.yaml`, the one file every target has.
+    #[must_use]
+    pub fn target_file() -> Self {
+        Self(Arc::from("target.yaml"))
+    }
+
     /// The path as text, with `/` between names.
     #[must_use]
     pub fn as_str(&self) -> &str {

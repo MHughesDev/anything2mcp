@@ -20,7 +20,7 @@ There is no official Playwright client for Rust. The options found:
 | headless_chrome | Simpler Rust client | Described as less maintained. [DEV](https://dev.to/vhub_systems_ed5641f65d59/puppeteer-in-rust-chromiumoxide-and-headlesschrome-vs-the-python-alternative-4ji0) |
 | playwright-rust wrappers | Rust bindings that bundle and drive Playwright's Node driver | Full Playwright features, but a Node process sits in the middle. [Project Awesome](https://project-awesome.org/r/padamson-playwright-rust) |
 
-**Decision so far.** Anything2MCP owns a small, verb-level engine on the DevTools protocol. Phase 0 runs a spike to choose between building on chromiumoxide, building on Rustwright's core, or writing a protocol client. See [ADR 0004](../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md).
+**Decision so far.** Anything2MCP owns a small, verb-level engine on the DevTools protocol ([ADR 0004](../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md)). The spike of package 0.4 chose a protocol client of our own, over the debugging pipe, in place of building on chromiumoxide or on Rustwright's core: see [note 17](17-browser-engine-base.md) and [decision 0070](../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md).
 
 **Spike criteria.** Event-driven waits; accessibility-tree access; network event capture and in-page fetch; connect to a browser the engine launched with its own data directory; stability under 30 minutes of continuous use; license; maintenance activity; Windows, macOS, and Linux support.
 
@@ -41,8 +41,26 @@ Added to `Cargo.toml` in slice 0.3, on 2026-11-16, for the test application. Eac
 | `serde`, `serde_json` | 1.0.229, 1.0.154 | MIT or Apache-2.0 | Serialization | |
 | `sha2` | 0.11.1 | MIT or Apache-2.0 | SHA-256, for digests in `a2m-core` | From the RustCrypto project; default features off. Checked on 2026-11-17: published 2026-10-12, builds on three operating systems in CI, and brings only crates under the same licences |
 | `reqwest` | 0.13.5 | MIT or Apache-2.0 | HTTP client in the test harness | Default features off, so no TLS yet. The product's choice of TLS is still to make |
+| `rusqlite` | 0.43.0 | MIT | The one SQLite of the workspace: the store, the data pack, and the test stands | Feature `bundled`, so SQLite is built in. [Decision 0067](../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md). Its tree brought the Zlib licence |
+| `rust_decimal` | 1.43.0 | MIT | Exact decimals, wrapped by `a2m-core` and named nowhere else | Default features off. [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
+| `unicode-normalization` | 0.1.26 | MIT or Apache-2.0, with Unicode-3.0 data | Unicode form C for text in `a2m-expr` | Default features off. [Decision 0073](../decisions/0073-decimals-use-operators-division-is-a-function-and-how-a-field-type-normalizes.md) |
+| `tracing` | 0.1.44 | MIT | Logging macros and the subscriber interface; `a2m-telemetry` writes the subscriber | Default features off; `std`. [Decision 0077](../decisions/0077-logs-through-the-tracing-crate-with-our-own-subscriber-and-spans-through-a-handle.md) |
+| `chacha20poly1305` | 0.11.0 | Apache-2.0 or MIT | The vault's one cipher | Default features off; `alloc`, `zeroize`. This row and the eight below: [decision 0074](../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md) |
+| `argon2` | 0.6.0 | MIT or Apache-2.0 | The vault's passphrase route | Default features off; `alloc`, `zeroize` |
+| `getrandom` | 0.4.3 | MIT or Apache-2.0 | Keys and nonces | |
+| `zeroize` | 1.9.1 | Apache-2.0 or MIT | Wiping keys and secrets from memory | |
+| `aho-corasick` | 1.1.5 | MIT or Unlicense | The redactor's matcher | Used under MIT |
+| `keyring-core` | 1.0.1 | MIT or Apache-2.0 | The interface over credential stores | |
+| `apple-native-keyring-store` | 1.0.2 | MIT or Apache-2.0 | macOS only: the Keychain | Feature `keychain` |
+| `windows-native-keyring-store` | 1.1.0 | MIT or Apache-2.0 | Windows only: Credential Manager | Default features off |
+| `zbus-secret-service-keyring-store` | 1.0.1 | MIT or Apache-2.0 | Linux only: the Secret Service | Feature `crypto-rust`. Only with the vault's cargo feature `secret-service` |
+| `sha1` | 0.11.0 | MIT or Apache-2.0 | SHA-1 for one-time codes in `a2m-auth` | Default features off. The reason is recorded in decision 0084 |
+| `saphyr-parser` | 0.3.4 | MIT or Apache-2.0 | The YAML parser for target files in `a2m-files` | The reason is recorded in decision 0078 |
+| `miniz_oxide` | 0.9.1 | MIT, Zlib, or Apache-2.0 | Inflate for a workbook's package in `a2m-sources` | Default features off; `with-alloc`. The reason is recorded in decision 0086 |
 
-The whole dependency tree is checked by `cargo-deny` in CI against `deny.toml`. The licences in it are MIT, Apache-2.0, BSD-3-Clause, and Unicode-3.0, the last through the Unicode data crates that `reqwest` brings in by way of `url`.
+The rows from `rusqlite` down were added on 2026-11-17, as the kernel's crates were built. The decision record in each row holds the check that was made. Whether each has yet built in CI on Windows and macOS is not recorded here.
+
+The whole dependency tree is checked by `cargo-deny` in CI against `deny.toml`. The licences in it are MIT, Apache-2.0, BSD-3-Clause, Unicode-3.0, and Zlib. Unicode-3.0 comes through the Unicode data crates that `reqwest` brings in by way of `url`. Zlib was added on 2026-11-17 for a crate in the tree of `rusqlite`.
 
 ## Candidates from general knowledge (unverified)
 

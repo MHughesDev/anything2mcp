@@ -4,7 +4,7 @@ The Cargo workspace is most of the product and not all of it. This page covers e
 
 | Folder | Holds | Language | State |
 | --- | --- | --- | --- |
-| `targets/` | The imaginary `example` target, and the test stands | Rust | The test application exists; the others are designed with their packs |
+| `targets/` | The imaginary `example` target, and the test stands | Rust | The test application and all six stands exist |
 | `bindings/python/` | The pip package: the binary and a thin client | Python | A placeholder exists |
 | `bindings/typescript/` | The npm package: a launcher, per-platform packages, a thin client | TypeScript | Not started |
 | `web/console/` | The admin console, the approval page, the sign-in page | TypeScript | Not started; milestone 9 |
@@ -21,17 +21,19 @@ A test stand imitates the part of one kind of system that makes the kind hard, a
 
 | Stand | Imitates | Control interface reports | Designed in | Package |
 | --- | --- | --- | --- | --- |
-| `targets/example-app` | A web application with a JSON interface | What is stored, how many times each record was written, which faults are set | The [test application plan](../plan/test-application.md) | 0.3, done |
-| A command-line tool | A program with typed arguments, several output forms, a prompt, slow output | What it stored, every invocation it received | [Section 306](../spec/3-packs/306-the-command-pack.md) | D2 |
-| A local database | A relational store with keys and constraints | The rows as stored, by a control query | [Section 307](../spec/3-packs/307-the-data-pack.md) | G1 |
-| Files in a temporary folder | Files in each supported format | The bytes on disk and their digests | [Section 308](../spec/3-packs/308-the-file-pack.md) | H1 |
-| A small local broker | A queue and a topic, with retained and unretained messages | Every message received and delivered, and to whom | [Section 309](../spec/3-packs/309-the-stream-pack.md) | J1 |
-| A simulated device | A device with readable and writable points, and its own update mechanism | Every frame received, and the state of its simulated outputs | [Section 310](../spec/3-packs/310-the-device-pack.md) | K1 |
-| A small MCP server | An upstream server whose tools can change, and whose connection can drop after a commit | Every call it received | The design of [`a2m-pack-mcp`](crates/a2m-pack-mcp.md) | 8.2 |
+| [`targets/example-app`](../../targets/example-app/README.md) | A web application with a JSON interface | What is stored, how many times each record was written, which faults are set | The [test application plan](../plan/test-application.md) | 0.3, done |
+| [`targets/example-cli`](../../targets/example-cli/README.md) | A command-line tool: a program with typed arguments, several output forms, a prompt, slow output | What it stored, how many times each record was written, every invocation it received | [Section 306](../spec/3-packs/306-the-command-pack.md) | D2, done |
+| [`targets/example-db`](../../targets/example-db/README.md) | A local database: a relational store with keys and constraints | The rows as stored, a log of every row written, the catalog | [Section 307](../spec/3-packs/307-the-data-pack.md) | G1, done |
+| [`targets/example-files`](../../targets/example-files/README.md) | Files in a temporary folder, in each supported format | The bytes on disk and their digests | [Section 308](../spec/3-packs/308-the-file-pack.md) | H1, done |
+| [`targets/example-broker`](../../targets/example-broker/README.md) | A small local broker that speaks its own line-delimited JSON protocol, with channels of four shapes: a queue, a topic, a retained channel, and a log | Every message received and delivered, and to whom | [Section 309](../spec/3-packs/309-the-stream-pack.md) | J1, done |
+| [`targets/example-device`](../../targets/example-device/README.md) | A simulated device with readable and writable points and its own update mechanism. It speaks a subset of the Modbus application protocol over TCP | Every frame received, and the state of its simulated outputs. The control interface is in the test's own process | [Section 310](../spec/3-packs/310-the-device-pack.md) | K1, done |
+| [`targets/example-mcp`](../../targets/example-mcp/README.md) | A small MCP server: an upstream server whose tools can change, and whose connection can drop after a commit | Every call it received | The design of [`a2m-pack-mcp`](crates/a2m-pack-mcp.md) | 8.2; the stand is done |
+
+Each stand's README lists its cases.
 
 Rules for every stand:
 
-- It is a workspace member under `targets/`, and a product crate may depend on it only in its tests. The benchmark harness in `bench/` is not a product crate and uses the stands directly. The audit enforces this for `example-app` today and for each new stand as it is added.
+- It is a workspace member under `targets/`, and a product crate may depend on it only in its tests. The benchmark harness in `bench/` is not a product crate and uses the stands directly. The audit enforces this for every crate under `targets/`.
 - It starts with one call from a test, on a port or path it chooses, and stops when the test ends.
 - Every fault it can show is a setting, so a failure is reproduced on demand and never waited for.
 - It is as real as is cheap. A stand does not reimplement a product; it shows the hard part.

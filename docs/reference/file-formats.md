@@ -73,9 +73,9 @@ Field types say how a value is formatted, normalized, compared, and classified.
 | `step` | The smallest increment, such as 1/16 inch |
 | `places`, `rounding` | Decimal places and rounding mode |
 | `currency` | For money |
-| `format` | How the application displays and accepts the value |
-| `timezone` | For dates and times: `fixed`, `user`, or a named zone |
-| `case`, `whitespace` | Text comparison rules |
+| `format` | How the application displays and accepts the value. For a number it is the decimal mark: `.` or `,` |
+| `timezone` | For dates and times: `fixed`, `user`, or a named zone. Only `UTC` and a fixed offset such as `+02:00` are built so far; a named zone or the `user` rule cannot be normalized yet |
+| `case`, `whitespace` | Text comparison rules. `case` is `sensitive` or `insensitive`; `whitespace` is `collapse`, `trim`, or `exact` |
 | `codes` | For choices: map of stored code to label |
 | `sensitivity` | `public`, `internal`, or `restricted` |
 | `untrusted` | True for free text that came from the application |
