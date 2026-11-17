@@ -565,6 +565,9 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert!(text.contains(UPSERT) && text.contains(&run), "{text}");
     assert!(text.contains("<th scope=\"row\">quantity</th>"), "{text}");
     assert!(text.contains("The prompt of a test."), "{text}");
+    // This write is read back after it is sent, so the page does not say
+    // that it is not (decision 0181).
+    assert!(!text.contains("not read back"), "{text}");
 
     // A press that does not come from the page's own origin raises nothing
     // and approves nothing.

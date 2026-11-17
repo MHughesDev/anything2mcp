@@ -12,9 +12,10 @@ default-run = "anything2mcp"
 
 [features]
 # HTTPS for the session keeper, the HTTP pack, and the MCP pack, and the
-# test application's TLS-aware harness for this crate's tests. Off by default
-# until the conditions in decision 0157 are met; the released build turns it
-# on then.
+# test application's TLS-aware harness for this crate's tests. On by default
+# since the conditions of decisions 0157 and 0166 held (decision 0181); a
+# build with `--no-default-features` refuses an `https` surface by name.
+default = ["tls"]
 tls = ["a2m-auth/tls", "a2m-pack-http/tls", "a2m-pack-mcp/tls", "example-app/tls"]
 
 [dependencies]
