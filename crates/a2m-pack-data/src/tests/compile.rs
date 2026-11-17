@@ -32,10 +32,14 @@ fn errors_after(file: &[&str], from: &str, to: &str) -> Diagnostics {
     let root = folder.path().join("example");
     copy(&fixtures(), &root);
     let path = file.iter().fold(root.clone(), |path, part| path.join(part));
-    let text = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\r\n", "\n");
     assert!(text.contains(from), "the fixture no longer holds `{from}`");
     std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
-    let problems = compile_folder(&registry, &root).err().expect("it must not compile");
+    let Err(problems) = compile_folder(&registry, &root) else {
+        panic!("it must not compile");
+    };
     problems
         .iter()
         .filter(|problem| problem.level == Level::Error)
@@ -73,7 +77,11 @@ fn the_fixtures_compile_twice_to_the_same_bytes() {
     );
     assert_eq!(update.access, Access::ReadWrite);
     assert_eq!(
-        update.params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+        update
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
         ["length", "unit_price", "order_id", "item_code", "version"]
     );
     assert_eq!(
@@ -105,9 +113,16 @@ fn the_fixtures_compile_twice_to_the_same_bytes() {
     assert_eq!(kinds(&read.act), ["begin", "execute", "fetch"]);
     assert!(read.act.iter().all(|step| !step.commits) && read.act[2].lookup);
     let write = binding("example_line_item_update");
-    assert_eq!(kinds(&write.act), ["begin", "execute", "expect_rows", "commit"]);
     assert_eq!(
-        write.act.iter().map(|step| step.commits).collect::<Vec<_>>(),
+        kinds(&write.act),
+        ["begin", "execute", "expect_rows", "commit"]
+    );
+    assert_eq!(
+        write
+            .act
+            .iter()
+            .map(|step| step.commits)
+            .collect::<Vec<_>>(),
         [false, false, false, true]
     );
     assert_eq!(kinds(&write.read_back), ["begin", "execute", "fetch"]);
@@ -138,12 +153,17 @@ fn what_the_pack_does_not_accept_is_refused_under_its_own_codes() {
         "    record: shipment\n    text:",
         "    record: parcel\n    text:",
     );
-    let problem = problems.find("data.unknown_record").expect("an unknown record");
+    let problem = problems
+        .find("data.unknown_record")
+        .expect("an unknown record");
     assert!(problem.at.line > 1 && !problem.fix.is_empty(), "{problem}");
 
     // A list with no limit.
     let problems = errors_after(&["statements", "orders.yaml"], "    max_rows: 500\n", "");
-    assert!(problems.find("data.limit_invalid").is_some(), "{problems:#?}");
+    assert!(
+        problems.find("data.limit_invalid").is_some(),
+        "{problems:#?}"
+    );
 
     // A binding to a statement nobody declared.
     let problems = errors_after(
@@ -151,7 +171,9 @@ fn what_the_pack_does_not_accept_is_refused_under_its_own_codes() {
         "statement: customer_by_key",
         "statement: customer_by_name",
     );
-    let problem = problems.find("data.unknown_statement").expect("an unknown statement");
+    let problem = problems
+        .find("data.unknown_statement")
+        .expect("an unknown statement");
     assert_eq!(problem.at.file.as_str(), "operations/customer_get.yaml");
     assert!(problem.fix.contains("customer_by_key"), "{problem}");
 
@@ -161,7 +183,10 @@ fn what_the_pack_does_not_accept_is_refused_under_its_own_codes() {
         "verb: update",
         "verb: delete",
     );
-    assert!(problems.find("data.verb_mismatch").is_some(), "{problems:#?}");
+    assert!(
+        problems.find("data.verb_mismatch").is_some(),
+        "{problems:#?}"
+    );
 
     // A hazard the statement declares and the operation does not.
     let problems = errors_after(
@@ -169,7 +194,10 @@ fn what_the_pack_does_not_accept_is_refused_under_its_own_codes() {
         "    set: [credit_limit_cents]\n    guard: none\n",
         "    set: [credit_limit_cents]\n    guard: none\n    hazard: data_elsewhere\n",
     );
-    assert!(problems.find("data.hazard_not_declared").is_some(), "{problems:#?}");
+    assert!(
+        problems.find("data.hazard_not_declared").is_some(),
+        "{problems:#?}"
+    );
 
     // A hand-written write, which is not built.
     let problems = errors_after(
@@ -177,7 +205,10 @@ fn what_the_pack_does_not_accept_is_refused_under_its_own_codes() {
         "    form: table\n    record: customer\n",
         "    form: statement\n    record: customer\n",
     );
-    assert!(problems.find("data.statement_invalid").is_some(), "{problems:#?}");
+    assert!(
+        problems.find("data.statement_invalid").is_some(),
+        "{problems:#?}"
+    );
 }
 
 #[test]
@@ -186,10 +217,20 @@ fn a_write_compiles_only_where_the_store_stands_alone() {
     let problems = errors_after(&["target.yaml"], "    stands: alone\n", "");
     assert!(!problems.is_empty());
     for problem in problems.iter() {
-        assert_eq!(problem.code.as_str(), "data.write_needs_stands_alone", "{problem}");
-        assert!(problem.at.file.as_str().starts_with("operations/"), "{problem}");
+        assert_eq!(
+            problem.code.as_str(),
+            "data.write_needs_stands_alone",
+            "{problem}"
+        );
+        assert!(
+            problem.at.file.as_str().starts_with("operations/"),
+            "{problem}"
+        );
     }
-    let files: Vec<&str> = problems.iter().map(|problem| problem.at.file.as_str()).collect();
+    let files: Vec<&str> = problems
+        .iter()
+        .map(|problem| problem.at.file.as_str())
+        .collect();
     assert!(files.contains(&"operations/line_item_update.yaml"));
     assert!(!files.contains(&"operations/line_item_get.yaml"));
 }

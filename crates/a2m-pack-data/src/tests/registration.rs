@@ -54,7 +54,10 @@ fn the_manifest_declares_every_code_the_driver_returns_and_no_network() {
             "{class}/{code} is not in the manifest"
         );
     }
-    assert_eq!(manifest.provider.version.to_string(), crate::names::PACK_VERSION);
+    assert_eq!(
+        manifest.provider.version.to_string(),
+        crate::names::PACK_VERSION
+    );
     assert_eq!(manifest.provider.name.as_str(), crate::names::PACK);
     // No server store is built, so the pack asks for no network.
     assert_eq!(manifest.effects.network, a2m_provider::NetworkEffect::None);

@@ -3,6 +3,8 @@ file: stock.csv
 format: delimited
 dialect: {delimiter: ",", header: true, encoding: utf-8}
 fingerprint: {headers: [item_code, description, on_hand, note]}
+may_be_open: true
+lock_signal: {sibling: stock.csv.lock}
 records:
   stock:
     rows: all

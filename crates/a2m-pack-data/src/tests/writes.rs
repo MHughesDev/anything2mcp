@@ -42,8 +42,13 @@ fn agree(scene: &Scene, field_type: &str, intended: &Value, read_back: &Value) -
         .iter()
         .find(|known| known.name == field_type)
         .unwrap();
-    let normalizer =
-        Normalizer::load(scene.plan.expression(field_type.normalizer.unwrap()).unwrap()).unwrap();
+    let normalizer = Normalizer::load(
+        scene
+            .plan
+            .expression(field_type.normalizer.unwrap())
+            .unwrap(),
+    )
+    .unwrap();
     normalizer
         .normalize(intended)
         .unwrap()
@@ -65,7 +70,11 @@ async fn an_update_is_written_once_and_reads_back() {
     let refused = run.step(&binding.act[3], &wanted).await;
     assert_eq!(
         failed(refused),
-        (FailureClass::Policy, contract::INTENT_MISSING, Sent::NotSent)
+        (
+            FailureClass::Policy,
+            contract::INTENT_MISSING,
+            Sent::NotSent
+        )
     );
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
 
@@ -74,7 +83,11 @@ async fn an_update_is_written_once_and_reads_back() {
         .await
         .unwrap();
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
-    let stored = scene.db.stored_row(Table::OrderLines, &LINE).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::OrderLines, &LINE)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.text("length_in"), Some("151.25"));
     // A decimal is bound as its exact text, which carries no trailing zero.
     assert_eq!(stored.text("unit_price"), Some("13.1"));
@@ -82,8 +95,18 @@ async fn an_update_is_written_once_and_reads_back() {
 
     // Read-back, in a new read-only transaction after the commit.
     let read = values(run.steps(&binding.read_back, &wanted, None).await.unwrap());
-    assert!(agree(&scene, "length_inches", &decimal("151.25"), read.get("length").unwrap()));
-    assert!(agree(&scene, "price", &decimal("13.10"), read.get("unit_price").unwrap()));
+    assert!(agree(
+        &scene,
+        "length_inches",
+        &decimal("151.25"),
+        read.get("length").unwrap()
+    ));
+    assert!(agree(
+        &scene,
+        "price",
+        &decimal("13.10"),
+        read.get("unit_price").unwrap()
+    ));
     assert_eq!(read.get("row_version"), Some(&Value::Int(2)));
     run.release().await;
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
@@ -97,19 +120,35 @@ async fn a_value_the_store_reformats_verifies_and_a_different_value_does_not() {
     scene.db.set_fault(Fault::PriceRoundedDown).unwrap();
     let (mut run, write) = scene.live(&LINE).await;
     let wanted = update("151.25", "12.49", 1);
-    run.steps(&binding.act, &wanted, Some(&write)).await.unwrap();
+    run.steps(&binding.act, &wanted, Some(&write))
+        .await
+        .unwrap();
     let read = values(run.steps(&binding.read_back, &wanted, None).await.unwrap());
     run.release().await;
 
     // The stand stored the length at another scale and dropped the cents.
-    let stored = scene.db.stored_row(Table::OrderLines, &LINE).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::OrderLines, &LINE)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.text("length_in"), Some("151.2500"));
     assert_eq!(stored.text("unit_price"), Some("12.00"));
     // The driver returns what is stored, as it is stored.
     assert_eq!(read.get("length"), Some(&Value::from("151.2500")));
     // The same value at another scale agrees; a different value does not.
-    assert!(agree(&scene, "length_inches", &decimal("151.25"), read.get("length").unwrap()));
-    assert!(!agree(&scene, "price", &decimal("12.49"), read.get("unit_price").unwrap()));
+    assert!(agree(
+        &scene,
+        "length_inches",
+        &decimal("151.25"),
+        read.get("length").unwrap()
+    ));
+    assert!(!agree(
+        &scene,
+        "price",
+        &decimal("12.49"),
+        read.get("unit_price").unwrap()
+    ));
 }
 
 #[tokio::test]
@@ -123,15 +162,34 @@ async fn padded_text_verifies_through_the_field_types_rule() {
         ("item_code", LINE[1]),
         ("description", "Left rail, long"),
     ]);
-    run.steps(&binding.act, &wanted, Some(&write)).await.unwrap();
+    run.steps(&binding.act, &wanted, Some(&write))
+        .await
+        .unwrap();
     let read = values(run.steps(&binding.read_back, &wanted, None).await.unwrap());
     run.release().await;
-    let stored = scene.db.stored_row(Table::OrderLines, &LINE).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::OrderLines, &LINE)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.text("description").unwrap().len(), 24);
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
-    assert_ne!(read.get("description"), Some(&Value::from("Left rail, long")));
-    assert!(agree(&scene, "note", &Value::from("Left rail, long"), read.get("description").unwrap()));
-    assert!(!agree(&scene, "note", &Value::from("Left rail"), read.get("description").unwrap()));
+    assert_ne!(
+        read.get("description"),
+        Some(&Value::from("Left rail, long"))
+    );
+    assert!(agree(
+        &scene,
+        "note",
+        &Value::from("Left rail, long"),
+        read.get("description").unwrap()
+    ));
+    assert!(!agree(
+        &scene,
+        "note",
+        &Value::from("Left rail"),
+        read.get("description").unwrap()
+    ));
 }
 
 #[tokio::test]
@@ -158,7 +216,11 @@ async fn a_row_changed_since_the_preview_is_stale_and_nothing_is_written() {
         failed(guarded),
         (FailureClass::Stale, codes::VERSION_CONFLICT, Sent::Answered)
     );
-    let stored = scene.db.stored_row(Table::OrderLines, &LINE).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::OrderLines, &LINE)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.text("unit_price"), Some("99.00"));
     assert_eq!(stored.text("length_in"), Some("150.5"));
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
@@ -174,13 +236,21 @@ async fn a_row_changed_since_the_preview_is_stale_and_nothing_is_written() {
     let gone = run
         .steps(
             &scene.binding("example_line_item_describe").act,
-            &inputs(&[("order_id", LINE[0]), ("item_code", LINE[1]), ("description", "x")]),
+            &inputs(&[
+                ("order_id", LINE[0]),
+                ("item_code", LINE[1]),
+                ("description", "x"),
+            ]),
             Some(&write),
         )
         .await;
     assert_eq!(
         failed(gone),
-        (FailureClass::Stale, codes::CHANGED_SINCE_PREVIEW, Sent::Answered)
+        (
+            FailureClass::Stale,
+            codes::CHANGED_SINCE_PREVIEW,
+            Sent::Answered
+        )
     );
     run.release().await;
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
@@ -191,26 +261,57 @@ async fn a_constraint_refuses_a_write_and_nothing_lands() {
     let scene = Scene::new();
     let binding = scene.binding("example_line_item_create");
     let line = |item: &str, quantity: i64| {
-        inputs(&[("order_id", "A-102"), ("item_code", item), ("description", "Shelf")])
-            .with("quantity", quantity)
-            .with("length", decimal("12"))
-            .with("unit_price", decimal("3.00"))
+        inputs(&[
+            ("order_id", "A-102"),
+            ("item_code", item),
+            ("description", "Shelf"),
+        ])
+        .with("quantity", quantity)
+        .with("length", decimal("12"))
+        .with("unit_price", decimal("3.00"))
     };
-    let rejected = (FailureClass::Rejected, codes::CONSTRAINT_VIOLATED, Sent::Answered);
+    let rejected = (
+        FailureClass::Rejected,
+        codes::CONSTRAINT_VIOLATED,
+        Sent::Answered,
+    );
     let (mut run, write) = scene.live(&["A-102", "L-301"]).await;
 
     // A check constraint, a foreign key, and a rule of the store.
-    assert_eq!(failed(run.steps(&binding.act, &line("L-301", 0), Some(&write)).await), rejected);
+    assert_eq!(
+        failed(
+            run.steps(&binding.act, &line("L-301", 0), Some(&write))
+                .await
+        ),
+        rejected
+    );
     let orphan = line("L-301", 1).with("order_id", "A-999");
-    assert_eq!(failed(run.steps(&binding.act, &orphan, Some(&write)).await), rejected);
+    assert_eq!(
+        failed(run.steps(&binding.act, &orphan, Some(&write)).await),
+        rejected
+    );
     scene.db.set_fault(Fault::LineWritesRefused).unwrap();
-    assert_eq!(failed(run.steps(&binding.act, &line("L-301", 1), Some(&write)).await), rejected);
+    assert_eq!(
+        failed(
+            run.steps(&binding.act, &line("L-301", 1), Some(&write))
+                .await
+        ),
+        rejected
+    );
     scene.db.clear_fault(Fault::LineWritesRefused).unwrap();
     assert!(scene.db.writes().unwrap().is_empty());
-    assert!(scene.db.stored_row(Table::OrderLines, &["A-102", "L-301"]).unwrap().is_none());
+    assert!(
+        scene
+            .db
+            .stored_row(Table::OrderLines, &["A-102", "L-301"])
+            .unwrap()
+            .is_none()
+    );
 
     // The same insert, allowed: one row, written once, and it reads back.
-    run.steps(&binding.act, &line("L-301", 1), Some(&write)).await.unwrap();
+    run.steps(&binding.act, &line("L-301", 1), Some(&write))
+        .await
+        .unwrap();
     let stored = scene
         .db
         .stored_row(Table::OrderLines, &["A-102", "L-301"])
@@ -218,13 +319,35 @@ async fn a_constraint_refuses_a_write_and_nothing_lands() {
         .unwrap();
     assert_eq!(stored.text("description"), Some("Shelf"));
     assert_eq!(stored.integer("quantity"), Some(1));
-    assert_eq!(scene.db.write_count(Table::OrderLines, &["A-102", "L-301"]).unwrap(), 1);
-    assert!(run.steps(&binding.read_back, &line("L-301", 1), None).await.is_ok());
+    assert_eq!(
+        scene
+            .db
+            .write_count(Table::OrderLines, &["A-102", "L-301"])
+            .unwrap(),
+        1
+    );
+    assert!(
+        run.steps(&binding.read_back, &line("L-301", 1), None)
+            .await
+            .is_ok()
+    );
 
     // A second insert under the same key is refused by the key itself.
-    assert_eq!(failed(run.steps(&binding.act, &line("L-301", 1), Some(&write)).await), rejected);
+    assert_eq!(
+        failed(
+            run.steps(&binding.act, &line("L-301", 1), Some(&write))
+                .await
+        ),
+        rejected
+    );
     run.release().await;
-    assert_eq!(scene.db.write_count(Table::OrderLines, &["A-102", "L-301"]).unwrap(), 1);
+    assert_eq!(
+        scene
+            .db
+            .write_count(Table::OrderLines, &["A-102", "L-301"])
+            .unwrap(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -237,7 +360,13 @@ async fn a_delete_removes_one_row_and_its_read_back_finds_it_absent() {
     let read = run.steps(&binding.read_back, &key, None).await.unwrap();
     assert!(matches!(read, StepOutcome::Absent(_)));
     run.release().await;
-    assert!(scene.db.stored_row(Table::OrderLines, &LINE).unwrap().is_none());
+    assert!(
+        scene
+            .db
+            .stored_row(Table::OrderLines, &LINE)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
     // The rows the write did not name are as they were.
     assert_eq!(scene.db.stored_rows(Table::OrderLines).unwrap().len(), 3);
@@ -263,15 +392,28 @@ async fn a_key_the_store_assigns_is_known_before_the_commit() {
         panic!("the insert returned its key");
     };
     assert_eq!(fetched.values.get("shipment_id"), Some(&Value::Int(2)));
-    assert_eq!(fetched.for_reconcile.get("shipment_id"), Some(&Value::Int(2)));
+    assert_eq!(
+        fetched.for_reconcile.get("shipment_id"),
+        Some(&Value::Int(2))
+    );
     assert_eq!(fetched.assigned_key.unwrap().parts(), [Value::Int(2)]);
     // Nothing is committed yet.
-    assert!(scene.db.stored_row(Table::Shipments, &["2"]).unwrap().is_none());
+    assert!(
+        scene
+            .db
+            .stored_row(Table::Shipments, &["2"])
+            .unwrap()
+            .is_none()
+    );
 
     run.step_with(&binding.act[4], &Values::new(), Some(&write))
         .await
         .unwrap();
-    let stored = scene.db.stored_row(Table::Shipments, &["2"]).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::Shipments, &["2"])
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.text("external_ref"), Some("SHIP-0002"));
     assert_eq!(scene.db.write_count(Table::Shipments, &["2"]).unwrap(), 1);
 
@@ -299,11 +441,17 @@ async fn a_trigger_the_target_did_not_declare_stops_a_write_as_drift() {
     // has no trigger and no cascading key: the write has no hazard.
     scene.db.set_write_log(false).unwrap();
     let (mut run, write) = scene.live(&["C-001"]).await;
-    run.steps(&binding.act, &wanted, Some(&write)).await.unwrap();
+    run.steps(&binding.act, &wanted, Some(&write))
+        .await
+        .unwrap();
     let read = values(run.steps(&binding.read_back, &wanted, None).await.unwrap());
     assert_eq!(read.get("credit_limit_cents"), Some(&Value::Int(750_000)));
     run.release().await;
-    let stored = scene.db.stored_row(Table::Customers, &["C-001"]).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.integer("credit_limit_cents"), Some(750_000));
 
     // A trigger appears on the table after publishing. The statement
@@ -322,9 +470,16 @@ async fn a_trigger_the_target_did_not_declare_stops_a_write_as_drift() {
         (FailureClass::Drift, codes::SCHEMA_CHANGED, Sent::NotSent)
     );
     run.release().await;
-    let stored = scene.db.stored_row(Table::Customers, &["C-001"]).unwrap().unwrap();
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.integer("credit_limit_cents"), Some(750_000));
-    assert_eq!(scene.db.write_count(Table::Customers, &["C-001"]).unwrap(), 0);
+    assert_eq!(
+        scene.db.write_count(Table::Customers, &["C-001"]).unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -334,7 +489,9 @@ async fn a_writer_that_cannot_take_the_lock_is_busy_and_writes_nothing() {
     let (mut run, write) = scene.live(&LINE).await;
     run.wait = Duration::from_millis(300);
     scene.db.set_fault(Fault::WritersLocked).unwrap();
-    let locked = run.steps(&binding.act, &update("151.25", "13.10", 1), Some(&write)).await;
+    let locked = run
+        .steps(&binding.act, &update("151.25", "13.10", 1), Some(&write))
+        .await;
     assert_eq!(
         failed(locked),
         (FailureClass::Busy, codes::STORE_LOCKED, Sent::NotSent)
@@ -356,19 +513,32 @@ async fn nothing_is_written_where_nothing_may_be() {
     let scene = Scene::new();
     let binding = scene.binding("example_line_item_update");
     let before = scene.db.data_version().unwrap();
-    for posture in [Posture::Discovery, Posture::Sandbox { test_records: false }] {
+    for posture in [
+        Posture::Discovery,
+        Posture::Sandbox {
+            test_records: false,
+        },
+    ] {
         // The driver's own guard: a transaction that may write is refused,
         // whatever the handle would do with the commit.
         let mut run = scene.prepare(posture).await;
         let begun = run.step(&binding.act[0], &Values::new()).await;
         assert_eq!(
             failed(begun),
-            (FailureClass::Policy, contract::READ_ONLY_POSTURE, Sent::NotSent)
+            (
+                FailureClass::Policy,
+                contract::READ_ONLY_POSTURE,
+                Sent::NotSent
+            )
         );
         // And a write statement run inside a read-only transaction is
         // refused by the store.
-        run.step(&binding.read_back[0], &Values::new()).await.unwrap();
-        let written = run.step(&binding.act[1], &update("151.25", "13.10", 1)).await;
+        run.step(&binding.read_back[0], &Values::new())
+            .await
+            .unwrap();
+        let written = run
+            .step(&binding.act[1], &update("151.25", "13.10", 1))
+            .await;
         assert_eq!(failed(written).2, Sent::NotSent);
         run.release().await;
     }
@@ -502,11 +672,15 @@ async fn a_lost_answer_to_a_commit_is_a_possible_commit_and_never_a_second_write
     for step in binding.act.iter().chain(&binding.read_back) {
         let args = scene.args(step, &wanted);
         let again = run
-            .step_with(step, &args, Some(&write).filter(|_| step.commits))
+            .step_with(step, &args, step.commits.then_some(&write))
             .await;
         assert_eq!(
             failed(again),
-            (FailureClass::Transient, contract::CONNECTION_LOST, Sent::NotSent)
+            (
+                FailureClass::Transient,
+                contract::CONNECTION_LOST,
+                Sent::NotSent
+            )
         );
     }
     run.release().await;
@@ -517,7 +691,12 @@ async fn a_lost_answer_to_a_commit_is_a_possible_commit_and_never_a_second_write
     armed.store(false, Ordering::SeqCst);
     let mut run = scene.prepare(Posture::Live).await;
     let read = values(run.steps(&binding.read_back, &wanted, None).await.unwrap());
-    assert!(agree(&scene, "length_inches", &decimal("151.25"), read.get("length").unwrap()));
+    assert!(agree(
+        &scene,
+        "length_inches",
+        &decimal("151.25"),
+        read.get("length").unwrap()
+    ));
     run.release().await;
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
 }

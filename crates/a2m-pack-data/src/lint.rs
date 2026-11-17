@@ -7,16 +7,22 @@ use a2m_files::{CompileMode, Diagnostic, Doc, Level, LintRule, Located, Resolved
 use crate::names::{DATABASE, STATEMENT, lint};
 
 /// Every statement the target declares, with its body.
-fn statements<'a>(view: &ResolvedView<'a>) -> Vec<(&'a str, &'a Located<Doc>, &'a Located<String>)> {
+fn statements<'a>(
+    view: &ResolvedView<'a>,
+) -> Vec<(&'a str, &'a Located<Doc>, &'a Located<String>)> {
     view.entries(&STATEMENT, &DATABASE)
         .iter()
-        .flat_map(|doc| doc.get("statements").map(Located::entries).unwrap_or_default())
+        .flat_map(|doc| {
+            doc.get("statements")
+                .map(Located::entries)
+                .unwrap_or_default()
+        })
         .map(|entry| (entry.key.value.as_str(), &entry.value, &entry.key))
         .collect()
 }
 
 /// The statements an operation's bindings name, with the place of each.
-fn bound<'a>(operation: &'a Located<Doc>) -> Vec<&'a Located<Doc>> {
+fn bound(operation: &Located<Doc>) -> Vec<&Located<Doc>> {
     operation
         .get("bindings")
         .map(Located::items)

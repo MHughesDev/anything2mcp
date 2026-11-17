@@ -24,9 +24,13 @@ async fn a_record_is_read_by_its_key_and_an_unknown_key_is_absent() {
     let act = &scene.binding("example_line_item_get").act;
 
     let found = values(
-        run.steps(act, &inputs(&[("order_id", "A-100"), ("item_code", "L-103")]), None)
-            .await
-            .unwrap(),
+        run.steps(
+            act,
+            &inputs(&[("order_id", "A-100"), ("item_code", "L-103")]),
+            None,
+        )
+        .await
+        .unwrap(),
     );
     // What the driver returns is what the stand stores, value for value.
     let stored = scene
@@ -43,7 +47,11 @@ async fn a_record_is_read_by_its_key_and_an_unknown_key_is_absent() {
     assert_eq!(text(&found, "order_id"), "A-100");
 
     let absent = run
-        .steps(act, &inputs(&[("order_id", "A-100"), ("item_code", "L-999")]), None)
+        .steps(
+            act,
+            &inputs(&[("order_id", "A-100"), ("item_code", "L-999")]),
+            None,
+        )
         .await
         .unwrap();
     assert!(matches!(absent, StepOutcome::Absent(_)));
@@ -53,7 +61,10 @@ async fn a_record_is_read_by_its_key_and_an_unknown_key_is_absent() {
     let absent = run
         .steps(
             act,
-            &inputs(&[("order_id", "A-100' OR '1'='1"), ("item_code", "L-101' OR '1'='1")]),
+            &inputs(&[
+                ("order_id", "A-100' OR '1'='1"),
+                ("item_code", "L-101' OR '1'='1"),
+            ]),
             None,
         )
         .await
@@ -62,7 +73,10 @@ async fn a_record_is_read_by_its_key_and_an_unknown_key_is_absent() {
     let absent = run
         .steps(
             act,
-            &inputs(&[("order_id", "A-100\"; DROP TABLE order_lines; --"), ("item_code", "x")]),
+            &inputs(&[
+                ("order_id", "A-100\"; DROP TABLE order_lines; --"),
+                ("item_code", "x"),
+            ]),
             None,
         )
         .await
@@ -96,9 +110,13 @@ async fn a_list_stops_at_its_limit_and_says_that_more_exist() {
     assert_eq!(all.get("more"), Some(&Value::Bool(false)));
 
     let first = values(
-        run.steps(&scene.binding("example_order_lines_first").act, &order, None)
-            .await
-            .unwrap(),
+        run.steps(
+            &scene.binding("example_order_lines_first").act,
+            &order,
+            None,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(
         codes_of(first.get("rows").and_then(Value::as_list).unwrap()),
@@ -147,9 +165,15 @@ async fn five_runs_of_one_read_do_the_same_thing() {
     let (_, means) = &seen[0];
     let shown = format!("{means:?}");
     assert_eq!(means.len(), 3);
-    assert!(shown.contains("line_item_by_key") && shown.contains("read_only"), "{shown}");
+    assert!(
+        shown.contains("line_item_by_key") && shown.contains("read_only"),
+        "{shown}"
+    );
     // A value of a row is never a detail of how the step was done.
-    assert!(!shown.contains("Left rail") && !shown.contains("150.5"), "{shown}");
+    assert!(
+        !shown.contains("Left rail") && !shown.contains("150.5"),
+        "{shown}"
+    );
 }
 
 #[tokio::test]
@@ -166,7 +190,11 @@ async fn a_statement_declared_a_read_that_writes_is_refused_by_the_store() {
         .await;
     assert_eq!(
         failed(touched),
-        (FailureClass::Policy, codes::READ_STATEMENT_WROTE, Sent::Answered)
+        (
+            FailureClass::Policy,
+            codes::READ_STATEMENT_WROTE,
+            Sent::Answered
+        )
     );
     // The connection is still good for a real read.
     let found = values(
@@ -182,7 +210,13 @@ async fn a_statement_declared_a_read_that_writes_is_refused_by_the_store() {
     run.release().await;
 
     // The stand: nothing was written, and nothing was committed.
-    assert_eq!(scene.db.write_count(Table::OrderLines, &["A-100", "L-101"]).unwrap(), 0);
+    assert_eq!(
+        scene
+            .db
+            .write_count(Table::OrderLines, &["A-100", "L-101"])
+            .unwrap(),
+        0
+    );
     assert_eq!(scene.db.data_version().unwrap(), before);
     let stored = scene
         .db
@@ -226,7 +260,13 @@ async fn text_the_store_holds_comes_back_as_data_of_an_untrusted_type() {
         .iter()
         .find(|output| output.name == "notes")
         .unwrap();
-    assert!(scene.plan.field_type(notes.field_type.unwrap()).unwrap().untrusted);
+    assert!(
+        scene
+            .plan
+            .field_type(notes.field_type.unwrap())
+            .unwrap()
+            .untrusted
+    );
 }
 
 #[tokio::test]
@@ -324,20 +364,35 @@ async fn a_value_that_cannot_be_bound_stops_the_step_unsent() {
     run.step(&act[0], &a2m_core::Values::new()).await.unwrap();
     // A list where one value belongs, and a missing argument.
     let args = a2m_core::Values::new()
-        .with("order_id", Value::List(vec![Value::from("A-100"), Value::from("A-101")]))
+        .with(
+            "order_id",
+            Value::List(vec![Value::from("A-100"), Value::from("A-101")]),
+        )
         .with("item_code", "L-101");
     let listed = run.step_with(&act[1], &args, None).await;
     assert_eq!(
         failed(listed),
-        (FailureClass::Input, codes::VALUE_NOT_BINDABLE, Sent::NotSent)
+        (
+            FailureClass::Input,
+            codes::VALUE_NOT_BINDABLE,
+            Sent::NotSent
+        )
     );
     run.step(&act[0], &a2m_core::Values::new()).await.unwrap();
     let missing = run
-        .step_with(&act[1], &a2m_core::Values::new().with("order_id", "A-100"), None)
+        .step_with(
+            &act[1],
+            &a2m_core::Values::new().with("order_id", "A-100"),
+            None,
+        )
         .await;
     assert_eq!(
         failed(missing),
-        (FailureClass::Input, codes::VALUE_NOT_BINDABLE, Sent::NotSent)
+        (
+            FailureClass::Input,
+            codes::VALUE_NOT_BINDABLE,
+            Sent::NotSent
+        )
     );
     run.release().await;
 }

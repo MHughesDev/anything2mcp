@@ -151,11 +151,16 @@ impl DraftingRule for TableToStatements {
             let mut predicate = Vec::new();
             let mut params = Vec::new();
             for (_, position) in &key {
-                let (Some(column), Some(name)) = (table.columns.get(*position), names.get(*position))
+                let (Some(column), Some(name)) =
+                    (table.columns.get(*position), names.get(*position))
                 else {
                     continue;
                 };
-                predicate.push(format!("{} = {}", quoted(&column.name)?, store.placeholder()));
+                predicate.push(format!(
+                    "{} = {}",
+                    quoted(&column.name)?,
+                    store.placeholder()
+                ));
                 params.push(DraftValue::map(vec![
                     ("name", DraftValue::text(name)),
                     ("type", type_of(*position)),

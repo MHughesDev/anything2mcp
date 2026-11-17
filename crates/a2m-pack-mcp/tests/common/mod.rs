@@ -231,15 +231,7 @@ pub async fn prepare(
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
     let handle = registry.driver(&mode).unwrap();
-    let programs = surface
-        .surface
-        .programs
-        .iter()
-        .map(|program| ProgramRef {
-            path: PathBuf::from(&program.path),
-            digest: program.digest,
-        })
-        .collect();
+    let programs = surface.surface.programs.iter().map(ProgramRef::from).collect();
     let supervisor = handle.supervisor(programs);
     let destinations = Destinations::new([surface.surface.address.clone()]);
     let cx = PrepareContext {

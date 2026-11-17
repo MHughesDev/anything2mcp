@@ -201,6 +201,16 @@ fn records(
     records
 }
 
+/// A `form: table` statement, as the pack wrote it.
+struct Written {
+    text: String,
+    params: Vec<Param>,
+    does: Does,
+    guarded: bool,
+    returns: Returns,
+    columns: Vec<Column>,
+}
+
 /// What a `form: table` statement is written from.
 struct TableForm<'a> {
     record: &'a Record,
@@ -330,7 +340,7 @@ impl TableForm<'_> {
 
     /// The statement's text, its parameters, what it does, whether it is
     /// guarded, and what it returns.
-    fn write(&self) -> Result<(String, Vec<Param>, Does, bool, Returns, Vec<Column>), Diagnostic> {
+    fn write(&self) -> Result<Written, Diagnostic> {
         let table = self.quoted(&self.record.table, &self.body.at)?;
         let placeholder = self.store.placeholder();
         let mut params = Vec::new();
@@ -345,7 +355,10 @@ impl TableForm<'_> {
                 if let Some(field) = set.iter().find(|field| field.key_position > 0) {
                     return Err(self.invalid(
                         &self.body.at,
-                        format!("An update does not set `{}`, a field of the record's key.", field.name),
+                        format!(
+                            "An update does not set `{}`, a field of the record's key.",
+                            field.name
+                        ),
                         "Leave the key's fields out of `set`.",
                     ));
                 }
@@ -358,25 +371,28 @@ impl TableForm<'_> {
                     params.push(as_param(field));
                 }
                 let (predicate, guarded) = self.by_key(&mut params)?;
-                Ok((
-                    format!("UPDATE {table} SET {} WHERE {predicate}", assignments.join(", ")),
+                Ok(Written {
+                    text: format!(
+                        "UPDATE {table} SET {} WHERE {predicate}",
+                        assignments.join(", ")
+                    ),
                     params,
-                    Does::Update,
+                    does: Does::Update,
                     guarded,
-                    Returns::Nothing,
-                    Vec::new(),
-                ))
+                    returns: Returns::Nothing,
+                    columns: Vec::new(),
+                })
             }
             Some("delete") => {
                 let (predicate, guarded) = self.by_key(&mut params)?;
-                Ok((
-                    format!("DELETE FROM {table} WHERE {predicate}"),
+                Ok(Written {
+                    text: format!("DELETE FROM {table} WHERE {predicate}"),
                     params,
-                    Does::Delete,
+                    does: Does::Delete,
                     guarded,
-                    Returns::Nothing,
-                    Vec::new(),
-                ))
+                    returns: Returns::Nothing,
+                    columns: Vec::new(),
+                })
             }
             Some("insert") => {
                 let set = self.set()?;
@@ -398,7 +414,14 @@ impl TableForm<'_> {
                     vec![placeholder; columns.len()].join(", ")
                 );
                 if missing.is_empty() {
-                    return Ok((text, params, Does::Insert, false, Returns::Nothing, Vec::new()));
+                    return Ok(Written {
+                        text,
+                        params,
+                        does: Does::Insert,
+                        guarded: false,
+                        returns: Returns::Nothing,
+                        columns: Vec::new(),
+                    });
                 }
                 if missing.len() != self.record.key.len() || !self.store.returns_assigned_key() {
                     return Err(self.invalid(
@@ -420,7 +443,14 @@ impl TableForm<'_> {
                 }
                 text.push_str(" RETURNING ");
                 text.push_str(&returned.join(", "));
-                Ok((text, params, Does::Insert, false, Returns::AssignedKey, assigned))
+                Ok(Written {
+                    text,
+                    params,
+                    does: Does::Insert,
+                    guarded: false,
+                    returns: Returns::AssignedKey,
+                    columns: assigned,
+                })
             }
             _ => Err(self.invalid(
                 &self.body.at,
@@ -439,7 +469,6 @@ impl StatementKind {
         surface: &str,
         records: &BTreeMap<String, Record>,
         store: &dyn Opener,
-        cx: &KindContext<'_>,
     ) -> Result<Statement, Diagnostic> {
         let invalid = |at: &Place, message: String, fix: &str| {
             problem(&lint::STATEMENT_INVALID, at, message, fix)
@@ -449,7 +478,9 @@ impl StatementKind {
             return Err(problem(
                 &lint::UNKNOWN_RECORD,
                 body.get("record").map_or(&body.at, |record| &record.at),
-                format!("The statement `{name}` names the record `{record_name}`, which this file does not declare."),
+                format!(
+                    "The statement `{name}` names the record `{record_name}`, which this file does not declare."
+                ),
                 "Name a record declared under `records:` in the same file.",
             ));
         };
@@ -457,7 +488,9 @@ impl StatementKind {
         let Some(timeout_ms) = time_limit_ms(limit) else {
             return Err(invalid(
                 body.get("time_limit").map_or(&body.at, |limit| &limit.at),
-                format!("The time limit of the statement `{name}` is not whole seconds or milliseconds of at most ten minutes."),
+                format!(
+                    "The time limit of the statement `{name}` is not whole seconds or milliseconds of at most ten minutes."
+                ),
                 "Write the limit as `2s` or `500ms`.",
             ));
         };
@@ -483,7 +516,9 @@ impl StatementKind {
             else {
                 return Err(invalid(
                     &body.at,
-                    format!("The read statement `{name}` states its `text`, its `params`, and what it `returns`."),
+                    format!(
+                        "The read statement `{name}` states its `text`, its `params`, and what it `returns`."
+                    ),
                     "Add the three keys; `params: []` for a statement with no parameter.",
                 ));
             };
@@ -543,14 +578,18 @@ impl StatementKind {
         if let Some((key, found)) = extra(&["text", "params", "returns", "max_rows"]) {
             return Err(invalid(
                 &found.at,
-                format!("The statement `{name}` is a write the pack writes from its record, and `{key}` belongs to a hand-written statement."),
+                format!(
+                    "The statement `{name}` is a write the pack writes from its record, and `{key}` belongs to a hand-written statement."
+                ),
                 "Remove the key.",
             ));
         }
         if body.text("form") != Some("table") {
             return Err(invalid(
                 body.get("form").map_or(&body.at, |form| &form.at),
-                format!("The write statement `{name}` is not `form: table`; hand-written writes are not built yet."),
+                format!(
+                    "The write statement `{name}` is not `form: table`; hand-written writes are not built yet."
+                ),
                 "Write `form: table` with `verb:` and `set:`.",
             ));
         }
@@ -560,8 +599,14 @@ impl StatementKind {
             body,
             store,
         };
-        let (text, params, does, guarded, returns, columns) = form.write()?;
-        let _ = cx;
+        let Written {
+            text,
+            params,
+            does,
+            guarded,
+            returns,
+            columns,
+        } = form.write()?;
         Ok(Statement {
             surface: surface.to_owned(),
             access: Access::ReadWrite,
@@ -626,7 +671,9 @@ impl FileKind for StatementKind {
         let mut section = Section::default();
         let mut problems = Diagnostics::new();
         for doc in docs {
-            let surface = cx.surface_of(doc).filter(|surface| *surface.kind == DATABASE);
+            let surface = cx
+                .surface_of(doc)
+                .filter(|surface| *surface.kind == DATABASE);
             let Some(surface) = surface else {
                 problems.push(problem(
                     &lint::SURFACE_INVALID,
@@ -640,7 +687,10 @@ impl FileKind for StatementKind {
             let Some(store): Option<Arc<dyn Opener>> = opener(store_name) else {
                 problems.push(problem(
                     &lint::STORE_NOT_BUILT,
-                    surface.doc.get("store").map_or(&surface.doc.at, |store| &store.at),
+                    surface
+                        .doc
+                        .get("store")
+                        .map_or(&surface.doc.at, |store| &store.at),
                     format!(
                         "The surface `{}` names a store this build does not speak to. Built: {}.",
                         surface.name,
@@ -651,7 +701,11 @@ impl FileKind for StatementKind {
                 continue;
             };
             let records = records(doc, cx, &mut problems);
-            for entry in doc.get("statements").map(Located::entries).unwrap_or_default() {
+            for entry in doc
+                .get("statements")
+                .map(Located::entries)
+                .unwrap_or_default()
+            {
                 let name = entry.key.value.as_str();
                 if a2m_core::StepKind::new(name).is_err() {
                     problems.push(problem(
@@ -668,7 +722,6 @@ impl FileKind for StatementKind {
                     surface.name.as_str(),
                     &records,
                     store.as_ref(),
-                    cx,
                 ) {
                     Ok(statement) => {
                         section.statements.insert(name.to_owned(), statement);

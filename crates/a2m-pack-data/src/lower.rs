@@ -356,9 +356,15 @@ impl Lowering for SqlLowering {
                     .and_then(Located::as_text)
                     .and_then(|read_back| statements.statements.get(read_back))
                     .is_some_and(|read_back| {
-                        read_back.params.iter().any(|param| param.name == entry.key.value)
+                        read_back
+                            .params
+                            .iter()
+                            .any(|param| param.name == entry.key.value)
                     });
-                let taken = statement.params.iter().any(|param| param.name == entry.key.value);
+                let taken = statement
+                    .params
+                    .iter()
+                    .any(|param| param.name == entry.key.value);
                 if !taken && !read_back_takes {
                     problems.push(problem(
                         &lint::PARAM_UNBOUND,
@@ -384,7 +390,9 @@ impl Lowering for SqlLowering {
                     "Remove `read_back:`.",
                 ));
             }
-            lower.read(name, statement, at, &mut problems).map(|act| (act, Vec::new()))
+            lower
+                .read(name, statement, at, &mut problems)
+                .map(|act| (act, Vec::new()))
         } else {
             // A write is allowed only where the target says the store is the
             // system of record. Unknown is not alone.
@@ -427,7 +435,9 @@ impl Lowering for SqlLowering {
                             ));
                             Some(Vec::new())
                         }
-                        Some(found) => lower.read(read_back_name, found, &read_back.at, &mut problems),
+                        Some(found) => {
+                            lower.read(read_back_name, found, &read_back.at, &mut problems)
+                        }
                     }
                 }
             };

@@ -78,7 +78,10 @@ async fn the_catalog_is_found_and_nothing_is_written() {
     let rows_before = scene.db.stored_rows(Table::OrderLines).unwrap();
     let (findings, discoverer) = discover(&scene).await;
     assert_eq!(scene.db.data_version().unwrap(), before);
-    assert_eq!(scene.db.stored_rows(Table::OrderLines).unwrap(), rows_before);
+    assert_eq!(
+        scene.db.stored_rows(Table::OrderLines).unwrap(),
+        rows_before
+    );
 
     assert!(findings.iter().all(|finding| {
         finding.level() == EvidenceLevel::Discovered && finding.source() == Source::LiveSystem
@@ -94,8 +97,18 @@ async fn the_catalog_is_found_and_nothing_is_written() {
     assert_eq!(lines.columns.len(), stand.len());
     for (found, stored) in lines.columns.iter().zip(&stand) {
         assert_eq!(
-            (&found.name, &found.declared_type, found.not_null, found.key_position),
-            (&stored.name, &stored.declared_type, stored.not_null, stored.key_position)
+            (
+                &found.name,
+                &found.declared_type,
+                found.not_null,
+                found.key_position
+            ),
+            (
+                &stored.name,
+                &stored.declared_type,
+                stored.not_null,
+                stored.key_position
+            )
         );
     }
     let stand_triggers = scene.db.triggers().unwrap();
@@ -112,11 +125,19 @@ async fn the_catalog_is_found_and_nothing_is_written() {
     assert_eq!(customers.unique, [["email"]]);
     // A table with no key, and a view.
     let history = table(&tables, "order_status_history");
-    assert!(history.columns.iter().all(|column| column.key_position == 0));
+    assert!(
+        history
+            .columns
+            .iter()
+            .all(|column| column.key_position == 0)
+    );
     assert!(table(&tables, "order_summaries").view);
     // No row was read: no value of the seed is in any finding.
     let all = findings.iter().map(Finding::found).collect::<String>();
-    assert!(!all.contains("Left rail") && !all.contains("Ignore all earlier"), "{all}");
+    assert!(
+        !all.contains("Left rail") && !all.contains("Ignore all earlier"),
+        "{all}"
+    );
 
     let summary = discoverer.describe(&findings, DescribeForm::Summary);
     assert!(summary.untrusted.is_empty());
@@ -134,7 +155,10 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         findings
             .iter()
             .find(|finding| {
-                serde_json::from_str::<TableFound>(finding.found()).unwrap().table == name
+                serde_json::from_str::<TableFound>(finding.found())
+                    .unwrap()
+                    .table
+                    == name
             })
             .unwrap()
             .clone()
@@ -142,7 +166,11 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     let folder = Folder::new("draft");
     let root = folder.path().join("example");
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::copy(super::fixtures().join("target.yaml"), root.join("target.yaml")).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
     let set = scene.registry.compiler_set();
     let target = TargetRoot::new(&root);
     let report = Drafter::new(set, &target)
@@ -151,15 +179,28 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
     assert_eq!(
         written,
-        ["statements/order_lines.yaml", "statements/order_status_history.yaml"]
+        [
+            "statements/order_lines.yaml",
+            "statements/order_status_history.yaml"
+        ]
     );
 
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
-    assert!(lines.contains("WHERE \\\"order_id\\\" = ? AND \\\"item_code\\\" = ?")
-        || lines.contains("WHERE \"order_id\" = ? AND \"item_code\" = ?"), "{lines}");
+    assert!(
+        lines.contains("WHERE \\\"order_id\\\" = ? AND \\\"item_code\\\" = ?")
+            || lines.contains("WHERE \"order_id\" = ? AND \"item_code\" = ?"),
+        "{lines}"
+    );
     // No write, and no unit: a length is text until a person says more.
-    assert!(!lines.contains("effect: write") && !lines.contains("length_"), "{lines}");
+    assert!(
+        !lines.contains("write") && !lines.contains("length_ft_in"),
+        "{lines}"
+    );
+    assert!(
+        lines.contains("length_in:\n        column: \"length_in\"\n        type: \"text\""),
+        "{lines}"
+    );
     // The table with no key holds a question where its key would be, and
     // no statement.
     let history =
@@ -169,8 +210,10 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         report
             .open_questions
             .iter()
-            .any(|question| question.file.as_str() == "statements/order_status_history.yaml"
-                && question.question.contains("identify one row")),
+            .any(
+                |question| question.file.as_str() == "statements/order_status_history.yaml"
+                    && question.question.contains("identify one row")
+            ),
         "{:#?}",
         report.open_questions
     );
@@ -178,7 +221,11 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     let again = Folder::new("draft");
     let second = again.path().join("example");
     std::fs::create_dir_all(&second).unwrap();
-    std::fs::copy(super::fixtures().join("target.yaml"), second.join("target.yaml")).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        second.join("target.yaml"),
+    )
+    .unwrap();
     Drafter::new(set, &TargetRoot::new(&second))
         .draft(&[of("order_lines"), of("order_status_history")])
         .unwrap();

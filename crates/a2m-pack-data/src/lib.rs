@@ -92,7 +92,8 @@ impl Pack for DataPack {
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         let names = names::Names::new()?;
         let max_rows = u32::try_from(setting(cx, "max_rows", 1000)).unwrap_or(1000);
-        let result_bytes = u64::try_from(setting(cx, "result_bytes", 4_000_000)).unwrap_or(4_000_000);
+        let result_bytes =
+            u64::try_from(setting(cx, "result_bytes", 4_000_000)).unwrap_or(4_000_000);
         to.driver(
             names.mode.clone(),
             Arc::new(driver::SqlDriver::new(

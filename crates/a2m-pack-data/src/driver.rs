@@ -274,10 +274,15 @@ impl Session {
             Access::ReadWrite => &mut self.writer,
         };
         if let Some(conn) = slot.take() {
-            let back = on_store(conn, Deadline::after(Duration::from_secs(5)), false, |conn| {
-                conn.rollback();
-                conn.in_transaction()
-            })
+            let back = on_store(
+                conn,
+                Deadline::after(Duration::from_secs(5)),
+                false,
+                |conn| {
+                    conn.rollback();
+                    conn.in_transaction()
+                },
+            )
             .await;
             match back {
                 Some((conn, false)) => *slot = Some(conn),
@@ -338,10 +343,7 @@ impl Session {
     }
 
     async fn begin(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
-        let detail: StepDetail = step
-            .payload
-            .decode()
-            .map_err(StepFailure::not_sent)?;
+        let detail: StepDetail = step.payload.decode().map_err(StepFailure::not_sent)?;
         let (Some(access), Some(isolation)) = (detail.access, detail.isolation) else {
             return Err(StepFailure::not_sent(unexpected(
                 "A `begin` step states no access mode.",
@@ -372,10 +374,9 @@ impl Session {
                 None => {
                     let opener = Arc::clone(&self.opener);
                     let file = self.file.clone();
-                    let opened = tokio::task::spawn_blocking(move || {
-                        opener.open(&file, Access::ReadWrite)
-                    })
-                    .await;
+                    let opened =
+                        tokio::task::spawn_blocking(move || opener.open(&file, Access::ReadWrite))
+                            .await;
                     match opened {
                         Ok(Ok(conn)) => Some(conn),
                         Ok(Err(refusal)) => {
@@ -539,10 +540,7 @@ impl Session {
     }
 
     async fn expect_rows(&mut self, step: &Step) -> Result<Observed, StepFailure> {
-        let detail: StepDetail = step
-            .payload
-            .decode()
-            .map_err(StepFailure::not_sent)?;
+        let detail: StepDetail = step.payload.decode().map_err(StepFailure::not_sent)?;
         let (Some(expected), Some(changed)) =
             (detail.rows, self.ran.as_ref().map(|ran| ran.changed))
         else {
@@ -554,7 +552,11 @@ impl Session {
         };
         if changed == expected {
             self.counted = true;
-            self.note(step, vec![Detail::new("rows", expected.to_string())], Vec::new());
+            self.note(
+                step,
+                vec![Detail::new("rows", expected.to_string())],
+                Vec::new(),
+            );
             return Ok(Observed::default());
         }
         // Any other count rolls back, so nothing is committed.
@@ -598,10 +600,17 @@ impl Session {
         }
     }
 
-    fn record(statement: &Statement, columns: &[String], row: Vec<Cell>) -> Result<Values, Failure> {
+    fn record(
+        statement: &Statement,
+        columns: &[String],
+        row: Vec<Cell>,
+    ) -> Result<Values, Failure> {
         let mut values = Values::new();
         for (name, cell) in columns.iter().zip(row) {
-            let Some(column) = statement.columns.iter().find(|column| &column.column == name)
+            let Some(column) = statement
+                .columns
+                .iter()
+                .find(|column| &column.column == name)
             else {
                 return Err(drift(
                     "The statement returned a column that the target's record does not declare.",
@@ -620,7 +629,9 @@ impl Session {
         let (_, statement) = self.statement(step)?;
         let Some(ran) = self.ran.take() else {
             return Err(self
-                .not_sent(unexpected("Rows were to be fetched, and no statement had run."))
+                .not_sent(unexpected(
+                    "Rows were to be fetched, and no statement had run.",
+                ))
                 .await);
         };
         let rows = ran.rows.len();
@@ -676,9 +687,13 @@ impl Session {
                         }))
                     })
                 }
-                _ => Err(drift("The insert did not return the one key the store assigned.")),
+                _ => Err(drift(
+                    "The insert did not return the one key the store assigned.",
+                )),
             },
-            Returns::Nothing => Err(unexpected("A statement that returns no rows has nothing to fetch.")),
+            Returns::Nothing => Err(unexpected(
+                "A statement that returns no rows has nothing to fetch.",
+            )),
         };
         // A read is over once its rows are taken: the read-only transaction
         // ends here. A writing transaction stays open for `commit`.
@@ -704,7 +719,11 @@ impl Session {
         }
     }
 
-    async fn commit(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
+    async fn commit(
+        &mut self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<Observed, StepFailure> {
         if self.open != Some(Access::ReadWrite) || !self.counted {
             // Nothing is committed whose count of rows was not checked.
             return Err(self
@@ -755,7 +774,9 @@ impl Session {
     ) -> Result<Observed, StepFailure> {
         if self.open.is_some() {
             return Err(self
-                .not_sent(unexpected("The catalog is read outside any other transaction."))
+                .not_sent(unexpected(
+                    "The catalog is read outside any other transaction.",
+                ))
                 .await);
         }
         let Some(conn) = self.reader.take() else {
@@ -777,8 +798,8 @@ impl Session {
             return Err(StepFailure::not_sent(lost()));
         };
         self.give_back(Access::ReadOnly, conn);
-        let catalog = catalog
-            .map_err(|refusal| StepFailure::answered(refused(refusal, Access::ReadOnly)))?;
+        let catalog =
+            catalog.map_err(|refusal| StepFailure::answered(refused(refusal, Access::ReadOnly)))?;
         self.note(
             step,
             Vec::new(),
@@ -804,10 +825,7 @@ impl Driver for SqlDriver {
                     "The `sql` driver was given a surface that is not a `database`.",
                 )));
             }
-            let fields: SurfaceFields = surface
-                .payload
-                .decode()
-                .map_err(StepFailure::not_sent)?;
+            let fields: SurfaceFields = surface.payload.decode().map_err(StepFailure::not_sent)?;
             let Some(opener) = (self.openers)(&fields.store) else {
                 return Err(StepFailure::not_sent(unexpected(
                     "The surface names a store this build does not speak to.",
@@ -907,7 +925,10 @@ impl Driver for SqlDriver {
             if step.kind == BEGIN {
                 session.begin(step, input).await.map(done)
             } else if step.kind == EXECUTE {
-                session.execute(step, input, self.result_bytes).await.map(done)
+                session
+                    .execute(step, input, self.result_bytes)
+                    .await
+                    .map(done)
             } else if step.kind == EXPECT_ROWS {
                 session.expect_rows(step).await.map(done)
             } else if step.kind == FETCH {

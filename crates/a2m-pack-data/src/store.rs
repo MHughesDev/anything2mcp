@@ -258,7 +258,8 @@ pub(crate) trait Opener: Send + Sync {
 
 /// The stores this build speaks to, by name. Server stores are not built.
 pub(crate) fn opener(store: &str) -> Option<Arc<dyn Opener>> {
-    (store == crate::sqlite::Sqlite.store()).then(|| Arc::new(crate::sqlite::Sqlite) as Arc<dyn Opener>)
+    (store == crate::sqlite::Sqlite.store())
+        .then(|| Arc::new(crate::sqlite::Sqlite) as Arc<dyn Opener>)
 }
 
 /// The names of the stores this build speaks to.

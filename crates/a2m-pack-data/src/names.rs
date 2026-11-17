@@ -147,4 +147,3 @@ pub(crate) mod lint {
         READ_BACK_INVALID = "read_back_invalid";
     }
 }
-
