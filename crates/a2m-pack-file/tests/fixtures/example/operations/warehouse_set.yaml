@@ -1,0 +1,21 @@
+operation: example_warehouse_set
+title: Set the cutoff time of a warehouse
+effect: write
+key: code
+commit_points: 1
+inputs:
+  code: {type: identifier, description: "Warehouse code, such as W2"}
+  cutoff: {type: cutoff, description: "The cutoff time, such as 13:00"}
+outputs:
+  cutoff: {type: cutoff}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: settings
+    record: warehouse
+    key: {code: input.code}
+    fields: {cutoff: input.cutoff}
+    read_back: {record: warehouse}
+description: >
+  Sets the cutoff time of one warehouse in the settings file.

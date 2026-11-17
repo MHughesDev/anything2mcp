@@ -1,0 +1,7 @@
+types:
+  item_name:
+    base: text
+    untrusted: true
+  location_code:
+    base: choice
+    codes: {A01: "Aisle A, bin 1", A02: "Aisle A, bin 2", B01: "Aisle B, bin 1"}

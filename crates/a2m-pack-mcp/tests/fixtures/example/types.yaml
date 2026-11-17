@@ -1,0 +1,8 @@
+types:
+  order_status:
+    base: choice
+    codes: {draft: "Draft", submitted: "Submitted", archived: "Archived"}
+  free_text:
+    base: text
+    untrusted: true
+    sensitivity: internal

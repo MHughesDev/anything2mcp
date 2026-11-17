@@ -1,0 +1,16 @@
+operation: example_duplicate_get
+title: Get the stock of an item from a file with a repeated key
+effect: read
+key: item_code
+inputs:
+  item_code: {type: identifier, description: "Item code"}
+outputs:
+  on_hand: {type: integer}
+bindings:
+  - mode: file
+    verb: read
+    document: duplicates
+    record: stock
+    key: {item_code: input.item_code}
+description: >
+  Reads one item from a stock file in which one key appears twice.

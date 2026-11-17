@@ -1,0 +1,19 @@
+operation: example_order_note_update
+title: Change the note of an order
+effect: write
+key: order_id
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number, such as A-100"}
+  note: {type: free_text, description: "The new note"}
+outputs:
+  note: {type: free_text}
+bindings:
+  - mode: mcp
+    verb: update
+    status: shadow
+    tool: orders_update
+    args: {order_id: input.order_id, field: "'note'", value: input.note}
+    read_back: {}
+description: >
+  Changes the note of one draft order and reads it back.

@@ -1,0 +1,574 @@
+//! What the tests share: a registry that holds only the HTTP pack, the
+//! fixture targets compiled through it, a prepared driver reached through
+//! its handle, a real store for real intent tokens, and a real session
+//! keeper for a real lease.
+
+#![allow(
+    dead_code,
+    reason = "each test binary uses some of these helpers and not others"
+)]
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use a2m_auth::{
+    AskPerson, AuthEntry, CredentialRef, InProcessWork, Keeper, KeeperWorker, LeaseRequest,
+    PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose, RunProbe, SessionKey,
+    SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
+};
+use a2m_core::{
+    AccountName, ApprovalId, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch,
+    Failure, Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact,
+    RunId, RunState, Secret, Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
+};
+use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
+use a2m_ledger::{
+    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+};
+use a2m_provider::{
+    Authority, BoxFuture, Capture, CheckedPaths, Deadline, Destinations, DriverHandle,
+    HostServices, Posture, PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder,
+    Roots, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
+};
+use a2m_telemetry::{ManualClock, TelemetrySettings};
+use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
+
+/// A folder under the system's temporary folder, removed when dropped.
+pub struct Folder(PathBuf);
+
+impl Folder {
+    pub fn new(name: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "a2m-pack-http-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A registry that holds only the HTTP pack.
+pub fn registry(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
+    let logs = folder.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let host = HostServices {
+        supervisor: Supervisor::new(SupervisorLimits::default()),
+        roots: Roots::none(),
+        redact: Arc::clone(&redact),
+        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+    };
+    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    a2m_pack_http::add_to(&mut builder);
+    let (registry, problems) = builder.build();
+    assert!(problems.is_empty(), "{problems:?}");
+    registry
+}
+
+/// The folder of one of this crate's fixture targets.
+pub fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(name)
+}
+
+/// Compiles a fixture target as it is on disk.
+pub fn compile(registry: &Registry, name: &str) -> Compiled {
+    let set = registry.compiler_set();
+    let sources = a2m_files::load(&TargetRoot::new(fixture(name)), set)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
+}
+
+/// Every file of a fixture target, with `change` applied to the text of
+/// the one at `path`; a file that is not there is added.
+pub fn compile_changed(
+    registry: &Registry,
+    name: &str,
+    path: &str,
+    change: impl Fn(&str) -> String,
+) -> Result<Compiled, Diagnostics> {
+    fn walk(root: &Path, folder: &Path, out: &mut Vec<(RelPath, Vec<u8>)>) {
+        let mut entries: Vec<_> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            if entry.is_dir() {
+                walk(root, &entry, out);
+            } else {
+                let relative: Vec<String> = entry
+                    .strip_prefix(root)
+                    .unwrap()
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                out.push((
+                    RelPath::new(&relative.join("/")).unwrap(),
+                    std::fs::read(&entry).unwrap(),
+                ));
+            }
+        }
+    }
+    let root = fixture(name);
+    let mut files = Vec::new();
+    walk(&root, &root, &mut files);
+    match files.iter_mut().find(|(known, _)| known.as_str() == path) {
+        Some((_, bytes)) => {
+            *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+        }
+        None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
+    }
+    let set = registry.compiler_set();
+    let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
+    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+}
+
+pub fn shown(problems: &Diagnostics) -> String {
+    problems
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn http_mode() -> Mode {
+    Mode::new("http").unwrap()
+}
+
+/// What a list of steps gave when none of them failed.
+#[derive(Debug, Default)]
+pub struct Ran {
+    pub values: Values,
+    pub absent: bool,
+    pub captures: Vec<Capture>,
+}
+
+impl Ran {
+    pub fn capture(&self, name: &str) -> String {
+        let capture = self
+            .captures
+            .iter()
+            .find(|capture| capture.name == name)
+            .unwrap_or_else(|| panic!("no capture named `{name}`"));
+        String::from_utf8(capture.bytes.clone()).unwrap()
+    }
+}
+
+/// One compiled fixture target, with its surface at the address of the
+/// system a test started.
+pub struct Scene {
+    pub folder: Folder,
+    pub registry: Registry,
+    pub plan: Plan,
+    pub surface: SurfaceRef,
+    pub destinations: Destinations,
+}
+
+impl Scene {
+    pub fn new(fixture_name: &str, address: &str) -> Self {
+        Self::with_redactor(fixture_name, address, Arc::new(NoSecrets))
+    }
+
+    pub fn with_redactor(fixture_name: &str, address: &str, redact: Arc<dyn Redact>) -> Self {
+        let folder = Folder::new(fixture_name);
+        let registry = registry(&folder, redact);
+        let plan = compile(&registry, fixture_name).plan;
+        Self::over(folder, registry, plan, address)
+    }
+
+    pub fn over(folder: Folder, registry: Registry, plan: Plan, address: &str) -> Self {
+        let mut surface = plan.surfaces[0].clone();
+        surface.address = address.to_owned();
+        Self {
+            surface: SurfaceRef {
+                target: plan.header.target.clone(),
+                environment: Environment::new("test").unwrap(),
+                surface,
+            },
+            destinations: Destinations::new([address.to_owned()]),
+            folder,
+            registry,
+            plan,
+        }
+    }
+
+    pub fn handle(&self) -> DriverHandle {
+        self.registry.driver(&http_mode()).unwrap()
+    }
+
+    pub async fn try_prepare(
+        &self,
+        lease: Option<&SessionLease>,
+        fence: Option<Fence>,
+        posture: Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle();
+        let fence = fence.unwrap_or(Fence {
+            run: RunId::from_bytes([7; 16]),
+            epoch: Epoch::new(1),
+        });
+        let supervisor = handle.supervisor(Vec::new());
+        let cx = PrepareContext {
+            run: fence.run,
+            epoch: fence.epoch,
+            surface: &self.surface,
+            plan: &self.plan,
+            posture,
+            deadline: Deadline::after(Duration::from_secs(30)),
+            redact: &NoSecrets,
+            destinations: &self.destinations,
+            paths: &CheckedPaths::none(),
+            supervisor: &supervisor,
+        };
+        let prepared = handle.prepare(&cx, lease).await?;
+        Ok((handle, prepared))
+    }
+
+    /// A driver prepared for reading, with no session.
+    pub async fn reader(&self) -> (DriverHandle, Prepared) {
+        self.try_prepare(None, None, Posture::Live).await.unwrap()
+    }
+
+    /// The first `http` binding of an operation.
+    pub fn binding(&self, operation: &str) -> &BindingPlan {
+        self.plan
+            .operations
+            .iter()
+            .find(|known| known.name.as_str() == operation)
+            .unwrap_or_else(|| panic!("no operation named `{operation}`"))
+            .bindings
+            .iter()
+            .find(|binding| binding.mode == http_mode())
+            .unwrap()
+    }
+
+    /// The arguments of a step, as the engine would evaluate them. Every
+    /// expression of the fixtures is `input.<name>`.
+    pub fn args(&self, step: &Step, inputs: &Values) -> Values {
+        let mut args = Values::new();
+        for arg in &step.args {
+            let source = &self.plan.expression(arg.value).unwrap().source;
+            let name = source
+                .strip_prefix("input.")
+                .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));
+            if let Some(value) = inputs.get(name) {
+                args.insert(arg.name.clone(), value.clone());
+            }
+        }
+        args
+    }
+
+    /// Carries out a list of steps in order through the handle, as the
+    /// engine would: it stops at the first failure and at the first step
+    /// that finds its record absent.
+    pub async fn run(
+        &self,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        steps: &[Step],
+        inputs: &Values,
+        write: Option<(&IntentToken, RecordRef, &RecordKey)>,
+        within: Duration,
+    ) -> Result<Ran, StepFailure> {
+        let mut ran = Ran::default();
+        for step in steps {
+            let args = self.args(step, inputs);
+            let input = StepInput {
+                args: &args,
+                record: write.map(|(_, record, _)| record),
+                key: write.map(|(_, _, key)| key),
+                stamp: None,
+                deadline: Deadline::after(within),
+            };
+            let authority = match write {
+                Some((token, _, _)) if step.commits => Authority::Write(token),
+                _ => Authority::Read,
+            };
+            let outcome = handle.act(prepared, step, &input, authority).await?;
+            let (observed, absent) = match outcome {
+                StepOutcome::Done(observed) => (observed, false),
+                StepOutcome::Absent(observed) => (observed, true),
+            };
+            for (name, value) in observed.values {
+                ran.values.insert(name, value);
+            }
+            ran.captures.extend(observed.captures);
+            if absent {
+                ran.absent = true;
+                break;
+            }
+        }
+        Ok(ran)
+    }
+
+    /// Reads through the `act` steps of a read operation.
+    pub async fn read(
+        &self,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        operation: &str,
+        inputs: &Values,
+    ) -> Result<Ran, StepFailure> {
+        let steps = &self.binding(operation).act;
+        self.run(handle, prepared, steps, inputs, None, Duration::from_secs(30))
+            .await
+    }
+}
+
+// ---- a real store, for real intent tokens ----
+
+struct Counted(AtomicU64);
+
+impl RandomSource for Counted {
+    fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
+        for chunk in out.chunks_mut(Digest::LENGTH) {
+            let number = self.0.fetch_add(1, Ordering::SeqCst);
+            let block = Digest::of(&number.to_le_bytes());
+            chunk.copy_from_slice(&block.as_bytes()[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
+fn counted() -> Arc<Counted> {
+    Arc::new(Counted(AtomicU64::new(0)))
+}
+
+fn clock() -> Arc<ManualClock> {
+    Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
+        1_800_000_000_000,
+    )))
+}
+
+pub async fn store() -> (Store, Arc<Vault>) {
+    let config = StoreConfig::in_memory()
+        .with_clock(clock())
+        .with_random(counted());
+    let store = Store::open(config).await.unwrap();
+    let vault = Arc::new(Vault::with_random(
+        Arc::new(MemoryKeyStore::with_random(counted())),
+        Arc::new(store.key_records()),
+        counted(),
+    ));
+    store.attach(Arc::clone(&vault)).await.unwrap();
+    (store, vault)
+}
+
+pub fn key(parts: &[&str]) -> RecordKey {
+    RecordKey::new(parts.iter().map(|part| Value::from(*part)).collect()).unwrap()
+}
+
+fn intended(key: &RecordKey) -> Digest {
+    Digest::of(&key.canonical_bytes())
+}
+
+/// A write run with the records planned, approved, and running.
+pub async fn running(store: &Store, keys: &[RecordKey]) -> Fence {
+    let keys = keys.to_vec();
+    let workspace = WorkspaceId::from_bytes([1; 16]);
+    store
+        .write(Durability::Synced, move |tx| {
+            let diff = Digest::of(b"diff");
+            let fence = {
+                let mut ledger = tx.ledger();
+                let Opened::New(opened) = ledger.open_run(NewRun {
+                    workspace,
+                    principal: PrincipalId::from_bytes([1; 16]),
+                    client_label: "test".to_owned(),
+                    tool_name: OperationName::new("example_line_item_upsert").unwrap(),
+                    tool_kind: ToolKind::Operation,
+                    target: TargetName::new("example").unwrap(),
+                    target_version: Digest::of(b"plan"),
+                    environment: Environment::new("test").unwrap(),
+                    identity: None,
+                    effect: EffectClass::Write,
+                    input_hash: Digest::of(&keys[0].canonical_bytes()),
+                    input: None,
+                    retention: RetentionClass::Long,
+                })?
+                else {
+                    panic!("the run exists already");
+                };
+                let fence = ledger.new_epoch(opened.run)?;
+                ledger.set_state(&fence, RunState::Validating, None)?;
+                let records: Vec<_> = keys
+                    .iter()
+                    .enumerate()
+                    .map(|(at, key)| PlannedRecord {
+                        step_seq: 0,
+                        record_seq: u32::try_from(at).unwrap(),
+                        key: key.clone(),
+                        operation: OperationName::new("example_line_item_upsert").unwrap(),
+                        intended: intended(key),
+                        intended_values: None,
+                        before: None,
+                        unchanged: false,
+                    })
+                    .collect();
+                ledger.plan_records(&fence, &records)?;
+                ledger.store_diff(&fence, diff, None)?;
+                ledger.set_state(&fence, RunState::NeedsApproval, None)?;
+                fence
+            };
+            // The policy engine's stand-in: an approval, used once.
+            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
+            let now = tx.now();
+            tx.tables(Owner::Policy).execute(
+                "INSERT INTO approvals
+                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
+                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
+                &[
+                    approval.to_string().into(),
+                    workspace.to_string().into(),
+                    fence.run.to_string().into(),
+                    diff.to_string().into(),
+                    PrincipalId::from_bytes([9; 16]).to_string().into(),
+                    now.into(),
+                ],
+            )?;
+            tx.ledger()
+                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            Ok(fence)
+        })
+        .await
+        .unwrap()
+}
+
+pub fn record(fence: &Fence, record_seq: u32) -> RecordRef {
+    RecordRef {
+        run: fence.run,
+        step_seq: 0,
+        record_seq,
+    }
+}
+
+/// The ledger's intent token for one planned record: the lock is taken and
+/// the intent is stored, as the engine does before a write is sent.
+pub async fn token(store: &Store, fence: Fence, record_seq: u32, key: &RecordKey) -> IntentToken {
+    store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger()
+                .take_lock(&fence, record(&fence, record_seq))
+                .map(|_| ())
+        })
+        .await
+        .unwrap();
+    let intents = vec![RecordIntent {
+        record: record(&fence, record_seq),
+        intended: intended(key),
+        mode: None,
+    }];
+    store
+        .store_intents(&fence, intents)
+        .await
+        .unwrap()
+        .remove(0)
+}
+
+// ---- a real keeper, for a real lease ----
+
+struct NoPerson;
+
+impl AskPerson for NoPerson {
+    fn ask<'a>(&'a self, _session: &'a SessionRef, _ask: PersonAsk) -> BoxFuture<'a, PersonAnswer> {
+        Box::pin(async { PersonAnswer::NoAnswer })
+    }
+}
+
+struct SignedInProbe;
+
+impl RunProbe for SignedInProbe {
+    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+        Box::pin(async { ProbeOutcome::SignedIn })
+    }
+}
+
+/// A session keeper over memory, holding one stored credential.
+pub struct Signed {
+    pub vault: Arc<Vault>,
+    pub keeper: Keeper,
+    key: SessionKey,
+    entry: Arc<AuthEntry>,
+}
+
+impl Signed {
+    /// A keeper whose one session signs in with `provider`, the settings
+    /// given, and one stored credential under `role`.
+    pub async fn new(provider: &str, settings: &[(&str, &str)], role: &str, secret: &str) -> Self {
+        let (ledger, vault) = store().await;
+        let clock = clock();
+        let sessions = SessionStore::new(ledger);
+        let credentials = StoredCredentials::new(sessions.clone(), Arc::clone(&vault));
+        let providers = ProviderSet::neutral();
+        let worker = Arc::new(KeeperWorker::new(
+            providers.clone(),
+            Arc::clone(&vault),
+            Arc::new(credentials.clone()),
+            clock.clone(),
+        ));
+        let work = Arc::new(InProcessWork::new(
+            Arc::clone(&worker),
+            Arc::new(NoPerson),
+            Arc::new(SignedInProbe),
+        ));
+        let keeper = Keeper::builder(sessions, providers, work, clock)
+            .local_worker(worker)
+            .build();
+        let key = SessionKey {
+            workspace: WorkspaceId::from_bytes([7; 16]),
+            target: TargetName::new("example").unwrap(),
+            environment: Environment::new("test").unwrap(),
+            identity: Identity::Account(AccountName::new("service").unwrap()),
+        };
+        let reference = CredentialRef::new(&format!("vault://example/service/{role}")).unwrap();
+        credentials
+            .put(&key.workspace, &key.identity, &reference, &Secret::new(secret))
+            .await
+            .unwrap();
+        let mut entry = AuthEntry::new(a2m_auth::ProviderName::new(provider).unwrap());
+        for (name, value) in settings {
+            entry = entry.setting(name, value);
+        }
+        Self {
+            vault,
+            keeper,
+            key,
+            entry: Arc::new(entry.credential(role, reference)),
+        }
+    }
+
+    pub async fn lease(&self) -> SessionLease {
+        self.keeper
+            .lease(LeaseRequest {
+                key: self.key.clone(),
+                entry: Arc::clone(&self.entry),
+                run: RunId::from_bytes([3; 16]),
+                decided: DecisionId::from_bytes([4; 16]),
+                acting_for: None,
+                wait: Wait::DEFAULT,
+                headroom: None,
+                purpose: Purpose::Run,
+            })
+            .await
+            .unwrap()
+    }
+}

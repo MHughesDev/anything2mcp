@@ -1,0 +1,149 @@
+# The command pack's manifest: everything it may register and do.
+# Spec section 306 is the design; `docs/architecture/crates/a2m-pack-command.md`
+# says how the crate carries it out.
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "command"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+[[modes]]
+name = "cli"
+archetype = "command"
+verbs = ["read", "list", "search", "create", "update", "delete", "call"]
+steps = ["spawn", "expect", "parse"]
+rank = 60
+exclusive = "surface"
+
+[[surface_kinds]]
+name = "program"
+archetype = "command"
+
+[points]
+driver = ["cli"]
+discoverer = ["help"]
+
+[[discoverers]]
+name = "help"
+archetype = "command"
+surface_kinds = ["program"]
+kinds = ["command"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 1048576, depth = 2 }
+
+[[file_kinds]]
+name = "command"
+directory = "commands/"
+surface_kinds = ["program"]
+
+[[finding_kinds]]
+name = "command"
+surface_kinds = ["program"]
+
+[[lint_rules]]
+code = "command.shell_program"
+level = "error"
+summary = "A program surface is never a shell or an interpreter."
+
+[[lint_rules]]
+code = "command.write_exit_declared"
+level = "warning"
+summary = "A write command declares the exit statuses that mean nothing changed."
+
+[[drafting_rules]]
+finding_kind = "command"
+file_kind = "command"
+
+[[failure_codes]]
+class = "drift"
+code = "program_missing"
+
+[[failure_codes]]
+class = "drift"
+code = "program_digest_changed"
+
+[[failure_codes]]
+class = "drift"
+code = "program_version_unsupported"
+
+[[failure_codes]]
+class = "drift"
+code = "output_unparsed"
+
+[[failure_codes]]
+class = "policy"
+code = "program_path_unsafe"
+
+[[failure_codes]]
+class = "policy"
+code = "limit_exceeded"
+
+[[failure_codes]]
+class = "input"
+code = "argument_unsafe"
+
+[[failure_codes]]
+class = "input"
+code = "schema_invalid"
+
+[[failure_codes]]
+class = "rejected"
+code = "app_validation_error"
+
+[[failure_codes]]
+class = "stale"
+code = "version_conflict"
+
+[[failure_codes]]
+class = "stale"
+code = "record_absent"
+
+[[failure_codes]]
+class = "busy"
+code = "program_busy"
+
+[[failure_codes]]
+class = "transient"
+code = "upstream_unavailable"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_exit_status"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_prompt"
+
+[[failure_codes]]
+class = "possible_commit"
+code = "ambiguous_match"
+
+[effects]
+# The pack starts no program of its own: only those a published plan
+# declares for a `program` surface, by path and digest.
+plan_programs = true
+# One fresh folder for each run is made under this root and removed after.
+write_roots = ["command_runs"]
+network = "none"
+
+[[settings]]
+key = "max_timeout_ms"
+type = "int"
+default = 600000
+min = 1
+max = 3600000
+safer = "lower"
+doc = "The longest one start of a program may run, whatever a target's files state."
+
+[[settings]]
+key = "max_output_bytes"
+type = "int"
+default = 16777216
+min = 1
+max = 1073741824
+safer = "lower"
+doc = "The most bytes kept of each output stream, whatever a target's files state."

@@ -1,0 +1,21 @@
+operation: example_price_set
+title: Set the unit price of an item
+effect: write
+key: item_code
+commit_points: 1
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1002"}
+  unit_price: {type: rate, description: "The unit price"}
+outputs:
+  unit_price: {type: rate}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: price_list
+    record: price
+    key: {item_code: input.item_code}
+    fields: {unit_price: input.unit_price}
+    read_back: {record: price}
+description: >
+  Sets the unit price of one item in the delimited price list.

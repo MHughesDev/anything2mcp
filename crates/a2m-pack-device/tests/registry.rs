@@ -1,0 +1,95 @@
+//! A registry that holds only the device pack builds, and what the pack
+//! declares is what it registers.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
+mod common;
+
+use a2m_core::{Archetype, Availability, FailureClass, Mode, SurfaceKind, Values};
+use a2m_provider::{Exclusive, Manifest, SurfaceDescription};
+use common::{Folder, registry};
+
+#[test]
+fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
+    let folder = Folder::new("registry");
+    let first = registry(&folder);
+    let second = registry(&folder);
+    assert_eq!(first.digest(), second.digest());
+
+    let mode = Mode::new("device").unwrap();
+    assert_eq!(first.archetype(&mode), Some(Archetype::Device));
+    let defaults = first.mode_defaults(&mode).unwrap();
+    // One request at a time, and one run at a time on one link.
+    assert_eq!(
+        (
+            defaults.session_reads,
+            defaults.session_writes,
+            defaults.intent_window,
+            defaults.exclusive
+        ),
+        (1, 1, 1, Exclusive::Link)
+    );
+    assert_eq!(
+        first.driver(&mode).unwrap().choice().provider.as_str(),
+        "device"
+    );
+
+    let kind = SurfaceKind::new("device_link").unwrap();
+    assert!(first.surface_kind(&kind).unwrap().session);
+    let set = first.compiler_set();
+    assert_eq!(set.modes(), vec![&mode]);
+    let verbs: Vec<&str> = set.verbs(&mode).iter().map(|verb| verb.as_str()).collect();
+    assert_eq!(verbs, ["read", "submit", "update"]);
+    assert_eq!(set.file_kinds().count(), 1);
+    assert_eq!(set.drafting_rules().count(), 1);
+    let codes: Vec<String> = set.lint_codes().into_iter().map(|(code, _)| code).collect();
+    for rule in [
+        "device.writable_without_hazard",
+        "device.writable_without_range",
+        "device.command_hazard_none",
+    ] {
+        assert!(codes.iter().any(|code| code == rule), "{rule}");
+    }
+
+    let surface = SurfaceDescription {
+        kind,
+        archetype: Archetype::Device,
+        address: "127.0.0.1:502".to_owned(),
+        facts: Values::new(),
+    };
+    let discoverers = first.discoverers_for(&surface);
+    assert_eq!(discoverers.len(), 1);
+    assert_eq!(
+        discoverers[0].declared().max_level,
+        a2m_core::EvidenceLevel::Discovered
+    );
+    let listing = first.listing();
+    assert_eq!(listing.len(), 1);
+    assert_eq!(listing[0].availability, Availability::Ready);
+    assert!(listing[0].registered);
+}
+
+#[test]
+fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
+    let manifest = Manifest::parse(a2m_pack_device::MANIFEST).unwrap();
+    let declared: Vec<(FailureClass, &str)> = manifest
+        .failure_codes
+        .iter()
+        .map(|code| (code.class, code.code.as_str()))
+        .collect();
+    let mut own: Vec<(FailureClass, &str)> = a2m_pack_device::codes::ALL.to_vec();
+    let mut listed = declared.clone();
+    own.sort_by_key(|(_, code)| *code);
+    listed.sort_by_key(|(_, code)| *code);
+    assert_eq!(own, listed);
+    // The pack reaches a network and hardware, holds a session for its
+    // links, and starts no program.
+    assert!(manifest.effects.devices);
+    assert!(manifest.effects.processes.is_empty());
+    assert!(!manifest.effects.plan_programs);
+    assert_eq!(manifest.effects.sessions.len(), 1);
+}

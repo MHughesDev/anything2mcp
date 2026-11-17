@@ -1,0 +1,12 @@
+operation: example_order_report
+title: Count orders by status
+effect: read
+inputs: {}
+outputs:
+  draft: {type: integer}
+bindings:
+  - mode: mcp
+    status: draft
+    tool: orders_report
+description: >
+  Counts the orders by status.

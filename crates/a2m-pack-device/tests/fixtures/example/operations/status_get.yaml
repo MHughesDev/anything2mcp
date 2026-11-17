@@ -1,0 +1,17 @@
+operation: example_status_get
+title: Get the controller's status
+effect: read
+inputs: {}
+outputs:
+  temperature: {type: temperature_c}
+  uptime: {type: integer}
+  model: {type: device_text}
+  batch: {type: integer}
+bindings:
+  - mode: device
+    verb: read
+    status: verified
+    device_map: controller.main
+    read: {temperature: temperature, uptime: uptime_ticks, model: model_text, batch: batch_target}
+description: >
+  Reads the temperature, the uptime, the model text, and the batch target.

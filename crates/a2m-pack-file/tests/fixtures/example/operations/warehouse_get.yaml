@@ -1,0 +1,16 @@
+operation: example_warehouse_get
+title: Get a warehouse
+effect: read
+key: code
+inputs:
+  code: {type: identifier, description: "Warehouse code, such as W2"}
+outputs:
+  cutoff: {type: cutoff}
+bindings:
+  - mode: file
+    verb: read
+    document: settings
+    record: warehouse
+    key: {code: input.code}
+description: >
+  Reads the cutoff time of one warehouse from the settings file.

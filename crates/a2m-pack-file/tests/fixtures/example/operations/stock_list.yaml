@@ -1,0 +1,14 @@
+operation: example_stock_list
+title: List the stock
+effect: read
+inputs: {}
+outputs:
+  on_hand: {type: integer, list: true}
+bindings:
+  - mode: file
+    verb: list
+    document: stock
+    record: stock
+    limit: 3
+description: >
+  Lists the first items of the stock file with their quantities on hand.

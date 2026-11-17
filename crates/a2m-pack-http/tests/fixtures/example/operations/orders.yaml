@@ -1,0 +1,63 @@
+operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  status: {type: identifier}
+  customer: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_get
+description: >
+  Reads the status and the customer of one order.
+---
+operation: example_order_list
+title: List the orders
+effect: read
+inputs: {}
+outputs:
+  order_ids: {type: identifier, list: true}
+bindings:
+  - mode: http
+    verb: list
+    status: verified
+    endpoint: order_list
+    extract: {order_ids: "*.order_id"}
+description: >
+  Lists the number of every order.
+---
+operation: example_order_totals_get
+title: Get an order's totals
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  total_quantity: {type: integer}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_totals
+description: >
+  Reads the totals of one order. The system computes them slowly.
+---
+operation: example_stock_get
+title: Get the stock of an item
+effect: read
+key: item_code
+inputs:
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+outputs:
+  in_stock: {type: integer}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: stock_get
+description: >
+  Reads how many of one item are in stock.

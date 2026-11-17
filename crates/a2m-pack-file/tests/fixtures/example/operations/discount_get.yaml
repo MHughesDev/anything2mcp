@@ -1,0 +1,13 @@
+operation: example_discount_get
+title: Get the standard discount
+effect: read
+inputs: {}
+outputs:
+  value: {type: rate}
+bindings:
+  - mode: file
+    verb: read
+    document: prices
+    record: discount
+description: >
+  Reads the standard discount from its named cell in the price workbook.

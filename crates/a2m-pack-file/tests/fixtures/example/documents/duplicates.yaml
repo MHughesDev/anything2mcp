@@ -1,0 +1,10 @@
+surface: price_files
+file: stock-duplicate-key.csv
+format: delimited
+records:
+  stock:
+    rows: all
+    key: [item_code]
+    fields:
+      item_code: {header: item_code, type: identifier}
+      on_hand: {header: on_hand, type: integer}

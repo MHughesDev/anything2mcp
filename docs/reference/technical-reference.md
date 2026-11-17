@@ -85,7 +85,15 @@ These complete the crate ([decision 0068](../decisions/0068-values-names-and-ide
 
 ## Driver interface
 
-The driver interface, the manifest, the registry, the supervisor, and the plug-in protocol are designed in [`a2m-provider`](../architecture/crates/a2m-provider.md), and that design is the reference until slice 1.1 builds the interface and settles it by decision record. In brief:
+The driver interface, the manifest, the registry, and the supervisor are built in `a2m-provider`. The [crate's design](../architecture/crates/a2m-provider.md) gives the interface in full, and decisions [0088](../decisions/0088-the-provider-contracts-outside-crates.md), [0089](../decisions/0089-the-provider-contract-as-building-it-settled-it.md), and [0090](../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) record how building it settled it. The main types:
+
+- **`Driver`** is what a pack implements for its modes, with the four calls below.
+- **`DriverHandle`** is the only way the engine reaches a driver. The registry gives one for a mode, and it checks every step on the way in and every outcome on the way out.
+- **`Authority`** is what a step is run under: the right to read, or the intent token for one write.
+- **`StepInput`** is what one step is given, with its values already evaluated. **`StepOutcome`** is how a step ended when it did not fail.
+- **`StepFailure`** is a failure together with **`Sent`**, which says whether the request was not sent, was answered, or is unknown.
+
+The plug-in host and the framed link are not built yet.
 
 | Call | Does |
 | --- | --- |
@@ -162,6 +170,56 @@ The design of [`a2m-telemetry`](../architecture/crates/a2m-telemetry.md) gives t
 - **`Telemetry`**, made by `start` from **`TelemetrySettings`**, is the handle for spans, metrics, and the engine's own logs.
 - **`Clock`** is how time is given, so that a test can fix it.
 
+## Compiler registration points
+
+The design of [`a2m-files`](../architecture/crates/a2m-files.md) gives the interface in full ([decision 0079](../decisions/0079-the-compilers-registration-points-and-the-file-formats-as-the-code-settles-them.md)). The main types:
+
+- **`CompilerSetBuilder`** takes what each pack registers, under the pack's own name, and ends as a **`CompilerSet`**, which `compile` and `lint_one` are given.
+- **`FileKind`**, **`Lowering`**, **`LintRule`**, and **`DraftingRule`** are the four traits a pack implements. A surface kind, as a **`SurfaceKindSpec`**, and a control name are registered as data.
+- **`Compiled`** is a plan with its encoded bytes and its hash. **`Diagnostics`** is every problem found, each a **`Diagnostic`** with its place and a fix.
+
+## Store interface
+
+The design of [`a2m-ledger`](../architecture/crates/a2m-ledger.md) gives the interface in full (decisions [0080](../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md) and [0081](../decisions/0081-what-the-ledger-holds-as-data-the-token-doubt-locks-and-rule-three.md)). The main types:
+
+- **`Store`**, opened from a **`StoreConfig`**, owns the database, the migrations, and the blobs. Its `write` and `read` each run one closure as one transaction on the store's own thread, and hand the closure a **`Tx`**.
+- **`Ledger`**, **`Findings`**, **`Versions`**, and **`Audit`** are the ledger's own tables inside a transaction. **`Blobs`** keeps evidence, sealed.
+- **`Tables`**, from `tx.tables` with an **`Owner`**, is how a crate above reaches its own tables and no others.
+- **`Fence`** names a run and its lease number. **`IntentToken`** is what the store gives for a stored intent, and what a step that commits must carry.
+
+## Policy interface
+
+The design of [`a2m-policy`](../architecture/crates/a2m-policy.md) gives the interface in full ([decision 0083](../decisions/0083-the-policy-engines-interface-as-building-it-settled-it.md)). The main types:
+
+- **`Policy`** answers a **`Request`** with a recorded **`Decision`**, through `decide`. It also compiles **`PolicyLayers`** into a **`CandidateSet`**, tests it, and publishes it.
+- **`ApprovalSurface`** is the one handle that can record a person's approval or decline, as an **`Approved`** or a **`Declined`**. It is not an action.
+- **`KillSwitch`** stops a scope, and **`LimitCheck`** counts a call against a quota.
+
+## Session keeper interface
+
+The design of [`a2m-auth`](../architecture/crates/a2m-auth.md) gives the interface in full ([decision 0085](../decisions/0085-the-session-keepers-interface-as-building-it-settled-it.md)). The auth providers are in the section above. The main types:
+
+- **`Keeper`** answers a **`LeaseRequest`** with a **`SessionLease`**, takes a driver's report of an **`ExpirySign`**, signs in, gives a session's status, and revokes. Nothing else calls an **`AuthProvider`**.
+- **`ProviderSet`** holds the providers handed to the keeper, by name.
+- **`KeeperWork`** is how a probe, a renewal, or a sign-in runs on a session's home runner. **`InProcessWork`** is the same for one process.
+- **`CredentialSink`** is what `inject` places credentials into. No method of it returns a value.
+
+## Source reader interface
+
+The design of [`a2m-sources`](../architecture/crates/a2m-sources.md) gives the interface in full ([decision 0087](../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md)). The main types:
+
+- **`SourceReader`** is the contract of a reader, with three calls: `name`; `check`, which refuses content that is not the reader's format; and `parse`, which gives the whole input as a **`Parsed`**. A reader is given a **`SourceInput`**, which is bytes and never a path.
+- **`Sources`** holds the registered readers. `CsvReader`, `JsonReader`, and `XlsxReader` are built in.
+- **`LoadedSource`** is a source definition loaded from a plan. With it, `Sources` turns an input into **`ValidatedRecords`**, or refuses it as a **`Rejected`** that lists every **`Problem`**.
+
+## Scheduler interface
+
+The design of [`a2m-sched`](../architecture/crates/a2m-sched.md) gives the interface in full ([decision 0093](../decisions/0093-the-schedulers-interface-as-building-it-settled-it.md)). The main types:
+
+- **`Scheduler`** admits a **`Submission`** and queues its job, hands a runner a **`JobLease`**, grants exclusive resources by **`ResourceKey`** and rate budgets by **`BudgetKey`**, and keeps holds by **`HoldScope`**.
+- **`LockTicket`** is taken before the ledger is asked for a record lock, so that a wait cannot miss a release.
+- **`SchedSettings`** holds the limits and their defaults. Nothing in the crate sleeps: `sweep` ends every wait whose moment has come.
+
 ## Data model
 
 The same schema runs on SQLite and Postgres. Column-level definitions for the run, ledger, scheduling, and evidence tables are in the [ledger schema](ledger-schema.md).
@@ -202,22 +260,22 @@ Delivery is at-least-once. A job whose lease ends without a result is treated as
 
 ## Failure codes
 
-Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them.
+Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them. The codes of `a2m-ledger` are listed in [its design](../architecture/crates/a2m-ledger.md).
 
 | Class | Example codes |
 | --- | --- |
-| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled` |
-| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch` |
-| `session_expired` | `needs_login`, `needs_mfa`, `device_required` |
+| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled`, `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture` |
+| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch`, `draft_conflict`, `registration_conflict`, `target_unreadable`, `formula_without_value`, `source_too_large`, `source_malformed`, `source_encoding_unsupported`, `source_protected`, `source_reader_unknown`, `source_definition_invalid`, `key_not_unique`, `auth_provider_unknown`, `auth_provider_duplicate`, `auth_settings_invalid`, `credential_missing`, `tls_not_enabled`, `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `file_unavailable`, `provider_ambiguous`, `mode_unknown`, `not_registered`, `kind_owner_missing`, `kind_owner_conflict`, `provider_duplicate`, `pack_settings_invalid`, `program_not_found` |
+| `session_expired` | `needs_login`, `needs_mfa`, `device_required`, `headroom_short`, `lease_stale`, `credential_refused` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
 | `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed` |
 
 ## Command line
 
@@ -281,7 +339,7 @@ Inside the data directory: `store/` for the database, `blobs/` for evidence, `pr
 
 ## Plug-in protocol
 
-A plug-in is a separate process that exchanges messages over standard input and output, started and stopped only by the supervisor. It receives only the inputs for its step. Secrets reach it only through `inject`, and only if an administrator approved the effects its manifest declares. The message list, its versioning, and the launch handshake are in the design of [`a2m-provider`](../architecture/crates/a2m-provider.md).
+A plug-in is a separate process that exchanges messages over standard input and output, started and stopped only by the supervisor. It receives only the inputs for its step. Secrets reach it only through `inject`, and only if an administrator approved the effects its manifest declares. The message list, its versioning, and the launch handshake are in the design of [`a2m-provider`](../architecture/crates/a2m-provider.md). The plug-in host and the framed link it speaks over are not built yet; a plug-in found on the machine is listed as present and not enabled.
 
 ## Benchmark matrix
 

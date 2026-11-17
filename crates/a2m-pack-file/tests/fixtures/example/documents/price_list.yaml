@@ -1,0 +1,10 @@
+surface: price_files
+file: price-list.csv
+format: delimited
+records:
+  price:
+    rows: all
+    key: [item_code]
+    fields:
+      item_code: {header: item_code, type: identifier}
+      unit_price: {header: unit_price, type: rate, writable: true}

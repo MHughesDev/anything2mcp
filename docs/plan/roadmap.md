@@ -118,7 +118,7 @@ Stage D. The command pack is designed in [section 306](../spec/3-packs/306-the-c
 | --- | --- | --- | --- | --- | --- |
 | D1 | The design of the command pack | Documents | None | Section 306 answers every item of the entry bar | done |
 | D2 | The command-line test stand, with its control interface: `targets/example-cli` | `targets/` | D1 | Its own tests, on three operating systems | done |
-| D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode | New pack crates | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
+| D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode | `a2m-pack-command` | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
 | D4 | The result of hypothesis H-26: every kernel change the pack forced, counted | Documents | D3 | A hypothesis result file. If the kernel changed more than slightly, the boundary is redrawn before another pack starts | held |
 | D5 | Writes through the command pack: a declared read-back command, `possible_commit` on a killed process | The command pack's crates | D4, 3.7 | The test stand confirms one write after a kill and a resume | held |
 
@@ -171,16 +171,16 @@ One pack at a time, each through the entry bar of [section 202](../spec/2-kernel
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | G1 | The data pack's test stand: a local database with a control query, at `targets/example-db` | `targets/` | None | Its own tests | done |
-| G2 | The data pack, reads only, with the store's own catalog as its discoverer | New pack crates | G1, D4 | A read by key; a statement that is not a read is refused by the database, not by parsing | held |
+| G2 | The data pack, reads only, with the store's own catalog as its discoverer | `a2m-pack-data` | G1, D4 | A read by key; a statement that is not a read is refused by the database, not by parsing | held |
 | G3 | Writes: a required key, a rows-affected check inside the transaction, read-back by key | The data pack's crates | G2, D5 | The stand confirms one row changed; any other count rolls back | held |
 | H1 | The file pack's test stand: files in a temporary folder, with a control interface that reports the bytes on disk, at `targets/example-files` | `targets/` | None | Its own tests | done |
-| H2 | The file pack, reads only | New pack crates | H1, D4 | A value read from a named place in each supported format | held |
+| H2 | The file pack, reads only | `a2m-pack-file` | H1, D4 | A value read from a named place in each supported format | held |
 | H3 | Writes: a new file that replaces the old one in one step; read-back by opening it again | The file pack's crates | H2, D5 | Killed mid-write and resumed: the file is the old one or the new one, never a mixture | held |
 | J1 | The stream pack's test stand: a small local broker with a control interface, at `targets/example-broker` | `targets/` | None | Its own tests | done |
-| J2 | The stream pack, bounded reads only; discovery that never consumes | New pack crates | J1, D4 | A read ends within its limit; the stand shows no message was taken from anyone | held |
+| J2 | The stream pack, bounded reads only; discovery that never consumes | `a2m-pack-stream` | J1, D4 | A read ends within its limit; the stand shows no message was taken from anyone | held |
 | J3 | Publishing, with a key that makes it safe to resume | The stream pack's crates | J2, D5 | A resumed publish delivers one message, by the stand's count | held |
 | K1 | The device pack's test stand: a simulated device, with a control interface that reports every frame, at `targets/example-device` | `targets/` | None | Its own tests | done |
-| K2 | The device pack, reads only | New pack crates | K1, D4 | A register read through the engine loop; the stand shows only read frames | held |
+| K2 | The device pack, reads only | `a2m-pack-device` | K1, D4 | A register read through the engine loop; the stand shows only read frames | held |
 | K3 | Writes against the simulator only: a range limit enforced before a frame is sent; approval by a person every run | The device pack's crates | K2, D5 | A value outside its range sends no frame; a lost link after a write is `possible_commit` | held |
 | K4 | Firmware: inspection as discovery through an optional provider; the update operation through the simulated device's own mechanism | The device pack's crates | K3, E1 | Findings are `inferred`; an update without a declared recovery path cannot be published | held |
 

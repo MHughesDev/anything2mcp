@@ -1,0 +1,14 @@
+operation: example_absent_point_get
+title: Read a point the device does not have
+effect: read
+inputs: {}
+outputs:
+  value: {type: integer}
+bindings:
+  - mode: device
+    verb: read
+    status: draft
+    device_map: controller.main
+    read: {value: absent_point}
+description: >
+  Reads an address the device refuses. It exists to show the refusal.

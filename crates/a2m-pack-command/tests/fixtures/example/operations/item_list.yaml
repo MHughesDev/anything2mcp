@@ -1,0 +1,15 @@
+operation: example_item_list
+title: List items
+effect: read
+inputs:
+  location: {type: location_code, required: false, description: "Only items at this location, such as A01"}
+outputs:
+  sku: {type: identifier, list: true}
+bindings:
+  - mode: cli
+    verb: list
+    status: verified
+    command: item_list
+description: >
+  Lists the items of the inventory, all of them or those at one location.
+  Prefer example_item_get to read one item whose code is known.

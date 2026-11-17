@@ -1,0 +1,16 @@
+# A second imaginary system, `example`, with a signed-in interface. It is
+# served by a small server inside this crate's tests, and describes no real
+# product.
+schema_version: 1
+target: example
+title: Example account service
+surfaces:
+  api:
+    kind: http
+    base: "http://127.0.0.1:4011"
+environments:
+  test:
+    kind: test
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

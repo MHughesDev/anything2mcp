@@ -1,0 +1,16 @@
+operation: example_stock_report
+title: Print a stock report
+effect: read
+inputs:
+  rows: {type: integer, description: "How many rows to print"}
+  pause: {type: integer, required: false, description: "Milliseconds to wait after each row"}
+outputs:
+  sku: {type: identifier, list: true}
+bindings:
+  - mode: cli
+    verb: list
+    status: verified
+    command: stock_report
+description: >
+  Prints the stock report of the inventory, row by row, as the tool gives it.
+  Prefer example_item_list for the plain list of items.

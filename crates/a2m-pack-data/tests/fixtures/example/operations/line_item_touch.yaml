@@ -1,0 +1,15 @@
+operation: example_line_item_touch
+title: Read a line item's quantity
+effect: read
+key: [order_id, item_code]
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+outputs:
+  quantity: {type: integer}
+bindings:
+  - mode: sql
+    statement: line_item_touch
+description: >
+  A statement declared as a read that changes a row: the store refuses it.
+  Prefer example_line_item_get, which only reads.
