@@ -38,6 +38,8 @@ Encryption is layered, so that most keys never need to leave the machine and rot
 
 The engine never falls back to writing a key to disk in the clear. `anything2mcp doctor` reports which store is in use and warns about the weaker ones.
 
+**A root is made once.** The operating systems' key stores cannot write an entry only when there is none, so two engines that start at the same moment on a fresh installation could each write a root, and what was wrapped under the one written first would never open again. A root is therefore made under a lock outside the key store, an operating-system lock on a file that every engine of the user agrees on, and a key is always wrapped under the root the store holds at that moment. On the passphrase route the same holds for the salt, which is made once under a lock beside its file. A passphrase shorter than 16 bytes is refused, `input`/`vault_passphrase_too_short`: a guess can be checked away from the machine, so nothing slows a search but the passphrase itself ([decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md)).
+
 ## Encryption behind the ownership rule
 
 A session signed in as a person may be used only by that person or an agent acting for them ([section 215](215-sessions-and-the-session-keeper.md)). On a server this is backed by keys:

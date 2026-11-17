@@ -388,9 +388,11 @@ impl Core {
         wait: Duration,
         asker: &Asker,
     ) -> Result<Following, Called> {
+        eprintln!("DBG dispatch {} {}", route.action, without_wait(&route.input));
         let response = self
             .dispatch(&route.action, without_wait(&route.input), asker)
             .await;
+        eprintln!("DBG dispatched {response:?}");
         let called = self.called(&response, route.published);
         let run = response
             .result

@@ -19,8 +19,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingStatus, FailsAs, FailureClass, FailureCode, Mode, OperationName, Plan, RecordState,
-    RunState, Value,
+    BindingStatus, FailureClass, FailureCode, Mode, OperationName, Plan, RecordState, RunState,
+    Value,
 };
 use a2m_engine::{Directive, JobKind, JobOutcome, KernelHealth, codes};
 use common::{
@@ -202,38 +202,36 @@ async fn the_applications_own_refusal_in_a_confirm_step_stands_and_the_record_is
 }
 
 #[tokio::test]
-async fn a_binding_that_saves_twice_is_refused_when_it_is_chosen_and_sends_nothing() {
-    // A line under a new header is planned before its binding can be
-    // chosen. When its turn comes the first binding may not act, and the
-    // one that is chosen instead saves twice in one call.
+async fn a_binding_that_saves_twice_is_refused_before_anything_is_sent() {
+    // The plan check in the core crate holds every binding of an operation
+    // to the operation's number of commit points, so a binding that saves
+    // twice cannot stand beside one that saves once. An operation all of
+    // whose bindings save twice is refused when its records are worked
+    // out, and again for the binding that is chosen to write: nothing is
+    // locked, intended, or sent, so no second save can meet the handle
+    // without a token.
     let scene = Scene::new(KIT_ENTER, |plan| {
-        let bindings = &mut plan.operations[2].bindings;
-        let mut twice = bindings[0].clone();
-        twice.mode = Mode::new(SECOND_MODE).unwrap();
-        twice.act.push(twice.act[0].clone());
-        bindings[0].status = BindingStatus::Retired;
-        bindings.push(twice);
+        let operation = &mut plan.operations[2];
+        operation.commit_points = 2;
+        let save = operation.bindings[0].act[0].clone();
+        operation.bindings[0].act.push(save);
+        let mut spare = operation.bindings[0].clone();
+        spare.mode = Mode::new(SECOND_MODE).unwrap();
+        operation.bindings[0].status = BindingStatus::Retired;
+        operation.bindings.push(spare);
     })
     .await;
     *scene.source.lock().unwrap() = Some(std::sync::Arc::new(sheet(&[("LEG", "Leg", "4", "28")])));
     let input = a2m_core::Values::new()
         .with("order_id", "A-102")
         .with("title", "Table kit");
-    approved(&scene, KIT_ENTER, &input).await;
     let outcome = scene.work(JobKind::Execute, KIT_ENTER, input).await;
     assert_eq!(
         failed_as(&outcome),
         (FailureClass::Busy, "job_kind_not_built".to_owned())
     );
-    // The header was written and verified. Nothing was sent for the line:
-    // no intent, no save, and the application holds the header alone.
-    assert_eq!(
-        scene.record_states().await,
-        [RecordState::Verified, RecordState::Planned]
-    );
-    assert_eq!(scene.hooks.count("put_item"), 0);
-    assert_eq!(scene.hooks.count("intend"), 1);
-    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+    assert!(scene.steps(&["lock", "intend", "put_item", "add_item"]).is_empty());
+    assert!(scene.app.writes().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -271,31 +269,41 @@ async fn outputs_that_cannot_be_stored_with_the_save_stop_the_job_and_are_read_a
 
 #[tokio::test]
 async fn a_record_that_failed_with_the_code_of_a_blocked_child_is_read_when_it_had_an_intent() {
-    // A provider may give one of its own failures the name the engine
-    // uses for a record that waited for its parent. Here the save reached
-    // the application and was then failed under that name.
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        plan.operations[2].bindings[0].act[0].fails_as = FailsAs {
-            class: FailureClass::Busy,
-            code: FailureCode::fixed("blocked_by_parent"),
-        };
-    })
-    .await;
+    // The save reached the application, and the ledger could not be told:
+    // the record is left in `intent`.
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     approved(&scene, ITEM_UPSERT, &rail()).await;
-    *scene.hooks.fails_after.lock().unwrap() = Some((
-        "put_item".to_owned(),
+    scene
+        .control
+        .faults
+        .acted_refused
+        .store(true, Ordering::SeqCst);
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+    scene
+        .control
+        .faults
+        .acted_refused
+        .store(false, Ordering::SeqCst);
+
+    // The record is then marked failed under the name the engine gives a
+    // record that waited for its parent, as a row written by something
+    // other than this engine may be. The name alone is not trusted.
+    let record = scene.records().await[0].record;
+    let named = common::failure(
         FailureClass::Busy,
         "blocked_by_parent",
-    ));
-    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
-    assert_eq!(
-        failed_as(&outcome),
-        (FailureClass::Busy, "blocked_by_parent".to_owned())
+        "The record waits for a record that failed earlier in the run.",
     );
-    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+    a2m_engine::Control::failed(scene.control.as_ref(), record, &named, None)
+        .await
+        .unwrap();
+    assert_eq!(scene.record_states().await, [RecordState::Failed]);
 
-    // On resume the record is read like every record in doubt, and is not
-    // sent back to `planned` unread and written a second time.
+    // On resume the record is read like every record in doubt, because it
+    // had an intent; it is not sent back to `planned` unread and written
+    // a second time.
     resumed_as_landed(&scene, "a failure named `blocked_by_parent`").await;
 }
 

@@ -78,6 +78,30 @@ codes! {
     NO_CONFIRMATION = PossibleCommit, "no_confirmation";
 }
 
+/// Codes that state the kernel's own bookkeeping about a run, a lease, or
+/// an approval, and never anything a system answered. The engine, the
+/// ledger, and the scheduler above and below this contract produce them,
+/// and some of their logic goes by the code alone. No provider may declare
+/// one, and the handle lets no driver return one, whatever class it gives.
+///
+/// The list is kept here because this contract is where a provider's codes
+/// are checked, and it cannot see the crates above it.
+pub const KERNEL_ONLY: &[&str] = &[
+    "blocked_by_parent",
+    "runner_lost",
+    "cannot_reconcile",
+    "reconcile_required",
+    "approval_missing",
+    "approval_stale",
+    "lease_superseded",
+];
+
+/// Whether the code is one of [`KERNEL_ONLY`].
+#[must_use]
+pub fn is_kernel_only(code: &FailureCode) -> bool {
+    KERNEL_ONLY.contains(&code.as_str())
+}
+
 pub(crate) fn failure(
     class: FailureClass,
     code: FailureCode,

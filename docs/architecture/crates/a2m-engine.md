@@ -282,6 +282,7 @@ It produces every class through the loop. `possible_commit`, `ambiguous_match` i
 | `unknown_variant` | `no_read_back` | A binding has no steps that read the record, so nothing it writes can be verified |
 | `unknown_variant` | `output_unexpected` | A step returned a value the plan gives no place to |
 | `unknown_variant` | `commit_skipped` | A binding ended without sending its write |
+| `unknown_variant` | `condition_not_boolean` | A condition of the plan, a step's `when`, a binding's precondition, or an `expect`, gave a value that is neither true nor false |
 | `possible_commit` | `no_confirmation` | A write was sent and the system's answer is not known, or could not be recorded, or the driver panicked in the save |
 | `possible_commit` | `cannot_reconcile` | A record in doubt cannot be read, so a person must settle it |
 

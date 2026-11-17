@@ -62,12 +62,30 @@ impl Drop for Folder {
 
 /// The host services of a test: a supervisor, the roots given, no secrets.
 pub fn host(folder: &Folder, roots: Roots) -> HostServices {
+    host_with(folder, roots, Arc::new(NoSecrets))
+}
+
+/// A redactor that knows one secret.
+pub struct OneSecret(pub &'static str);
+
+impl a2m_core::Redact for OneSecret {
+    fn redact(&self, text: &str) -> String {
+        text.replace(self.0, a2m_core::REDACTED)
+    }
+}
+
+/// The host services of a test, with the redactor given.
+pub fn host_with(
+    folder: &Folder,
+    roots: Roots,
+    redact: Arc<dyn a2m_core::Redact>,
+) -> HostServices {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     HostServices {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots,
-        redact: Arc::new(NoSecrets),
+        redact,
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), Arc::new(NoSecrets), &logs)
             .unwrap(),
     }
@@ -233,6 +251,8 @@ impl Lowering for StandLowering {
 #[derive(Clone)]
 pub enum Behaviour {
     Done,
+    /// Done, with what was observed.
+    Saw(Observed),
     Absent,
     DoneWithReconcile,
     Fail(StepFailure),
@@ -266,6 +286,7 @@ impl Driver for StubDriver {
             self.reached.lock().unwrap().push(step.kind.to_string());
             match self.behaviour.lock().unwrap().clone() {
                 Behaviour::Done => Ok(StepOutcome::Done(Observed::default())),
+                Behaviour::Saw(observed) => Ok(StepOutcome::Done(observed)),
                 Behaviour::Absent => Ok(StepOutcome::Absent(Observed::default())),
                 Behaviour::DoneWithReconcile => Ok(StepOutcome::Done(Observed {
                     for_reconcile: Values::new().with("assigned", "K-1"),

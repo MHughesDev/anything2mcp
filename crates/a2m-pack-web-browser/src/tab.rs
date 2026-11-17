@@ -2,10 +2,11 @@
 //! tab that may only observe. Everything that only looks is the [`Look`]
 //! trait, which both have; only [`ActTab`] has a method that acts.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::future::Future;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use a2m_core::Redact;
@@ -17,18 +18,49 @@ use tokio::sync::{mpsc, watch};
 use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
+use crate::origin::{Origins, origin_of, path_of, shown_origin};
 use crate::protocol::{
-    AddBinding, AddScriptOnNewDocument, AttachToTarget, BypassServiceWorker, CallArgument,
-    CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld, CreateTarget,
-    DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind, FailRequest,
-    FetchEnable, GetFullAxTree, GetProperties, HandleDialog, InsertText, MediaFeature, Navigate,
-    NetworkEnable, PageEnable, RequestPattern, RunIfWaiting, RuntimeEnable, SetAutoAttach,
-    SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
+    CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
+    CreateTarget, DescribeNode, DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind,
+    FailRequest, FetchEnable, GetFullAxTree, GetProperties, HandleDialog, InsertText, MediaFeature,
+    Navigate, NetworkEnable, NodeDescription, PageEnable, RequestPattern, RequestPaused,
+    RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia,
+    SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
 /// The helper that runs in the page, in a world of its own.
 const HELPER: &str = include_str!("helper.js");
+
+/// Where the helper's source holds the origins its tab was opened for.
+const HELPER_ORIGINS: &str = "/*a2m:origins*/[]";
+
+/// How the helper says that the page is on an origin the tab was not
+/// opened for, and that a selector would tell a password.
+const OUTSIDE_ORIGINS: &str = "a2m-outside-origins ";
+const PASSWORD_REFUSED: &str = "a2m-password-refused";
+
+/// What a tab reports for a move of the tab that was refused, a new window
+/// that was closed before it ran, and a download that was refused.
+const NAVIGATION: &str = "NAVIGATION";
+const POPUP: &str = "POPUP";
+const DOWNLOAD: &str = "DOWNLOAD";
+
+/// How the browser is told to end a request. A document that is ended as
+/// aborted leaves the page that asked for it in place; one that is ended
+/// as blocked is replaced by the browser's own error page (measured,
+/// decision 0143).
+const ABORTED: &str = "Aborted";
+const BLOCKED: &str = "BlockedByClient";
+
+/// The helper's source for a tab opened for these origins.
+fn helper_for(origins: &Origins) -> String {
+    let list: Vec<&str> = origins.iter().collect();
+    // A list of plain texts is always written; an empty one refuses all.
+    let list = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_owned());
+    HELPER.replacen(HELPER_ORIGINS, &list, 1)
+}
 
 /// The name of the helper's isolated world.
 const WORLD: &str = "anything2mcp";
@@ -102,8 +134,11 @@ impl Default for PageEnvironment {
 pub struct SafeRequest {
     /// The method, in capitals, such as `POST`.
     pub method: String,
-    /// What the address must start with, such as the address of a search
-    /// endpoint that is called with POST.
+    /// The address the request must be at or under: the same origin, and
+    /// the same path or a path below it, such as the address of a search
+    /// endpoint that is called with POST. Text that only begins the same
+    /// way is not under it: neither a longer host nor a longer last name
+    /// of the path. An address with a query marks nothing.
     pub address_prefix: String,
 }
 
@@ -118,12 +153,26 @@ pub struct SafeRequests {
 impl SafeRequests {
     fn allows(&self, method: &str, address: &str) -> bool {
         matches!(method, "GET" | "HEAD" | "OPTIONS")
-            || self.allowed.iter().any(|safe| {
-                safe.method == method
-                    && !safe.address_prefix.is_empty()
-                    && address.starts_with(&safe.address_prefix)
-            })
+            || self
+                .allowed
+                .iter()
+                .any(|safe| safe.method == method && under(&safe.address_prefix, address))
     }
+}
+
+/// Whether `address` is at `prefix` or under it.
+fn under(prefix: &str, address: &str) -> bool {
+    let (Some(marked), Some(asked)) = (origin_of(prefix), origin_of(address)) else {
+        return false;
+    };
+    if marked != asked || prefix.contains(['?', '#']) {
+        return false;
+    }
+    let (marked, asked) = (path_of(prefix), path_of(address));
+    asked == marked
+        || asked.strip_prefix(marked).is_some_and(|below| {
+            marked.ends_with('/') || below.starts_with('/')
+        })
 }
 
 pub(crate) enum Posture {
@@ -391,8 +440,9 @@ impl Key {
 }
 
 /// One input to one element. Each is one strategy; none falls back to
-/// another.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// another. A text to enter may be a password, so it is never printed:
+/// the debug form says how long it is.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Input {
     /// Focus, select what is there, and insert the text as one edit.
     Fill(String),
@@ -411,6 +461,21 @@ pub enum Input {
     SelectByValue(String),
 }
 
+impl fmt::Debug for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let length = |text: &str| text.chars().count();
+        match self {
+            Self::Fill(text) => write!(f, "Fill({} characters)", length(text)),
+            Self::Type(text) => write!(f, "Type({} characters)", length(text)),
+            Self::NativeSet(text) => write!(f, "NativeSet({} characters)", length(text)),
+            Self::Press(key) => write!(f, "Press({key:?})"),
+            Self::Click => f.write_str("Click"),
+            Self::Check(on) => write!(f, "Check({on})"),
+            Self::SelectByValue(value) => write!(f, "SelectByValue({value:?})"),
+        }
+    }
+}
+
 /// How to answer a dialog of the page.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DialogAnswer {
@@ -422,12 +487,16 @@ pub enum DialogAnswer {
     Dismiss,
 }
 
-/// A request sent from inside the page, with the page's own session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A request sent from inside the page, with the page's own session. Its
+/// headers and its body may carry a credential, so they are never printed:
+/// the debug form gives the names of the headers and the length of the
+/// body, and the address without its query.
+#[derive(Clone, PartialEq, Eq)]
 pub struct PageRequest {
     /// The method, in capitals.
     pub method: String,
-    /// Where it goes. The crate above has checked the origin.
+    /// Where it goes: an address on one of the tab's origins. The tab
+    /// refuses any other, and follows no redirect.
     pub address: Address,
     /// Its headers.
     pub headers: Vec<(String, String)>,
@@ -435,12 +504,24 @@ pub struct PageRequest {
     pub body: Option<String>,
 }
 
+impl fmt::Debug for PageRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = self.headers.iter().map(|(name, _)| name.as_str()).collect();
+        f.debug_struct("PageRequest")
+            .field("method", &self.method)
+            .field("address", &without_query(self.address.as_str()))
+            .field("headers", &names)
+            .field("body_characters", &self.body.as_ref().map(|body| body.chars().count()))
+            .finish()
+    }
+}
+
 /// The answer to a [`PageRequest`], with credentials removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageResponse {
     /// The status.
     pub status: u16,
-    /// The address that answered, after redirects.
+    /// The address that answered, without its query.
     pub address: String,
     /// The headers, without cookies and authorization, in order of name.
     pub headers: Vec<(String, String)>,
@@ -464,6 +545,105 @@ struct Nav {
     document: Option<(String, u16)>,
 }
 
+/// Who is moving the tab to another document: the `goto` under way, or the
+/// page itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mover {
+    Goto,
+    Page,
+}
+
+/// What the tab knows about the moves of its own frame.
+#[derive(Debug, Default)]
+struct Moves {
+    /// Whether a `goto` is under way.
+    going: bool,
+    /// The loader of the move that is the `goto`'s, once its request has
+    /// been seen, and that request's latest number: a redirect keeps the
+    /// loader and takes a new number.
+    goto_loader: Option<String>,
+    goto_request: Option<String>,
+    /// The origin the `goto` under way was refused for.
+    refused: Option<String>,
+    /// The addresses of moves the page has asked for and that have not
+    /// started, without their fragments.
+    asked: VecDeque<String>,
+    /// The loaders of the moves the page started.
+    by_page: VecDeque<String>,
+}
+
+impl Moves {
+    /// A page that keeps asking must not fill the engine's memory.
+    const KEPT: usize = 64;
+
+    fn remember(list: &mut VecDeque<String>, one: String) {
+        if list.len() >= Self::KEPT {
+            list.pop_front();
+        }
+        list.push_back(one);
+    }
+
+    /// The page asked for a move to this address.
+    fn asked(&mut self, address: &str) {
+        Self::remember(&mut self.asked, without_fragment(address).to_owned());
+    }
+
+    /// A move has started. It is the page's when the page asked for it, or
+    /// when it is a move through the tab's history, which `goto` never is.
+    fn started(&mut self, address: &str, loader: &str, kind: &str) {
+        let address = without_fragment(address);
+        let asked = self.asked.iter().position(|one| one == address);
+        if let Some(at) = asked {
+            self.asked.remove(at);
+        }
+        let history = kind.starts_with("history") || kind.starts_with("restore");
+        if (asked.is_some() || history) && !loader.is_empty() {
+            Self::remember(&mut self.by_page, loader.to_owned());
+        }
+    }
+
+    /// Whose the request of the tab's own document is. The `goto`'s is the
+    /// first one, since the `goto` began, that the page did not ask for,
+    /// and every redirect of it.
+    fn mover(&mut self, paused: &RequestPaused) -> Mover {
+        let loader = paused.network_id.as_deref().filter(|loader| !loader.is_empty());
+        let follows = paused.redirected_request_id.as_deref();
+        let of_goto = (follows.is_some() && follows == self.goto_request.as_deref())
+            || (loader.is_some() && loader == self.goto_loader.as_deref());
+        if of_goto {
+            self.goto_request = Some(paused.request_id.clone());
+            return Mover::Goto;
+        }
+        if loader.is_some_and(|loader| self.by_page.iter().any(|one| one == loader)) {
+            return Mover::Page;
+        }
+        let address = without_fragment(&paused.request.url);
+        if let Some(at) = self.asked.iter().position(|one| one == address) {
+            self.asked.remove(at);
+            if let Some(loader) = loader {
+                Self::remember(&mut self.by_page, loader.to_owned());
+            }
+            return Mover::Page;
+        }
+        if follows.is_none() && self.going && self.goto_request.is_none() {
+            self.goto_loader = loader.map(str::to_owned);
+            self.goto_request = Some(paused.request_id.clone());
+            return Mover::Goto;
+        }
+        Mover::Page
+    }
+}
+
+/// What becomes of a request the browser holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Verdict {
+    /// It goes on.
+    Pass,
+    /// It is ended before it leaves the browser, and reported under this
+    /// word when there is one.
+    Refuse(Option<String>),
+}
+
 pub(crate) struct Page {
     client: Client,
     session: String,
@@ -479,7 +659,22 @@ pub(crate) struct Page {
     dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
     safe: Option<SafeRequests>,
+    /// The origins the tab was opened for.
+    origins: Origins,
+    /// The helper's source, with those origins written in.
+    helper: String,
+    moves: Mutex<Moves>,
     browser: Arc<BrowserInner>,
+}
+
+/// Clears the mark of a `goto` under way when the `goto` ends, however it
+/// ends.
+struct Going<'a>(&'a Page);
+
+impl Drop for Going<'_> {
+    fn drop(&mut self) {
+        self.0.moves().going = false;
+    }
 }
 
 /// A call that could not be made as asked.
@@ -524,9 +719,38 @@ fn without_query(address: &str) -> &str {
     address.split(['?', '#']).next().unwrap_or(address)
 }
 
+fn without_fragment(address: &str) -> &str {
+    address.split('#').next().unwrap_or(address)
+}
+
+/// Whether a node the browser described is a password input: by its type,
+/// or by an `autocomplete` that names a password.
+fn is_password(node: &NodeDescription) -> bool {
+    node.local_name.eq_ignore_ascii_case("input")
+        && (node
+            .attribute("type")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("password"))
+            || node
+                .attribute("autocomplete")
+                .is_some_and(|hint| hint.to_ascii_lowercase().contains("password")))
+}
+
 impl Page {
     fn shown(&self, text: &str) -> String {
         self.redact.redact(&cut(text))
+    }
+
+    /// The tab's moves, also after a panic elsewhere poisoned the lock:
+    /// the state is plain data and every change to it is whole.
+    fn moves(&self) -> MutexGuard<'_, Moves> {
+        self.moves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The error for a page, or an address, outside the tab's origins.
+    fn outside(&self, origin: &str) -> BrowserError {
+        BrowserError::ForeignOrigin(self.shown(origin))
     }
 
     fn client_error(&self, error: ClientError) -> BrowserError {
@@ -632,7 +856,14 @@ impl Page {
                     details.text,
                     evaluated.result.description.as_deref().unwrap_or_default()
                 );
-                if text.contains("__a2m") {
+                if let Some((_, after)) = text.split_once(OUTSIDE_ORIGINS) {
+                    // The helper found the page on an origin the tab was
+                    // not opened for, and did nothing.
+                    let origin = after.split_whitespace().next().unwrap_or_default();
+                    Err(self.outside(origin).into())
+                } else if text.contains(PASSWORD_REFUSED) {
+                    Err(BrowserError::PasswordField.into())
+                } else if text.contains("__a2m") {
                     Err(CallError::NoHelper)
                 } else if gone(&text) {
                     Err(CallError::Gone)
@@ -701,7 +932,7 @@ impl Page {
                 Err(CallError::NoHelper) => {
                     // The world was made before the helper reached it.
                     let install = Evaluate {
-                        expression: HELPER,
+                        expression: &self.helper,
                         context_id: Some(world),
                         return_by_value: true,
                         await_promise: false,
@@ -776,6 +1007,10 @@ impl Page {
     // ---- looking ----
 
     async fn goto(&self, address: &Address, deadline: Deadline) -> Result<Loaded, BrowserError> {
+        // Refused before the browser hears of it.
+        if !self.origins.allows(address) {
+            return Err(self.outside(&address.origin()));
+        }
         self.goto_text(address.as_str(), deadline).await
     }
 
@@ -786,9 +1021,23 @@ impl Page {
     ) -> Result<Loaded, BrowserError> {
         let mut nav = self.nav.subscribe();
         let mut status = self.status.subscribe();
+        {
+            let mut moves = self.moves();
+            moves.going = true;
+            moves.goto_loader = None;
+            moves.goto_request = None;
+            moves.refused = None;
+        }
+        let _going = Going(self);
         let navigated = self.call(&Navigate { url: address }, deadline).await?;
         if let Some(why) = navigated.error_text.filter(|why| !why.is_empty()) {
-            return Err(BrowserError::NotLoaded(self.shown(&why)));
+            // The tab itself ended the move, at a redirect to an origin it
+            // was not opened for: that is the reason, not the browser's.
+            let refused = self.moves().refused.take();
+            return Err(match refused {
+                Some(origin) => self.outside(&origin),
+                None => BrowserError::NotLoaded(self.shown(&why)),
+            });
         }
         let mut document_status = None;
         if let Some(loader) = navigated.loader_id {
@@ -963,6 +1212,9 @@ impl Page {
             Waited { ok: true, .. } => Ok(()),
             Waited {
                 error: Some(error), ..
+            } if error.contains(PASSWORD_REFUSED) => Err(BrowserError::PasswordField),
+            Waited {
+                error: Some(error), ..
             } => Err(BrowserError::Unexpected(self.shown(&error))),
             Waited { .. } => Err(BrowserError::Timeout {
                 dispatch: Dispatch::NotSent,
@@ -976,10 +1228,41 @@ impl Page {
         deadline: Deadline,
     ) -> Result<Snapshot, BrowserError> {
         let (address, title) = self.address_and_title(deadline).await?;
-        let masked = self.password_nodes(deadline).await?;
+        // Before the tree is taken: the password inputs the helper sees.
+        let mut masked = self.password_nodes(deadline).await?;
         let tree = self.call(&GetFullAxTree {}, deadline).await?;
+        // After it: every node that carries a value is asked of the
+        // browser itself, which also sees inside a closed shadow root. A
+        // node that is a password input at either moment is masked, and
+        // so is one the browser can no longer describe.
+        for node in &tree.nodes {
+            let valued = node.value.as_ref().is_some_and(|value| !value.text().is_empty());
+            let Some(number) = node.backend_dom_node_id.filter(|_| valued) else {
+                continue;
+            };
+            if masked.contains(&number) {
+                continue;
+            }
+            let described = self
+                .call(
+                    &DescribeNode {
+                        object_id: None,
+                        backend_node_id: Some(number),
+                    },
+                    deadline,
+                )
+                .await;
+            match described {
+                Ok(described) if !is_password(&described.node) => {}
+                Ok(_) | Err(BrowserError::Unexpected(_)) => {
+                    masked.insert(number);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         Ok(Snapshot::build(
-            address,
+            // A query is where tokens travel, and a snapshot is kept.
+            without_query(&address).to_owned(),
             title,
             &tree.nodes,
             &masked,
@@ -1028,7 +1311,8 @@ impl Page {
                 let described = self
                     .call(
                         &DescribeNode {
-                            object_id: &element,
+                            object_id: Some(&element),
+                            backend_node_id: None,
                         },
                         deadline,
                     )
@@ -1227,6 +1511,7 @@ impl Page {
         #[serde(default)]
         struct Answer {
             too_large: bool,
+            redirected: bool,
             status: Option<u16>,
             address: String,
             headers: Vec<(String, String)>,
@@ -1234,6 +1519,11 @@ impl Page {
         }
         let shape =
             || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        // Refused before anything is sent: the request would carry the
+        // page's session to an origin the tab was not opened for.
+        if !self.origins.allows(&request.address) {
+            return Err(self.outside(&request.address.origin()));
+        }
         let spec = Spec {
             method: &request.method,
             address: request.address.as_str(),
@@ -1269,6 +1559,14 @@ impl Page {
             }
         };
         let answer: Answer = Self::answer(evaluated)?;
+        if answer.redirected {
+            // The request was answered, by a redirect. Its next address
+            // was checked by nobody, so it is not followed; what the first
+            // request did is for the crate above to find out.
+            return Err(BrowserError::RequestFailed(
+                "the answer was a redirect, and a request from the page follows none".to_owned(),
+            ));
+        }
         let Some(status) = answer.status else {
             return Err(if answer.too_large {
                 BrowserError::TooLarge {
@@ -1287,7 +1585,7 @@ impl Page {
         headers.sort();
         Ok(PageResponse {
             status,
-            address: self.redact.redact(&answer.address),
+            address: self.redact.redact(without_query(&answer.address)),
             headers,
             body: self.redact.redact(&answer.body),
         })
@@ -1385,7 +1683,7 @@ impl Page {
 
     // ---- the tab's own task ----
 
-    fn block(&self, method: &str, address: &str) {
+    pub(crate) fn block(&self, method: &str, address: &str) {
         let shape = RequestShape {
             method: method.to_owned(),
             address: self.redact.redact(&cut(without_query(address))),

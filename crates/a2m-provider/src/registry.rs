@@ -967,6 +967,7 @@ impl Registry {
             mode: mode.clone(),
             archetype: entry.archetype,
             steps: candidate.decl.steps.iter().cloned().collect(),
+            commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             codes: candidate.codes.clone(),
             choice: ProviderChoice {
                 provider: candidate.provider.clone(),

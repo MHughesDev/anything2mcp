@@ -145,3 +145,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0140 | [The command pack after its safety audit](0140-the-command-pack-after-its-safety-audit.md) | Accepted (design decision) |
 | 0141 | [The data pack holds a statement to one read or one keyed write, and a connection to one file](0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md) | Accepted (design decision) |
 | 0142 | [The presence prompt's interface and the Linux prompt, as built](0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md) | Accepted (design decision) |
+| 0150 | [A take records its message before it acknowledges, and an answer with no rule leaves a write in doubt](0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) | Accepted (design decision) |

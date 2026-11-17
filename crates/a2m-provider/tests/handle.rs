@@ -30,7 +30,9 @@ use a2m_provider::{
 };
 use a2m_telemetry::ManualClock;
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
-use common::{Behaviour, Folder, TestPack, failure, host, mode, step_kind};
+use common::{
+    Behaviour, Folder, OneSecret, TestPack, failure, host_with, manifest, mode, step_kind,
+};
 
 // ---- a real store, for real intent tokens ----
 
@@ -187,10 +189,16 @@ struct Scene {
 }
 
 fn scene() -> Scene {
+    scene_of(TestPack::new("alpha"), Arc::new(a2m_core::NoSecrets))
+}
+
+/// A scene with the pack and the host's redactor given.
+fn scene_of(pack: TestPack, redact: Arc<dyn a2m_core::Redact>) -> Scene {
     let folder = Folder::new("handle");
-    let pack = TestPack::new("alpha");
-    let mut builder =
-        RegistryBuilder::new(ProviderSettings::default(), host(&folder, Roots::none()));
+    let mut builder = RegistryBuilder::new(
+        ProviderSettings::default(),
+        host_with(&folder, Roots::none(), redact),
+    );
     builder.add_pack(&pack);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -587,6 +595,264 @@ async fn what_a_driver_returns_is_checked() {
 
 fn failure_of(class: FailureClass, code: &'static str) -> Failure {
     failure(class, code)
+}
+
+/// A write that was sent is settled only by the system's own verdict.
+/// `policy` and `input` say that nothing was sent, and the kernel releases
+/// a record's lock on them without reading the record: from a committing
+/// step that did leave, they are a write in doubt.
+#[tokio::test]
+async fn a_committing_step_that_was_sent_is_never_settled_by_a_class_that_means_unsent() {
+    let pack = TestPack::with_manifest(
+        "alpha",
+        manifest(
+            "alpha",
+            "request",
+            "\n[[failure_codes]]\nclass = \"policy\"\ncode = \"example_limit\"\n\n[[failure_codes]]\nclass = \"input\"\ncode = \"example_shape\"\n\n[[failure_codes]]\nclass = \"stale\"\ncode = \"example_changed\"\n",
+        ),
+    );
+    let scene = scene_of(pack, Arc::new(a2m_core::NoSecrets));
+    let store = store().await;
+    let fence = running(&store, 1, &["one"]).await;
+    let (handle, mut prepared) = scene.prepared(Some(fence), Posture::Live).await;
+    let args = Values::new();
+    let token_one = token(&store, fence, 0, "one").await;
+    let write = input(&args, Some(record(&fence, 0)), None);
+    let read = input(&args, None, None);
+    let send = scene.step("send", true, false);
+
+    for (class, code) in [
+        (FailureClass::Policy, "example_limit"),
+        (FailureClass::Input, "example_shape"),
+    ] {
+        // Answered, as a driver says of a reply it read: in doubt.
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        let failure = handle
+            .act(&mut prepared, &send, &write, Authority::Write(&token_one))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (
+                failure.failure.class(),
+                failure.failure.code(),
+                failure.sent
+            ),
+            (
+                FailureClass::PossibleCommit,
+                &codes::NO_CONFIRMATION,
+                Sent::Unknown
+            ),
+            "{class}/{code}"
+        );
+        // Not sent at all: the class stands, and nothing is in doubt.
+        scene.behave(Behaviour::Fail(StepFailure::not_sent(failure_of(class, code))));
+        let failure = handle
+            .act(&mut prepared, &send, &write, Authority::Write(&token_one))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (failure.failure.class(), failure.sent),
+            (class, Sent::NotSent)
+        );
+        // On a step that commits nothing, the class stands as well.
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        let failure = handle
+            .act(
+                &mut prepared,
+                &scene.step("fetch", false, false),
+                &read,
+                Authority::Read,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (failure.failure.class(), failure.sent),
+            (class, Sent::Answered)
+        );
+    }
+
+    // The system's own verdicts on the committing step stand: it refused
+    // the write, or it answered that the record had changed.
+    for (class, code) in [
+        (FailureClass::Rejected, "example_refused"),
+        (FailureClass::Stale, "example_changed"),
+    ] {
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        let failure = handle
+            .act(&mut prepared, &send, &write, Authority::Write(&token_one))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (failure.failure.class(), failure.sent),
+            (class, Sent::Answered)
+        );
+    }
+    assert!(handle.release(prepared, true).await.complete);
+}
+
+/// The planted-secret test of rule 4. A driver that forgot to redact
+/// returns a registered secret in a value, in a value for reconcile, in a
+/// capture's name, in a capture of text, and in a failure. None of it
+/// passes the handle.
+#[tokio::test]
+async fn a_secret_a_driver_returns_does_not_pass_the_handle() {
+    const SECRET: &str = "example-token-planted-0148";
+    let has_secret = |bytes: &[u8]| {
+        bytes
+            .windows(SECRET.len())
+            .any(|window| window == SECRET.as_bytes())
+    };
+    let scene = scene_of(TestPack::new("alpha"), Arc::new(OneSecret(SECRET)));
+    let (handle, mut prepared) = scene.prepared(None, Posture::Live).await;
+    let args = Values::new();
+    let read = input(&args, None, None);
+    let fetch = scene.step("fetch", false, false);
+
+    // Bytes that are not text cannot be searched, and pass as they are.
+    let picture = vec![0xff, 0xfe, 0x00, 0x01];
+    scene.behave(Behaviour::Saw(a2m_provider::Observed {
+        values: Values::new()
+            .with("note", format!("the key is {SECRET}"))
+            .with("quantity", 12_i64)
+            .with(
+                "lines",
+                Value::List(vec![Value::Text(format!("{SECRET} again"))]),
+            ),
+        assigned_key: None,
+        for_reconcile: Values::new().with("handle", SECRET),
+        captures: vec![
+            a2m_provider::Capture {
+                name: format!("response-{SECRET}"),
+                media_type: "application/json".to_owned(),
+                bytes: format!("{{\"token\":\"{SECRET}\"}}").into_bytes(),
+            },
+            a2m_provider::Capture {
+                name: "screen".to_owned(),
+                media_type: "image/png".to_owned(),
+                bytes: picture.clone(),
+            },
+        ],
+    }));
+    let StepOutcome::Done(observed) = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap()
+    else {
+        panic!("done");
+    };
+    let shown = format!("{observed:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+    assert!(observed.captures.iter().all(|capture| !has_secret(&capture.bytes)));
+    // What is not a secret is as the driver returned it.
+    assert_eq!(observed.values.get("quantity"), Some(&Value::Int(12)));
+    assert_eq!(
+        observed.values.get("note"),
+        Some(&Value::Text(format!("the key is {}", a2m_core::REDACTED)))
+    );
+    assert_eq!(
+        observed.captures[0].bytes,
+        format!("{{\"token\":\"{}\"}}", a2m_core::REDACTED).into_bytes()
+    );
+    assert_eq!(observed.captures[1].bytes, picture);
+
+    // A failure's sentence and next step.
+    scene.behave(Behaviour::Fail(StepFailure::answered(Failure::new(
+        FailureClass::Rejected,
+        a2m_core::FailureCode::fixed("example_refused"),
+        format!("The system refused the token {SECRET}."),
+        format!("Sign in again with {SECRET}."),
+    ))));
+    let failure = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap_err();
+    let shown = format!("{failure:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+    assert_eq!(failure.failure.code().as_str(), "example_refused");
+    assert!(handle.release(prepared, false).await.complete);
+}
+
+/// A mode may name the kinds of step that always save. The handle then
+/// refuses one sent as a step that commits nothing, whoever built the step:
+/// the plan, or a discoverer through the read-only port.
+#[tokio::test]
+async fn a_step_of_a_kind_that_always_commits_is_refused_when_sent_as_a_read() {
+    let declares = manifest("alpha", "request", "").replace(
+        "steps = [\"fetch\", \"send\"]",
+        "steps = [\"fetch\", \"send\"]\ncommit_steps = [\"send\"]",
+    );
+    let scene = scene_of(
+        TestPack::with_manifest("alpha", declares),
+        Arc::new(a2m_core::NoSecrets),
+    );
+    let (handle, mut prepared) = scene.prepared(None, Posture::Discovery).await;
+    let args = Values::new();
+    let read = input(&args, None, None);
+    let refused = refused_unsent(
+        handle
+            .act(
+                &mut prepared,
+                &scene.step("send", false, false),
+                &read,
+                Authority::Read,
+            )
+            .await,
+    );
+    assert_eq!(
+        (refused.class(), refused.code()),
+        (FailureClass::Policy, &codes::INTENT_MISSING)
+    );
+    // Through the port a discoverer is given, too.
+    let port = ReadOnlyPort::new(handle.clone(), prepared);
+    let refused = refused_unsent(
+        a2m_provider::SandboxPort::act(&port, &scene.step("send", false, false), &read).await,
+    );
+    assert_eq!(refused.code(), &codes::INTENT_MISSING);
+    assert!(scene.reached().is_empty(), "{:?}", scene.reached());
+    // A step of another kind is carried out.
+    a2m_provider::SandboxPort::act(&port, &scene.step("fetch", false, false), &read)
+        .await
+        .unwrap();
+    assert_eq!(scene.reached(), ["fetch"]);
+    let (handle, prepared) = port.into_parts();
+    assert!(handle.release(prepared, false).await.complete);
+}
+
+/// A code that states the kernel's own bookkeeping never comes from a
+/// driver, also where a step's own `fails_as` would let it pass.
+#[tokio::test]
+async fn a_driver_cannot_return_a_code_that_is_the_kernels_alone() {
+    let scene = scene();
+    let (handle, mut prepared) = scene.prepared(None, Posture::Live).await;
+    let args = Values::new();
+    let read = input(&args, None, None);
+    let mut fetch = scene.step("fetch", false, false);
+    fetch.fails_as.class = FailureClass::Busy;
+    fetch.fails_as.code = a2m_core::FailureCode::fixed("blocked_by_parent");
+    scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(
+        FailureClass::Busy,
+        "blocked_by_parent",
+    ))));
+    let failure = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (failure.failure.class(), failure.failure.code()),
+        (FailureClass::UnknownVariant, &codes::UNDECLARED_CODE)
+    );
+    // The step's own code, when it is not the kernel's, passes.
+    fetch.fails_as.code = a2m_core::FailureCode::fixed("example_busy");
+    scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(
+        FailureClass::Busy,
+        "example_busy",
+    ))));
+    let failure = handle
+        .act(&mut prepared, &fetch, &read, Authority::Read)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.failure.code().as_str(), "example_busy");
+    assert!(handle.release(prepared, false).await.complete);
 }
 
 struct Kept(Vec<a2m_core::Finding>);

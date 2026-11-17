@@ -407,6 +407,8 @@ pub(crate) struct HandleFacts {
     pub mode: Mode,
     pub archetype: Archetype,
     pub steps: BTreeSet<StepKind>,
+    /// The kinds of step that always save.
+    pub commit_steps: BTreeSet<StepKind>,
     pub codes: BTreeMap<FailureCode, FailureClass>,
     pub choice: ProviderChoice,
     pub supervisor: ScopedSupervisor,
@@ -543,6 +545,18 @@ impl DriverHandle {
         }
         if step.commits {
             self.may_commit(prepared, input, authority)?;
+        } else if self.facts.commit_steps.contains(&step.kind) {
+            // The mode says a step of this kind always saves. Sent as a
+            // step that commits nothing, it would be a write with no intent
+            // stored and no token, on the word of whoever built the step.
+            return Err(refused(codes::policy(
+                codes::INTENT_MISSING,
+                format!(
+                    "A `{}` step always commits in the mode `{}`, and was sent as a step that commits nothing.",
+                    step.kind, self.facts.mode
+                ),
+                "Mark the step as the binding's commit point, so that its intent is stored first.",
+            )));
         }
         let result = self.driver.act(prepared, step, input).await;
         match result {
@@ -569,7 +583,33 @@ impl DriverHandle {
                     "Read the record back; then report this to the provider's author.",
                 )))
             }
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => Ok(self.redacted(outcome)),
+        }
+    }
+
+    /// The backstop of rule 4. A driver redacts what it returns; whatever
+    /// it missed is redacted here, with the same redactor, before the
+    /// outcome reaches the engine: every text in the values, in the values
+    /// for reconcile, in a capture's name, and in a capture whose bytes are
+    /// text. Bytes that are not text cannot be searched and pass as the
+    /// driver left them.
+    fn redacted(&self, outcome: StepOutcome) -> StepOutcome {
+        let clean = |mut observed: Observed| {
+            observed.values = self.redact.redact_values(&observed.values);
+            observed.for_reconcile = self.redact.redact_values(&observed.for_reconcile);
+            for capture in &mut observed.captures {
+                capture.name = self.redact.redact(&capture.name);
+                if let Ok(text) = std::str::from_utf8(&capture.bytes)
+                    && self.redact.contains_secret(text)
+                {
+                    capture.bytes = self.redact.redact(text).into_bytes();
+                }
+            }
+            observed
+        };
+        match outcome {
+            StepOutcome::Done(observed) => StepOutcome::Done(clean(observed)),
+            StepOutcome::Absent(observed) => StepOutcome::Absent(clean(observed)),
         }
     }
 
@@ -629,15 +669,16 @@ impl DriverHandle {
     }
 
     /// Redacts a driver's failure, refuses a code nothing declares, and
-    /// fixes the class of a doubtful write.
+    /// fixes the class of a write that was sent and is not settled.
     fn checked_failure(&self, failure: StepFailure, step: Option<&Step>) -> StepFailure {
-        let StepFailure { failure, sent } = failure;
+        let StepFailure { failure, mut sent } = failure;
         let mut failure = self.redact.redact_failure(&failure);
-        let declared = self.facts.codes.get(failure.code()) == Some(&failure.class())
-            || step.is_some_and(|step| {
-                step.fails_as.class == failure.class() && step.fails_as.code == *failure.code()
-            })
-            || is_contract_code(failure.class(), failure.code());
+        let declared = !codes::is_kernel_only(failure.code())
+            && (self.facts.codes.get(failure.code()) == Some(&failure.class())
+                || step.is_some_and(|step| {
+                    step.fails_as.class == failure.class() && step.fails_as.code == *failure.code()
+                })
+                || is_contract_code(failure.class(), failure.code()));
         if !declared {
             failure = codes::unknown_variant(
                 codes::UNDECLARED_CODE,
@@ -650,7 +691,25 @@ impl DriverHandle {
                 "Report this to the provider's author; every failure code is declared in the manifest.",
             );
         }
-        if sent == Sent::Unknown && step.is_some_and(|step| step.commits) {
+        // A write that was sent is settled only by the system's own
+        // verdict. Where nothing says what became of it, it is in doubt.
+        // `policy` and `input` say that nothing was sent: the kernel
+        // releases a record's lock on them without reading the record. On a
+        // committing step that did leave they are not a verdict of the
+        // system, so the write is in doubt as well. `stale` stays: there
+        // the system answered that the record had changed and nothing was
+        // written.
+        let in_doubt = step.is_some_and(|step| step.commits)
+            && match sent {
+                Sent::NotSent => false,
+                Sent::Unknown => true,
+                Sent::Answered => matches!(
+                    failure.class(),
+                    FailureClass::Policy | FailureClass::Input
+                ),
+            };
+        if in_doubt {
+            sent = Sent::Unknown;
             failure = Failure::new(
                 FailureClass::PossibleCommit,
                 codes::NO_CONFIRMATION,

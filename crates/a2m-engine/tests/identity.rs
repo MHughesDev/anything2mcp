@@ -213,6 +213,34 @@ async fn a_lookup_that_lags_behind_the_write_is_asked_again_after_its_settle_tim
     assert_eq!(stored(&scene, "A-102").await.len(), 1);
 }
 
+#[tokio::test]
+async fn a_settle_time_the_lease_does_not_cover_is_not_waited_out() {
+    let scene = Scene::new(REF_ADD, |plan| {
+        plan.operations[6].bindings[0].settle_ms = 60_000;
+    })
+    .await;
+    let input = slot("A-102", 4, "12");
+    approved(&scene, REF_ADD, &input).await;
+    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let outcome = scene.work(JobKind::Execute, REF_ADD, input.clone()).await;
+    assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
+
+    // The lookup finds nothing yet, and the lease has less left than the
+    // settle time: the job ends with the record still in doubt. It does
+    // not sleep past its lease, and it does not take "nothing found" as
+    // "did not land".
+    scene.hooks.lookup_lags.store(1, Ordering::SeqCst);
+    scene.new_lease().await;
+    scene
+        .lease
+        .renew(tokio::time::Instant::now() + std::time::Duration::from_secs(30));
+    let outcome = scene.work(JobKind::Execute, REF_ADD, input).await;
+    assert_eq!(outcome, JobOutcome::LeaseEnding);
+    assert_eq!(scene.hooks.count("add_item"), 1);
+    assert_eq!(scene.hooks.count("settle:Planned"), 0);
+    assert_eq!(stored(&scene, "A-102").await.len(), 1);
+}
+
 // ---- a key the system assigns before the commit point ----
 
 #[tokio::test]

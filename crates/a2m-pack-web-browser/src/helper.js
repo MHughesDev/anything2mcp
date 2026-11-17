@@ -10,6 +10,24 @@
 (() => {
   if (globalThis.__a2m) return;
 
+  // The origins this tab was opened for. The engine writes the list in
+  // when it places the helper; as the file stands, the list is empty and
+  // every call is refused.
+  const ALLOWED = /*a2m:origins*/[];
+
+  // Where the page is: its origin, or its scheme when it has none.
+  const here = () => (location.origin !== "null" ? location.origin : location.protocol);
+
+  // Every function the engine calls goes through this, in the same call
+  // as the look or the act itself: on a page of an origin the tab was not
+  // opened for, nothing is located, read, checked, focused, or sent.
+  const guarded = (fn) =>
+    function (...args) {
+      const at = here();
+      if (!ALLOWED.includes(at)) throw new Error("a2m-outside-origins " + at);
+      return fn.apply(this, args);
+    };
+
   const norm = (text) => (text || "").replace(/\s+/g, " ").trim();
 
   // Elements a person can perceive: laid out, and not hidden.
@@ -145,6 +163,12 @@
       case "title":
         return (el) => norm(el.getAttribute("title")) === by.text;
       case "css":
+        // A selector on the `value` attribute would tell, match by match,
+        // what a password input was served with. On a page that holds one,
+        // such a selector is refused whole.
+        if (asksValue(by.selector) && [...walk(document)].some((el) => isPassword(el) && el.hasAttribute("value"))) {
+          throw new Error("a2m-password-refused");
+        }
         return (el) => el.matches(by.selector);
       case "text": {
         const hit = by.contains
@@ -188,6 +212,10 @@
     if (!Array.isArray(found)) return found.scope;
     return found.length === 1 ? found[0] : found.length;
   }
+
+  // Whether a selector asks about the `value` attribute. A selector with an
+  // escape in it could spell the name another way, so it counts as asking.
+  const asksValue = (selector) => /\\|\[\s*(?:[*\w-]*\|)?\s*value/i.test(selector);
 
   const isPassword = (el) =>
     el.localName === "input" &&
@@ -379,8 +407,10 @@
       headers: spec.headers,
       body: spec.body === null ? undefined : spec.body,
       credentials: "include",
-      redirect: "follow",
+      // A redirect is not followed: its next address was checked by nobody.
+      redirect: "manual",
     });
+    if (response.type === "opaqueredirect") return { redirected: true };
     const body = await response.text();
     if (body.length > limit) return { too_large: true };
     const headers = [];
@@ -390,5 +420,8 @@
 
   const page = () => ({ address: location.href, title: document.title });
 
-  globalThis.__a2m = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, page, passwords };
+  globalThis.__a2m = Object.freeze(
+    Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
+  );
 })();
