@@ -1002,3 +1002,57 @@ impl Driver for FileDriver {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Layout;
+
+    fn document(may_be_open: Option<bool>, lock_sibling: Option<&str>) -> DocumentSpec {
+        DocumentSpec {
+            surface: "price_files".to_owned(),
+            file: "stock.csv".to_owned(),
+            format: Format::Delimited,
+            delimiter: None,
+            line_ending: None,
+            layout: Layout::default(),
+            may_be_open,
+            lock_sibling: lock_sibling.map(str::to_owned),
+            records: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_write_to_a_document_that_does_not_say_whether_it_may_be_open_does_not_run() {
+        // The compiler refuses both; a plan that holds either all the same
+        // is refused by the driver before the file is read.
+        for spec in [document(None, None), document(None, Some("stock.csv.lock"))] {
+            let failure = may_be_written(&spec).unwrap_err();
+            assert_eq!(failure.failure.code(), &codes::PAYLOAD_UNREADABLE);
+            assert_eq!(failure.sent, a2m_provider::Sent::NotSent);
+        }
+        assert!(may_be_written(&document(Some(true), None)).is_err());
+        assert!(may_be_written(&document(Some(false), None)).is_ok());
+        assert!(may_be_written(&document(Some(true), Some("stock.csv.lock"))).is_ok());
+    }
+
+    #[test]
+    fn a_number_the_pack_spells_is_not_taken_for_a_formula() {
+        let field = |may_begin_formula| FieldSpec {
+            name: "note".to_owned(),
+            header: Some("note".to_owned()),
+            path: Vec::new(),
+            field_type: 0,
+            writable: true,
+            formula: false,
+            may_begin_formula,
+        };
+        assert!(formula_guard(&field(false), &Value::Int(-5), "-5").is_ok());
+        assert!(formula_guard(&field(false), &Value::from("-5"), "-5").is_err());
+        assert!(formula_guard(&field(true), &Value::from("-5"), "-5").is_ok());
+        // A declaration lets a sign through, and never a tab or a line break.
+        let stopped = formula_guard(&field(true), &Value::from("\t=1"), "\t=1").unwrap_err();
+        assert_eq!(stopped.failure.code(), &codes::VALUE_BEGINS_FORMULA);
+        assert!(!stopped.failure.message().contains("=1"));
+    }
+}

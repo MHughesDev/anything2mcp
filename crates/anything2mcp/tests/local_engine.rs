@@ -607,7 +607,10 @@ async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its
         line.starts_with("anything2mcp: approvals on this machine: not_available, not_built. "),
         "{line}"
     );
-    assert!(line.contains(&none.message) && line.contains(&none.remedy), "{line}");
+    assert!(
+        line.contains(&none.message) && line.contains(&none.remedy),
+        "{line}"
+    );
     let serving = tokio::spawn(local.serve());
 
     // The write rests, with a link to its page.

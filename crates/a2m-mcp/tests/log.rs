@@ -117,6 +117,7 @@ async fn the_log_at_its_most_verbose_holds_nothing_that_passed_through_the_door(
             user: world::USER.to_owned(),
             label: "label-of-the-log-test".to_owned(),
         }),
+        project: None,
     };
     let mut stdio = Stdio::start(service);
     for message in [

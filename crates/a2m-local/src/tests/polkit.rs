@@ -26,8 +26,7 @@ use crate::{
 };
 
 /// The policy file as it ships.
-const POLICY: &str =
-    include_str!("../../polkit/io.github.mhughesdev.anything2mcp.presence.policy");
+const POLICY: &str = include_str!("../../polkit/io.github.mhughesdev.anything2mcp.presence.policy");
 
 /// Says that this machine was prepared for the test against a real
 /// polkit, and how far: `no_polkit`, `no_policy`, `no_session`, `root`,
@@ -652,7 +651,9 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
         agent.heard.clear();
         agent.types(REAL_PASSWORD);
     });
-    let got = within("the ask after a cancelled one", asking).await.unwrap();
+    let got = within("the ask after a cancelled one", asking)
+        .await
+        .unwrap();
     assert_eq!(got, PromptAnswer::Present(PromptName::Polkit));
 }
 

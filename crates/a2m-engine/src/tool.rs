@@ -74,6 +74,9 @@ struct Planned {
     current: Option<Values>,
     /// When this job last read the record, on the engine's clock.
     seen_at: Option<Duration>,
+    /// The driver context this job last read the record in; `None` when
+    /// the record was not read, because nothing could be looked up.
+    seen_in: Option<u64>,
     state: RecordState,
     stamp: Option<String>,
     /// The position of the binding that writes it.
@@ -1186,6 +1189,7 @@ fn derive_step(
             before: None,
             current: None,
             seen_at: None,
+            seen_in: None,
             state: RecordState::Planned,
             stamp: None,
             binding,
@@ -1561,7 +1565,9 @@ async fn preview_record(
         };
     let raw = if looked_up {
         let held = hold_for(run, found, record, None, false).await?;
-        read_record(run, found, record, held, false).await?
+        let raw = read_record(run, found, record, held, false).await?;
+        record.seen_in = Some(run.serial_of(held));
+        raw
     } else {
         None
     };
@@ -1780,6 +1786,7 @@ async fn reconcile(
                 record.recorded = false;
                 record.current = raw;
                 record.seen_at = Some(run.engine.deps.clock.elapsed());
+                record.seen_in = Some(run.serial_of(context));
             }
             Settled::Stale => {
                 return Err(Stop::Fail(stale(
@@ -1873,7 +1880,12 @@ async fn commit_point(
         }
     }
     run.checkpoint(Duration::ZERO)?;
-    let reads = hold_for(run, found, record, None, false).await?;
+    // The context the record is written in. Live it is the one every step
+    // of the mode runs in. In the sandbox it is prepared for the write of
+    // a declared test record alone: every other step of the job, the
+    // preview's lookups among them, runs with the driver's own read-only
+    // guard on.
+    let held = hold_for(run, found, record, None, true).await?;
     let binding = &found.bindings[record.binding];
     // The binding chosen now may not be the one the records were worked
     // out with: it is checked for its one save before anything is sent.
@@ -1895,18 +1907,26 @@ async fn commit_point(
     let whole = run.time_of(steps_of(binding));
     run.checkpoint(whole)?;
     let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
-    run.budget(reads, steps).await?;
+    run.budget(held, steps).await?;
 
     // Intend: the lock, the freshness check, then the intent.
     run.control.lock(record.record).await?;
     let settings = &run.engine.deps.settings;
     let now = run.engine.deps.clock.elapsed();
+    // A read is fresh when it is recent and was made in the context that
+    // writes. A driver may keep what it read of a record, such as its
+    // version, with its context: a context prepared since the read, in
+    // place of one that failed or for the sandbox's write, knows nothing
+    // of the record, so the record is read again in it.
     let fresh = !run.job.conditions.strict_freshness
         && record
             .seen_at
-            .is_some_and(|at| now.saturating_sub(at) <= settings.freshness_window);
+            .is_some_and(|at| now.saturating_sub(at) <= settings.freshness_window)
+        && record
+            .seen_in
+            .is_none_or(|context| context == run.serial_of(held));
     if !fresh && found.identity.strategy != IdentityStrategy::None {
-        let raw = read_record(run, found, record, reads, false).await?;
+        let raw = read_record(run, found, record, held, false).await?;
         let seen = raw
             .as_ref()
             .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
@@ -1921,15 +1941,8 @@ async fn commit_point(
         }
         record.current = raw;
         record.seen_at = Some(run.engine.deps.clock.elapsed());
+        record.seen_in = Some(run.serial_of(held));
     }
-    // The context the record is written in. Live it is the one it was read
-    // in. In the sandbox it is prepared for this write alone: everything
-    // before this line ran with the driver's own read-only guard on.
-    let held = if run.posture == Posture::Live {
-        reads
-    } else {
-        hold_for(run, found, record, None, true).await?
-    };
     // The waits are over, and they may have used the lease up: the
     // directive and the lease are checked again before the intent.
     run.checkpoint(whole)?;

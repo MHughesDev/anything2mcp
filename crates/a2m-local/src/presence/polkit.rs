@@ -207,9 +207,9 @@ pub(crate) fn answered(answer: Result<Verdict, Fault>) -> PromptAnswer {
         )),
         // A yes that also says it was not given: polkit sends no such
         // answer, and an answer that is not understood is not a yes.
-        (true, _, _) => PromptAnswer::NotAvailable(unavailable(&Fault::Other(
-            "inconsistent_answer".to_owned(),
-        ))),
+        (true, _, _) => {
+            PromptAnswer::NotAvailable(unavailable(&Fault::Other("inconsistent_answer".to_owned())))
+        }
     }
 }
 

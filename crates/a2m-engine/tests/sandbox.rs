@@ -232,14 +232,13 @@ async fn a_try_of_a_write_is_refused_before_the_driver_unless_its_record_is_a_te
     assert_eq!(scene.record_states().await, [RecordState::Verified]);
     assert_eq!(scene.app.write_count("A-102", "T-1").await.unwrap(), 1);
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
-    // The record was looked up, at the preview and again before its write,
-    // with the driver's own guard on. One context alone was prepared in
-    // the posture that may write: the one the test record was written in.
+    // The record was looked up at the preview with the driver's own guard
+    // on. One context alone was prepared in the posture that may write:
+    // the one the test record was written in.
     let postures = scene.hooks.postures.lock().unwrap().clone();
     assert_eq!(
         postures,
         [
-            "Sandbox { test_records: false }",
             "Sandbox { test_records: false }",
             "Sandbox { test_records: true }"
         ]

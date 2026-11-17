@@ -6,6 +6,22 @@
 //! the engine itself dies. Membership of the job is the proof of ownership:
 //! ending the job reaches only what was started in it.
 //!
+//! A child is created suspended, placed in its job, and only then resumed.
+//! It runs no instruction outside the job, so a process it starts at once
+//! is in the job too. The standard library does not hand out the handle of
+//! the child's first thread, so the thread is found in a snapshot of the
+//! system's threads by the child's process identifier and resumed through a
+//! handle opened for that alone.
+//!
+//! A program is opened once, shared for reading only, and digested through
+//! that handle. The handle stays open until the child exists: while it is
+//! open the system lets nobody write the file, rename it, or delete it, so
+//! the file that is started by its path is the file that was digested.
+//! Windows cannot start a process from an open handle. A folder on the way
+//! to the file is not held: under the start lock the path is resolved once
+//! more and must still lead to the same file, and a link on the way that is
+//! repointed in the moment between that look and the start is not seen.
+//!
 //! The standard library starts every child with handle inheritance on. A
 //! foreign link marks two handles inheritable for the moment of one start,
 //! so every start of a process takes the one lock below; a second child
@@ -14,7 +30,9 @@
 use std::fs::{File, OpenOptions};
 use std::future::Future;
 use std::io;
+use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,14 +41,22 @@ use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::process::{Child, Command};
-use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+use windows_sys::Win32::Foundation::{
+    HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
 };
+use windows_sys::Win32::System::Threading::{
+    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+};
 
-use super::ForeignPipe;
+use super::{ForeignPipe, StartError};
 
 /// The two ends of a foreign link that stay with the engine.
 pub(crate) type Pipes = (
@@ -202,14 +228,144 @@ fn foreign_ends() -> io::Result<ForeignEnds> {
     })
 }
 
-/// Starts `command` inside a new job object. With `foreign`, the child
-/// inherits the two pipe ends, named by value in one added argument.
+/// The share mode of a file others may open for reading, and for nothing
+/// else: not for writing, and not for deleting or renaming.
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+/// A program opened once, to be digested and then started.
+pub(crate) struct Program {
+    /// The path it was asked for by, which it is started by.
+    named: PathBuf,
+    /// That path with every link resolved, when it was opened.
+    real: PathBuf,
+    /// Held open, shared for reading only, until the child exists.
+    file: File,
+}
+
+impl Program {
+    /// Opens the file at `real`, the resolved form of `named`, so that
+    /// nobody can write, rename, or delete it while the handle is open.
+    /// Only a regular file is taken. A file someone has open for writing
+    /// cannot be opened this way, and is not started.
+    pub(crate) fn open(named: &Path, real: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(real)?;
+        if !file.metadata()?.is_file() {
+            return Err(other("a program is a regular file"));
+        }
+        Ok(Self {
+            named: named.to_path_buf(),
+            real: real.to_path_buf(),
+            file,
+        })
+    }
+
+    /// The digest of the open file.
+    pub(crate) fn digest(&mut self) -> io::Result<a2m_core::Digest> {
+        super::digest_read(&mut self.file).map(|(digest, _)| digest)
+    }
+
+    /// Whether the path the program is started by still leads to the file
+    /// that is held open.
+    fn still_there(&self) -> bool {
+        std::fs::canonicalize(&self.named).is_ok_and(|now| now == self.real)
+    }
+}
+
+/// Starts the command with its first thread suspended: the process exists
+/// and has run nothing.
+fn start_suspended(command: &mut Command) -> io::Result<Child> {
+    command.creation_flags(CREATE_SUSPENDED);
+    command.spawn()
+}
+
+/// Places the child in the job.
 #[allow(unsafe_code)] // one call into the operating system, explained below
+fn admit(job: &OwnedHandle, child: &Child) -> io::Result<()> {
+    let process = child
+        .raw_handle()
+        .ok_or_else(|| other("the child has no process handle"))?;
+    // SAFETY: both handles are open: the job is owned by `job`, and the
+    // process handle by `child`, which is alive here. The process handle
+    // is the one the system gave when it created the process, which carries
+    // every right the call asks for. The call touches no memory of ours.
+    let ok = unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) };
+    if ok == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Resumes the threads of a process that was created suspended. Such a
+/// process has one thread, its first. The threads are found in a snapshot
+/// of every thread in the system, by the identifier of the process that
+/// owns them.
+#[allow(unsafe_code)] // five calls into the operating system; each is explained where it is made
+fn resume(process_id: u32) -> io::Result<()> {
+    // SAFETY: the call takes two numbers and touches no memory of ours. For
+    // a snapshot of threads the process identifier is not used.
+    let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a handle the call above just returned, it is not the
+    // value that means failure, and nothing else owns it. From here the
+    // `OwnedHandle` closes it.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut entry = THREADENTRY32 {
+        dwSize: u32::try_from(std::mem::size_of::<THREADENTRY32>())
+            .map_err(|_| other("a thread entry does not fit a length"))?,
+        ..THREADENTRY32::default()
+    };
+    let mut resumed = 0_u32;
+    // SAFETY: the snapshot handle is open and owned by `snapshot`. The
+    // pointer is to `entry`, a live value of the type the call fills, whose
+    // first field holds its size as the call requires.
+    let mut more = unsafe { Thread32First(snapshot.as_raw_handle(), &raw mut entry) } != 0;
+    while more {
+        if entry.th32OwnerProcessID == process_id {
+            // SAFETY: the call takes three numbers and touches no memory of
+            // ours. It asks for the one right the next call needs, and for
+            // a handle no child inherits.
+            let raw = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if raw.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: `raw` is a handle the call above just returned, it is
+            // not null, and nothing else owns it.
+            let thread = unsafe { OwnedHandle::from_raw_handle(raw) };
+            // SAFETY: the thread handle is open, owned by `thread`, and was
+            // opened with the right to resume. The call touches no memory.
+            let before = unsafe { ResumeThread(thread.as_raw_handle()) };
+            if before == u32::MAX {
+                return Err(io::Error::last_os_error());
+            }
+            resumed += 1;
+        }
+        // SAFETY: as for the first entry above.
+        more = unsafe { Thread32Next(snapshot.as_raw_handle(), &raw mut entry) } != 0;
+    }
+    if resumed == 0 {
+        return Err(other("the child has no thread to resume"));
+    }
+    Ok(())
+}
+
+/// Starts `program` inside a new job object, with the command `command`
+/// builds for the path it is given. The child is created suspended, placed
+/// in the job, and then resumed, so nothing it starts is outside the job.
+/// With `foreign`, the child inherits the two pipe ends, named by value in
+/// one added argument.
 pub(crate) fn spawn(
-    mut command: Command,
+    program: &Program,
+    command: impl FnOnce(&Path) -> Command,
     foreign: Option<&ForeignPipe>,
-) -> io::Result<(Group, Option<Pipes>)> {
+) -> Result<(Group, Option<Pipes>), StartError> {
     let job = new_job()?;
+    let mut command = command(&program.named);
     let mut child_ends = None;
     let pipes = match foreign {
         None => None,
@@ -237,15 +393,20 @@ pub(crate) fn spawn(
             Some(pipes)
         }
     };
-    let child = {
+    let mut child = {
         let _one_start = START
             .lock()
             .map_err(|_| other("the start lock is broken"))?;
+        // The file is held open and cannot change. The path to it is looked
+        // at once more, as late as can be.
+        if !program.still_there() {
+            return Err(StartError::Changed);
+        }
         if let Some((reads, writes)) = &child_ends {
             set_inherit(reads, true)?;
             set_inherit(writes, true)?;
         }
-        let started = command.spawn();
+        let started = start_suspended(&mut command);
         if let Some((reads, writes)) = &child_ends {
             set_inherit(reads, false)?;
             set_inherit(writes, false)?;
@@ -255,21 +416,14 @@ pub(crate) fn spawn(
     // Close this process's copies of the child's ends, so that a dead child
     // shows as the end of the pipe.
     drop(child_ends);
-    let process = child
-        .raw_handle()
-        .ok_or_else(|| other("the child has no process handle"))?;
-    // SAFETY: both handles are open: the job is owned by `job`, and the
-    // process handle by `child`, which is alive here. The call touches no
-    // memory of ours.
-    let ok = unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) };
-    if ok == 0 {
-        let error = io::Error::last_os_error();
-        // The child is not in the job, so it is ended on its own.
-        let mut child = child;
-        let _ = child.start_kill();
-        return Err(error);
-    }
+    // Into the job first, and only then allowed to run.
     let id = child.id().unwrap_or(0);
+    if let Err(error) = admit(&job, &child).and_then(|()| resume(id)) {
+        // It has run nothing. It is ended on its own, in case it is not in
+        // the job; if it is, closing the job's last handle ends it as well.
+        let _ = child.start_kill();
+        return Err(StartError::Failed(error));
+    }
     Ok((
         Group {
             job,

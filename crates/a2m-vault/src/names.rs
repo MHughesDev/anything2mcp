@@ -108,6 +108,13 @@ impl OwnerRef {
 
     /// A service identity, by its name.
     ///
+    /// A name that begins with `account:` is a dedicated account's: it is
+    /// the owner [`OwnerRef::of`] gives for that account, deliberately, so
+    /// that a store can make an owner again from the kind and the
+    /// identifier it kept. A service's name is therefore never built from
+    /// text a caller chose: a service that could name itself `account:x`
+    /// would hold that account's key.
+    ///
     /// # Errors
     ///
     /// `input`/`schema_invalid` when `name` is not a name this crate accepts.
@@ -116,7 +123,8 @@ impl OwnerRef {
     }
 
     /// The owner of what belongs to an identity a system sees: the person,
-    /// or the dedicated account as a service identity.
+    /// or the dedicated account as the service identity named `account:`
+    /// and the account's name.
     #[must_use]
     pub fn of(identity: &Identity) -> Self {
         let (kind, id) = match identity {
@@ -452,6 +460,27 @@ mod tests {
         }
         assert_eq!(KeyId::workspace(&main), KeyId::workspace(&main));
         assert!(!format!("{:?}", KeyId::owner(&main, &ana)).contains("ana"));
+    }
+
+    /// Audit finding V-6. A dedicated account is a service identity with a
+    /// reserved beginning to its name, and a store makes its owner again
+    /// from the kind and the identifier it kept. This holds the rule in
+    /// place: the two spellings are one owner with one key, and a person of
+    /// the same text is another.
+    #[test]
+    fn an_accounts_owner_is_the_service_identity_named_for_it() {
+        let main = WorkspaceId::from_bytes([1; 16]);
+        let account = a2m_core::AccountName::new("robot").unwrap();
+        let owner = OwnerRef::of(&Identity::Account(account));
+        assert_eq!(owner.kind(), OwnerKind::Service);
+        assert_eq!(owner.id(), "account:robot");
+        let rebuilt = OwnerRef::service(owner.id()).unwrap();
+        assert_eq!(rebuilt, owner);
+        assert_eq!(KeyId::owner(&main, &rebuilt), KeyId::owner(&main, &owner));
+        let person = OwnerRef::person("account:robot").unwrap();
+        assert_ne!(KeyId::owner(&main, &person), KeyId::owner(&main, &owner));
+        let other = OwnerRef::service("robot").unwrap();
+        assert_ne!(KeyId::owner(&main, &other), KeyId::owner(&main, &owner));
     }
 
     #[test]

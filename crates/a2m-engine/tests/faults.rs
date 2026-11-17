@@ -672,10 +672,11 @@ async fn a_lease_that_runs_out_after_the_intent_stops_the_job_at_the_commit_poin
         .lease
         .renew(tokio::time::Instant::now() + Duration::from_secs(3600));
     // The lease ends during the step before the save, after the intent
-    // was stored.
+    // was stored. It does so once.
     let lease = scene.lease.clone();
+    let once = std::sync::atomic::AtomicBool::new(true);
     scene.hooks.on_step(move |kind| {
-        if kind == "reserve_code" {
+        if kind == "reserve_code" && once.swap(false, Ordering::SeqCst) {
             lease.renew(tokio::time::Instant::now());
         }
     });

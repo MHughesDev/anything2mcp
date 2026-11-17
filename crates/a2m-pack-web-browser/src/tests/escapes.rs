@@ -93,7 +93,7 @@ async fn before_b3_a_frame_from_another_site_opens_a_socket() {
     let blocked = tab.blocked();
     drop(tab);
     stand.end().await;
-    assert!(escapes(&app).await.is_empty(), "{:?} {waited:?} {blocked:?}", escapes(&app).await);
+    panic!("{:?} {waited:?} {blocked:?}", app.trap_writes().await.unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -123,7 +123,7 @@ async fn before_b4_a_service_worker_writes_for_an_observed_page() {
     drop(tab);
     drop(acting);
     stand.end().await;
-    assert!(escapes(&app).await.is_empty(), "{:?} {answer:?}", escapes(&app).await);
+    panic!("{:?} {answer:?}", app.trap_writes().await.unwrap());
 }
 
 #[cfg(unix)]

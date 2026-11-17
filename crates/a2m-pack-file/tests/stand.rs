@@ -1210,8 +1210,7 @@ async fn a_file_is_replaced_only_by_one_who_may_write_it_and_keeps_its_owner_and
     );
     scene.stand.clear_faults().unwrap();
 
-    // A file of another owner and group, which only the superuser can make
-    // and only the superuser may then write: the new file is still theirs.
+    // A file of another owner and group, which only the superuser can make.
     scene.stand.reset().unwrap();
     if shown(
         &scene,
@@ -1220,15 +1219,124 @@ async fn a_file_is_replaced_only_by_one_who_may_write_it_and_keeps_its_owner_and
         },
     ) {
         let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
-        write(&scene, &store, 3, "example_stock_set", &values, || {})
-            .await
-            .unwrap();
+        let may_write = std::fs::OpenOptions::new()
+            .write(true)
+            .open(scene.stand.path(seed::STOCK_CSV).unwrap())
+            .is_ok();
+        let result = write(&scene, &store, 3, "example_stock_set", &values, || {}).await;
         let after = scene.stand.inspect(seed::STOCK_CSV).unwrap();
-        assert_eq!(stored(&scene), ["38"]);
+        if may_write {
+            // One who may write it replaces it, and the new file is still
+            // the other owner's, with the bits it had.
+            result.unwrap();
+            assert_eq!(stored(&scene), ["38"]);
+            assert_ne!(after.identity, before.identity);
+        } else {
+            // One who may write the folder and not the file replaces nothing.
+            let failure = refused(result);
+            assert_eq!(
+                class_and_code(&failure),
+                (FailureClass::Policy, "file_protected")
+            );
+            assert_eq!(failure.sent, Sent::NotSent);
+            assert_eq!(stored(&scene), ["40"]);
+            assert_eq!(after.identity, before.identity);
+        }
         assert_eq!((after.owner, after.mode), (before.owner, before.mode));
-        assert_ne!(after.identity, before.identity);
     }
     assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn text_a_spreadsheet_program_would_run_is_refused_and_never_altered() {
+    let scene = Scene::new();
+    let store = store().await;
+    let stored_note = |scene: &Scene, key: &str| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", key, "note")
+            .unwrap()
+    };
+    let is_refused = |failure: &StepFailure, value: &str| {
+        assert_eq!(
+            class_and_code(failure),
+            (FailureClass::Input, "value_begins_formula"),
+            "{value:?}"
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+        // The message names the field and never holds the value.
+        assert!(failure.failure.message().contains("`note`"));
+        assert!(!failure.failure.message().contains(value.trim()));
+    };
+
+    // An update: each way a field can begin that a spreadsheet program
+    // would run when a person opens the file.
+    let mut caller = 0;
+    for note in ["=1+1", "+1+1", "-1+1", "@total", "  =1+1", "\u{FF1D}1+1"] {
+        caller += 1;
+        let values = inputs(&[("item_code", text("EX-1002")), ("note", text(note))]);
+        let result = write(&scene, &store, caller, "example_stock_note_set", &values, || {}).await;
+        is_refused(&refused(result), note);
+    }
+    // A new row: the same rule.
+    let values = inputs(&[
+        ("item_code", text("EX-1009")),
+        ("on_hand", Value::Int(5)),
+        ("note", text("=1+1")),
+    ]);
+    let result = write(&scene, &store, 20, "example_stock_add", &values, || {}).await;
+    is_refused(&refused(result), "=1+1");
+    // Nothing was written, and the value was not made safe by changing it.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+    assert_eq!(stored_note(&scene, "EX-1002"), ["Says \"heavy\" on the box"]);
+
+    // A sign inside a value, and a negative number, are not formulas.
+    let values = inputs(&[("item_code", text("EX-1002")), ("note", text("1+1=2 - checked"))]);
+    write(&scene, &store, 21, "example_stock_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1002"), ["1+1=2 - checked"]);
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(-3))]);
+    write(&scene, &store, 22, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["-3"]
+    );
+
+    // A document that declares the column free text that may begin so: the
+    // value is stored exactly as given, and reads back as given.
+    let values = inputs(&[("item_code", text("EX-1002")), ("note", text("=1+1"))]);
+    let written = write(&scene, &store, 23, "example_free_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1002"), ["=1+1"]);
+    assert_eq!(
+        last_values(&written.read_back).get("note"),
+        Some(&text("=1+1"))
+    );
+
+    // What would end a field or a row is quoted, and a quote is doubled:
+    // the stand's own reader and the pack's read-back both give the text.
+    let said = "He said \"no, thanks\", twice";
+    let values = inputs(&[("item_code", text("EX-1001")), ("note", text(said))]);
+    let written = write(&scene, &store, 24, "example_stock_note_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored_note(&scene, "EX-1001"), [said]);
+    assert_eq!(last_values(&written.read_back).get("note"), Some(&text(said)));
+    let bytes = scene.stand.bytes(seed::STOCK_CSV).unwrap().unwrap();
+    let field = b"\"He said \"\"no, thanks\"\", twice\"";
+    assert!(bytes.windows(field.len()).any(|window| window == field));
+    // The file still has as many rows, each with as many fields.
+    let rows = scene.stand.stored_rows(seed::STOCK_CSV, ',').unwrap();
+    assert_eq!(rows.len(), 6);
+    assert!(rows.iter().all(|row| row.len() == 4));
 }
 
 #[tokio::test]
@@ -1418,6 +1526,25 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     };
     // One for the key, and one for the type of each of the four columns.
     assert_eq!(questions("documents/stock.yaml"), 5);
+    // A question is the pack's own words. No header, table name, or file
+    // name reaches it: text in a file may be written as an instruction.
+    for question in &drafted.open_questions {
+        for layout in &layouts {
+            let from_the_file = layout
+                .headers
+                .iter()
+                .chain(layout.tables.iter().flat_map(|table| &table.headers))
+                .chain(layout.tables.iter().map(|table| &table.name))
+                .chain(std::iter::once(&layout.file));
+            for said in from_the_file.filter(|said| !said.is_empty()) {
+                assert!(
+                    !question.question.contains(said.as_str()),
+                    "`{}` holds `{said}`",
+                    question.question
+                );
+            }
+        }
+    }
     let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
     assert!(
         stock.contains("rows: \"all\"") && stock.contains("item_code"),

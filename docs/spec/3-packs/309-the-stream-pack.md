@@ -1,6 +1,6 @@
 # 309. The stream pack
 
-Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The pack is designed here before it is built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Mode: `stream`, registered when the pack was built ([record 0105](../../decisions/0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md)); the same record lists where building changed this section.
+Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The pack is designed here before it is built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Mode: `stream`, registered when the pack was built ([record 0105](../../decisions/0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md)); the same record lists where building changed this section, and [record 0150](../../decisions/0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) lists what a safety audit of the code changed.
 
 The stream archetype is the furthest from what the engine loop was first drawn for. The loop assumes a record that is there to be read before and after a write. A message is often not: it is sent, it is taken, and it is gone. This section says plainly where that bends the loop, and what the pack does about it.
 
@@ -56,7 +56,7 @@ limits:
 | `consumers` | Who reads what is published. `unknown` is treated as `outside` |
 | `wait` | Default and largest wait for this channel; the settings hold a ceiling for all ([section 226](../2-kernel/226-configuration.md)) |
 
-The surface kind `broker` takes one `address`, a `protocol`, and a `rate`, as other surfaces do. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression.
+The surface kind `broker` takes one `address`, a `protocol`, and a `rate`, as other surfaces do. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression. No body may have a field named `message_meta`: that is the name under which a result holds what the broker says about a message, and a message that uses it is refused when it is read and never sent.
 
 ```yaml
 operation: example_order_status_set
@@ -90,7 +90,7 @@ The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists
 
 **Nothing arriving is an answer, not a failure.** An `await` that sees no match within its limit returns `arrived: false`, how long it waited, and the coverage of what it watched. A binding that needs a message states `on_nothing: fail`, and then the run stops with the class `transient` and the code `nothing_arrived`. A `take` always needs one.
 
-**A wait starts from a recorded position.** In prepare, the driver records the position each subscribed partition stands at and stores it with the run. A resumed wait starts from the same place, so a reply that came while the runner was lost is still found. On a `queue` with no positions, a wait starts at the moment of subscribing and says so as a limitation.
+**A wait starts from a recorded position.** In prepare, the driver records the position each subscribed partition stands at and stores it with the run. A resumed wait starts from the same place, so a reply that came while the runner was lost is still found. On a `queue` with no positions, a wait starts at the moment of subscribing and says so as a limitation. So a wait that saw nothing says `coverage: complete` only where its subscription stands at a position the broker reported; elsewhere it says `coverage: partial` with the limitation `starts_at_subscription`. A wait asks for one message at a time, and a broker that hands over more is stopped as `unexpected_reply`.
 
 ## The driver, part by part
 
@@ -120,13 +120,13 @@ For a `retained` channel, another producer may publish the same key between the 
 
 ## Delivery and duplicates
 
-Brokers deliver at least once. A publish whose acknowledgement was lost may have landed, and sending it again may send it twice.
+Brokers deliver at least once. A publish whose acknowledgement was lost may have landed, and sending it again may send it twice. The same holds for an answer the driver cannot read and for a refusal under a code the protocol does not define: neither says that nothing was stored, so each is `possible_commit`, for a publish and for the acknowledgement of a `take` alike. A write is refused only in words the protocol defines for it.
 
 | What the target offers | How a publish is made safe to resume |
 | --- | --- |
 | The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
 | A `retained` state channel | Identity `natural` by the key. Reconcile reads `latest`: the intended value means it landed; the value seen before means it did not; anything else is `stale` |
-| A `log` with positions | Identity `stamped`. Reconcile scans from the position recorded at intent, on the partitions the key maps to, for the token. Found means it landed. Not found with `complete` coverage of that range means it did not |
+| A `log` with positions | Identity `stamped`. Reconcile scans from the position recorded at intent, on the partitions the key maps to, for the token. Found means it landed. Not found with `complete` coverage of that range means it did not. A look that says more is held and gives no place to go on from, or says that was all while the log's own end lies further on, has not covered the range: it is `unexpected_reply`, never "not found" |
 | Consumers that ignore a repeated token, declared | Recorded and shown at approval; it does not change the class. The runtime cannot see a consumer |
 | None of these | Identity `none`. A lost acknowledgement is `possible_commit`, the run stops, and a person decides whether to send again |
 
@@ -140,13 +140,15 @@ Reading a queue removes messages that others expected. The pack's rules:
 2. **Never acknowledge on a shared queue.** `take` compiles only on a channel with `ownership: runtime_owned`.
 3. **Otherwise only look.** Where the broker offers a browse or a peek, `list` uses it. Where it does not, and there is no subscription of the runtime's own, the channel cannot be read, and the compiler says so.
 4. **Discovery never consumes,** whatever the channel declares.
-5. **Record, then acknowledge.** A `take` stores the message in the ledger before it acknowledges. If the run stops between the two, the broker delivers the message again, and the ledger already holds its identifier, so it is returned once. This is the only read-like verb with a ledger row. It is declared `irreversible` with no identity: an acknowledged message cannot be read again or put back.
+5. **Record, then acknowledge.** A `take` stores the message in the ledger before it acknowledges. The step that waits gives the whole message, redacted, as values for reconcile, and the engine stores those durably before it sends the acknowledging step ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)). A message larger than the channel's `limits.message_bytes` cannot be recorded: it is given back to the queue and the run stops with `take_too_large`, never acknowledged. If the run stops before the acknowledgement is sent, the broker delivers the message again. If the acknowledgement was sent and its answer is lost or has no rule, the take is `possible_commit`: the broker may have dropped the message, the record holds it, and nothing is taken in its place until a person has settled the record. This is the only read-like verb with a ledger row. It is declared `irreversible` with no identity: an acknowledged message cannot be read again or put back.
 
 ## Identity, sessions, effects
 
 **Identity strategies.** A record is a message, or the value for a key. `natural` by key on a state channel; `stamped` with the token where the broker keeps messages; `find` is not offered, because a lookup over a flow is the bounded scan above and is written as `stamped`; `none` everywhere else.
 
-**Sessions and secrets.** A broker session is a signed-in connection: a user name and password, a token, or a client certificate, held in the vault and injected when the connection opens. The neutral auth providers of `a2m-auth` cover the first two; a certificate provider is the pack's, if the neutral set lacks one. The session keeper renews; the driver reports signs of expiry, such as an authorization refusal on a connection that worked a moment ago. No credential is ever a message header the caller can see, and a message body is checked by the redactor before it is stored.
+**Sessions and secrets.** A broker session is a signed-in connection: a user name and password, a token, or a client certificate, held in the vault and injected when the connection opens. The neutral auth providers of `a2m-auth` cover the first two; a certificate provider is the pack's, if the neutral set lacks one. A wire protocol presents what it can carry, and a session that holds a credential it cannot carry is stopped with `credential_not_carried` before a connection opens; the first protocol carries one token. The session keeper renews; the driver reports signs of expiry, such as an authorization refusal on a connection that worked a moment ago. No credential is ever a message header the caller can see: of a message's headers a result holds only the one the channel declares for correlation. A message body is checked by the redactor before it is stored, and a broker's words are redacted before they are cut for a failure's sentence.
+
+**Text from a message is untrusted.** An output of an operation bound through this mode that is or holds text must be of a field type marked `untrusted` ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)), unless the channel's schema holds the field of that name to an `enum`. The compiler refuses the rest under `stream.untrusted_unmarked`.
 
 **Effects** in the manifest: uses the network, to the broker addresses the target declares; holds a session, for surfaces of kind `broker`. Both `enforced`, since the pack's client performs them.
 
@@ -189,14 +191,14 @@ These strains are contained in the pack, and none needs a kernel change. One may
 
 | Class | Codes | When |
 | --- | --- | --- |
-| `input` | `schema_invalid`, `value_out_of_range`, `message_too_large`, `protocol_unknown` | The message fails its schema or the size limit, or the surface names a protocol this build does not speak; nothing is sent |
-| `policy` | `ack_not_owned`, `surface_not_declared`, `scan_limit` | A `take` on a shared queue; a broker address not declared; a log longer than a scan for a record's token may read |
+| `input` | `schema_invalid`, `value_out_of_range`, `message_too_large`, `protocol_unknown`, `credential_not_carried` | The message fails its schema or the size limit, the surface names a protocol this build does not speak, or the session holds a credential the protocol cannot present; nothing is sent |
+| `policy` | `ack_not_owned`, `surface_not_declared`, `scan_limit`, `take_too_large` | A `take` on a shared queue; a broker address not declared; a log longer than a scan for a record's token may read; a message taken that is too large to record before it is acknowledged |
 | `session_expired` | `needs_login` | The broker refuses the credentials |
 | `rejected` | `broker_refused` | The broker refuses the message, with its reason |
 | `drift` | `channel_missing`, `shape_changed`, `response_schema_mismatch`, `position_out_of_range` | The channel is gone, its shape or key changed, a message fails its schema, or a position is no longer held |
-| `unknown_variant` | `unexpected_reply` | The broker answers in a way the driver has no rule for |
+| `unknown_variant` | `unexpected_reply` | The broker answers a read in a way the driver has no rule for; a look at a log does not say how far it reached; a fetch hands over more than was asked |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable`, `nothing_arrived` | Before a publish was sent, or on a read |
-| `possible_commit` | `no_confirmation` | A publish was sent and no acknowledgement came |
+| `possible_commit` | `no_confirmation` | A publish or an acknowledgement was sent, and no answer came or the answer has no rule |
 | `mismatch` | `read_back_differs` | The latest value or the message at the position differs |
 | `busy` | `subscription_in_use` | The runtime's own subscription is held by another run |
 
@@ -211,7 +213,7 @@ A small broker in the test application family ([test application](../../plan/tes
 | Reset, Inspect | Restore known contents; return every message a channel holds, with position, key, and headers |
 | Received | Every message published, by which connection, in order, with a digest of its body |
 | Delivered | Every delivery: to which subscription, whether acknowledged, how many times |
-| Faults | Store and then drop the acknowledgement; delay; refuse; deliver twice; expire retention; refuse a repeated token or accept it; an unexpected reply; a consumer that never acknowledges; a renamed field; a drop before the message is stored |
+| Faults | Store and then drop the acknowledgement; delay; refuse; deliver twice; expire retention; refuse a repeated token or accept it; an unexpected reply; a consumer that never acknowledges; a renamed field; a drop before the message is stored; store or acknowledge and then answer with an unknown code; acknowledge and then drop the answer; a look that returns nothing; a fetch that hands over more than was asked |
 
 A test that a publish happened once asks Received, never the pack's own read.
 

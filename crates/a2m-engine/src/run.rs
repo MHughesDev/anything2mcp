@@ -57,6 +57,9 @@ struct Held {
     /// The posture the context was prepared in. A context is used again
     /// only for the posture it was prepared in.
     posture: Posture,
+    /// Which of the job's contexts this is, counted from the first. A
+    /// context prepared in place of one that failed has a new number.
+    serial: u64,
     poisoned: bool,
 }
 
@@ -115,6 +118,7 @@ pub(crate) struct Run<'a> {
     next_pass: u32,
     begins: Option<PassInfo>,
     held: Vec<Held>,
+    next_serial: u64,
     destinations: Destinations,
     paths: CheckedPaths,
     /// The time on the engine's clock at which the run's own time limit
@@ -182,6 +186,7 @@ impl<'a> Run<'a> {
             next_pass: 0,
             begins: None,
             held: Vec::new(),
+            next_serial: 0,
             destinations: Destinations::new(addresses),
             paths: CheckedPaths::none(),
             time_limit: None,
@@ -517,6 +522,8 @@ impl<'a> Run<'a> {
         };
         let prepare = self.engine.deps.clock.elapsed().saturating_sub(preparing);
         self.begin_pass(operation, candidate.reason, queue, prepare);
+        let serial = self.next_serial;
+        self.next_serial += 1;
         self.held.push(Held {
             mode: binding.mode.clone(),
             surface: binding.surface,
@@ -525,6 +532,7 @@ impl<'a> Run<'a> {
             prepared,
             lease,
             posture,
+            serial,
             poisoned: false,
         });
         Ok(self.held.len() - 1)
@@ -836,6 +844,13 @@ impl<'a> Run<'a> {
     /// The surface at a position, at this run's environment.
     pub fn surface_at(&self, surface: SurfaceIndex) -> Result<SurfaceRef, Failure> {
         self.surface_ref(surface)
+    }
+
+    /// Which of the job's contexts a held context is. A driver may keep
+    /// what it read of a record with its context, so a record read in one
+    /// context is not known to the context prepared in its place.
+    pub fn serial_of(&self, held: usize) -> u64 {
+        self.held[held].serial
     }
 
     /// The mode of a held context.
