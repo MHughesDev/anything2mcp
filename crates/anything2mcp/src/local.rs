@@ -38,7 +38,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response as HttpResponse};
 use serde_json::json;
 
-use crate::engine::{Engine, EngineOptions, Serves, load_settings};
+use crate::engine::{Engine, EngineOptions, load_settings};
 use crate::wire;
 
 /// The action that stops the engine. The dispatcher decides whether its
@@ -343,7 +343,7 @@ impl LocalEngine {
         let idle_after = minutes(&settings, "engine.idle_stop_minutes");
         // The channel holds the engine lock; the engine takes none of its
         // own.
-        let engine = Engine::open_loaded(options, settings, None, Serves::AnyProject).await?;
+        let engine = Engine::open_loaded(options, settings, None).await?;
         let idle = match idle_after {
             Some(after) => IdlePolicy::after(
                 after,

@@ -424,18 +424,28 @@ async fn one_engine_serves_two_projects_and_each_read_resolves_its_files_in_its_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_served_engine_never_resolves_a_root_against_the_project_that_started_it() {
-    // The surface in the root `files`, which the engine is handed as a
-    // folder of its own: an engine that serves every project is handed
-    // none bound to the folder it was started in, so B's read stops by
-    // name and never reads A's file (decision 0192).
+    // The surface in the root `files`, which stands for the project folder
+    // of each request (decision 0193): one engine serves both projects, and
+    // each read resolves in its own project, whichever started the engine.
+    // B is never given A's file, nor A B's (decisions 0192 and 0194).
     let (a, b) = two_projects((IN_FILES, IN_FILES)).await;
+    // A starts the engine.
     let first = stock_read_in(&a, a.project.path()).await;
+    assert_eq!(read_or_code(&first), "held in project A", "{first}");
     let second = stock_read_in(&a, b.path()).await;
-    for response in [&first, &second] {
-        // `policy`/`effect_not_declared`: the root `files` is not one the
-        // file driver has, in either project.
-        assert_eq!(read_or_code(response), "effect_not_declared", "{response}");
-        assert_eq!(response["error"]["class"], "policy", "{response}");
+    assert_eq!(read_or_code(&second), "held in project B", "{second}");
+    assert_eq!(started(&a).len(), 1, "{}", log(&a));
+    stop(&a).await;
+    // B starts it this time; A's read is still A's.
+    let first = stock_read_in(&a, b.path()).await;
+    assert_eq!(read_or_code(&first), "held in project B", "{first}");
+    let second = stock_read_in(&a, a.project.path()).await;
+    assert_eq!(read_or_code(&second), "held in project A", "{second}");
+    for (response, other) in [(&first, "A"), (&second, "B")] {
+        assert!(
+            !response.to_string().contains(&format!("held in project {other}")),
+            "{response}"
+        );
     }
     stop(&a).await;
 }
