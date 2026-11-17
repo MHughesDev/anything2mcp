@@ -918,6 +918,7 @@ impl Kernel {
                         .copied(),
                 )
                 .await?;
+            let acknowledged = record.acknowledged();
             records.push(RecordSnapshot {
                 record: record.record,
                 key: record.key,
@@ -935,6 +936,7 @@ impl Kernel {
                 // record in doubt is read through the binding that wrote it.
                 mode: record.mode,
                 failure: record.failure,
+                acknowledged,
             });
         }
         Ok(Some(RunSnapshot {

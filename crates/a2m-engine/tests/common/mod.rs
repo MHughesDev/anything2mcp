@@ -2668,6 +2668,7 @@ impl Scene {
                     .find(|(held, _)| *held == record.record)
                     .map(|(_, mode)| mode.clone()),
                 failure: record.failure.clone(),
+                acknowledged: record.acknowledged(),
             });
         }
         Some(RunSnapshot {

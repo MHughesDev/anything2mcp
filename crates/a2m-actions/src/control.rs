@@ -564,6 +564,33 @@ impl Control for InProcessControl {
         })
     }
 
+    fn acknowledged<'a>(
+        &'a self,
+        token: &'a ActedToken,
+        evidence: Option<BlobRef>,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            // The ledger releases the record's lock in the transaction that
+            // ends it; a run waiting for it is told as this call ends.
+            let _notice = self.notice(token.record()).await;
+            // The ledger requires the answer's evidence: where the engine
+            // could not keep it, the record stays in doubt (decision 0172).
+            let evidence = evidence.ok_or_else(|| {
+                Failure::new(
+                    FailureClass::Busy,
+                    a2m_engine::codes::ACKNOWLEDGEMENT_NOT_KEPT,
+                    "The system's answer could not be kept, so the record cannot end on it and stays in doubt.",
+                    "Look at the system; the run stops until the record is settled.",
+                )
+            })?;
+            self.kernel
+                .store()?
+                .store_acknowledged(token, evidence)
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
     fn failed<'a>(
         &'a self,
         record: RecordRef,
