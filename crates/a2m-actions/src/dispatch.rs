@@ -585,7 +585,19 @@ impl Kernel {
         // The name is echoed as it was asked for, and so passes the
         // redactor like everything else that leaves.
         let asked = redact.redact(&codes::shown(&request.action));
-        match self.dispatch_inner(request).await {
+        let outcome = self.dispatch_inner(request).await;
+        self.shaped(asked, outcome)
+    }
+
+    /// A response from what the dispatcher, or a person's act carried out
+    /// on its page, came to: every string through the redactor.
+    pub(crate) fn shaped(
+        &self,
+        asked: String,
+        outcome: Result<(Output, DecisionId), Box<Refused>>,
+    ) -> Response {
+        let redact = self.redact();
+        match outcome {
             Ok((output, decision)) => {
                 let exit = output.exit;
                 Response {
@@ -723,6 +735,23 @@ impl Kernel {
             PersonNeed::PresenceWhenLoosening => loosens(&def, &input),
             PersonNeed::None => false,
         };
+        if asks && request.caller.is_agent {
+            // A person's act asked for by an agent is shown to the person
+            // on a page of the person surface; a press there, and the
+            // presence prompt it raises, carry it out (decision 0163).
+            let project = match request.project {
+                Some(stated) => match self.checked_project(&stated).await {
+                    Ok(folder) => (Some(folder), None),
+                    Err(refused) => (None, Some(refused)),
+                },
+                None => (None, None),
+            };
+            let output = self
+                .ask_person(&def, &request.caller, input, project)
+                .await
+                .map_err(|failure| Refused::after(failure, effect_class, decision))?;
+            return Ok((output, decision));
+        }
         let presence = if asks {
             Some(
                 self.presence(&request.caller, &def, effect_class)
@@ -783,7 +812,7 @@ impl Kernel {
     /// # Errors
     ///
     /// `input`/`path_not_allowed`, with the reason.
-    async fn checked_project(&self, stated: &std::path::Path) -> Result<PathBuf, Failure> {
+    pub(crate) async fn checked_project(&self, stated: &std::path::Path) -> Result<PathBuf, Failure> {
         let refuse = |why: &str| {
             codes::input(
                 codes::PATH_NOT_ALLOWED,
@@ -866,7 +895,7 @@ impl Kernel {
         Ok(proof)
     }
 
-    async fn run_handler(&self, def: &ActionDef, call: Call) -> Result<Output, Failure> {
+    pub(crate) async fn run_handler(&self, def: &ActionDef, call: Call) -> Result<Output, Failure> {
         match &def.handler {
             Handler::Kernel(handler) => handler(self, call).await,
             Handler::Provider(name) => {
@@ -917,7 +946,7 @@ impl Kernel {
 
     /// Cuts a result to the configured size cap, and says which limit cut
     /// it.
-    fn capped(&self, def: &ActionDef, mut output: Output) -> Output {
+    pub(crate) fn capped(&self, def: &ActionDef, mut output: Output) -> Output {
         let cap = self.settings().int("tools.result_cap_bytes").unwrap_or(0);
         let Ok(cap) = usize::try_from(cap) else {
             return output;
@@ -1049,7 +1078,7 @@ pub(crate) struct Decided {
     pub(crate) refusal: Option<Failure>,
 }
 
-struct Refused {
+pub(crate) struct Refused {
     failure: Failure,
     malformed: bool,
     effect: EffectClass,
@@ -1078,7 +1107,7 @@ impl Refused {
         })
     }
 
-    fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Box<Self> {
+    pub(crate) fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Box<Self> {
         Box::new(Self {
             failure,
             malformed: false,

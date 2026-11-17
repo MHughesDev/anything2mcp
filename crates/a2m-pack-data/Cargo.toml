@@ -17,6 +17,14 @@ rusqlite = { workspace = true, features = ["hooks", "limits", "load_extension"] 
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tokio-postgres = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+
+[features]
+# The server store, PostgreSQL, through `tokio-postgres` (decision 0168). Off
+# by default until it is proven on the three systems: without it the pack
+# speaks to the embedded store only, exactly as before.
+postgres = ["dep:tokio-postgres", "dep:bytes"]
 
 [dev-dependencies]
 a2m-expr = { path = "../a2m-expr" }

@@ -2,7 +2,7 @@
 //! here answers `input`/`action_not_built`.
 
 mod admin;
-mod build;
+pub(crate) mod build;
 mod machine;
 mod meta;
 mod provider;
@@ -50,6 +50,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "target.list" => build::target_list,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,
+        "publish.request" => build::publish_request,
         "policy.explain" => admin::policy_explain,
         "audit.query" => admin::audit_query,
         "secret.set" => admin::secret_set,

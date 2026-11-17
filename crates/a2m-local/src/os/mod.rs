@@ -11,12 +11,16 @@ use std::path::PathBuf;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub(crate) use unix::{Listener, ServerStream, connect, current_user, kept, prepare_dir};
+pub(crate) use unix::{
+    Listener, ServerStream, connect, current_user, kept, prepare_dir, spawn_detached,
+};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::{Listener, ServerStream, connect, current_user, prepare_dir};
+pub(crate) use windows::{
+    Listener, ServerStream, connect, current_user, prepare_dir, spawn_detached,
+};
 
 /// The file name of the socket inside the runtime directory.
 #[cfg(unix)]

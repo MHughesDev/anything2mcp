@@ -79,12 +79,67 @@ async fn compiled_target(
     version: Version,
 ) -> Result<Result<Compiled, Diagnostics>, Failure> {
     let project_folder = call.project_folder()?.to_path_buf();
+    compile_in(kernel, project_folder, target, mode, version).await
+}
+
+/// Compiles the drafts of `target` in the checked project folder, off the
+/// async threads.
+pub(crate) async fn compile_in(
+    kernel: &Kernel,
+    project_folder: std::path::PathBuf,
+    target: &TargetName,
+    mode: CompileMode,
+    version: Version,
+) -> Result<Result<Compiled, Diagnostics>, Failure> {
     let (kernel, target) = (kernel.clone(), target.clone());
     off_thread(move || {
         let folder = target_folder(&project_folder, &target)?;
         Ok(compile_target(&kernel, &folder, mode, version))
     })
     .await
+}
+
+/// The version a publish of `target` is stored as: the one given, or the
+/// next whole number. A version the target has already is refused.
+///
+/// # Errors
+///
+/// `input`/`schema_invalid` for a label that is not a version, or one the
+/// target already has; the store's failures.
+pub(crate) async fn chosen_version(
+    kernel: &Kernel,
+    workspace: a2m_core::WorkspaceId,
+    target: &TargetName,
+    given: Option<&str>,
+) -> Result<Version, Failure> {
+    let listed = target.clone();
+    let earlier = kernel
+        .store()?
+        .read(move |tx| tx.versions().list(&workspace, &listed))
+        .await?;
+    let version = match given {
+        Some(text) => text.parse::<Version>().map_err(|_| {
+            codes::input(
+                codes::SCHEMA_INVALID,
+                "The version is not three numbers joined by dots.",
+                "Write the version as, for example, `2.0.0`.",
+            )
+        })?,
+        None => {
+            let next = earlier.len() + 1;
+            Version::new(u32::try_from(next).unwrap_or(u32::MAX), 0, 0)
+        }
+    };
+    if earlier.iter().any(|row| row.version == version) {
+        return Err(codes::input(
+            codes::SCHEMA_INVALID,
+            format!(
+                "The target `{target}` already has a version {version}. A published version is never changed."
+            ),
+            "Publish under the next version.",
+        ));
+    }
+    Ok(version)
 }
 
 handler!(
@@ -242,36 +297,21 @@ handler!(
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
         let workspace = call.caller.principal.workspace;
-        let listed = target.clone();
-        let earlier = kernel
-            .store()?
-            .read(move |tx| tx.versions().list(&workspace, &listed))
-            .await?;
-        let version = match call.text("version") {
-            Some(text) => text.parse::<Version>().map_err(|_| {
-                codes::input(
-                    codes::SCHEMA_INVALID,
-                    "The version is not three numbers joined by dots.",
-                    "Write the version as, for example, `2.0.0`.",
-                )
-            })?,
-            None => {
-                let next = earlier.len() + 1;
-                Version::new(u32::try_from(next).unwrap_or(u32::MAX), 0, 0)
-            }
-        };
-        if earlier.iter().any(|row| row.version == version) {
-            return Err(codes::input(
-                codes::SCHEMA_INVALID,
-                format!(
-                    "The target `{target}` already has a version {version}. A published version is never changed."
-                ),
-                "Publish under the next version.",
-            ));
-        }
+        let version = chosen_version(kernel, workspace, &target, call.text("version")).await?;
         let compiled = compiled_target(kernel, &call, &target, CompileMode::Publish, version)
             .await?
             .map_err(Failure::from)?;
+        // A publish a person was shown on a page carries the hash of the
+        // plan they read: drafts changed since are not published.
+        if let Some(pinned) = call.text("plan_hash")
+            && pinned != compiled.encoded.hash.to_string()
+        {
+            return Err(codes::stale(
+                codes::DRAFTS_CHANGED,
+                "The drafts changed after the publish was asked for, so they compile to another plan than the one shown. Nothing was published.",
+                "Ask for the publish again; the person reads the new plan on a new page.",
+            ));
+        }
         let tools: Vec<String> = compiled
             .plan
             .tools
@@ -301,6 +341,34 @@ handler!(
             json!({"target": target.as_str()}),
             "to see the published tools",
         )))
+    }
+);
+
+handler!(
+    /// `publish.request`: an agent asks for a target's drafts to be
+    /// published. Nothing is published here: the publish is handed to the
+    /// person surface as a person's act, with the plan it will store, and
+    /// the person decides on its page (decision 0163).
+    publish_request,
+    |kernel, call| {
+        let def = kernel
+            .actions()
+            .find("version.publish")
+            .cloned()
+            .ok_or_else(|| {
+                codes::input(
+                    codes::ACTION_NOT_BUILT,
+                    "`version.publish` is not in this engine's registry.",
+                    "Call `action.search` to see which actions are built.",
+                )
+            })?;
+        let mut input = serde_json::Map::new();
+        input.insert("target".to_owned(), json!(call.required("target")?));
+        if let Some(version) = call.text("version") {
+            input.insert("version".to_owned(), json!(version));
+        }
+        let project = (call.project.clone(), call.project_refused.clone());
+        kernel.ask_person(&def, &call.caller, input, project).await
     }
 );
 

@@ -216,6 +216,11 @@ pub(crate) struct Inner {
     pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
     pub(crate) runner: crate::runner::RunnerState,
     pub(crate) signals: Arc<RunSignals>,
+    /// The person's acts that wait on a page, and what became of the last
+    /// ones (decision 0163).
+    pub(crate) acts: Arc<crate::acts::Acts>,
+    /// Where the identifiers of those acts come from.
+    pub(crate) random: Arc<dyn RandomSource>,
     /// One call at a time for each caller's idempotency key, from the
     /// look at the key to binding its run.
     pub(crate) key_locks: crate::signals::KeyLocks,
@@ -359,6 +364,7 @@ impl Kernel {
         );
 
         let signals = Arc::new(RunSignals::default());
+        let acts = crate::acts::Acts::new();
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
@@ -403,6 +409,7 @@ impl Kernel {
                         found.workspace,
                         Arc::clone(&signals),
                         Arc::clone(&prepared.redact),
+                        Arc::clone(&acts),
                     ));
                     policy = Some(opened);
                 }
@@ -502,11 +509,14 @@ impl Kernel {
                 plans: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
                 signals,
+                acts: Arc::clone(&acts),
+                random: Arc::clone(&prepared.random),
                 key_locks: crate::signals::KeyLocks::default(),
                 wake: Arc::new(Notify::new()),
                 tasks: Mutex::new(Vec::new()),
             }),
         };
+        acts.bind(&kernel.inner);
         kernel.recheck().await;
         kernel.record_start().await;
         kernel.start_tending();
