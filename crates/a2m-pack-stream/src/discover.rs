@@ -17,6 +17,7 @@ use a2m_provider::{
 };
 use a2m_telemetry::Clock;
 
+use crate::channel::{JsonType, MessageSchema};
 use crate::codes;
 use crate::json::Json;
 use crate::lower::StepDetail;
@@ -227,6 +228,26 @@ impl Discoverer for BrokerLook {
                     .map(Json::text)
                     .collect();
                 let schema = facts.get("schema").and_then(Value::as_text);
+                // What a read drafted from this one finding returns: the
+                // plain fields the broker's registered schema states, by
+                // name and JSON type, where the pack reads the schema. A
+                // drafting rule sees one finding at a time, so the channel
+                // finding carries them; they are the broker's claim about
+                // its messages, as the schema finding is, and no value.
+                let schema_fields = schema
+                    .and_then(|text| Json::parse(text).ok())
+                    .and_then(|json| MessageSchema::from_registered(&json))
+                    .map_or(Json::Null, |read| {
+                        Json::Object(
+                            read.fields
+                                .iter()
+                                .filter(|(_, rule)| {
+                                    !matches!(rule.ty, JsonType::Array | JsonType::Object)
+                                })
+                                .map(|(name, rule)| (name.clone(), Json::text(rule.ty.as_str())))
+                                .collect(),
+                        )
+                    });
                 let found = Json::object([
                     ("address", Json::text(address)),
                     ("shape", text_json(facts.get("shape"))),
@@ -235,6 +256,7 @@ impl Discoverer for BrokerLook {
                     ("subscriptions", Json::List(subscriptions)),
                     ("look", Json::text(look)),
                     ("schema", Json::Bool(schema.is_some())),
+                    ("schema_fields", schema_fields),
                 ])
                 .to_line();
                 bytes += u64::try_from(found.len()).unwrap_or(u64::MAX);

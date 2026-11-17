@@ -8,7 +8,7 @@
 //! publish, a `take`, or a subscription's name.
 
 use a2m_core::{Failure, FailureClass, FailureCode, FileKindName, Finding, FindingKind};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
+use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
 use crate::channel::{MessageSchema, Shape};
 use crate::json::Json;
@@ -217,6 +217,69 @@ impl DraftingRule for SchemaDraft {
     }
 }
 
+/// The field type an output of a message's field is drafted with, from the
+/// JSON type the broker's schema states: text the broker holds is
+/// untrusted, and a number is read exactly, as a decimal. An array or an
+/// object is no one value, and is left out.
+fn output_type(json_type: &str) -> Option<&'static str> {
+    match json_type {
+        "string" => Some(UNTRUSTED_TEXT),
+        "integer" => Some("integer"),
+        "number" => Some("decimal"),
+        "boolean" => Some("boolean"),
+        _ => None,
+    }
+}
+
+/// The outputs of a read of one key: each plain field of a message the
+/// broker's schema states, but the key, which is the input. Where the
+/// broker holds no schema the pack reads, which fields a message has is a
+/// question: the read returns nothing until it is answered.
+fn read_outputs(found: &Found, key: &str, cx: &DraftContext<'_>) -> DraftValue {
+    let fields: Vec<(String, DraftValue)> = found
+        .json
+        .get("schema_fields")
+        .and_then(Json::as_object)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|(name, _)| name.as_str() != key && a2m_core::Verb::new(name).is_ok())
+                .filter_map(|(name, json_type)| {
+                    let field_type = output_type(json_type.as_str()?)?;
+                    Some((
+                        name.clone(),
+                        DraftValue::map(vec![("type", DraftValue::text(field_type))]),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if fields.is_empty() {
+        cx.open_question(&format!(
+            "Which fields does a message on `{}` have, and of which types? The broker holds no schema for it that the pack reads.",
+            found.channel
+        ))
+    } else {
+        DraftValue::Map(fields)
+    }
+}
+
+/// The outputs of a look at a channel: what the driver states of every
+/// look, whatever its messages hold. How many messages the look returned,
+/// and whether the channel held more than one look returns.
+fn list_outputs() -> DraftValue {
+    DraftValue::map(vec![
+        (
+            "count",
+            DraftValue::map(vec![("type", DraftValue::text("integer"))]),
+        ),
+        (
+            "more",
+            DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
+        ),
+    ])
+}
+
 /// From a channel the broker lists: one operation that reads it. `read` of
 /// a retained key where the broker states the key; else `list` where the
 /// broker let a look through; else nothing.
@@ -271,7 +334,7 @@ impl DraftingRule for ReadDraft {
                             DraftValue::map(vec![("type", DraftValue::text("text"))]),
                         )]),
                     ),
-                    ("outputs", DraftValue::Map(Vec::new())),
+                    ("outputs", read_outputs(&found, key, cx)),
                     (
                         "bindings",
                         binding(
@@ -299,7 +362,7 @@ impl DraftingRule for ReadDraft {
                 vec![
                     ("effect", DraftValue::text("read")),
                     ("inputs", DraftValue::Map(Vec::new())),
-                    ("outputs", DraftValue::Map(Vec::new())),
+                    ("outputs", list_outputs()),
                     ("bindings", binding("list", Vec::new())),
                     (
                         "description",
