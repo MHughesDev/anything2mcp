@@ -76,3 +76,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0064 | [Five further packs are designed before they are built](0064-five-further-packs-are-designed-before-they-are-built.md) | Accepted (design decision) |
 | 0065 | [The specification is rebuilt in parts, and the first design is archived](0065-the-specification-is-rebuilt-in-parts-and-the-first-design-is-archived.md) | Accepted (design decision) |
 | 0066 | [Configuration in layers that may only tighten, and a bar that is measured](0066-configuration-in-layers-that-may-only-tighten-and-a-bar-that-is-measured.md) | Accepted (design decision) |
+| 0067 | [The kernel is built layer by layer, in parallel, and the first driver through the loop is the HTTP pack's](0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md) | Accepted (design decision) |
