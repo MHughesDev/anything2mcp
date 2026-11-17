@@ -6,7 +6,8 @@
 
 #![allow(
     clippy::unwrap_used,
-    reason = "this file holds only tests; clippy.toml allows unwrap in tests, which it tells by the #[test] attribute, and the helpers the tests share do not carry it"
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
 mod common;
@@ -49,8 +50,12 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
     // The example target names the stand's protocol: the compiler of the
     // ordinary registration refuses its surface.
     let refused = compile(&shipped, &fixture_root()).unwrap_err().to_string();
-    assert!(refused.contains("protocol"), "{refused}");
-    assert!(refused.contains("broker"), "{refused}");
+    assert!(
+        refused.contains(
+            "target.yaml:11:15: error kernel.unknown_value: `example-broker/1` is not one of the words this field takes. Fix: Use one of: nats."
+        ),
+        "{refused}"
+    );
     // The same target compiles where a test registered the stand's
     // protocol, and names it.
     let tests = registry(&folder);

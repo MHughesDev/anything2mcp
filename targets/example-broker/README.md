@@ -18,7 +18,7 @@ let received = broker.received();                 // ground truth
 
 The broker stops, with every connection it holds, when the `TestBroker` is dropped. Two brokers in one test share nothing. There is no binary and no fixed port.
 
-Its protocol, `example-broker/1`, is spoken by the stream pack only with the pack's feature `example-protocol`, which this crate turns on: every build that has the stand as a dependency, which is the tests, speaks it, and the shipped product, which has the stand as no dependency, does not offer it ([decision 0197](../../docs/decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)). The pack dials it, as every plain TCP link, only at a loopback address written as an IP address; the stand listens on `127.0.0.1`.
+Its protocol, `example-broker/1`, is offered by the stream pack only to a test's own registration: `a2m_pack_stream::register_with_test_broker`, or the pack's ordinary `register` in a process where `TestBroker::start` has run, which tells the pack so. The shipped product, which has the stand as no dependency, never runs that, so whatever a build unifies it offers `nats` alone ([decision 0201](../../docs/decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md), which replaces the feature of decision 0197). The pack dials it, as every plain TCP link, only at a loopback address written as an IP address; the stand listens on `127.0.0.1`.
 
 ## The wire protocol, and why it is our own
 

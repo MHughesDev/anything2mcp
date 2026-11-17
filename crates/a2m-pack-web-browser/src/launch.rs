@@ -280,7 +280,10 @@ mod tests {
                 .map(|argument| argument.to_string_lossy().to_lowercase())
                 .collect::<Vec<_>>();
             assert!(all.iter().any(|argument| argument == "--no-proxy-server"));
-            assert!(all.iter().any(|argument| argument == "--disable-extensions"));
+            assert!(
+                all.iter()
+                    .any(|argument| argument == "--disable-extensions")
+            );
             // Nothing names a proxy, a way to find one, or an extension.
             for named in [
                 "--proxy-server",

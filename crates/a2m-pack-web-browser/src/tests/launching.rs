@@ -326,7 +326,9 @@ async fn stand_in_proxy() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
             let mut first = [0_u8; 512];
             let _ = connection.read(&mut first).await;
             let _ = connection
-                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .await;
         }
     });

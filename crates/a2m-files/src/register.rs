@@ -395,14 +395,23 @@ impl CompilerSet {
     /// drafted `target.yaml` or `auth.yaml` would widen what the target
     /// reaches, and a drafted pipeline or test would stand for a person's
     /// judgment. A kind nobody has registered yet is not refused here.
+    ///
+    /// A file kind is registered for a surface kind, so two packs may each
+    /// register a kind of one name, each for its own surfaces (a screen of
+    /// a web application and a screen of a desktop application): each may
+    /// then draft files of that name. A pack that registered the name for
+    /// no surface kind, while others did, may not (decision 0203).
     pub(crate) fn may_draft(&self, pack: &str, kind: &FileKindName) -> bool {
         if KERNEL_FILE_KINDS.contains(&kind.as_str()) {
             return kind.as_str() == OPERATION || kind.as_str() == SOURCE;
         }
-        self.file_kinds
+        let mut owners = self
+            .file_kinds
             .iter()
             .filter(|((name, _), _)| name == kind)
-            .all(|(_, owner)| owner.pack == pack)
+            .map(|(_, owner)| owner.pack.as_str())
+            .peekable();
+        owners.peek().is_none() || owners.any(|owner| owner == pack)
     }
 
     /// Whether `pack` registered the file kind `kind` for some surface kind.

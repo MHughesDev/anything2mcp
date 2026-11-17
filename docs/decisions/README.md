@@ -202,3 +202,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0196 | [The engine and the registry after the acknowledgement ruling and the first hour](0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md) | Accepted (design decision) |
 | 0198 | [The desktop pack's first slice reads Linux applications through a look-only back end](0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md) | Accepted (design decision) |
 | 0199 | [The halves left for each other are joined](0199-the-halves-left-for-each-other-are-joined.md) | Accepted (design decision) |
+| 0202 | [The desktop pack's control has a name of its own](0202-the-desktop-packs-control-has-a-name-of-its-own.md) | Accepted (design decision) |
+| 0203 | [Two packs may each draft a file kind of one name, each for its own surfaces](0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md) | Accepted (design decision) |

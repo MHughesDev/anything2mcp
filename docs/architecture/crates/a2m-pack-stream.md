@@ -19,7 +19,7 @@ The stream pack: the `stream` driver over queues, topics, and logs. Every read e
 - The `schemas/` file kind: one document per message schema, in the part of JSON Schema the pack checks.
 - The lowering of the verbs `read`, `list`, `await`, `publish`, and `take` into steps, with the pack's own details as each step's opaque payload.
 - The driver of the mode `stream`: bounded looks and waits, a publish checked against its schema before it is sent, and the mapping of every failure to one class and code with whether the request left.
-- The wire interface, `Protocol` and `Link`, and its two implementations: `nats` (`src/nats_wire.rs`), the NATS client protocol with JetStream, and `example-broker/1` (`src/example_wire.rs`), the test broker's line protocol, built only with the feature `example-protocol`, which `targets/example-broker` turns on: the tests speak it and the shipped product does not offer it ([record 0197](../../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)).
+- The wire interface, `Protocol` and `Link`, and its two implementations: `nats` (`src/nats_wire.rs`), the NATS client protocol with JetStream, and `example-broker/1` (`src/example_wire.rs`), the test broker's line protocol, which only a test's own registration offers (`register_with_test_broker`, or `register` in a process where the stand's harness started a broker): the registration the product makes offers `nats` alone, whatever a build unifies ([record 0201](../../decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md), which replaces the feature of record 0197).
 - The discoverer `broker_look`, its describer, and three drafting rules.
 
 It must never: choose a channel from a step argument; keep a subscription open after its run; subscribe during a discovery; acknowledge on a queue the target does not declare the runtime owns; acknowledge a message it has not first given out to be recorded; say a message is absent from a log it has not covered to the end; report a publish or an acknowledgement as refused when the broker's answer has no rule; send a publish twice; renew a session; open a connection without part of a session's credentials; put what a broker said into a result or a finding before the redactor has seen it, or cut it before the redactor has; create a subscription on a broker.
@@ -29,7 +29,7 @@ It must never: choose a channel from a step argument; keep a subscription open a
 | Registration | Content |
 | --- | --- |
 | Mode | `stream`, archetype stream; rank 60; four reads and one write at a time in a session; a write holds the link |
-| Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names in the crate's `PROTOCOLS` constant: `nats`, and `example-broker/1` in a build with the feature `example-protocol` |
+| Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names the registration offers: `nats` (the crate's `PROTOCOLS`), and `example-broker/1` (`TEST_BROKER_PROTOCOL`) only in a test's registration |
 | Step kinds | `latest`, `browse`, `subscribe`, `await`, `publish`, `acknowledge`, `scan`, `position`, `taken` from lowerings; `channels` and `describe` from the discoverer only |
 | Driver | One, for `stream` |
 | File kinds | `channel` in `channels/`, `message_schema` in `schemas/`, both for `broker` surfaces |
@@ -89,10 +89,13 @@ No rule writes a publish, a `take`, or a subscription's name.
 ## Interface
 
 ```rust
-pub fn register(builder: &mut RegistryBuilder);       // the one call the product crate makes
-pub struct StreamPack;                                // impl Pack
+pub fn register(builder: &mut RegistryBuilder);       // the one call the product crate makes: `nats` alone
+pub fn register_with_test_broker(builder: &mut RegistryBuilder); // a test's: `example-broker/1` too
+pub fn offer_test_broker_protocol_in_this_process();  // hidden; only the stand's harness calls it, at `TestBroker::start`
+pub struct StreamPack;                                // impl Pack; `default()`, `with_test_broker()`, `protocols()`
 pub const MANIFEST: &str;                             // the manifest's text
-pub const PROTOCOLS: &[&str];                         // the wire protocols this build speaks
+pub const PROTOCOLS: &[&str];                         // the wire protocols the product's registration offers
+pub const TEST_BROKER_PROTOCOL: &str;                 // `example-broker/1`
 pub mod codes;                                        // every failure code, with ALL and CONTRACT_CODES
 ```
 
@@ -282,7 +285,9 @@ What a step is given and gives:
 
 12. Done ([decision 0184](../../decisions/0184-the-data-and-stream-packs-after-their-second-safety-audit.md)): the findings of the second safety audit, above, and the two open points of step 11. A channel file's `role` is optional, and no drafted channel asks it: only a publish needs it, and a publish over a channel that states none does not compile and asks the question. A `list` gives each field of its messages as a list of its values in their order, `null` where a message has none, beside `count` and `more` (which no field takes over); the drafted list outputs each, from the broker's schema or else from the fields a look saw with one type (`sampled_fields` in the channel finding). Over NATS the drafted lists of a log and a queue compile as drafted; the retained channel still asks its key, which the server does not name.
 
-13. Done ([decision 0197](../../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)): plain TCP to a loopback IP literal for both protocols through one check; `example-broker/1` behind the feature `example-protocol`, which the stand turns on; the example protocol's delivery count read; an unknown count counts as delivered before, and a work queue's consumer with no stated wait is `unexpected_reply`; a redelivered message with no mark asks the engine through `Prepared::recorded_elsewhere`.
+13. Done ([decision 0197](../../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)): plain TCP to a loopback IP literal for both protocols through one check; `example-broker/1` behind the feature `example-protocol`, which the stand turns on (replaced by step 14); the example protocol's delivery count read; an unknown count counts as delivered before, and a work queue's consumer with no stated wait is `unexpected_reply`; a redelivered message with no mark asks the engine through `Prepared::recorded_elsewhere`.
+
+14. Done ([decision 0201](../../decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md)): no feature. The test broker's protocol is always compiled and offered only by a test's registration; `register` offers `nats` alone unless the stand's harness started a broker in the same process. `tests/shipped.rs`, a test binary that starts no broker, holds that the ordinary registration refuses a surface naming the stand's protocol (`Use one of: nats.`) and that its driver refuses a plan that names it, unsent; a unit rule holds that only `targets/example-broker/src/harness.rs` names the switch and that no manifest names a feature for it. `cargo build --workspace` then the built program's `draft lint` of a broker target naming `example-broker/1` answers `kernel.unknown_value`, `Use one of: nats.`
 
 Not built:
 
@@ -300,7 +305,7 @@ Not proven:
 
 - Over `nats`, anything against a real server. The test `the_same_client_against_a_real_server` runs when `A2M_TEST_NATS` names one and was not run: no server could be had on the machine it was built on. The stand was written from the same documents and source as the client. Decision 0167 lists what only a real server can show.
 - The engine's half of `recorded_elsewhere`. The pack asks; until the engine passes an answerer (`DriverHandle::act_asking`), every answer is `CannotTell` and a redelivered message after a restart still waits for a person. The pack's tests answer each of the three through a test answerer.
-- That the shipped product leaves `example-broker/1` out is shown by reading the manifests (`cargo tree -p anything2mcp -e normal,features` names no `example-protocol`) and held by the manifest test; no test runs a build without the feature, because every test build has the stand.
+- The product's end-to-end test reaches the test broker through the global switch that `TestBroker::start` sets, because the product's engine builds its registry with `register` and takes no registration from a test. Once the product's engine options take a test's registration, `other_packs.rs` can pass `register_with_test_broker` and the switch can go.
 - Redelivery after the acknowledgement wait on `nats` against a real server. The stand redelivers after the wait on its own clock, when a test moves it; a run that drops its connection holding a message leaves it pending until then, as the reviewer read the server to do.
 
 - The session path with a real lease. Tests run with no lease; the token reaches the wire only through `connect`, which the stand's token case exercises from the refusing side. Read, not run: `SessionLease::apply` registers every secret with the vault's redactor before the driver's sink is given it, so the token is known to the redactor before `connect`; the refusal of a credential that cannot be carried is tested on the sink alone.
