@@ -171,8 +171,9 @@ fn no_rule(why: &str) -> a2m_core::Failure {
 ///   and decimal places (`2` and zeros where that is the original);
 /// - a date, a moment, and a length of time, by fixed ones
 ///   (2000-01-01, 2000-01-01T00:00:00Z, one second);
-/// - a list, by its first [`LIST_ITEMS_KEPT`] items, each scrubbed; a
-///   record, field by field, its names kept.
+/// - a list, by its first [`LIST_ITEMS_KEPT`] items, each scrubbed by the
+///   list's field type, which is its items'; a record, field by field, its
+///   names kept.
 ///
 /// Text of a field type built on a number, a date, or a time has no rule,
 /// and stops the action.
@@ -237,7 +238,11 @@ impl<'r> Scrubber<'r> {
                             .into_iter()
                             .find(|code| *code != text)
                             .ok_or_else(|| no_rule("a choice with no other code"))?;
-                        self.originals.insert(text);
+                        // A code is one the target's own field type
+                        // declares, never text of the system's: the codes
+                        // stand for one another, so the code observed is
+                        // not looked for in what is written (decision
+                        // 0199), where another code may stand for it.
                         self.count("choice by another declared code");
                         Value::Text(code)
                     }
@@ -275,9 +280,11 @@ impl<'r> Scrubber<'r> {
                 if items.len() > LIST_ITEMS_KEPT {
                     self.count("list cut to its first items");
                 }
+                // A list output's field type is its items' type: a list of
+                // choices is scrubbed code by code (decision 0199).
                 let mut out = Vec::new();
                 for item in items.iter().take(LIST_ITEMS_KEPT) {
-                    out.push(self.value(item, None)?);
+                    out.push(self.value(item, ty)?);
                 }
                 Value::List(out)
             }

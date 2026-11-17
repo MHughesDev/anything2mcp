@@ -2502,8 +2502,12 @@ const RECORDED_READS: [(&str, &str); 3] = [
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
     let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
     let target_dir = world.project.path().join("targets").join("example");
+    // The stand signs nobody in: the reads run in the sandbox with no
+    // session, as the scout's tests run them.
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
     for (file, text) in RECORDED_READS {
         let written = world
             .call(
