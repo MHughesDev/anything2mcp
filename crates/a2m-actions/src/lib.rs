@@ -31,10 +31,8 @@ mod kernel;
 mod paths;
 mod person;
 mod registry;
-mod render;
 mod runner;
 pub mod settings;
-mod signals;
 mod tools;
 
 pub use def::{
@@ -54,8 +52,7 @@ pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
-    ApprovalAsk, ApprovalDesk, ApprovalPreview, PREVIEW_RECORDS, PREVIEW_VALUE_CHARS,
-    PersonSurface, PresenceAsk, PresenceProof, PreviewField, PreviewRecord, SessionAsk, SignInAsk,
+    ApprovalAsk, ApprovalDesk, PersonSurface, PresenceAsk, PresenceProof, SessionAsk, SignInAsk,
     SurfaceLink, WaitingApproval,
 };
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
@@ -75,5 +72,4 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod kernel;
-    mod runs;
 }

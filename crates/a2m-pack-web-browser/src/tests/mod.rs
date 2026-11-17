@@ -273,18 +273,27 @@ fn page_of(html: &str) -> String {
     address
 }
 
-/// Ends a process from outside, as a crash would.
+/// Ends a process from outside, as a crash would: that one process, with
+/// no notice. Its children are not named here; a browser's own children end
+/// when it does, and the test then asks whether any process is left.
 fn kill(process: u32) {
     let done = if cfg!(windows) {
         std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &process.to_string()])
+            .args(["/F", "/PID", &process.to_string()])
             .output()
     } else {
         std::process::Command::new("kill")
             .args(["-9", &process.to_string()])
             .output()
-    };
-    assert!(done.unwrap().status.success());
+    }
+    .unwrap();
+    assert!(
+        done.status.success(),
+        "ending process {process} from outside failed with {:?}: {} {}",
+        done.status.code(),
+        String::from_utf8_lossy(&done.stdout).trim(),
+        String::from_utf8_lossy(&done.stderr).trim()
+    );
 }
 
 #[test]

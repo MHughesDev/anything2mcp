@@ -39,7 +39,6 @@ use crate::paths::Paths;
 use crate::person::{ApprovalDesk, PersonSurface};
 use crate::registry::ActionRegistry;
 use crate::settings::Settings;
-use crate::signals::RunSignals;
 
 /// Where the store is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +206,6 @@ pub(crate) struct Inner {
     fixed: Vec<Impaired>,
     pub(crate) plans: Mutex<BTreeMap<Digest, Arc<Plan>>>,
     pub(crate) runner: crate::runner::RunnerState,
-    pub(crate) signals: Arc<RunSignals>,
     pub(crate) wake: Arc<Notify>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -347,7 +345,6 @@ impl Kernel {
             Some("solo" | "workstation" | "embedded") | None
         );
 
-        let signals = Arc::new(RunSignals::default());
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
@@ -372,13 +369,7 @@ impl Kernel {
                 Ok((opened, surface)) => {
                     // The one handle that can record an approval goes to the
                     // person surface, and nowhere else.
-                    person.take_desk(ApprovalDesk::new(
-                        surface,
-                        store.clone(),
-                        found.workspace,
-                        Arc::clone(&signals),
-                        Arc::clone(&prepared.redact),
-                    ));
+                    person.take_desk(ApprovalDesk::new(surface, store.clone(), found.workspace));
                     policy = Some(opened);
                 }
                 Err(failure) => fixed.push(Impaired {
@@ -474,7 +465,6 @@ impl Kernel {
                 fixed,
                 plans: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
-                signals,
                 wake: Arc::new(Notify::new()),
                 tasks: Mutex::new(Vec::new()),
             }),
@@ -783,9 +773,6 @@ impl Kernel {
     pub async fn tend(&self) {
         if let Some(sched) = &self.inner.sched {
             let _ = sched.sweep().await;
-            // A sweep may have ended a job or stopped a run: whoever waits
-            // for one looks again.
-            self.run_changed();
         }
         if let Some(keeper) = &self.inner.keeper {
             keeper.tick().await;

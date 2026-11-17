@@ -23,7 +23,7 @@ mod status;
 
 pub use openapi::{OPENAPI_PATH, OPENAPI_VERSION, openapi, operation_id};
 pub use router::{
-    ApiSettings, DRAIN_FACTOR, DRAIN_TIME, IDEMPOTENCY_KEY_LONGEST, ProjectFolder, ServedRoute,
-    router, served_routes,
+    ApiSettings, DRAIN_FACTOR, DRAIN_TIME, IDEMPOTENCY_KEY_LONGEST, ServedRoute, router,
+    served_routes,
 };
-pub use status::{EXIT_CLASS_HEADER, status_of};
+pub use status::status_of;

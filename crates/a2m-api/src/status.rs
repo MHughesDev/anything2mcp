@@ -77,21 +77,9 @@ pub(crate) fn refused(action: &str, failure: &Failure, retry_safe: bool) -> Resp
     }
 }
 
-/// The header of every rendered response that carries its exit class, as
-/// the word `ExitClass::as_str` gives. The body holds no exit class and
-/// the status is coarser than one, so a client that must end as the
-/// response ends, such as a command with its exit code, reads it here.
-pub const EXIT_CLASS_HEADER: &str = "a2m-exit-class";
-
-/// A response as an HTTP answer: its status, its exit class as a header,
-/// and its JSON as the body.
+/// A response as an HTTP answer: its status, and its JSON as the body.
 pub(crate) fn render(response: &Response) -> axum::response::Response {
-    let mut answer = json_answer(status_of(response), response.to_json().to_string());
-    answer.headers_mut().insert(
-        EXIT_CLASS_HEADER,
-        HeaderValue::from_static(response.exit.as_str()),
-    );
-    answer
+    json_answer(status_of(response), response.to_json().to_string())
 }
 
 /// A JSON body with a status. Never cached: a result is the caller's.

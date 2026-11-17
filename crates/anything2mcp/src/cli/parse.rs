@@ -28,7 +28,7 @@ pub(crate) const GLOBAL_FLAGS: &[(&str, &str)] = &[
     ),
     (
         "--in-process",
-        "Run the engine inside this command, with no local engine. Refused while one runs.",
+        "Run the engine inside this command. In this build it is the only way, and the default.",
     ),
     (
         "--idempotency-key <key>",
@@ -69,8 +69,8 @@ pub(crate) enum Parsed {
     /// Actions to dispatch in turn; the first that is not a success ends
     /// the sequence. One for an action command, several for a shortcut.
     Invoke(Globals, Vec<Step>),
-    /// A process command, with the words that follow it.
-    Process(Globals, &'static str, Vec<String>),
+    /// A process command.
+    Process(Globals, &'static str),
     /// A shortcut with no action beneath it.
     EmptyShortcut(Globals, &'static str),
 }
@@ -188,9 +188,11 @@ impl Tree {
         }
         if let Some(word) = PROCESS_COMMANDS.iter().find(|word| *word == first) {
             if help {
-                return Ok(Parsed::Help(help_process(word)));
+                return Ok(Parsed::Help(format!(
+                    "{PROGRAM} {word}\n\nA process command: it starts a long-lived role and is not an action.\nIt is not built in this build.\n"
+                )));
             }
-            return Ok(Parsed::Process(globals, word, rest[1..].to_vec()));
+            return Ok(Parsed::Process(globals, word));
         }
         let verbs = self.of_noun(first);
         if !verbs.is_empty() {
@@ -296,7 +298,7 @@ impl Tree {
         for shortcut in SHORTCUTS {
             out.push_str(&format!("  {:<12} {}\n", shortcut.word, shortcut.does));
         }
-        out.push_str("\nProcess commands (`<command> --help` says what each does; `runner` is not built):\n");
+        out.push_str("\nProcess commands (not built in this build):\n");
         out.push_str(&format!("  {}\n", PROCESS_COMMANDS.join(", ")));
         out.push_str("\nGlobal flags:\n");
         for (flag, does) in GLOBAL_FLAGS {
@@ -331,35 +333,6 @@ impl Tree {
         }
         out
     }
-}
-
-/// The help of a process command. These three are the only commands
-/// written by hand.
-fn help_process(word: &str) -> String {
-    let (usage, about) = match word {
-        "serve" => (
-            format!("{PROGRAM} serve"),
-            "Runs the local engine in the foreground: the one process that holds the store, \
-             serves commands and MCP clients over the local channel of this machine, and shows \
-             the page on which a person answers a write that waits.\nIt stops when asked (`anything2mcp engine stop`, or the terminal's \
-             interrupt) and after `engine.idle_stop_minutes` with nothing to do.\nA second engine \
-             on the same data directory is refused.",
-        ),
-        "bridge" => (
-            format!("{PROGRAM} bridge [--toolset use|build]"),
-            "The program an MCP client starts: it copies MCP messages between its standard \
-             input and output and the local engine's MCP endpoint.\nStandard output carries \
-             protocol messages and nothing else.\nIt starts no engine: until one runs \
-             (`anything2mcp serve`), every request is answered with an error that says so.",
-        ),
-        _ => (
-            format!("{PROGRAM} {word}"),
-            "It is not built in this build.",
-        ),
-    };
-    format!(
-        "{usage}\n\nA process command: it starts a long-lived role and is not an action.\n{about}\n"
-    )
 }
 
 fn help_action(face: &CommandFace) -> String {

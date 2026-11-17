@@ -6,8 +6,8 @@
 //! Nothing here looks at what a result holds: text is the same JSON, laid
 //! out as indented lines.
 //!
-//! Exit code 4, the engine could not be reached, is the client end's to
-//! raise: no response carries it.
+//! Exit code 4, the engine could not be reached or started, is not raised
+//! in this build: every command runs the engine in its own process.
 
 use a2m_actions::{ErrorBody, ExitClass, PROGRAM, Response};
 use a2m_core::Failure;
@@ -102,54 +102,39 @@ fn shown(value: &Json, indent: usize) -> String {
         .join(&format!("\n{pad}"))
 }
 
-/// A failure as a person reads it, on standard error: the `error` object
-/// of a response.
-fn failure_text(error: &Json) -> String {
-    let part = |name: &str| error.get(name).and_then(Json::as_str).unwrap_or_default();
+/// A failure as a person reads it, on standard error.
+fn failure_text(error: &ErrorBody) -> String {
     format!(
         "{PROGRAM}: {}\n  class: {}\n  code: {}\n  fix: {}\n",
-        part("message"),
-        part("class"),
-        part("code"),
-        part("fix")
+        error.message, error.class, error.code, error.fix
     )
 }
 
-/// Renders one response of an engine in this process.
+/// Renders one response.
 pub(crate) fn render(response: &Response, tree: &Tree, json: bool) -> Finished {
-    show(&response.to_json(), response.exit_code(), tree, json)
-}
-
-/// Renders one response from its JSON form and its exit code. A command
-/// that ran the engine in its own process and one that asked the local
-/// engine both end here, so both print the same.
-pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finished {
     let mut stdout = String::new();
     let mut stderr = String::new();
     if json {
-        stdout.push_str(&response.to_string());
+        stdout.push_str(&response.to_json().to_string());
         stdout.push('\n');
     } else {
-        if let Some(result) = response.get("result") {
+        if let Some(result) = &response.result {
             lines(result, 0, &mut stdout);
         }
-        if let Some(next) = response.get("next") {
-            let action = next.get("action").and_then(Json::as_str).unwrap_or_default();
-            let when = next.get("when").and_then(Json::as_str).unwrap_or_default();
-            let line = command_line(tree, action, next.get("args").unwrap_or(&Json::Null))
-                .unwrap_or_else(|| action.to_owned());
-            stdout.push_str(&format!("\nnext, {when}:\n  {line}\n"));
+        if let Some(next) = &response.next {
+            let line =
+                command_line(tree, &next.action, &next.args).unwrap_or_else(|| next.action.clone());
+            stdout.push_str(&format!("\nnext, {}:\n  {line}\n", next.when));
         }
     }
-    let warnings = response.get("warnings").and_then(Json::as_array);
-    for warning in warnings.into_iter().flatten() {
-        stderr.push_str(&format!("warning: {}\n", scalar(warning)));
+    for warning in &response.warnings {
+        stderr.push_str(&format!("warning: {warning}\n"));
     }
-    if let Some(error) = response.get("error") {
+    if let Some(error) = &response.error {
         stderr.push_str(&failure_text(error));
     }
     Finished {
-        code,
+        code: response.exit_code(),
         stdout,
         stderr,
     }

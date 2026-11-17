@@ -12,20 +12,15 @@
 //! command, tool, or route, can reach it.
 
 use a2m_auth::{PersonAnswer, PersonAsk, PersonReason};
-use std::sync::Arc;
-
 use a2m_core::{
-    ApprovalId, Digest, EffectClass, Environment, Failure, Identity, PrincipalId, Redact, RunId,
-    RunState, SessionId, TargetName, Timestamp, WorkspaceId,
+    ApprovalId, Digest, EffectClass, Environment, Failure, Identity, PrincipalId, RunId, RunState,
+    SessionId, TargetName, Timestamp, WorkspaceId,
 };
-use a2m_engine::Diff;
-use a2m_ledger::{Durability, Fence, RunRow, Store};
+use a2m_ledger::Store;
 use a2m_policy::{ApprovalSurface, Approved, Channel, Declined, PresenceCheck, PrincipalRef};
 
 use crate::codes;
 use crate::def::{ActionName, BoxFuture};
-use crate::render;
-use crate::signals::RunSignals;
 
 /// Where a person goes to answer: a link they open themselves, and words to
 /// show beside it. Following a link is never an approval by itself, so the
@@ -193,89 +188,13 @@ pub struct WaitingApproval {
     pub tool_version: Digest,
 }
 
-/// The most records one call of [`ApprovalDesk::preview`] gives.
-pub const PREVIEW_RECORDS: usize = 100;
-/// The most characters of one value a preview shows. A longer value is cut
-/// and marked.
-pub const PREVIEW_VALUE_CHARS: usize = 400;
-
-/// The change a waiting run would make, as an approval page shows it: the
-/// content of the diff whose hash the desk reports for the run, and of no
-/// other. Every text in it passed the redactor.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApprovalPreview {
-    /// The run.
-    pub run: RunId,
-    /// The hash of the diff shown. An approval is recorded for this hash.
-    pub diff_hash: Digest,
-    /// The tool.
-    pub tool: String,
-    /// The target the write goes to.
-    pub target: String,
-    /// The environment.
-    pub environment: String,
-    /// How many records the write would create.
-    pub create: u32,
-    /// How many it would change.
-    pub update: u32,
-    /// How many already hold the intended values.
-    pub unchanged: u32,
-    /// How many records the diff holds in all.
-    pub total: usize,
-    /// How many records were skipped before the first one shown.
-    pub offset: usize,
-    /// The records shown, in the order the run would write them.
-    pub records: Vec<PreviewRecord>,
-}
-
-impl ApprovalPreview {
-    /// Whether every record of the diff from `offset` on is shown. When
-    /// not, ask again with `offset` moved on by the number shown.
-    #[must_use]
-    pub const fn complete(&self) -> bool {
-        self.offset + self.records.len() >= self.total
-    }
-}
-
-/// One record of a preview.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviewRecord {
-    /// The operation that writes it.
-    pub operation: String,
-    /// The record's key, its parts joined by ` / `.
-    pub key: String,
-    /// `create`, `update`, or `unchanged`.
-    pub action: &'static str,
-    /// Its fields, in the record's declared order.
-    pub fields: Vec<PreviewField>,
-}
-
-/// One field of one record of a preview.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviewField {
-    /// The field's name.
-    pub name: String,
-    /// The value the record holds now; `None` when the record does not
-    /// exist. For a field labelled restricted, the hash of the value.
-    pub current: Option<String>,
-    /// The value the write would leave, or its hash when restricted.
-    pub proposed: String,
-    /// Whether the write would change the field.
-    pub changes: bool,
-    /// Whether a value was longer than [`PREVIEW_VALUE_CHARS`] and was cut.
-    pub cut: bool,
-}
-
 /// The desk approvals are recorded at. It records an answer through the
-/// policy engine, ends a declined run, shows what a waiting run would
-/// change, and does nothing else. It is not `Clone`, has no public
+/// policy engine and does nothing else. It is not `Clone`, has no public
 /// constructor, and is reached by no action.
 pub struct ApprovalDesk {
-    surface: Arc<ApprovalSurface>,
+    surface: ApprovalSurface,
     store: Store,
     workspace: WorkspaceId,
-    signals: Arc<RunSignals>,
-    redact: Arc<dyn Redact>,
 }
 
 impl std::fmt::Debug for ApprovalDesk {
@@ -284,39 +203,16 @@ impl std::fmt::Debug for ApprovalDesk {
     }
 }
 
-fn not_waiting() -> Failure {
-    codes::input(
-        codes::NOT_FOUND,
-        "That run does not wait for an approval.",
-        "Call `run.get` to see where the run stands.",
-    )
-}
-
-/// The run and the hash of its diff, when it waits for an approval in
-/// `workspace`.
-fn waiting_row(row: RunRow, workspace: WorkspaceId) -> Result<(RunRow, Digest), Failure> {
-    match (row.state, row.diff_hash) {
-        (RunState::NeedsApproval, Some(diff_hash)) if row.workspace == workspace => {
-            Ok((row, diff_hash))
-        }
-        _ => Err(not_waiting()),
-    }
-}
-
 impl ApprovalDesk {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         surface: ApprovalSurface,
         store: Store,
         workspace: WorkspaceId,
-        signals: Arc<RunSignals>,
-        redact: Arc<dyn Redact>,
     ) -> Self {
         Self {
-            surface: Arc::new(surface),
+            surface,
             store,
             workspace,
-            signals,
-            redact,
         }
     }
 
@@ -331,107 +227,25 @@ impl ApprovalDesk {
         let workspace = self.workspace;
         self.store
             .read(move |tx| {
-                let (row, diff_hash) = waiting_row(tx.ledger().run(run)?, workspace)?;
-                Ok(WaitingApproval {
-                    run,
-                    started_by: row.principal,
-                    tool: row.tool_name.to_string(),
-                    diff_hash,
-                    tool_version: row.target_version,
-                })
+                let row = tx.ledger().run(run)?;
+                match (row.state, row.diff_hash) {
+                    (RunState::NeedsApproval, Some(diff_hash)) if row.workspace == workspace => {
+                        Ok(WaitingApproval {
+                            run,
+                            started_by: row.principal,
+                            tool: row.tool_name.to_string(),
+                            diff_hash,
+                            tool_version: row.target_version,
+                        })
+                    }
+                    _ => Err(codes::input(
+                        codes::NOT_FOUND,
+                        "That run does not wait for an approval.",
+                        "Call `run.get` to see where the run stands.",
+                    )),
+                }
             })
             .await
-    }
-
-    /// What the waiting run would change: which records, which fields, from
-    /// what to what. At most [`PREVIEW_RECORDS`] records from `offset` on,
-    /// each value cut to [`PREVIEW_VALUE_CHARS`] characters, every text
-    /// redacted. The page shows this, and an approval is then recorded for
-    /// [`ApprovalPreview::diff_hash`].
-    ///
-    /// The stored diff is read back and its hash computed again: a diff
-    /// that is not the one the run waits on is never shown.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` when there is no such run or it does not wait
-    /// for an approval; `policy`/`approval_stale` when the stored diff is
-    /// not the one whose hash the run carries; the store's failures.
-    pub async fn preview(&self, run: RunId, offset: usize) -> Result<ApprovalPreview, Failure> {
-        let workspace = self.workspace;
-        let (row, diff_hash) = self
-            .store
-            .read(move |tx| waiting_row(tx.ledger().run(run)?, workspace))
-            .await?;
-        let stale = || {
-            codes::policy(
-                a2m_policy::APPROVAL_STALE,
-                "The stored diff is not the one the run waits on, so it is not shown.",
-                "Call the tool again to build a new diff.",
-            )
-        };
-        let blob = row.diff.ok_or_else(stale)?;
-        let opened = self.store.blobs().get(&blob).await?;
-        let diff = Diff::decode(opened.expose())?;
-        if diff.hash() != diff_hash {
-            return Err(stale());
-        }
-        let counts = diff.counts();
-        let shown = |value: &a2m_core::Value| {
-            let text = self.redact.redact(&render::line(value));
-            let cut = text.chars().count() > PREVIEW_VALUE_CHARS;
-            let text = if cut {
-                text.chars().take(PREVIEW_VALUE_CHARS).collect()
-            } else {
-                text
-            };
-            (text, cut)
-        };
-        let records = diff
-            .records
-            .iter()
-            .skip(offset)
-            .take(PREVIEW_RECORDS)
-            .map(|record| PreviewRecord {
-                operation: record.operation.to_string(),
-                key: record
-                    .key
-                    .parts()
-                    .iter()
-                    .map(|part| shown(part).0)
-                    .collect::<Vec<_>>()
-                    .join(" / "),
-                action: record.action.as_str(),
-                fields: record
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        let current = field.current.as_ref().map(shown);
-                        let (proposed, cut) = shown(&field.proposed);
-                        PreviewField {
-                            name: self.redact.redact(&field.name),
-                            cut: cut || current.as_ref().is_some_and(|(_, cut)| *cut),
-                            current: current.map(|(text, _)| text),
-                            proposed,
-                            changes: field.changes,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
-        Ok(ApprovalPreview {
-            run,
-            diff_hash,
-            tool: diff.tool.to_string(),
-            target: diff.target.to_string(),
-            environment: diff.environment.to_string(),
-            create: counts.create,
-            update: counts.update,
-            unchanged: counts.unchanged,
-            total: diff.records.len(),
-            offset,
-            records,
-        })
     }
 
     /// Records a person's approval of the diff they saw. The policy engine
@@ -452,8 +266,7 @@ impl ApprovalDesk {
         proof: PresenceProof,
     ) -> Result<ApprovalId, Failure> {
         let waiting = self.waiting(run).await?;
-        let approval = self
-            .surface
+        self.surface
             .approve(Approved {
                 run,
                 diff_hash,
@@ -462,78 +275,21 @@ impl ApprovalDesk {
                 channel,
                 presence: proof.check(),
             })
-            .await?;
-        // A reader of the run is told that it is approved and waits only
-        // to be resumed. This decides nothing: the approval itself is in
-        // the store.
-        self.signals.note_approved(run, diff_hash);
-        self.signals.changed();
-        Ok(approval)
+            .await
     }
 
     /// Records a person's refusal, or an approval window that ended in
-    /// silence (`by` is then `None`), and ends the run as `expired` in the
-    /// same transaction (spec section 212). The run's failure is `policy`,
-    /// `approval_refused`, which `run.get` reports from then on. An unused
-    /// approval of the run is revoked.
-    ///
-    /// A run that has already ended is left as it is and nothing is
-    /// recorded, so a second press, or a window that ends after a press,
-    /// is harmless.
+    /// silence.
     ///
     /// # Errors
     ///
-    /// `input`/`not_found` when there is no such run in this workspace or
-    /// it is being worked on and no longer waits; the policy engine's and
-    /// the store's failures.
+    /// The policy engine's and the store's failures.
     pub async fn decline(
         &self,
         run: RunId,
         by: Option<PrincipalRef>,
         channel: Channel,
     ) -> Result<(), Failure> {
-        let workspace = self.workspace;
-        let surface = Arc::clone(&self.surface);
-        let why = codes::policy(
-            a2m_policy::APPROVAL_REFUSED,
-            if by.is_some() {
-                "A person declined the write. Nothing was written."
-            } else {
-                "The approval window ended with no answer, which is a decline. Nothing was written."
-            },
-            "Call the tool again if the write is still wanted; a person must approve the new diff.",
-        );
-        let declined = Declined { run, by, channel };
-        let ended = self
-            .store
-            .write(Durability::Synced, move |tx| {
-                let row = tx.ledger().run(run)?;
-                if row.workspace != workspace {
-                    return Err(not_waiting());
-                }
-                if row.state.is_final() {
-                    return Ok(false);
-                }
-                if row.state != RunState::NeedsApproval {
-                    return Err(not_waiting());
-                }
-                surface.record_decline(tx, &declined)?;
-                // Nobody writes under the run's lease number while it
-                // waits; a job that holds it finds the run ended at its
-                // next call and stops.
-                let fence = Fence {
-                    run,
-                    epoch: row.epoch,
-                };
-                tx.ledger()
-                    .set_state(&fence, RunState::Expired, Some(&why))?;
-                Ok(true)
-            })
-            .await?;
-        if ended {
-            self.signals.forget(run);
-            self.signals.changed();
-        }
-        Ok(())
+        self.surface.decline(Declined { run, by, channel }).await
     }
 }

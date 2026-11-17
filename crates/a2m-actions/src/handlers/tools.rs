@@ -3,16 +3,15 @@
 use std::time::Duration;
 
 use a2m_core::{
-    EffectClass, Environment, Failure, FailureCode, FieldHasher, Identity, OperationName, RunId,
-    RunState, ToolRuns, Values,
+    EffectClass, Environment, Failure, FailureCode, Identity, OperationName, RunId, RunState,
+    ToolRuns, Values,
 };
 use a2m_engine::encode_values;
 use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, RunRow, ToolKind};
 use a2m_policy::PrincipalKind;
-use a2m_provider::{Access, RootName, Roots};
 use a2m_sched::{
     Admitted, CancelOutcome, Enqueue, HealthState as SchedHealth, JobKind, JobRequirements,
-    Priority, Scheduler, SessionLimits, Submission,
+    Priority, SessionLimits, Submission,
 };
 use a2m_vault::OwnerRef;
 use serde_json::{Value as Json, json};
@@ -23,9 +22,7 @@ use crate::dispatch::{Call, ExitClass, Next, Output};
 use crate::health::HealthState;
 use crate::kernel::Kernel;
 use crate::person::{ApprovalAsk, SignInAsk};
-use crate::runner::{CallerFacts, KeptSource, SourceKind, keep_run_call, keep_run_source};
-use crate::tools::FoundTool;
-use crate::signals::KeptLink;
+use crate::runner::{CallerFacts, keep_run_call};
 
 /// How long a call waits for its run to rest or end, when it does not say.
 const DEFAULT_WAIT_SECONDS: i64 = 60;
@@ -132,119 +129,6 @@ handler!(
     }
 );
 
-/// The most bytes of rows a call may carry inline. A larger input is a
-/// file.
-const INLINE_ROWS_BYTES: usize = 256 * 1024;
-
-/// The reader inline rows are read by: they are handed on as a JSON
-/// document.
-const ROWS_READER: &str = "json";
-
-/// The source a call hands to a tool: its bytes, read and not yet stored.
-struct GivenSource {
-    kind: SourceKind,
-    name: String,
-    bytes: Vec<u8>,
-}
-
-/// Takes the source of a call. A file is named by its path inside the
-/// project folder and read here, through a checked path, once; the engine
-/// is handed bytes and never a path (spec section 210). Rows given inline
-/// are the bytes of a JSON document.
-///
-/// # Errors
-///
-/// `input`/`schema_invalid` when the tool reads a source and the call gives
-/// none, gives both forms, or gives one to a tool that reads none, and for
-/// rows given to a source that another reader reads;
-/// `input`/`path_not_allowed` and `input`/`file_unavailable` for the file.
-async fn given_source(call: &Call, found: &FoundTool) -> Result<Option<GivenSource>, Failure> {
-    let reads = match found.tool.runs {
-        ToolRuns::Pipeline(index) => found
-            .plan
-            .pipeline(index)
-            .and_then(|pipeline| pipeline.source.as_ref()),
-        ToolRuns::Operation(_) => None,
-    };
-    let tool = &found.tool.name;
-    let invalid = |message: String, fix: &str| codes::input(codes::SCHEMA_INVALID, message, fix);
-    match (reads, call.text("source_file"), call.input.get("source_rows")) {
-        (None, None, None) => Ok(None),
-        (None, _, _) => Err(invalid(
-            format!("`{tool}` reads no source, and the call gives one."),
-            "Leave `source_file` and `source_rows` out.",
-        )),
-        (Some(_), None, None) => Err(invalid(
-            format!("`{tool}` reads a source, and the call gives none."),
-            "Give `source_file`, the file's path inside the project folder, or `source_rows` for a small input.",
-        )),
-        (Some(_), Some(_), Some(_)) => Err(invalid(
-            format!("The call gives `{tool}` both a source file and rows."),
-            "Give `source_file` or `source_rows`, not both.",
-        )),
-        (Some(_), Some(path), None) => {
-            let folder = call.project.as_ref().ok_or_else(|| {
-                codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    "A source file is read from a project folder, and the call names none.",
-                    "Run the command inside the project folder, or pass `--project` with the folder's full path.",
-                )
-            })?;
-            let root = RootName::new("project")?;
-            let mut roots = Roots::none();
-            roots.add(root.clone(), folder, Access::Read)?;
-            let file = roots.folder(&root, Access::Read)?.join(path)?;
-            let most = a2m_engine::EngineSettings::default().source_limits.bytes;
-            // Reading a file waits on the disk: off the async threads.
-            let bytes = tokio::task::spawn_blocking(move || file.read(most))
-                .await
-                .map_err(|_| {
-                    codes::input(
-                        a2m_provider::codes::FILE_UNAVAILABLE,
-                        "The source file could not be read.",
-                        "Try again.",
-                    )
-                })??;
-            Ok(Some(GivenSource {
-                kind: SourceKind::File,
-                name: codes::shown(path),
-                bytes,
-            }))
-        }
-        (Some(source), None, Some(rows)) => {
-            if source.reader != ROWS_READER {
-                return Err(invalid(
-                    format!(
-                        "The source of `{tool}` is read by the `{}` reader, which takes a file; rows given inline are read as a JSON document.",
-                        source.reader
-                    ),
-                    "Give `source_file`, the file's path inside the project folder.",
-                ));
-            }
-            let bytes = serde_json::to_vec(rows).map_err(|_| {
-                invalid(
-                    "The rows could not be written as a JSON document.".to_owned(),
-                    "Give `source_rows` as a list of records.",
-                )
-            })?;
-            if bytes.len() > INLINE_ROWS_BYTES {
-                return Err(invalid(
-                    format!(
-                        "The rows are {} bytes, and at most {INLINE_ROWS_BYTES} may be given inline.",
-                        bytes.len()
-                    ),
-                    "Write the rows to a file in the project and give `source_file`.",
-                ));
-            }
-            Ok(Some(GivenSource {
-                kind: SourceKind::Rows,
-                name: String::new(),
-                bytes,
-            }))
-        }
-    }
-}
-
 fn sched_health(kernel: &Kernel) -> SchedHealth {
     let health = kernel.health();
     let cause = || {
@@ -323,47 +207,10 @@ handler!(
                 "Leave `environment` out to use the target's default.",
             ));
         }
-        let given = given_source(&call, &found).await?;
         let store = kernel.store()?;
         let principal = &call.caller.principal;
         let identity = (principal.principal.kind == PrincipalKind::Person)
             .then_some(Identity::Person(principal.principal.id));
-        // The source is stored before the run is admitted, under a name
-        // that is a keyed digest of its bytes. That name is part of what
-        // makes a run the same run, so the same call with another file is
-        // another run, and a resumed run reads the bytes it was given.
-        let source = match given {
-            Some(given) => {
-                let size = given.bytes.len() as u64;
-                let blob = store
-                    .blobs()
-                    .put(NewBlob {
-                        workspace: principal.workspace,
-                        owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
-                        kind: BlobKind::Input,
-                        class: RetentionClass::Long,
-                        plain: given.bytes,
-                    })
-                    .await?;
-                Some(KeptSource {
-                    blob,
-                    kind: given.kind,
-                    name: given.name,
-                    size,
-                })
-            }
-            None => None,
-        };
-        let input_hash = match &source {
-            None => input.digest(),
-            Some(source) => {
-                let mut hasher = FieldHasher::new();
-                hasher.field("purpose", b"anything2mcp call with source 1");
-                hasher.field("input", input.digest().to_string().as_bytes());
-                hasher.field("source", source.blob.to_string().as_bytes());
-                hasher.finish()
-            }
-        };
         let stored = store
             .blobs()
             .put(NewBlob {
@@ -388,7 +235,7 @@ handler!(
             environment: environment.clone(),
             identity,
             effect,
-            input_hash,
+            input_hash: input.digest(),
             input: Some(stored),
             retention: RetentionClass::Long,
         };
@@ -396,11 +243,7 @@ handler!(
         let kept = run.clone();
         store
             .write(Durability::Synced, move |tx| {
-                keep_run_call(tx, &kept, stored, &facts)?;
-                match &source {
-                    Some(source) => keep_run_source(tx, &kept, source),
-                    None => Ok(()),
-                }
+                keep_run_call(tx, &kept, stored, &facts)
             })
             .await?;
         let admitted = kernel
@@ -433,7 +276,7 @@ handler!(
             Admitted::New { run, .. } | Admitted::Existing { run } => run,
         };
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
-        run_output(kernel, &call, row, Tell::Person).await
+        run_output(kernel, &call, row).await
     }
 );
 
@@ -467,43 +310,26 @@ impl Kernel {
         }
     }
 
-    /// The run, and whether the scheduler holds a job for it that is
-    /// waiting or leased, read in one transaction. A job a runner has
-    /// claimed is leased from the transaction of its claim to the one that
-    /// records how it ended, so nothing the runner does between the two is
-    /// taken for rest.
-    async fn run_and_work(&self, run: RunId) -> Result<(RunRow, bool), Failure> {
-        self.store()?
-            .read(move |tx| {
-                let row = tx.ledger().run(run)?;
-                let working = Scheduler::unfinished_job(tx, run)?.is_some();
-                Ok((row, working))
-            })
-            .await
-    }
-
-    /// Waits until the run has ended, or rests or has stopped with no job
-    /// waiting or in hand for it, or until `wait` has passed, and gives the
-    /// run as it then stands. It waits on the notice that a run changed,
-    /// never on a timer alone.
+    /// Waits until the run rests, stops, or ends, or until `wait` has
+    /// passed, and gives the run as it then stands. It waits on the runner's
+    /// own notice that a run changed, never on a timer alone.
     pub(crate) async fn wait_for_rest(
         &self,
         run: RunId,
         wait: Duration,
     ) -> Result<RunRow, Failure> {
+        let store = self.store()?;
         let mut changed = self.run_watch();
         let give_up = tokio::time::sleep(wait);
         tokio::pin!(give_up);
         loop {
-            // The notice is marked seen before the look, so that a change
-            // between the look and the wait is not missed.
             changed.borrow_and_update();
-            let (row, working) = self.run_and_work(run).await?;
-            let active = matches!(
+            let row = store.read(move |tx| tx.ledger().run(run)).await?;
+            if !matches!(
                 row.state,
                 RunState::Queued | RunState::Validating | RunState::Running
-            );
-            if row.state.is_final() || !(active || working) {
+            ) && !self.in_hand(run)
+            {
                 return Ok(row);
             }
             tokio::select! {
@@ -518,25 +344,9 @@ impl Kernel {
     }
 }
 
-/// Whether an action may tell the run's person that the run waits for
-/// them. The actions that start or continue a run may; reading a run asks
-/// nobody anything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tell {
-    /// `tool.call` and `run.resume`.
-    Person,
-    /// `run.get`.
-    Nobody,
-}
-
 /// The run as `tool.call`, `run.get`, and `run.resume` return it, with the
 /// next step for the state it is in.
-async fn run_output(
-    kernel: &Kernel,
-    call: &Call,
-    row: RunRow,
-    tell: Tell,
-) -> Result<Output, Failure> {
+async fn run_output(kernel: &Kernel, call: &Call, row: RunRow) -> Result<Output, Failure> {
     let store = kernel.store()?;
     let run = row.id;
     let events = store
@@ -615,104 +425,46 @@ async fn run_output(
             Some(Next::new("run.get", again, "in a few seconds")),
         ),
         RunState::NeedsApproval => {
-            let signals = &kernel.inner.signals;
-            if row
-                .diff_hash
-                .is_some_and(|diff| signals.approved(row.id, &diff))
-            {
-                // A person approved this diff at the desk and the run was
-                // not resumed yet. Nobody is asked again; the next step is
-                // the caller's own.
-                out.insert("approved".to_owned(), json!(true));
-                (
-                    "A person approved the write. Nothing was written yet: resume the run to carry it out."
-                        .to_owned(),
-                    ExitClass::Succeeded,
-                    Some(Next::new("run.resume", again, "now")),
-                )
-            } else {
-                // The run's person is told, on a surface the caller cannot
-                // reach, by the call that rested the run and by no other.
-                // The link may be given to an agent: following it is never
-                // an approval by itself.
-                let link = match (tell, row.diff_hash) {
-                    (Tell::Person, Some(diff_hash)) => {
-                        let asked = kernel
-                            .person()
-                            .ask_approval(ApprovalAsk {
-                                run: row.id,
-                                workspace: row.workspace,
-                                started_by: row.principal,
-                                tool: row.tool_name.to_string(),
-                                diff_hash,
-                                summary: format!(
-                                    "`{}` would write to `{}`.",
-                                    row.tool_name, row.target
-                                ),
-                            })
-                            .await
-                            .ok();
-                        if let Some(link) = &asked {
-                            signals.keep_link(
-                                row.id,
-                                KeptLink {
-                                    state: row.state,
-                                    diff: Some(diff_hash),
-                                    link: link.clone(),
-                                },
-                            );
-                        }
-                        asked
-                    }
-                    _ => signals.link(row.id, row.state, row.diff_hash.as_ref()),
-                };
-                if let Some(link) = link {
-                    if let Some(url) = link.url {
-                        out.insert("link".to_owned(), json!(url));
-                    }
+            // The run's person is told, on a surface the caller cannot
+            // reach. The link may be given to an agent: following it is
+            // never an approval by itself.
+            if let Some(diff_hash) = row.diff_hash {
+                let asked = kernel
+                    .person()
+                    .ask_approval(ApprovalAsk {
+                        run: row.id,
+                        workspace: row.workspace,
+                        started_by: row.principal,
+                        tool: row.tool_name.to_string(),
+                        diff_hash,
+                        summary: format!("`{}` would write to `{}`.", row.tool_name, row.target),
+                    })
+                    .await;
+                if let Ok(link) = asked {
+                    out.insert("link".to_owned(), json!(link.url));
                     out.insert("person".to_owned(), json!(link.text));
                 }
-                (
-                    "The write waits for a person's approval. Nothing was written.".to_owned(),
-                    ExitClass::PersonNeeded,
-                    Some(Next::new("run.resume", again, "after the person approves")),
-                )
             }
+            (
+                "The write waits for a person's approval. Nothing was written.".to_owned(),
+                ExitClass::PersonNeeded,
+                Some(Next::new("run.resume", again, "after the person approves")),
+            )
         }
         RunState::NeedsLogin => {
-            let signals = &kernel.inner.signals;
-            let link = match tell {
-                Tell::Person => {
-                    let asked = kernel
-                        .person()
-                        .ask_sign_in(SignInAsk {
-                            session: None,
-                            workspace: row.workspace,
-                            target: row.target.clone(),
-                            environment: row.environment.clone(),
-                            identity: Identity::Person(row.principal),
-                            reason: a2m_auth::PersonReason::SignIn,
-                        })
-                        .await
-                        .ok();
-                    if let Some(link) = &asked {
-                        signals.keep_link(
-                            row.id,
-                            KeptLink {
-                                state: row.state,
-                                diff: None,
-                                link: link.clone(),
-                            },
-                        );
-                    }
-                    asked
-                }
-                Tell::Nobody => signals.link(row.id, row.state, None),
-            };
-            if let Some(link) = link {
-                if let Some(url) = link.url {
-                    out.insert("link".to_owned(), json!(url));
-                }
+            let asked = kernel
+                .person()
+                .ask_sign_in(SignInAsk {
+                    session: None,
+                    workspace: row.workspace,
+                    target: row.target.clone(),
+                    environment: row.environment.clone(),
+                    identity: Identity::Person(row.principal),
+                    reason: a2m_auth::PersonReason::SignIn,
+                })
+                .await;
+            if let Ok(link) = asked {
+                out.insert("link".to_owned(), json!(link.url));
                 out.insert("person".to_owned(), json!(link.text));
             }
             (
@@ -731,17 +483,6 @@ async fn run_output(
                 .to_owned(),
             ExitClass::Failed,
             Some(Next::new("run.resume", again, "to continue the run")),
-        ),
-        // A person declined the write, or the approval window ended. The
-        // run is final: the same call again is a new run with a new diff.
-        RunState::Expired => (
-            "The write was not approved. Nothing was written.".to_owned(),
-            ExitClass::Failed,
-            Some(Next::new(
-                "tool.call",
-                json!({"tool": row.tool_name.as_str()}),
-                "with the same input, if the write is still wanted",
-            )),
         ),
         other => (
             format!("The run ended as `{other}`."),
@@ -772,7 +513,7 @@ handler!(
     run_get,
     |kernel, call| {
         let row = kernel.run_row(&call, run_id(&call)?).await?;
-        run_output(kernel, &call, row, Tell::Nobody).await
+        run_output(kernel, &call, row).await
     }
 );
 
@@ -792,7 +533,7 @@ handler!(
                 | RunState::NeedsInput
                 | RunState::Stopped
         ) {
-            return run_output(kernel, &call, row, Tell::Nobody).await;
+            return run_output(kernel, &call, row).await;
         }
         // The caller's facts are kept again, so that the guard's question
         // is asked about whoever resumes.
@@ -812,6 +553,9 @@ handler!(
         // going on from there is this call's own job, queued once the
         // other has ended.
         for last in [false, true] {
+            // A job in hand took its lease number before this call read
+            // the run, so its end, and not a later lease, is waited for.
+            let busy = kernel.in_hand(run);
             let queued = kernel
                 .sched()?
                 .enqueue(Enqueue {
@@ -829,18 +573,59 @@ handler!(
             };
             kernel.run_changed();
             let left = give_up.saturating_duration_since(tokio::time::Instant::now());
-            // The job, this call's own or the one that was there first, is
-            // unfinished in the scheduler's table from before this wait
-            // begins until its work has ended, so the wait cannot return in
-            // between.
-            row = kernel.wait_for_rest(run, left).await?;
+            row = kernel
+                .wait_for_work(run, row.epoch, !own && busy, left)
+                .await?;
             if own || last || row.state != RunState::Stopped || left.is_zero() {
                 break;
             }
         }
-        run_output(kernel, &call, row, Tell::Person).await
+        run_output(kernel, &call, row).await
     }
 );
+
+impl Kernel {
+    /// Waits, after a resume, until a new lease has worked on the run and
+    /// it rests, stops, or ends again. `busy` says a job was working on
+    /// the run when the resume came; its end is then the work waited for.
+    async fn wait_for_work(
+        &self,
+        run: RunId,
+        before: a2m_core::Epoch,
+        busy: bool,
+        wait: Duration,
+    ) -> Result<RunRow, Failure> {
+        let store = self.store()?;
+        let mut changed = self.run_watch();
+        let give_up = tokio::time::sleep(wait);
+        tokio::pin!(give_up);
+        loop {
+            changed.borrow_and_update();
+            let row = store.read(move |tx| tx.ledger().run(run)).await?;
+            let worked = busy || row.epoch != before;
+            if worked
+                && !matches!(
+                    row.state,
+                    RunState::Queued | RunState::Validating | RunState::Running
+                )
+                && !self.in_hand(run)
+            {
+                return Ok(row);
+            }
+            if row.state.is_final() {
+                return Ok(row);
+            }
+            tokio::select! {
+                alive = changed.changed() => {
+                    if alive.is_err() {
+                        return Ok(row);
+                    }
+                }
+                () = &mut give_up => return Ok(row),
+            }
+        }
+    }
+}
 
 handler!(
     /// `run.cancel`: stops a running or waiting run.

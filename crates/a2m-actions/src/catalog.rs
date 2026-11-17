@@ -58,8 +58,6 @@ fn run_output() -> JsonSchema {
         .optional("diff", any_map())
         .optional("trace", text())
         .optional("link", text())
-        .optional("person", text())
-        .optional("approved", JsonSchema::bool())
         .optional("events", JsonSchema::int())
 }
 
@@ -106,8 +104,6 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("tool.call", "Call one published operation or pipeline by name with its input. Returns the result of a read, or the run's resting state (such as needs_approval) with the next step. A write never proceeds without a person's approval.", Who::ByEffect, Use, "1", Change)
             .pos("tool", TEXT, "The tool's full name.")
             .opt("input", MAP, "The tool's own input, as its schema describes.")
-            .opt("source_file", TEXT, "For a tool that reads a source: the file, by its path inside the project folder. It is read once; a resumed run reads the same bytes.")
-            .opt("source_rows", FieldType::MapList, "For a tool that reads a source, in place of a file: the rows themselves, for a small input. A list of records, read as a JSON document.")
             .opt("environment", TEXT, "The environment to run in. The target's first production environment when left out.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for the run to rest or end before returning its run_id.")
             .effect(Effect::OfTool)

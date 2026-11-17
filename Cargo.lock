@@ -492,11 +492,8 @@ name = "anything2mcp"
 version = "0.0.1"
 dependencies = [
  "a2m-actions",
- "a2m-api",
  "a2m-auth",
  "a2m-core",
- "a2m-local",
- "a2m-mcp",
  "a2m-pack-command",
  "a2m-pack-data",
  "a2m-pack-device",
@@ -511,7 +508,6 @@ dependencies = [
  "a2m-provider",
  "a2m-telemetry",
  "a2m-vault",
- "axum",
  "example-app",
  "example-broker",
  "example-cli",
@@ -519,8 +515,6 @@ dependencies = [
  "example-device",
  "example-files",
  "example-mcp",
- "futures-core",
- "reqwest",
  "serde_json",
  "tokio",
 ]

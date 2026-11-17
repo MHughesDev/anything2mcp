@@ -19,12 +19,12 @@ use a2m_provider::{
 use a2m_telemetry::{
     ChoiceReason, PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
 };
+use tokio::time::Instant;
 
 use crate::codes;
 use crate::compare::Field;
 use crate::control::{Control, EngineEvent, PassedOver, SessionWant};
 use crate::engine::Engine;
-use crate::guard::caught;
 use crate::job::{Directive, JobSpec, KernelHealth};
 use crate::loaded::{Loaded, Scope};
 
@@ -110,9 +110,8 @@ pub(crate) struct Run<'a> {
     held: Vec<Held>,
     destinations: Destinations,
     paths: CheckedPaths,
-    /// The time on the engine's clock at which the run's own time limit
-    /// passes.
-    pub time_limit: Option<Duration>,
+    /// The moment the run's own time limit passes.
+    pub time_limit: Option<Instant>,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -210,10 +209,7 @@ impl<'a> Run<'a> {
         if !self.job.lease.leaves(needed) {
             return Err(Stop::LeaseEnding);
         }
-        if self
-            .time_limit
-            .is_some_and(|limit| self.engine.deps.clock.elapsed() >= limit)
-        {
+        if self.time_limit.is_some_and(|limit| Instant::now() >= limit) {
             return Err(Stop::Fail(codes::fail(
                 FailureClass::Busy,
                 codes::RUN_TIME_EXCEEDED,
@@ -468,13 +464,12 @@ impl<'a> Run<'a> {
         // deadline.
         let prepared = tokio::time::timeout_at(
             deadline.at(),
-            caught(candidate.handle.prepare(&context, lease.as_ref())),
+            candidate.handle.prepare(&context, lease.as_ref()),
         )
         .await;
         let prepared = match prepared {
-            Ok(Some(Ok(prepared))) => prepared,
-            Ok(Some(Err(failure))) => return Err(failure.failure),
-            Ok(None) => return Err(panicked(&binding.mode, "preparing")),
+            Ok(Ok(prepared)) => prepared,
+            Ok(Err(failure)) => return Err(failure.failure),
             Err(_) => {
                 return Err(codes::fail(
                     FailureClass::Transient,
@@ -600,48 +595,17 @@ impl<'a> Run<'a> {
             let held = &mut self.held[cx.held];
             let result = if cx.step.commits {
                 // The future of a committing step is never dropped, so it
-                // runs to its end whatever the deadline says. The deadline
-                // is the driver's to keep.
+                // runs to its end whatever the deadline says.
                 let authority = cx.token.map_or(Authority::Read, Authority::Write);
-                let acting = caught(held.handle.act(
-                    &mut held.prepared,
-                    cx.step,
-                    &input,
-                    authority,
-                ));
-                match acting.await {
-                    Some(result) => result,
-                    None => {
-                        // Nothing says whether the write left before the
-                        // panic: the record is in doubt.
-                        held.poisoned = true;
-                        Err(StepFailure::unknown(codes::fail(
-                            FailureClass::PossibleCommit,
-                            codes::NO_CONFIRMATION,
-                            format!(
-                                "The driver of the mode `{}` panicked in a `{}` step that commits.",
-                                held.mode, cx.step.kind
-                            ),
-                            "Reconcile the run: read the record back before anything is written again.",
-                        )))
-                    }
-                }
+                held.handle
+                    .act(&mut held.prepared, cx.step, &input, authority)
+                    .await
             } else {
-                let acting = caught(held.handle.act(
-                    &mut held.prepared,
-                    cx.step,
-                    &input,
-                    Authority::Read,
-                ));
+                let acting = held
+                    .handle
+                    .act(&mut held.prepared, cx.step, &input, Authority::Read);
                 match tokio::time::timeout_at(deadline.at(), acting).await {
-                    Ok(Some(result)) => result,
-                    Ok(None) => {
-                        held.poisoned = true;
-                        Err(StepFailure::unknown(panicked(
-                            &held.mode,
-                            cx.step.kind.as_str(),
-                        )))
-                    }
+                    Ok(result) => result,
                     Err(_) => {
                         held.poisoned = true;
                         Err(StepFailure::unknown(Failure::new(
@@ -782,7 +746,7 @@ impl<'a> Run<'a> {
     /// Gives every held driver context back.
     pub async fn release(&mut self) {
         for held in self.held.drain(..) {
-            let _ = caught(held.handle.release(held.prepared, held.poisoned)).await;
+            let _ = held.handle.release(held.prepared, held.poisoned).await;
         }
     }
 
@@ -838,17 +802,6 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
         all.assigned_key = observed.assigned_key;
     }
     all.captures.extend(observed.captures);
-}
-
-/// The failure of a step, or of preparing, in which a provider's code
-/// panicked.
-fn panicked(mode: &Mode, doing: &str) -> Failure {
-    codes::fail(
-        FailureClass::UnknownVariant,
-        codes::DRIVER_PANICKED,
-        format!("The driver of the mode `{mode}` panicked in `{doing}`."),
-        "Report this to the provider's author; the engine went on without the step.",
-    )
 }
 
 fn session_usable(state: SessionState) -> bool {

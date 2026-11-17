@@ -46,14 +46,6 @@ impl Default for ApiSettings {
 /// The longest `Idempotency-Key` accepted.
 pub const IDEMPOTENCY_KEY_LONGEST: usize = 200;
 
-/// The project folder a local command was run in. Whoever mounts the
-/// router on the local channel may put one on a request as an extension,
-/// beside the caller; it becomes the request's project folder, which the
-/// dispatcher's handlers check before any use. Nothing in a request's
-/// path, query, or body can set it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectFolder(pub std::path::PathBuf);
-
 /// One route as the router serves it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServedRoute {
@@ -270,10 +262,6 @@ async fn prepare(
     }
     let mut request = Request::new(&route.action, Json::Object(input), caller);
     request.idempotency_key = key;
-    request.project = parts
-        .extensions
-        .get::<ProjectFolder>()
-        .map(|folder| folder.0.clone());
     Ok(request)
 }
 

@@ -5,24 +5,19 @@
 //! one call per first-party pack, opens the kernel, and runs a command
 //! line that is generated from the action registry.
 //!
-//! The local engine ([`LocalEngine`]) is the kernel of one machine served
-//! on the local channel: `anything2mcp serve` runs it, a command is its
-//! thin client, and `anything2mcp bridge` is the stdio proxy an MCP client
-//! starts. When no engine runs, a command runs one inside its own process
-//! ([`Engine`]). The server and runner roles are not here yet.
+//! In this build every command runs the engine inside its own process
+//! ([`Engine`]). The local engine, its channel, the stdio proxy, and the
+//! server and runner roles are not here yet.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: all of them.
 
 pub mod cli;
 mod engine;
-mod local;
 mod packs;
 mod person;
-mod wire;
 
 pub use engine::{Engine, EngineOptions, PASSPHRASE_VARIABLE, action_registry};
-pub use local::LocalEngine;
 pub use person::{ProcessTerminal, Terminal, TerminalSurface};
 
 /// The version of this build of Anything2MCP.

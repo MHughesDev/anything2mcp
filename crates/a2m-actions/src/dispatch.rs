@@ -945,10 +945,6 @@ fn check_type(def: &ActionDef, name: &str, ty: &FieldType, value: &Json) -> Resu
             .as_object()
             .map(|_| ())
             .ok_or_else(|| wrong("a map of named values".to_owned())),
-        FieldType::MapList => match value.as_array() {
-            Some(items) if items.iter().all(Json::is_object) => Ok(()),
-            _ => Err(wrong("a list of maps of named values".to_owned())),
-        },
         FieldType::Any => Ok(()),
     }
 }

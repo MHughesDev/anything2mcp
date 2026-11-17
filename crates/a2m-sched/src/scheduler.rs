@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{Failure, JobId, RunId, RunnerId, Timestamp};
-use a2m_ledger::{Durability, Store, Tx};
+use a2m_ledger::{Durability, Store};
 use a2m_telemetry::{Attr, Clock, Telemetry};
 use tokio::sync::{Notify, oneshot, watch};
 
@@ -817,18 +817,6 @@ impl Scheduler {
     }
 
     // ---- reading ---------------------------------------------------------
-
-    /// The job of a run that is waiting or leased, when it has one, read in
-    /// the caller's own transaction. A run has at most one. Whoever waits
-    /// for work on a run to end reads this together with the run's row, so
-    /// that a job a runner has claimed and not yet begun counts as work.
-    ///
-    /// # Errors
-    ///
-    /// The store's failures.
-    pub fn unfinished_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<JobId>, Failure> {
-        tables::unfinished_job(tx, run)
-    }
 
     /// A job, as the store holds it now.
     ///
