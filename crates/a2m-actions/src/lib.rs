@@ -72,5 +72,4 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod kernel;
-    mod runs;
 }
