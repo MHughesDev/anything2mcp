@@ -1663,80 +1663,84 @@ pub(crate) async fn submit_trial(
     input: &Values,
     environment: Environment,
 ) -> Result<RunId, Failure> {
-    let (name, target, effect) = (found.tool.name.clone(), found.target.clone(), found.effect().0);
-        let store = kernel.store()?;
-        let principal = &call.caller.principal;
-        let stored = store
-            .blobs()
-            .put(NewBlob {
-                workspace: principal.workspace,
-                owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
-                kind: BlobKind::Input,
-                class: RetentionClass::Long,
-                plain: encode_values(input)?,
-            })
-            .await?;
-        let run = NewRun {
+    let (name, target, effect) = (
+        found.tool.name.clone(),
+        found.target.clone(),
+        found.effect().0,
+    );
+    let store = kernel.store()?;
+    let principal = &call.caller.principal;
+    let stored = store
+        .blobs()
+        .put(NewBlob {
             workspace: principal.workspace,
-            principal: principal.principal.id,
-            client_label: codes::shown(&call.caller.client),
-            tool_name: name.clone(),
-            tool_kind: match found.tool.runs {
-                ToolRuns::Operation(_) => ToolKind::Operation,
-                ToolRuns::Pipeline(_) => ToolKind::Pipeline,
-            },
-            target: target.clone(),
-            target_version: found.plan_hash,
-            environment: environment.clone(),
-            identity: (principal.principal.kind == PrincipalKind::Person)
-                .then_some(Identity::Person(principal.principal.id)),
-            effect,
-            input_hash: {
-                // A trial is another run than a call of the same input.
-                let mut hasher = FieldHasher::new();
-                hasher.field("purpose", b"anything2mcp draft try 1");
-                hasher.field("input", input.digest().to_string().as_bytes());
-                hasher.finish()
-            },
-            input: Some(stored),
-            retention: RetentionClass::Long,
-        };
-        let facts = CallerFacts::of(&call.caller, call.decision);
-        let kept = run.clone();
-        store
-            .write(Durability::Synced, move |tx| {
-                keep_run_call(tx, &kept, stored, &facts)
-            })
-            .await?;
-        let admitted = kernel
-            .sched()?
-            .submit(Submission {
-                job: JobRequirements {
-                    kind: JobKind::Try,
-                    target: run.target.clone(),
-                    environment,
-                    modes: Vec::new(),
-                    os: None,
-                    acts_as: Some(run.principal),
-                    session: None,
-                    session_limits: SessionLimits {
-                        reads: 4,
-                        writes: 0,
-                    },
-                    exclusive: Vec::new(),
-                    max_step: Duration::from_secs(30),
-                    writes: false,
+            owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
+            kind: BlobKind::Input,
+            class: RetentionClass::Long,
+            plain: encode_values(input)?,
+        })
+        .await?;
+    let run = NewRun {
+        workspace: principal.workspace,
+        principal: principal.principal.id,
+        client_label: codes::shown(&call.caller.client),
+        tool_name: name.clone(),
+        tool_kind: match found.tool.runs {
+            ToolRuns::Operation(_) => ToolKind::Operation,
+            ToolRuns::Pipeline(_) => ToolKind::Pipeline,
+        },
+        target: target.clone(),
+        target_version: found.plan_hash,
+        environment: environment.clone(),
+        identity: (principal.principal.kind == PrincipalKind::Person)
+            .then_some(Identity::Person(principal.principal.id)),
+        effect,
+        input_hash: {
+            // A trial is another run than a call of the same input.
+            let mut hasher = FieldHasher::new();
+            hasher.field("purpose", b"anything2mcp draft try 1");
+            hasher.field("input", input.digest().to_string().as_bytes());
+            hasher.finish()
+        },
+        input: Some(stored),
+        retention: RetentionClass::Long,
+    };
+    let facts = CallerFacts::of(&call.caller, call.decision);
+    let kept = run.clone();
+    store
+        .write(Durability::Synced, move |tx| {
+            keep_run_call(tx, &kept, stored, &facts)
+        })
+        .await?;
+    let admitted = kernel
+        .sched()?
+        .submit(Submission {
+            job: JobRequirements {
+                kind: JobKind::Try,
+                target: run.target.clone(),
+                environment,
+                modes: Vec::new(),
+                os: None,
+                acts_as: Some(run.principal),
+                session: None,
+                session_limits: SessionLimits {
+                    reads: 4,
+                    writes: 0,
                 },
-                run,
-                priority: Priority::Interactive,
-                health: sched_health(kernel),
-                queue_wait: None,
-                budgets: Vec::new(),
-            })
-            .await?;
-        let run = match admitted {
-            Admitted::New { run, .. } | Admitted::Existing { run } => run,
-        };
+                exclusive: Vec::new(),
+                max_step: Duration::from_secs(30),
+                writes: false,
+            },
+            run,
+            priority: Priority::Interactive,
+            health: sched_health(kernel),
+            queue_wait: None,
+            budgets: Vec::new(),
+        })
+        .await?;
+    let run = match admitted {
+        Admitted::New { run, .. } | Admitted::Existing { run } => run,
+    };
     Ok(run)
 }
 
@@ -1914,7 +1918,8 @@ handler!(
             })?;
         let mut runs = Vec::new();
         for surface in &surfaces {
-            let run = submit_discovery(kernel, &call, &target, plan_hash, &environment, surface).await?;
+            let run =
+                submit_discovery(kernel, &call, &target, plan_hash, &environment, surface).await?;
             runs.push((surface.clone(), run));
         }
         let mut shown = Vec::new();

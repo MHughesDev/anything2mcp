@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use a2m_core::{REDACTED, Value, Values};
 use a2m_provider::{Authority, Posture, Sent, StepOutcome};
-use common::{Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, text};
+use common::{
+    Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, signature_with, text,
+};
 use example_broker::client::Publish;
 use example_broker::faults::{Fault, FaultKind};
 use example_broker::model::{ChannelSpec, DeliveryOutcome, Op, PublishOutcome, Shape, body_digest};
@@ -55,20 +57,43 @@ fn ops(scene: &Scene) -> Vec<Op> {
 async fn a_retained_key_reads_the_same_five_times_and_takes_nothing() {
     let scene = Scene::start().await;
     let steps = &scene.binding("example_order_status_get").act;
-    let mut signatures = Vec::new();
+    let mut plain = Vec::new();
+    let mut acted = Vec::new();
     let mut results = Vec::new();
+    let mut means = Vec::new();
     for _ in 0..5 {
         let (handle, mut prepared) = scene.reading().await;
-        let values = done(
-            read(&handle, &mut prepared, steps, &key_arg("A-100"))
-                .await
-                .unwrap(),
-        );
-        signatures.push(signature_of(&steps[0].kind, &values));
-        results.push(values);
+        let StepOutcome::Done(observed) = read(&handle, &mut prepared, steps, &key_arg("A-100"))
+            .await
+            .unwrap()
+        else {
+            panic!("the value is held");
+        };
+        // How the read was done goes to the trace, and its `means` are in
+        // the signature: the same five times.
+        let acting = observed.acting().expect("how the step was done");
+        means.push(acting.means.clone());
+        plain.push(signature_of(&steps[0].kind, &observed.values));
+        acted.push(signature_with(
+            &steps[0].kind,
+            &observed.values,
+            Some(acting),
+        ));
+        results.push(observed.values);
         assert!(handle.release(prepared, false).await.complete);
     }
-    assert!(signatures.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(plain.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(acted.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_ne!(plain[0], acted[0], "the signature covers how the step was done");
+    assert!(means.windows(2).all(|pair| pair[0] == pair[1]));
+    let said: Vec<(&str, &str)> = means[0]
+        .iter()
+        .map(|detail| (detail.name.as_str(), detail.value.as_str()))
+        .collect();
+    assert_eq!(
+        said,
+        [("protocol", "example-broker/1"), ("shape_check", "made")]
+    );
     assert!(results.windows(2).all(|pair| pair[0] == pair[1]));
     assert_eq!(text(&results[0], "status"), "draft");
     assert_eq!(text(&results[0], "order_id"), "A-100");
@@ -708,7 +733,7 @@ async fn a_publish_to_a_log_is_found_again_by_its_token() {
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-9")),
                 write.authority(),
             )
@@ -794,7 +819,12 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         ),
         ("rejected".to_owned(), "broker_refused", Sent::Answered)
     );
-    assert!(refused.failure.message().contains("The quota is used up"));
+    // The broker's words are its own, apart from the sentence, which is the
+    // product's; neither holds the secret.
+    let said = refused.failure.said().expect("what the broker said");
+    assert!(said.contains("The quota is used up"), "{said}");
+    assert!(!said.contains(PLANTED));
+    assert!(!refused.failure.message().contains("The quota is used up"));
     assert!(!refused.failure.message().contains(PLANTED));
 
     // A secret that lies across the place where the broker's words are cut
@@ -812,12 +842,10 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         .await
         .unwrap_err();
     assert_eq!(cut.failure.code().as_str(), "broker_refused");
-    assert!(
-        !cut.failure.message().contains(&PLANTED[..6]),
-        "{}",
-        cut.failure.message()
-    );
-    assert!(cut.failure.message().contains(REDACTED));
+    let said = cut.failure.said().expect("what the broker said");
+    assert!(!said.contains(&PLANTED[..6]), "{said}");
+    assert!(said.contains(REDACTED), "{said}");
+    assert!(!cut.failure.message().contains(&PLANTED[..6]));
 
     // Sent again by the caller's choice: one copy to whoever listens.
     let mut listener = scene.broker.client("outside").await.unwrap();
@@ -1296,7 +1324,7 @@ async fn a_scan_that_did_not_cover_the_log_never_says_absent() {
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-lost")),
                 write.authority(),
             )

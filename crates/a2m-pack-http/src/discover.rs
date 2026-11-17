@@ -75,13 +75,7 @@ impl<'a> ReadClient<'a> {
             })?,
         };
         let args = Values::new();
-        let input = StepInput {
-            args: &args,
-            record: None,
-            key: None,
-            stamp: None,
-            deadline: self.scope.deadline,
-        };
+        let input = StepInput::new(&args, self.scope.deadline);
         match self.port.act(&step, &input).await {
             Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => Ok(observed.values),
             Err(failure) => Err(failure.failure),

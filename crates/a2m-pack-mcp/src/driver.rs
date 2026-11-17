@@ -15,6 +15,7 @@ use a2m_provider::{
     BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, PrepareContext,
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
+use a2m_telemetry::{Acting, Detail};
 use serde_json::{Value as Json, json};
 
 use crate::client::{Client, HttpLink, Limits, Link, Revision, ToolResult};
@@ -599,11 +600,20 @@ impl McpDriver {
             media_type: "application/json".to_owned(),
             bytes: self.redact.redact(&canonical(&result.raw)).into_bytes(),
         };
+        // How the call was done: which tool, and whether it answered with
+        // an error result. The size of the answer is measured, not meant.
+        let acting = Capture::acting(&Acting {
+            means: vec![
+                Detail::new("tool", tool),
+                Detail::new("is_error", result.is_error.to_string()),
+            ],
+            measured: vec![Detail::new("result_bytes", capture.bytes.len().to_string())],
+        });
         let observed = |values: Values, assigned_key: Option<RecordKey>| Observed {
             values: self.redact.redact_values(&values),
             assigned_key,
             for_reconcile: Values::new(),
-            captures: vec![capture.clone()],
+            captures: vec![acting.clone(), capture.clone()],
         };
         if result.is_error {
             let absent = step.lookup
@@ -616,7 +626,12 @@ impl McpDriver {
             return if absent {
                 Ok(StepOutcome::Absent(observed(Values::new(), None)))
             } else {
-                Err(StepFailure::answered(codes::rejected(tool)))
+                // What the tool said is its own text: carried apart from the
+                // product's sentence, redacted, cleaned, and redacted again.
+                let said = self.redact.redact(&result.texts.join("\n"));
+                let clean: String = said.chars().filter(|c| !c.is_control()).collect();
+                Err(StepFailure::answered(codes::rejected(tool))
+                    .with_said(self.redact.redact(&clean)))
             };
         }
         let mut values = if entry.result == "text" {
@@ -848,8 +863,13 @@ impl Driver for McpDriver {
                         .await?,
                 );
                 state.conn.client.take_list_changed();
+                let acting = Acting {
+                    means: vec![Detail::new("step", "list_tools")],
+                    measured: vec![Detail::new("tools", state.listing.tools.len().to_string())],
+                };
                 return Ok(StepOutcome::Done(Observed {
                     values: state.listing_values(),
+                    captures: vec![Capture::acting(&acting)],
                     ..Observed::default()
                 }));
             }

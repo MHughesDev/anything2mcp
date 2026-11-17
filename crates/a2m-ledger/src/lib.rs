@@ -39,9 +39,9 @@ pub use finding::{
 };
 pub use keys::StoreKeyRecords;
 pub use ledger::{
-    Acted, ActedToken, EventKind, Fence, IntentToken, Ledger, LockHeld, LockRow, NewRun, Opened,
-    PlannedRecord, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow, Replayed, RunEvent,
-    RunRow, Settled, ToolKind, WriteClearance, replay,
+    AcknowledgedInDiff, Acted, ActedToken, EventKind, Fence, IntentToken, Ledger, LockHeld,
+    LockRow, NewRun, Opened, PlannedRecord, ReadBack, Reconciled, RecordIntent, RecordRef,
+    RecordRow, RecordTally, Replayed, RunEvent, RunRow, Settled, ToolKind, WriteClearance, replay,
 };
 pub use listing::{
     CALLER_KEY_LONGEST, CallerKey, CallerKeyRow, IDEMPOTENCY_KEY_INVALID, RUN_PAGE_MOST, RunQuery,

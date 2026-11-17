@@ -60,6 +60,16 @@ session = true
 
 [points]
 driver = ["stand"]
+discoverer = ["calls"]
+
+[[discoverers]]
+name = "calls"
+archetype = "request"
+surface_kinds = ["stand"]
+kinds = ["stand_call"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 100000, depth = 1 }
 
 [[file_kinds]]
 name = "call"
@@ -82,6 +92,10 @@ summary = "A call's path starts with a slash."
 finding_kind = "stand_call"
 file_kind = "call"
 
+[[drafting_rules]]
+finding_kind = "stand_call"
+file_kind = "operation"
+
 [[settings]]
 key = "page_budget"
 type = "int"
@@ -97,6 +111,148 @@ sessions = ["stand"]
 
 struct StandPack {
     reached: Arc<Mutex<Vec<String>>>,
+    behaviour: Arc<Mutex<Behaviour>>,
+}
+
+/// The stand's discoverer: it tries to send a step that saves, which the
+/// sandbox refuses unsent, reads once, and finds one call that reads, as a
+/// discoverer of a live system would.
+struct CallsDiscoverer;
+
+fn stand_step(kind: &str, commits: bool) -> a2m_core::Step {
+    a2m_core::Step {
+        kind: a2m_core::StepKind::new(kind).unwrap(),
+        refers_to: None,
+        args: Vec::new(),
+        timeout_ms: 2_000,
+        fails_as: a2m_core::FailsAs {
+            class: a2m_core::FailureClass::Transient,
+            code: a2m_core::FailureCode::fixed("stand_timed_out"),
+        },
+        commits,
+        lookup: false,
+        idempotent: false,
+        when: None,
+        payload: a2m_core::PackPayload::none(),
+    }
+}
+
+impl a2m_provider::Discoverer for CallsDiscoverer {
+    fn name(&self) -> a2m_provider::DiscovererName {
+        a2m_provider::DiscovererName::new("calls").unwrap()
+    }
+
+    fn suits(&self, _surface: &a2m_provider::SurfaceDescription) -> bool {
+        true
+    }
+
+    fn discover<'a>(
+        &'a self,
+        port: &'a dyn a2m_provider::SandboxPort,
+        scope: &'a a2m_provider::DiscoveryScope<'a>,
+        out: &'a mut dyn a2m_provider::FindingSink,
+    ) -> BoxFuture<'a, Result<a2m_provider::DiscoveryReport, Failure>> {
+        Box::pin(async move {
+            let args = a2m_core::Values::new();
+            let input = a2m_provider::StepInput {
+                args: &args,
+                record: None,
+                key: None,
+                stamp: None,
+                deadline: scope.deadline,
+            };
+            let refused = port.act(&stand_step("send", true), &input).await;
+            assert!(refused.is_err(), "the sandbox sends no step that saves");
+            let _ = port.act(&stand_step("fetch", false), &input).await;
+            out.found(
+                a2m_core::Finding::about(
+                    a2m_core::Subject::Address(
+                        a2m_core::Address::new("https://test.example.com", "/orders").unwrap(),
+                    ),
+                    a2m_core::FindingKind::new("stand_call").unwrap(),
+                    "order_list /orders read",
+                    a2m_core::Source::LiveSystem,
+                    a2m_core::ProducedBy {
+                        provider: "stand".to_owned(),
+                        version: "0.1.0".to_owned(),
+                        component: None,
+                    },
+                    Timestamp::from_unix_millis(1_800_000_000_000),
+                )
+                .level(a2m_core::EvidenceLevel::Discovered)
+                .build()
+                .unwrap(),
+            )?;
+            Ok(a2m_provider::DiscoveryReport::default())
+        })
+    }
+}
+
+struct Plain;
+
+impl a2m_provider::Describer for Plain {
+    fn describe(
+        &self,
+        findings: &[a2m_core::Finding],
+        _form: a2m_provider::DescribeForm,
+    ) -> a2m_provider::Description {
+        a2m_provider::Description {
+            text: format!("{} findings", findings.len()),
+            ..a2m_provider::Description::default()
+        }
+    }
+}
+
+/// The stand's second drafting rule: a read operation for each call a
+/// finding says reads, and nothing for one that writes or does not say.
+struct OperationFromCall;
+
+impl a2m_files::DraftingRule for OperationFromCall {
+    fn finding_kind(&self) -> a2m_core::FindingKind {
+        a2m_core::FindingKind::new("stand_call").unwrap()
+    }
+
+    fn file_kind(&self) -> a2m_core::FileKindName {
+        a2m_core::FileKindName::new("operation").unwrap()
+    }
+
+    fn draft(
+        &self,
+        finding: &a2m_core::Finding,
+        cx: &a2m_files::DraftContext<'_>,
+    ) -> Result<Vec<a2m_files::DraftDoc>, Failure> {
+        use a2m_files::DraftValue;
+        let parts: Vec<&str> = finding.found().split_whitespace().collect();
+        let (Some(name), Some(&"read"), Some(target)) = (parts.first(), parts.get(2), cx.target())
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(vec![a2m_files::DraftDoc {
+            path: a2m_files::RelPath::new(&format!("operations/{name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("operation", DraftValue::text(&format!("{target}_{name}"))),
+                ("title", DraftValue::text(name)),
+                ("effect", DraftValue::text("read")),
+                ("inputs", DraftValue::Map(Vec::new())),
+                (
+                    "outputs",
+                    DraftValue::map(vec![(
+                        "note",
+                        DraftValue::map(vec![("type", DraftValue::text("note"))]),
+                    )]),
+                ),
+                (
+                    "bindings",
+                    DraftValue::List(vec![DraftValue::map(vec![
+                        ("mode", DraftValue::text("stand")),
+                        ("status", DraftValue::text("verified")),
+                        ("call", DraftValue::text(name)),
+                    ])]),
+                ),
+                ("description", DraftValue::text("Drafted from a finding.")),
+            ]),
+        }])
+    }
 }
 
 impl Pack for StandPack {
@@ -109,9 +265,10 @@ impl Pack for StandPack {
             testing::mode(),
             Arc::new(StubDriver {
                 reached: Arc::clone(&self.reached),
-                behaviour: Arc::new(Mutex::new(Behaviour::Done)),
+                behaviour: Arc::clone(&self.behaviour),
             }),
         )?;
+        to.discoverer(Arc::new(CallsDiscoverer), Arc::new(Plain))?;
         to.compiler(
             CompilerRegistrations::new()
                 .surface_kind(testing::surface_kind_spec())
@@ -119,7 +276,8 @@ impl Pack for StandPack {
                 .file_kind(testing::file_kind())
                 .lowering(testing::lowering())
                 .lint_rule(testing::lint_rule())
-                .drafting_rule(testing::drafting_rule()),
+                .drafting_rule(testing::drafting_rule())
+                .drafting_rule(Arc::new(OperationFromCall)),
         )
     }
 }
@@ -214,6 +372,8 @@ fn repository() -> PathBuf {
 struct World {
     /// Every step that reached the stand's driver.
     reached: Arc<Mutex<Vec<String>>>,
+    /// What the stand's driver answers.
+    behaviour: Arc<Mutex<Behaviour>>,
     clock: Arc<ManualClock>,
     kernel: Kernel,
     surface: Arc<Present>,
@@ -274,8 +434,10 @@ impl World {
             prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
         let reached = Arc::new(Mutex::new(Vec::new()));
+        let behaviour = Arc::new(Mutex::new(Behaviour::Done));
         builder.add_pack(&StandPack {
             reached: Arc::clone(&reached),
+            behaviour: Arc::clone(&behaviour),
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
@@ -305,6 +467,7 @@ impl World {
         );
         Self {
             reached,
+            behaviour,
             clock,
             kernel,
             surface,
@@ -923,5 +1086,148 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         )
         .await;
     assert_eq!(write.error.unwrap().code, "action_not_built");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// The scout through the dispatcher, in a project: it identifies the
+/// stand's surface, runs its discoverer in the sandbox, drafts by the
+/// pack's rules into the target's folder beside the files a person wrote,
+/// compiles the drafts, tries the drafted read five times, and reports. A
+/// stopped scout continues where it stopped; two scouts of the same stand
+/// in the same state give one report, by hash; no step that saves reaches
+/// the stand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    // The target here declares no sign-in, so the stand is reached with
+    // none; and the stand answers every read with one note.
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
+    let written_by_hand = std::fs::read(target_dir.join("calls").join("orders.yaml")).unwrap();
+
+    // Asked not to wait, the scout may stop at a stage whose runs have not
+    // ended; called again, it continues the same scout.
+    let early = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "wait_seconds": 0}),
+        )
+        .await;
+    assert!(early.ok, "{:?}", early.error);
+    let early = early.result.unwrap();
+    let report = world
+        .call(&agent, "scout.run", json!({"target": "example"}))
+        .await;
+    assert!(report.ok, "{:?}", report.error);
+    let report = report.result.unwrap();
+    assert_eq!(report["scout_id"], early["scout_id"], "{early}\n{report}");
+    let content = &report["content"];
+
+    // Found: one call, observed on the live system.
+    assert_eq!(content["surfaces"][0]["state"], "identified", "{report}");
+    assert_eq!(content["found"].as_array().unwrap().len(), 1, "{report}");
+    assert_eq!(content["found"][0]["level"], "discovered");
+    assert_eq!(
+        content["found"][0]["found"]["untrusted"],
+        "order_list /orders read"
+    );
+    // Drafted, file by file, by the pack's rules, and the drafts compile.
+    let drafted: Vec<&str> = content["drafted"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        drafted,
+        ["calls/order_list.yaml", "operations/order_list.yaml"],
+        "{report}"
+    );
+    assert_eq!(content["checked"]["compiles"], true, "{report}");
+    assert!(
+        target_dir
+            .join("operations")
+            .join("order_list.yaml")
+            .is_file()
+    );
+    // A file a person wrote is left as it was.
+    assert_eq!(
+        std::fs::read(target_dir.join("calls").join("orders.yaml")).unwrap(),
+        written_by_hand
+    );
+    // Tried: the drafted read, five times, the same each time, with the
+    // stand's own value kept apart as untrusted.
+    let tried = &content["tried"]["tools"][0];
+    assert_eq!(tried["tool"], "example_order_list", "{report}");
+    assert_eq!(tried["tries"], 5, "{report}");
+    assert_eq!(tried["state"], "proven", "{report}");
+    assert_eq!(tried["level"], "executed");
+    assert_eq!(
+        tried["result"]["untrusted"]["note"], "Kept by the stand",
+        "{report}"
+    );
+    assert_eq!(
+        report["runs"]["tried"]["example_order_list"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    // No step that saves reached the stand: the discoverer's was refused
+    // unsent, and every trial only read.
+    let reached = world.reached.lock().unwrap().clone();
+    assert!(!reached.is_empty());
+    assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
+
+    // The report is read later; a second scout of the same stand in the
+    // same state gives the same report.
+    let read = world
+        .call(&agent, "scout.report", json!({"target": "example"}))
+        .await;
+    assert_eq!(read.result.unwrap()["report_hash"], report["report_hash"]);
+    let again = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "fresh": true}),
+        )
+        .await;
+    let again = again.result.unwrap();
+    assert_ne!(again["scout_id"], report["scout_id"]);
+    assert_eq!(
+        again["report_hash"], report["report_hash"],
+        "{report}\n{again}"
+    );
+
+    // A target just added declares no surface yet: its scout reports that
+    // it looked at nothing, and why, and is not an error.
+    let added = world
+        .call(&agent, "target.add", json!({"name": "blank"}))
+        .await;
+    assert!(added.ok, "{:?}", added.error);
+    let blank = world
+        .call(&agent, "scout.run", json!({"target": "blank"}))
+        .await;
+    assert!(blank.ok, "{:?}", blank.error);
+    let blank = blank.result.unwrap();
+    assert!(
+        blank["content"]["found"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{blank}"
+    );
+    assert!(
+        blank["content"]["not_looked_at"]
+            .to_string()
+            .contains("declares no surface"),
+        "{blank}"
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

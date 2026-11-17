@@ -144,15 +144,21 @@ pub(crate) struct RunLimits {
 }
 
 /// What a store's error means, in the pack's own words. The store's own
-/// text is never kept: it may quote a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// text is never kept, because it may quote a row; the one thing kept of it
+/// is the name of the constraint it broke, which names schema and no row.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// Another connection held a lock for the whole wait.
     Locked,
     /// The statement was interrupted at its time limit.
     TimedOut,
-    /// A constraint refused the write; which kind, as a word of the pack's.
-    Constraint(&'static str),
+    /// A constraint refused the write: which kind, as a word of the pack's,
+    /// and, when the store names it, the constraint's name, with its table
+    /// and column. Never a value.
+    Constraint {
+        kind: &'static str,
+        named: Option<String>,
+    },
     /// The connection may not write, and the statement tried to.
     ReadOnly,
     /// The store denied the identity a right.
@@ -180,7 +186,7 @@ pub(crate) enum Refusal {
 }
 
 /// How a `commit` failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CommitFailed {
     /// The store said it did not commit. Nothing landed.
     NotCommitted(Refusal),

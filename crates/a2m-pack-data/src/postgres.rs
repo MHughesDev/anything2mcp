@@ -555,6 +555,24 @@ fn constraint(state: &SqlState) -> &'static str {
     }
 }
 
+/// The name of the constraint, and its table and column, as the server's
+/// error carries them in fields of their own. Those fields name schema; the
+/// message and its detail, which quote the row, are never read.
+fn named_by(error: &tokio_postgres::Error) -> Option<String> {
+    let found = error.as_db_error()?;
+    let mut said = Vec::new();
+    if let Some(name) = found.constraint() {
+        said.push(format!("constraint {name}"));
+    }
+    if let Some(table) = found.table() {
+        said.push(format!("table {table}"));
+    }
+    if let Some(column) = found.column() {
+        said.push(format!("column {column}"));
+    }
+    (!said.is_empty()).then(|| said.join(", "))
+}
+
 /// What an error means while a statement runs. The server's own message is
 /// never kept: it may quote a row.
 fn refusal(error: &tokio_postgres::Error) -> Refusal {
@@ -572,9 +590,15 @@ fn refusal(error: &tokio_postgres::Error) -> Refusal {
         "55P03" | "40P01" | "40001" | "53300" => Refusal::Locked,
         "25006" => Refusal::ReadOnly,
         "42501" => Refusal::Denied,
-        _ if code.starts_with("23") => Refusal::Constraint(constraint(state)),
+        _ if code.starts_with("23") => Refusal::Constraint {
+            kind: constraint(state),
+            named: named_by(error),
+        },
         // A value the column's type does not read.
-        _ if code.starts_with("22") => Refusal::Constraint("value"),
+        _ if code.starts_with("22") => Refusal::Constraint {
+            kind: "value",
+            named: None,
+        },
         // A table, a column, a function, or the statement's syntax.
         _ if code.starts_with("42") => Refusal::Shape,
         _ if code.starts_with("08") || code.starts_with("57P") => Refusal::Unavailable,

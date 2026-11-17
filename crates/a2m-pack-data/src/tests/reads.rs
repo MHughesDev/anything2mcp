@@ -9,7 +9,7 @@ use a2m_vault::Redactor;
 use example_db::faults::Fault;
 use example_db::schema::{READ_THAT_WRITES, Table};
 
-use super::{Scene, failed, inputs, values};
+use super::{Scene, failed, inputs, project_of, values};
 use crate::names::codes;
 
 fn text<'a>(values: &'a a2m_core::Values, name: &str) -> &'a str {
@@ -424,4 +424,65 @@ async fn a_value_that_cannot_be_bound_stops_the_step_unsent() {
         )
     );
     run.release().await;
+}
+
+#[tokio::test]
+async fn a_database_file_is_of_the_project_of_the_request_that_started_the_run() {
+    let scene = Scene::new();
+    // A second project, with its own file of the same name and another
+    // value in it.
+    let other = example_db::harness::TestDb::start().unwrap();
+    other
+        .someone_else(
+            "UPDATE customers SET name = 'Example Customer Two' WHERE customer_id = 'C-001'",
+            &[],
+        )
+        .unwrap();
+    let act = &scene.binding("example_customer_get").act;
+    let wanted = inputs(&[("customer_id", "C-001")]);
+    let fence = || a2m_ledger::Fence {
+        run: a2m_core::RunId::from_bytes([7; 16]),
+        epoch: a2m_core::Epoch::new(1),
+    };
+    let mut names = Vec::new();
+    for project in [
+        scene.db.path().parent().unwrap(),
+        other.path().parent().unwrap(),
+    ] {
+        let handle = scene.handle();
+        let prepared = scene
+            .try_prepare_with(&handle, Posture::Live, fence(), &project_of(project))
+            .await
+            .unwrap();
+        let mut run = super::Run {
+            plan: &scene.plan,
+            handle,
+            prepared: Some(prepared),
+            wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: a2m_core::Values::new(),
+        };
+        let found = values(run.steps(act, &wanted, None).await.unwrap());
+        names.push(text(&found, "name").to_owned());
+        run.release().await;
+    }
+    assert_eq!(names, ["Example Customer One", "Example Customer Two"]);
+
+    // A run whose request had no project folder stops by name, and opens
+    // nothing: the folder the engine was started in is never used.
+    let handle = scene.handle();
+    let Err(stopped) = scene
+        .try_prepare_with(
+            &handle,
+            Posture::Live,
+            fence(),
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+    else {
+        panic!("no project folder");
+    };
+    assert_eq!(stopped.sent, Sent::NotSent);
+    assert_eq!(stopped.failure.class(), FailureClass::Input);
+    assert_eq!(stopped.failure.code().as_str(), "project_folder_missing");
 }

@@ -320,7 +320,7 @@ async fn a_publish_carries_the_records_token_and_the_window_bounds_what_the_serv
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-1")),
                 write.authority(),
             )
@@ -347,7 +347,7 @@ async fn a_publish_carries_the_records_token_and_the_window_bounds_what_the_serv
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &again.input(&args, Some("tok-1")),
                 again.authority(),
             )
@@ -390,7 +390,7 @@ async fn a_publish_carries_the_records_token_and_the_window_bounds_what_the_serv
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &late.input(&args, Some("tok-1")),
                 late.authority(),
             )
@@ -420,7 +420,7 @@ async fn a_stream_that_remembers_a_token_for_less_than_the_file_says_is_drift() 
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-1")),
                 write.authority(),
             )
@@ -459,7 +459,7 @@ async fn a_lost_or_unreadable_acknowledgement_is_a_write_in_doubt_and_a_refusal_
         step.deadline = Deadline::after(Duration::from_secs(2));
         let doubt = failed(
             handle
-                .act(&mut prepared, &binding.act[0], &step, write.authority())
+                .act(&mut prepared, &binding.act[1], &step, write.authority())
                 .await,
         );
         assert_eq!(
@@ -502,7 +502,7 @@ async fn a_lost_or_unreadable_acknowledgement_is_a_write_in_doubt_and_a_refusal_
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-refused")),
                 write.authority(),
             )
@@ -540,7 +540,7 @@ async fn nothing_a_step_sends_can_move_a_message_to_another_subject_or_past_the_
             handle
                 .act(
                     &mut prepared,
-                    &binding.act[0],
+                    &binding.act[1],
                     &write.input(&args, Some("tok-1")),
                     write.authority(),
                 )
@@ -569,7 +569,7 @@ async fn nothing_a_step_sends_can_move_a_message_to_another_subject_or_past_the_
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&event_args("A-100", "shipped"), Some("tok-1")),
                 write.authority(),
             )
@@ -789,7 +789,7 @@ async fn a_line_the_protocol_does_not_have_stops_a_read_and_leaves_a_write_in_do
     handle
         .act(
             &mut prepared,
-            &binding.act[0],
+            &binding.act[1],
             &write.input(&args, Some("tok-a")),
             write.authority(),
         )
@@ -800,7 +800,7 @@ async fn a_line_the_protocol_does_not_have_stops_a_read_and_leaves_a_write_in_do
         handle
             .act(
                 &mut prepared,
-                &binding.act[0],
+                &binding.act[1],
                 &write.input(&args, Some("tok-b")),
                 write.authority(),
             )
@@ -1159,7 +1159,7 @@ async fn the_same_client_against_a_real_server() {
             handle
                 .act(
                     &mut prepared,
-                    &binding.act[0],
+                    &binding.act[1],
                     &write.input(&args, Some("tok-real")),
                     write.authority(),
                 )

@@ -27,7 +27,7 @@ use a2m_core::{
     FailsAs, Failure, FailureClass, FailureCode, RecordKey, Redact, Step, Value, Values,
 };
 use a2m_provider::{
-    BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
+    BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
     Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
@@ -187,9 +187,6 @@ pub(crate) struct Session {
     looked_at: BTreeSet<String>,
     /// A connection was lost or left in doubt. Nothing more is sent.
     lost: bool,
-    /// What each step did, for the step trace. The contract has no place to
-    /// hand this on yet; the driver keeps it so that its shape is fixed.
-    pub(crate) acting: Vec<Acting>,
 }
 
 fn failure(
@@ -301,12 +298,20 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
             "The statement ran past its time limit and was stopped.",
             "Try again, or raise the statement's `time_limit`.",
         ),
-        Refusal::Constraint(kind) => failure(
-            FailureClass::Rejected,
-            codes::CONSTRAINT_VIOLATED,
-            format!("A constraint of the store refused the write (kind: {kind})."),
-            "Correct the values so that they satisfy the store's constraints; nothing was written.",
-        ),
+        // The sentence is the product's. What the store says of the
+        // constraint, its name, goes apart from it, and `act` redacts it.
+        Refusal::Constraint { kind, named } => {
+            let refused = failure(
+                FailureClass::Rejected,
+                codes::CONSTRAINT_VIOLATED,
+                format!("A constraint of the store refused the write (kind: {kind})."),
+                "Correct the values so that they satisfy the store's constraints; nothing was written.",
+            );
+            match named {
+                Some(said) => refused.with_said(said),
+                None => refused,
+            }
+        }
         Refusal::ReadOnly if access == Access::ReadOnly => read_wrote(),
         Refusal::ReadOnly | Refusal::Denied => failure(
             FailureClass::Policy,
@@ -416,6 +421,17 @@ fn close(conn: Box<dyn Conn>) {
 
 /// The moment a step must be done by: its own time limit or the caller's
 /// deadline, whichever is first.
+/// How a step was done, as the capture the trace takes: `means` is what the
+/// trace's signature covers, `measured` what it does not.
+fn acting(step: &Step, means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
+    let mut all = vec![Detail::new("step", step.kind.as_str())];
+    all.extend(means);
+    Capture::acting(&Acting {
+        means: all,
+        measured,
+    })
+}
+
 fn until(step: &Step, input: &StepInput<'_>) -> Deadline {
     let own = Deadline::after(Duration::from_millis(u64::from(step.timeout_ms)));
     own.min(input.deadline)
@@ -517,15 +533,6 @@ impl Session {
         }
     }
 
-    fn note(&mut self, step: &Step, means: Vec<Detail>, measured: Vec<Detail>) {
-        let mut all = vec![Detail::new("step", step.kind.as_str())];
-        all.extend(means);
-        self.acting.push(Acting {
-            means: all,
-            measured,
-        });
-    }
-
     async fn begin(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
         let detail: StepDetail = step.payload.decode().map_err(StepFailure::not_sent)?;
         let (Some(access), Some(isolation)) = (detail.access, detail.isolation) else {
@@ -604,18 +611,20 @@ impl Session {
         match began {
             Ok(()) => {
                 self.open = Some(access);
-                self.note(
-                    step,
-                    vec![Detail::new(
-                        "access",
-                        match access {
-                            Access::ReadOnly => "read_only",
-                            Access::ReadWrite => "read_write",
-                        },
+                Ok(Observed {
+                    captures: vec![acting(
+                        step,
+                        vec![Detail::new(
+                            "access",
+                            match access {
+                                Access::ReadOnly => "read_only",
+                                Access::ReadWrite => "read_write",
+                            },
+                        )],
+                        Vec::new(),
                     )],
-                    Vec::new(),
-                );
-                Ok(Observed::default())
+                    ..Observed::default()
+                })
             }
             // No transaction was opened, so nothing was sent that could
             // change data.
@@ -667,6 +676,7 @@ impl Session {
         &mut self,
         step: &Step,
         input: &StepInput<'_>,
+        recorded: &Values,
         result_bytes: u64,
     ) -> Result<Observed, StepFailure> {
         let (name, statement) = self.statement(step)?;
@@ -692,7 +702,15 @@ impl Session {
         }
         let mut params = Vec::with_capacity(statement.params.len());
         for param in &statement.params {
-            let Some(value) = input.args.get(&param.name).and_then(bound) else {
+            // A key the store assigned is not an input: the read-back of such
+            // a write takes it from what the write recorded before its
+            // commit point, which is the same on a resume as in the pass.
+            let given = input.args.get(&param.name).or_else(|| {
+                recorded
+                    .get(&param.name)
+                    .filter(|_| param.key && statement.access == Access::ReadOnly)
+            });
+            let Some(value) = given.and_then(bound) else {
                 return Err(self
                     .not_sent(failure(
                         FailureClass::Input,
@@ -834,7 +852,7 @@ impl Session {
                 if let Some(table) = table {
                     self.looked_at.insert(table);
                 }
-                self.note(
+                let how = acting(
                     step,
                     vec![Detail::new("statement", name)],
                     vec![
@@ -847,7 +865,10 @@ impl Session {
                 self.counted = false;
                 self.wrote = access == Access::ReadWrite;
                 self.asked = asked;
-                Ok(Observed::default())
+                Ok(Observed {
+                    captures: vec![how],
+                    ..Observed::default()
+                })
             }
             // Found before the statement ran.
             Err(Stopped::Unsent(found)) => Err(self.not_sent(found).await),
@@ -878,12 +899,14 @@ impl Session {
         }
         if changed == expected {
             self.counted = true;
-            self.note(
-                step,
-                vec![Detail::new("rows", expected.to_string())],
-                Vec::new(),
-            );
-            return Ok(Observed::default());
+            return Ok(Observed {
+                captures: vec![acting(
+                    step,
+                    vec![Detail::new("rows", expected.to_string())],
+                    Vec::new(),
+                )],
+                ..Observed::default()
+            });
         }
         // Any other count rolls back, so nothing is committed.
         let FailsAs { class, code } = step.fails_as.clone();
@@ -1077,8 +1100,8 @@ impl Session {
             self.roll_back().await;
         }
         match outcome {
-            Ok(outcome) => {
-                self.note(
+            Ok(mut outcome) => {
+                let how = acting(
                     step,
                     vec![Detail::new(
                         "found",
@@ -1089,6 +1112,11 @@ impl Session {
                     )],
                     vec![Detail::new("rows", rows.to_string())],
                 );
+                match &mut outcome {
+                    StepOutcome::Absent(observed) | StepOutcome::Done(observed) => {
+                        observed.captures.push(how);
+                    }
+                }
                 Ok(outcome)
             }
             Err(found) => Err(self.answered(found).await),
@@ -1136,8 +1164,16 @@ impl Session {
                 self.ran = None;
                 self.counted = false;
                 self.wrote = false;
-                self.note(step, Vec::new(), Vec::new());
-                Ok(Observed::default())
+                Ok(Observed {
+                    captures: vec![acting(step, Vec::new(), Vec::new())],
+                    ..Observed::default()
+                })
+            }
+            // A link that had ended before `COMMIT` was sent: nothing was
+            // sent, and the store answered nothing.
+            Some((conn, Err(CommitFailed::NotCommitted(Refusal::Unavailable)))) => {
+                self.give_back(access, conn);
+                Err(self.not_sent(refused(Refusal::Unavailable, access)).await)
             }
             Some((conn, Err(CommitFailed::NotCommitted(refusal)))) => {
                 self.give_back(access, conn);
@@ -1195,13 +1231,13 @@ impl Session {
         self.give_back(Access::ReadOnly, conn);
         let catalog =
             catalog.map_err(|refusal| StepFailure::answered(refused(refusal, Access::ReadOnly)))?;
-        self.note(
-            step,
-            Vec::new(),
-            vec![Detail::new("tables", catalog.tables.len().to_string())],
-        );
         Ok(Observed {
             values: redact.redact_values(&crate::discover::catalog_values(&catalog)),
+            captures: vec![acting(
+                step,
+                Vec::new(),
+                vec![Detail::new("tables", catalog.tables.len().to_string())],
+            )],
             ..Observed::default()
         })
     }
@@ -1216,7 +1252,7 @@ impl SqlDriver {
         fields: &SurfaceFields,
     ) -> Result<StoreAt, StepFailure> {
         // The store's file arrives as a checked path under the surface's
-        // name. The driver resolves no path itself, and takes only the file
+        // name, when the run was handed one. The driver takes only the file
         // the target declares.
         let root = fields.root.as_deref().unwrap_or(DEFAULT_ROOT);
         let given = cx
@@ -1224,13 +1260,25 @@ impl SqlDriver {
             .get(surface.name.as_str())
             .filter(|path| path.root().as_str() == root && path.relative() == surface.address)
             .cloned();
-        // A run that was handed no path for the surface gets the same file
-        // through the one check that makes a path: the surface's root, among
-        // the roots the pack's manifest declares, and the surface's address
-        // below it. Nothing in a plan yet tells the engine that a surface's
-        // address is a file, so the engine hands none over.
-        let path = given.or_else(|| {
-            let name = RootName::new(root).ok()?;
+        if let Some(path) = given {
+            return Ok(StoreAt::File(path.as_path().to_path_buf()));
+        }
+        // A file named in the root `project` is a file of the project of the
+        // request that started the run: it is resolved against that folder,
+        // never against the folder the engine was started in. A run with no
+        // project folder stops by name, before anything is opened.
+        if root == DEFAULT_ROOT {
+            let path = cx
+                .paths
+                .project_folder()
+                .and_then(|folder| folder.join(&surface.address))
+                .map_err(StepFailure::not_sent)?;
+            return Ok(StoreAt::File(path.as_path().to_path_buf()));
+        }
+        // Any other root is one the pack's manifest declares: the surface's
+        // root, among them, and the surface's address below it, through the
+        // one check that makes a path.
+        let path = RootName::new(root).ok().and_then(|name| {
             self.roots
                 .check(&name, &surface.address, a2m_provider::Access::Write)
                 .or_else(|_| {
@@ -1353,7 +1401,6 @@ impl Driver for SqlDriver {
                 described: BTreeSet::new(),
                 looked_at: BTreeSet::new(),
                 lost: false,
-                acting: Vec::new(),
             }))
         })
     }
@@ -1365,6 +1412,7 @@ impl Driver for SqlDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
+            let recorded = prepared.recorded().clone();
             let Some(session) = prepared.state::<Session>() else {
                 return Err(StepFailure::not_sent(unexpected(
                     "The step was given a state the `sql` driver did not prepare.",
@@ -1380,7 +1428,7 @@ impl Driver for SqlDriver {
                 session.begin(step, input).await.map(done)
             } else if step.kind == EXECUTE {
                 session
-                    .execute(step, input, self.result_bytes)
+                    .execute(step, input, &recorded, self.result_bytes)
                     .await
                     .map(done)
             } else if step.kind == EXPECT_ROWS {
@@ -1402,7 +1450,14 @@ impl Driver for SqlDriver {
             if outcome.is_err() {
                 session.failed = true;
             }
-            outcome
+            // What the store said is redacted here, before it leaves the
+            // pack; the sentence is the pack's own.
+            outcome.map_err(|mut stopped| {
+                if stopped.failure.said().is_some() {
+                    stopped.failure = self.redact.redact_failure(&stopped.failure);
+                }
+                stopped
+            })
         })
     }
 

@@ -15,7 +15,7 @@ archetype = "stream"
 verbs = ["read", "list", "await", "publish", "take"]
 # `channels` and `describe` are sent by the discoverer only; no lowering
 # gives them.
-steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "channels", "describe"]
+steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "position", "taken", "channels", "describe"]
 commit_steps = ["publish", "acknowledge"]
 rank = 60
 intent_window = 1
@@ -154,6 +154,10 @@ code = "protocol_unknown"
 [[failure_codes]]
 class = "input"
 code = "credential_not_carried"
+
+[[failure_codes]]
+class = "input"
+code = "nothing_recorded"
 
 # A plan compiled by another build of the pack: `a2m-core`'s own code.
 [[failure_codes]]

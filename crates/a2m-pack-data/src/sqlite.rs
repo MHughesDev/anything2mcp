@@ -226,25 +226,49 @@ fn code_of(error: &rusqlite::Error) -> Option<ffi::Error> {
     }
 }
 
+/// What the store says of the constraint, for the kinds whose message names
+/// only schema: the part after `constraint failed:`, which is the columns
+/// of a unique key or a not-null column, or the name of a check. A message
+/// of any other kind is not read.
+fn constraint_named(error: &rusqlite::Error) -> Option<String> {
+    let rusqlite::Error::SqliteFailure(_, Some(message)) = error else {
+        return None;
+    };
+    let (kind, names) = message.split_once(" constraint failed: ")?;
+    Some(format!(
+        "{} constraint failed: {names}",
+        kind.to_lowercase()
+    ))
+}
+
 /// What an error means while a statement runs.
 fn refusal(error: &rusqlite::Error) -> Refusal {
     if matches!(error, rusqlite::Error::MultipleStatement) {
         return Refusal::NotAllowed;
     }
+    let source = error;
     let Some(error) = code_of(error) else {
         return Refusal::Other(0);
     };
     match error.code {
         ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Refusal::Locked,
         ErrorCode::OperationInterrupted => Refusal::TimedOut,
-        ErrorCode::ConstraintViolation => Refusal::Constraint(match error.extended_code {
-            ffi::SQLITE_CONSTRAINT_UNIQUE | ffi::SQLITE_CONSTRAINT_PRIMARYKEY => "unique",
-            ffi::SQLITE_CONSTRAINT_CHECK => "check",
-            ffi::SQLITE_CONSTRAINT_NOTNULL => "not-null",
-            ffi::SQLITE_CONSTRAINT_FOREIGNKEY => "foreign-key",
-            ffi::SQLITE_CONSTRAINT_TRIGGER => "trigger",
-            _ => "other",
-        }),
+        ErrorCode::ConstraintViolation => {
+            let (kind, names) = match error.extended_code {
+                ffi::SQLITE_CONSTRAINT_UNIQUE | ffi::SQLITE_CONSTRAINT_PRIMARYKEY => {
+                    ("unique", true)
+                }
+                ffi::SQLITE_CONSTRAINT_CHECK => ("check", true),
+                ffi::SQLITE_CONSTRAINT_NOTNULL => ("not-null", true),
+                ffi::SQLITE_CONSTRAINT_FOREIGNKEY => ("foreign-key", false),
+                ffi::SQLITE_CONSTRAINT_TRIGGER => ("trigger", false),
+                _ => ("other", false),
+            };
+            Refusal::Constraint {
+                kind,
+                named: names.then(|| constraint_named(source)).flatten(),
+            }
+        }
         ErrorCode::ReadOnly => Refusal::ReadOnly,
         ErrorCode::PermissionDenied => Refusal::Denied,
         // Only the connection's own guard answers this.

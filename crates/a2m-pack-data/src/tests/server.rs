@@ -272,6 +272,8 @@ impl ServerScene {
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: a2m_core::Values::new(),
         }
     }
 

@@ -141,7 +141,8 @@ fn both_names_are_the_same_program() {
         vec!["runner"],
         vec!["serve", "--help"],
         vec!["bridge", "--toolset", "admin"],
-        vec!["init"],
+        // `init` writes files, so a second run of it says what it kept:
+        // not the same output, by design.
         vec!["docs", "get", "approvals"],
     ] {
         let long = bare.run_as(COMMANDS[0], &args);
@@ -455,14 +456,20 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
 #[test]
 fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let bare = Bare::with_passphrase();
-    // `init` has no action beneath it yet, and says what to do instead.
+    // `init` writes the project's first files beside the project file that
+    // is there, and keeps that one.
     let init = bare.run(&["init"]);
-    assert_eq!(init.status.code(), Some(1));
-    assert!(
-        object(&init)["error"]["fix"]
-            .as_str()
-            .unwrap()
-            .contains("anything2mcp.toml")
+    assert_eq!(init.status.code(), Some(0), "{init:?}");
+    let made = &object(&init)["result"];
+    assert_eq!(
+        made["kept"],
+        serde_json::json!(["anything2mcp.toml"]),
+        "{made}"
+    );
+    assert_eq!(
+        made["written"],
+        serde_json::json!(["AGENTS.md", ".gitignore", "targets"]),
+        "{made}"
     );
 
     // `add` registers the target, then stops at the first of its actions
@@ -470,12 +477,16 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
     assert_eq!(add.status.code(), Some(1), "{added}");
-    assert_eq!(added["action"], "target.probe");
     assert_eq!(added["error"]["code"], "action_not_built");
     // The step it stopped before was never begun, and the note says what
-    // was done and what was not.
+    // was done and what was not. Which step that is moves as the actions
+    // beneath `add` are built.
+    let stopped_before = added["action"].as_str().unwrap();
     let note = added["error"]["message"].as_str().unwrap();
-    assert!(note.contains("stopped before `target.probe`"), "{note}");
+    assert!(
+        note.contains(&format!("stopped before `{stopped_before}`")),
+        "{note}"
+    );
     assert!(note.contains("Done: `target.add`"), "{note}");
     assert!(note.contains("`session.login`"), "{note}");
     let file = bare

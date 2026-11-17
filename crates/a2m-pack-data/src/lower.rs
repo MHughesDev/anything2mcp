@@ -108,11 +108,15 @@ impl Lower<'_, '_> {
 
     /// One argument for each parameter of the statement: the expression the
     /// binding gives under `params`, or the operation's input of that name.
+    /// A key parameter that neither gives, in the read-back of a write whose
+    /// key the store assigns (`assigned`), has no argument: the driver takes
+    /// it from what the write's own steps recorded before its commit point.
     fn args(
         &self,
         name: &str,
         statement: &Statement,
         at: &Place,
+        assigned: bool,
         problems: &mut Diagnostics,
     ) -> Vec<StepArg> {
         let mut args = Vec::new();
@@ -129,6 +133,7 @@ impl Lower<'_, '_> {
                     self.cx
                         .expr_at(&format!("input.{}", param.name), at, expected.as_ref())
                 }
+                None if assigned && param.key => continue,
                 None => Err(problem(
                     &lint::PARAM_UNBOUND,
                     Stage::Resolve,
@@ -157,6 +162,7 @@ impl Lower<'_, '_> {
         name: &str,
         statement: &Statement,
         at: &Place,
+        assigned: bool,
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
         let drift = || fails(FailureClass::Drift, codes::SCHEMA_CHANGED);
@@ -172,7 +178,7 @@ impl Lower<'_, '_> {
             fails(FailureClass::Busy, codes::STORE_LOCKED),
         )?;
         let mut execute = self.step(EXECUTE, name, statement, &StepDetail::default(), drift())?;
-        execute.args = self.args(name, statement, at, problems);
+        execute.args = self.args(name, statement, at, assigned, problems);
         let mut fetch = self.step(FETCH, name, statement, &StepDetail::default(), drift())?;
         fetch.lookup = statement.returns == Returns::OneOrNone;
         Some(vec![begin, execute, fetch])
@@ -204,7 +210,7 @@ impl Lower<'_, '_> {
             &StepDetail::default(),
             fails(FailureClass::Drift, codes::SCHEMA_CHANGED),
         )?;
-        execute.args = self.args(name, statement, at, problems);
+        execute.args = self.args(name, statement, at, false, problems);
         // No row changed: the record is gone, or the guard did not hold.
         let none_changed = match (statement.does, statement.guarded) {
             (Does::Insert, _) => fails(FailureClass::UnknownVariant, codes::UNEXPECTED_STATUS),
@@ -425,7 +431,7 @@ impl Lowering for SqlLowering {
                 ));
             }
             lower
-                .read(name, statement, at, &mut problems)
+                .read(name, statement, at, false, &mut problems)
                 .map(|act| (act, Vec::new()))
         } else {
             // A write is allowed only where the target says the store is the
@@ -473,9 +479,13 @@ impl Lowering for SqlLowering {
                             ));
                             Some(Vec::new())
                         }
-                        Some(found) => {
-                            lower.read(read_back_name, found, &read_back.at, &mut problems)
-                        }
+                        Some(found) => lower.read(
+                            read_back_name,
+                            found,
+                            &read_back.at,
+                            statement.returns == Returns::AssignedKey,
+                            &mut problems,
+                        ),
                     }
                 }
             };

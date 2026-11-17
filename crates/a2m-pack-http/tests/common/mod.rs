@@ -105,6 +105,18 @@ pub fn compile_changed(
     path: &str,
     change: impl Fn(&str) -> String,
 ) -> Result<Compiled, Diagnostics> {
+    compile_changed_files(registry, name, &[(path, &change)])
+}
+
+/// A change to one file's text.
+pub type Change<'a> = (&'a str, &'a dyn Fn(&str) -> String);
+
+/// The same, with a change to each of several files.
+pub fn compile_changed_files(
+    registry: &Registry,
+    name: &str,
+    changes: &[Change<'_>],
+) -> Result<Compiled, Diagnostics> {
     fn walk(root: &Path, folder: &Path, out: &mut Vec<(RelPath, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
             .unwrap()
@@ -131,11 +143,13 @@ pub fn compile_changed(
     let root = fixture(name);
     let mut files = Vec::new();
     walk(&root, &root, &mut files);
-    match files.iter_mut().find(|(known, _)| known.as_str() == path) {
-        Some((_, bytes)) => {
-            *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+    for (path, change) in changes {
+        match files.iter_mut().find(|(known, _)| known.as_str() == *path) {
+            Some((_, bytes)) => {
+                *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+            }
+            None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
         }
-        None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
@@ -292,12 +306,10 @@ impl Scene {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput {
-                args: &args,
-                record: write.map(|(_, record, _)| record),
-                key: write.map(|(_, _, key)| key),
-                stamp: None,
-                deadline: Deadline::after(within),
+            let input = StepInput::new(&args, Deadline::after(within));
+            let input = match write {
+                Some((_, record, key)) => input.for_record(record, Some(key), None),
+                None => input,
             };
             let authority = match write {
                 Some((token, _, _)) if step.commits => Authority::Write(token),

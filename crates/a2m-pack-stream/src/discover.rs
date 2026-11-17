@@ -112,13 +112,7 @@ impl Discoverer for BrokerLook {
         Box::pin(async move {
             let broker = scope.surface.surface.address.as_str();
             let no_args = Values::new();
-            let input = StepInput {
-                args: &no_args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: scope.deadline,
-            };
+            let input = StepInput::new(&no_args, scope.deadline);
             let listed = port
                 .act(&Self::step(STEP_CHANNELS, &StepDetail::default()), &input)
                 .await

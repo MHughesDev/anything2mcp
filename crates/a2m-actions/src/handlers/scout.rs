@@ -180,7 +180,6 @@ fn identified_state(state: a2m_core::RunState, failure: Option<FailureClass>) ->
 
 /// What the identify stage came to.
 struct Identified {
-    target: TargetName,
     plan_hash: Digest,
     /// One entry per surface, with no run identifier in it.
     surfaces: Vec<Json>,
@@ -188,6 +187,8 @@ struct Identified {
     runs: BTreeMap<String, RunId>,
     /// Every discovery ended.
     complete: bool,
+    /// Why nothing was observed, when the drafts do not compile.
+    not_compiled: Option<String>,
 }
 
 /// The identify stage: what the registry says of each declared surface, and
@@ -251,9 +252,8 @@ async fn identify(
                 "not_observed"
             }
             None => {
-                entry["why"] = json!(
-                    "No enabled discoverer suits this surface; it is not guessed about."
-                );
+                entry["why"] =
+                    json!("No enabled discoverer suits this surface; it is not guessed about.");
                 "no_discoverer"
             }
             Some(run) => {
@@ -313,11 +313,11 @@ async fn identify(
         surfaces.push(entry);
     }
     Ok(Identified {
-        target: target.clone(),
         plan_hash,
         surfaces,
         runs,
         complete,
+        not_compiled: None,
     })
 }
 
@@ -488,7 +488,6 @@ handler!(
 #[derive(Debug, Clone)]
 struct Scout {
     id: RunId,
-    finished: bool,
 }
 
 /// The newest scout of a target by the caller's person: the unfinished one
@@ -515,7 +514,6 @@ fn newest_scout(
         if done == finished {
             return Ok(Some(Scout {
                 id: row.text(0)?.parse()?,
-                finished: done,
             }));
         }
         if !finished {
@@ -696,7 +694,11 @@ fn copy_target(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Runs the drafter over `findings` in `folder`.
-fn draft_into(kernel: &Kernel, folder: &Path, findings: &[Finding]) -> Result<DraftReport, Failure> {
+fn draft_into(
+    kernel: &Kernel,
+    folder: &Path,
+    findings: &[Finding],
+) -> Result<DraftReport, Failure> {
     let set = kernel.providers().compiler_set();
     let root = TargetRoot::new(folder);
     Drafter::new(set, &root).draft(findings)
@@ -708,7 +710,7 @@ fn paths(list: &[a2m_files::RelPath]) -> Vec<String> {
 
 /// The compare stage: what the observations draft by rule, set against
 /// what the target's files hold. The drafter is run over a copy of the
-/// target's folder, so nothing in the project changes; a file it would
+/// target's folder in the engine's cache, so nothing in the project changes; a file it would
 /// write where the target holds one a person wrote is a difference, and
 /// each difference is an open question. A finding no rule covers is
 /// listed, since nothing in the files can be compared with it by rule.
@@ -720,7 +722,9 @@ async fn compare(
 ) -> Result<(Json, Vec<(String, String, String, String)>), Failure> {
     let kernel = kernel.clone();
     off_thread(move || {
-        let scratch = std::env::temp_dir().join(format!("a2m-scout-{scout}"));
+        // The engine's own cache folder: no other account writes there,
+        // and the name is the scout's, so no two scouts share it.
+        let scratch = kernel.paths().cache.join("scout").join(scout.to_string());
         let _ = std::fs::remove_dir_all(&scratch);
         let copied = copy_target(&folder, &scratch);
         let drafted = match copied {
@@ -854,8 +858,9 @@ async fn try_reads(
         return Ok((json!({"tools": tried}), runs, complete));
     }
     let project = call.project_folder()?.to_path_buf();
-    let compiled = super::build::compile_in(kernel, project, target, CompileMode::Draft, DRAFT_VERSION)
-        .await?;
+    let compiled =
+        super::build::compile_in(kernel, project, target, CompileMode::Draft, DRAFT_VERSION)
+            .await?;
     let Ok(compiled) = compiled else {
         for (tool, file) in tools {
             tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile."}));
@@ -955,7 +960,13 @@ async fn try_reads(
 }
 
 /// What a scout says when it stops before its last stage.
-fn stopped(target: &TargetName, scout: RunId, stage: u8, why: &str, done: &BTreeMap<u8, Json>) -> Output {
+fn stopped(
+    target: &TargetName,
+    scout: RunId,
+    stage: u8,
+    why: &str,
+    done: &BTreeMap<u8, Json>,
+) -> Output {
     Output::ok(json!({
         "target": target.as_str(),
         "scout_id": scout.to_string(),
@@ -1008,15 +1019,18 @@ handler!(
                         SqlValue::from(now),
                     ],
                 )?;
-                Ok(Scout { id, finished: false })
+                Ok(Scout { id })
             })
             .await?;
         let id = scout.id;
-        let mut done = kernel.store()?.read(move |tx| stored_stages(tx, id)).await?;
+        let mut done = kernel
+            .store()?
+            .read(move |tx| stored_stages(tx, id))
+            .await?;
         let folder = folder_of(&call, &target).await?;
 
         // 0. Consent and budget.
-        if !done.contains_key(&0) {
+        if let std::collections::btree_map::Entry::Vacant(slot) = done.entry(0) {
             let result = json!({
                 "consent": "The person who added the target, on this machine (section 402).",
                 "decision": call.decision.to_string(),
@@ -1024,24 +1038,53 @@ handler!(
                 "budget_in_force": false,
                 "why_not": "The engine holds a discovery job to its discoverers' own bounds; no part of it keeps a budget for a whole scout yet.",
             });
-            kernel.store_stage(id, 0, input_hash(&json!(target.as_str())), &result).await?;
-            done.insert(0, result);
+            kernel
+                .store_stage(id, 0, input_hash(&json!(target.as_str())), &result)
+                .await?;
+            slot.insert(result);
         }
         // 1. Identify; 2. discover. One discovery job per surface: the
         // engine runs every discoverer that suits a surface in one job.
         if !done.contains_key(&1) {
-            let identified = identify(kernel, &call, &target, None).await?;
+            let identified = match identify(kernel, &call, &target, None).await {
+                Ok(identified) => identified,
+                // Drafts that do not compile declare no surface the engine
+                // can observe: the scout reports that and goes on, so that
+                // a target just added gets a report and not an error.
+                Err(failure) if failure.code() == &a2m_files::LINT_FAILED => Identified {
+                    plan_hash: Digest::of(b"no plan"),
+                    surfaces: Vec::new(),
+                    runs: BTreeMap::new(),
+                    complete: true,
+                    not_compiled: Some(failure.message().to_owned()),
+                },
+                Err(failure) => return Err(failure),
+            };
             if !identified.complete {
-                return Ok(stopped(&target, id, 1, "A discovery run has not ended yet.", &done));
+                return Ok(stopped(
+                    &target,
+                    id,
+                    1,
+                    "A discovery run has not ended yet.",
+                    &done,
+                ));
             }
             let declared = declared_sign_ins(kernel, &call, &target).await?;
-            let result = json!({
+            let mut result = json!({
                 "plan_hash": identified.plan_hash.to_string(),
                 "surfaces": identified.surfaces,
                 "sign_in": sign_ins(&identified, declared.as_ref()),
                 "runs": identified.runs_json(),
             });
-            kernel.store_stage(id, 1, input_hash(&done[&0]), &result).await?;
+            if let Some(why) = &identified.not_compiled {
+                result["state"] = json!("not_looked_at");
+                result["why"] = json!(format!(
+                    "The target's drafts do not compile, so no surface can be observed: {why} `draft.lint` names every problem."
+                ));
+            }
+            kernel
+                .store_stage(id, 1, input_hash(&done[&0]), &result)
+                .await?;
             done.insert(1, result);
         }
         let runs: BTreeMap<String, String> =
@@ -1063,7 +1106,9 @@ handler!(
                 })
                 .collect();
             let result = json!({"findings": found, "by_discoverer": by_discoverer});
-            kernel.store_stage(id, 2, input_hash(&done[&1]), &result).await?;
+            kernel
+                .store_stage(id, 2, input_hash(&done[&1]), &result)
+                .await?;
             done.insert(2, result);
         }
         // 3. Compare; 4. draft; 5. check. Only in a project that holds the
@@ -1072,17 +1117,22 @@ handler!(
         if !done.contains_key(&3) {
             let result = match &folder {
                 Some(folder) => {
-                    let (result, asked) = compare(kernel, folder.clone(), id, findings.clone()).await?;
+                    let (result, asked) =
+                        compare(kernel, folder.clone(), id, findings.clone()).await?;
                     let named = target.clone();
                     kernel
                         .store()?
-                        .write(Durability::Synced, move |tx| open_questions(tx, workspace, &named, &asked))
+                        .write(Durability::Synced, move |tx| {
+                            open_questions(tx, workspace, &named, &asked)
+                        })
                         .await?;
                     result
                 }
                 None => no_folder.clone(),
             };
-            kernel.store_stage(id, 3, input_hash(&done[&2]), &result).await?;
+            kernel
+                .store_stage(id, 3, input_hash(&done[&2]), &result)
+                .await?;
             done.insert(3, result);
         }
         if !done.contains_key(&4) {
@@ -1092,31 +1142,47 @@ handler!(
                     let named = target.clone();
                     kernel
                         .store()?
-                        .write(Durability::Synced, move |tx| open_questions(tx, workspace, &named, &asked))
+                        .write(Durability::Synced, move |tx| {
+                            open_questions(tx, workspace, &named, &asked)
+                        })
                         .await?;
                     result
                 }
                 None => no_folder.clone(),
             };
-            kernel.store_stage(id, 4, input_hash(&done[&3]), &result).await?;
+            kernel
+                .store_stage(id, 4, input_hash(&done[&3]), &result)
+                .await?;
             done.insert(4, result);
         }
         if !done.contains_key(&5) {
             let result = match &folder {
                 Some(_) => {
                     let project = call.project_folder()?.to_path_buf();
-                    match super::build::compile_in(kernel, project, &target, CompileMode::Draft, DRAFT_VERSION).await? {
+                    match super::build::compile_in(
+                        kernel,
+                        project,
+                        &target,
+                        CompileMode::Draft,
+                        DRAFT_VERSION,
+                    )
+                    .await?
+                    {
                         Ok(compiled) => json!({
                             "compiles": true,
                             "problems": problems_json(&compiled.warnings),
                             "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
                         }),
-                        Err(problems) => json!({"compiles": false, "problems": problems_json(&problems)}),
+                        Err(problems) => {
+                            json!({"compiles": false, "problems": problems_json(&problems)})
+                        }
                     }
                 }
                 None => no_folder.clone(),
             };
-            kernel.store_stage(id, 5, input_hash(&done[&4]), &result).await?;
+            kernel
+                .store_stage(id, 5, input_hash(&done[&4]), &result)
+                .await?;
             done.insert(5, result);
         }
         // 6. Try.
@@ -1131,7 +1197,8 @@ handler!(
                     .filter_map(|file| file["file"].as_str().map(str::to_owned))
                     .collect();
                 let tools = drafted_tools(kernel, folder.clone(), written).await?;
-                let (mut result, runs, complete) = try_reads(kernel, &call, &target, &tools).await?;
+                let (mut result, runs, complete) =
+                    try_reads(kernel, &call, &target, &tools).await?;
                 if !complete {
                     return Ok(stopped(&target, id, 6, "A trial has not ended yet.", &done));
                 }
@@ -1140,7 +1207,9 @@ handler!(
             } else {
                 no_folder.clone()
             };
-            kernel.store_stage(id, 6, input_hash(&done[&5]), &result).await?;
+            kernel
+                .store_stage(id, 6, input_hash(&done[&5]), &result)
+                .await?;
             done.insert(6, result);
         }
         // 7. Report.
@@ -1151,7 +1220,9 @@ handler!(
                 .read(move |tx| tx.findings().unknowns(&workspace, &named))
                 .await?;
             let report = super::scout_report::assemble(&target, id, &done, &open);
-            kernel.store_stage(id, 7, input_hash(&done[&6]), &report).await?;
+            kernel
+                .store_stage(id, 7, input_hash(&done[&6]), &report)
+                .await?;
             done.insert(7, report);
         }
         let report = done.remove(&7).unwrap_or(Json::Null);

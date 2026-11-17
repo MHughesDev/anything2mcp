@@ -29,6 +29,12 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
     let mut out = Vec::new();
     let empty = Json::Null;
     let stage = |number: u8| done.get(&number).unwrap_or(&empty);
+    if list(&stage(1)["surfaces"]).next().is_none() && stage(1)["state"] != "not_looked_at" {
+        out.push(json!({
+            "what": "the target's surfaces",
+            "why": "The target declares no surface, and the scout observes only declared surfaces. Declare one in `target.yaml`.",
+        }));
+    }
     for surface in list(&stage(1)["surfaces"]) {
         let name = surface["surface"].as_str().unwrap_or_default();
         match surface["state"].as_str() {
@@ -40,7 +46,10 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
             Some(state) => out.push(json!({
                 "what": format!("surface `{name}`"),
                 "why": surface["why"].as_str().map_or_else(
-                    || format!("Its discovery ended as `{state}`."),
+                    || match surface["failure"]["code"].as_str() {
+                        Some(code) => format!("Its discovery ended as `{state}`, with `{code}`."),
+                        None => format!("Its discovery ended as `{state}`."),
+                    },
                     str::to_owned,
                 ),
             })),
@@ -66,7 +75,13 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
             }
         }
     }
-    for (number, what) in [(3_u8, "compare"), (4, "draft"), (5, "check"), (6, "try")] {
+    for (number, what) in [
+        (1_u8, "identify"),
+        (3, "compare"),
+        (4, "draft"),
+        (5, "check"),
+        (6, "try"),
+    ] {
         if stage(number)["state"] == "not_looked_at" {
             out.push(json!({"what": format!("stage `{what}`"), "why": stage(number)["why"]}));
         }
@@ -101,7 +116,12 @@ pub(crate) fn assemble(
     let stage = |number: u8| done.get(&number).unwrap_or(&empty);
     let mut open: Vec<Json> = unknowns
         .iter()
-        .filter(|row| !matches!(row.status, UnknownStatus::Settled | UnknownStatus::OutOfScope))
+        .filter(|row| {
+            !matches!(
+                row.status,
+                UnknownStatus::Settled | UnknownStatus::OutOfScope
+            )
+        })
         .map(|row| {
             json!({
                 "question": row.question,
@@ -207,6 +227,13 @@ fn rendered(report: &Json) -> String {
         ));
     }
     for tool in list(&content["tried"]["tools"]) {
+        if tool["state"] == "not_tried" {
+            lines.push(format!(
+                "Not tried: `{}`.",
+                tool["tool"].as_str().unwrap_or_default()
+            ));
+            continue;
+        }
         lines.push(format!(
             "Tried: `{}`: {}, {} of {} completed.",
             tool["tool"].as_str().unwrap_or_default(),

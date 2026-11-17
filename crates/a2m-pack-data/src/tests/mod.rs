@@ -334,6 +334,8 @@ impl Scene {
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
+            acted: Vec::new(),
+            recorded: Values::new(),
         }
     }
 
@@ -342,6 +344,19 @@ impl Scene {
         handle: &DriverHandle,
         posture: Posture,
         fence: Fence,
+    ) -> Result<Prepared, StepFailure> {
+        self.try_prepare_with(handle, posture, fence, &self.paths)
+            .await
+    }
+
+    /// The same, with the checked paths the test gives: a run whose
+    /// request came from another project folder.
+    pub(crate) async fn try_prepare_with(
+        &self,
+        handle: &DriverHandle,
+        posture: Posture,
+        fence: Fence,
+        paths: &CheckedPaths,
     ) -> Result<Prepared, StepFailure> {
         let supervisor = handle.supervisor(Vec::new());
         let cx = PrepareContext {
@@ -353,7 +368,7 @@ impl Scene {
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
-            paths: &self.paths,
+            paths,
             supervisor: &supervisor,
         };
         handle.prepare(&cx, None).await
@@ -375,6 +390,15 @@ impl Scene {
             },
         )
     }
+}
+
+/// What a run gets from a request that came from this folder: the folder,
+/// checked as the root `project`, and no path under a surface's name.
+pub(crate) fn project_of(folder: &Path) -> CheckedPaths {
+    let root = RootName::new("project").unwrap();
+    let mut roots = Roots::none();
+    roots.add(root.clone(), folder, Access::Write).unwrap();
+    CheckedPaths::none().with_project(roots.folder(&root, Access::Write).unwrap())
 }
 
 /// A step's arguments, evaluated from the operation's inputs as the engine
@@ -408,6 +432,12 @@ pub(crate) struct Run<'a> {
     pub(crate) prepared: Option<Prepared>,
     /// How long each step is given.
     pub(crate) wait: Duration,
+    /// How each step was done, as the trace takes it: from the step's
+    /// `acting` capture, in order.
+    pub(crate) acted: Vec<a2m_telemetry::Acting>,
+    /// What earlier steps of the record returned in `for_reconcile`, as the
+    /// engine hands it on, within a pass and on a resume.
+    pub(crate) recorded: Values,
 }
 
 impl Run<'_> {
@@ -429,17 +459,25 @@ impl Run<'_> {
         args: &Values,
         write: Option<&Write>,
     ) -> Result<StepOutcome, StepFailure> {
-        let input = StepInput {
-            args,
-            record: write.map(|write| write.record),
-            key: write.map(|write| &write.key),
-            stamp: None,
-            deadline: Deadline::after(self.wait),
-        };
+        let mut input = StepInput::new(args, Deadline::after(self.wait));
+        if let Some(write) = write {
+            input = input.for_record(write.record, Some(&write.key), None);
+        }
         let authority = write.map_or(Authority::Read, |write| Authority::Write(&write.token));
-        self.handle
-            .act(self.prepared.as_mut().unwrap(), step, &input, authority)
-            .await
+        let outcome = self
+            .handle
+            .act_recorded(
+                self.prepared.as_mut().unwrap(),
+                step,
+                &input,
+                authority,
+                &self.recorded,
+            )
+            .await;
+        if let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = &outcome {
+            self.acted.extend(observed.acting());
+        }
+        outcome
     }
 
     /// Every step of a list, in order, stopping at the first failure. The
@@ -462,14 +500,8 @@ impl Run<'_> {
     }
 
     /// What the driver noted of each step, for the step trace.
-    pub(crate) fn acting(&mut self) -> Vec<a2m_telemetry::Acting> {
-        self.prepared
-            .as_mut()
-            .unwrap()
-            .state::<crate::driver::Session>()
-            .unwrap()
-            .acting
-            .clone()
+    pub(crate) fn acting(&self) -> Vec<a2m_telemetry::Acting> {
+        self.acted.clone()
     }
 
     pub(crate) async fn release(mut self) {

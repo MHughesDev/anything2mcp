@@ -912,16 +912,21 @@ async fn an_agents_publish_waits_on_its_page_and_a_persons_press_publishes_it_on
     let response = object(&again);
     assert_ne!(response["result"]["state"], "needs_person", "{response}");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
-    // A second press on the same page finds nothing to carry out.
+    // A second press on the same page finds nothing to carry out: the page
+    // is refused, or its listener has closed with nothing left waiting.
     let twice = http
         .post(format!("{link}/confirm"))
         .header("origin", origin)
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!("once={once}"))
         .send()
-        .await
-        .unwrap();
-    assert_ne!(twice.status().as_u16(), 200);
+        .await;
+    assert!(
+        twice
+            .as_ref()
+            .map_or(true, |answer| answer.status().as_u16() != 200),
+        "{twice:?}"
+    );
     assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
 
     let stop = output(machine.program(&["engine", "stop"])).await;

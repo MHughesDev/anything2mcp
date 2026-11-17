@@ -843,12 +843,25 @@ mod tests {
             let run = shortcut.on(&registry);
             // The shortcut's own argument, when its steps take one.
             let takes = shortcut.steps.iter().any(|step| step.argument.is_some());
-            let line = if takes {
+            let mut line = if takes {
                 words(&[shortcut.word, "example"])
             } else {
                 words(&[shortcut.word])
             };
-            let parsed = tree.parse(&line).unwrap();
+            // A shortcut of one action takes that action's flags, and a
+            // required one is given a value, as its refusal names it.
+            let mut parsed = tree.parse(&line);
+            while let Err(refused) = &parsed {
+                let flag = refused
+                    .message()
+                    .split_once("needs --")
+                    .map(|(_, rest)| rest.trim_end_matches('.').to_owned())
+                    .unwrap_or_else(|| panic!("{refused:?}"));
+                line.extend([format!("--{flag}"), "example".to_owned()]);
+                assert!(line.len() < 12, "{line:?}");
+                parsed = tree.parse(&line);
+            }
+            let parsed = parsed.unwrap();
             let Parsed::Invoke(_, steps, stop) = parsed else {
                 panic!("{parsed:?}");
             };

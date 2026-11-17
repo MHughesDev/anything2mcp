@@ -13,6 +13,7 @@
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -618,6 +619,20 @@ impl Lowering for HttpLowering {
             EffectClass::Write
         } else {
             EffectClass::Irreversible
+        }
+    }
+
+    /// A `submit` whose binding names no `read_back` has nothing to read
+    /// the record back through: the endpoint's own answer is the only
+    /// evidence there can be. Every other write keeps what the default
+    /// says; a write with a `read_back` always keeps it.
+    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if binding.verb.as_str() == "submit" && binding.field("read_back").is_none() {
+            WriteEvidence::Acknowledged
+        } else if lowered.prefer_response {
+            WriteEvidence::Response
+        } else {
+            WriteEvidence::ReadBack
         }
     }
 

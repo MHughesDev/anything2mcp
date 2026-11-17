@@ -20,9 +20,10 @@ use a2m_core::{
     Step, Value, Values,
 };
 use a2m_provider::{
-    BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture,
+    PrepareContext, Prepared, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::channel::{ChannelEntry, MessageSchema, Ownership, SECTION_FORMAT, Shape};
@@ -31,7 +32,8 @@ use crate::json::Json;
 use crate::lower::{ARG_BODY, ARG_CORRELATION, ARG_FROM, ARG_HEADER, ARG_KEY, StepDetail};
 use crate::names::{
     BROKER, CHANNEL, MESSAGE_SCHEMA, PACK, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE,
-    STEP_CHANNELS, STEP_DESCRIBE, STEP_LATEST, STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE,
+    STEP_CHANNELS, STEP_DESCRIBE, STEP_LATEST, STEP_POSITION, STEP_PUBLISH, STEP_SCAN,
+    STEP_SUBSCRIBE, STEP_TAKEN,
 };
 use crate::wire::{
     ChannelFacts, Credential, Link, Message, Outgoing, Protocol, Receipt, WireError, WireErrorKind,
@@ -63,6 +65,15 @@ type PoolKey = (String, String, Option<(String, u64)>);
 /// The name `message_meta`: where a result holds what the broker says
 /// about a message. No body may have a field of this name.
 const MESSAGE_META: &str = "message_meta";
+
+/// The name under which a `position` step records, before a publish, the
+/// place the log ends at. It is no output of any operation: the engine
+/// keeps what a step records beside the record's outputs.
+const SCAN_FROM: &str = "scan_from";
+
+/// The name under which a take's `await` step records the identifier of
+/// the message it gives out to be recorded.
+const MESSAGE_ID: &str = "message_id";
 
 /// Where the session's credentials are put while a connection opens.
 ///
@@ -163,6 +174,11 @@ struct Run {
     receipts: BTreeMap<String, Receipt>,
     /// Whether a step of the run failed. Its connection is then not kept.
     failed: bool,
+    /// The wire protocol the run speaks, as the surface names it.
+    protocol: &'static str,
+    /// How the step being carried out is done, for its trace record: set
+    /// up when the step starts, and handed over as its `acting` capture.
+    acting: Acting,
 }
 
 /// The driver.
@@ -238,7 +254,7 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
         ),
         WireErrorKind::Refused => (
             codes::BROKER_REFUSED,
-            format!("The broker refused the message: {}", said(redact, error)),
+            "The broker refused the message.".to_owned(),
             "Correct what the broker names, then send the message again.",
         ),
         WireErrorKind::TooLarge => (
@@ -269,13 +285,19 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
         WireErrorKind::Unexpected => (
             codes::UNEXPECTED_REPLY,
             format!(
-                "The broker answered in a way the driver has no rule for while it tried to {what}: {}.",
-                said(redact, error)
+                "The broker answered in a way the driver has no rule for while it tried to {what}."
             ),
             "Check that the surface's `protocol` is the one the broker speaks; then report this.",
         ),
     };
-    stopped(error.sent, code, message, next)
+    let failed = stopped(error.sent, code, message, next);
+    // What the broker said is its own, kept apart from the sentence.
+    match error.kind {
+        WireErrorKind::Refused | WireErrorKind::Unexpected => {
+            failed.with_said(said(redact, error))
+        }
+        _ => failed,
+    }
 }
 
 /// The failure of a publish or an acknowledgement. A write is refused only
@@ -304,20 +326,25 @@ fn doubtful(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailure {
     if refused {
         return wire_failure(redact, error, what);
     }
-    let message = if error.kind == WireErrorKind::Unexpected {
+    let unexpected = error.kind == WireErrorKind::Unexpected;
+    let message = if unexpected {
         format!(
-            "The request to {what} was sent and the broker answered in a way the driver has no rule for ({}), so nothing says whether it happened.",
-            said(redact, error)
+            "The request to {what} was sent and the broker answered in a way the driver has no rule for, so nothing says whether it happened."
         )
     } else {
         format!("The request to {what} was sent and the broker's confirmation did not arrive.")
     };
-    stopped(
+    let failed = stopped(
         Sent::Unknown,
         codes::NO_CONFIRMATION,
         message,
         "Reconcile the record before anything is sent again: the broker may have carried the request out.",
-    )
+    );
+    if unexpected {
+        failed.with_said(said(redact, error))
+    } else {
+        failed
+    }
 }
 
 fn text_arg<'a>(input: &'a StepInput<'_>, name: &str) -> Result<&'a str, StepFailure> {
@@ -407,6 +434,17 @@ impl Run {
             .ok_or_else(|| wrong_plan("a step names a channel its section does not hold"))
     }
 
+    /// A detail of how the step was done, which the trace's signature
+    /// covers: never a value.
+    fn mean(&mut self, name: &str, value: &str) {
+        self.acting.means.push(Detail::new(name, value));
+    }
+
+    /// A count the step measured, which the signature does not cover.
+    fn measure(&mut self, name: &str, count: usize) {
+        self.acting.measured.push(Detail::new(name, count.to_string()));
+    }
+
     /// Compares, once per run, the channel's declared shape and key with
     /// what the broker reports.
     async fn check_shape(
@@ -417,6 +455,7 @@ impl Run {
         deadline: Deadline,
     ) -> Result<(), StepFailure> {
         if self.checked.contains(name) {
+            self.mean("shape_check", "earlier");
             return Ok(());
         }
         let facts = self
@@ -424,6 +463,39 @@ impl Run {
             .describe(&entry.address, deadline)
             .await
             .map_err(|error| wire_failure(redact, &error, "describe the channel"))?;
+        self.compare_shape(name, entry, &facts)
+    }
+
+    /// What the broker reports about a channel, as a step that needs the
+    /// report itself reads it; compared with the file once per run.
+    async fn described(
+        &mut self,
+        redact: &dyn Redact,
+        name: &str,
+        entry: &ChannelEntry,
+        deadline: Deadline,
+    ) -> Result<ChannelFacts, StepFailure> {
+        let facts = self
+            .link()?
+            .describe(&entry.address, deadline)
+            .await
+            .map_err(|error| wire_failure(redact, &error, "describe the channel"))?;
+        if self.checked.contains(name) {
+            self.mean("shape_check", "earlier");
+        } else {
+            self.compare_shape(name, entry, &facts)?;
+        }
+        Ok(facts)
+    }
+
+    /// The comparison of the channel's declared shape and key with what the
+    /// broker reports.
+    fn compare_shape(
+        &mut self,
+        name: &str,
+        entry: &ChannelEntry,
+        facts: &ChannelFacts,
+    ) -> Result<(), StepFailure> {
         let changed = |what: &str| {
             stopped(
                 Sent::Answered,
@@ -458,6 +530,7 @@ impl Run {
             }
         }
         self.checked.insert(name.to_owned());
+        self.mean("shape_check", "made");
         Ok(())
     }
 
@@ -614,6 +687,7 @@ impl StreamDriver {
             .iter()
             .map(|message| run.record(&entry, message).map(Value::Record))
             .collect::<Result<Vec<Value>, StepFailure>>()?;
+        run.measure("messages", messages.len());
         let count = i64::try_from(messages.len()).unwrap_or(i64::MAX);
         Ok(self.done(
             Values::new()
@@ -685,6 +759,7 @@ impl StreamDriver {
         run: &mut Run,
         step: &Step,
         input: &StepInput<'_>,
+        recorded: &Values,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
         let (Some(stamp), Some(header)) = (input.stamp, &entry.token_header) else {
@@ -697,11 +772,36 @@ impl StreamDriver {
                 "Declare `idempotency.header` in the channel file, and give the operation the `stamped` identity.",
             ));
         };
+        // Where the log ended before the publish was sent, as a step of
+        // the record recorded it: the message, if it was stored, is there
+        // or after it. Checked before anything is sent.
+        let recorded_from = match recorded.get(SCAN_FROM) {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_int()
+                    .and_then(|position| u64::try_from(position).ok())
+                    .ok_or_else(|| {
+                        nothing_recorded(&format!(
+                            "the place a scan of the log `{name}` starts at is not a whole number"
+                        ))
+                    })?,
+            ),
+        };
         run.check_shape(&*self.redact, &name, &entry, input.deadline)
             .await?;
-        // Where this run's own publish was confirmed, read that one place.
-        let mut from = run.receipts.get(stamp).and_then(|receipt| receipt.position);
-        let known = from.is_some();
+        // Where this run's own publish was confirmed, read that one place;
+        // else from where the log ended before it; else from the start.
+        let confirmed = run.receipts.get(stamp).and_then(|receipt| receipt.position);
+        let (mut from, began) = match (confirmed, recorded_from) {
+            (Some(position), _) => (Some(position), "confirmed"),
+            (None, Some(position)) => (Some(position), "recorded"),
+            (None, None) => (None, "start"),
+        };
+        let known = confirmed.is_some();
+        run.mean("from", began);
+        let mut pages = 0_usize;
+        let mut looked = 0_usize;
         for _ in 0..SCAN_PAGES {
             let max = if known { 1 } else { entry.browse_count };
             let page = run
@@ -709,6 +809,11 @@ impl StreamDriver {
                 .browse(&entry.address, from, max, input.deadline)
                 .await
                 .map_err(|error| wire_failure(&*self.redact, &error, "scan the log"))?;
+            pages += 1;
+            looked += page.messages.len();
+            run.acting.measured.clear();
+            run.measure("pages", pages);
+            run.measure("messages", looked);
             if let Some(found) = page
                 .messages
                 .iter()
@@ -912,6 +1017,7 @@ impl StreamDriver {
                     .await;
             }
         }
+        run.measure("examined", usize::try_from(examined).unwrap_or(usize::MAX));
         let Some(message) = outcome? else {
             if detail.fail_on_nothing {
                 return Err(stopped(
@@ -961,7 +1067,7 @@ impl StreamDriver {
             // acknowledgement is sent only for a message given out this
             // way. One too large to be recorded is given back.
             let for_reconcile = Values::new()
-                .with("message_id", message.id.as_str())
+                .with(MESSAGE_ID, message.id.as_str())
                 .with("message", record.clone());
             let size = CanonicalJson::encode(&for_reconcile)
                 .map(|stored| stored.as_bytes().len())
@@ -1077,6 +1183,9 @@ impl StreamDriver {
             // The record's token, in the one header the channel declares.
             // No argument can name that header: the compiler refuses it.
             headers.insert(header.clone(), stamp.to_owned());
+            run.mean("token", "sent");
+        } else {
+            run.mean("token", "none");
         }
         let body = Json::Object(body);
         if let Some(schema_name) = &entry.schema {
@@ -1094,6 +1203,7 @@ impl StreamDriver {
             })?;
         }
         let size = body.to_line().len();
+        run.measure("bytes", size);
         if size > usize::try_from(entry.message_bytes).unwrap_or(usize::MAX) {
             return Err(stopped(
                 Sent::NotSent,
@@ -1128,6 +1238,147 @@ impl StreamDriver {
         Ok(self.done(values))
     }
 
+    /// Where a log ends now, read before a publish to it and given for
+    /// reconcile, so that a scan of a resumed run starts there. Takes
+    /// nothing.
+    async fn position(
+        &self,
+        run: &mut Run,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
+        let (name, entry) = run.declared(step)?;
+        if entry.shape != Shape::Log {
+            return Err(wrong_plan("a position read on a channel that is not a log"));
+        }
+        let facts = run
+            .described(&*self.redact, &name, &entry, input.deadline)
+            .await?;
+        let Some(end) = facts.end else {
+            return Err(stopped(
+                Sent::Answered,
+                codes::UNEXPECTED_REPLY,
+                format!("The broker did not say where the log `{name}` ends."),
+                "Check that the surface's `protocol` is the one the broker speaks; then report this.",
+            ));
+        };
+        Ok(StepOutcome::Done(Observed {
+            for_reconcile: Values::new().with(SCAN_FROM, position_value(Some(end))),
+            ..Observed::default()
+        }))
+    }
+
+    /// Whether the message a take recorded before it acknowledged is gone
+    /// from its queue, which settles a take whose acknowledgement's answer
+    /// was lost: gone, the acknowledgement landed and the record is found;
+    /// still held, nothing was taken and the record is absent. Only a queue
+    /// the runtime owns is looked at, so nobody else removes a message from
+    /// it. Takes nothing. "Gone" is said only of a queue the look covered.
+    async fn taken(
+        &self,
+        run: &mut Run,
+        step: &Step,
+        input: &StepInput<'_>,
+        recorded: &Values,
+    ) -> Result<StepOutcome, StepFailure> {
+        let (name, entry) = run.declared(step)?;
+        if entry.shape != Shape::Queue || entry.ownership != Ownership::RuntimeOwned {
+            return Err(not_owned(&name));
+        }
+        let Some(id) = recorded.get(MESSAGE_ID).and_then(Value::as_text) else {
+            return Err(nothing_recorded(&format!(
+                "the record holds no identifier of a message taken from the queue `{name}`"
+            )));
+        };
+        // Where the broker gives a message a position, as a stream does,
+        // the one place is looked at; else the whole queue.
+        let position = match recorded
+            .get("message")
+            .and_then(Value::as_record)
+            .and_then(|message| message.get(MESSAGE_META))
+            .and_then(Value::as_record)
+            .and_then(|meta| meta.get("position"))
+        {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_int()
+                    .and_then(|position| u64::try_from(position).ok())
+                    .ok_or_else(|| {
+                        nothing_recorded("the recorded message's position is not a whole number")
+                    })?,
+            ),
+        };
+        let facts = run
+            .described(&*self.redact, &name, &entry, input.deadline)
+            .await?;
+        let held = if let Some(at) = position {
+            run.mean("look", "by_position");
+            if facts.start.is_some_and(|start| at < start) {
+                false
+            } else if facts.end.is_none_or(|end| at >= end) {
+                return Err(stopped(
+                    Sent::Answered,
+                    codes::UNEXPECTED_REPLY,
+                    format!(
+                        "The queue `{name}` does not reach the position of the message the record took."
+                    ),
+                    "Look at the queue by hand before anything is sent again; then report this.",
+                ));
+            } else {
+                let page = run
+                    .link()?
+                    .browse(&entry.address, Some(at), 1, input.deadline)
+                    .await
+                    .map_err(|error| wire_failure(&*self.redact, &error, "look at the queue"))?;
+                run.measure("messages", page.messages.len());
+                page.messages.first().is_some_and(|message| message.id == id)
+            }
+        } else {
+            run.mean("look", "whole_queue");
+            let page = run
+                .link()?
+                .browse(&entry.address, None, entry.browse_count, input.deadline)
+                .await
+                .map_err(|error| wire_failure(&*self.redact, &error, "look at the queue"))?;
+            run.measure("messages", page.messages.len());
+            if page.messages.iter().any(|message| message.id == id) {
+                true
+            } else if page.more {
+                return Err(stopped(
+                    Sent::Answered,
+                    codes::SCAN_LIMIT,
+                    format!(
+                        "The queue `{name}` holds more than one look may read, so the driver cannot say whether the message the record took is gone."
+                    ),
+                    "Look at the queue by hand before anything is sent again, or raise `limits.browse_count`.",
+                ));
+            } else if u64::try_from(page.messages.len()).unwrap_or(u64::MAX) < facts.held {
+                // Nobody else takes from a queue the runtime owns: a look
+                // that shows fewer messages than the queue holds did not
+                // cover it, and "gone" is never said of what was not seen.
+                return Err(stopped(
+                    Sent::Answered,
+                    codes::UNEXPECTED_REPLY,
+                    format!(
+                        "A look at the queue `{name}` showed fewer messages than the broker says it holds, so the driver cannot say whether the message the record took is gone."
+                    ),
+                    "Look at the queue by hand before anything is sent again; then report this.",
+                ));
+            } else {
+                false
+            }
+        };
+        if held {
+            return Ok(StepOutcome::Absent(Observed::default()));
+        }
+        Ok(self.done(
+            Values::new()
+                .with("acknowledged", true)
+                .with(MESSAGE_ID, id),
+        ))
+    }
+
     /// What the broker lists, for a discovery.
     async fn channels(
         &self,
@@ -1157,6 +1408,7 @@ impl StreamDriver {
             .iter()
             .map(|facts| Value::Record(facts_values(facts)))
             .collect();
+        run.measure("channels", channels.len());
         Ok(self.done(Values::new().with("channels", channels)))
     }
 }
@@ -1171,6 +1423,18 @@ fn uncovered(name: &str) -> StepFailure {
             "A look at the log `{name}` did not say how far it reached, so the driver cannot say that the record's message is not there."
         ),
         "Look at the log by hand before anything is sent again; then report this.",
+    )
+}
+
+/// A step that needs what an earlier step of its record recorded, and was
+/// given nothing of the form it needs. Nothing is sent: a look that has
+/// nothing to look for cannot settle the record.
+fn nothing_recorded(what: &str) -> StepFailure {
+    stopped(
+        Sent::NotSent,
+        codes::NOTHING_RECORDED,
+        format!("The step cannot settle its record: {what}."),
+        "Settle the record by hand, with what the run's ledger holds for it.",
     )
 }
 
@@ -1336,6 +1600,8 @@ impl Driver for StreamDriver {
                 seen: BTreeSet::new(),
                 receipts: BTreeMap::new(),
                 failed: false,
+                protocol: protocol.name(),
+                acting: Acting::default(),
             }))
         })
     }
@@ -1347,8 +1613,15 @@ impl Driver for StreamDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
+            // What this record's earlier steps recorded, read before the
+            // driver's own state is borrowed.
+            let recorded = prepared.recorded().clone();
             let Some(run) = prepared.state::<Run>() else {
                 return Err(wrong_plan("the run was prepared by another driver"));
+            };
+            run.acting = Acting {
+                means: vec![Detail::new("protocol", run.protocol)],
+                measured: Vec::new(),
             };
             let detail: StepDetail = if step.payload == PackPayload::none() {
                 StepDetail::default()
@@ -1360,7 +1633,11 @@ impl Driver for StreamDriver {
             } else if step.kind == STEP_BROWSE {
                 self.browse(run, step, &detail, input).await
             } else if step.kind == STEP_SCAN {
-                self.scan(run, step, input).await
+                self.scan(run, step, input, &recorded).await
+            } else if step.kind == STEP_POSITION {
+                self.position(run, step, input).await
+            } else if step.kind == STEP_TAKEN {
+                self.taken(run, step, input, &recorded).await
             } else if step.kind == STEP_SUBSCRIBE {
                 self.subscribe(run, step, &detail, input).await
             } else if step.kind == STEP_AWAIT {
@@ -1387,7 +1664,18 @@ impl Driver for StreamDriver {
                     run.link = None;
                 }
             }
-            result
+            // How the step was done goes to its trace record.
+            let acting = Capture::acting(&std::mem::take(&mut run.acting));
+            result.map(|outcome| match outcome {
+                StepOutcome::Done(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Done(observed)
+                }
+                StepOutcome::Absent(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Absent(observed)
+                }
+            })
         })
     }
 

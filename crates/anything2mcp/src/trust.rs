@@ -121,7 +121,6 @@ fn read(path: &Path, allowed: &[(RootName, Roots)], index: usize) -> Result<Vec<
 /// before.
 pub(crate) fn install(settings: &Settings, project: Option<&Path>) -> Result<(), Failure> {
     let named = settings.list(TRUST_ROOTS);
-    eprintln!("DEBUG trust roots named: {named:?}");
     if named.is_empty() && INSTALLED.get().is_none() {
         return Ok(());
     }
@@ -149,11 +148,7 @@ pub(crate) fn install(settings: &Settings, project: Option<&Path>) -> Result<(),
         };
     }
     let pem: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
-    let made = tls::Trust::with_named_roots(&pem)?;
-    eprintln!("DEBUG made named {}", made.named_roots());
-    let r = tls::install(made);
-    eprintln!("DEBUG install {:?} now {:?}", r.as_ref().map_err(|f| f.message().to_owned()), tls::installed().map(|t| t.named_roots()).ok());
-    r?;
+    tls::install(tls::Trust::with_named_roots(&pem)?)?;
     let _ = INSTALLED.set(digest);
     Ok(())
 }

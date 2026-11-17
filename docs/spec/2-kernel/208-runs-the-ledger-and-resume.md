@@ -47,7 +47,7 @@ The store also holds published versions and their plans, findings, and the audit
 | `needs_input` | A declared decision point is waiting for a person | Input or cancel |
 | `needs_login` | The session expired and could not renew itself | Sign-in |
 | `stopped` | Halted with a failure class; can be resumed | Resume or cancel |
-| `completed` | Every record verified or unchanged | Final |
+| `completed` | Every record verified, unchanged, or acknowledged | Final |
 | `failed` | Halted and cannot be resumed | Final |
 | `cancelled` | Stopped at a person's or caller's request | Final |
 
@@ -78,7 +78,7 @@ These are written as tests, and a change that breaks one cannot merge. Each is e
 2. **Proof before verified.** A record reaches `verified` only with a value read from the system that equals the intended value after normalization, and a link to that evidence.
 3. **Approval bound to the diff.** A write run first enters `running` only with an approval whose diff hash (defined in [steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md#diffs)) equals the run's, that is unexpired and unused, for the run's tool version, and backed by a presence check where the channel needs one, or with a policy decision that allowed this run to write without a person, recorded in the same transaction. Marking the approval used and changing the run's state happen in one transaction. Only the policy engine can write approvals and decisions ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)). A resumed run is the same run: it continues under the approval it has already used and writes only what that diff holds, with rule 5 and the freshness check guarding each record.
 4. **One writer per run.** Only the holder of the run's current lease number may change its records. Anything carrying an older number is refused.
-5. **Reconcile after any doubt.** After a lease is lost or an engine stops, no record of that run is written until it has been read back. The ledger refuses to store a new intent while any record of the run is in `intent` or `acted` under an older lease number, so there is no flag to forget to set.
+5. **Reconcile after any doubt.** After a lease is lost or an engine stops, no record of that run is written until it has been read back. The ledger refuses to store a new intent while any record of the run is in `intent` or `acted` under an older lease number, so there is no flag to forget to set. A record that ended `acted` on the system's acknowledgement is settled, not in doubt.
 6. **One run per identical call.** At most one unfinished run exists for the same caller, tool version, and input hash. A second identical call returns the first run. For a file input the hash covers the file's content, not its path.
 7. **One lock per record.** At most one run holds the lock for a record key in a target and environment.
 8. **Final means final.** A run in a final state never changes again.
@@ -149,7 +149,7 @@ How the record is read depends on how it is found again:
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
 | `none` | Cannot be read. The run is never resumed by itself and stops for a person |
 
-Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged` are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
+Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged`, and records that ended `acted` on an acknowledgement, are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
 
 **Records with no way to be found again cannot be read back,** so they cannot be reconciled. An operation that creates them is classed `irreversible`, is approved per run, and is never resumed automatically. A pipeline that creates such records avoids this by storing its own key in the system, such as a source id in a reference field; [section 209](209-record-identity-and-dependent-records.md) gives the ways.
 
@@ -161,7 +161,7 @@ Only after every doubtful record is settled does any write run. Records in `plan
 | `response` | The save's own answer, where it carries every intended field; otherwise the read-back | `verified` |
 | `acknowledged` | Nothing is read and nothing compared: the committing step's own answer is the only evidence there can be. Only for an operation declared `irreversible`, such as a queue take, a publish with no key, or a call to an irreversible tool | `acted`, never `verified`; the result and the diff say "accepted by the system, not read back" |
 
-A lost answer to an `acknowledged` save leaves the record in doubt; where the binding has no lookup, the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded before the save.
+The ledger ends a record on an acknowledgement only when the run's own stored diff says its write is `acknowledged`, never on the caller's word, and only for a cleared irreversible run; it keeps the answer as evidence, releases the lock, and the record is settled, not in doubt ([decision 0172](../../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)). A lost answer to an `acknowledged` save leaves the record in doubt; where the binding has no lookup, the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded before the save.
 
 **Who resumes.** A run stopped by the engine's own death is resumed by its caller with `run.resume`, never by the engine alone at its next start. A job whose lease ended without a result is treated as `possible_commit` and reconciled before anyone else gets it ([section 223](223-the-runner-protocol.md)).
 
@@ -197,7 +197,7 @@ A read has a run row and events but no record rows. Reads are recorded for audit
 Record locks belong to the ledger, because storing an intent must check the lock in the same transaction. The scheduler only queues the wait ([section 211](211-concurrency.md)).
 
 - A lock names a workspace, target, environment, and record key, and its holder's run and lease number.
-- It is taken just before the intent and released by the ledger when the record is verified or unchanged, so a long pipeline holds one lock at a time, not all of them.
+- It is taken just before the intent and released by the ledger when the record is verified, unchanged, or acknowledged, so a long pipeline holds one lock at a time, not all of them.
 - A second run that needs a locked record waits in the queue up to a limit, then returns `busy`, `record_locked` with a retry time.
 - A lock is `held` or `quarantined`. When a lease is lost, or a run stops with a record in doubt, the locks for those records are quarantined, not released. They pass to reconcile, so no other run can write those records before they have been read back.
 
@@ -209,7 +209,7 @@ Record locks belong to the ledger, because storing an intent must check the lock
 - Each blob has a retention class: short for traces and screenshots, longer for diffs and before-and-after values, longest for the audit log.
 - A retention job deletes whole runs and their unreferenced blobs once they are past their class. Legal hold on a run suspends it.
 - Values classified as sensitive are stored only as hashes unless policy allows the values themselves, which limits undo for those fields.
-- Event payloads, audit entries, and failure messages pass the redactor before they are written.
+- Event payloads, audit entries, and failure messages pass the redactor before they are written. A stored failure keeps what the system said apart from its message, and hands it back apart.
 
 What a trace and its evidence contain is [section 217](217-traces-evidence-and-repair.md).
 

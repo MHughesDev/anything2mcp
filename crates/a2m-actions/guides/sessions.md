@@ -46,7 +46,7 @@ auth:
     attempt_limit: 1
 ```
 
-`auth.detect` works out how a target signs in and recommends a mode and a provider, with its evidence. A person confirms it.
+`auth.detect` says how each surface signs in, as claims for a person to confirm: whether the surface's kind keeps a session, which mode and provider `auth.yaml` declares for it, and whether its probe was answered or met a sign-in it needs. It recommends no mode or provider the files do not declare; those are named as unknown. A person confirms it by signing in.
 
 ## Rules
 

@@ -342,13 +342,7 @@ impl Discoverer for CatalogDiscoverer {
                 payload: PackPayload::none(),
             };
             let args = Values::new();
-            let input = StepInput {
-                args: &args,
-                record: None,
-                key: None,
-                stamp: None,
-                deadline: scope.deadline,
-            };
+            let input = StepInput::new(&args, scope.deadline);
             let observed = match port.act(&step, &input).await {
                 Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => observed,
                 Err(failed) => return Err(failed.failure),

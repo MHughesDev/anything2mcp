@@ -73,3 +73,92 @@ async fn a_discovery_runs_in_the_sandbox_stores_its_findings_and_writes_nothing(
     assert_eq!(missing.error.unwrap().code, "not_found");
     world.kernel.close(a2m_actions::CloseReason::Asked).await;
 }
+
+/// The identify stage, the sign-in as claims, and a scout of a published
+/// target with no project folder: every stage that touches the system runs
+/// in the sandbox, the stages that draft say why they did not, and two
+/// scouts of the same system in the same state give one report, by hash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_identifies_reports_the_same_twice_and_writes_nothing() {
+    let world = World::ready().await;
+    let before = world.app.writes().await.unwrap().len();
+
+    // Identify: what the registry says of each surface, and what its
+    // discovery met. A surface with no discoverer is said to have none.
+    let probed = world.ok("target.probe", json!({"target": "example"})).await;
+    assert_eq!(probed["complete"], true, "{probed}");
+    let surfaces = probed["surfaces"].as_array().unwrap();
+    assert!(!surfaces.is_empty(), "{probed}");
+    let identified = surfaces
+        .iter()
+        .find(|surface| surface["state"] == "identified")
+        .expect("one surface answers");
+    assert_eq!(identified["provider"], "example_json", "{probed}");
+    assert_eq!(identified["discoverers"][0]["discoverer"], "look");
+    assert_eq!(
+        identified["findings_by_kind"]["call"]["discovered"], 1,
+        "{probed}"
+    );
+    assert_eq!(identified["ended"][0]["findings"], 1, "{probed}");
+    for surface in surfaces {
+        let state = surface["state"].as_str().unwrap();
+        assert!(
+            ["identified", "needs_login", "refused", "failed"].contains(&state),
+            "{probed}"
+        );
+        assert!(
+            surface.get("run_id").is_none(),
+            "run identifiers are kept apart"
+        );
+    }
+
+    // The sign-in, as claims for a person: nothing is recommended that
+    // the target's files do not declare, and no credential is shown.
+    let auth = world.ok("auth.detect", json!({"target": "example"})).await;
+    for surface in auth["surfaces"].as_array().unwrap() {
+        assert_eq!(surface["level"], "unknown", "{auth}");
+        assert!(surface["identity_mode"].is_null(), "{auth}");
+        assert!(
+            ["answered", "needs_sign_in", "refused", "failed"]
+                .contains(&surface["observed"].as_str().unwrap()),
+            "{auth}"
+        );
+    }
+
+    // The scout: no project holds the target, so nothing is drafted, and
+    // the report says so.
+    let first = world.ok("scout.run", json!({"target": "example"})).await;
+    let hash = first["report_hash"].as_str().unwrap().to_owned();
+    assert!(
+        !first["content"]["found"].as_array().unwrap().is_empty(),
+        "{first}"
+    );
+    let found = &first["content"]["found"][0];
+    assert_eq!(found["kind"], "call");
+    assert_eq!(found["level"], "discovered");
+    // What the system said is kept apart and marked.
+    assert!(found["found"]["untrusted"].is_string(), "{found}");
+    assert_eq!(first["content"]["drafted"]["state"], "not_looked_at");
+    let skipped = first["content"]["not_looked_at"].to_string();
+    assert!(skipped.contains("stage `draft`"), "{skipped}");
+    assert!(
+        first["text"]
+            .as_str()
+            .unwrap()
+            .contains("Scout of `example`")
+    );
+    assert!(!first["text"].as_str().unwrap().contains("/api/orders"));
+
+    // The report is read later, and a second scout gives the same one.
+    let read = world.ok("scout.report", json!({"target": "example"})).await;
+    assert_eq!(read["report_hash"], hash.as_str());
+    let second = world.ok("scout.run", json!({"target": "example"})).await;
+    assert_ne!(second["scout_id"], first["scout_id"]);
+    assert_eq!(second["report_hash"], hash.as_str(), "{first}\n{second}");
+
+    // Nothing was written to the system by any of it.
+    assert_eq!(world.app.writes().await.unwrap().len(), before);
+    assert_eq!(world.app.write_count("A-100", "L-900").await.unwrap(), 0);
+
+    world.kernel.close(a2m_actions::CloseReason::Asked).await;
+}
