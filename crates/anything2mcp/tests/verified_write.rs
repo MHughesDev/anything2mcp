@@ -239,18 +239,18 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
     program.kill().unwrap();
     program.wait().unwrap();
 
-    // The machine is started again ten minutes later. The lease of the
-    // dead process has ended, the engine's tending declares it lost, and
-    // the run says a write may have gone through.
+    // The machine is started again twenty minutes later. The lease of the
+    // dead process, which in one process is at least ten minutes long, has
+    // ended; the engine's tending declares it lost, and the run says a
+    // write may have gone through.
     let later = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
-        SystemClock::new().now().as_unix_millis() + 600_000,
+        SystemClock::new().now().as_unix_millis() + 1_200_000,
     )));
     let world = machine
         .open_at(Some(Arc::clone(&later) as Arc<dyn Clock>))
         .await;
     world.engine.kernel().tend().await;
     let left = world.agent(&["run", "get", &run]).await;
-    eprintln!("DEBUG trace {}", world.agent(&["trace", "show", &run]).await.json);
     assert_eq!(left.result()["status"], "stopped", "{:?}", left.finished);
     assert_eq!(left.error()["class"], "possible_commit");
     assert_eq!(left.error()["code"], "runner_lost");
@@ -286,4 +286,130 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
     for text in [&output.stdout, &output.stderr] {
         assert!(!String::from_utf8_lossy(text).contains(common::PASSPHRASE));
     }
+}
+
+/// How long a test waits for a child process to do what it should do at
+/// once. Only a failure waits this long.
+const PATIENCE: Duration = Duration::from_secs(180);
+
+/// Waits for a child to end, within a bound, and gives what it printed. A
+/// child that does not end is killed and the test fails by name.
+async fn ended_within(mut child: std::process::Child) -> std::process::Output {
+    tokio::task::spawn_blocking(move || {
+        let give_up = std::time::Instant::now() + PATIENCE;
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                return child.wait_with_output().unwrap();
+            }
+            if std::time::Instant::now() >= give_up {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("the process did not end");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })
+    .await
+    .unwrap()
+}
+
+/// The real program's `serve`, once it says it is ready.
+fn serving(machine: &Machine) -> std::process::Child {
+    use std::io::BufRead;
+    let mut child = machine.program(&["serve"]).spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (said, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if line == anything2mcp::cli::READY_LINE {
+                let _ = said.send(());
+            }
+        }
+    });
+    if heard.recv_timeout(PATIENCE).is_err() {
+        let _ = child.kill();
+        panic!("`serve` did not become ready");
+    }
+    child
+}
+
+/// A machine whose store on disk holds an approved write, through a relay
+/// that can hold back the answer to it.
+async fn approved_on_disk(app: &TestApp) -> (Proxy, Machine, String) {
+    let proxy = Proxy::start(&app.url("")).await;
+    let machine = Machine::new("orders", &[(PLACEHOLDER, proxy.url())]).with_passphrase();
+    let world = published(app, &machine).await;
+    let run = approved_write(&world).await;
+    world.close().await;
+    (proxy, machine, run)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answer_lost_through_the_served_engine_is_a_write_in_doubt_and_never_safe_to_retry() {
+    let app = TestApp::start().await.unwrap();
+    let (proxy, machine, run) = approved_on_disk(&app).await;
+    let mut engine = serving(&machine);
+
+    // A command resumes the write through the engine. The system stores
+    // it, its answer is held back, and the engine's process dies while the
+    // command waits for its answer.
+    proxy.hold_next_write();
+    let mut resume = machine.program(&["run", "resume", &run]);
+    resume.env_remove(anything2mcp::PASSPHRASE_VARIABLE);
+    let resume = resume.spawn().unwrap();
+    proxy.stored().await;
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    engine.kill().unwrap();
+    engine.wait().unwrap();
+
+    // The command does not say that running it again is safe: the write
+    // may have been made, and it was.
+    let output = ended_within(resume).await;
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let error = &printed(&output)["error"];
+    assert_eq!(error["class"], "possible_commit", "{error}");
+    assert_eq!(error["code"], "answer_lost", "{error}");
+    assert_eq!(error["retry_safe"], false, "{error}");
+    assert!(
+        error["fix"].as_str().unwrap().contains("run list"),
+        "{error}"
+    );
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_command_that_runs_the_engine_itself_holds_its_lock_and_no_second_engine_opens_the_store()
+{
+    let app = TestApp::start().await.unwrap();
+    let (proxy, machine, run) = approved_on_disk(&app).await;
+
+    // With no engine running, a command runs the engine inside itself. Its
+    // write is stored and its answer held back, so it stays, holding the
+    // store.
+    proxy.hold_next_write();
+    let mut first = machine.program(&["run", "resume", &run]).spawn().unwrap();
+    proxy.stored().await;
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // A second command that would run the engine itself waits for the
+    // engine lock, and when it stays held is refused by name.
+    let second = ended_within(machine.program(&["run", "get", &run]).spawn().unwrap()).await;
+    assert_eq!(second.status.code(), Some(4), "{second:?}");
+    assert_eq!(printed(&second)["error"]["code"], "engine_unreachable");
+
+    // `serve` is refused while the command holds the store.
+    let served = ended_within(machine.program(&["serve"]).spawn().unwrap()).await;
+    assert_eq!(served.status.code(), Some(1), "{served:?}");
+    assert_eq!(printed(&served)["error"]["code"], "engine_running");
+
+    // A third command waits; once the first has gone, it runs the engine
+    // itself and reads the run.
+    let third = machine.program(&["run", "get", &run]).spawn().unwrap();
+    first.kill().unwrap();
+    first.wait().unwrap();
+    let third = ended_within(third).await;
+    assert_eq!(third.status.code(), Some(0), "{third:?}");
+    assert_eq!(printed(&third)["result"]["run_id"], run.as_str());
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
 }

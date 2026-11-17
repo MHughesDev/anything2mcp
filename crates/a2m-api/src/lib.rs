@@ -31,7 +31,7 @@ mod status;
 /// type every door reads: whoever mounts the router puts one on a request
 /// as an extension, beside the caller.
 pub use a2m_actions::ProjectFolder;
-pub use events::{KEEP_ALIVE, RUN_EVENTS_PATH};
+pub use events::{KEEP_ALIVE, READER_PATIENCE, RUN_EVENTS_PATH};
 pub use openapi::{OPENAPI_PATH, OPENAPI_VERSION, openapi, operation_id};
 pub use router::{
     ApiSettings, DRAIN_FACTOR, DRAIN_TIME, IDEMPOTENCY_KEY_LONGEST, ServedRoute, router,

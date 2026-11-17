@@ -21,6 +21,9 @@ const REST_PREFIX = "/api/v1";
 // The longest answer read, in bytes.
 const ANSWER_LIMIT = 16 * 1024 * 1024;
 const EXIT_CLASSES = ["succeeded", "failed", "malformed", "person_needed"];
+// The form of an action's name, `noun.verb`. Nothing else goes into a
+// request's path: no input may change where a request goes.
+const ACTION_NAME = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 
 function version() {
   try {
@@ -90,12 +93,22 @@ class Client extends Actions {
     socket.on("error", () => {});
   }
 
-  _exchange(method, requestPath, headers, payload) {
+  // One request and its answer. `lostAnswer` makes the error for an answer
+  // lost once the request may have been written: for an action, that is a
+  // call in doubt; for the hello, nothing was asked that could write.
+  _exchange(method, requestPath, headers, payload, lostAnswer = channel.answerLost) {
     return new Promise((resolve, reject) => {
       if (this._closed) {
+        // Nothing is written on a connection that has closed.
         reject(channel.lost());
         return;
       }
+      let settled = false;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
       const request = http.request(
         { method, path: requestPath, headers, agent: this._agent, host: "localhost" },
         (answer) => {
@@ -104,7 +117,7 @@ class Client extends Actions {
           answer.on("data", (chunk) => {
             size += chunk.length;
             if (size > ANSWER_LIMIT) {
-              reject(channel.lost("The engine's answer was too long."));
+              fail(lostAnswer("The engine's answer was too long."));
               this._socket.destroy();
               return;
             }
@@ -118,31 +131,42 @@ class Client extends Actions {
               body = null;
             }
             if (body === null || typeof body !== "object" || Array.isArray(body)) {
-              reject(channel.lost("The engine's answer could not be read."));
+              fail(lostAnswer("The engine's answer could not be read."));
               return;
             }
+            if (settled) return;
+            settled = true;
             resolve({ status: answer.statusCode, body, exit: answer.headers["a2m-exit-class"] });
           });
-          answer.on("error", () => reject(channel.lost()));
+          answer.on("error", () => fail(lostAnswer("The engine's answer broke off.")));
         },
       );
       if (this._timeout) {
+        // The engine may still be carrying the call out when the caller
+        // stops waiting for it.
         request.setTimeout(this._timeout, () => {
+          fail(lostAnswer(`The engine did not answer within ${this._timeout} ms, and the client stopped waiting.`));
           request.destroy();
           this._socket.destroy();
         });
       }
-      request.on("error", () => reject(channel.lost()));
+      request.on("error", () => fail(lostAnswer()));
       request.end(payload);
     });
   }
 
   async _hello() {
-    const { status, body } = await this._exchange("GET", "/local/hello", {
-      "a2m-client-version": version(),
-      "a2m-local-api": String(LOCAL_API),
-      "a2m-client-label": this._label,
-    });
+    const { status, body } = await this._exchange(
+      "GET",
+      "/local/hello",
+      {
+        "a2m-client-version": version(),
+        "a2m-local-api": String(LOCAL_API),
+        "a2m-client-label": this._label,
+      },
+      undefined,
+      (why) => channel.lost(why),
+    );
     if (status !== 200) {
       const error = body.error || {};
       throw new ChannelError(
@@ -157,8 +181,16 @@ class Client extends Actions {
   // Sends one action, such as "engine.status" or "tool.call", with its
   // input, and resolves to the engine's response, success or not. It
   // rejects with a ChannelError only when the engine was not reached or its
-  // answer could not be read.
+  // answer could not be read. Once the request may have reached the engine,
+  // a lost answer is `answer_lost` with `retrySafe` false: the call may have
+  // started a run that writes. `options.idempotencyKey` is sent as the
+  // Idempotency-Key header; the engine does not yet tie a second call with
+  // the same key to the first one's run, so it does not make a repeated
+  // call safe.
   async call(action, input = {}, options = {}) {
+    if (typeof action !== "string" || !ACTION_NAME.test(action)) {
+      throw new TypeError("An action's name is `noun.verb`, in lowercase letters, digits, and underscores.");
+    }
     const headers = { "content-type": "application/json" };
     if (this._project !== null) headers["a2m-project"] = encodePath(this._project);
     if (options.idempotencyKey !== undefined) headers["idempotency-key"] = options.idempotencyKey;

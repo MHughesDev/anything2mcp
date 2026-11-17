@@ -32,6 +32,9 @@ class ShortNameTests(unittest.TestCase):
         # A missing program is a named stop with the same code as the Unix script.
         self.assertIn("exit /b 4", text)
         self.assertIn("if not exist \"%~dp0anything2mcp.exe\"", text)
+        # The folder holds this file before its program is run: never a
+        # program in the working folder, which cmd can name as `%~dp0`.
+        self.assertLess(text.index('if not exist "%~dp0a2m.cmd"'), text.index('"%~dp0anything2mcp.exe" %*'))
         self.assertNotIn("%1", text)
 
     def test_the_unix_script_is_still_there_and_the_two_say_the_same_stop(self) -> None:

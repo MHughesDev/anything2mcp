@@ -169,7 +169,8 @@ async fn serve(
         )),
     );
     options.clock = clock;
-    options.project = project_of(globals, host);
+    options.project =
+        project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
     let local = LocalEngine::start(options, system_prompt())
         .await
@@ -275,7 +276,9 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
     // `--project`, named to the engine on every request, as a command names
     // it. The engine checks the folder before any action uses it; nothing
     // an MCP message says can name one.
-    let project = project_of(globals, host).and_then(|folder| {
+    let project = project_of(globals, host)
+        .map_err(|failure| (failure, ExitClass::Malformed))?
+        .and_then(|folder| {
         let named = wire::encode_path(&folder)
             .and_then(|text| axum::http::HeaderValue::from_str(&text).ok());
         if named.is_none() {

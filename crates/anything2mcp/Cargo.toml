@@ -50,6 +50,9 @@ tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
 [dev-dependencies]
 # The person of a test opens the approval page over loopback.
 reqwest.workspace = true
+# And presses it in a real browser: the browser engine of the web pack, with
+# the test equipment that names the test environment's browser.
+a2m-pack-web-browser = { path = "../a2m-pack-web-browser", features = ["test-support"] }
 example-app = { path = "../../targets/example-app" }
 example-broker = { path = "../../targets/example-broker" }
 example-cli = { path = "../../targets/example-cli" }

@@ -471,6 +471,99 @@ async fn a_prompt_nobody_answers_ends_with_the_window_as_a_decline() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A prompt that does not keep its deadline: it answers that the person
+/// passed, a second after the window closed.
+struct Late;
+
+impl crate::PresencePrompt for Late {
+    fn available(&self) -> a2m_actions::BoxFuture<'_, Availability> {
+        Box::pin(async { Availability::ready(PromptName::Polkit, "A late prompt of a test.") })
+    }
+
+    fn ask(
+        &self,
+        _text: crate::PromptText,
+        deadline: tokio::time::Instant,
+    ) -> a2m_actions::BoxFuture<'_, PromptAnswer> {
+        Box::pin(async move {
+            tokio::time::sleep_until(deadline + Duration::from_secs(1)).await;
+            PASSED
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompt_that_answers_after_the_window_records_nothing() {
+    let world = World::ready(Arc::new(Late) as _, Duration::from_secs(3)).await;
+    let http = http();
+    let rested = rest(&world).await;
+    let (_, once) = open(&http, &rested.link).await;
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::FORBIDDEN, "{said}");
+    assert!(said.contains("its time ended"), "{said}");
+    within("the page's end", world.surface.settled()).await;
+    assert_ne!(status(&world, &rested.run).await, "needs_approval");
+    assert_ne!(status(&world, &rested.run).await, "completed");
+    assert_eq!(written(&world).await, 0);
+
+    // A protected setting's prompt that answers late proves nobody either.
+    let person = world.caller.principal.principal().id;
+    let late = world
+        .surface
+        .confirm_presence(PresenceAsk {
+            principal: person,
+            action: "config.set".parse().unwrap(),
+            effect: EffectClass::Write,
+            summary: "Loosen a protected setting.".to_owned(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(*late.code(), codes::PRESENCE_FAILED);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_prompt_but_a_pages_is_raised_while_a_page_waits_for_its_person() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let rested = rest(&world).await;
+
+    // The page keeps its origin on a press and gives it to no other, and
+    // says which prompt is its own.
+    let page = http.get(&rested.link).send().await.unwrap();
+    assert_eq!(page.headers()["referrer-policy"], "same-origin");
+    let (text, once) = open(&http, &rested.link).await;
+    assert!(
+        text.contains("A prompt that comes up before you press"),
+        "{text}"
+    );
+
+    // While the person reads the page, a protected setting asks for the
+    // presence prompt: none is raised, so no dialog comes up that the
+    // person could take for the page's.
+    let person = world.caller.principal.principal().id;
+    let busy = world
+        .surface
+        .confirm_presence(PresenceAsk {
+            principal: person,
+            action: "config.set".parse().unwrap(),
+            effect: EffectClass::Write,
+            summary: "Loosen a protected setting.".to_owned(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(busy.class(), FailureClass::Busy);
+    assert_eq!(*busy.code(), codes::PROMPT_BUSY);
+    assert_eq!(prompt.asked(), 0);
+
+    // The press raises the page's prompt.
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::OK, "{said}");
+    assert_eq!(prompt.asked(), 1);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 fn rest_like(rested: &Rested) -> Rested {
     Rested {
         run: rested.run.clone(),
@@ -550,21 +643,7 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
     assert!(said.contains(&none.message), "{said}");
     assert_eq!(status(&world, &rested.run).await, "needs_approval");
 
-    // A protected setting cannot be loosened here: no proof is given.
     let person = world.caller.principal.principal().id;
-    let refused = world
-        .surface
-        .confirm_presence(PresenceAsk {
-            principal: person,
-            action: "config.set".parse().unwrap(),
-            effect: EffectClass::Write,
-            summary: "Loosen a protected setting.".to_owned(),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(refused.class(), FailureClass::Policy);
-    assert_eq!(*refused.code(), codes::PRESENCE_FAILED);
-
     // What is not built says so: no page for a sign-in, and no way to the
     // session's person.
     let sign_in = world
@@ -610,6 +689,20 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
     assert!(result["link"].is_null(), "{result}");
     assert!(result["person"].as_str().unwrap().contains("declined"));
     assert_eq!(written(&world).await, 0);
+
+    // A protected setting cannot be loosened here: no proof is given.
+    let refused = world
+        .surface
+        .confirm_presence(PresenceAsk {
+            principal: person,
+            action: "config.set".parse().unwrap(),
+            effect: EffectClass::Write,
+            summary: "Loosen a protected setting.".to_owned(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Policy);
+    assert_eq!(*refused.code(), codes::PRESENCE_FAILED);
     world.kernel.close(CloseReason::Asked).await;
 }
 

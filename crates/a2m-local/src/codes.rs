@@ -12,8 +12,14 @@ pub const ENGINE_UNREACHABLE: FailureCode = FailureCode::fixed("engine_unreachab
 /// The channel, a lock file, or the loopback listener cannot be opened on
 /// this machine. Class `busy`.
 pub const CHANNEL_UNAVAILABLE: FailureCode = FailureCode::fixed("channel_unavailable");
-/// The engine went away during a request. Class `transient`.
+/// The connection to the engine ended before a request was sent, so the
+/// engine never had it. Class `transient`.
 pub const CONNECTION_LOST: FailureCode = FailureCode::fixed("connection_lost");
+/// The engine may have had a request, and its answer was lost: what the
+/// request asked may have been done, a write among it. Class
+/// `possible_commit`. The same code, class, and meaning as the stdio
+/// proxy's.
+pub const ANSWER_LOST: FailureCode = FailureCode::fixed("answer_lost");
 /// A connection from another user, or an engine owned by another user.
 /// Class `policy`.
 pub const PEER_NOT_ALLOWED: FailureCode = FailureCode::fixed("peer_not_allowed");
@@ -56,12 +62,26 @@ pub(crate) fn input(
     Failure::new(FailureClass::Input, code, message, next)
 }
 
+/// The connection ended before the request was sent: nothing reached the
+/// engine, so the request may be made again.
 pub(crate) fn lost() -> Failure {
     Failure::new(
         FailureClass::Transient,
         CONNECTION_LOST,
-        "The engine went away during the request.",
-        "Run the command again; the engine is started again when it is needed.",
+        "The connection to the engine ended before the request was sent, so the engine did not have it.",
+        "Run the command again once an engine answers (`anything2mcp serve` starts one).",
+    )
+}
+
+/// The request was handed to the engine, and no whole answer came back.
+/// The channel cannot know what the request was, so it never says that
+/// sending it again is safe: a write sent twice may be written twice.
+pub(crate) fn answer_lost() -> Failure {
+    Failure::new(
+        FailureClass::PossibleCommit,
+        ANSWER_LOST,
+        "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run.",
+        "Do not send it again before you know what became of it: a second request may start a second run and write twice. Find it first in your recent runs (`anything2mcp run list`).",
     )
 }
 

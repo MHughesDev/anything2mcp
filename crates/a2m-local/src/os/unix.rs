@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::net::{UnixListener, UnixStream};
 
-use super::{ConnectError, PeerId, Place};
+use super::{ConnectError, Kept, PeerId, Place};
 
 /// The engine's end of one connection.
 pub(crate) type ServerStream = UnixStream;
@@ -152,4 +152,29 @@ pub(crate) async fn connect(place: &Place, expected: &str) -> Result<ClientStrea
         }
         Err(error) => Err(ConnectError::Io(error)),
     }
+}
+
+/// Who may change a file or a folder: only this user or the administrator,
+/// or others too. A link is judged with what it leads to, and its own owner
+/// must be one of the two as well. A group may change it only when the
+/// group is this user's own primary group.
+pub(crate) fn kept(path: &Path) -> io::Result<Kept> {
+    let me = rustix::process::getuid().as_raw();
+    let mine = rustix::process::getgid().as_raw();
+    let link = fs::symlink_metadata(path)?;
+    let found = fs::metadata(path)?;
+    if [&link, &found]
+        .iter()
+        .any(|meta| meta.uid() != me && meta.uid() != 0)
+    {
+        return Ok(Kept::Open("it belongs to another account"));
+    }
+    let mode = found.mode();
+    if mode & 0o002 != 0 {
+        return Ok(Kept::Open("every account may change it"));
+    }
+    if mode & 0o020 != 0 && found.gid() != mine {
+        return Ok(Kept::Open("a group of other accounts may change it"));
+    }
+    Ok(Kept::Private)
 }

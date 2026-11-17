@@ -19,7 +19,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use a2m_actions::{Caller, EVENTS_PAGE, ExitClass, Kernel, Response, RunEventView, RunEvents};
-use a2m_core::{Failure, FailureClass, RunId, RunState};
+use a2m_core::{Failure, FailureClass, RunId};
 use axum::body::{Body, Bytes};
 use axum::extract::{FromRequestParts, RawPathParams};
 use axum::http::{HeaderValue, StatusCode, header, request::Parts};
@@ -38,6 +38,12 @@ const LAST_EVENT_ID: &str = "last-event-id";
 /// How long a stream stays silent before a comment line is sent, so that
 /// whatever carries the connection does not take it for dead.
 pub const KEEP_ALIVE: Duration = Duration::from_secs(15);
+
+/// How long a line of a stream waits for its reader to take it. A reader
+/// that keeps the connection open and reads nothing for this long is
+/// treated as gone, and the stream ends. Following only reads, so ending
+/// it leaves nothing half done.
+pub const READER_PATIENCE: Duration = Duration::from_secs(60);
 
 /// What a request for a run's events asks for.
 struct Asked {
@@ -223,27 +229,33 @@ pub(crate) async fn serve(
     answer
 }
 
-/// How long the first look lasts for a run whose state rests while its job
-/// is still in a runner's hands, and the longest such a look grows to. The
-/// record that the job has ended appends no event, so the kernel's wait
-/// for the next event does not end on it; the run is looked at again
-/// after this long, twice as long each time.
-const SETTLE_FIRST: Duration = Duration::from_millis(20);
-const SETTLE_LONGEST: Duration = Duration::from_secs(2);
+/// Sends one line of a stream. `false` when the reader has gone, or has
+/// taken nothing for [`READER_PATIENCE`].
+async fn send(lines: &mpsc::Sender<Bytes>, line: impl Into<Bytes>) -> bool {
+    matches!(
+        tokio::time::timeout(READER_PATIENCE, lines.send(line.into())).await,
+        Ok(Ok(()))
+    )
+}
 
 /// Sends the run's events as they come, each with its sequence number as
 /// its `id`, and ends with a `settled` event once the run has ended or
-/// rests with every event sent. It stops when the caller has gone. It only
-/// reads, so stopping it leaves nothing half done.
+/// rests with every event sent. It stops when the caller has gone, or has
+/// read nothing for [`READER_PATIENCE`]. It only reads, so stopping it
+/// leaves nothing half done.
+///
+/// The wait for more is the kernel's, from what the last page showed: a
+/// run whose state rests while its job is still in hand settles without a
+/// further event, and the kernel tells it at once because this says it
+/// last saw the run unsettled.
 async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::Sender<Bytes>) {
     let principal = &caller.principal;
     let mut page = first;
-    let mut settle = SETTLE_FIRST;
     let mut said = Instant::now();
     loop {
         for event in &page.events {
             let line = format!("id: {}\ndata: {}\n\n", event.seq, event_json(event));
-            if lines.send(Bytes::from(line)).await.is_err() {
+            if !send(&lines, line).await {
                 return;
             }
             said = Instant::now();
@@ -252,38 +264,25 @@ async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::S
         let whole = page.events.len() < EVENTS_PAGE as usize;
         if whole && page.settled() {
             let line = format!("event: settled\ndata: {}\n\n", standing(&page));
-            let _ = lines.send(Bytes::from(line)).await;
+            let _ = send(&lines, line).await;
             return;
         }
         if said.elapsed() >= KEEP_ALIVE {
-            if lines.send(Bytes::from(": waiting\n\n")).await.is_err() {
+            if !send(&lines, ": waiting\n\n").await {
                 return;
             }
             said = Instant::now();
         }
-        let active = matches!(
-            page.state,
-            RunState::Queued | RunState::Validating | RunState::Running
-        );
         let next = if !whole {
             // More is stored already: read on without a wait.
             kernel
                 .events(principal, page.run, page.last, EVENTS_PAGE)
                 .await
         } else {
-            // A run whose state rests while its job is still in hand
-            // settles without a further event: it is looked at again soon.
-            let wait = if active {
-                settle = SETTLE_FIRST;
-                KEEP_ALIVE
-            } else {
-                let wait = settle;
-                settle = (settle * 2).min(SETTLE_LONGEST);
-                wait
-            };
+            let wait = KEEP_ALIVE.saturating_sub(said.elapsed());
             tokio::select! {
                 () = lines.closed() => return,
-                next = kernel.next_events(principal, page.run, page.last, EVENTS_PAGE, wait) => next,
+                next = kernel.next_events_from(principal, page.run, page.followed(), EVENTS_PAGE, wait) => next,
             }
         };
         page = match next {
@@ -293,7 +292,7 @@ async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::S
                 let failed = refused("", &failure, true);
                 let error = failed.error.map_or(Json::Null, |error| error.to_json());
                 let line = format!("event: failed\ndata: {error}\n\n");
-                let _ = lines.send(Bytes::from(line)).await;
+                let _ = send(&lines, line).await;
                 return;
             }
         };

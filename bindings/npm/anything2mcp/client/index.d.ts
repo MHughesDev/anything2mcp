@@ -14,7 +14,13 @@ export declare class ChannelError extends Error {
   readonly code: string;
   readonly reason: string;
   readonly fix: string;
-  constructor(code: string, message: string, fix: string);
+  /**
+   * True when nothing was sent, so the call may be made again. False for
+   * `answer_lost`: the engine may have had the call, which may have started
+   * a run that writes.
+   */
+  readonly retrySafe: boolean;
+  constructor(code: string, message: string, fix: string, retrySafe?: boolean);
 }
 
 /** A failure as the engine reports it: one class and one code. */

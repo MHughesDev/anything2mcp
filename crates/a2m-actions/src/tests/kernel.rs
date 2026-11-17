@@ -710,7 +710,12 @@ async fn a_stopped_store_serves_status_and_nothing_else() {
     );
     world.ok("provider.list", json!({})).await;
     world.ok("config.show", json!({})).await;
-    world.ok("docs.get", json!({"topic": "approvals"})).await;
+    // A guide is served from the files in `guides/`, with what the
+    // registry says of each action it names.
+    let guide = world.ok("docs.get", json!({"topic": "approvals"})).await;
+    let text = guide["text"].as_str().unwrap();
+    assert!(text.starts_with("# Approvals"), "{text}");
+    assert!(text.contains("- `run.resume`: built."), "{text}");
 
     // Every action that needs the store refuses, with the reason.
     for (action, input) in [

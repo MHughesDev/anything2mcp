@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use a2m_actions::{Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes};
 use a2m_core::{Failure, FailureClass};
-use a2m_local::ClientLabel;
+use a2m_local::{ClientLabel, Kept, kept_by};
 use a2m_telemetry::SystemClock;
 use a2m_vault::KeyStore;
 
@@ -122,18 +122,91 @@ pub fn usage_lines() -> Result<Vec<String>, Failure> {
         .collect())
 }
 
-/// The nearest folder, from `from` upward, that holds the project file.
-fn find_project(from: &Path) -> Option<PathBuf> {
-    from.ancestors()
-        .find(|folder| folder.join(PROJECT_FILE).is_file())
-        .map(Path::to_path_buf)
+/// A project file, or a folder a project is looked for in, that others may
+/// change: it is not taken as this person's project.
+fn not_yours(path: &Path, why: &str) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        codes::PATH_NOT_ALLOWED,
+        format!(
+            "`{}` is not taken as a project: {why}. A project's file decides which settings, target files, and folders a command uses, so it is taken only from a folder that only you, or the administrator, can change.",
+            shown_path(path)
+        ),
+        "Make the folder and its project file yours and closed to others, or run the command in a folder of your own.",
+    )
 }
 
-fn project_of(globals: &Globals, host: &Host) -> Option<PathBuf> {
+fn shown_path(path: &Path) -> String {
+    render::visible(&path.display().to_string())
+}
+
+/// Whether a folder, or a project file, is this person's own.
+fn kept(path: &Path) -> Kept {
+    // A path that cannot be read is nobody's to trust.
+    kept_by(path).unwrap_or(Kept::Open("it cannot be read"))
+}
+
+/// The nearest folder, from `from` upward, that holds the project file.
+///
+/// The walk looks only in folders that only this person, or the
+/// administrator, can change, and stops at the first that others can:
+/// a shared folder such as the system's temporary folder is never looked
+/// in, nor anything above it. A project file found in a folder of the
+/// person's own must be closed to others as well, or it is refused by name.
+/// Where this build cannot tell who may change a file (Windows), the walk
+/// looks in the working folder, and above it only inside `home`.
+fn find_project(from: &Path, home: Option<&Path>) -> Result<Option<PathBuf>, Failure> {
+    for folder in from.ancestors() {
+        match kept(folder) {
+            Kept::Private => {}
+            Kept::NotChecked => {
+                let inside_home = home.is_some_and(|home| folder.starts_with(home));
+                if folder != from && !inside_home {
+                    return Ok(None);
+                }
+            }
+            Kept::Open(_) => return Ok(None),
+        }
+        let file = folder.join(PROJECT_FILE);
+        if std::fs::symlink_metadata(&file).is_err() {
+            continue;
+        }
+        return match kept(&file) {
+            Kept::Private | Kept::NotChecked if file.is_file() => Ok(Some(folder.to_path_buf())),
+            Kept::Open(why) => Err(not_yours(&file, why)),
+            _ => Err(not_yours(&file, "it is not a file")),
+        };
+    }
+    Ok(None)
+}
+
+/// The project a command names with `--project`: the folder and its file
+/// must be the person's own, as for one found by walking up.
+fn named_project(folder: PathBuf) -> Result<Option<PathBuf>, Failure> {
+    if let Kept::Open(why) = kept(&folder) {
+        return Err(not_yours(&folder, why));
+    }
+    let file = folder.join(PROJECT_FILE);
+    if std::fs::symlink_metadata(&file).is_ok()
+        && let Kept::Open(why) = kept(&file)
+    {
+        return Err(not_yours(&file, why));
+    }
+    Ok(Some(folder))
+}
+
+fn project_of(globals: &Globals, host: &Host) -> Result<Option<PathBuf>, Failure> {
     match &globals.project {
-        Some(given) if given.is_absolute() => Some(given.clone()),
-        Some(given) => Some(host.cwd.join(given)),
-        None => find_project(&host.cwd),
+        Some(given) if given.is_absolute() => named_project(given.clone()),
+        Some(given) => named_project(host.cwd.join(given)),
+        None => {
+            let home = ["USERPROFILE", "HOME"]
+                .iter()
+                .find_map(|name| host.environment.get(*name))
+                .filter(|home| !home.is_empty())
+                .map(PathBuf::from);
+            find_project(&host.cwd, home.as_deref())
+        }
     }
 }
 
@@ -363,8 +436,11 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Ok(paths) => paths,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Failed, json),
     };
-    let project = project_of(&globals, host);
-    match client::find(&paths, ClientLabel::CommandLine).await {
+    let project = match project_of(&globals, host) {
+        Ok(project) => project,
+        Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Malformed, json),
+    };
+    let lock = match client::find(&paths, ClientLabel::CommandLine).await {
         Ok(client::Found::Engine(_)) if globals.in_process => {
             return stopped(
                 &tree,
@@ -380,23 +456,16 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
             );
         }
         Ok(client::Found::Engine(link)) => {
-            let finished = client::run_steps(
-                &link,
-                &tree,
-                &globals,
-                steps,
-                json,
-                host,
-                project.as_deref(),
-            )
-            .await;
+            let finished =
+                client::run_steps(&link, &tree, &globals, steps, json, project.as_deref()).await;
             return after_steps(finished, stop.as_ref(), &tree, json);
         }
         // No engine runs, and nothing starts one on demand yet: the
-        // command runs the engine inside its own process.
-        Ok(client::Found::Nothing) => {}
+        // command runs the engine inside its own process, holding the
+        // engine lock it was handed until the kernel has closed.
+        Ok(client::Found::Nothing(lock)) => lock,
         Err(failure) => return client::not_reached(&tree, &action, &failure, json),
-    }
+    };
     let clock = Arc::new(SystemClock::new());
     let person: Arc<dyn PersonSurface> = match &host.person {
         Some(person) => Arc::clone(person),
@@ -409,10 +478,15 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     options.clock = clock;
     options.project = project;
     options.key_store.clone_from(&host.key_store);
-    let engine = match Engine::open(options).await {
+    let engine = match Engine::open_holding(options, lock).await {
         Ok(engine) => engine,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Failed, json),
     };
+    // In one process the caller is this process: whether a person is at
+    // its terminal is what the process can see of itself. It is no proof
+    // of a person (a program can give itself a terminal), and it is never
+    // carried over the local channel; a person's act here is asked for at
+    // the terminal and recorded as proving nobody (decision 0158).
     let finished = run_steps(
         &engine,
         &tree,
@@ -426,14 +500,49 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     after_steps(finished, stop.as_ref(), &tree, json)
 }
 
+/// Takes the vault's passphrase out of this process's environment, once
+/// the host has copied it, so that nothing this process starts can inherit
+/// it, whatever a target lists to pass on.
+///
+/// # Safety
+///
+/// No other thread may run, or read or change the environment, while it
+/// runs: the caller is `main`, before anything else.
+#[allow(
+    unsafe_code,
+    reason = "the environment is changed once, at the start of `main`, while the process has one thread"
+)]
+unsafe fn forget_passphrase() {
+    // SAFETY: the caller holds that no other thread exists yet (see the
+    // function's contract); with one thread nothing reads the environment
+    // while it changes.
+    unsafe { std::env::remove_var(crate::PASSPHRASE_VARIABLE) };
+}
+
 /// Runs the command line with the arguments that follow the program name,
 /// in this process's surroundings.
 ///
 /// The output names the product, never the name the program was started
 /// under, so both commands behave identically.
-pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
+///
+/// It copies the process environment into the host first, and then takes
+/// the vault's passphrase out of the process's own environment.
+///
+/// # Safety
+///
+/// It is the program's `main`, and is called before any other thread
+/// starts: it changes the process environment, which is sound only while
+/// the process has one thread.
+#[allow(
+    unsafe_code,
+    reason = "the program's main changes the environment before any thread starts"
+)]
+pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
     let args: Vec<String> = args.into_iter().collect();
     let host = Host::of_process();
+    // SAFETY: the caller holds this function's contract, which is the
+    // same: no other thread runs yet.
+    unsafe { forget_passphrase() };
     let finished = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -449,4 +558,60 @@ pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
     let _ = std::io::stdout().write_all(finished.stdout.as_bytes());
     let _ = std::io::stderr().write_all(finished.stderr.as_bytes());
     ExitCode::from(finished.code)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn a_project_file_that_others_can_change_is_never_taken_as_a_project() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use super::{PROJECT_FILE, find_project};
+
+        let mode = |path: &std::path::Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let base = std::env::temp_dir().join(format!("anything2mcp-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        mode(&base, 0o755);
+
+        // A folder every account may write to, as the system's temporary
+        // folder is, holds a project file another account planted; the
+        // person works in a folder of their own beneath it.
+        let shared = base.join("shared");
+        let work = shared.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(shared.join(PROJECT_FILE), "").unwrap();
+        mode(&shared, 0o777);
+        mode(&work, 0o755);
+        assert_eq!(find_project(&work, None).unwrap(), None);
+        // In the shared folder itself nothing is taken either.
+        assert_eq!(find_project(&shared, None).unwrap(), None);
+
+        // A project file in the person's own folder that others may change
+        // is refused by name; closed to others, it is the project.
+        let own = base.join("own");
+        std::fs::create_dir_all(&own).unwrap();
+        mode(&own, 0o755);
+        let file = own.join(PROJECT_FILE);
+        std::fs::write(&file, "").unwrap();
+        mode(&file, 0o666);
+        let refused = find_project(&own, None).unwrap_err();
+        assert_eq!(refused.code().as_str(), "path_not_allowed");
+        assert!(
+            refused.message().contains("every account may change it"),
+            "{refused:?}"
+        );
+        mode(&file, 0o644);
+        assert_eq!(find_project(&own, None).unwrap(), Some(own.clone()));
+        let below = own.join("targets");
+        std::fs::create_dir_all(&below).unwrap();
+        mode(&below, 0o755);
+        assert_eq!(find_project(&below, None).unwrap(), Some(own.clone()));
+
+        mode(&shared, 0o755);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -131,11 +131,19 @@ impl Kernel {
     /// rest while this waits, or `wait` passes.
     pub async fn next_events(&self, caller: &Principal, run: RunId, after: u64, limit: u32,
                              wait: Duration) -> Result<RunEvents, Failure>;
+    /// The same, from what the follower last saw: answered at once when whether the run
+    /// is settled has changed since, although no event says so. What a follower uses.
+    pub async fn next_events_from(&self, caller: &Principal, run: RunId, seen: Followed,
+                                  limit: u32, wait: Duration) -> Result<RunEvents, Failure>;
     /// The scheduler's jobs waiting or leased, and the runs resting for a person.
     pub async fn runs_in_hand(&self) -> Result<RunsInHand, Failure>;
     pub async fn close(self, why: CloseReason);
 }
 pub struct RunsInHand { pub working: u64, pub waiting_for_person: u64 }
+/// The last event's number a follower was given, and whether the run was settled then.
+pub struct Followed { pub after: u64, pub settled: Option<bool> }
+impl From<u64> for Followed {}            // nothing known of the run
+impl RunEvents { pub const fn followed(&self) -> Followed; }
 impl RunsInHand { pub const fn any(&self) -> bool; }
 pub struct RunEvents { pub run: RunId, pub events: Vec<RunEventView>, pub last: u64,
                        pub state: RunState, pub working: bool, pub ended: bool }
@@ -360,7 +368,7 @@ Rust faces are derived at run time from the `Registry`. Code in other languages 
 | REST route | `a2m-api`, when its router is built | `Registry`: `POST /api/v1/actions/<noun>.<verb>`, and the `rest_alias` routes |
 | OpenAPI document | `a2m-api` | `Registry` |
 | SDK methods | A code-generation task in `xtask`, written to `bindings/` | The recorded catalog |
-| Reference pages for `docs.get` | The same task | The recorded catalog and the documents |
+| Reference pages for `docs.get` | The same task | The recorded catalog and the documents. The guides in `guides/*.md` are built into the binary and served first, by the name on their first line; each ends with whether every action it names is built, read from the registry as it is asked for ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)) |
 
 Two checks hold this. **Parity:** a test enumerates the live command tree, MCP tool list, router, and SDK method list, and compares each with the registry, failing on anything extra or missing; process commands and shortcuts are the only words allowed beside the nouns. **Recorded catalog:** the build writes the catalog with its digest; the engine compares the digest at start, and CI fails when the checked-in SDKs were generated from another digest.
 
@@ -495,7 +503,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
 6. Not built: the scout, `discover.run`, `test.run`.
 7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data, and `Shortcut::on` says where one stops on this engine. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
-9. Done (the safety audit, [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)): whose a run is; the protected settings and what is in force; the bounds of a project folder and of a source file; the checked proof of presence; a run whose call cannot be read; presence when an act loosens; what a job holds alone; the in-process lease; `next_events` at rest; `tool.search` by kind; `McpResultFace::of_in`; `PersonSurface::presence`. Done since (decision 0145): every policy setting is carried into the policy engine; `policy.explain` answers only in the caller's workspace; a record's mode is read from the ledger's row.
+9. Done (the safety audit, [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)): whose a run is; the protected settings and what is in force; the bounds of a project folder and of a source file; the checked proof of presence; a run whose call cannot be read; presence when an act loosens; what a job holds alone; the in-process lease; `next_events` at rest; `tool.search` by kind; `McpResultFace::of_in`; `PersonSurface::presence`. Done since (decision 0159): `next_events_from` and `Followed`, so that a run that came to rest between a follower's two calls is told at once; the guides served by `docs.get`. Done since (decision 0145): every policy setting is carried into the policy engine; `policy.explain` answers only in the caller's workspace; a record's mode is read from the ledger's row.
 8. Done (the second pass): a source through `tool.call` and the runner; `tool.search` in full; `Kernel::events` and `next_events`; values shown as themselves. Not built: inline rows for a source that is not read as JSON; a call by a published tool's own name in one dispatch, which the MCP endpoint can have by dispatching `tool.call` and reading `input`, `not_found` with no result as an unknown tool.
 
 ## Open points

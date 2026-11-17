@@ -184,13 +184,19 @@ class PipeSocket:
 
 class PipeConnection(http.client.HTTPConnection):
     """HTTP/1.1 over a named pipe. The host name is only what the ``Host``
-    header says; nothing is looked up."""
+    header says; nothing is looked up. Like ``UnixConnection`` it opens
+    once: the engine's hello holds for one connection, and a request on a
+    closed one raises ``NotConnected`` before anything is sent."""
 
     def __init__(self, open_pipe: Callable[[], PipeSocket], timeout: Optional[float] = None) -> None:
         super().__init__("localhost", timeout=timeout)
         self._open_pipe = open_pipe
+        self._opened = False
 
     def connect(self) -> None:
+        if self._opened:
+            raise http.client.NotConnected()
+        self._opened = True
         self.sock = self._open_pipe()  # type: ignore[assignment]
 
 

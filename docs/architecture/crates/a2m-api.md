@@ -111,9 +111,12 @@ The document is generated from the registry when the router is built: one operat
 4. A stream ends with one event named `settled`, which says where the run stands, once the run has ended or rests with every event sent. A run that waits for a person may wait for days, so the stream does not stay open across a rest: a client opens it again, with the last identifier, after the run is resumed.
 5. The first page is read before anything is answered. A refusal is therefore an ordinary answer with its status, and never the start of a stream. A failure after the stream began is its last event, named `failed`.
 6. A comment line is sent when a stream has said nothing for 15 seconds, so that an idle connection is not taken for dead.
-7. A run whose state rests while its job is still in a runner's hands settles without a further event, and `next_events` does not return on that. The stream looks again after 20 ms, then twice as long each time, up to 2 s.
+7. A run whose state rests while its job is still in a runner's hands settles without a further event. Each wait is `Kernel::next_events_from` with what the last page showed, so the kernel answers the moment the job is recorded as ended, with no timer ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
+8. Each line waits at most 60 s for the reader to take it (`READER_PATIENCE`). A reader that keeps the connection open and reads nothing for that long is treated as gone, and the stream ends. Following only reads, so ending it leaves nothing half done.
 
 Events pass the redactor before they are stored, and their detail passes it again as the kernel hands it out, so the stream never holds a secret.
+
+**No redaction pass of its own.** Unlike the MCP door, this crate does not walk what it sends through the redactor. Everything it sends is the dispatcher's response or the kernel's events, both redacted before they are handed over, and this door's own texts quote nothing a caller sent except the HTTP method and, for a JSON error, a line and a column. The MCP door needs its pass because its protocol errors echo a tool's name, a request's id, and a progress token. A route of this crate that comes to quote its input must add the pass.
 
 ## Webhooks
 
@@ -188,6 +191,6 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 - Actions to manage webhook destinations and toolset export: neither is in the action catalog yet.
 - The `/api/v1/admin/...` row of the technical reference should be removed or defined as aliases.
 - Where a remote caller fetches a kept blob: a generated alias of `trace.show`, most likely.
-- The short second look at a run that is settling. `Kernel::next_events` returning when a run that was worked on comes to rest would remove it.
+- `engine_fault` and `request_timed_out` send the caller to `run.list` before it calls again, and `run.list` is not built yet. An `Idempotency-Key` is carried to the kernel, which does not yet tie a second call with the same key to the first one's run (decision 0159).
 - A second principal for this crate's tests, so that the refusal of another caller's run is proven through the door and not only in the kernel.
 - The health answer for a load balancer, which has no caller: a reduced, generated alias of `engine.status` that shows only the state.

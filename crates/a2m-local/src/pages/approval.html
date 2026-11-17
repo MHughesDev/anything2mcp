@@ -31,6 +31,7 @@ button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer
 {{change}}
 <h2>Your answer</h2>
 <p>Pressing Approve does not approve by itself: this machine then asks for proof that a person is present. This page closes {{minutes}} minutes after it was first asked for. No answer is a decline.</p>
+<p>Answer a prompt only right after you press Approve here. A prompt that comes up before you press, or while nothing on this page says it is waiting for one, is not for this change: cancel it. Where the prompt can show text, it shows <code>{{short_hash}}</code>, the same twelve characters as beside the buttons.</p>
 {{presence}}
 <div class="presses">
 <form method="post" action="/approve/{{code}}/approve">

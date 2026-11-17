@@ -81,7 +81,9 @@ impl Connector {
             .header(CLIENT_LABEL_HEADER, self.label.as_text())
             .body(Body::empty())
             .map_err(|_| codes::lost())?;
-        let answer = link.send(hello).await?;
+        // A hello does nothing in the engine, so a hello whose answer was
+        // lost is only a connection that ended.
+        let answer = link.send(hello).await.map_err(|_| codes::lost())?;
         let status = answer.status();
         let body = axum::body::to_bytes(answer.into_body(), HELLO_LIMIT)
             .await
@@ -175,7 +177,11 @@ impl Link {
     ///
     /// # Errors
     ///
-    /// `transient`/`connection_lost` when the engine went away.
+    /// `transient`/`connection_lost` when the connection ended before the
+    /// request was sent, so the engine never had it;
+    /// `possible_commit`/`answer_lost` when the request may have reached
+    /// the engine and no answer came back. The second is never safe to
+    /// send again blindly: what the request asked may have been done.
     pub async fn send(&self, mut request: Request<Body>) -> Result<Response<Body>, Failure> {
         request
             .headers_mut()
@@ -184,15 +190,27 @@ impl Link {
         let mut sender = self.sender.lock().await;
         let mut gone = self.gone.clone();
         let answered = async {
-            sender.ready().await?;
-            sender.send_request(request).await
+            // A connection that cannot take a request has been given none.
+            sender.ready().await.map_err(|_| codes::lost())?;
+            match sender.try_send_request(request).await {
+                Ok(response) => Ok(response),
+                // The library hands the request back when it never wrote
+                // any of it; otherwise some of it may have reached the
+                // engine.
+                Err(mut error) => Err(if error.take_message().is_some() {
+                    codes::lost()
+                } else {
+                    codes::answer_lost()
+                }),
+            }
         };
         // An answer that is there is taken first. Otherwise the end of the
-        // connection ends the wait: nothing can answer after it.
+        // connection ends the wait: nothing can answer after it, and the
+        // request may have been read before it ended.
         let response = tokio::select! {
             biased;
-            answered = answered => answered.map_err(|_| codes::lost())?,
-            _ = gone.wait_for(|gone| *gone) => return Err(codes::lost()),
+            answered = answered => answered?,
+            _ = gone.wait_for(|gone| *gone) => return Err(codes::answer_lost()),
         };
         Ok(response.map(Body::new))
     }

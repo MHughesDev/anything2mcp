@@ -17,15 +17,19 @@ const APP_FOLDER = "anything2mcp";
 const HOME_VARIABLE = "A2M_HOME";
 const SOCKET_NAME = "engine.sock";
 
-// The engine's failure code, a message, and the fix; every way the engine
-// was not reached is one of these.
+// The failure code, a message, and the fix; every way the engine was not
+// reached, or its answer was lost, is one of these. `retrySafe` is true when
+// nothing was sent, so the call may be made again. It is false for
+// `answer_lost`: the engine may have had the call, which may have started a
+// run that writes, and a second call may write a second time.
 class ChannelError extends Error {
-  constructor(code, message, fix) {
+  constructor(code, message, fix, retrySafe = true) {
     super(`${message} ${fix}`.trim());
     this.name = "ChannelError";
     this.code = code;
     this.reason = message;
     this.fix = fix;
+    this.retrySafe = retrySafe;
   }
 }
 
@@ -37,8 +41,21 @@ function notRunning() {
   );
 }
 
-function lost(why = "The connection to the engine was lost.") {
-  return new ChannelError("connection_lost", why, "Run it again.");
+// The connection is closed, or was lost before the request was sent:
+// nothing reached the engine.
+function lost(why = "The connection to the engine is closed, so nothing was sent.") {
+  return new ChannelError("connection_lost", why, "Connect again with `connect()`, then make the call again.");
+}
+
+// The request may have reached the engine, and its answer is lost.
+function answerLost(why = "The connection to the engine was lost before it answered.") {
+  return new ChannelError(
+    "answer_lost",
+    `${why} The engine may have had the call: it may have started a run, and that run may have written.`,
+    "Do not make the call again: a second call may start a second run and write twice. " +
+      "Find this call's run first in your recent runs (`run.list`), or tell the person that the answer was lost so that they can check.",
+    false,
+  );
 }
 
 // A directory taken from the environment: set, and absolute on this system.
@@ -158,6 +175,7 @@ function checkOwner(socketFile) {
 module.exports = {
   APP_FOLDER,
   ChannelError,
+  answerLost,
   checkOwner,
   lost,
   notRunning,

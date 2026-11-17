@@ -37,6 +37,10 @@ class FakeEngine:
     def __init__(self, home: Path, local_api: str = "1") -> None:
         self.requests: list = []
         self.answers: dict = {}
+        #: Actions whose request the fake takes and then drops the
+        #: connection without an answer, as an engine that stops does.
+        self.drops: set = set()
+        self.connections = 0
         run = home / "run"
         run.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(run, 0o700)
@@ -46,6 +50,10 @@ class FakeEngine:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
             said_hello = False
+
+            def setup(self) -> None:
+                fake.connections += 1
+                super().setup()
 
             def log_message(self, *_: object) -> None:
                 pass
@@ -82,6 +90,9 @@ class FakeEngine:
                     self._send(400, {"error": {"code": "hello_invalid"}})
                     return
                 action = self.path.rsplit("/", 1)[-1]
+                if action in fake.drops:
+                    self.close_connection = True
+                    return
                 status, answer, exit_class = fake.answers.get(
                     action, (200, {"ok": True, "action": action, "result": {"echo": json.loads(body)}}, "succeeded")
                 )
@@ -144,6 +155,44 @@ class ClientTests(unittest.TestCase):
             assert answer.error is not None
             self.assertEqual((answer.error.failure_class, answer.error.code), ("input", "schema_invalid"))
             self.assertEqual(answer.body, refused)
+        finally:
+            engine.stop()
+
+    def test_a_call_whose_answer_is_lost_after_the_engine_took_it_is_not_safe_to_make_again(self) -> None:
+        engine = FakeEngine(self.home)
+        engine.drops.add("tool.call")
+        try:
+            client = anything2mcp.connect(env=self.env)
+            with self.assertRaises(anything2mcp.ChannelError) as raised:
+                client.call("tool.call", {"tool": "example_orders_order_update"})
+            lost = raised.exception
+            self.assertEqual(lost.code, "answer_lost")
+            self.assertFalse(lost.retry_safe)
+            self.assertTrue(lost.fix.startswith("Do not make the call again"), lost.fix)
+            self.assertNotIn("Run it again", lost.fix)
+            # The engine had it.
+            self.assertEqual([r[1] for r in engine.requests][-1], "/api/v1/actions/tool.call")
+            # The client does not open the channel again behind the caller's
+            # back, with no check and no hello: nothing more is sent.
+            sent, connections = len(engine.requests), engine.connections
+            with self.assertRaises(anything2mcp.ChannelError) as raised:
+                client.call("engine.status")
+            self.assertEqual(raised.exception.code, "connection_lost")
+            self.assertTrue(raised.exception.retry_safe)
+            self.assertEqual((len(engine.requests), engine.connections), (sent, connections))
+            client.close()
+        finally:
+            engine.stop()
+
+    def test_an_action_name_that_is_not_noun_dot_verb_is_refused_before_anything_is_sent(self) -> None:
+        engine = FakeEngine(self.home)
+        try:
+            with anything2mcp.connect(env=self.env) as client:
+                sent = len(engine.requests)
+                for name in ("../local/hello", "tool.call?x=1", "tool.call#x", "tool%2Ecall", "Tool.Call", "tool"):
+                    with self.assertRaises(ValueError):
+                        client.call(name)
+                self.assertEqual(len(engine.requests), sent)
         finally:
             engine.stop()
 

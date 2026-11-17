@@ -16,6 +16,10 @@ pub const CALLER_MISSING: FailureCode = FailureCode::fixed("caller_missing");
 /// The proxy could not read its input.
 pub const STDIO_READ_FAILED: FailureCode = FailureCode::fixed("stdio_read_failed");
 
+/// The engine may have had a tool call, and its answer was lost: the call
+/// may have started a run that writes. Class `possible_commit`.
+pub const ANSWER_LOST: FailureCode = FailureCode::fixed("answer_lost");
+
 /// JSON-RPC: the body or line is not JSON.
 pub const PARSE_ERROR: i64 = -32700;
 /// JSON-RPC: the message is not a request.
@@ -36,6 +40,18 @@ pub const CALLER_REFUSED: i64 = -32001;
 /// answered with something that is not an MCP message.
 pub const ENGINE_UNREACHABLE: i64 = -32000;
 
+/// The failure of a tool call whose answer was lost after the engine may
+/// have had it. It names no run, because the answer that named one is
+/// what was lost.
+pub(crate) fn answer_lost() -> Failure {
+    Failure::new(
+        FailureClass::PossibleCommit,
+        ANSWER_LOST,
+        "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
+        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs (`run.list`), or tell the person that the answer was lost so that they can check.",
+    )
+}
+
 pub(crate) fn input(
     code: FailureCode,
     message: impl Into<String>,
@@ -53,7 +69,7 @@ pub(crate) fn policy(
 }
 
 /// A failure as the `data` of a JSON-RPC error: its class, code, message,
-/// and next step.
+/// and next step. The proxy adds `retry_safe`.
 pub(crate) fn failure_data(failure: &Failure) -> serde_json::Value {
     serde_json::json!({
         "class": failure.class().to_string(),

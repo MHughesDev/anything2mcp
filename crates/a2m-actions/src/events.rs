@@ -283,7 +283,9 @@ impl Kernel {
             changed.borrow_and_update();
             let page = self.events(caller, run, seen.after, limit).await?;
             let settled = page.settled();
-            if !page.events.is_empty() || page.ended || was_settled.is_some_and(|was| was != settled)
+            if !page.events.is_empty()
+                || page.ended
+                || was_settled.is_some_and(|was| was != settled)
             {
                 return Ok(page);
             }

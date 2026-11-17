@@ -10,13 +10,16 @@
 //! raise: no response carries it.
 
 use a2m_actions::{ErrorBody, ExitClass, PROGRAM, Response};
-use a2m_core::Failure;
+use a2m_core::{Failure, FailureClass};
 use serde_json::Value as Json;
 
 use super::Finished;
 use super::parse::{Tree, command_line};
 
-/// A response for a failure met before any action was dispatched.
+/// A response for a failure of this end: one met before any action was
+/// dispatched, which may be made again, or an answer lost after the
+/// request was handed to the engine, which is a write in doubt and is
+/// never said to be safe to make again.
 pub(crate) fn refused(action: &str, failure: &Failure, exit: ExitClass) -> Response {
     Response {
         ok: false,
@@ -27,7 +30,7 @@ pub(crate) fn refused(action: &str, failure: &Failure, exit: ExitClass) -> Respo
             code: failure.code().to_string(),
             message: failure.message().to_owned(),
             fix: failure.next_step().to_owned(),
-            retry_safe: true,
+            retry_safe: failure.class() != FailureClass::PossibleCommit,
         }),
         warnings: Vec::new(),
         next: None,
@@ -120,14 +123,58 @@ pub(crate) fn render(response: &Response, tree: &Tree, json: bool) -> Finished {
     show(&response.to_json(), response.exit_code(), tree, json)
 }
 
+/// Whether a character could change what a terminal shows other than by
+/// being shown: a control character (C0, DEL, and C1, which opens escape
+/// sequences, sets the clipboard, or moves the cursor), or one that turns
+/// the direction of the text around it.
+fn moves_the_terminal(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Text for a person's terminal: every character that could change what
+/// the terminal shows is written as a visible escape, `\u{1b}`, so that
+/// text a system returned is read and never obeyed. Line ends and tabs
+/// stay.
+pub(crate) fn visible(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if moves_the_terminal(c) {
+            out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// One JSON object on one line. The encoder escapes the characters below
+/// a space; DEL, C1, and the direction marks it writes as they are, and a
+/// terminal that shows the line would obey them, so they are escaped too.
+/// The text is the same JSON value either way.
+fn json_line(response: &Json) -> String {
+    let mut out = String::new();
+    for c in response.to_string().chars() {
+        if moves_the_terminal(c) {
+            out.push_str(&format!("\\u{:04x}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Renders one response from its JSON form and its exit code. A command
 /// that ran the engine in its own process and one that asked the local
 /// engine both end here, so both print the same.
+///
+/// Standard error is for a person in both forms, and text for a terminal
+/// is too, so both pass [`visible`] whole. JSON passes [`json_line`].
 pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finished {
     let mut stdout = String::new();
     let mut stderr = String::new();
     if json {
-        stdout.push_str(&response.to_string());
+        stdout.push_str(&json_line(response));
         stdout.push('\n');
     } else {
         if let Some(result) = response.get("result") {
@@ -153,8 +200,8 @@ pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finish
     }
     Finished {
         code,
-        stdout,
-        stderr,
+        stdout: if json { stdout } else { visible(&stdout) },
+        stderr: visible(&stderr),
     }
 }
 
@@ -162,7 +209,62 @@ pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finish
 mod tests {
     use serde_json::json;
 
-    use super::lines;
+    use super::{lines, show};
+    use crate::cli::parse::Tree;
+
+    #[test]
+    fn text_a_system_returned_reaches_a_terminal_as_text_and_is_never_obeyed() {
+        // A value that would set the clipboard, rub out the line above, turn
+        // the text around, and open a sequence with one C1 character.
+        let planted =
+            "A-100\u{1b}]52;c;ZXhhbXBsZQ==\u{7}\u{1b}[1A\u{1b}[2K\r\u{202e}\u{9b}31m\u{7f}";
+        let response = json!({
+            "ok": false,
+            "action": "tool.call",
+            "result": {"customer": planted, "lines": "first\n\tsecond"},
+            "warnings": [planted],
+            "error": {"class": "rejected", "code": "app_validation_error", "message": planted, "fix": planted},
+            "next": {"action": planted, "when": planted, "args": {}},
+        });
+        let tree = Tree::empty();
+        let shown = show(&response, 1, &tree, false);
+        for text in [&shown.stdout, &shown.stderr] {
+            assert!(
+                !text
+                    .chars()
+                    .any(|c| (c.is_control() && c != '\n' && c != '\t') || c == '\u{202e}'),
+                "{text:?}"
+            );
+            assert!(
+                text.contains("A-100\\u{1b}]52;c;ZXhhbXBsZQ==\\u{7}"),
+                "{text}"
+            );
+            assert!(text.contains("\\u{9b}31m\\u{7f}"), "{text}");
+        }
+        // Line ends and tabs of a value are kept.
+        assert!(
+            shown.stdout.contains("lines: first\n  \tsecond"),
+            "{}",
+            shown.stdout
+        );
+
+        // As JSON the value is the same value, and no character in the line
+        // can move a terminal that shows it.
+        let printed = show(&response, 1, &tree, true);
+        let line = printed.stdout.trim_end();
+        assert!(
+            !line.chars().any(|c| c.is_control() || c == '\u{202e}'),
+            "{line:?}"
+        );
+        let read: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(read["result"]["customer"], planted);
+        assert!(
+            !printed
+                .stderr
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+        );
+    }
 
     #[test]
     fn a_value_of_a_system_is_shown_as_the_result_carries_it() {

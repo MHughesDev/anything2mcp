@@ -157,7 +157,7 @@ handler!(
     }
 );
 
-/// The built-in topics beside the actions themselves.
+/// The built-in topics beside the actions and the guides.
 const TOPICS: &[(&str, &str)] = &[
     (
         "actions",
@@ -176,19 +176,6 @@ useful following action. Exit codes: 0 succeeded, 1 the action failed, 2 the req
 malformed, 3 a person is needed, 4 the engine could not be reached.",
     ),
     (
-        "failures",
-        "A failure carries a class, a stable code, a plain sentence, and a next step. The classes: \
-policy, input, session_expired, edge_blocked, drift, unknown_variant, rejected, mismatch, \
-possible_commit, stale, transient, busy. Only `possible_commit` means a write may have gone \
-through: resume the run, which reconciles first, and never call again.",
-    ),
-    (
-        "approvals",
-        "A write rests at `needs_approval` until a person approves the exact diff, on a surface \
-no caller can reach. No action, tool, command, or route approves. After the approval, call \
-`run.resume` with the run's identifier.",
-    ),
-    (
         "settings",
         "Settings come from eight layers, lowest first: built-in defaults, the profile, a preset, \
 the installation's file, the user's file, the project's `anything2mcp.toml`, `A2M_<GROUP>__<KEY>` \
@@ -198,20 +185,107 @@ set it.",
     ),
 ];
 
+/// The built-in guides, as written in `guides/`: a first line
+/// `name: <name>`, a blank line, then the page.
+const GUIDE_FILES: &[&str] = &[
+    include_str!("../../guides/guidance.md"),
+    include_str!("../../guides/target-files.md"),
+    include_str!("../../guides/operations.md"),
+    include_str!("../../guides/identity.md"),
+    include_str!("../../guides/sources.md"),
+    include_str!("../../guides/sessions.md"),
+    include_str!("../../guides/approvals.md"),
+    include_str!("../../guides/failures.md"),
+    include_str!("../../guides/pack-web.md"),
+    include_str!("../../guides/pack-http.md"),
+    include_str!("../../guides/pack-mcp.md"),
+    include_str!("../../guides/pack-command.md"),
+    include_str!("../../guides/pack-data.md"),
+    include_str!("../../guides/pack-file.md"),
+    include_str!("../../guides/pack-stream.md"),
+    include_str!("../../guides/pack-device.md"),
+    include_str!("../../guides/pack-desktop.md"),
+];
+
+/// One guide: its stable name and its page. `None` for a file whose first
+/// line is not `name: <name>` followed by a blank line; the test holds
+/// every file to that.
+pub(crate) fn guide(file: &str) -> Option<(&str, &str)> {
+    let (first, rest) = file.split_once('\n')?;
+    let name = first.trim_end_matches('\r').strip_prefix("name: ")?;
+    let page = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))?;
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    .then_some((name, page))
+}
+
+/// Every guide, in the order of [`GUIDE_FILES`].
+pub(crate) fn guides() -> impl Iterator<Item = (&'static str, &'static str)> {
+    GUIDE_FILES.iter().filter_map(|file| guide(file))
+}
+
+/// The text in backticks on `line`, in order.
+pub(crate) fn quoted(line: &str) -> impl Iterator<Item = &str> {
+    line.split('`').skip(1).step_by(2)
+}
+
+/// What a guide says, with a line at its end for each action it names:
+/// whether that action is built, read from the registry as the page is
+/// asked for, so that a page never sends a caller to an action that
+/// answers `action_not_built` without saying so.
+fn guide_text(registry: &crate::registry::ActionRegistry, page: &str) -> String {
+    let mut named: Vec<&ActionDef> = Vec::new();
+    for word in page.lines().flat_map(quoted) {
+        if let Some(def) = registry.find(word)
+            && !named.iter().any(|seen| seen.name == def.name)
+        {
+            named.push(def);
+        }
+    }
+    let mut text = page.trim_end().to_owned();
+    if !named.is_empty() {
+        text.push_str("\n\n## The actions this page names\n\n");
+        for def in named {
+            text.push_str(&format!(
+                "- `{}`: {}\n",
+                def.name,
+                if def.built() {
+                    "built."
+                } else {
+                    "not built yet: a call answers `action_not_built`."
+                }
+            ));
+        }
+    }
+    text
+}
+
 handler!(
-    /// `docs.get`: a reference page, generated from the registry and the
-    /// topics above. Offline, and only when asked for.
+    /// `docs.get`: a reference page: a guide, one of the topics above, or
+    /// an action's page, generated from the registry. Offline, and only
+    /// when asked for.
     docs_get,
     |kernel, call| {
-        let mut topics: Vec<String> = TOPICS.iter().map(|(name, _)| (*name).to_owned()).collect();
+        let mut topics: Vec<String> = guides().map(|(name, _)| name.to_owned()).collect();
+        topics.extend(TOPICS.iter().map(|(name, _)| (*name).to_owned()));
         topics.extend(kernel.actions().iter().map(|def| def.name.to_string()));
         let Some(topic) = call.text("topic") else {
             return Ok(Output::ok(json!({
                 "topic": "",
-                "text": "Pass a topic. Every action's name is a topic, and so are the names listed here.",
+                "text": "Pass a topic. Start with `guidance`. Every action's name is a topic, and so are the guides and the other names listed here.",
                 "topics": topics,
             })));
         };
+        if let Some((name, page)) = guides().find(|(name, _)| *name == topic) {
+            let text = guide_text(kernel.actions(), page);
+            return Ok(Output::ok(
+                json!({"topic": name, "text": text, "topics": topics}),
+            ));
+        }
         if let Some((name, text)) = TOPICS.iter().find(|(name, _)| *name == topic) {
             return Ok(Output::ok(
                 json!({"topic": name, "text": text, "topics": topics}),
@@ -271,3 +345,83 @@ handler!(
         ))
     }
 );
+
+#[cfg(test)]
+mod tests {
+    use super::{GUIDE_FILES, TOPICS, guide, guide_text, guides, quoted};
+    use crate::registry::ActionRegistry;
+
+    #[test]
+    fn every_guide_is_named_on_its_first_line_once_and_every_page_docs_get_is_sent_to_exists() {
+        // Every file in the folder is served, each under a name of its own.
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("guides");
+        let on_disk = std::fs::read_dir(&folder)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "md")
+            })
+            .count();
+        assert_eq!(
+            on_disk,
+            GUIDE_FILES.len(),
+            "a guide in {folder:?} is not served"
+        );
+        let mut names = Vec::new();
+        for file in GUIDE_FILES {
+            let first = file.lines().next().unwrap_or("");
+            let (name, page) = guide(file).unwrap_or_else(|| panic!("not `name: <name>`: {first}"));
+            assert_eq!(first.trim_end_matches('\r'), format!("name: {name}"));
+            assert!(!page.trim().is_empty(), "{name}");
+            assert!(!names.contains(&name), "two guides are named {name}");
+            assert!(TOPICS.iter().all(|(topic, _)| *topic != name), "{name}");
+            names.push(name);
+        }
+
+        let registry = ActionRegistry::kernel_only();
+        let exists = |topic: &str| {
+            names.contains(&topic)
+                || TOPICS.iter().any(|(name, _)| *name == topic)
+                || registry.find(topic).is_some()
+        };
+        let mut sent = 0;
+        for (name, page) in guides() {
+            for line in page.lines() {
+                // A page names what to ask `docs.get` for after it, on the
+                // same line.
+                let Some((_, after)) = line.split_once("`docs.get`") else {
+                    continue;
+                };
+                for topic in quoted(after).filter(|word| *word != "docs.get") {
+                    sent += 1;
+                    assert!(exists(topic), "{name} sends `docs.get` to `{topic}`");
+                }
+            }
+        }
+        assert!(sent > 10, "{sent}");
+    }
+
+    #[test]
+    fn a_guide_says_of_each_action_it_names_whether_it_is_built() {
+        let registry = ActionRegistry::kernel_only();
+        let page = "Call `run.resume`, then `run.list`, then `run.resume` again.";
+        let text = guide_text(&registry, page);
+        let built = |name: &str| registry.find(name).unwrap().built();
+        assert!(built("run.resume") && !built("run.list"));
+        assert!(text.contains("- `run.resume`: built."), "{text}");
+        assert!(
+            text.contains("- `run.list`: not built yet: a call answers `action_not_built`."),
+            "{text}"
+        );
+        assert_eq!(text.matches("- `run.resume`").count(), 1, "{text}");
+        // A page that names no action is served as written.
+        assert_eq!(
+            guide_text(&registry, "No action here.\n"),
+            "No action here."
+        );
+    }
+}

@@ -80,8 +80,11 @@ impl EngineLock {
         })
     }
 
-    /// Whether an engine holds the lock, without keeping it. A command
-    /// that would run the engine inside itself asks this first.
+    /// Whether an engine holds the lock, without keeping it. This is a
+    /// question for a report, never a guard: the answer may be wrong the
+    /// moment it is given. Whatever opens the store, a `serve` or a command
+    /// that runs the kernel inside its own process, takes the lock with
+    /// [`EngineLock::take`] and holds it until the kernel has closed.
     ///
     /// # Errors
     ///

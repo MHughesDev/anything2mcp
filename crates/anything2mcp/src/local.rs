@@ -135,19 +135,31 @@ fn refused(action: &str, failure: &Failure) -> Response {
 }
 
 /// The caller a peer of the channel is, once the kernel has checked it.
-async fn caller_of(kernel: &Kernel, peer: &Peer, person: bool) -> Result<Caller, Failure> {
+///
+/// Every caller of the channel is an agent, whatever it says of itself.
+/// The label of its hello and anything in its headers are its own words,
+/// and any program of the user can say them: none of them makes it a
+/// person for any decision. So a person's act asked through the channel is
+/// refused as one an agent asked, a pre-approval rule that asks for a
+/// caller who is no agent is never met through it, and the decision
+/// records the caller as an agent. A person is shown only by the presence
+/// prompt, raised from a press on the page that shows what is approved.
+/// The label still says which door the request came through, for the
+/// audit log.
+async fn caller_of(kernel: &Kernel, peer: &Peer) -> Result<Caller, Failure> {
     let principal = match kernel.verify_caller(peer.credential()).await {
         Ok(principal) => principal,
-        // A stopped engine names nobody; it answers its own status.
-        Err(failure) if failure.class() == FailureClass::Busy => kernel.status_only_caller(),
+        // Only a kernel whose store never opened names nobody: it answers
+        // its own status, and nothing else, to nobody.
+        Err(failure) if *failure.code() == codes::ENGINE_DEGRADED => kernel.status_only_caller(),
         Err(failure) => return Err(failure),
     };
-    let (door, is_agent) = match &peer.label {
-        ClientLabel::CommandLine => (FrontDoor::Command, !person),
-        ClientLabel::Mcp(_) => (FrontDoor::Mcp, true),
-        ClientLabel::Sdk(_) => (FrontDoor::Sdk, true),
+    let door = match &peer.label {
+        ClientLabel::CommandLine => FrontDoor::Command,
+        ClientLabel::Mcp(_) => FrontDoor::Mcp,
+        ClientLabel::Sdk(_) => FrontDoor::Sdk,
     };
-    let mut caller = Caller::new(principal, door, is_agent);
+    let mut caller = Caller::new(principal, door, true);
     caller.client = peer.label.as_text();
     Ok(caller)
 }
@@ -171,7 +183,6 @@ async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -
             ),
         ));
     };
-    let person = text(request.headers(), wire::PERSON_HEADER) == Some(wire::PERSON_PRESENT);
     let named = text(request.headers(), wire::PROJECT_HEADER).map(wire::decode_path);
     let project = match named {
         None => None,
@@ -191,7 +202,7 @@ async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -
             ));
         }
     };
-    let caller = match caller_of(&door.kernel, &peer, person).await {
+    let caller = match caller_of(&door.kernel, &peer).await {
         Ok(caller) => caller,
         Err(failure) => return render(&refused("", &failure)),
     };
@@ -300,7 +311,9 @@ impl LocalEngine {
         });
         options.person = Arc::new(surface.clone()) as Arc<dyn PersonSurface>;
         let idle_after = minutes(&settings, "engine.idle_stop_minutes");
-        let engine = Engine::open_loaded(options, settings).await;
+        // The channel holds the engine lock; the engine takes none of its
+        // own.
+        let engine = Engine::open_loaded(options, settings, None).await?;
         let idle = match idle_after {
             Some(after) => IdlePolicy::after(
                 after,

@@ -47,6 +47,8 @@ The client reaches the engine on macOS and Linux by the socket, and on Windows b
 
 **What the client offers.** `anything2mcp.connect(project=..., name=...)`, `Client.call(action, input)`, which returns the engine's `Response` as it was written, and one typed method per action (`client.tool_call(...)`, `client.run_get(...)`), generated.
 
+**When the engine was not reached, or its answer was lost** (both clients; [decision 0159](../docs/decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)). The client raises (Python) or rejects with (Node) a `ChannelError` with a code and `retry_safe` (`retrySafe` in Node). Before anything was sent, `retry_safe` is true: `engine_unreachable`, `peer_not_allowed`, or `connection_lost` for a connection that had closed. Once the request may have reached the engine, the error is `answer_lost` and `retry_safe` is false: the call may have started a run that writes, and a second call may write a second time. A broken connection, an answer that breaks off, runs too long, or cannot be read, and the caller's own `timeout` all count. The fix says to find the run first. An idempotency key can be given and is sent as `Idempotency-Key`; the engine does not yet tie a second call with the same key to the first one's run, so it does not make a repeated call safe. A connection is opened once and never again behind the caller's back: after it closes, make a new client. An action's name must be `noun.verb`; anything else is refused before a byte is sent.
+
 **How the methods are generated.** The engine serves an OpenAPI document made from the action registry (`GET /api/v1/openapi.json`). `python/tools/openapi.json` is a saved copy. `python/tools/generate_actions.py` reads it and writes `python/src/anything2mcp/_actions.py`; both generated and saved files are committed, and a test fails when the module differs from what the generator writes. When the engine's actions change, start an engine and run, from `bindings/python`:
 
 ```sh
@@ -58,7 +60,9 @@ node ../npm/scripts/generate-actions.js       # writes the Node methods and type
 
 `python3 tools/generate_actions.py --check` and `node ../npm/scripts/generate-actions.js --check` fail when a file differs.
 
-**`a2m` on Windows.** pip makes no launcher for a data script there, so the wheel also carries `wheel-data/scripts/a2m.cmd`, which runs `anything2mcp.exe` beside it with every argument and returns its exit code. `python/tests/test_wheel_data.py` holds the file; `maturin sdist` was run to see that it is carried. The wheel itself needs the product built.
+**Which program `a2m` starts.** Only the one installed beside it, by its full path. The script finds its folder from its own resolved path and never from the search path or the working folder, and replaces itself with the binary (`execv`) on macOS and Linux.
+
+**`a2m` on Windows.** pip makes no launcher for a data script there, so the wheel also carries `wheel-data/scripts/a2m.cmd`, which runs `anything2mcp.exe` beside it with every argument and returns its exit code. It first checks that its folder holds `a2m.cmd`: cmd can give the working folder as `%~dp0` when the file is named in quotes and found on the search path, and a program planted in the working folder is then not run. What remains is cmd's own: a person who types `a2m` in a folder that holds an `a2m.cmd` runs that one, whatever is installed. `python/tests/test_wheel_data.py` holds the file; `maturin sdist` was run to see that it is carried. The wheel itself needs the product built.
 
 ## The npm packages
 
@@ -72,6 +76,8 @@ node test/install.js --binary ../../target/release/anything2mcp
 ```
 
 `test/client.test.js` runs the Node client against a fake engine of its own (a Unix socket, or on Windows a named pipe) and checks that the committed `actions.js` and `actions.d.ts` are what the generator writes. One more test starts a real engine; it runs only when `A2M_TEST_BINARY` names a built binary (not on Windows). On Windows the client refuses to connect until the caller supplies a check of the pipe's server, which Node cannot make itself.
+
+**Which program the launcher runs.** It looks for the platform package only where the launcher's own dependencies are installed: inside its own folder, and beside it in the `node_modules` folder that holds it (under Yarn's Plug'n'Play, Node's resolution, which reads only the declared dependencies). A package of the same name in a folder above is not looked at. The package's `name` and `version` must be the launcher's, and the program's resolved path must lie inside it; otherwise the launcher stops with exit 4. What remains: a `node_modules` folder that others can write to can still be written to. **Signals.** The launcher passes `SIGINT`, `SIGTERM`, and `SIGHUP` on to the program and ends as it ends, so a process manager or an MCP client that stops the launcher stops `serve` and `bridge`. On Windows the console sends Ctrl-C to the program itself, and the launcher only waits.
 
 `test/install.js` assembles every platform package (this machine's with the real binary, the others with a stand-in, because npm only reads their manifests), packs them and the launcher, serves them from a registry on `127.0.0.1` in the same process, and installs `anything2mcp` into scratch projects three ways: normally, with `--ignore-scripts`, and with `--omit=optional`. The first two must run both names; the third must name the missing package and exit 4. It fetches nothing from the internet.
 

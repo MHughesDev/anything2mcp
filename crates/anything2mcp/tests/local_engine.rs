@@ -468,6 +468,25 @@ impl PresencePrompt for Passed {
     }
 }
 
+/// Waits, for a bounded time, until the engine lock of the machine is free.
+///
+/// The engine in this process let go of it when it closed. Another test in
+/// this process may have started a child process at that moment, and a
+/// child holds a copy of every file this process has open from its start
+/// until it runs its program; a lock file is among them. So the lock is
+/// looked at until it is free, and the test fails by name if it never is.
+async fn lock_comes_free(machine: &Machine) {
+    let paths = Paths::under(machine.home.path());
+    let give_up = tokio::time::Instant::now() + PATIENCE;
+    while EngineLock::held(&paths).unwrap() {
+        assert!(
+            tokio::time::Instant::now() < give_up,
+            "the engine lock stayed held after the engine closed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// A command of a program, run as the command line runs it, in this
 /// process: nobody is at a terminal, so the caller is an agent.
 async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
@@ -524,29 +543,41 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert_eq!(response["result"]["status"], "needs_approval");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
-    // The person opens the page in a browser, reads it, and presses
-    // Approve; the presence prompt is raised, and passed.
+    // The page shows the change itself, and the prompt this machine has.
     let http = reqwest::Client::builder().no_proxy().build().unwrap();
     let page = http.get(&link).send().await.unwrap();
     assert_eq!(page.status().as_u16(), 200);
+    assert_eq!(page.headers()["referrer-policy"], "same-origin");
     let text = page.text().await.unwrap();
     assert!(text.contains(UPSERT) && text.contains(&run), "{text}");
-    // The page shows the change itself, and the prompt this machine has.
     assert!(text.contains("<th scope=\"row\">quantity</th>"), "{text}");
     assert!(text.contains("The prompt of a test."), "{text}");
+
+    // A press that does not come from the page's own origin raises nothing
+    // and approves nothing.
     let marker = "name=\"once\" value=\"";
     let from = text.find(marker).unwrap() + marker.len();
     let once = &text[from..from + text[from..].find('"').unwrap()];
-    let origin = &link[..link.find("/approve/").unwrap()];
-    let pressed = http
-        .post(format!("{link}/approve"))
-        .header("origin", origin)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(format!("once={once}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(pressed.status().as_u16(), 200, "{pressed:?}");
+    for origin in ["null", "http://127.0.0.1:1"] {
+        let forged = http
+            .post(format!("{link}/approve"))
+            .header("origin", origin)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(format!("once={once}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(forged.status().as_u16(), 403, "{origin}");
+    }
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    // The person opens the link in a real browser, reads the page, and
+    // presses Approve, as a person does; the presence prompt is raised, and
+    // passed.
+    let person = common::browser::Person::new();
+    let (title, detail) = person.press(&link, "Approve").await;
+    person.end().await;
+    assert_eq!(title, "Approved", "{detail}");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 0);
 
@@ -580,7 +611,7 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(stop.code, 0, "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
-    assert!(!EngineLock::held(&Paths::under(machine.home.path())).unwrap());
+    lock_comes_free(&machine).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -657,7 +688,7 @@ async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(stop.code, 0, "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
-    assert!(!EngineLock::held(&Paths::under(machine.home.path())).unwrap());
+    lock_comes_free(&machine).await;
 }
 
 /// A command sends its action to the action's own REST route. Every
@@ -675,4 +706,84 @@ fn every_action_command_has_the_rest_route_a_thin_client_sends_it_to() {
         let path = format!("{}/actions/{}", a2m_actions::REST_PREFIX, face.action);
         assert!(routes.contains(&path), "{}", face.action);
     }
+}
+
+/// Nothing a program says of itself on the local channel makes it a
+/// person: not the label `cli` of its hello, not a header that says a
+/// person is at its terminal, and not a terminal of its own. A person's
+/// act asked through the channel is refused as an agent's, and no presence
+/// prompt is raised for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises_no_prompt() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    let serving = tokio::spawn(local.serve());
+
+    // A program writes what the command line used to: the label `cli`,
+    // the header, and the project folder.
+    let connector = a2m_local::Connector::new(
+        &Paths::under(machine.home.path()),
+        anything2mcp::version().parse().unwrap(),
+        a2m_local::ClientLabel::CommandLine,
+    )
+    .unwrap();
+    let link = connector.connect().await.unwrap();
+    let folder = machine.project.path().to_str().unwrap();
+    assert!(
+        folder
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte))
+    );
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri(format!(
+            "{}/actions/version.publish",
+            a2m_actions::REST_PREFIX
+        ))
+        .header("content-type", "application/json")
+        .header("a2m-person-at-terminal", "true")
+        .header("a2m-project", folder)
+        .body(axum::body::Body::from(r#"{"target": "example"}"#))
+        .unwrap();
+    let answer = link.send(request).await.unwrap();
+    let body = axum::body::to_bytes(answer.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let response: Json = serde_json::from_slice(&body).unwrap();
+    assert_eq!(response["error"]["code"], "person_required", "{response}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    // The command line itself, started at a terminal, is the same through
+    // the engine: what it sees of its own terminal is not sent.
+    let host = Host {
+        cwd: machine.project.path().to_path_buf(),
+        environment: machine.environment(),
+        stdout_is_terminal: false,
+        person_at_terminal: true,
+        person: None,
+        key_store: None,
+    };
+    let args: Vec<String> = ["version", "publish", "example"]
+        .iter()
+        .map(|arg| (*arg).to_owned())
+        .collect();
+    let finished = run_with(&args, &host).await;
+    assert_eq!(finished.code, 3, "{finished:?}");
+    let response: Json = serde_json::from_str(finished.stdout.trim()).unwrap();
+    assert_eq!(response["error"]["code"], "person_required", "{response}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
 }

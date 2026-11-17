@@ -11,7 +11,7 @@ use std::path::PathBuf;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub(crate) use unix::{Listener, ServerStream, connect, current_user, prepare_dir};
+pub(crate) use unix::{Listener, ServerStream, connect, current_user, kept, prepare_dir};
 
 #[cfg(windows)]
 mod windows;
@@ -66,6 +66,36 @@ impl Place {
 pub(crate) struct PeerId {
     pub(crate) user: Option<String>,
     pub(crate) process: Option<u32>,
+}
+
+/// Who may change a file or a folder, as far as this build can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kept {
+    /// Only this process's user, or the administrator.
+    Private,
+    /// Others may change it too; the words say who.
+    Open(&'static str),
+    /// This build does not read who may change a file on this operating
+    /// system: Windows, where the owner and the access list would have to
+    /// be read and are not yet.
+    NotChecked,
+}
+
+/// Who may change the file or folder at `path`. Its parts above it are not
+/// looked at; a caller that walks a path asks for each folder.
+///
+/// # Errors
+///
+/// What the operating system answers when the path cannot be read.
+pub fn kept_by(path: &std::path::Path) -> io::Result<Kept> {
+    #[cfg(unix)]
+    {
+        kept(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::metadata(path).map(|_| Kept::NotChecked)
+    }
 }
 
 /// Why a client did not reach the engine.

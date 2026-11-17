@@ -31,6 +31,7 @@ pub use channel::{
 };
 pub use connector::{Connector, Link};
 pub use lock::{ENGINE_LOCK_NAME, EngineLock};
+pub use os::{Kept, kept_by};
 pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
     PromptText, presence_available, system_prompt,

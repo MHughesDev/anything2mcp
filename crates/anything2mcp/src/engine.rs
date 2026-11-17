@@ -16,7 +16,8 @@ use a2m_actions::{
     ActionRegistry, Caller, CallerCredential, CloseReason, FrontDoor, Kernel, KernelParts, Paths,
     PersonSurface, Principal, Request, Response, Settings, Sources, StorePlace,
 };
-use a2m_core::{Failure, FailureClass, NoSecrets, Secret};
+use a2m_core::{Digest, Failure, FailureClass, NoSecrets, Secret};
+use a2m_local::EngineLock;
 use a2m_provider::{
     Access, HostServices, ProviderSettings, RegistryBuilder, RootName, Roots, Supervisor,
     SupervisorLimits,
@@ -133,6 +134,9 @@ pub struct Engine {
     project: Option<PathBuf>,
     /// Why the runner loop is not running, when it is not.
     runner_problem: Option<Failure>,
+    /// The engine lock, held for as long as the kernel is open, when this
+    /// engine took it. The local engine's channel holds its own.
+    lock: Option<EngineLock>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -299,7 +303,7 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
         };
     }
     let name = "the operating system's key store";
-    let installation = match InstallationName::new("local") {
+    let installation = match InstallationName::new(installation_name(&options.paths)) {
         Ok(installation) => installation,
         Err(failure) => return no_key_store(name, failure),
     };
@@ -327,8 +331,39 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
     }
 }
 
+/// The name of this installation's entry in the operating system's key
+/// store: one entry for each data directory, so that two installations on
+/// one machine, such as a test's home and the person's own, never share a
+/// root key, and one that replaces its root leaves the other's alone. The
+/// name carries a digest of the data directory's path, as the pipe's name
+/// does of the runtime directory's.
+fn installation_name(paths: &Paths) -> String {
+    let data = std::fs::canonicalize(&paths.data).unwrap_or_else(|_| paths.data.clone());
+    let digest = Digest::of(data.to_string_lossy().as_bytes()).to_string();
+    format!("local-{}", &digest[..16])
+}
+
+/// Takes the engine lock off the async threads, so that no second engine,
+/// a `serve` or another command, opens the store while this one runs.
+async fn take_lock(paths: &Paths) -> Result<EngineLock, Failure> {
+    let paths = paths.clone();
+    tokio::task::spawn_blocking(move || EngineLock::take(&paths))
+        .await
+        .map_err(|_| {
+            Failure::new(
+                FailureClass::Busy,
+                a2m_local::codes::CHANNEL_UNAVAILABLE,
+                "The engine lock could not be taken: the task that took it stopped.",
+                "Run the command again.",
+            )
+        })?
+}
+
 impl Engine {
-    /// Opens the engine in this process and starts its runner loop.
+    /// Opens the engine in this process and starts its runner loop. With
+    /// its store on disk it takes the engine lock first, and holds it until
+    /// [`Engine::close`] has closed the kernel: two engines on one store
+    /// never run.
     ///
     /// The kernel always opens: a store, a vault, or a pack that cannot be
     /// used is a named reason in `engine.status` and `doctor.run`, never a
@@ -337,16 +372,38 @@ impl Engine {
     /// # Errors
     ///
     /// `input`/`settings_invalid`, `policy`/`setting_protected`, and
-    /// `policy`/`setting_locked` when the settings do not load.
+    /// `policy`/`setting_locked` when the settings do not load;
+    /// `busy`/`engine_running` when another engine holds the lock of this
+    /// data directory; `policy`/`caller_not_verified` when the kernel does
+    /// not take this process's user as its caller.
     pub async fn open(options: EngineOptions) -> Result<Self, Failure> {
         let settings = load_settings(&options)?;
-        Ok(Self::open_loaded(options, settings).await)
+        let lock = match options.place {
+            StorePlace::Disk => Some(take_lock(&options.paths).await?),
+            // A store in memory is this process's alone.
+            StorePlace::Memory => None,
+        };
+        Self::open_loaded(options, settings, lock).await
+    }
+
+    /// The same, with the engine lock taken already: a command takes it
+    /// while it looks for an engine, so that nothing comes between.
+    pub(crate) async fn open_holding(
+        options: EngineOptions,
+        lock: EngineLock,
+    ) -> Result<Self, Failure> {
+        let settings = load_settings(&options)?;
+        Self::open_loaded(options, settings, Some(lock)).await
     }
 
     /// Opens the engine with settings that are loaded already. The local
     /// engine reads them first, because its person surface is made from
-    /// them.
-    pub(crate) async fn open_loaded(options: EngineOptions, settings: Settings) -> Self {
+    /// them, and its channel holds the engine lock.
+    pub(crate) async fn open_loaded(
+        options: EngineOptions,
+        settings: Settings,
+        lock: Option<EngineLock>,
+    ) -> Result<Self, Failure> {
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,
@@ -372,18 +429,26 @@ impl Engine {
             .await
         {
             Ok(principal) => principal,
-            // A stopped engine names nobody; it answers its own status.
-            Err(_) => kernel.status_only_caller(),
+            // Only a kernel whose store never opened names nobody: it
+            // answers its own status, and nothing else, to nobody.
+            Err(failure) if *failure.code() == a2m_actions::codes::ENGINE_DEGRADED => {
+                kernel.status_only_caller()
+            }
+            Err(failure) => {
+                kernel.close(CloseReason::Asked).await;
+                return Err(failure);
+            }
         };
         // A kernel that is stopped or degraded runs no job. The reason is
         // kept for the caller who asks, and is in `engine.status` already.
         let runner_problem = kernel.start_runner_loop(RUNNER_SLOTS).await.err();
-        Self {
+        Ok(Self {
             kernel,
             principal,
             project: options.project,
             runner_problem,
-        }
+            lock,
+        })
     }
 
     /// The kernel, for a host that needs more than `dispatch`.
@@ -426,8 +491,9 @@ impl Engine {
         self.kernel.dispatch(request).await
     }
 
-    /// Closes the engine: the runner loop stops, sessions are saved, and
-    /// the store is closed.
+    /// Closes the engine: the runner loop stops, sessions are saved, the
+    /// store is closed, and then the engine lock, if this engine took it,
+    /// is let go.
     pub async fn close(self) {
         self.close_because(CloseReason::Asked).await;
     }
@@ -435,6 +501,8 @@ impl Engine {
     /// The same, with the reason the audit log is to hold.
     pub(crate) async fn close_because(self, why: CloseReason) {
         self.kernel.close(why).await;
+        // Only once the kernel has closed may another engine open the store.
+        drop(self.lock);
     }
 }
 

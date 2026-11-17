@@ -35,6 +35,11 @@ const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
 /// How long a client may keep what discovery or a tool list said, in
 /// milliseconds.
 const TTL_MS: u64 = 60_000;
+/// How long a message of a stream waits for its reader to take it. A
+/// reader that keeps its connection open and reads nothing for this long
+/// is treated as gone: what follows its call stops, and the dispatch,
+/// which runs on a task of its own, goes on to its end.
+pub(crate) const READER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 fn server_info() -> Json {
     json!({"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")})
 }
@@ -281,7 +286,7 @@ async fn call(core: &Arc<Core>, asker: Asker, params: &Json, id: &Json, stateles
         match with_progress(&core, route, &asker, &mut progress).await {
             Some(outcome) => {
                 let message = called(&id, &name, outcome, stateless);
-                let _ = progress.messages.send(message).await;
+                let _ = progress.send(message).await;
             }
             // The caller cancelled, or closed the stream: nothing more is
             // sent for this request.
@@ -308,6 +313,15 @@ struct Progress {
 }
 
 impl Progress {
+    /// Sends one message of the stream. `false` when the caller has gone,
+    /// or has read nothing for [`READER_PATIENCE`].
+    async fn send(&self, message: Json) -> bool {
+        matches!(
+            tokio::time::timeout(READER_PATIENCE, self.messages.send(message)).await,
+            Ok(Ok(()))
+        )
+    }
+
     /// Sends one note. `false` when the caller has gone.
     async fn tell(&mut self, text: &str) -> bool {
         self.sent += 1;
@@ -316,7 +330,7 @@ impl Progress {
             "method": "notifications/progress",
             "params": {"progressToken": self.token, "progress": self.sent, "message": text},
         });
-        self.messages.send(note).await.is_ok()
+        self.send(note).await
     }
 
     async fn tell_all(&mut self, notes: Vec<String>) -> bool {

@@ -17,9 +17,9 @@ use axum::body::{Body, BodyDataStream, Bytes};
 use axum::http::{Method, Request, header};
 use serde_json::Value as Json;
 
+use super::Finished;
 use super::parse::{Globals, Step, Tree};
 use super::render;
-use super::{Finished, Host};
 use crate::local::program_version;
 use crate::wire;
 
@@ -31,7 +31,8 @@ pub(crate) const EXIT_UNREACHABLE: u8 = 4;
 const ANSWER_LIMIT: usize = 256 * 1024 * 1024;
 
 /// How long a command waits for an engine that holds the engine lock and
-/// does not answer yet: one that is starting, or one that is closing.
+/// does not answer: a `serve` that is starting or closing, or another
+/// command that runs the engine inside its own process.
 const STARTING_WAIT: Duration = Duration::from_secs(20);
 /// The pause between two looks at the channel during that wait.
 const STARTING_PAUSE: Duration = Duration::from_millis(25);
@@ -40,23 +41,29 @@ const STARTING_PAUSE: Duration = Duration::from_millis(25);
 pub(crate) enum Found {
     /// An engine answers on the local channel.
     Engine(Link),
-    /// No engine runs for this user and data directory.
-    Nothing,
+    /// No engine runs for this user and data directory, and the engine
+    /// lock is now this command's: it holds it for as long as it runs the
+    /// engine inside itself, so that no second engine opens the store.
+    Nothing(EngineLock),
 }
 
 fn unreachable(failure: &Failure) -> bool {
     *failure.code() == local_codes::ENGINE_UNREACHABLE
 }
 
-/// Looks for the local engine. An engine that holds the engine lock and
-/// does not answer is starting or closing, and is waited for; nothing is
-/// started.
+/// Looks for the local engine. When none answers, the engine lock is
+/// taken, in the same step that finds it free, and handed back: nothing
+/// can open the store between the look and the open. An engine that holds
+/// the lock and does not answer is waited for, for a bounded time: a
+/// `serve` that is starting or closing, or another command that runs the
+/// engine inside itself. Nothing is started.
 ///
 /// # Errors
 ///
 /// What `Connector::connect` answers for an engine that cannot be used,
-/// and `busy`/`engine_unreachable` for one that holds the lock and never
-/// answered.
+/// `busy`/`engine_unreachable` for a lock that was held for the whole
+/// wait, and what `EngineLock::take` answers for a lock file that cannot
+/// be opened.
 pub(crate) async fn find(paths: &Paths, label: ClientLabel) -> Result<Found, Failure> {
     let connector = Connector::new(paths, program_version()?, label)?;
     let give_up = tokio::time::Instant::now() + STARTING_WAIT;
@@ -65,23 +72,34 @@ pub(crate) async fn find(paths: &Paths, label: ClientLabel) -> Result<Found, Fai
             Ok(link) => return Ok(Found::Engine(link)),
             Err(failure) if unreachable(&failure) => {
                 let lock_paths = paths.clone();
-                let held = tokio::task::spawn_blocking(move || EngineLock::held(&lock_paths))
+                let taken = tokio::task::spawn_blocking(move || EngineLock::take(&lock_paths))
                     .await
-                    .unwrap_or(Ok(false))?;
-                if !held {
-                    return Ok(Found::Nothing);
+                    .map_err(|_| {
+                        Failure::new(
+                            FailureClass::Busy,
+                            local_codes::CHANNEL_UNAVAILABLE,
+                            "The engine lock could not be taken: the task that took it stopped.",
+                            "Run the command again.",
+                        )
+                    })?;
+                match taken {
+                    Ok(lock) => return Ok(Found::Nothing(lock)),
+                    Err(failure) if *failure.code() != local_codes::ENGINE_RUNNING => {
+                        return Err(failure);
+                    }
+                    Err(_) => {}
                 }
                 if tokio::time::Instant::now() >= give_up {
                     return Err(Failure::new(
                         FailureClass::Busy,
                         local_codes::ENGINE_UNREACHABLE,
-                        "An engine holds this data directory and does not answer on the local channel.",
-                        "Run the command again. If it stays so, stop that engine's process and start it again with `anything2mcp serve`.",
+                        "An engine holds this data directory and does not answer on the local channel: a `serve` that is starting or closing, or another command that runs the engine inside itself.",
+                        "Run the command again once the other command has ended. If it stays so, stop that engine's process and start one with `anything2mcp serve`, which commands then share.",
                     ));
                 }
-                // Not a wait for a fixed time: the channel is looked at
-                // again until it answers, the lock is free, or the time
-                // is up.
+                // Not a wait for a fixed time: the channel and the lock
+                // are looked at again until one of them answers, or the
+                // time is up.
                 tokio::time::sleep(STARTING_PAUSE).await;
             }
             Err(failure) => return Err(failure),
@@ -110,13 +128,42 @@ fn exit_class(word: Option<&str>) -> ExitClass {
     .unwrap_or(ExitClass::Failed)
 }
 
+/// The engine had the request, and its answer cannot be read: the
+/// request is in doubt, as one whose answer was lost.
 fn not_an_answer() -> Failure {
     Failure::new(
-        FailureClass::Transient,
-        local_codes::CONNECTION_LOST,
-        "The engine's answer could not be read.",
-        "Run the command again.",
+        FailureClass::PossibleCommit,
+        local_codes::ANSWER_LOST,
+        "The engine had the request, and its answer could not be read: what it asked may have been done, and a write may have started a run.",
+        "Do not run the command again before you know what became of it: a second run of it may start a second run and write twice. Find it first with `anything2mcp run list`.",
     )
+}
+
+/// What the engine answered, as the response it is. An answer of the
+/// channel itself, which refused the request before any part of the engine
+/// saw it, has its four parts and no `ok`: it becomes the failure it
+/// names. Anything else that is not a response is no answer.
+fn response_of(body: Json) -> Result<Json, Failure> {
+    if body.get("ok").is_some_and(Json::is_boolean) {
+        return Ok(body);
+    }
+    let part = |name: &str| body.get(name).and_then(Json::as_str).map(str::to_owned);
+    match (part("class"), part("code"), part("message"), part("fix")) {
+        (Some(class), Some(code), Some(message), Some(fix)) => Ok(serde_json::json!({
+            "ok": false,
+            "action": "",
+            "error": {
+                "class": class,
+                "code": code,
+                "message": message,
+                "fix": fix,
+                // The channel refuses before anything is dispatched.
+                "retry_safe": true,
+            },
+            "warnings": [],
+        })),
+        _ => Err(not_an_answer()),
+    }
 }
 
 /// Sends one action to its REST route and reads the answer.
@@ -125,7 +172,6 @@ async fn send(
     step: &Step,
     globals: &Globals,
     project: Option<&Path>,
-    person_at_terminal: bool,
 ) -> Result<Answered, Failure> {
     let mut request = Request::builder()
         .method(Method::POST)
@@ -141,9 +187,6 @@ async fn send(
             )
         })?;
         request = request.header(wire::PROJECT_HEADER, folder);
-    }
-    if person_at_terminal {
-        request = request.header(wire::PERSON_HEADER, wire::PERSON_PRESENT);
     }
     if let Some(key) = &globals.idempotency_key {
         request = request.header("idempotency-key", key);
@@ -169,9 +212,7 @@ async fn send(
         .await
         .map_err(|_| not_an_answer())?;
     let body: Json = serde_json::from_slice(&bytes).map_err(|_| not_an_answer())?;
-    if !body.is_object() {
-        return Err(not_an_answer());
-    }
+    let body = response_of(body)?;
     Ok(Answered { body, exit })
 }
 
@@ -197,12 +238,11 @@ pub(crate) async fn run_steps(
     globals: &Globals,
     steps: Vec<Step>,
     json: bool,
-    host: &Host,
     project: Option<&Path>,
 ) -> Finished {
     let mut last = None;
     for step in steps {
-        match send(link, &step, globals, project, host.person_at_terminal).await {
+        match send(link, &step, globals, project).await {
             Ok(answered) => {
                 let go_on = answered.exit == ExitClass::Succeeded;
                 last = Some(answered);

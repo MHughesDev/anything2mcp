@@ -36,7 +36,7 @@ async function fakeEngine({ localApi = "1", dir = scratch(), mode = 0o700 } = {}
   const address = WINDOWS
     ? `\\\\.\\pipe\\a2m-test-${process.pid}-${crypto.randomBytes(6).toString("hex")}`
     : path.join(runtime, "engine.sock");
-  const fake = { dir, address, requests: [], connections: 0, answers: new Map(), sockets: new Set() };
+  const fake = { dir, address, requests: [], connections: 0, answers: new Map(), sockets: new Set(), drops: new Set(), silent: new Set() };
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
@@ -59,6 +59,14 @@ async function fakeEngine({ localApi = "1", dir = scratch(), mode = 0o700 } = {}
         return;
       }
       const action = request.url.replace("/api/v1/actions/", "");
+      if (fake.drops.has(action)) {
+        // Takes the request, then goes away without an answer, as an
+        // engine that stops does.
+        request.socket.destroy();
+        return;
+      }
+      // Takes the request and is still carrying it out: no answer yet.
+      if (fake.silent.has(action)) return;
       const [status, answer, exitClass] = fake.answers.get(action) || [
         200,
         { ok: true, action, result: { echoed: body ? JSON.parse(body) : null }, warnings: [] },
@@ -162,15 +170,55 @@ test("an unreadable answer is a named failure", async (t) => {
   engine.answers.set("engine.status", [200, "not an object", "succeeded"]);
   const c = await client.connectTo(engine.address);
   t.after(() => c.close());
-  await assert.rejects(c.engineStatus(), (error) => error.code === "connection_lost");
+  await assert.rejects(c.engineStatus(), (error) => error.code === "answer_lost" && error.retrySafe === false);
+});
+
+test("a call whose answer is lost after the engine took it is not safe to make again", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
+  engine.drops.add("tool.call");
+  const c = await client.connectTo(engine.address);
+  t.after(() => c.close());
+  await assert.rejects(c.toolCall({ tool: "example_order_update", input: {} }), (error) => {
+    assert.strictEqual(error.code, "answer_lost");
+    assert.strictEqual(error.retrySafe, false);
+    assert.ok(error.fix.startsWith("Do not make the call again"), error.fix);
+    assert.ok(!error.fix.includes("Run it again"), error.fix);
+    return true;
+  });
+  assert.strictEqual(engine.requests.at(-1).url, "/api/v1/actions/tool.call");
+  // The client's own timeout leaves the call in doubt too: the engine may
+  // still be carrying it out.
+  engine.drops.clear();
+  engine.silent.add("tool.call");
+  const slow = await client.connectTo(engine.address, { timeout: 200 });
+  t.after(() => slow.close());
+  await assert.rejects(
+    slow.toolCall({ tool: "example_order_update", input: {} }),
+    (error) => error.code === "answer_lost" && error.retrySafe === false,
+  );
+});
+
+test("an action's name that is not noun.verb is refused before anything is sent", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
+  const c = await client.connectTo(engine.address);
+  t.after(() => c.close());
+  const sent = engine.requests.length;
+  for (const name of ["../local/hello", "tool.call?x=1", "tool.call#x", "tool%2Ecall", "Tool.Call", "tool", 7]) {
+    await assert.rejects(c.call(name), TypeError);
+  }
+  assert.strictEqual(engine.requests.length, sent);
 });
 
 test("a lost connection is named, and the client does not reconnect without a hello", async (t) => {
   const engine = await fakeEngine();
   t.after(() => engine.stop());
   const c = await client.connectTo(engine.address);
+  const closed = new Promise((resolve) => c._socket.once("close", resolve));
   for (const socket of engine.sockets) socket.destroy();
-  await assert.rejects(c.engineStatus(), (error) => error.code === "connection_lost");
+  await closed;
+  await assert.rejects(c.engineStatus(), (error) => error.code === "connection_lost" && error.retrySafe === true);
   await assert.rejects(c.engineStatus(), (error) => error.code === "connection_lost");
   assert.strictEqual(engine.connections, 1);
 });

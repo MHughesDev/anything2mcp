@@ -10,6 +10,7 @@
     reason = "each test binary uses some of these helpers and not others; a helper that cannot do its work stops the test"
 )]
 
+pub mod browser;
 pub mod proxy;
 pub mod service;
 

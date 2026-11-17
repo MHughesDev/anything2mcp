@@ -250,7 +250,11 @@ fn page(status: StatusCode, html: String) -> Response {
             (header::CONTENT_SECURITY_POLICY, fixed(CONTENT_POLICY)),
             (header::X_FRAME_OPTIONS, fixed("DENY")),
             (header::X_CONTENT_TYPE_OPTIONS, fixed("nosniff")),
-            (header::REFERRER_POLICY, fixed("no-referrer")),
+            // Not `no-referrer`: under it a browser sends `Origin: null` on
+            // the page's own form post, which the guard refuses, so no real
+            // press could work. `same-origin` keeps the page's origin on a
+            // press and sends nothing to any other origin.
+            (header::REFERRER_POLICY, fixed("same-origin")),
         ],
         html,
     )
@@ -703,6 +707,14 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             pressed.deadline,
         )
         .await;
+    // The window is the surface's own to keep: an answer that comes back
+    // after it closed is a dismissal, whatever the prompt said, so that no
+    // approval is recorded late by a prompt that did not keep its deadline.
+    let asked = if Instant::now() >= pressed.deadline {
+        PromptAnswer::Dismissed
+    } else {
+        asked
+    };
     let (check, named, how) = match asked {
         PromptAnswer::Present(prompt) => (
             recorded_check(prompt),
@@ -1050,6 +1062,17 @@ impl PersonSurface for LocalSurface {
                     "Answer or close that prompt, then run the command again.",
                 ));
             };
+            // A prompt that no page asked for is not raised while a page
+            // waits for its person: on a system whose dialog shows fixed
+            // text, the person reading that page would take it for theirs.
+            if self.waiting() > 0 {
+                return Err(codes::busy(
+                    codes::PROMPT_BUSY,
+                    "An approval page waits for its person on this machine, and no other presence prompt is raised meanwhile.",
+                    "Answer or let that page close, then run the command again.",
+                ));
+            }
+            let deadline = Instant::now() + self.inner.window;
             let answer = self
                 .inner
                 .prompt
@@ -1059,9 +1082,15 @@ impl PersonSurface for LocalSurface {
                         detail: ask.summary,
                     },
                     // A prompt nobody answers ends as an approval's does.
-                    Instant::now() + self.inner.window,
+                    deadline,
                 )
                 .await;
+            // An answer after the window is a dismissal, whatever it says.
+            let answer = if Instant::now() >= deadline {
+                PromptAnswer::Dismissed
+            } else {
+                answer
+            };
             match answer {
                 PromptAnswer::Present(prompt) => Ok(PresenceProof::new(
                     recorded_check(prompt),

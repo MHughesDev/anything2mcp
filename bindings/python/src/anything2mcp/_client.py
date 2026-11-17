@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,30 @@ _HELLO_PATH = "/local/hello"
 _EXIT_CLASS_HEADER = "a2m-exit-class"
 _PROJECT_HEADER = "a2m-project"
 _EXIT_CLASSES = ("succeeded", "failed", "malformed", "person_needed")
+#: The form of an action's name, ``noun.verb``. Nothing else goes into a
+#: request's path: no input may change where a request goes.
+_ACTION_NAME = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\Z")
+
+
+def _closed() -> ChannelError:
+    """The connection is closed and nothing was sent."""
+    return ChannelError(
+        "connection_lost",
+        "The connection to the engine is closed, so nothing was sent.",
+        "Connect again with `anything2mcp.connect()`, then make the call again.",
+    )
+
+
+def _answer_lost(why: str) -> ChannelError:
+    """The request may have reached the engine, and its answer is lost."""
+    return ChannelError(
+        "answer_lost",
+        f"{why} The engine may have had the call: it may have started a run, and that run may have written.",
+        "Do not make the call again: a second call may start a second run and write twice. "
+        "Find this call's run first in your recent runs (`run.list`), or tell the person that the "
+        "answer was lost so that they can check.",
+        retry_safe=False,
+    )
 
 
 def _version() -> str:
@@ -126,7 +151,7 @@ class Client(Actions):
             },
         )
         answer = self._connection.getresponse()
-        body = self._read(answer)
+        body = self._read(answer, lost=lambda why: ChannelError("connection_lost", why, "Connect again."))
         if answer.status != 200:
             error = body.get("error") or {}
             raise ChannelError(
@@ -137,18 +162,21 @@ class Client(Actions):
         return str(body.get("engine_version", ""))
 
     @staticmethod
-    def _read(answer: http.client.HTTPResponse) -> Dict[str, Any]:
-        raw = answer.read(ANSWER_LIMIT + 1)
+    def _read(answer: http.client.HTTPResponse, lost: Any = _answer_lost) -> Dict[str, Any]:
+        """The answer's body as one JSON object. ``lost`` makes the error
+        for an answer that breaks off, runs too long, or is not one."""
+        try:
+            raw = answer.read(ANSWER_LIMIT + 1)
+        except (OSError, http.client.HTTPException):
+            raise lost("The engine's answer broke off.") from None
         if len(raw) > ANSWER_LIMIT:
-            raise ChannelError("connection_lost", "The engine's answer was too long.", "Run it again.")
+            raise lost("The engine's answer was too long.")
         try:
             body = json.loads(raw)
         except ValueError:
             body = None
         if not isinstance(body, dict):
-            raise ChannelError(
-                "connection_lost", "The engine's answer could not be read.", "Run it again."
-            )
+            raise lost("The engine's answer could not be read.")
         return body
 
     def call(
@@ -161,7 +189,15 @@ class Client(Actions):
         """Sends one action, such as ``"engine.status"`` or ``"tool.call"``,
         with its input, and returns the engine's response, success or not.
         Raises :class:`ChannelError` only when the engine was not reached or
-        its answer could not be read."""
+        its answer could not be read. Once the request may have reached the
+        engine, a lost answer is ``answer_lost`` with ``retry_safe`` false:
+        the call may have started a run that writes.
+
+        ``idempotency_key`` is sent as the ``Idempotency-Key`` header. The
+        engine does not yet tie a second call with the same key to the
+        first one's run, so it does not make a repeated call safe."""
+        if not isinstance(action, str) or not _ACTION_NAME.match(action):
+            raise ValueError("An action's name is `noun.verb`, in lowercase letters, digits, and underscores.")
         headers = {"content-type": "application/json"}
         if self._project is not None:
             headers[_PROJECT_HEADER] = _encode_path(self._project)
@@ -172,12 +208,24 @@ class Client(Actions):
             self._connection.request(
                 "POST", f"{REST_PREFIX}/actions/{action}", body=payload, headers=headers
             )
-            answer = self._connection.getresponse()
+        except (http.client.NotConnected, http.client.ImproperConnectionState):
+            # Raised before a byte is written: the connection had closed,
+            # or an earlier answer on it was lost.
+            self._connection.close()
+            raise _closed() from None
         except (OSError, http.client.HTTPException) as lost:
-            raise ChannelError(
-                "connection_lost", "The connection to the engine was lost.", "Run it again."
-            ) from lost
-        body = self._read(answer)
+            # Some of the request may have been written.
+            self._connection.close()
+            raise _answer_lost("The connection to the engine was lost while the call was sent.") from lost
+        try:
+            answer = self._connection.getresponse()
+            body = self._read(answer)
+        except (OSError, http.client.HTTPException) as lost:
+            self._connection.close()
+            raise _answer_lost("The connection to the engine was lost before it answered.") from lost
+        except ChannelError:
+            self._connection.close()
+            raise
         return Response.of(body, answer.getheader(_EXIT_CLASS_HEADER))
 
     def close(self) -> None:

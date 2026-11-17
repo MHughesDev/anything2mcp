@@ -26,13 +26,18 @@ SOCKET_NAME = "engine.sock"
 
 
 class ChannelError(Exception):
-    """The engine could not be reached. ``code`` is the engine's failure code."""
+    """The engine could not be reached, or its answer was lost. ``code`` is
+    the failure code. ``retry_safe`` is true when nothing was sent, so the
+    call may be made again. It is false for ``answer_lost``: the engine may
+    have had the call, which may have started a run that writes, and a
+    second call may write a second time."""
 
-    def __init__(self, code: str, message: str, fix: str) -> None:
+    def __init__(self, code: str, message: str, fix: str, retry_safe: bool = True) -> None:
         super().__init__(f"{message} {fix}")
         self.code = code
         self.message = message
         self.fix = fix
+        self.retry_safe = retry_safe
 
 
 def _dir(env: Mapping[str, str], name: str) -> Optional[Path]:
@@ -120,13 +125,22 @@ def check_owner(path: Path) -> None:
 
 class UnixConnection(http.client.HTTPConnection):
     """HTTP/1.1 over a Unix domain socket. The host name is only what the
-    ``Host`` header says; nothing is looked up."""
+    ``Host`` header says; nothing is looked up.
+
+    It opens once: ``http.client`` would reconnect behind the caller's back
+    once the socket was closed, with no owner check and no hello. A request
+    on a closed connection raises ``NotConnected`` before anything is
+    sent."""
 
     def __init__(self, path: Path, timeout: Optional[float] = None) -> None:
         super().__init__("localhost", timeout=timeout)
         self._path = str(path)
+        self._opened = False
 
     def connect(self) -> None:
+        if self._opened:
+            raise http.client.NotConnected()
+        self._opened = True
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)  # type: ignore[attr-defined, unused-ignore]
         try:
             if self.timeout is not None:

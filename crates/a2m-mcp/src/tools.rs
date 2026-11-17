@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use a2m_actions::{
-    BuiltInToolset, Caller, ErrorBody, Kernel, McpResultFace, ProjectFolder, Request, Response,
-    RunEvents, ToolAnnotationsFace, mcp_tools,
+    BuiltInToolset, Caller, ErrorBody, Followed, Kernel, McpResultFace, ProjectFolder, Request,
+    Response, RunEvents, ToolAnnotationsFace, mcp_tools,
 };
 use a2m_core::{FailureClass, OperationName, RunId, RunState};
 use a2m_policy::ToolsetName;
@@ -42,13 +42,6 @@ const DEFAULT_WAIT: u64 = 60;
 const LONGEST_WAIT: u64 = 600;
 /// How many of a run's events one read asks for.
 const EVENTS: u32 = 50;
-/// How long the first look lasts for a run whose state rests while its job
-/// is still in a runner's hands, and the longest such a look grows to. The
-/// record that the job has ended appends no event, so the kernel's wait
-/// for the next event does not end on it; the run is looked at again
-/// after this long, twice as long each time.
-const SETTLE_FIRST: Duration = Duration::from_millis(20);
-const SETTLE_LONGEST: Duration = Duration::from_secs(2);
 
 /// The key of the warnings in a result's `_meta`.
 pub(crate) const WARNINGS_KEY: &str = "anything2mcp/warnings";
@@ -149,7 +142,8 @@ pub(crate) enum Stand {
     Working,
     /// Its state is a resting one, and the job that brought it there is
     /// still in a runner's hands: it rests as soon as that job is recorded
-    /// as ended.
+    /// as ended, which the kernel's wait tells at once because the
+    /// follower says it last saw the run unsettled.
     Settling,
     /// It rests or has stopped, and nothing happens until someone acts.
     Rests,
@@ -163,13 +157,12 @@ pub(crate) enum Stand {
 #[derive(Debug)]
 pub(crate) struct Following {
     run: RunId,
-    /// The number of the last event read.
-    after: u64,
+    /// What was last read of the run: the number of its last event, and
+    /// whether it was settled then.
+    seen: Followed,
     /// When the wait the caller asked for is over.
     until: Instant,
     pub(crate) stand: Stand,
-    /// How long the next look lasts while the run is settling.
-    settle: Duration,
     verified: u64,
     failed: u64,
     /// What the call that started the run answered: the answer, should
@@ -178,13 +171,12 @@ pub(crate) struct Following {
 }
 
 impl Following {
-    fn new(run: RunId, after: u64, wait: Duration) -> Self {
+    fn new(run: RunId, seen: Followed, wait: Duration) -> Self {
         Self {
             run,
-            after,
+            seen,
             until: Instant::now() + wait,
             stand: Stand::Working,
-            settle: SETTLE_FIRST,
             verified: 0,
             failed: 0,
             started: None,
@@ -426,12 +418,20 @@ impl Core {
                 if !active(state) {
                     return None;
                 }
-                // The events the answer already counted are not told again.
-                Some((run, result["events"].as_u64().unwrap_or(0)))
+                // The events the answer already counted are not told again,
+                // and the run was being worked on when it answered.
+                let after = result["events"].as_u64().unwrap_or(0);
+                Some((
+                    run,
+                    Followed {
+                        after,
+                        settled: Some(false),
+                    },
+                ))
             });
         match (run, called) {
-            (Some((run, after)), Called::Answered(started)) => {
-                let mut following = Following::new(run, after, wait);
+            (Some((run, seen)), Called::Answered(started)) => {
+                let mut following = Following::new(run, seen, wait);
                 following.started = Some(started);
                 Ok(following)
             }
@@ -442,46 +442,40 @@ impl Core {
     /// The run a call continues, to be followed from its last event on, or
     /// `None` when the caller started no such run.
     pub(crate) async fn resume_from(&self, run: RunId, asker: &Asker) -> Option<Following> {
-        let mut after = 0;
+        let mut seen = Followed::default();
         loop {
             let page = self
                 .kernel
                 .events(
                     &asker.caller.principal,
                     run,
-                    after,
+                    seen.after,
                     a2m_actions::EVENTS_PAGE,
                 )
                 .await
                 .ok()?;
             let full = page.events.len() >= a2m_actions::EVENTS_PAGE as usize;
-            after = page.last;
+            seen = page.followed();
             if !full {
                 break;
             }
         }
-        Some(Following::new(
-            run,
-            after,
-            Duration::from_secs(LONGEST_WAIT),
-        ))
+        Some(Following::new(run, seen, Duration::from_secs(LONGEST_WAIT)))
     }
 
     /// Waits for the followed run to say something, and returns what to
     /// tell the caller about it. It waits on the kernel's notice that a
-    /// run changed. It only reads, so it may be dropped at any moment.
+    /// run changed, from what was last read of the run, so that a run that
+    /// came to rest since is told at once. It only reads, so it may be
+    /// dropped at any moment.
     pub(crate) async fn follow(&self, following: &mut Following, asker: &Asker) -> Vec<String> {
-        let mut wait = following.until.saturating_duration_since(Instant::now());
-        if following.stand == Stand::Settling {
-            wait = wait.min(following.settle);
-            following.settle = (following.settle * 2).min(SETTLE_LONGEST);
-        }
+        let wait = following.until.saturating_duration_since(Instant::now());
         let page = self
             .kernel
-            .next_events(
+            .next_events_from(
                 &asker.caller.principal,
                 following.run,
-                following.after,
+                following.seen,
                 EVENTS,
                 wait,
             )
@@ -490,7 +484,7 @@ impl Core {
             following.stand = Stand::Lost;
             return Vec::new();
         };
-        following.after = page.last;
+        following.seen = page.followed();
         following.stand = if page.ended {
             Stand::Ended
         } else if page.settled() {
@@ -500,9 +494,6 @@ impl Core {
         } else {
             Stand::Settling
         };
-        if following.stand != Stand::Settling || !page.events.is_empty() {
-            following.settle = SETTLE_FIRST;
-        }
         following.notes(&page)
     }
 
@@ -548,7 +539,11 @@ impl Core {
         {
             return Called::Unknown(Some(error.clone()));
         }
-        Called::Answered(Box::new(render(response)))
+        Called::Answered(Box::new(render(
+            response,
+            self.kernel.actions(),
+            self.builtin,
+        )))
     }
 }
 
@@ -557,14 +552,20 @@ impl Core {
 /// output schema admits (spec section 221). Its warnings go into the
 /// result's `_meta`, because the output schemas take no other key. A
 /// failure carries its class, code, message, and next step, and nothing
-/// else.
-fn render(response: &Response) -> Rendered {
+/// else. A `next` whose tool this toolset does not list names
+/// `a2m_action_run` with the action, so that a caller is never pointed at
+/// a tool its list does not hold.
+fn render(
+    response: &Response,
+    registry: &a2m_actions::ActionRegistry,
+    toolset: BuiltInToolset,
+) -> Rendered {
     let mut meta = Map::new();
     if response.error.is_none() && !response.warnings.is_empty() {
         meta.insert(WARNINGS_KEY.to_owned(), json!(response.warnings));
     }
     Rendered {
-        face: McpResultFace::of(response),
+        face: McpResultFace::of_in(response, registry, toolset),
         meta,
     }
 }
@@ -626,5 +627,45 @@ fn answered(response: Response) -> Result<Json, ErrorBody> {
     match (response.error, response.result) {
         (Some(error), _) => Err(error),
         (None, result) => Ok(result.unwrap_or(Json::Null)),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod tests {
+    use a2m_actions::{ActionRegistry, BuiltInToolset, ExitClass, Next, Response};
+    use serde_json::json;
+
+    use super::render;
+
+    #[test]
+    fn a_next_step_names_a_tool_the_callers_toolset_lists() {
+        let registry = ActionRegistry::kernel_only();
+        let answer = |action: &str| Response {
+            ok: true,
+            action: "tool.call".to_owned(),
+            result: Some(json!({"run_id": "r_1", "status": "failed"})),
+            error: None,
+            warnings: Vec::new(),
+            next: Some(Next::new(
+                action,
+                json!({"run_id": "r_1"}),
+                "to see what happened",
+            )),
+            exit: ExitClass::Failed,
+            decision: None,
+        };
+        // `trace.show` is not on the `use` list: it is reached through
+        // `a2m_action_run`.
+        let rendered = render(&answer("trace.show"), &registry, BuiltInToolset::Use);
+        let next = &rendered.face.structured.unwrap()["next"];
+        assert_eq!(next["tool"], "a2m_action_run", "{next}");
+        assert_eq!(next["args"]["action"], "trace.show", "{next}");
+        // `run.get` is, and is named as itself.
+        let rendered = render(&answer("run.get"), &registry, BuiltInToolset::Use);
+        assert_eq!(
+            rendered.face.structured.unwrap()["next"]["tool"],
+            "a2m_run_get"
+        );
     }
 }

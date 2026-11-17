@@ -46,4 +46,63 @@ function binaryInPackage(packageDir, platform = process.platform) {
   return path.join(packageDir, "bin", binaryName(platform));
 }
 
-module.exports = { PLATFORMS, platformKey, binaryName, binaryInPackage, isMusl };
+// The folders a package manager puts the launcher's own dependency in, and
+// no other: inside the launcher's package, as npm does when it nests one,
+// and beside it in the `node_modules` folder that holds it, as npm, Yarn,
+// and pnpm do when they hoist one. Node's own resolution would go on to the
+// `node_modules` of every folder above, `NODE_PATH`, and the global
+// folders, where a package of the same name may be anybody's.
+function candidateDirs(launcherRoot, name) {
+  const dirs = [path.join(launcherRoot, "node_modules", ...name.split("/"))];
+  const holder = path.dirname(launcherRoot);
+  if (path.basename(holder) === "node_modules") {
+    dirs.push(path.join(holder, ...name.split("/")));
+  }
+  return dirs;
+}
+
+// Finds the platform package that belongs to this launcher. Returns
+// `{ dir, binary }`, or `{ missing: true }` when none is installed where the
+// launcher's own dependencies go, or `{ refused: reason }` for a package
+// that is there and is not this launcher's: another name, another version,
+// or a program that lies outside the package. `resolve` is Node's
+// resolution, used only under Yarn's Plug'n'Play, which resolves a package
+// from the launcher's declared dependencies alone.
+function findPlatformPackage(launcherRoot, platform, version, { pnp = false, resolve, system = process.platform } = {}) {
+  let dirs = candidateDirs(launcherRoot, platform.name);
+  if (pnp && typeof resolve === "function") {
+    try {
+      dirs = [path.dirname(resolve(`${platform.name}/package.json`))];
+    } catch {
+      dirs = [];
+    }
+  }
+  const dir = dirs.find((candidate) => fs.existsSync(path.join(candidate, "package.json")));
+  if (dir === undefined) return { missing: true };
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  } catch {
+    return { refused: `the package at ${dir} has no readable package.json` };
+  }
+  if (manifest.name !== platform.name || manifest.version !== version) {
+    return {
+      refused: `the package at ${dir} is ${manifest.name}@${manifest.version}, and this launcher needs ${platform.name}@${version}`,
+    };
+  }
+  const binary = binaryInPackage(dir, system);
+  let real;
+  let home;
+  try {
+    real = fs.realpathSync(binary);
+    home = fs.realpathSync(dir);
+  } catch {
+    return { refused: `the package ${platform.name} holds no program at ${binary}` };
+  }
+  if (!real.startsWith(home + path.sep) || !fs.statSync(real).isFile()) {
+    return { refused: `the program at ${binary} lies outside the package ${platform.name}` };
+  }
+  return { dir, binary: real };
+}
+
+module.exports = { PLATFORMS, platformKey, binaryName, binaryInPackage, candidateDirs, findPlatformPackage, isMusl };

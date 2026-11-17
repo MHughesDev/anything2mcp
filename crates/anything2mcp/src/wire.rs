@@ -1,9 +1,11 @@
 //! What a command and the local engine agree on beyond the REST interface:
-//! two request headers that only the local channel carries. Both ends are
-//! in this crate, so the names and the encoding are written once, here.
+//! one request header that only the local channel carries. Both ends are
+//! in this crate, so the name and the encoding are written once, here.
 //!
-//! Neither header is read from anything but the local channel, whose
-//! other end is a process of the engine's own user.
+//! The header is read from nothing but the local channel, whose other end
+//! is a process of the engine's own user. No header says whether a person
+//! is at the caller's terminal: nothing a caller says of itself makes it a
+//! person (decision 0158).
 
 use std::path::{Path, PathBuf};
 
@@ -11,15 +13,6 @@ use std::path::{Path, PathBuf};
 /// in, percent-encoded. The engine's handlers check the folder before any
 /// use.
 pub(crate) const PROJECT_HEADER: &str = "a2m-project";
-
-/// The request header by which the command line says that a person is at
-/// the terminal it was started at. Without it a caller is taken to be an
-/// agent. It stops a mistake and is not a security boundary: a person's
-/// act is proven by the presence prompt, never by this.
-pub(crate) const PERSON_HEADER: &str = "a2m-person-at-terminal";
-
-/// The one value [`PERSON_HEADER`] is read with.
-pub(crate) const PERSON_PRESENT: &str = "true";
 
 fn plain(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/')

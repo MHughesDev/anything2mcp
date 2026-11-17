@@ -308,7 +308,8 @@ impl Tree {
                         format!(
                             "The shortcut `{}` takes one argument and no flag, and `{}` was given.",
                             shortcut.word,
-                            shown(&flag)
+                            // The flag's name, never a value written into it.
+                            shown(flag.split('=').next().unwrap_or_default())
                         ),
                         format!("Run `{PROGRAM} {} --help`.", shortcut.word),
                     ));
@@ -534,14 +535,15 @@ fn tokens(rest: &[String]) -> (Vec<String>, Option<String>) {
     (positional, flag)
 }
 
-/// One argument's written value as the JSON its type asks for.
+/// One argument's written value as the JSON its type asks for. A value
+/// that does not fit is never quoted back: it may be a secret written in
+/// the wrong place, and an error message is kept in logs.
 fn value_of(arg: &CommandArg, written: &str) -> Result<Json, Failure> {
     let wrong = |what: &str| {
         malformed(
             format!(
-                "`{}` takes {what}, and `{}` was given.",
+                "`{}` takes {what}, and the value given is not one.",
                 shown_name(arg),
-                shown(written)
             ),
             format!("Write {what}."),
         )
@@ -612,12 +614,12 @@ fn parse_args(
         }
         if literal || !word.starts_with("--") {
             let Some(arg) = positional else {
+                // The word is not quoted: it may be a secret written in the
+                // wrong place.
                 return Err(malformed(
                     format!(
-                        "`{} {}` takes no argument without a flag, and `{}` was given.",
-                        face.noun,
-                        face.verb,
-                        shown(word)
+                        "`{} {}` takes no argument without a flag, and one was given.",
+                        face.noun, face.verb,
                     ),
                     usage(),
                 ));
@@ -625,10 +627,8 @@ fn parse_args(
             if given_positional {
                 return Err(malformed(
                     format!(
-                        "`{} {}` takes one argument without a flag, and a second, `{}`, was given.",
-                        face.noun,
-                        face.verb,
-                        shown(word)
+                        "`{} {}` takes one argument without a flag, and a second was given.",
+                        face.noun, face.verb,
                     ),
                     usage(),
                 ));
@@ -813,6 +813,20 @@ mod tests {
         assert!(refused.message().contains("--value"));
         assert!(!refused.message().contains(given));
         assert!(!refused.next_step().contains(given));
+
+        // A secret written in the wrong place is not quoted back either: as
+        // a second word, as the value of the flag that takes none, or as a
+        // value of the wrong type.
+        for line in [
+            &["secret", "set", "example_name", given][..],
+            &["secret", "set", "example_name", &format!("--stdin={given}")][..],
+            &["run", "list", &format!("--limit={given}")][..],
+        ] {
+            let refused = tree.parse(&words(line)).unwrap_err();
+            assert_eq!(refused.code().as_str(), "schema_invalid", "{line:?}");
+            assert!(!refused.message().contains(given), "{refused:?}");
+            assert!(!refused.next_step().contains(given), "{refused:?}");
+        }
     }
 
     #[test]
