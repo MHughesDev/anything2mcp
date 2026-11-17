@@ -20,8 +20,10 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+# The unix rules are written with "/" paths; on a Windows host they are PurePosixPath.
+UnixPath = PurePosixPath if os.name == "nt" else Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 
@@ -252,23 +254,23 @@ class PlaceTests(unittest.TestCase):
         linux = {"HOME": "/home/pat"}
         self.assertEqual(
             _channel.socket_path(linux, "linux"),
-            Path("/home/pat/.local/share/anything2mcp/run/engine.sock"),
+            UnixPath("/home/pat/.local/share/anything2mcp/run/engine.sock"),
         )
         self.assertEqual(
             _channel.socket_path({**linux, "XDG_RUNTIME_DIR": "/run/user/1000"}, "linux"),
-            Path("/run/user/1000/anything2mcp/engine.sock"),
+            UnixPath("/run/user/1000/anything2mcp/engine.sock"),
         )
         self.assertEqual(
             _channel.socket_path({**linux, "XDG_RUNTIME_DIR": "relative"}, "linux"),
-            Path("/home/pat/.local/share/anything2mcp/run/engine.sock"),
+            UnixPath("/home/pat/.local/share/anything2mcp/run/engine.sock"),
         )
         self.assertEqual(
             _channel.socket_path({"HOME": "/Users/pat", "TMPDIR": "/var/folders/x/T"}, "darwin"),
-            Path("/var/folders/x/T/anything2mcp/engine.sock"),
+            UnixPath("/var/folders/x/T/anything2mcp/engine.sock"),
         )
         self.assertEqual(
             _channel.socket_path({"A2M_HOME": "/srv/a2m", "HOME": "/ignored"}, "linux"),
-            Path("/srv/a2m/run/engine.sock"),
+            UnixPath("/srv/a2m/run/engine.sock"),
         )
         with self.assertRaises(anything2mcp.ChannelError):
             _channel.socket_path({"A2M_HOME": "relative"}, "linux")

@@ -17,7 +17,7 @@ import os
 import socket
 import stat
 import sys
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Mapping, Optional
 
 APP_FOLDER = "anything2mcp"
@@ -40,11 +40,18 @@ class ChannelError(Exception):
         self.retry_safe = retry_safe
 
 
+# The rules for macOS and Linux are written with "/" paths. On a Windows host,
+# `Path("/home/pat")` has no drive and is not absolute, so a test of those
+# rules there (the platform is a parameter) needs the POSIX flavour. On a
+# Unix host this is the concrete `Path`, which can be stat-ed and connected to.
+_UnixPath = PurePosixPath if os.name == "nt" else Path
+
+
 def _dir(env: Mapping[str, str], name: str) -> Optional[Path]:
     value = env.get(name, "")
     if not value:
         return None
-    path = Path(value)
+    path = _UnixPath(value)
     return path if path.is_absolute() else None
 
 
@@ -54,13 +61,17 @@ def runtime_dir(env: Optional[Mapping[str, str]] = None, platform: Optional[str]
     platform = sys.platform if platform is None else platform
     home = env.get(HOME_VARIABLE, "")
     if home:
-        if not Path(home).is_absolute():
+        if platform.startswith("win"):
+            home_path: PurePosixPath | Path = Path(home)
+        else:
+            home_path = _UnixPath(home)
+        if not home_path.is_absolute():
             raise ChannelError(
                 "path_not_allowed",
                 f"`{HOME_VARIABLE}` is not an absolute path.",
                 f"Set `{HOME_VARIABLE}` to the full path of a directory.",
             )
-        return Path(home) / "run"
+        return home_path / "run"
     if platform.startswith("win"):
         # Shown for the user's information; the pipe's name is made from the
         # text of this path, in `_winpipe`, and not from this object.
