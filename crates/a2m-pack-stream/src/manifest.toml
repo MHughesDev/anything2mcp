@@ -241,6 +241,14 @@ max = 100
 doc = "How many messages of one channel a discovery looks at, without taking any, to learn the shape of its messages."
 
 [[settings]]
+key = "message_ceiling_bytes"
+type = "int"
+default = 8388608
+min = 1024
+max = 67108864
+doc = "The largest message, in bytes, the pack reads from or sends to a broker, whatever the broker states as its own limit. A larger one stops by name before anything is set aside for it."
+
+[[settings]]
 key = "idle_links"
 type = "int"
 default = 2

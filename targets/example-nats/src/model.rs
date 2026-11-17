@@ -248,6 +248,13 @@ pub enum Fault {
     UnknownLine,
     /// Hand over one message more than a pull asked for.
     DeliverExtra,
+    /// Store a publish, then send `-ERR 'User Authentication Expired'` and
+    /// close the connection before the acknowledgement: the server's timer
+    /// on a credential that expires fires while the publish is in flight.
+    ExpireAuthAfterStore,
+    /// Carry out an acknowledgement, then send `-ERR 'User Authentication
+    /// Expired'` and close the connection before its answer.
+    ExpireAuthAfterAck,
 }
 
 /// One consumer, as the control interface reports it.

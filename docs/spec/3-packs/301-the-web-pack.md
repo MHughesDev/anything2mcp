@@ -272,7 +272,7 @@ Other ways of signing in to a web application, such as a token from the operatin
 | `web_endpoints` | `endpoints.infer` | Stored exchange findings, not the page | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
 | `web_declared` | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
 
-Screen matching, in `a2m-pack-web-ui`, sets a stored snapshot finding against the target's screen models. It reads findings, not the page. The describer shows an agent snapshots in the text form of the [steps reference](../../reference/steps-snapshots-and-diffs.md#snapshots), captures as exchanges by step, and endpoints as method, template, and shapes, with every string from the target marked untrusted.
+Screen matching, in `a2m-pack-web-ui`, sets a stored snapshot finding against the target's screen models. It reads findings, not the page. As built, the first half of it is in `web_snapshot`: pages of one discovery whose paths differ in exactly one segment and whose snapshots give the same named tables, headings, and labelled values are given as one `screen` finding whose path holds that segment as a placeholder, naming the pages it was seen on ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). The describer shows an agent snapshots in the text form of the [steps reference](../../reference/steps-snapshots-and-diffs.md#snapshots), captures as exchanges by step, and endpoints as method, template, and shapes, with every string from the target marked untrusted.
 
 Hitting a bound is not a failure. It is a limitation on the findings, `truncated` or `time_limit`, and the report names it. Two scouts of the same application in the same state give the same findings.
 
@@ -362,12 +362,12 @@ Codes are stable once released.
 
 | From a finding of kind | The drafter writes | Left as an open question |
 | --- | --- | --- |
-| `screen`, from a snapshot | For each table the page names and the snapshot can tell apart: a screen model with `reach` the observed path, `ready` the table showing, and `rows` located by the table's role and name and read by its headings, each column `untrusted_text`; and a `list` read over it. Placeholders in `reach` wait for screen matching | What the screen is for; its name beyond the mechanical one; two tables of one name |
+| `screen`, from a snapshot | For each table the page names and the snapshot can tell apart: a screen model with `reach` the observed path, `ready` the table showing, and `rows` located by the table's role and name and read by its headings, each column `untrusted_text`; and a `list` read over it. For the values the page labels (a definition labelled by a term of the same name): a screen whose fields locate each by the role `definition` and its label, and a `get` read of them as `untrusted_text`. A finding the discoverer matched from several pages has a placeholder in its path, which is each read's input and key | What the screen is for; its name beyond the mechanical one; two tables of one name; a label two terms share, apart from the read of the others |
 | `field`, from a snapshot | A field: `control` from the role by a fixed table (textbox to `text`, combobox to `combobox`, checkbox to `checkbox`); `locate` as role and name, then label; `fingerprint` from the nearest heading or section | Its field type. A field type is meaning, so the draft does not compile until it is settled |
 | `action`, from a snapshot | Nothing | Every action, and whether it commits |
 | A tool a page registers, marked read-only by the page | A `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
 
-As built, only the `screen` row is drafted, and only for tables; fields, actions, and registered tools are not ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)). Endpoint findings are drafted by the HTTP pack's rule. Whether drafts by rule save work is hypothesis H-31.
+As built, only the `screen` row is drafted, for tables and labelled values; fields that are set, actions, and registered tools are not ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md), [decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). Endpoint findings are drafted by the HTTP pack's rule. Whether drafts by rule save work is hypothesis H-31.
 
 ## Effects and hazards
 

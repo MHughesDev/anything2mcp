@@ -33,6 +33,7 @@ mod draft;
 mod driver;
 mod endpoints;
 mod json;
+mod link;
 mod lower;
 mod openapi;
 mod shape;
@@ -46,6 +47,7 @@ use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, Registry
 
 pub use discover::{DESCRIPTION_FILE, DESCRIPTION_PATH};
 pub use endpoints::{ENDPOINT_KIND, HTTP_SURFACE, PACK, WEB_SURFACE};
+pub use link::{ACCEPTED, UNENCRYPTED_CREDENTIALS};
 pub use lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
 
 /// The name of the mode this pack drives.
@@ -93,7 +95,12 @@ impl Pack for HttpPack {
                 .surface_kind(SurfaceKindSpec::new(
                     HTTP_SURFACE,
                     ADDRESS_KEY,
-                    JsonSchema::object().required(ADDRESS_KEY, JsonSchema::text()),
+                    JsonSchema::object()
+                        .required(ADDRESS_KEY, JsonSchema::text())
+                        .optional(
+                            link::UNENCRYPTED_CREDENTIALS,
+                            JsonSchema::words(&[link::ACCEPTED]),
+                        ),
                 ))
                 .file_kind(Arc::new(endpoints::EndpointKind::new()))
                 .lowering(Arc::new(lower::HttpLowering::new(mode)))
@@ -101,6 +108,7 @@ impl Pack for HttpPack {
                 .lint_rule(Arc::new(endpoints::NoResponseSchema))
                 .lint_rule(Arc::new(endpoints::EffectMethod))
                 .lint_rule(Arc::new(endpoints::SignedEndpoint))
+                .lint_rule(Arc::new(link::UnencryptedCredentials))
                 .drafting_rule(Arc::new(openapi::DescribedOperationRule {
                     kind: openapi::described_operation()?,
                 }))

@@ -45,7 +45,7 @@ It is a provider of its own, named `web_probe`, because a pack is handed its con
 | `web_probe`, built | `target.probe` | One page load: the status, where the tab ended, whether a password input shows, the roles of the snapshot, and whether the document is JSON. The kind of interface is named by `INTERFACE_RULES`, which are data. Platform profiles are not built, so the platform is `unknown_platform` and the tier `unsupported` | Surface; sign-in method when the page asks for one | The surface `discovered`; the sign-in method `inferred` |
 | `web_auth`, not built | `auth.detect` | Redirects, challenges, a request for a client certificate, the identity provider's discovery document, whether backend calls carry a cookie or a bearer token | Sign-in method, with a recommended mode | `inferred`, with the observations as evidence |
 | `web_snapshot`, built | `screen.snapshot` | The accessibility tree, through the base's snapshot builder, of the start page, of each page the focus names, and of the pages plain links lead to, as deep as the bounds allow | Screen, with its elements | `discovered`; coverage `partial`, limitation `single_variant` |
-| `web_capture`, built in part | `capture.start`, `capture.stop`, and scenario runs | The request for each document the tab is sent to, with the shape of a JSON answer; each request a page tried that the tab refused. Not the requests a page's own scripts read with: the base has no stream of exchanges yet | Exchange; endpoint | An answered exchange `discovered`; a refused one `inferred`. Endpoints as below |
+| `web_capture`, built in part | `capture.start`, `capture.stop`, and scenario runs | The request for each document the tab is sent to, with the shape of a JSON answer; each request a page tried that the tab refused; each request a page's own script made with GET to the surface's origin, as the observing tab records it: method, path, the query's names, status, the names and kinds of a JSON answer's fields to one level, the page that made it (`made_by`), and the names of the headers that carried a credential (`credential_headers`), never a value ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) | Exchange; endpoint | An answered exchange `discovered`; a refused one `inferred`. Endpoints as below |
 | `web_endpoints`, not built apart | `endpoints.infer` | Stored exchange findings, not the page. Until the sandbox port hands over stored findings, the inference runs inside `web_capture` | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
 | `web_declared`, not built | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
 
@@ -120,7 +120,8 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 /// Shapes and inference, pure.
 pub fn type_of_text(text: &str) -> &'static str;
 pub struct Shape;                              // Shape::of(&json), merged, has_optional, cut, to_json
-pub struct Exchange { pub method, pub origin, pub path, pub query, pub status, pub answer: Answer }
+pub struct Exchange { pub method, pub origin, pub path, pub query, pub status, pub answer: Answer,
+                      pub made_by: Option<String>, pub credential_headers: Vec<String> }
 pub enum Answer { Refused, Json(Shape), Document }
 pub struct Endpoint { pub method, pub origin, pub segments: Vec<Segment>, pub statuses, pub query, pub response, pub seen, pub sources }
 pub enum Segment { Literal(String), Parameter { types, tier: Tier, literals } }
@@ -148,7 +149,7 @@ What the kernel gives this crate, as built:
 | `a2m-pack-web-ui`, through stored findings only | Snapshot findings, for its drafting rules and screen matching |
 | `a2m-pack-http`, through stored findings only | Endpoint findings, for its drafting rule |
 
-It uses the base's `Observer`, `Look`, `Snapshot`, and the list of what an observing tab refused; the redactor on everything it finds. The base's exchanges and platform profiles are not built.
+It uses the base's `Observer`, `Look`, `Snapshot`, the list of what an observing tab refused, and the page's own GET exchanges an observing tab recorded (`ObserveTab::exchanges`); the redactor on everything it finds. The base's platform profiles are not built.
 
 ## State
 
@@ -199,7 +200,7 @@ Run on Linux only. The crate has no code that differs by operating system.
 
 1. Not built, package 2.6: `web_auth`, against case 13's sign-in variants. The probe names a sign-in wall; it does not say which method of sign-in to use.
 2. Done, package E2: the manifest and registration; `web_probe`; `web_snapshot` with links followed within the bounds.
-3. Done in part: `web_capture` of documents and refused requests, and endpoint inference with tier one and tier two, inside it. Not built: the requests a page's own scripts read with, which need the base's stream of exchanges; request shapes; scenario steps; cases 5 and 22.
+3. Done in part: `web_capture` of documents, refused requests, and the GET requests a page's own scripts make to its origin ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)), and endpoint inference with tier one and tier two, inside it. Done: screen matching's first half in `web_snapshot`, pages whose paths differ in one segment and whose tables and labelled values are the same given as one `screen` finding with a placeholder and `pages`; the names of a description list's terms and of the definitions a page labels are kept outside a record. Not built: request shapes; a request's dependencies; scenario steps; cases 5 and 22.
 4. Not built: dependencies between requests and the front-end logic mark.
 5. Not built: the watching tab and the capture of a person's own use, which need a visible window in the base.
 6. Not built: platform profiles and the support tier, which are data of the base.

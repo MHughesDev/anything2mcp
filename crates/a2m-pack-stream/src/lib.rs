@@ -73,13 +73,19 @@ impl Pack for StreamPack {
         let ceiling_ms = setting(cx, "wait_ceiling_seconds", 60).saturating_mul(1_000);
         let sample = setting(cx, "sample_count", 5);
         let idle_links = usize::try_from(setting(cx, "idle_links", 2)).unwrap_or(2);
+        let ceiling = usize::try_from(setting(
+            cx,
+            "message_ceiling_bytes",
+            u32::try_from(nats_wire::DEFAULT_CEILING).unwrap_or(u32::MAX),
+        ))
+        .unwrap_or(nats_wire::DEFAULT_CEILING);
 
         to.driver(
             names.mode.clone(),
             Arc::new(driver::StreamDriver::new(
                 Arc::clone(cx.redact()),
                 vec![
-                    Arc::new(nats_wire::NatsProtocol),
+                    Arc::new(nats_wire::NatsProtocol::new(ceiling)),
                     Arc::new(example_wire::ExampleProtocol),
                 ],
                 idle_links,

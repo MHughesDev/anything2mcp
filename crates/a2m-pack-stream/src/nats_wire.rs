@@ -113,6 +113,17 @@ pub(crate) fn is_subject(text: &str) -> bool {
     text.len() <= 4096 && text.split('.').all(is_token)
 }
 
+/// Whether a subject is one of the server's own: its JetStream interface
+/// and acknowledgements (`$JS`, `$JSC`), its system account (`$SYS`), its
+/// key-value and object stores (`$KV`, `$O`), anything else under `$`, and
+/// the reply subjects of other clients (`_INBOX`). A channel there would
+/// let a caller's key choose a request to the server, or answer another
+/// client's request.
+pub(crate) fn is_system_subject(text: &str) -> bool {
+    let first = text.split('.').next().unwrap_or_default();
+    first.starts_with('$') || first.eq_ignore_ascii_case("_INBOX")
+}
+
 /// Where a channel's address points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Place<'a> {
@@ -132,7 +143,13 @@ pub(crate) fn place(address: &str) -> Result<Place<'_>, &'static str> {
             if !is_subject(subject) {
                 return Err("the subject is not a subject without wildcards");
             }
+            if is_system_subject(subject) {
+                return Err("the subject is one of the server's own, under `$` or `_INBOX`");
+            }
             Ok(Place::Stream { stream, subject })
+        }
+        None if is_system_subject(address) => {
+            Err("the subject is one of the server's own, under `$` or `_INBOX`")
         }
         None if is_subject(address) => Ok(Place::Topic { subject: address }),
         None => Err("the address is neither `STREAM/subject` nor a subject without wildcards"),
@@ -314,8 +331,27 @@ struct NatsLink {
     topic_count: u64,
 }
 
+/// The largest message the client reads or sends when no setting says
+/// otherwise: 8 MiB, eight times the server's default `max_payload`.
+pub(crate) const DEFAULT_CEILING: usize = 8 * 1024 * 1024;
+
+/// The most messages of a topic held for their fetch while something else
+/// is read.
+const QUEUED_MOST: usize = 1000;
+
 /// The protocol.
-pub(crate) struct NatsProtocol;
+pub(crate) struct NatsProtocol {
+    /// The pack's own bound on the size of any message, whatever a server
+    /// states: the setting `message_ceiling_bytes`.
+    ceiling: usize,
+}
+
+impl NatsProtocol {
+    /// The protocol, reading and sending no message larger than `ceiling`.
+    pub(crate) fn new(ceiling: usize) -> Self {
+        Self { ceiling }
+    }
+}
 
 /// A prefix for the connection's reply subjects that another client of the
 /// same server cannot guess: it is not shown, hashed, or compared anywhere.
@@ -420,10 +456,13 @@ impl Protocol for NatsProtocol {
                     "the server does not carry headers, so a record's token cannot travel",
                 ));
             }
+            // The server's own limit, never above the pack's: a server that
+            // states more is held to the ceiling, so that what it states
+            // never decides what the client takes in.
             link.max_payload = info
                 .get("max_payload")
                 .and_then(Json::as_u64)
-                .and_then(|n| usize::try_from(n).ok())
+                .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
                 .filter(|n| *n > 0)
                 .ok_or_else(|| {
                     error(
@@ -431,7 +470,8 @@ impl Protocol for NatsProtocol {
                         Sent::NotSent,
                         "the server's `INFO` states no payload limit",
                     )
-                })?;
+                })?
+                .min(self.ceiling);
             let mut options = BTreeMap::from([
                 ("verbose".to_owned(), Json::Bool(false)),
                 ("pedantic".to_owned(), Json::Bool(false)),
@@ -473,7 +513,17 @@ impl Protocol for NatsProtocol {
     }
 }
 
-/// A `-ERR` line, as this pack names it.
+/// A `-ERR` line that arrives while a publish or an acknowledgement is in
+/// flight on the connection. Nothing ties a `-ERR` to the request: the
+/// server sends one on a timer (a credential that expires) whatever it has
+/// already carried out, so once the bytes of a write have left, every
+/// `-ERR` leaves the write in doubt, and the reconcile decides.
+fn err_in_flight(said: &str) -> WireError {
+    error(WireErrorKind::Unexpected, Sent::Unknown, said)
+}
+
+/// A `-ERR` line while nothing that writes is in flight: at `CONNECT`, or
+/// during a look, as this pack names it.
 fn err_line(said: &str) -> WireError {
     let lower = said.to_ascii_lowercase();
     if lower.contains("authorization violation") || lower.contains("authentication") {
@@ -575,7 +625,7 @@ impl NatsLink {
         };
         loop {
             if let Some((head, body)) = &mut self.head {
-                let need = head.total + 2;
+                let need = head.total.saturating_add(2);
                 while body.len() < need {
                     let buffer = self.stream.fill_buf().await.map_err(|_| lost())?;
                     if buffer.is_empty() {
@@ -651,8 +701,13 @@ impl NatsLink {
                     } else {
                         (numbers[0], numbers[1])
                     };
-                    if header_len > total || total > self.max_payload + HEADER_ROOM {
-                        return Err(unexpected("a message is larger than the server may send"));
+                    // Bounded by the pack's ceiling, whatever the server
+                    // stated, before anything is set aside for it.
+                    if header_len > total || total > self.max_payload.saturating_add(HEADER_ROOM)
+                    {
+                        return Err(unexpected(
+                            "a message is larger than the server's limit or the pack's setting `message_ceiling_bytes` allows",
+                        ));
                     }
                     self.head = Some((
                         Head {
@@ -662,7 +717,8 @@ impl NatsLink {
                             header_len,
                             total,
                         },
-                        Vec::with_capacity(total + 2),
+                        // Grown as the bytes arrive.
+                        Vec::with_capacity(total.saturating_add(2).min(LONGEST_LINE)),
                     ));
                 }
                 _ => {
@@ -765,10 +821,13 @@ impl NatsLink {
             .values()
             .any(|sub| matches!(sub, Sub::Core { sid, .. } if *sid == message.sid));
         if topic {
-            self.queued
-                .entry(message.sid.clone())
-                .or_default()
-                .push(message);
+            let queue = self.queued.entry(message.sid.clone()).or_default();
+            if queue.len() >= QUEUED_MOST {
+                return Err(unexpected(
+                    "more messages of a topic arrived while something else was read than the client holds",
+                ));
+            }
+            queue.push(message);
             Ok(())
         } else {
             Err(unexpected(
@@ -778,11 +837,14 @@ impl NatsLink {
     }
 
     /// Sends one request and reads the one answer that belongs to it.
+    /// `writes` says the request is a publish or an acknowledgement: a
+    /// `-ERR` then leaves it in doubt.
     async fn request(
         &mut self,
         subject: &str,
         headers: &BTreeMap<String, String>,
         body: &[u8],
+        writes: bool,
         deadline: Deadline,
     ) -> Result<Incoming, WireError> {
         let reply = format!("{}.{}", self.inbox, self.next_reply);
@@ -798,6 +860,7 @@ impl NatsLink {
                 }
                 Event::Message(message) => self.keep(message)?,
                 Event::Pong => return Err(unexpected("the server answered a ping no one sent")),
+                Event::Error(said) if writes => return Err(err_in_flight(&said)),
                 Event::Error(said) => return Err(err_line(&said)),
             }
         }
@@ -817,7 +880,7 @@ impl NatsLink {
             body.to_line()
         };
         let answer = self
-            .request(subject, &BTreeMap::new(), line.as_bytes(), deadline)
+            .request(subject, &BTreeMap::new(), line.as_bytes(), false, deadline)
             .await?;
         if answer.status_code() == Some("503") {
             return Err(error(
@@ -859,8 +922,13 @@ impl NatsLink {
     }
 
     /// Writes a ping and reads to its pong: everything the server sent
-    /// before it is in hand.
-    async fn round_trip(&mut self, deadline: Deadline) -> Result<Vec<Incoming>, WireError> {
+    /// before it is in hand. `writes` says a publish went before it: a
+    /// `-ERR` then leaves the publish in doubt.
+    async fn round_trip(
+        &mut self,
+        writes: bool,
+        deadline: Deadline,
+    ) -> Result<Vec<Incoming>, WireError> {
         self.start()?;
         self.write(b"PING\r\n", deadline).await?;
         let mut before = Vec::new();
@@ -871,6 +939,7 @@ impl NatsLink {
                     return Ok(before);
                 }
                 Event::Message(message) => before.push(message),
+                Event::Error(said) if writes => return Err(err_in_flight(&said)),
                 Event::Error(said) => return Err(err_line(&said)),
             }
         }
@@ -903,8 +972,9 @@ impl NatsLink {
                 .as_list()
                 .ok_or_else(|| unexpected("a list of consumers is not a list"))?
                 .iter()
-                .filter_map(|name| name.as_str().map(str::to_owned))
-                .collect(),
+                .map(|name| name.as_str().filter(|name| is_name(name)).map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+                .ok_or_else(|| unexpected("a consumer the server lists has no name a consumer can have"))?,
         })
     }
 
@@ -948,6 +1018,26 @@ impl NatsLink {
             .get("duplicate_window")
             .and_then(Json::as_u64)
             .unwrap_or(0);
+        // What lets the stream drop a message from inside its range, not
+        // only from its front: a limit per subject other than one (which
+        // is a retained channel's, read by its key) that evicts, a time to
+        // live per message, or a retention that removes a message once it
+        // is read or nobody is interested. A field the stream states in a
+        // form with no rule is read as able to lose.
+        let per_subject_unlimited = match config.get("max_msgs_per_subject") {
+            None => true,
+            Some(Json::Number(n)) => n == "-1" || n == "0" || n == "1",
+            Some(_) => false,
+        };
+        let ttl = match config.get("allow_msg_ttl") {
+            None | Some(Json::Bool(false)) => false,
+            Some(_) => true,
+        };
+        let removes_read = !matches!(
+            config.get("retention").and_then(Json::as_str),
+            Some("limits")
+        );
+        let may_lose_inside = !per_subject_unlimited || ttl || removes_read;
         let last = number(state, "last_seq")?;
         let first = number(state, "first_seq")?;
         Ok(ChannelFacts {
@@ -961,6 +1051,7 @@ impl NatsLink {
             start: Some(first.max(1).min(last + 1)),
             end: Some(last + 1),
             subscriptions,
+            may_lose_inside,
         })
     }
 
@@ -1047,9 +1138,17 @@ fn body_of(data: &[u8]) -> Result<Json, WireError> {
         })
 }
 
-/// The stream sequence an acknowledgement subject names: the 9-token form
-/// and the longer form with a domain and an account.
-fn sequence_of(ack: &str) -> Option<u64> {
+/// What an acknowledgement subject names: the stream, the consumer, how
+/// many times the message was delivered, and its stream sequence. The
+/// 9-token form, and the longer form with a domain and an account.
+struct AckMeta<'a> {
+    stream: &'a str,
+    consumer: &'a str,
+    attempt: u64,
+    seq: u64,
+}
+
+fn ack_meta(ack: &str) -> Option<AckMeta<'_>> {
     let tokens: Vec<&str> = ack.split('.').collect();
     if tokens.first() != Some(&"$JS") || tokens.get(1) != Some(&"ACK") {
         return None;
@@ -1059,7 +1158,17 @@ fn sequence_of(ack: &str) -> Option<u64> {
         n if n >= 11 => 4,
         _ => return None,
     };
-    tokens.get(offset + 3)?.parse().ok()
+    Some(AckMeta {
+        stream: tokens.get(offset)?,
+        consumer: tokens.get(offset + 1)?,
+        attempt: tokens.get(offset + 2)?.parse().ok()?,
+        seq: tokens.get(offset + 3)?.parse().ok()?,
+    })
+}
+
+/// The stream sequence an acknowledgement subject names.
+fn sequence_of(ack: &str) -> Option<u64> {
+    ack_meta(ack).map(|meta| meta.seq)
 }
 
 impl Link for NatsLink {
@@ -1103,7 +1212,10 @@ impl Link for NatsLink {
                     let name = config
                         .and_then(|c| c.get("name"))
                         .and_then(Json::as_str)
-                        .ok_or_else(|| unexpected("a stream has no name"))?
+                        .filter(|name| is_name(name))
+                        .ok_or_else(|| {
+                            unexpected("a stream the server lists has no name a stream can have")
+                        })?
                         .to_owned();
                     let first = config
                         .and_then(|c| c.get("subjects"))
@@ -1116,6 +1228,11 @@ impl Link for NatsLink {
                         .or_else(|| first.strip_suffix(".*"))
                         .unwrap_or(first)
                         .to_owned();
+                    if !subject.is_empty() && !is_subject(&subject) {
+                        return Err(unexpected(
+                            "a stream the server lists stores a subject the protocol cannot name",
+                        ));
+                    }
                     let consumers = self.consumer_names(&name, deadline).await?;
                     found.push(Self::facts(
                         format!("{name}/{subject}"),
@@ -1170,6 +1287,8 @@ impl Link for NatsLink {
                         start: None,
                         end: None,
                         subscriptions: Vec::new(),
+                        // A topic keeps nothing to lose.
+                        may_lose_inside: false,
                     })
                 }
             }
@@ -1294,12 +1413,13 @@ impl Link for NatsLink {
                             subject: subject.to_owned(),
                         },
                     );
-                    for message in self.round_trip(deadline).await? {
+                    for message in self.round_trip(false, deadline).await? {
                         self.keep(message)?;
                     }
                     Ok(Opened {
                         handle: format!("core.{sid}"),
                         position: None,
+                        ack_wait: None,
                     })
                 }
                 Place::Stream { stream, subject } => {
@@ -1309,6 +1429,7 @@ impl Link for NatsLink {
                         .and_then(|c| c.get("retention"))
                         .and_then(Json::as_str)
                         == Some("workqueue");
+                    let mut ack_wait = None;
                     let (consumer, ephemeral, answer) = match name {
                         Some(name) => {
                             if from.is_some() {
@@ -1345,6 +1466,13 @@ impl Link for NatsLink {
                                     "the declared consumer's acknowledgement policy is not the one this read needs",
                                 ));
                             }
+                            let wait = match config.get("ack_wait") {
+                                None => None,
+                                Some(wait) => Some(wait.as_u64().ok_or_else(|| {
+                                    unexpected("a consumer's acknowledgement wait is not a whole number")
+                                })?),
+                            };
+                            ack_wait = wait.map(Duration::from_nanos);
                             (name.to_owned(), false, answer)
                         }
                         None if queue => {
@@ -1416,6 +1544,7 @@ impl Link for NatsLink {
                     Ok(Opened {
                         handle,
                         position: Some(position),
+                        ack_wait,
                     })
                 }
             }
@@ -1531,7 +1660,7 @@ impl Link for NatsLink {
             if !ended {
                 // As many as were asked for came. A ping's answer shows
                 // whether the server handed over more than that.
-                for message in self.round_trip(deadline).await? {
+                for message in self.round_trip(false, deadline).await? {
                     if message.sid == INBOX_SID
                         && message
                             .reply
@@ -1549,9 +1678,18 @@ impl Link for NatsLink {
             let mut out = Vec::new();
             for message in delivered {
                 let ack = message.reply.clone().unwrap_or_default();
-                let seq = sequence_of(&ack).ok_or_else(|| {
+                let meta = ack_meta(&ack).ok_or_else(|| {
                     unexpected("a delivery's acknowledgement subject is not in the protocol's form")
                 })?;
+                // A delivery is this pull's only when its acknowledgement
+                // names the stream and the consumer pulled: another client
+                // that sees the inbox cannot hand over one of its choosing.
+                if meta.stream != stream || meta.consumer != consumer {
+                    return Err(unexpected(
+                        "a delivery's acknowledgement names another stream or consumer than the one pulled",
+                    ));
+                }
+                let (seq, attempt) = (meta.seq, meta.attempt);
                 if let Some(Sub::Pull {
                     held,
                     explicit: true,
@@ -1569,6 +1707,7 @@ impl Link for NatsLink {
                         body: body_of(&message.data)?,
                         position: Some(seq),
                     },
+                    attempt: Some(attempt),
                 });
             }
             Ok(out)
@@ -1613,7 +1752,7 @@ impl Link for NatsLink {
                     self.queued.remove(&twin);
                     // What was in flight to the subscription arrives before
                     // the pong, and is dropped with it.
-                    self.round_trip(deadline).await.map(|_| ())
+                    self.round_trip(false, deadline).await.map(|_| ())
                 }
                 Some(Sub::Pull {
                     stream,
@@ -1661,7 +1800,7 @@ impl Link for NatsLink {
                     self.broken = false;
                     // The core protocol confirms nothing; a pong says the
                     // server read the message and refused nothing before it.
-                    for incoming in self.round_trip(deadline).await? {
+                    for incoming in self.round_trip(true, deadline).await? {
                         self.keep(incoming)?;
                     }
                     Ok(Receipt {
@@ -1673,7 +1812,7 @@ impl Link for NatsLink {
                 Place::Stream { stream, subject } => {
                     let subject = keyed(subject, message.key.as_deref())?;
                     let answer = self
-                        .request(&subject, &message.headers, body.as_bytes(), deadline)
+                        .request(&subject, &message.headers, body.as_bytes(), true, deadline)
                         .await?;
                     match answer.status_code() {
                         None => {}
@@ -1793,6 +1932,7 @@ impl NatsLink {
                         body: body_of(&message.data)?,
                         position: None,
                     },
+                    attempt: None,
                 })
             })
             .collect::<Result<Vec<_>, WireError>>()
@@ -1816,7 +1956,7 @@ impl NatsLink {
             ));
         }
         let answer = self
-            .request(delivery, &BTreeMap::new(), word, deadline)
+            .request(delivery, &BTreeMap::new(), word, true, deadline)
             .await?;
         if answer.status_code() == Some("503") {
             // Nobody listens on the acknowledgement's subject: the consumer
@@ -1858,11 +1998,11 @@ mod tests {
         let token = |text: &str| Credential::Token(Secret::new(text));
 
         stand.require_token(Some("example-token-for-tests"));
-        let opened = NatsProtocol
+        let opened = NatsProtocol::new(DEFAULT_CEILING)
             .connect(&address, Some(&token("example-token-for-tests")), deadline)
             .await;
         assert!(opened.is_ok());
-        let wrong = NatsProtocol
+        let wrong = NatsProtocol::new(DEFAULT_CEILING)
             .connect(&address, Some(&token("example-token-wrong")), deadline)
             .await
             .err()
@@ -1880,7 +2020,7 @@ mod tests {
             password: Secret::new("secret-for-tests-pass"),
         };
         assert!(
-            NatsProtocol
+            NatsProtocol::new(DEFAULT_CEILING)
                 .connect(&address, Some(&user), deadline)
                 .await
                 .is_ok()
@@ -1893,7 +2033,7 @@ mod tests {
         assert_eq!(seen, [("token", true), ("token", false), ("user", true)]);
 
         // Not this machine's own address: refused before anything is sent.
-        let far = NatsProtocol
+        let far = NatsProtocol::new(DEFAULT_CEILING)
             .connect("192.0.2.10:4222", Some(&user), deadline)
             .await
             .err()

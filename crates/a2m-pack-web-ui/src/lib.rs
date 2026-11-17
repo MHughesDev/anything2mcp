@@ -24,12 +24,15 @@
 //! `sso_saml` auth providers and the sign-in window; signs of expiry;
 //! frames; platform profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
-//! identity by a stamp or a search; screen matching, and drafting a field,
-//! a key, or a type from a snapshot.
+//! identity by a stamp or a search; setting a finding against existing
+//! screen models, and drafting a field that is set or a type from a
+//! snapshot.
 //!
 //! Its drafting rules turn a snapshot the web pack's discoverers took into
-//! a screen that reads one of the page's tables by its headings, and a
-//! `list` read over it (decision 0183).
+//! a screen that reads one of the page's tables by its headings and a
+//! `list` read over it (decision 0183), and a screen of the values the page
+//! labels and a `get` read of them; a placeholder the discoverers matched
+//! into the page's path is each read's key (decision 0187).
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in

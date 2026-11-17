@@ -27,7 +27,7 @@ The base of the web pack: a browser engine that speaks the DevTools protocol to 
 - Keeping each tab on the origins it was opened for, and refusing what leaves the page: a download, and a window the page opens.
 - Detecting a crash, a disconnect, and a dialog, and saying for each act whether its input reached the page.
 
-Designed and not built: recycling by run count, age, and memory; declared frames; platform profiles as data; the stream of network exchanges; pop-ups and downloads a step declares (an undeclared one is refused and reported).
+Built since ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)): an observing tab records each request its page makes by itself from a script with GET to one of the tab's origins, as a `PageExchange` of names and kinds only (method, origin, path, the query's names, the names of headers whose name says they carry a credential or an anti-forgery token, status, media type, and a JSON answer's names and kinds to one level), taken with `ObserveTab::exchanges(deadline)`, which waits until no such request is awaiting its answer; the helper gives `dt` and `dd` the roles `term` and `definition`. Designed and not built: recycling by run count, age, and memory; declared frames; platform profiles as data; the stream of every network exchange; pop-ups and downloads a step declares (an undeclared one is refused and reported).
 
 It must never: start a process except through its scoped supervisor; connect to any browser process it did not start; resolve a path itself, or open a data directory it was not handed as a checked path; read or copy another program's cookie store; hide that it is automation, alter its fingerprint, or answer a challenge; know about screen models, widget drivers, endpoints, or modes; decide whether a failure means a write may have landed; retry.
 
@@ -315,7 +315,7 @@ A test finds its browser as the product does: in the known places. Two variables
 6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets. Done after the safety audit ([decision 0143](../../decisions/0143-the-browser-engine-after-its-safety-audit.md)): `Origins` on every tab; the lock on a tab's moves; downloads denied, permissions refused, and windows closed; the lock of a frame in another process; the private data directory; the settings reader for digests.
 7. Not built, slice 1.6: declared frames; the check of a helper's match against the browser's own accessibility query; recycling; the stable-position check before a click; `Input::Scroll`; one telemetry span per round trip group.
 8. Not built, package 2.3: `Visibility::Window`, `export_state`, `import_state`, the watching tab.
-9. Not built, package E2 and later: platform profiles as data; the stream of network exchanges and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
+9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; `fetch` from an observing tab; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
 
 ## Open points
 

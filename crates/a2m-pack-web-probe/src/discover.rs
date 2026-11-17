@@ -601,9 +601,10 @@ impl Discoverer for WebSnapshot {
 /// `web_capture`: the exchanges of the pages it is sent to, by structure,
 /// and the endpoints they group into. An exchange is the request for a
 /// document the tab was sent to, with the shape of a JSON answer, or a
-/// request the page tried and the tab refused. The requests a page's own
-/// scripts read with are not seen: the base has no stream of exchanges
-/// yet.
+/// request the page tried and the tab refused, or a request a page's own
+/// script made with GET to the surface's origin, as the observing tab
+/// recorded it, which names the page that made it. A request of a script
+/// to another origin is not followed (decision 0187).
 pub(crate) struct WebCapture(pub(crate) Arc<Parts>, pub(crate) DiscovererName);
 
 impl WebCapture {
@@ -753,7 +754,7 @@ impl WebCapture {
             let mut limitations = vec![(
                 LimitationCode::Sampled,
                 format!(
-                    "Made from {} exchange(s) of one capture. The requests a page's own scripts read with are not seen.",
+                    "Made from {} exchange(s) of one capture. Of the requests a page's own scripts make, only those with GET to the surface's origin are seen.",
                     endpoint.seen
                 ),
             )];

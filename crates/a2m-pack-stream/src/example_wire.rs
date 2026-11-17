@@ -343,6 +343,8 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
         start: number_of(value, "start")?,
         end: number_of(value, "end")?,
         subscriptions,
+        // The test broker loses nothing from inside a log or a queue.
+        may_lose_inside: false,
     })
 }
 
@@ -460,6 +462,7 @@ impl Link for ExampleLink {
                 handle: text_of(reply.get("subscription"))
                     .ok_or_else(|| unexpected("a subscription has no handle"))?,
                 position: number_of(&reply, "position")?,
+                ack_wait: None,
             })
         })
     }
@@ -491,6 +494,7 @@ impl Link for ExampleLink {
                             item.get("message")
                                 .ok_or_else(|| unexpected("a delivery has no message"))?,
                         )?,
+                        attempt: None,
                     })
                 })
                 .collect()

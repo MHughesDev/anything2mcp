@@ -112,6 +112,12 @@ pub(crate) struct ChannelFacts {
     pub end: Option<u64>,
     /// The subscriptions declared on it, by name.
     pub subscriptions: Vec<String>,
+    /// Whether the broker's own configuration of the channel lets it lose a
+    /// message from inside its range between a publish and a later look: a
+    /// limit per key that evicts, a time to live per message, or a
+    /// retention that removes what nobody reads. A look at such a channel
+    /// never says a message is absent.
+    pub may_lose_inside: bool,
 }
 
 /// One message as a broker holds or delivers it.
@@ -149,6 +155,10 @@ pub(crate) struct Opened {
     pub handle: String,
     /// On a log, the position it stands at.
     pub position: Option<u64>,
+    /// On a queue, how long the broker waits for an acknowledgement of a
+    /// delivery before it hands the message out again, as the declared
+    /// consumer states it; nothing where the protocol does not say.
+    pub ack_wait: Option<Duration>,
 }
 
 /// One delivery of one message.
@@ -158,6 +168,11 @@ pub(crate) struct Delivered {
     pub delivery: String,
     /// The message.
     pub message: Message,
+    /// How many times the broker has handed this message out, this one
+    /// included, as the delivery's own metadata says; nothing where the
+    /// protocol does not say. Above one, an earlier delivery may be held by
+    /// another record.
+    pub attempt: Option<u64>,
 }
 
 /// One message to publish.

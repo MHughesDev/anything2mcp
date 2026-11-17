@@ -26,6 +26,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
 use crate::json::Json;
+use crate::link;
 use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
@@ -45,6 +46,10 @@ pub(crate) struct Origin {
     pub text: String,
     /// The path the surface's address ends in, without a trailing slash.
     pub prefix: String,
+    /// Whether the address is plain `http` to an address that is not a
+    /// loopback address: no credential goes there unless the surface
+    /// accepts it.
+    pub plain_remote: bool,
 }
 
 impl Origin {
@@ -83,6 +88,7 @@ impl Origin {
         Ok(Self {
             text: url.origin().ascii_serialization(),
             prefix,
+            plain_remote: link::plain_to_another_machine(&url),
         })
     }
 }
@@ -211,6 +217,9 @@ struct Session {
     client_key: String,
     origin: Origin,
     surface: String,
+    /// Whether the surface accepts that its credentials cross an
+    /// unencrypted link to another machine.
+    unencrypted_accepted: bool,
     sections: BTreeMap<usize, EndpointSection>,
     held: Option<Held>,
     expiry: Expiry,
@@ -330,6 +339,9 @@ impl HttpDriver {
         let unsent = StepFailure::not_sent;
         let surface = &cx.surface.surface;
         let origin = Origin::of(&surface.address).map_err(unsent)?;
+        let unencrypted_accepted = link::SurfaceFields::of(surface)
+            .map_err(|_| codes::not_usable("the surface's fields do not decode"))?
+            .accepts_unencrypted();
         if !cx.destinations.contains(&surface.address) {
             return Err(unsent(codes::surface_not_declared(&format!(
                 "The address of the surface `{}`",
@@ -366,6 +378,17 @@ impl HttpDriver {
                     .decode::<EndpointSection>()
                     .map_err(|_| codes::not_usable("its endpoints do not decode"))?,
             );
+        }
+
+        // A credential never crosses an unencrypted link to another machine
+        // unless the surface accepts it: a pass with a session whose plan
+        // has an endpoint on this surface that takes the credential is
+        // refused here, and each request is checked again as it is sent.
+        let takes_credential = sections.values().flat_map(BTreeMap::values).any(|template| {
+            template.surface == surface.name.as_str() && template.auth != Auth::None
+        });
+        if lease.is_some() && takes_credential && origin.plain_remote && !unencrypted_accepted {
+            return Err(unsent(link::not_encrypted(surface.name.as_str())));
         }
 
         let mut expiry = Expiry::default();
@@ -422,6 +445,7 @@ impl HttpDriver {
             client_key,
             origin,
             surface: surface.name.as_str().to_owned(),
+            unencrypted_accepted,
             sections,
             held,
             expiry,
@@ -598,6 +622,9 @@ impl Session {
             if let Some(cannot) = &held.cannot {
                 return Err(NotReceived::Refused(cannot.clone()));
             }
+            if self.origin.plain_remote && !self.unencrypted_accepted {
+                return Err(NotReceived::Refused(link::not_encrypted(&self.surface)));
+            }
             let sensitive = |secret: &str| {
                 HeaderValue::from_str(secret).map(|mut value| {
                     value.set_sensitive(true);
@@ -762,15 +789,22 @@ impl HttpDriver {
         template_path: &str,
         built: &Built,
         credentials: Option<&Held>,
+        unencrypted: bool,
         received: &Received,
     ) -> Vec<Capture> {
+        let mut means = vec![
+            Detail::new("endpoint", endpoint),
+            Detail::new("method", built.method.word()),
+            Detail::new("path", template_path),
+            Detail::new("status", received.status.to_string()),
+        ];
+        // A credential that crossed an unencrypted link, as the surface
+        // accepts, is said in the evidence of every request that carried it.
+        if unencrypted && credentials.is_some() {
+            means.push(Detail::new("link", "unencrypted_credentials_accepted"));
+        }
         let acting = Acting {
-            means: vec![
-                Detail::new("endpoint", endpoint),
-                Detail::new("method", built.method.word()),
-                Detail::new("path", template_path),
-                Detail::new("status", received.status.to_string()),
-            ],
+            means,
             measured: vec![Detail::new(
                 "response_bytes",
                 received.body.len().to_string(),
@@ -953,7 +987,14 @@ impl HttpDriver {
             }
             None => {}
         }
-        let captures = self.captures(&name, &template.path_text(), &built, credentials, &received);
+        let captures = self.captures(
+            &name,
+            &template.path_text(),
+            &built,
+            credentials,
+            session.origin.plain_remote,
+            &received,
+        );
         let absent = step.lookup && template.answers.absent.contains(&received.status);
         if absent && let Some(own) = own {
             session.versions.insert(own, Known::Absent);
@@ -1443,6 +1484,7 @@ mod tests {
             client_key: format!("- {}", origin.text),
             origin,
             surface: "api".to_owned(),
+            unencrypted_accepted: false,
             sections: BTreeMap::new(),
             held: None,
             expiry: Expiry::default(),

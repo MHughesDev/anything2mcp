@@ -24,6 +24,10 @@ pub const RESPONSE_TOO_LARGE: FailureCode = FailureCode::fixed("response_too_lar
 pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
 /// `policy`: a request, or a redirect, that leaves the declared surfaces.
 pub const SURFACE_NOT_DECLARED: FailureCode = FailureCode::fixed("surface_not_declared");
+/// `policy`: a request that would carry the session's credential over
+/// plain `http` to an address that is not a loopback address, from a
+/// surface that does not accept it. Nothing is sent (decision 0188).
+pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
 /// `input`: a value that cannot stand in one segment of a path.
 pub const PATH_VALUE_REFUSED: FailureCode = FailureCode::fixed("path_value_refused");
 /// `input`: a step this driver cannot carry out as the plan wrote it.
@@ -50,6 +54,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "response_too_large"),
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "surface_not_declared"),
+    (FailureClass::Policy, "link_not_encrypted"),
     (FailureClass::Input, "path_value_refused"),
     (FailureClass::Input, "step_not_usable"),
     (FailureClass::Input, "tls_not_enabled"),

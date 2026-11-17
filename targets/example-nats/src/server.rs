@@ -411,6 +411,14 @@ async fn connection(stream: tokio::net::TcpStream, id: u64, shared: Arc<Shared>)
     let _ = writer.await;
 }
 
+/// What the server sends when a connection's credential expires: its timer
+/// fires whatever the connection has in flight.
+fn expire(shared: &Shared, id: u64) {
+    if let Some(conn) = shared.conns().get(&id) {
+        let _ = conn.tx.send(err_line("User Authentication Expired"));
+    }
+}
+
 /// One message from a client. Returns true when the connection is to close.
 fn publish(
     shared: &Arc<Shared>,
@@ -436,7 +444,11 @@ fn publish(
             (None, _) => shared.no_responders(id, reply),
             (Some(()), Some(reply)) => {
                 let mut state = shared.lock();
-                if state.fault(&Fault::DropAckReply) {
+                if state.fault(&Fault::ExpireAuthAfterAck) {
+                    drop(state);
+                    expire(shared, id);
+                    return true;
+                } else if state.fault(&Fault::DropAckReply) {
                 } else if state.fault(&Fault::UnknownAckReply) {
                     drop(state);
                     shared.route(reply, None, None, b"+WHAT");
@@ -475,6 +487,11 @@ fn publish(
                 return false;
             }
             if !duplicate && state.fault(&Fault::CloseAfterStore) {
+                return true;
+            }
+            if !duplicate && state.fault(&Fault::ExpireAuthAfterStore) {
+                drop(state);
+                expire(shared, id);
                 return true;
             }
             let unknown = !duplicate && state.fault(&Fault::UnknownCodeAfterStore);
