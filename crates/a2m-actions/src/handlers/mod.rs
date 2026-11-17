@@ -10,7 +10,7 @@ mod promote;
 mod provider;
 mod scout;
 mod scout_report;
-mod tools;
+pub(crate) mod tools;
 
 pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
 
@@ -69,6 +69,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "draft.delete" => drafts::draft_delete,
         "binding.promote" => promote::binding_promote,
         "test.run" => drafts::test_run,
+        "fixture.record" => crate::fixture::fixture_record,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,
         "publish.request" => build::publish_request,

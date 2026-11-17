@@ -760,7 +760,8 @@ handler!(
         }
         let written: Vec<String> = files.iter().map(|(path, _)| path.clone()).collect();
         {
-            let (project_folder, target) = (project_folder.clone(), target.clone());
+            let (project_folder, target, folder) =
+                (project_folder.clone(), target.clone(), folder.clone());
             crate::handlers::build::off_thread(move || {
                 let at = crate::handlers::build::target_folder(&project_folder, &target)?;
                 at.join(&folder)?.create_dir_all()?;

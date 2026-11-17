@@ -74,6 +74,17 @@ pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
 /// a write; its control plane holds nothing and refuses (decision 0177).
 pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");
 
+/// `fixture.record` met an observed value that no scrubbing rule covers,
+/// and wrote nothing (decision 0196). Class `input`.
+pub const FIXTURE_NO_SCRUB_RULE: FailureCode = FailureCode::fixed("fixture_no_scrub_rule");
+/// The read `fixture.record` runs did not complete in the sandbox, or gave
+/// nothing to record; nothing was written. Class `input`.
+pub const FIXTURE_READ_FAILED: FailureCode = FailureCode::fixed("fixture_read_failed");
+/// The test `fixture.record` made does not pass against its scrubbed
+/// fixture, or an observed value would be in a file; nothing was written.
+/// Class `input`.
+pub const FIXTURE_NOT_REPLAYED: FailureCode = FailureCode::fixed("fixture_not_replayed");
+
 /// A binding `binding.promote` may not make verified: not a drafted first
 /// binding of its operation, or one whose file cannot be rewritten by rule
 /// (decision 0189). Class `input`.

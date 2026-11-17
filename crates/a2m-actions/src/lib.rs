@@ -27,6 +27,7 @@ mod def;
 mod dispatch;
 mod events;
 mod faces;
+mod fixture;
 mod handlers;
 mod health;
 pub mod init;
