@@ -38,7 +38,10 @@ use a2m_core::{Failure, FailureClass, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar};
 
-pub use discover::{FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound, TableFound};
+pub use discover::{
+    CellKind, ColumnFound, FILE_KEY_CANDIDATE, FILE_LAYOUT, KeyCandidateFound, LayoutFound,
+    TableFound,
+};
 pub use driver::{FileDriver, FileLimits};
 pub use kind::{DOCUMENT_INVALID, DocumentKind, FORMAT_NOT_BUILT, document_schema};
 pub use lower::{

@@ -294,11 +294,17 @@ pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
             .and_then(|index| plan.field_types[index.get()].normalizer)
         {
             Some(index) => {
-                a2m_expr::Normalizer::load(plan.expression(index).unwrap())
-                    .unwrap()
-                    .normalize(raw)
-                    .unwrap()
-                    .normalized
+                let normalizer =
+                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
+                // A list output is normalized value by value; the engine
+                // hands a normalizer the whole list (decision 0182).
+                match raw {
+                    Value::List(values) if matches!(output.ty, a2m_core::ValueType::List(_)) => {
+                        Value::List(values.iter().map(one).collect())
+                    }
+                    other => one(other),
+                }
             }
             None => raw.clone(),
         };
@@ -313,27 +319,20 @@ pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
     out
 }
 
-/// A drafted target folder with the judgments each channel file leaves
-/// open answered as a person who knows the example's messages would: a
-/// retained value is the latest state for its key, every other message is
-/// a thing that happened, and a key the broker does not name is the
-/// order's number.
-pub fn answer_roles(root: &Path) {
+/// A drafted target folder with the one judgment a drafted read can need
+/// answered as a person who knows the example's messages would: a key the
+/// broker does not name for a retained channel is the order's number. No
+/// read needs the channel's `role`, and no drafted file asks it.
+pub fn answer_keys(root: &Path) {
     let channels = root.join("channels");
     for entry in std::fs::read_dir(&channels).unwrap() {
         let path = entry.unwrap().path();
         let text = std::fs::read_to_string(&path).unwrap();
-        let role = if text.contains("shape: \"retained\"") {
-            "state"
-        } else {
-            "events"
-        };
+        assert!(!text.contains("role:"), "{text}");
         let answered: Vec<String> = text
             .lines()
             .map(|line| {
-                if line.starts_with("role:") {
-                    format!("role: \"{role}\"")
-                } else if line.starts_with("key: {open_question") {
+                if line.starts_with("key: {open_question") {
                     "key:\n  field: \"order_id\"".to_owned()
                 } else {
                     line.to_owned()

@@ -497,3 +497,97 @@ async fn a_record_in_doubt_whose_stored_values_were_masked_is_not_looked_for_und
     assert_eq!(scene.hooks.count("add_item"), 1);
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
 }
+
+// ---- the binding a person approved is the binding that writes ----
+
+/// The stored diff of the scene's run, read back.
+async fn stored_diff(scene: &Scene) -> a2m_engine::Diff {
+    let blob = scene.run_row().await.diff.expect("a diff was stored");
+    let opened = scene.control.store.blobs().get(&blob).await.unwrap();
+    a2m_engine::Diff::decode(opened.expose()).unwrap()
+}
+
+#[tokio::test]
+async fn a_write_through_another_binding_than_the_approved_one_is_not_sent() {
+    // A keyless create with two bindings: the first reads its record back,
+    // the second offers only the system's acknowledgement.
+    let scene = Scene::new(common::SLOT_ADD, |plan| {
+        common::keyless_slot_add(plan);
+        let operation = &mut plan.operations[7];
+        let mut second = operation.bindings[0].clone();
+        second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
+        second.evidence = a2m_core::WriteEvidence::Acknowledged;
+        operation.bindings.push(second);
+    })
+    .await;
+    let input = common::slot("A-102", 4, "12");
+    approved(&scene, common::SLOT_ADD, &input).await;
+    // The person was shown the first binding and its evidence.
+    let diff = stored_diff(&scene).await;
+    let named = diff.records[0].binding.as_ref().expect("the binding is named");
+    assert_eq!(
+        (named.position, named.evidence),
+        (0, a2m_core::WriteEvidence::ReadBack)
+    );
+    assert!(!diff.records[0].not_read_back());
+
+    // At the write only the second binding may act: nothing is sent
+    // through it, because its evidence is not what was approved.
+    *scene.pin.lock().unwrap() = Some(a2m_core::Mode::new(common::SECOND_MODE).unwrap());
+    let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::Policy, "approval_stale".to_owned())
+    );
+    assert_eq!(scene.hooks.count("intend"), 0);
+    assert_eq!(scene.hooks.count("reserve_code"), 0);
+    assert_eq!(scene.hooks.count("add_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_could_take() {
+    let scene = Scene::new(common::KIT_ENTER, |plan| {
+        // The lines' operation gets a second binding that is only
+        // acknowledged.
+        let operation = &mut plan.operations[2];
+        operation.effect = a2m_core::EffectClass::Irreversible;
+        let mut second = operation.bindings[0].clone();
+        second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
+        second.evidence = a2m_core::WriteEvidence::Acknowledged;
+        operation.bindings.push(second);
+        for pipeline in &mut plan.pipelines {
+            pipeline.effect = a2m_core::EffectClass::Irreversible;
+        }
+        for tool in &mut plan.tools {
+            tool.annotations.read_only = false;
+        }
+    })
+    .await;
+    *scene.source.lock().unwrap() = Some(std::sync::Arc::new(common::sheet(&[
+        ("A", "Left leg", "2", "30"),
+    ])));
+    let kit = a2m_core::Values::new()
+        .with("order_id", "A-102")
+        .with("title", "Table kit");
+    let outcome = scene.work(JobKind::Preview, common::KIT_ENTER, kit).await;
+    assert!(waits(&outcome), "{outcome:?}");
+    let diff = stored_diff(&scene).await;
+    // The header's binding is known; the line's waits for the header's
+    // key, so the diff names both bindings it could take, and warns that
+    // its write may not be read back.
+    assert!(diff.records[0].binding.is_some());
+    let line = &diff.records[1];
+    assert!(line.binding_unknown());
+    assert_eq!(
+        line.could_take
+            .iter()
+            .map(|binding| (binding.position, binding.evidence))
+            .collect::<Vec<_>>(),
+        [
+            (0, a2m_core::WriteEvidence::ReadBack),
+            (1, a2m_core::WriteEvidence::Acknowledged)
+        ]
+    );
+    assert!(line.not_read_back());
+}

@@ -31,7 +31,7 @@ session = true
 
 [points]
 driver = ["device"]
-discoverer = ["device_identity"]
+discoverer = ["device_identity", "device_register_map"]
 
 # Asks the device to identify itself, and nothing else.
 [[discoverers]]
@@ -43,6 +43,17 @@ sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 4096, depth = 1 }
 
+# Reads a register map a vendor published, given as a file in the project.
+# It sends no frame: nothing of the device is observed.
+[[discoverers]]
+name = "device_register_map"
+archetype = "device"
+surface_kinds = ["device_link"]
+kinds = ["device_register_map"]
+sources = ["published_description"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 1000000, depth = 1 }
+
 [[file_kinds]]
 name = "register"
 directory = "registers/"
@@ -50,6 +61,10 @@ surface_kinds = ["device_link"]
 
 [[finding_kinds]]
 name = "device_identity"
+surface_kinds = ["device_link"]
+
+[[finding_kinds]]
+name = "device_register_map"
 surface_kinds = ["device_link"]
 
 [[lint_rules]]
@@ -70,6 +85,14 @@ summary = "A register that can only be written is a command, and a command's haz
 [[drafting_rules]]
 finding_kind = "device_identity"
 file_kind = "register"
+
+[[drafting_rules]]
+finding_kind = "device_register_map"
+file_kind = "register"
+
+[[drafting_rules]]
+finding_kind = "device_register_map"
+file_kind = "operation"
 
 [[failure_codes]]
 class = "input"

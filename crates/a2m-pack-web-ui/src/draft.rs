@@ -36,7 +36,7 @@ use serde_json::Value as Json;
 use crate::screens::SCREEN_KIND;
 
 /// Whether `text` is a name a screen, an output, or a column may have.
-fn is_name(text: &str, longest: usize) -> bool {
+pub(crate) fn is_name(text: &str, longest: usize) -> bool {
     text.len() <= longest && crate::screens::is_name(text)
 }
 
@@ -218,7 +218,7 @@ fn inside(elements: &[Element], at: usize) -> (Vec<String>, bool) {
 
 /// A name in the form target files use: lowercase letters and digits,
 /// with one underscore between words.
-fn snake(text: &str) -> String {
+pub(crate) fn snake(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         if c.is_ascii_alphanumeric() {
@@ -265,7 +265,7 @@ fn origin(finding: &Finding) -> Option<&str> {
 
 /// The surface of the target whose origin is the page's, when there is
 /// exactly one of the kind `web`.
-fn surface(cx: &DraftContext<'_>, origin: &str) -> Option<String> {
+pub(crate) fn surface(cx: &DraftContext<'_>, origin: &str) -> Option<String> {
     let target = cx.existing()?.docs_of("target").next()?;
     let mut found = target
         .get("surfaces")?

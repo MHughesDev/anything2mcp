@@ -384,9 +384,12 @@ impl HttpDriver {
         // unless the surface accepts it: a pass with a session whose plan
         // has an endpoint on this surface that takes the credential is
         // refused here, and each request is checked again as it is sent.
-        let takes_credential = sections.values().flat_map(BTreeMap::values).any(|template| {
-            template.surface == surface.name.as_str() && template.auth != Auth::None
-        });
+        let takes_credential = sections
+            .values()
+            .flat_map(BTreeMap::values)
+            .any(|template| {
+                template.surface == surface.name.as_str() && template.auth != Auth::None
+            });
         if lease.is_some() && takes_credential && origin.plain_remote && !unencrypted_accepted {
             return Err(unsent(link::not_encrypted(surface.name.as_str())));
         }

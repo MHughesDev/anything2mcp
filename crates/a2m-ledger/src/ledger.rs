@@ -308,6 +308,12 @@ pub struct RecordRow {
     /// read back (decision 0172). The record stays `acted`, is never called
     /// verified, and is settled, not in doubt.
     pub acknowledged_at: Option<Timestamp>,
+    /// The number of the run event that stored its current intent: what
+    /// was recorded for the record after it belongs to this attempt, and
+    /// what was recorded before it to an earlier one.
+    pub intent_seq: Option<u64>,
+    /// When its current intent was stored.
+    pub intent_at: Option<Timestamp>,
 }
 
 impl RecordRow {
@@ -854,7 +860,7 @@ macro_rules! select_records {
                     intended_hash, before_ref, after_ref, idempotency_token, assigned_key,
                     outputs_ref, intent_epoch, attempts, failure_class, failure_code,
                     evidence_ref, intent_seq, binding_mode, acted_at, reconciled_at,
-                    acknowledged_at
+                    acknowledged_at, intent_at
              FROM run_records ",
             $rest
         )
@@ -889,6 +895,8 @@ fn record_row(row: &Row) -> Result<(RecordRow, Option<u64>), Failure> {
             acted_at: row.opt_int(20)?.map(moment),
             reconciled_at: row.opt_int(21)?.map(moment),
             acknowledged_at: row.opt_int(22)?.map(moment),
+            intent_seq: row.opt_int(18)?.map(count).transpose()?,
+            intent_at: row.opt_int(23)?.map(moment),
         },
         row.opt_int(18)?.map(count).transpose()?,
     ))

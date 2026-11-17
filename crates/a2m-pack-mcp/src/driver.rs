@@ -392,7 +392,12 @@ impl McpDriver {
             // destinations.
             FarEnd::Http { address } => address,
         };
-        let link = HttpLink::new(address, sink.headers, self.limits)?;
+        let link = HttpLink::new(
+            address,
+            sink.headers,
+            fields.accepts_unencrypted(),
+            self.limits,
+        )?;
         let client = Client::connect(
             Link::Http(link),
             Revision::of(fields.revision.as_deref()),
@@ -814,6 +819,17 @@ impl Driver for McpDriver {
             // Checked for every run, before any connection is taken: what
             // the surface names now, and whether this run may reach it.
             let far_end = FarEnd::of(cx, &fields)?;
+            // A credential never crosses an unencrypted link to another
+            // machine unless the surface accepts it (decision 0188). Checked
+            // here for every pass, whether or not a connection is open, and
+            // again by the link as each request is sent.
+            if let FarEnd::Http { address } = &far_end
+                && lease.is_some()
+                && crate::mapping::plain_to_another_machine(address)
+                && !fields.accepts_unencrypted()
+            {
+                return Err(unsent(codes::link_not_encrypted()));
+            }
             let mapping = Section::of(cx.plan)
                 .map_err(unsent)?
                 .surfaces

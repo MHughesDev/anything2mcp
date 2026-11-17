@@ -167,26 +167,72 @@ pub struct Failure {
     said: Option<Box<String>>,
 }
 
-/// The longest text a failure keeps of what the system said, in characters.
+/// The longest text of what the system said that a door shows, in
+/// characters. A failure keeps the text whole; a door cuts it for display,
+/// after it was redacted, with [`said_shown`].
 pub const SAID_LONGEST: usize = 400;
 
-/// What the system said, as a failure keeps it: control characters as
-/// spaces, the ends trimmed, at most [`SAID_LONGEST`] characters. `None`
-/// when nothing is left.
-fn bounded_said(text: &str) -> Option<String> {
-    let clean: String = text
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let trimmed = clean.trim();
-    if trimmed.is_empty() {
+/// The most a failure keeps of what the system said, in bytes. Above it the
+/// text is dropped whole, never cut, and [`SAID_TOO_LONG`] stands in its
+/// place: a prefix could hold part of a secret the redactor would match
+/// only whole.
+pub const SAID_CEILING: usize = 64 * 1024;
+
+/// What stands in `said` for a text above [`SAID_CEILING`].
+pub const SAID_TOO_LONG: &str = "(what the system said was longer than 64 KiB, and none of it was kept)";
+
+/// What the system said, as a failure keeps it: whole, with its line
+/// breaks and every other character as given, so that the redactor, which
+/// matches a secret and its encodings only whole, sees it as the system
+/// said it. Nothing is cut, joined, or flattened before redaction (decision
+/// 0185). `None` when the text holds nothing but white space.
+fn kept_said(text: &str) -> Option<String> {
+    if text.trim().is_empty() {
         return None;
     }
-    let mut kept: String = trimmed.chars().take(SAID_LONGEST).collect();
-    if trimmed.chars().count() > SAID_LONGEST {
-        kept.push('…');
+    if text.len() > SAID_CEILING {
+        return Some(SAID_TOO_LONG.to_owned());
     }
-    Some(kept)
+    Some(text.to_owned())
+}
+
+/// What the system said, as a door shows it, from text that was already
+/// redacted: cut to `longest` characters at a place that does not split a
+/// redaction mark, with `…` after a cut, and every control character
+/// escaped (`\n`, `\u{1b}`), never removed, so that the text cannot move
+/// a cursor or rewrite a line and a line break stays visible. The `bool`
+/// says whether it was cut.
+#[must_use]
+pub fn said_shown(redacted: &str, longest: usize) -> (String, bool) {
+    let cut_at = redacted
+        .char_indices()
+        .nth(longest)
+        .map(|(byte, _)| byte);
+    let (kept, cut) = match cut_at {
+        None => (redacted, false),
+        Some(mut at) => {
+            // A mark that the cut would split is left out whole.
+            let mark = crate::redact::REDACTED;
+            for (start, _) in redacted.match_indices(mark) {
+                if start < at && at < start + mark.len() {
+                    at = start;
+                }
+            }
+            (&redacted[..at], true)
+        }
+    };
+    let mut shown = String::with_capacity(kept.len() + 4);
+    for c in kept.chars() {
+        if c.is_control() {
+            shown.extend(c.escape_default());
+        } else {
+            shown.push(c);
+        }
+    }
+    if cut {
+        shown.push('…');
+    }
+    (shown, cut)
 }
 
 impl Failure {
@@ -208,13 +254,15 @@ impl Failure {
     }
 
     /// The same failure with what the system itself said: a validation
-    /// message, a constraint's name. The text is bounded and kept apart from
-    /// the sentence; it is untrusted data, never an instruction. Text that is
-    /// empty once its control characters are removed leaves the failure as it
-    /// was.
+    /// message, a constraint's name. The text is kept whole and apart from
+    /// the sentence, up to [`SAID_CEILING`], above which it is dropped whole
+    /// for [`SAID_TOO_LONG`]; it is untrusted data, never an instruction.
+    /// The redactor that passes over the failure sees all of it; a door cuts
+    /// it for display only after that, with [`said_shown`]. Text that holds
+    /// nothing but white space leaves the failure as it was.
     #[must_use]
     pub fn with_said(mut self, said: impl AsRef<str>) -> Self {
-        self.said = bounded_said(said.as_ref()).map(Box::new);
+        self.said = kept_said(said.as_ref()).map(Box::new);
         self
     }
 

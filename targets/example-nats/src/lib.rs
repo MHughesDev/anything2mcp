@@ -214,11 +214,29 @@ impl TestNats {
         self.shared.change(|s| s.faults.clear());
     }
 
-    /// Moves the stand's clock on. Nothing else moves it.
+    /// Moves the stand's clock on. Nothing else moves it. Every delivery
+    /// whose consumer's acknowledgement wait has run out goes out again.
     pub fn advance(&self, by: Duration) {
         let ms = u64::try_from(by.as_millis()).unwrap_or(u64::MAX);
-        self.shared
-            .change(|s| s.now_ms = s.now_ms.saturating_add(ms));
+        self.shared.change(|s| s.advance(ms));
+    }
+
+    /// Changes how long a consumer waits for an acknowledgement, keeping
+    /// what it holds. Returns whether there was one.
+    pub fn set_ack_wait(&self, stream: &str, consumer: &str, wait: Duration) -> bool {
+        self.shared.change(|s| {
+            s.streams
+                .get_mut(stream)
+                .and_then(|st| st.consumers.get_mut(consumer))
+                .map(|c| c.spec.ack_wait = wait)
+                .is_some()
+        })
+    }
+
+    /// Removes one message from inside a stream, as a person deleting it
+    /// by hand does. Returns whether there was one.
+    pub fn remove_message(&self, stream: &str, seq: u64) -> bool {
+        self.shared.change(|s| s.remove_message(stream, seq))
     }
 
     /// Declares a stream; one of the same name is replaced with everything it held.

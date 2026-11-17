@@ -27,6 +27,12 @@ pub const UNKNOWN_CONTROL: FailureCode = FailureCode::fixed("unknown_control");
 pub const BROWSER_NOT_OWNED: FailureCode = FailureCode::fixed("browser_not_owned");
 /// `unknown_variant`: what a read gave is larger than the limit.
 pub const READ_TOO_LARGE: FailureCode = FailureCode::fixed("read_too_large");
+/// `unknown_variant`: a read from inside the page was answered with a
+/// status it does not declare.
+pub const UNEXPECTED_STATUS: FailureCode = FailureCode::fixed("unexpected_status");
+/// `drift`: the answer to a read from inside the page is not the shape its
+/// entry declares, or not of its media type.
+pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
 /// `rejected`: the application showed a declared refusal.
 pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
 /// `policy`: a page address outside the surfaces the run may reach.
@@ -49,12 +55,14 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Drift, "locator_not_found"),
     (FailureClass::Drift, "locator_ambiguous"),
     (FailureClass::Drift, "fingerprint_mismatch"),
+    (FailureClass::Drift, "response_schema_mismatch"),
     (FailureClass::UnknownVariant, "unexpected_dialog"),
     (FailureClass::UnknownVariant, "unexpected_page"),
     (FailureClass::UnknownVariant, "unexpected_control"),
     (FailureClass::UnknownVariant, "unknown_control"),
     (FailureClass::UnknownVariant, "browser_not_owned"),
     (FailureClass::UnknownVariant, "read_too_large"),
+    (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::Rejected, "app_validation_error"),
     (FailureClass::Policy, "surface_not_declared"),
     (FailureClass::Policy, "password_read_refused"),

@@ -517,6 +517,8 @@ pub(crate) struct HandleFacts {
     pub steps: BTreeSet<StepKind>,
     /// The kinds of step that always save.
     pub commit_steps: BTreeSet<StepKind>,
+    /// The kinds of step whose "absent" is authoritative.
+    pub absence_steps: BTreeSet<StepKind>,
     pub codes: BTreeMap<FailureCode, FailureClass>,
     pub choice: ProviderChoice,
     pub supervisor: ScopedSupervisor,
@@ -579,6 +581,18 @@ impl DriverHandle {
     #[must_use]
     pub fn choice(&self) -> &ProviderChoice {
         &self.facts.choice
+    }
+
+    /// Whether "absent" from these steps proves that a record is not there:
+    /// true only when there is at least one step and the mode's manifest
+    /// states every one of their kinds in `absence_steps` (decision 0185).
+    /// A lookup of other steps, or none, proves nothing by finding nothing.
+    #[must_use]
+    pub fn proves_absence(&self, steps: &[Step]) -> bool {
+        !steps.is_empty()
+            && steps
+                .iter()
+                .all(|step| !step.commits && self.facts.absence_steps.contains(&step.kind))
     }
 
     /// The supervisor to put in the [`PrepareContext`]: it starts only the

@@ -3,7 +3,6 @@
 //! in `server.rs`; nothing here knows a byte of it.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::time::Duration;
 
 use crate::model::{
     AckKind, AckPolicy, Acknowledgement, ApiCall, Connect, ConsumerSpec, ConsumerTruth, Delivery,
@@ -13,10 +12,6 @@ use crate::model::{
 /// The stand's clock starts here, in milliseconds since 1970. It moves only
 /// when a test moves it, so a duplicate window is crossed without a wait.
 pub(crate) const CLOCK_START_MS: u64 = 1_800_000_000_000;
-
-/// How long a consumer waits for an acknowledgement, as its info reports
-/// it. The stand redelivers only when a test says the time has passed.
-pub(crate) const ACK_WAIT: Duration = Duration::from_secs(30);
 
 /// An answer of the JetStream interface that is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +64,8 @@ pub(crate) struct Consumer {
     pub pending: BTreeMap<u64, (u64, u64)>,
     /// What goes out again first.
     pub redeliver: VecDeque<u64>,
+    /// When each pending delivery went out, on the stand's clock.
+    pub delivered_at: BTreeMap<u64, u64>,
     /// How many times each stream sequence went out.
     pub counts: BTreeMap<u64, u64>,
 }
@@ -150,8 +147,23 @@ impl Stream {
     }
 
     fn store(&mut self, subject: &str, headers: BTreeMap<String, String>, data: Vec<u8>) -> u64 {
-        if self.spec.max_msgs_per_subject == 1 {
-            self.messages.retain(|_, m| m.subject != subject);
+        // A limit per subject evicts that subject's oldest messages, from
+        // wherever they stand in the stream.
+        if let Ok(keep) = usize::try_from(self.spec.max_msgs_per_subject)
+            && keep > 0
+        {
+            let of_subject: Vec<u64> = self
+                .messages
+                .iter()
+                .filter(|(_, m)| m.subject == subject)
+                .map(|(seq, _)| *seq)
+                .collect();
+            for seq in of_subject
+                .iter()
+                .take((of_subject.len() + 1).saturating_sub(keep))
+            {
+                self.messages.remove(seq);
+            }
         }
         self.last_seq += 1;
         let seq = self.last_seq;
@@ -168,7 +180,7 @@ impl Stream {
     }
 
     /// The next message a consumer may be handed, if any.
-    fn claim(&mut self, consumer: &str) -> Option<Handed> {
+    fn claim(&mut self, consumer: &str, now_ms: u64, foreign: bool) -> Option<Handed> {
         let stream = self.spec.name.clone();
         let consumer_state = self.consumers.get_mut(consumer)?;
         let mut seq = None;
@@ -203,11 +215,17 @@ impl Stream {
             consumer_state
                 .pending
                 .insert(seq, (consumer_state.dseq, dc));
+            consumer_state.delivered_at.insert(seq, now_ms);
         }
         let pending = self.messages.range(consumer_state.next..).count();
+        let named = if foreign {
+            "another_consumer"
+        } else {
+            consumer
+        };
         Some(Handed {
             ack_subject: format!(
-                "$JS.ACK.{stream}.{consumer}.{dc}.{seq}.{}.{}.{pending}",
+                "$JS.ACK.{stream}.{named}.{dc}.{seq}.{}.{}.{pending}",
                 consumer_state.dseq, CLOCK_START_MS
             ),
             message,
@@ -461,9 +479,17 @@ impl State {
         if !s.consumers.contains_key(consumer) {
             return Err(ApiError::consumer_not_found());
         }
+        let now = self.now_ms;
+        let foreign = self.faults.contains(&Fault::ForeignDelivery);
+        let s = self
+            .streams
+            .get_mut(stream)
+            .ok_or_else(ApiError::stream_not_found)?;
         let mut handed = Vec::new();
         while handed.len() < batch {
-            let Some(one) = s.claim(consumer) else { break };
+            let Some(one) = s.claim(consumer, now, foreign) else {
+                break;
+            };
             handed.push(one);
         }
         for one in &handed {
@@ -511,6 +537,7 @@ impl State {
         match kind {
             AckKind::Ack | AckKind::Term => {
                 consumer.pending.remove(&seq);
+                consumer.delivered_at.remove(&seq);
                 consumer.redeliver.retain(|s| *s != seq);
                 // As the server does on a work queue: the acknowledged
                 // message is removed, whether or not it was still pending.
@@ -521,6 +548,7 @@ impl State {
             AckKind::Nak => {
                 if was_pending {
                     consumer.pending.remove(&seq);
+                    consumer.delivered_at.remove(&seq);
                     consumer.redeliver.push_back(seq);
                 }
             }
@@ -537,6 +565,29 @@ impl State {
         Some(())
     }
 
+    /// Moves the clock on, and hands out again every delivery whose
+    /// acknowledgement wait ran out, as the server does.
+    pub(crate) fn advance(&mut self, ms: u64) {
+        self.now_ms = self.now_ms.saturating_add(ms);
+        let now = self.now_ms;
+        for stream in self.streams.values_mut() {
+            for consumer in stream.consumers.values_mut() {
+                let wait = u64::try_from(consumer.spec.ack_wait.as_millis()).unwrap_or(u64::MAX);
+                let due: Vec<u64> = consumer
+                    .delivered_at
+                    .iter()
+                    .filter(|(_, at)| now.saturating_sub(**at) >= wait)
+                    .map(|(seq, _)| *seq)
+                    .collect();
+                for seq in due {
+                    consumer.delivered_at.remove(&seq);
+                    consumer.pending.remove(&seq);
+                    consumer.redeliver.push_back(seq);
+                }
+            }
+        }
+    }
+
     pub(crate) fn redeliver_unacknowledged(&mut self, stream: &str, consumer: &str) -> usize {
         let Some(c) = self
             .streams
@@ -547,8 +598,15 @@ impl State {
         };
         let pending: Vec<u64> = c.pending.keys().copied().collect();
         c.pending.clear();
+        c.delivered_at.clear();
         c.redeliver.extend(pending.iter().copied());
         pending.len()
+    }
+
+    pub(crate) fn remove_message(&mut self, stream: &str, seq: u64) -> bool {
+        self.streams
+            .get_mut(stream)
+            .is_some_and(|s| s.messages.remove(&seq).is_some())
     }
 
     pub(crate) fn declare_stream(&mut self, spec: StreamSpec) {
@@ -611,6 +669,7 @@ fn new_consumer(spec: ConsumerSpec, ephemeral: bool, next: u64) -> Consumer {
         dseq: 0,
         pending: BTreeMap::new(),
         redeliver: VecDeque::new(),
+        delivered_at: BTreeMap::new(),
         counts: BTreeMap::new(),
     }
 }

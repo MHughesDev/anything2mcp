@@ -216,6 +216,19 @@ fn a_badly_formed_name_or_file_is_refused_with_the_line() {
         Manifest::parse(&commits).unwrap_err().code(),
         &codes::MANIFEST_INVALID
     );
+    // A step kind whose absence is authoritative is one of the mode's
+    // step kinds, and never one that always commits.
+    for absence in ["absence_steps = [\"look\"]", "commit_steps = [\"send\"]\nabsence_steps = [\"send\"]"] {
+        let declares = manifest("alpha", "request", "").replace(
+            "steps = [\"fetch\", \"send\"]",
+            &format!("steps = [\"fetch\", \"send\"]\n{absence}"),
+        );
+        assert_eq!(
+            Manifest::parse(&declares).unwrap_err().code(),
+            &codes::MANIFEST_INVALID,
+            "{absence}"
+        );
+    }
     let level = manifest("alpha", "request", "")
         .replace(r#"max_level = "discovered""#, r#"max_level = "approved""#);
     assert_eq!(

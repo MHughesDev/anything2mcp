@@ -21,6 +21,9 @@ pub mod codes {
     pub const PASSWORD_READ_REFUSED: FailureCode = FailureCode::fixed("password_read_refused");
     /// An address is not one a tab may be sent to.
     pub const ADDRESS_INVALID: FailureCode = FailureCode::fixed("address_invalid");
+    /// A value cannot stand in one segment of a path: it is refused, never
+    /// encoded.
+    pub const ADDRESS_VALUE_REFUSED: FailureCode = FailureCode::fixed("address_value_refused");
     /// A page, or an address, is on an origin the tab was not opened for.
     /// The same name, with the same class, as the code the packs built on
     /// this crate give a surface nobody declared.
@@ -34,6 +37,7 @@ pub mod codes {
         (FailureClass::Transient, "timeout"),
         (FailureClass::Policy, "password_read_refused"),
         (FailureClass::Input, "address_invalid"),
+        (FailureClass::Input, "address_value_refused"),
         (FailureClass::Policy, "surface_not_declared"),
     ];
 }

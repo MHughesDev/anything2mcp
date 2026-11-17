@@ -24,6 +24,10 @@ pub(crate) const REVISION_HANDSHAKE: &str = "2025-11-25";
 pub(crate) const REVISION_NO_HANDSHAKE: &str = "2026-07-28";
 /// What a local server program's surface writes as its address.
 pub(crate) const LOCAL_ADDRESS: &str = "stdio";
+/// The surface field that accepts credentials over an unencrypted link to
+/// another machine (decision 0188), and the one word it takes.
+pub(crate) const UNENCRYPTED_CREDENTIALS: &str = "unencrypted_credentials";
+pub(crate) const ACCEPTED: &str = "accepted";
 
 /// The `mcp` surface kind: its address, and for a local server program the
 /// program by path and digest with its arguments and its environment.
@@ -41,7 +45,8 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
             .optional(
                 "revision",
                 JsonSchema::words(&[REVISION_HANDSHAKE, REVISION_NO_HANDSHAKE]),
-            ),
+            )
+            .optional(UNENCRYPTED_CREDENTIALS, JsonSchema::words(&[ACCEPTED])),
     )
     .with_program("program", Some("digest"))
 }
@@ -124,9 +129,41 @@ pub(crate) struct SurfaceFields {
     /// The protocol revision the connection speaks.
     #[serde(default)]
     pub revision: Option<String>,
+    /// `accepted` when the surface accepts that its credentials cross an
+    /// unencrypted link to another machine.
+    #[serde(default)]
+    pub unencrypted_credentials: Option<String>,
+}
+
+/// Whether an address is plain `http` to an address that is not a loopback
+/// address written as an IP address. A name, `localhost` included, is not
+/// one: the machine's resolver decides where a name leads. The same rule as
+/// `plain_to_another_machine` in `a2m-pack-http` (`src/link.rs`), which this
+/// pack cannot share code with.
+pub(crate) fn plain_to_another_machine(address: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(address) else {
+        return address.starts_with("http://");
+    };
+    if url.scheme() != "http" {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default();
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    !bare
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 impl SurfaceFields {
+    /// Whether the surface accepts that its credentials cross an
+    /// unencrypted link to another machine.
+    pub(crate) fn accepts_unencrypted(&self) -> bool {
+        self.unencrypted_credentials.as_deref() == Some(ACCEPTED)
+    }
+
     /// Reads the fields of a surface of the plan.
     pub(crate) fn of(surface: &SurfacePlan) -> Result<Self, a2m_core::Failure> {
         if surface.payload.is_none() {

@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, timeout_at};
 
 use crate::model::{AckPolicy, ApiCall, Connect, ConsumerSpec, Fault, Retention};
-use crate::state::{ACK_WAIT, ApiError, Published, matches};
+use crate::state::{ApiError, Published, matches};
 use crate::{MAX_CONTROL_LINE, Shared};
 
 /// One open connection, as routing sees it.
@@ -531,6 +531,7 @@ fn stream_info(shared: &Shared, name: &str) -> Result<J, ApiError> {
             "max_bytes": -1,
             "max_age": 0,
             "max_msgs_per_subject": s.spec.max_msgs_per_subject,
+            "allow_msg_ttl": s.spec.allow_msg_ttl,
             "max_msg_size": s.spec.max_msg_size.map_or(-1, |n| i64::try_from(n).unwrap_or(-1)),
             "discard": "old",
             "storage": "memory",
@@ -563,7 +564,7 @@ fn consumer_info(shared: &Shared, stream: &str, name: &str, kind: &str) -> Resul
         "name": name,
         "ack_policy": match c.spec.ack { AckPolicy::None => "none", AckPolicy::Explicit => "explicit" },
         "deliver_policy": "all",
-        "ack_wait": u64::try_from(ACK_WAIT.as_nanos()).unwrap_or(u64::MAX),
+        "ack_wait": u64::try_from(c.spec.ack_wait.as_nanos()).unwrap_or(u64::MAX),
         "max_deliver": -1,
         "replay_policy": "instant",
         "max_waiting": 512,

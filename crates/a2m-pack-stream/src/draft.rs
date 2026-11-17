@@ -99,13 +99,9 @@ impl DraftingRule for ChannelDraft {
             ("channel", DraftValue::text(&found.channel)),
             ("address", DraftValue::text(&found.address)),
             ("shape", DraftValue::text(shape.as_str())),
-            (
-                "role",
-                cx.open_question(&format!(
-                    "Is each message on `{}` the latest state for its key (`state`), or a thing that happened (`events`)?",
-                    found.channel
-                )),
-            ),
+            // What a message is (`role`) is a judgment only a publish needs,
+            // so no question of it is left here: the drafted reads compile,
+            // and a publish written over the channel says it is missing.
         ];
         if found.json.get("schema").and_then(Json::as_bool) == Some(true) {
             body.push(("schema", DraftValue::text(&found.word)));
@@ -280,20 +276,53 @@ fn read_outputs(found: &Found, key: &str, cx: &DraftContext<'_>) -> DraftValue {
     }
 }
 
-/// The outputs of a look at a channel: what the driver states of every
-/// look, whatever its messages hold. How many messages the look returned,
-/// and whether the channel held more than one look returns.
-fn list_outputs() -> DraftValue {
-    DraftValue::map(vec![
-        (
-            "count",
-            DraftValue::map(vec![("type", DraftValue::text("integer"))]),
-        ),
-        (
-            "more",
-            DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
-        ),
-    ])
+/// The names a look states of itself, which no field of a message takes
+/// over.
+pub(crate) const LOOK_FACTS: &[&str] = &["messages", "count", "more", "coverage", "next"];
+
+/// The outputs of a look at a channel: each plain field of a message the
+/// broker's schema states, or else each a look saw with one type, as a
+/// list of its values in the order of the messages; then what the driver states of every look, whatever its
+/// messages hold: how many messages the look returned, and whether the
+/// channel held more than one look returns.
+fn list_outputs(found: &Found) -> DraftValue {
+    // The broker's schema where it holds one the pack reads; else the
+    // fields a look saw, each with the one type every message gave it.
+    let stated = found
+        .json
+        .get("schema_fields")
+        .and_then(Json::as_object)
+        .filter(|fields| !fields.is_empty());
+    let mut outputs: Vec<(String, DraftValue)> = stated
+        .or_else(|| found.json.get("sampled_fields").and_then(Json::as_object))
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|(name, _)| {
+                    !LOOK_FACTS.contains(&name.as_str()) && a2m_core::Verb::new(name).is_ok()
+                })
+                .filter_map(|(name, json_type)| {
+                    let field_type = output_type(json_type.as_str()?)?;
+                    Some((
+                        name.clone(),
+                        DraftValue::map(vec![
+                            ("type", DraftValue::text(field_type)),
+                            ("list", DraftValue::Bool(true)),
+                        ]),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    outputs.push((
+        "count".to_owned(),
+        DraftValue::map(vec![("type", DraftValue::text("integer"))]),
+    ));
+    outputs.push((
+        "more".to_owned(),
+        DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
+    ));
+    DraftValue::Map(outputs)
 }
 
 /// From a channel the broker lists: one operation that reads it. `read` of
@@ -379,12 +408,12 @@ impl DraftingRule for ReadDraft {
                 vec![
                     ("effect", DraftValue::text("read")),
                     ("inputs", DraftValue::Map(Vec::new())),
-                    ("outputs", list_outputs()),
+                    ("outputs", list_outputs(&found)),
                     ("bindings", binding("list", Vec::new())),
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Lists what the channel `{}` holds now, without taking anything: how many messages one look returns, and whether it holds more.",
+                            "Lists what the channel `{}` holds now, without taking anything: each field of its messages in their order, how many messages one look returns, and whether it holds more.",
                             found.channel
                         )),
                     ),

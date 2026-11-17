@@ -1,6 +1,8 @@
 //! The observing tab: it reads, and its page cannot write.
 
-use crate::{RawValue, ReadWhat, SafeRequest, SafeRequests};
+use std::collections::BTreeMap;
+
+use crate::{RawValue, ReadWhat, SafeRequest, SafeRequests, codes};
 
 use super::*;
 
@@ -220,6 +222,185 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
     // Taken once; the document the tab was sent to is not one.
     assert!(tab.exchanges(soon()).await.is_empty());
     assert!(app.writes().await.unwrap().is_empty());
+    drop(tab);
+    stand.end().await;
+}
+
+/// What the test application holds for an order, as its totals.
+async fn totals_of(app: &TestApp, order: &str) -> (usize, u64) {
+    let stored = app.stored_order(order).await.unwrap().unwrap();
+    let quantity = stored
+        .items
+        .values()
+        .map(|item| u64::from(item.quantity))
+        .sum();
+    (stored.items.len(), quantity)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_observing_tab_reads_from_inside_its_page_with_get_alone_and_its_guard_still_holds() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("page-read");
+    let clerk = profile("clerk");
+    let observer = stand.browsers.observer();
+    let tab = must(
+        observer
+            .observing_tab(
+                &clerk,
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    let totals = Address::new(&app.url("/orders/A-100/totals")).unwrap();
+    must(tab.goto(&totals, soon()).await);
+    // The page's own read is done, so that what the application sees next
+    // is the tab's alone. The browser's own ask for an icon is not a
+    // request of the page, and is left out.
+    let loaded = crate::Primitive::Text(
+        css("#state"),
+        crate::TextMatch {
+            text: "Loaded.".to_owned(),
+            contains: false,
+        },
+    );
+    must(tab.wait(&loaded, soon()).await);
+    assert_eq!(tab.exchanges(soon()).await.len(), 1);
+    let seen = || async {
+        app.seen()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|line| line != "GET /favicon.ico")
+            .collect::<Vec<_>>()
+    };
+    let pattern = "/api/orders/{order_id}/totals";
+    let key = |order: &str| {
+        [("order_id".to_owned(), order.to_owned())]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>()
+    };
+
+    // Two orders, by key, from the page of one: each answer is what the
+    // application holds.
+    for order in ["A-100", "A-101"] {
+        let before = seen().await.len();
+        let path = crate::PagePath::fill(pattern, &key(order)).unwrap();
+        let answer = must(tab.read_from_page(&path, soon()).await);
+        assert_eq!(answer.status, 200);
+        assert_eq!(answer.media_type, "application/json");
+        let body: serde_json::Value = serde_json::from_str(&answer.body).unwrap();
+        let (lines, quantity) = totals_of(&app, order).await;
+        assert_eq!(body["order_id"], order);
+        assert_eq!(body["lines"], lines);
+        assert_eq!(body["total_quantity"], quantity);
+        // The page's cookie and its token are in no part of the answer.
+        let whole = format!("{answer:?}");
+        assert!(!whole.contains("secret-for-tests-cookie"), "{whole}");
+        assert!(!whole.contains("example-token-for-tests"), "{whole}");
+        // One request, with GET, to the path made, and nothing else.
+        let now = seen().await;
+        assert_eq!(
+            now[before..],
+            [format!("GET /api/orders/{order}/totals")],
+            "{now:?}"
+        );
+    }
+
+    // A value that would leave its segment is refused before any request.
+    let before = seen().await;
+    for value in ["A-100/../../orders", "..", "A-100?x=1", "%2e%2e", "A 100"] {
+        let refused = crate::PagePath::fill(pattern, &key(value)).unwrap_err();
+        assert_eq!(refused.code(), &codes::ADDRESS_VALUE_REFUSED);
+    }
+    assert_eq!(seen().await, before);
+
+    // A redirect is not followed: the application's start page redirects.
+    let root = crate::PagePath::fill("/", &BTreeMap::new()).unwrap();
+    assert!(matches!(
+        tab.read_from_page(&root, soon()).await,
+        Err(BrowserError::RequestFailed(_))
+    ));
+    let now = seen().await;
+    assert_eq!(now[before.len()..], ["GET /".to_owned()], "{now:?}");
+
+    // The guard beneath it: the same request from the same page, with the
+    // guard's rule broken by another method, is failed by the browser and
+    // never reaches the application.
+    let posted = tab
+        .page
+        .fetch(
+            &crate::PageRequest {
+                method: "POST".to_owned(),
+                address: Address::new(&app.url("/api/orders/A-100/totals")).unwrap(),
+                headers: Vec::new(),
+                body: None,
+            },
+            soon(),
+        )
+        .await;
+    assert!(
+        matches!(posted, Err(BrowserError::RequestFailed(_))),
+        "{posted:?}"
+    );
+    let after = seen().await;
+    assert!(
+        !after.iter().any(|line| line.starts_with("POST")),
+        "{after:?}"
+    );
+    must(tab.goto(&totals, soon()).await);
+    assert!(tab.blocked().iter().any(|one| one.method == "POST"));
+
+    // A page with no origin of its own has no session to read with.
+    must(
+        tab.page
+            .goto_text(&page_of("<p>Nothing here.</p>"), soon())
+            .await,
+    );
+    let before = seen().await;
+    let path = crate::PagePath::fill(pattern, &key("A-100")).unwrap();
+    assert!(tab.read_from_page(&path, soon()).await.is_err());
+    assert_eq!(seen().await, before);
+
+    assert!(app.writes().await.unwrap().is_empty());
+    drop(tab);
+    stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_from_inside_the_page_longer_than_the_limit_is_refused_whole() {
+    let app = TestApp::start().await.unwrap();
+    let mut settings = test_support::settings();
+    settings.max_read_chars = 16;
+    let stand = Stand::new("page-read-limit", settings, &[]);
+    let tab = must(
+        stand
+            .browsers
+            .observer()
+            .observing_tab(
+                &profile("clerk"),
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    must(
+        tab.goto(&Address::new(&app.url("/orders/A-100")).unwrap(), soon())
+            .await,
+    );
+    let path = crate::PagePath::fill(
+        "/api/orders/{order_id}/totals",
+        &[("order_id".to_owned(), "A-100".to_owned())]
+            .into_iter()
+            .collect(),
+    )
+    .unwrap();
+    assert!(matches!(
+        tab.read_from_page(&path, soon()).await,
+        Err(BrowserError::TooLarge { limit: 16 })
+    ));
     drop(tab);
     stand.end().await;
 }

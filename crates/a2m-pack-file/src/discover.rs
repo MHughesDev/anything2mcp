@@ -42,6 +42,70 @@ pub struct TableFound {
     pub sheet: Option<String>,
     /// Its header texts, or the keys of the list's records, in order.
     pub headers: Vec<String>,
+    /// For a workbook's table, what the cells under each header hold, in
+    /// the order of `headers`: a shape, never a value. Empty for a JSON
+    /// list, and in a finding made before it was carried.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnFound>,
+}
+
+/// What the cells of one column of a workbook's table hold below its
+/// header, as the workbook stores them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnFound {
+    /// The one kind every cell that holds something is of, or `Mixed`. A
+    /// formula counts as the kind of the result it kept.
+    pub cells: CellKind,
+    /// Whether any of its cells holds a formula.
+    pub formula: bool,
+}
+
+/// The kind of what a workbook's cells hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellKind {
+    /// Text, or nothing at all.
+    Text,
+    /// Numbers.
+    Number,
+    /// True or false.
+    Boolean,
+    /// Cells of more than one kind, a date, an error, or a formula that
+    /// kept no result: no one type reads them all.
+    Mixed,
+}
+
+/// What each column of a workbook's table holds below its header row.
+fn columns_of(part: &a2m_sources::ParsedPart, range: a2m_sources::CellRange) -> Vec<ColumnFound> {
+    (range.left..=range.right)
+        .map(|column| {
+            let mut kind = None;
+            let mut formula = false;
+            for row in range.top.saturating_add(1)..=range.bottom {
+                let Some(placed) = part.cell(row, column) else {
+                    continue;
+                };
+                formula |= matches!(placed.cell.raw, RawCell::Formula { .. });
+                let this = match placed.cell.raw.settled() {
+                    Some(RawCell::Empty) => continue,
+                    Some(RawCell::Text(_)) => CellKind::Text,
+                    Some(RawCell::Number(_)) => CellKind::Number,
+                    Some(RawCell::Bool(_)) => CellKind::Boolean,
+                    _ => CellKind::Mixed,
+                };
+                kind = match kind {
+                    None => Some(this),
+                    Some(known) if known == this => Some(known),
+                    Some(_) => Some(CellKind::Mixed),
+                };
+            }
+            ColumnFound {
+                cells: kind.unwrap_or(CellKind::Text),
+                formula,
+            }
+        })
+        .collect()
 }
 
 /// What a `file_layout` finding holds: the file's layout, as the file
@@ -49,6 +113,12 @@ pub struct TableFound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutFound {
+    /// The surface the file was observed on: the document drafted from the
+    /// finding names it, so that in a target of several file surfaces it
+    /// is not taken for a file of the first. Nothing in a finding made
+    /// before it was carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
     /// The file's name inside its folder.
     pub file: String,
     /// Its format.
@@ -96,8 +166,15 @@ fn format_of(name: &str) -> Option<(Format, Option<&'static str>)> {
     }
 }
 
-fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFile) -> LayoutFound {
+fn layout_of(
+    surface: &str,
+    file: &str,
+    format: Format,
+    delimiter: Option<&str>,
+    open: &OpenFile,
+) -> LayoutFound {
     let mut found = LayoutFound {
+        surface: Some(surface.to_owned()),
         file: file.to_owned(),
         format,
         delimiter: delimiter.map(str::to_owned),
@@ -117,15 +194,21 @@ fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFil
         }
         Content::Cells(parsed) => {
             let structure = &parsed.structure;
-            for sheet in &structure.sheets {
+            for (index, sheet) in structure.sheets.iter().enumerate() {
                 found.sheets.push(sheet.name.clone());
-                found
-                    .tables
-                    .extend(sheet.tables.iter().map(|table| TableFound {
+                let part = u32::try_from(index)
+                    .ok()
+                    .and_then(|index| parsed.part(index));
+                found.tables.extend(sheet.tables.iter().map(|table| {
+                    TableFound {
                         name: table.name.clone(),
                         sheet: Some(sheet.name.clone()),
                         headers: table.headers.clone(),
-                    }));
+                        columns: part
+                            .map(|part| columns_of(part, table.range))
+                            .unwrap_or_default(),
+                    }
+                }));
             }
             found.names = structure.names.iter().map(|n| n.name.clone()).collect();
             found.macros = structure.macros;
@@ -160,6 +243,7 @@ fn layout_of(file: &str, format: Format, delimiter: Option<&str>, open: &OpenFil
                                 name: key.clone(),
                                 sheet: None,
                                 headers: keys,
+                                columns: Vec::new(),
                             });
                         }
                     }
@@ -239,7 +323,12 @@ impl LayoutDiscoverer {
         })
     }
 
-    fn findings(&self, path: &CheckedPath, bytes: Vec<u8>) -> Result<Vec<Finding>, Failure> {
+    fn findings(
+        &self,
+        surface: &str,
+        path: &CheckedPath,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<Finding>, Failure> {
         let file = path.relative().rsplit('/').next().unwrap_or_default();
         let Some((format, delimiter)) = format_of(file) else {
             return Ok(Vec::new());
@@ -272,7 +361,7 @@ impl LayoutDiscoverer {
         let layout = Finding::about(
             subject(open.digest),
             self.layout.clone(),
-            encoded(&layout_of(file, format, delimiter, &open))?,
+            encoded(&layout_of(surface, file, format, delimiter, &open))?,
             Source::LiveSystem,
             produced(),
             now,
@@ -374,7 +463,7 @@ impl Discoverer for LayoutDiscoverer {
                     continue;
                 };
                 left = left.saturating_sub(bytes.len() as u64);
-                let findings = self.findings(path, bytes)?;
+                let findings = self.findings(scope.surface.surface.name.as_str(), path, bytes)?;
                 if findings.is_empty() {
                     report.dropped += 1;
                 }

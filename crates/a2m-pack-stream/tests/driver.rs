@@ -778,11 +778,33 @@ async fn a_publish_to_a_log_is_found_again_by_its_token() {
     );
     let mut other = input(&args);
     other.stamp = Some("tok-never");
+    // "Absent" is said of a range read whole from where the log ended
+    // before the publish, as the record recorded it; with nothing recorded
+    // the range has no beginning, and the scan cannot tell.
     let absent = handle
-        .act(&mut prepared, &binding.lookup[0], &other, Authority::Read)
+        .act_recorded(
+            &mut prepared,
+            &binding.lookup[0],
+            &other,
+            Authority::Read,
+            &Values::new().with("scan_from", 0_i64),
+        )
         .await
         .unwrap();
     assert!(matches!(absent, StepOutcome::Absent(_)));
+    let unknown = failed(
+        handle
+            .act(&mut prepared, &binding.lookup[0], &other, Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        unknown,
+        (
+            "policy".to_owned(),
+            "scan_inconclusive".to_owned(),
+            Sent::Answered
+        )
+    );
     assert_eq!(scene.broker.received().len(), 1);
     assert!(scene.broker.deliveries().is_empty());
 }

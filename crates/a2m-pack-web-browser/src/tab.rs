@@ -21,6 +21,7 @@ use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
+use crate::page_read::{PageAnswer, PagePath};
 use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, Attached, BypassServiceWorker,
     CallArgument, CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld,
@@ -1635,7 +1636,7 @@ impl Page {
         }
     }
 
-    async fn fetch(
+    pub(crate) async fn fetch(
         &self,
         request: &PageRequest,
         deadline: Deadline,
@@ -1727,6 +1728,71 @@ impl Page {
             status,
             address: without_query(&self.redact.redact(&answer.address)).to_owned(),
             headers,
+            body: self.redact.redact(&answer.body),
+        })
+    }
+
+    /// A read from inside the page, with GET, to a checked path on the
+    /// page's own origin (decision 0190). The page's origin is checked
+    /// against the tab's in the same call that sends it.
+    async fn read_from_page(
+        &self,
+        path: &PagePath,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Answer {
+            too_large: bool,
+            redirected: bool,
+            status: Option<u16>,
+            media_type: String,
+            body: String,
+        }
+        let world = self.world(deadline).await?;
+        let outcome = self
+            .evaluate(
+                On::World(world),
+                "function (path, limit) { return __a2m.readFromPage(path, limit); }",
+                vec![
+                    CallArgument::text(path.as_str()),
+                    CallArgument::number(self.max_read),
+                ],
+                true,
+                true,
+                deadline,
+            )
+            .await;
+        let evaluated = match outcome {
+            Ok(evaluated) => evaluated,
+            Err(CallError::Browser(BrowserError::Unexpected(why))) => {
+                return Err(BrowserError::RequestFailed(self.shown(&why)));
+            }
+            Err(CallError::Browser(error)) => return Err(error),
+            Err(CallError::Gone | CallError::NoHelper) => {
+                return Err(BrowserError::RequestFailed(
+                    "the page was replaced while the read was under way".to_owned(),
+                ));
+            }
+        };
+        let answer: Answer = Self::answer(evaluated)?;
+        if answer.redirected {
+            return Err(BrowserError::RequestFailed(
+                "the answer was a redirect, and a read from the page follows none".to_owned(),
+            ));
+        }
+        let Some(status) = answer.status else {
+            return Err(if answer.too_large {
+                BrowserError::TooLarge {
+                    limit: self.max_read,
+                }
+            } else {
+                BrowserError::Unexpected("the helper answered a read with no status".to_owned())
+            });
+        };
+        Ok(PageAnswer {
+            status,
+            media_type: self.redact.redact(&answer.media_type),
             body: self.redact.redact(&answer.body),
         })
     }
@@ -3030,6 +3096,34 @@ impl ObserveTab {
     /// A request of any other method is refused, and is in [`Self::blocked`].
     pub async fn exchanges(&self, deadline: Deadline) -> Vec<PageExchange> {
         self.page.take_exchanges(deadline).await
+    }
+
+    /// Reads from inside the page the tab is on, with the page's own
+    /// session, once: a GET to `path` on the page's own origin, which must
+    /// be one of the tab's, with no header a caller chose and no body
+    /// (decision 0190). It takes no method: it cannot send another. A
+    /// redirect is not followed, and the answer is read as text up to the
+    /// tab's limit. The tab's guard still fails any request of the page
+    /// that could write, beneath this. No credential, cookie, or token of
+    /// the page is read: the browser sends the page's cookies itself, and
+    /// nothing else of the page is sent. What comes back passes the
+    /// redactor; no header of it is returned.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::ForeignOrigin`] when the page is on an origin the
+    /// tab was not opened for; nothing was sent.
+    /// [`BrowserError::TooLarge`] for an answer longer than the limit.
+    /// [`BrowserError::RequestFailed`] when the page could not complete
+    /// the read, or the answer was a redirect. A read changes nothing, so
+    /// whether it was sent matters to no one: every error is `NotSent` or
+    /// as the base reports it.
+    pub async fn read_from_page(
+        &self,
+        path: &PagePath,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        self.page.read_from_page(path, deadline).await
     }
 }
 

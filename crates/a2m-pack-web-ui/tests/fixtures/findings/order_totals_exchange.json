@@ -1,0 +1,5 @@
+{
+  "found": "{\"answered\":true,\"content\":\"json\",\"credential_headers\":[\"cookie\",\"x-csrf-token\"],\"format\":\"1\",\"made_by\":\"/orders/{order_id}/totals\",\"method\":\"GET\",\"path\":\"/api/orders/{order_id}/totals\",\"paths\":[\"/api/orders/A-100/totals\",\"/api/orders/A-101/totals\"],\"query\":{\"lang\":\"unknown\",\"view\":\"unknown\"},\"response\":{\"fields\":{\"lines\":{\"type\":\"integer\"},\"order_id\":{\"type\":\"text\"},\"total_length_in\":{\"type\":\"text\"},\"total_quantity\":{\"type\":\"integer\"}},\"type\":\"object\"},\"status\":200}",
+  "kind": "exchange",
+  "path": "/api/orders/{order_id}/totals"
+}

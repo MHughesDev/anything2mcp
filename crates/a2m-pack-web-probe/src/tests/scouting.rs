@@ -688,3 +688,68 @@ async fn a_request_the_page_makes_by_itself_is_an_exchange_of_names_and_kinds_on
     assert!(site.writes().await.is_empty());
     bench.end().await;
 }
+
+/// The `exchange` finding of the page that asks for an order's totals by
+/// itself, matched over two orders, as the web UI pack's drafting test
+/// reads it.
+fn shared_totals_exchange() -> std::path::PathBuf {
+    shared_order_screen().with_file_name("order_totals_exchange.json")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_pages_that_ask_for_one_read_by_key_give_one_exchange_with_a_placeholder() {
+    let site = Site::start().await;
+    let bench = Bench::new("totals-matched", no_secrets());
+    let start = site.url("/");
+    let look = Look {
+        paths: vec!["/orders/A-100/totals", "/orders/A-101/totals"],
+        depth: Some(0),
+        ready_text: Some("Loaded."),
+        ..Look::default()
+    };
+    let first = must(bench.run("web_capture", &start, &look).await);
+    check(&first);
+    let second = must(bench.run("web_capture", &start, &look).await);
+    let ids = |seen: &Seen| seen.findings.iter().map(|one| one.id().clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&first), ids(&second));
+    // One request by key; neither order's own is given apart.
+    assert!(first.at("exchange", "/api/orders/A-100/totals").is_empty());
+    assert!(first.at("exchange", "/api/orders/A-101/totals").is_empty());
+    let (finding, found) = first.one("exchange", "/api/orders/{order_id}/totals");
+    assert_eq!(found["made_by"], "/orders/{order_id}/totals");
+    assert_eq!(
+        found["paths"],
+        serde_json::json!(["/api/orders/A-100/totals", "/api/orders/A-101/totals"])
+    );
+    assert!(
+        finding
+            .limitations()
+            .iter()
+            .any(|one| one.code == LimitationCode::Sampled)
+    );
+    // No value of the query, a header, the cookie, or the answer.
+    let whole = serde_json::to_string(&first.findings).unwrap();
+    for value in [
+        "summary",
+        "example-token-for-tests",
+        "secret-for-tests-cookie",
+    ] {
+        assert!(!whole.contains(value), "{whole}");
+    }
+    let text = std::fs::read_to_string(shared_totals_exchange()).unwrap_or_default();
+    let shared: Json = serde_json::from_str(&text).unwrap_or(Json::Null);
+    let wanted = serde_json::json!({
+        "kind": "exchange",
+        "path": "/api/orders/{order_id}/totals",
+        "found": finding.found(),
+    });
+    assert_eq!(
+        shared,
+        wanted,
+        "write this into {}:\n{}",
+        shared_totals_exchange().display(),
+        serde_json::to_string_pretty(&wanted).unwrap()
+    );
+    assert!(site.writes().await.is_empty());
+    bench.end().await;
+}

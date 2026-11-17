@@ -36,7 +36,7 @@ Spec section 605 and the roadmap's package 8.2 place the `site_tools` mode in th
 | --- | --- |
 | Provider | `mcp` |
 | Mode | `mcp`, archetype request, rank 30, with the verbs `read`, `list`, `search`, `create`, `update`, `upsert`, `delete`, `download`, `submit`, and `call`. Four reads and one write at a time on a session |
-| Surface kind | `mcp`, with a session. Fields: `address`, an `http://` address, or `stdio` for a local server program, which states `program` (its absolute path), `digest`, `args`, `environment`, and `pass_environment`; `revision`, `2025-11-25` (the default, which starts with `initialize`) or `2026-07-28` (no handshake). The program and its digest are declared as the surface's program, so the plan declares them ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)) |
+| Surface kind | `mcp`, with a session. Fields: `address`, an `http://` address, or `stdio` for a local server program, which states `program` (its absolute path), `digest`, `args`, `environment`, and `pass_environment`; `revision`, `2025-11-25` (the default, which starts with `initialize`) or `2026-07-28` (no handshake); `unencrypted_credentials: accepted`, the one way to let a session's token cross plain `http` to an address that is not a loopback address ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). The program and its digest are declared as the surface's program, so the plan declares them ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)) |
 | Step kinds | `call_tool`, from lowerings; `list_tools`, which only the discoverer sends, through the sandbox port |
 | Driver | `McpDriver` |
 | File kind | `mapping`, in `mappings/`, for `mcp` surfaces. A mapped tool is the defined name `surface/tool`, so the kernel refuses one tool mapped twice for a surface |
@@ -80,6 +80,7 @@ The first six are registered rules that look across files. The last four are rai
 | `mcp.write_no_readback` | Error | A tool mapped `write` that names no mapped read tool. A tool mapped `irreversible` needs none |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
 | `mcp.environment_refused` | Error | A local server program is handed a variable that starts with `A2M_` (any letter case) or is named for a credential, in `environment` or `pass_environment`. The driver refuses the same names again before it starts the program, so a plan changed by hand starts nothing. A credential for a local server goes through the session keeper, not the environment ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md), finding P6) |
+| `mcp.unencrypted_credentials` | Warning | A surface declares `unencrypted_credentials: accepted`: its credentials cross an unencrypted link to another machine |
 | `mcp.free_text` | Warning at the mapping, error at a binding | A tool whose entry says `free_text: true` is never called. The entry may stand as the record of a review; a binding that uses the tool, as its act, its read-back, or its lookup, does not compile |
 | `mcp.effect_understated` | Error | An operation states less than the tool it calls, or a reading verb calls a write tool |
 | `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted. Every value of the mode comes from the server, from the act, the read-back, or the lookup. A choice is not text: the kernel admits only its codes |
@@ -207,6 +208,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | --- | --- | --- | --- |
 | `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool whose entry says `free_text: true`, a one-string tool whose entry does not say `free_text: false`; an address that is not among the run's destinations, or a local program the plan does not declare for the surface, at every `prepare` | Not sent |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema, or a value with no form a tool takes | Not sent |
+| `policy` | `link_not_encrypted` | A session on an `http://` surface whose address is not a loopback address written as an IP address, where the surface does not declare `unencrypted_credentials: accepted`; refused at every `prepare`, and by the link before each request | Not sent |
 | `input` | `tls_not_enabled` | An `https://` surface in a build without the feature `tls` | Not sent |
 | `input` | `tls_setup_failed` | No TLS configuration could be made on this machine | Not sent |
 | `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https://` surface whose certificate or handshake fails. The session keeper's codes, given by `tls::refusal` of `a2m-auth` | Not sent |
@@ -255,7 +257,8 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 2. Done: the mapping schema, `McpDriver` for reads against the stand over HTTP and as a local program, and change detection before a call.
 3. Done: writes with read-back, the stamp and the lookup, and the fault cases.
 4. Done: `mcp_tools`, its describer, and its drafting rule; `upstream_mcp` with a bearer token against the HTTP stand. The pass-through read operation drafted for each settled read-only tool ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)), proven against the HTTP stand by `the_stands_tool_list_drafts_reads_that_read_what_it_stores`.
-5. Package E6: a `discovery` mapping, whose results are stored as findings at `inferred` and never bound. Hypothesis H-27.
+5. Done: no credential crosses plain `http` to another machine unless the surface accepts it; the lint rule `mcp.unencrypted_credentials` warns in every mode ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). Proven by `a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts_it`, in `tests/driver.rs`.
+6. Package E6: a `discovery` mapping, whose results are stored as findings at `inferred` and never bound. Hypothesis H-27.
 
 Not built:
 

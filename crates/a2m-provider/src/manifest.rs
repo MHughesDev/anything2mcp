@@ -251,6 +251,16 @@ pub struct ModeDecl {
     /// a write. Empty, the default, checks nothing.
     #[serde(default)]
     pub commit_steps: Vec<StepKind>,
+    /// The kinds of step whose "absent" the mode's driver states is
+    /// authoritative: when such a step answers that a record is not there,
+    /// after the binding's settle time, the record is not there in the
+    /// system, whatever replica, page, or window a reader might otherwise
+    /// see. Only a lookup made of these kinds alone may prove that a write
+    /// of a record with no key did not land (decision 0185); a read-back
+    /// never does. Empty, the default, states none: "absent" from such a
+    /// mode proves nothing on its own.
+    #[serde(default)]
+    pub absence_steps: Vec<StepKind>,
     /// Its place in binding order when an operation states none; lower is
     /// tried first.
     #[serde(default = "default_rank")]
@@ -975,6 +985,16 @@ impl Manifest {
                 return Err(invalid(
                     "modes",
                     "a step kind that always commits is listed once, and is one of the mode's step kinds",
+                ));
+            }
+            if !unique(mode.absence_steps.iter())
+                || mode.absence_steps.iter().any(|kind| {
+                    !mode.steps.contains(kind) || mode.commit_steps.contains(kind)
+                })
+            {
+                return Err(invalid(
+                    "modes",
+                    "a step kind whose absence is authoritative is listed once, is one of the mode's step kinds, and never commits",
                 ));
             }
             if mode.session_reads == 0 || mode.session_writes == 0 {

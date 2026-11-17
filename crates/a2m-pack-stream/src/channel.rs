@@ -117,8 +117,9 @@ pub(crate) struct ChannelEntry {
     pub address: String,
     /// What the channel does with a message.
     pub shape: Shape,
-    /// What a message on it is.
-    pub role: Role,
+    /// What a message on it is. Only a publish needs it: a channel that
+    /// does not say compiles for reads, and a publish to it does not.
+    pub role: Option<Role>,
     /// The message schema, by the name a file under `schemas/` gives it.
     pub schema: Option<String>,
     /// The field of the body the message key is taken from.
@@ -160,7 +161,7 @@ impl ChannelEntry {
     /// reads it: the one channel a publish to which is an ordinary write.
     pub(crate) fn is_private_state(&self) -> bool {
         self.shape == Shape::Retained
-            && self.role == Role::State
+            && self.role == Some(Role::State)
             && self.consumers == Consumers::None
     }
 }
@@ -235,7 +236,7 @@ pub(crate) fn read_channel(
     };
     let word = |key: &str| doc.text(key).unwrap_or_default();
     let shape = Shape::from_word(word("shape")).unwrap_or(Shape::Topic);
-    let role = Role::from_word(word("role")).unwrap_or(Role::Events);
+    let role = doc.text("role").and_then(Role::from_word);
     let read_through_at = doc.get("read_through").map_or(&doc.at, |field| &field.at);
     let read_through: Vec<ReadThrough> = doc
         .get("read_through")
@@ -464,7 +465,7 @@ pub(crate) fn channel_schema() -> JsonSchema {
         .optional("surface", JsonSchema::surface())
         .required("address", JsonSchema::text())
         .required("shape", JsonSchema::words(Shape::WORDS))
-        .required("role", JsonSchema::words(Role::WORDS))
+        .optional("role", JsonSchema::words(Role::WORDS))
         .optional("schema", JsonSchema::name())
         .optional("encoding", JsonSchema::words(&["json"]))
         .optional(

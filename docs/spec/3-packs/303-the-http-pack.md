@@ -130,6 +130,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 
 - The lease places a token or the session's cookies into the driver's prepared client without returning them. The client holds them for one pass of the loop, sends them only to an endpoint that takes the session's credential, and wipes them at release. Warm connections are kept by session and origin.
 - The keeper hands the driver short-lived tokens in memory only.
+- **A credential never crosses an unencrypted link to another machine.** A request that would carry the session's credential (an `Authorization` header, a cookie, a key in a header) to a plain `http` address that is not a loopback address written as an IP address is refused unsent, at prepare and again as it is sent, with `policy`, `link_not_encrypted`. A name, `localhost` included, is not a loopback address: the resolver decides where it leads. The one way to allow it, for a system on a private network that offers nothing else, is the surface's own field `unencrypted_credentials: accepted` in `target.yaml`; `http.unencrypted_credentials` reports it as a warning on every lint, and the evidence of every request that carries a credential over it says so. No setting, variable, or input turns it on ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). No redirect is followed, so none can carry a credential anywhere.
 - A status and path matching the target's declared expiry signal, or a redirect to its identity host, is reported through the lease as `needs_login`. The driver never renews.
 - Where an authorization-code response arrives on a server, when no loopback address reaches the person's browser, is open.
 
@@ -160,6 +161,7 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 | `http.no_response_schema` | Error | An endpoint without a response schema |
 | `http.effect_method` | Warning | An endpoint marked `read` whose method is not one its description, or HTTP itself, marks safe |
 | `http.signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser |
+| `http.unencrypted_credentials` | Warning | A surface declares `unencrypted_credentials: accepted`: its credentials cross an unencrypted link to another machine |
 | `http.placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry; refused by the lowering |
 | `http.graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash. Not built |
 | `http.api_operation_missing` | Error | An `operation_id` not in the pinned description. Not built |
@@ -189,6 +191,7 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back, or what came back is not the application's verdict: a redirect to another origin, or an answer over the limit on its size |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
 | `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or, for a read, a redirect to another origin |
+| `policy` | `link_not_encrypted` | A request that would carry the session's credential over plain `http` to an address that is not a loopback address, on a surface that does not accept it; nothing was sent |
 | `unknown_variant` | `response_too_large` | An answer to a read over the limit on its size |
 | `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https` surface whose certificate or handshake fails; nothing was sent. The session keeper's codes, passed on |
 | `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read; a description past the bounds of the import |

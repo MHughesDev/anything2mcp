@@ -7,8 +7,10 @@
 //! frame at a time, compares the device's model, firmware, and serial with
 //! what the target declares, checks every write against its register's
 //! range before a frame is built, and gives the frame out to be recorded
-//! before it is sent; and a discoverer that asks a device to identify
-//! itself and nothing else.
+//! before it is sent; a discoverer that asks a device to identify itself
+//! and nothing else; and a discoverer that reads a register map a vendor
+//! published, given as a file, sends no frame, and drafts a map of its
+//! readable registers with one read each.
 //!
 //! The first protocol is a subset of the Modbus application protocol over
 //! TCP, written here. Not built: serial links, a console on a link, writes
@@ -31,6 +33,7 @@ mod lower;
 mod map;
 mod modbus;
 mod names;
+mod published;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -103,7 +106,13 @@ impl Pack for DevicePack {
             ))
             .file_kind(Arc::new(map::RegisterKind::new(Arc::clone(&names))))
             .lowering(Arc::new(lower::DeviceLowering::new(Arc::clone(&names))))
-            .drafting_rule(Arc::new(discover::MapFromIdentity::new(Arc::clone(&names))));
+            .drafting_rule(Arc::new(discover::MapFromIdentity::new(Arc::clone(&names))))
+            .drafting_rule(Arc::new(published::MapFromPublished::new(Arc::clone(
+                &names,
+            ))?))
+            .drafting_rule(Arc::new(published::ReadsFromPublished::new(Arc::clone(
+                &names,
+            ))?));
         for rule in [
             map::WritableRule::Hazard,
             map::WritableRule::Range,
@@ -123,9 +132,17 @@ impl Pack for DevicePack {
             Arc::new(discover::IdentityDiscoverer::new(
                 Arc::clone(&names),
                 cx.telemetry().clock(),
-                version,
+                version.clone(),
             )?),
             Arc::new(discover::IdentityDescriber),
+        )?;
+        to.discoverer(
+            Arc::new(published::PublishedMapDiscoverer::new(
+                Arc::clone(&names),
+                cx.telemetry().clock(),
+                version,
+            )?),
+            Arc::new(published::PublishedMapDescriber),
         )?;
         Ok(())
     }

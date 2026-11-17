@@ -135,7 +135,8 @@ kind = "pack"
 name = "app_json"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken", "scan"]
+absence_steps = ["scan"]
 rank = 40
 session_reads = 4
 
@@ -143,7 +144,7 @@ session_reads = 4
 name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken", "scan"]
 rank = 50
 session_reads = 4
 
@@ -286,6 +287,12 @@ pub struct Hooks {
     /// stored: `absent`, or `nothing`, a look that did not cover what it
     /// looked in.
     pub taken_answer: Mutex<Option<&'static str>>,
+    /// The code a step hands out before the save is recorded with the
+    /// order it is for, so that a record has two recorded values.
+    pub records_order: AtomicBool,
+    /// The step that hands out a code before the save records nothing for
+    /// reconcile.
+    pub records_nothing: AtomicBool,
 }
 
 /// What one step was given.
@@ -677,7 +684,7 @@ impl AppDriver {
                     let (status, body) = self.get(state, &path).await?;
                     match status {
                         200 => Ok(StepOutcome::Done(Observed {
-                            values: item_values(&body),
+                            values: item_values(&body).with("order_id", order.as_str()),
                             ..Observed::default()
                         })),
                         404 => Ok(StepOutcome::Absent(Observed::default())),
@@ -686,6 +693,48 @@ impl AppDriver {
                             "example_unexpected",
                             "The application answered a look in a way no rule covers.",
                         ))),
+                    }
+                }
+                // A lookup of a record of no identity through every line
+                // item of the order, by the stamp its save wrote: the mode's
+                // manifest states its "absent" authoritative. It may lag
+                // behind the write, as `find_item` may.
+                "scan" => {
+                    let order = text(args, "order_id")?;
+                    let Some(stamp) = input.stamp else {
+                        return Err(StepFailure::not_sent(failure(
+                            FailureClass::UnknownVariant,
+                            "example_unexpected",
+                            "The scan was given no stamp to look for.",
+                        )));
+                    };
+                    if matches!(*hooks.taken_answer.lock().unwrap(), Some("nothing")) {
+                        return Err(StepFailure::answered(failure(
+                            FailureClass::Transient,
+                            "example_not_covered",
+                            "The scan did not cover the order.",
+                        )));
+                    }
+                    if hooks
+                        .lookup_lags
+                        .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                            left.checked_sub(1)
+                        })
+                        .is_ok()
+                    {
+                        return Ok(StepOutcome::Absent(Observed::default()));
+                    }
+                    let wanted = format!("ref:{stamp}");
+                    let items = self.items(state, &order).await?;
+                    match items
+                        .iter()
+                        .find(|item| item["description"].as_str() == Some(wanted.as_str()))
+                    {
+                        Some(item) => Ok(StepOutcome::Done(Observed {
+                            values: item_values(item).with("order_id", order.as_str()),
+                            ..Observed::default()
+                        })),
+                        None => Ok(StepOutcome::Absent(Observed::default())),
                     }
                 }
                 "put_item" => {
@@ -780,11 +829,20 @@ impl AppDriver {
                 "reserve_code" => {
                     let order = text(args, "order_id")?;
                     let code = self.free_code(state, &order).await?;
-                    let key = RecordKey::new(vec![order.into(), code.as_str().into()]).unwrap();
+                    let key = RecordKey::new(vec![order.as_str().into(), code.as_str().into()])
+                        .unwrap();
                     Ok(StepOutcome::Done(Observed {
                         values: Values::new().with("item_code", code.as_str()),
                         assigned_key: Some(key),
-                        for_reconcile: Values::new().with("item_code", code.as_str()),
+                        for_reconcile: if hooks.records_nothing.load(Ordering::SeqCst) {
+                            Values::new()
+                        } else if hooks.records_order.load(Ordering::SeqCst) {
+                            Values::new()
+                                .with("item_code", code.as_str())
+                                .with("order_id", order.as_str())
+                        } else {
+                            Values::new().with("item_code", code.as_str())
+                        },
                         captures: Vec::new(),
                     }))
                 }
@@ -1919,6 +1977,22 @@ pub fn keyless_slot_add(plan: &mut Plan) {
     }
 }
 
+/// As [`keyless_slot_add`], and the binding also has a lookup that scans
+/// the order for the record's stamp (`scan`), whose "absent" the first
+/// mode's manifest states authoritative, with a settle time of `settle_ms`.
+pub fn keyless_slot_add_scanned(plan: &mut Plan, settle_ms: u32) {
+    keyless_slot_add(plan);
+    for operation in &mut plan.operations {
+        if operation.name.as_str() == SLOT_ADD {
+            for binding in &mut operation.bindings {
+                let order_id = binding.read_back[0].args[0].value;
+                binding.lookup = vec![step("scan", &[("order_id", order_id)], false, true)];
+                binding.settle_ms = settle_ms;
+            }
+        }
+    }
+}
+
 /// The plan changed so that the upsert is irreversible and its only
 /// evidence is the system's acknowledgement (`acknowledged`): nothing is
 /// read back after its save. Every pipeline, which enters line items
@@ -2208,7 +2282,15 @@ impl Control for StoreControl {
                         .push((intent.record, mode.clone()));
                 }
             }
+            let attempts: Vec<RecordRef> = intents.iter().map(|intent| intent.record).collect();
             let tokens = self.store.store_intents(&self.fence(), intents).await?;
+            // A new attempt of a record records its own values before its
+            // save; what an earlier attempt recorded is not this one's, as
+            // the runner reads it from the ledger (decision 0185).
+            self.before_commit
+                .lock()
+                .unwrap()
+                .retain(|(record, _)| !attempts.contains(record));
             self.hooks.note("intend");
             if self.faults.intend_answer_lost.swap(false, Ordering::SeqCst) {
                 return Err(failure(
@@ -2453,7 +2535,7 @@ impl Control for StoreControl {
     fn acknowledged<'a>(
         &'a self,
         token: &'a ActedToken,
-        _evidence: Option<BlobRef>,
+        evidence: Option<BlobRef>,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
             if !self.keeps_acknowledgements.load(Ordering::SeqCst) {
@@ -2463,6 +2545,16 @@ impl Control for StoreControl {
                     "No acknowledgement is kept.",
                 ));
             }
+            // As the action registry's control plane does: the ledger ends
+            // the record, from the run's own stored diff.
+            let Some(evidence) = evidence else {
+                return Err(failure(
+                    FailureClass::Busy,
+                    "acknowledgement_not_kept",
+                    "An acknowledgement is kept only with its evidence.",
+                ));
+            };
+            self.store.store_acknowledged(token, evidence).await?;
             self.hooks.note("acknowledged");
             self.acknowledged.lock().unwrap().push(token.record());
             Ok(())
@@ -2750,6 +2842,36 @@ impl Scene {
         Some(decode_values(opened.expose()).unwrap())
     }
 
+    /// When the ledger last recorded what followed the record's current
+    /// send: its `acted` mark, or the failure that ended the attempt.
+    async fn sent_by(&self, record: &RecordRow) -> Option<a2m_core::Timestamp> {
+        let after = record.intent_seq?;
+        let run = self.run();
+        let events = self
+            .control
+            .store
+            .read(move |tx| tx.ledger().events(run, after, u32::MAX))
+            .await
+            .unwrap();
+        let place = |event: &a2m_ledger::RunEvent| {
+            let payload: serde_json::Value = serde_json::from_str(&event.payload).ok()?;
+            Some((payload["step"].as_u64()?, payload["record"].as_u64()?))
+        };
+        let marked = events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::Acted | EventKind::Failed))
+            .filter(|event| {
+                place(event)
+                    == Some((
+                        u64::from(record.record.step_seq),
+                        u64::from(record.record.record_seq),
+                    ))
+            })
+            .map(|event| event.at)
+            .max_by_key(|at| at.as_unix_millis());
+        marked.or(record.acted_at)
+    }
+
     /// What the runner fills when it claims a job for a run that has been
     /// worked on before: the ledger's rows, with their stored values.
     async fn snapshot(&self) -> Option<RunSnapshot> {
@@ -2785,13 +2907,23 @@ impl Scene {
                     .map(|(_, mode)| mode.clone()),
                 failure: record.failure.clone(),
                 acknowledged: record.acknowledged(),
+                intent_at: record.intent_at,
+                sent_by: self.sent_by(&record).await,
             });
         }
+        let approved = match row.diff {
+            Some(blob) => {
+                let opened = self.control.store.blobs().get(&blob).await.unwrap();
+                Some(a2m_engine::Diff::decode(opened.expose()).unwrap())
+            }
+            None => None,
+        };
         Some(RunSnapshot {
             state: row.state,
             diff: row.diff_hash,
             cleared: row.cleared_to_write(),
             records,
+            approved,
         })
     }
 

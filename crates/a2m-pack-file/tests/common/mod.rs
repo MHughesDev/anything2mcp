@@ -303,11 +303,12 @@ impl Scene {
 
 /// What a read returns through the engine: each output the operation
 /// declares, taken by its name from what the last step observed and
-/// normalized by its field type, as the engine's own shaping does. A value
-/// the step gave that no output declares is not returned; an output the
-/// step gave no value for stops the test, as it stops a read in the engine.
-/// A list output is normalized value by value: the engine's shaping today
-/// hands its normalizer the whole list, which it refuses.
+/// normalized by its field type. The engine's own shaping (`outputs_of` in
+/// `a2m-engine`) does the same, which a pack cannot call: it may not depend
+/// on the engine. A value the step gave that no output declares is not
+/// returned; an output the step gave no value for stops the test, as it
+/// stops a read in the engine. A list output is normalized item by item,
+/// and a `null` item stays `null`, as the engine does (decision 0180).
 pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
     let operation = plan
         .operations
@@ -326,7 +327,13 @@ pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
             Some(index) => {
                 let normalizer =
                     a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
-                let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
+                let one = |value: &Value| {
+                    if value.is_null() {
+                        Value::Null
+                    } else {
+                        normalizer.normalize(value).unwrap().normalized
+                    }
+                };
                 match raw {
                     Value::List(items) => Value::List(items.iter().map(one).collect()),
                     other => one(other),

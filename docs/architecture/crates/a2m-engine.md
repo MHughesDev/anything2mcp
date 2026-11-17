@@ -302,6 +302,7 @@ It produces every class through the loop. `possible_commit`, `ambiguous_match` i
 | `policy` | `record_limit_exceeded` | The run would touch more records than its limit allows |
 | `policy` | `sandbox_read_only` | A write was asked for where nothing may be written |
 | `policy` | `intent_token_missing` | An intent was stored and no token came back for it; nothing was sent |
+| `policy` | `approval_stale` | The binding that would write a record is not one the approved diff names for it, or the diff read back is not the approved one; nothing is sent ([decision 0185](../../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)) |
 | `input` | `job_invalid` | The job names a tool, an environment, or a surface the plan does not hold, or is of a kind the tool cannot run as |
 | `input` | `input_invalid` | An input is missing, is not declared, or is not of its type |
 | `busy` | `engine_degraded`, `no_binding` | A write on a degraded kernel; no binding qualifies for a reason that is not session, edge, or drift |

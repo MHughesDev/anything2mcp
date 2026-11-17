@@ -94,6 +94,14 @@ async fn a_write_that_ends_on_an_acknowledgement_is_settled_completes_and_is_nev
             .all(|record| record.not_read_back == Some(NOT_READ_BACK)),
         "{preview:?}"
     );
+    // Each names the binding that writes it, and that binding's evidence
+    // (decision 0185).
+    assert!(
+        preview.records.iter().all(|record| record.binding_later.is_none()
+            && record.bindings.len() == 1
+            && record.bindings[0].evidence == "acknowledged"),
+        "{preview:?}"
+    );
     world.approve(id).await;
     let stopped = world.call("run.resume", json!({"run_id": run})).await;
     assert_eq!(status(&stopped), "stopped", "{stopped:?}");
@@ -368,5 +376,51 @@ async fn a_call_made_again_while_its_run_is_stopped_is_given_that_run_marked_as_
     let result = new.result.unwrap();
     assert_ne!(result["run_id"], run.as_str());
     assert!(result.get("earlier_run").is_none());
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A record in doubt is read by what its own attempt recorded before its
+/// save, never by what an earlier attempt recorded (decision 0185).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_record_in_doubt_is_read_by_the_values_its_own_attempt_recorded() {
+    let world = World::ready().await;
+    world
+        .republish(|plan| engine::keyless_slot_add_scanned(plan, 5))
+        .await;
+    let input = json!({"order_id": "A-102", "quantity": 4, "length_in": "12"});
+    // The first attempt records the code `N-001` before its save, sends
+    // it, and loses the answer; no look covers the order, so the run stops.
+    world.hooks.lose_answer.store(true, Ordering::SeqCst);
+    *world.hooks.taken_answer.lock().unwrap() = Some("nothing");
+    let rested = world
+        .call("tool.call", json!({"tool": SLOT_ADD, "input": input}))
+        .await;
+    assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
+    let (run, id) = run_of(&rested);
+    world.approve(id).await;
+    let stopped = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&stopped), "stopped", "{stopped:?}");
+    assert_eq!(world.hooks.count("add_item"), 1);
+    // A reconcile that cannot settle the record rests the run for a person:
+    // it is not queued again, and the system is not read again and again.
+    assert!(world.hooks.given("taken").len() <= 3);
+
+    // The read-back by the recorded code answers "absent", and the lookup
+    // the manifest states authoritative answers it twice: the record goes
+    // back to `planned`. The second attempt records nothing before its
+    // save, sends it, and loses the answer too; the run reconciles again.
+    *world.hooks.taken_answer.lock().unwrap() = Some("absent");
+    world.hooks.lookup_lags.store(2, Ordering::SeqCst);
+    world.hooks.records_nothing.store(true, Ordering::SeqCst);
+    world.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let looks = world.hooks.given("taken").len();
+    let _ = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(world.hooks.count("add_item"), 2);
+    // The read-back that takes recorded values was asked once, for the
+    // first attempt, with its code. For the second attempt nothing was
+    // recorded, and the first attempt's code names what the first attempt
+    // sent: it is not asked again.
+    let taken = world.hooks.given("taken");
+    assert_eq!(taken.len(), looks + 1, "{taken:?}");
     world.kernel.close(CloseReason::Asked).await;
 }

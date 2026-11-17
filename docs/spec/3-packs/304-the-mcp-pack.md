@@ -120,6 +120,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 - The session keeper alone calls it. The tokens it obtains are held by the keeper; one request borrows them through `SessionLease::inject`, which places a token in a request header, or an environment variable into a local program's start, without returning it.
 - When the protocol's authorization needs a person to consent in a browser, `upstream_mcp` asks through the person surface, reached through the keeper: the person is given a link and opens it in their own browser. Nothing drives that browser, and the pack borrows nothing from the web pack. The callback carries the authorization code back to the provider, which exchanges it for tokens the keeper holds.
 - The server refusing the credential is `needs_login`, reported through the lease.
+- **A credential never crosses an unencrypted link to another machine.** A connection with a session to a server at a plain `http` address that is not a loopback address written as an IP address is refused unsent, at prepare and again as each request is sent, with `policy`, `link_not_encrypted`, unless the surface declares `unencrypted_credentials: accepted`, which `mcp.unencrypted_credentials` reports as a warning on every lint. The standard-input transport is not a network link ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)).
 - A local program's credential is handed to it privately at start by the supervisor, as the mapping's `credential` says.
 
 ## Discovery and drafting
@@ -147,6 +148,7 @@ As built, the drafter writes the mapping entry for either kind of tool, and the 
 | `mcp.environment_refused` | Error | A local server program is handed a variable of the engine's (a name that starts with `A2M_`) or one named for a credential. The driver refuses them again at run time |
 | `mcp.free_text` | Warning at the mapping, error at a binding | A mapped tool whose entry says `free_text: true`: a reviewer found that the server runs the text it is given. The tool is never called, and a binding that uses it does not compile. The compiler sees a tool's digest and not its schema, so the driver is what refuses a one-string tool that no reviewer has cleared |
 | `mcp.untrusted_unmarked` | Error | An output of an operation bound in this mode that is or holds text, and whose field type is not marked untrusted |
+| `mcp.unencrypted_credentials` | Warning | A surface declares `unencrypted_credentials: accepted`: its credentials cross an unencrypted link to another machine |
 
 ## Effects and hazards
 
@@ -173,6 +175,7 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before a call was sent, or on a read |
 | `policy` | `not_granted` | A call to a tool that is not mapped, if one were ever attempted; the compiler refuses it first. Also an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool that runs free text or whose one string no reviewer has cleared, and an address that is not among the run's destinations |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema; nothing is sent |
+| `policy` | `link_not_encrypted` | A session's credential would go over plain `http` to an address that is not a loopback address, on a surface that does not accept it; nothing was sent |
 | `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https://` surface whose certificate or handshake fails; nothing was sent. The session keeper's codes, passed on |
 | `input` | `tls_not_enabled`, `not_built`, `payload_unreadable` | An `https://` surface in a build without the feature `tls`; a part of this design that is not built; a plan compiled by another build of the pack |
 

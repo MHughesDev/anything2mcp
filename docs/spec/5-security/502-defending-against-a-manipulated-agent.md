@@ -13,6 +13,7 @@ Operation inputs are filled into request templates. A crafted input must not be 
 - **Scheme, host, and port never come from an input.** They come from the surface.
 - **Redirects are followed only within declared surfaces.** Anything else stops with `policy` and the code `surface_not_declared`.
 - **Inputs that are themselves addresses** use a `url` field type that accepts only destinations the operation declared. On a server, private and loopback addresses are refused unless declared.
+- **A credential never crosses an unencrypted link to another machine.** The HTTP, MCP, and data packs refuse, unsent, a request that would carry a credential over a plain link to an address that is not a loopback address. Only the target's own surface can accept it, in words a reviewer sees and the lint repeats; no input, setting, or variable can ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)).
 
 ## Inputs cannot make Anything2MCP read arbitrary files
 

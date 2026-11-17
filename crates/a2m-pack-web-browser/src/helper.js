@@ -418,9 +418,49 @@
     return { status: response.status, address: response.url, headers, body };
   }
 
+  // A read from the page's own origin, with the page's own session: GET,
+  // to a path the engine made and checked, with no header and no body. A
+  // redirect is not followed. The answer is read as text up to the limit,
+  // and the rest is not read at all.
+  async function readFromPage(path, limit) {
+    // A page with no origin of its own, such as a `data:` page, has no
+    // session to read with.
+    if (location.origin === "null") throw new Error("a2m-path-refused");
+    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+      throw new Error("a2m-path-refused");
+    }
+    const address = new URL(path, location.origin);
+    if (address.origin !== location.origin) throw new Error("a2m-path-refused");
+    const response = await fetch(address.href, {
+      method: "GET",
+      credentials: "same-origin",
+      redirect: "manual",
+      cache: "no-store",
+    });
+    if (response.type === "opaqueredirect") return { redirected: true };
+    const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    let body = "";
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        body += decoder.decode(value, { stream: true });
+        if (body.length > limit) {
+          await reader.cancel();
+          return { too_large: true };
+        }
+      }
+      body += decoder.decode();
+      if (body.length > limit) return { too_large: true };
+    }
+    return { status: response.status, media_type: type, body };
+  }
+
   const page = () => ({ address: location.href, title: document.title });
 
-  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, readFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
     Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
   );

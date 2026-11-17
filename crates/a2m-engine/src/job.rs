@@ -5,9 +5,11 @@ use std::time::Duration;
 
 use a2m_core::{
     Digest, Environment, Epoch, Failure, FailureCode, Identity, Mode, OperationName, RecordKey,
-    RecordState, RunId, RunState, SessionState, SurfaceName, Values, WorkspaceId,
+    RecordState, RunId, RunState, SessionState, SurfaceName, Timestamp, Values, WorkspaceId,
 };
 use a2m_ledger::RecordRef;
+
+use crate::diff::Diff;
 use a2m_telemetry::CaptureLevel;
 use tokio::time::Instant;
 
@@ -201,6 +203,14 @@ pub struct RecordSnapshot {
     /// True when the record ended `acted` on the system's acknowledgement:
     /// settled, never read back, and skipped on a resume (decision 0172).
     pub acknowledged: bool,
+    /// When the ledger stored the intent of the record's current attempt.
+    pub intent_at: Option<Timestamp>,
+    /// When the ledger last recorded what followed the current attempt's
+    /// send: its `acted` mark, or the failure that ended the attempt. The
+    /// send was made before it. `None` when neither was recorded; then the
+    /// send was made, if at all, within the time the binding's act steps
+    /// may take after `intent_at`.
+    pub sent_by: Option<Timestamp>,
 }
 
 /// A run that has been worked on before, as the ledger holds it.
@@ -215,6 +225,10 @@ pub struct RunSnapshot {
     pub cleared: bool,
     /// Every record of the run, in the ledger's order.
     pub records: Vec<RecordSnapshot>,
+    /// The stored diff the run was previewed with, read back: what a
+    /// person approved, binding by binding. `None` before a preview stored
+    /// one; a run that writes without it stops as a stale approval.
+    pub approved: Option<Diff>,
 }
 
 /// Everything about a job that is data. The runner fills it when it claims

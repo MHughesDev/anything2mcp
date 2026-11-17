@@ -28,6 +28,7 @@ mod client;
 mod error;
 mod launch;
 mod origin;
+mod page_read;
 mod protocol;
 mod snapshot;
 mod tab;
@@ -47,6 +48,7 @@ pub use browsers::{
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
+pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use tab::{
     ActTab, By, CREDENTIAL_HEADER_WORDS, DialogAnswer, Element, Input, Key, Loaded, Look,

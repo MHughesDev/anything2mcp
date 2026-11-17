@@ -220,6 +220,14 @@ code = "nothing_arrived"
 class = "busy"
 code = "subscription_in_use"
 
+[[failure_codes]]
+class = "busy"
+code = "message_may_be_held"
+
+[[failure_codes]]
+class = "policy"
+code = "scan_inconclusive"
+
 [effects]
 network = "surfaces"
 sessions = ["broker"]

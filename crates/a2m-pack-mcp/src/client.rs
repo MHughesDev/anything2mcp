@@ -450,6 +450,9 @@ pub(crate) struct HttpLink {
     /// The headers the session's provider placed. Held for this connection
     /// and nowhere else, and never shown.
     credentials: Vec<(String, Secret)>,
+    /// Whether the credentials would cross plain `http` to another machine
+    /// with the surface's acceptance missing: then nothing is sent.
+    refuse_credentials: bool,
     session: Mutex<Option<String>>,
     lost: AtomicBool,
     max_message_bytes: usize,
@@ -469,6 +472,7 @@ impl HttpLink {
     pub(crate) fn new(
         url: &str,
         credentials: Vec<(String, Secret)>,
+        unencrypted_accepted: bool,
         limits: Limits,
     ) -> Result<Self, StepFailure> {
         // No redirect is followed and no proxy of the environment is used:
@@ -490,6 +494,9 @@ impl HttpLink {
         Ok(Self {
             client,
             url: url.to_owned(),
+            refuse_credentials: !credentials.is_empty()
+                && !unencrypted_accepted
+                && crate::mapping::plain_to_another_machine(url),
             credentials,
             session: Mutex::new(None),
             lost: AtomicBool::new(false),
@@ -508,6 +515,9 @@ impl HttpLink {
         tool: Option<&str>,
         deadline: Deadline,
     ) -> Result<Exchange, StepFailure> {
+        if self.refuse_credentials {
+            return Err(StepFailure::not_sent(codes::link_not_encrypted()));
+        }
         let mut request = self
             .client
             .post(&self.url)

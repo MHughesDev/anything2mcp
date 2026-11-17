@@ -1235,3 +1235,127 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
     );
     assert_eq!(taken.assigned_key, Some(key("A-100")));
 }
+
+/// A credential never crosses plain `http` to another machine unless the
+/// surface accepts it (decision 0188). "Another machine" is the stand
+/// reached by the name `localhost`, which the rule never takes for a
+/// loopback address, and a documentation address that nothing answers.
+#[tokio::test]
+async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts_it() {
+    let sessions = Sessions::new(vec![Arc::new(UpstreamMcp)]).await;
+    let redact = sessions.redact();
+    let scene = scene_with(|folder| registry_with(folder, redact)).await;
+    let control = scene.stand.control();
+    control.accept_token("PLANTED-token-of-ada", "ada").unwrap();
+    let ada = sessions.lease("ada", "PLANTED-token-of-ada").await;
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let by_name = scene.stand.url().replace("127.0.0.1", "localhost");
+    assert_ne!(by_name, scene.stand.url());
+
+    // Not accepted: refused before anything is sent; the stand saw nothing.
+    for address in [by_name.as_str(), "http://192.0.2.10:9/mcp"] {
+        let far = surface(&scene.plan, "orders", Some(address));
+        let refused = prepare(
+            &scene.registry,
+            &scene.plan,
+            &far,
+            fence_of(7),
+            Posture::Live,
+            Some(&ada),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (
+                refused.failure.class(),
+                refused.failure.code(),
+                refused.sent
+            ),
+            (
+                FailureClass::Policy,
+                &codes::LINK_NOT_ENCRYPTED,
+                Sent::NotSent
+            ),
+            "{address}"
+        );
+        assert!(!format!("{refused:?}").contains("PLANTED"));
+    }
+    assert_eq!(control.request_count("initialize").unwrap(), 0);
+    assert_eq!(control.unauthorized_count().unwrap(), 0);
+    assert!(control.calls().unwrap().is_empty());
+
+    // Over the loopback address nothing changes.
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence_of(7),
+        Posture::Live,
+        Some(&ada),
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+
+    // Accepted, in the target's own words: the lint warns, and the call
+    // goes through to the name with the session's token.
+    let folder = Folder::new("unencrypted");
+    let registry = registry_with(&folder, sessions.redact());
+    let root = folder.path().join("target");
+    common::write_target(&root, &|path, text| match path {
+        "target.yaml" => text.replace(
+            "    address: \"http://127.0.0.1:9/mcp\"\n",
+            "    address: \"http://127.0.0.1:9/mcp\"\n    unencrypted_credentials: accepted\n",
+        ),
+        _ => text,
+    });
+    let compiled = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
+    assert!(
+        compiled
+            .warnings
+            .find("mcp.unencrypted_credentials")
+            .is_some()
+    );
+    let far = surface(&compiled.plan, "orders", Some(&by_name));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &compiled.plan,
+        &far,
+        fence_of(7),
+        Posture::Live,
+        Some(&ada),
+    )
+    .await
+    .unwrap();
+    let get = steps(&compiled.plan, "example_order_get").act;
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    let callers: Vec<Option<String>> = control
+        .calls()
+        .unwrap()
+        .into_iter()
+        .map(|call| call.principal)
+        .collect();
+    assert_eq!(callers, [Some("ada".to_owned()), Some("ada".to_owned())]);
+}

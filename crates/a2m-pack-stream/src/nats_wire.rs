@@ -703,8 +703,7 @@ impl NatsLink {
                     };
                     // Bounded by the pack's ceiling, whatever the server
                     // stated, before anything is set aside for it.
-                    if header_len > total || total > self.max_payload.saturating_add(HEADER_ROOM)
-                    {
+                    if header_len > total || total > self.max_payload.saturating_add(HEADER_ROOM) {
                         return Err(unexpected(
                             "a message is larger than the server's limit or the pack's setting `message_ceiling_bytes` allows",
                         ));
@@ -972,9 +971,15 @@ impl NatsLink {
                 .as_list()
                 .ok_or_else(|| unexpected("a list of consumers is not a list"))?
                 .iter()
-                .map(|name| name.as_str().filter(|name| is_name(name)).map(str::to_owned))
+                .map(|name| {
+                    name.as_str()
+                        .filter(|name| is_name(name))
+                        .map(str::to_owned)
+                })
                 .collect::<Option<Vec<String>>>()
-                .ok_or_else(|| unexpected("a consumer the server lists has no name a consumer can have"))?,
+                .ok_or_else(|| {
+                    unexpected("a consumer the server lists has no name a consumer can have")
+                })?,
         })
     }
 
@@ -1469,7 +1474,9 @@ impl Link for NatsLink {
                             let wait = match config.get("ack_wait") {
                                 None => None,
                                 Some(wait) => Some(wait.as_u64().ok_or_else(|| {
-                                    unexpected("a consumer's acknowledgement wait is not a whole number")
+                                    unexpected(
+                                        "a consumer's acknowledgement wait is not a whole number",
+                                    )
                                 })?),
                             };
                             ack_wait = wait.map(Duration::from_nanos);
@@ -2044,6 +2051,73 @@ mod tests {
         );
     }
 
+    /// A server that states a payload limit no real one has, and then a
+    /// message far larger than the pack's ceiling.
+    #[tokio::test]
+    async fn a_message_larger_than_the_ceiling_stops_before_anything_is_set_aside() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = BufReader::new(socket);
+            socket
+                .get_mut()
+                .write_all(b"INFO {\"headers\":true,\"max_payload\":18446744073709551615}\r\n")
+                .await
+                .unwrap();
+            let mut line = String::new();
+            // `CONNECT`, `SUB`, and `PING`.
+            for _ in 0..3 {
+                line.clear();
+                socket.read_line(&mut line).await.unwrap();
+            }
+            socket.get_mut().write_all(b"PONG\r\n").await.unwrap();
+            line.clear();
+            socket.read_line(&mut line).await.unwrap();
+            let reply = line.split_whitespace().nth(2).unwrap().to_owned();
+            socket
+                .get_mut()
+                .write_all(format!("MSG {reply} 1 1099511627776\r\n").as_bytes())
+                .await
+                .unwrap();
+            // Held open until the client lets go.
+            let mut rest = Vec::new();
+            let _ = tokio::io::AsyncReadExt::read_to_end(&mut socket, &mut rest).await;
+        });
+        let deadline = Deadline::after(Duration::from_secs(10));
+        let mut link = NatsProtocol::new(DEFAULT_CEILING)
+            .connect(&address, None, deadline)
+            .await
+            .ok()
+            .unwrap();
+        let stopped = link
+            .describe("ORDERS/example.orders", deadline)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(stopped.kind, WireErrorKind::Unexpected);
+        assert!(
+            stopped.detail.contains("message_ceiling_bytes"),
+            "{}",
+            stopped.detail
+        );
+        drop(link);
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn a_channel_is_never_one_of_the_servers_own_subjects() {
+        for address in [
+            "$JS.API.STREAM.DELETE",
+            "_INBOX.abc",
+            "S/$KV.orders",
+            "S/$SYS.x",
+            "$O.bucket",
+        ] {
+            assert!(place(address).is_err(), "{address}");
+        }
+    }
+
     #[test]
     fn an_address_names_a_stream_and_a_subject_or_a_topic() {
         assert_eq!(
@@ -2091,6 +2165,8 @@ mod tests {
     #[test]
     fn an_acknowledgement_subject_names_its_sequence_in_both_forms() {
         assert_eq!(sequence_of("$JS.ACK.S.C.1.42.7.1800000000000.0"), Some(42));
+        let meta = ack_meta("$JS.ACK.S.C.3.42.7.1800000000000.0").unwrap();
+        assert_eq!((meta.stream, meta.consumer, meta.attempt), ("S", "C", 3));
         assert_eq!(
             sequence_of("$JS.ACK.dom.acc.S.C.1.42.7.1800000000000.0.r"),
             Some(42)

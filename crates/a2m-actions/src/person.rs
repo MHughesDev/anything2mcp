@@ -421,11 +421,40 @@ pub struct PreviewRecord {
     /// whose only evidence is the system's own acknowledgement: "accepted
     /// by the system, not read back" (decision 0176).
     pub not_read_back: Option<&'static str>,
+    /// `Some(BINDING_LATER)` when the binding that writes the record is
+    /// chosen only once the record it waits for is written; `bindings` then
+    /// names every binding it could take (decision 0185).
+    pub binding_later: Option<&'static str>,
+    /// The binding the approved diff names for the record, or every binding
+    /// it could take, each with the evidence its write would end on. The
+    /// engine writes the record through no other.
+    pub bindings: Vec<PreviewBinding>,
+}
+
+/// One binding a record may be written by, as the approval page shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewBinding {
+    /// Its mode.
+    pub mode: String,
+    /// What will stand as the evidence that its write landed: `read_back`,
+    /// `response`, or `acknowledged`.
+    pub evidence: &'static str,
 }
 
 /// What the approval page shows beside a record whose write is accepted by
 /// the system and never read back.
 pub const NOT_READ_BACK: &str = "accepted by the system, not read back";
+
+/// What the approval page shows beside a record whose binding is chosen
+/// only when it is written, when one binding it could take is accepted by
+/// the system and never read back.
+pub const MAY_NOT_BE_READ_BACK: &str =
+    "may be accepted by the system and not read back, by a binding chosen when it is written";
+
+/// What the approval page shows beside a record whose binding is chosen
+/// only once the record it waits for is written.
+pub const BINDING_LATER: &str =
+    "written by a binding chosen once the record it waits for is written";
 
 /// One field of one record of a preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -647,7 +676,28 @@ impl ApprovalDesk {
                         }
                     })
                     .collect(),
-                not_read_back: record.not_read_back().then_some(NOT_READ_BACK),
+                not_read_back: match (record.not_read_back(), record.binding_unknown()) {
+                    (false, _) => None,
+                    (true, false) => Some(NOT_READ_BACK),
+                    (true, true)
+                        if record.could_take.iter().all(|binding| {
+                            binding.evidence == a2m_core::WriteEvidence::Acknowledged
+                        }) =>
+                    {
+                        Some(NOT_READ_BACK)
+                    }
+                    (true, true) => Some(MAY_NOT_BE_READ_BACK),
+                },
+                binding_later: record.binding_unknown().then_some(BINDING_LATER),
+                bindings: record
+                    .binding
+                    .iter()
+                    .chain(&record.could_take)
+                    .map(|binding| PreviewBinding {
+                        mode: self.redact.redact(binding.mode.as_str()),
+                        evidence: binding.evidence.as_str(),
+                    })
+                    .collect(),
             })
             .collect();
         Ok(ApprovalPreview {

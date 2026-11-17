@@ -5,7 +5,7 @@
 //! the lease is counted on a steady clock, a task per held job sends its
 //! heartbeats, and the engine stops acting before the lease runs out.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use a2m_core::{
     DecisionId, Failure, Identity, Mode, PrincipalId, RunId, RunState, RunnerId, Values,
 };
 use a2m_engine::{
-    Conditions, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
+    Conditions, Diff, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
     KernelHealth, LeaseClock, Parallelism, RecordSnapshot, RunSnapshot, ToolRef, decode_values,
 };
 use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RunRow, SqlValue, Tx};
@@ -830,6 +830,18 @@ impl Kernel {
                 control.apply(state, failure).await?;
                 JobEnd::Rests
             }
+            // A record in doubt that reconcile read and could not settle
+            // waits for a person: reading it again at once would answer
+            // the same, and a reconcile queued on every stop would read the
+            // system without end. The run rests `stopped`; a resume asks
+            // again (decision 0185).
+            JobOutcome::Stopped(failure)
+                if failure.class() == a2m_core::FailureClass::PossibleCommit
+                    && *failure.code() == a2m_engine::codes::CANNOT_RECONCILE =>
+            {
+                control.apply(RunState::Stopped, Some(failure)).await?;
+                JobEnd::Rests
+            }
             JobOutcome::Stopped(failure) => {
                 let (class, code) = (failure.class(), failure.code().clone());
                 control.apply(RunState::Stopped, Some(failure)).await?;
@@ -890,49 +902,62 @@ impl Kernel {
         let run = row.id;
         // The values recorded before a commit point are the evidence of a
         // `need` event of the run. They are read from the ledger, so a
-        // run resumed after a restart has them as well.
-        let (rows, recorded) = store
+        // run resumed after a restart has them as well. Only those recorded
+        // after the record's current intent belong to the attempt whose
+        // send may be in doubt: an earlier attempt's values name what that
+        // attempt sent, and a reconcile is never given them (decision 0185).
+        let (rows, events) = store
             .read(move |tx| {
                 let mut ledger = tx.ledger();
                 let rows = ledger.records(run)?;
-                let mut recorded: BTreeMap<(u32, u32), BlobRef> = BTreeMap::new();
-                for event in ledger.events(run, 0, u32::MAX)? {
-                    if event.kind != EventKind::Need {
-                        continue;
-                    }
-                    let (Some(blob), Ok(payload)) =
-                        (event.evidence, serde_json::from_str::<Json>(&event.payload))
-                    else {
-                        continue;
-                    };
-                    if payload["before_commit"] != true {
-                        continue;
-                    }
-                    let place = |name: &str| {
-                        payload[name]
-                            .as_u64()
-                            .and_then(|number| u32::try_from(number).ok())
-                    };
-                    if let (Some(step), Some(record)) = (place("step"), place("record")) {
-                        // A later event of the same record replaces an
-                        // earlier one.
-                        recorded.insert((step, record), blob);
-                    }
-                }
-                Ok((rows, recorded))
+                let events = ledger.events(run, 0, u32::MAX)?;
+                Ok((rows, events))
             })
             .await?;
+        let place_of = |payload: &Json| {
+            let place = |name: &str| {
+                payload[name]
+                    .as_u64()
+                    .and_then(|number| u32::try_from(number).ok())
+            };
+            place("step").zip(place("record"))
+        };
         let mut records = Vec::new();
         for record in rows {
+            let place = (record.record.step_seq, record.record.record_seq);
+            let mut before_commit_blob = None;
+            let mut sent_by: Option<a2m_core::Timestamp> = record.acted_at;
+            if let Some(intent_seq) = record.intent_seq {
+                for event in events.iter().filter(|event| event.seq > intent_seq) {
+                    let Ok(payload) = serde_json::from_str::<Json>(&event.payload) else {
+                        continue;
+                    };
+                    if place_of(&payload) != Some(place) {
+                        continue;
+                    }
+                    match event.kind {
+                        EventKind::Need if payload["before_commit"] == true => {
+                            // A later event of the same attempt replaces an
+                            // earlier one.
+                            if let Some(blob) = event.evidence {
+                                before_commit_blob = Some(blob);
+                            }
+                        }
+                        // What followed the send was recorded at this
+                        // moment: the send was made before it.
+                        EventKind::Acted | EventKind::Failed => {
+                            if sent_by.is_none_or(|at| at.as_unix_millis() < event.at.as_unix_millis())
+                            {
+                                sent_by = Some(event.at);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let before = self.stored_values(record.before).await?;
             let outputs = self.stored_values(record.outputs).await?;
-            let before_commit = self
-                .stored_values(
-                    recorded
-                        .get(&(record.record.step_seq, record.record.record_seq))
-                        .copied(),
-                )
-                .await?;
+            let before_commit = self.stored_values(before_commit_blob).await?;
             let acknowledged = record.acknowledged();
             records.push(RecordSnapshot {
                 record: record.record,
@@ -952,13 +977,25 @@ impl Kernel {
                 mode: record.mode,
                 failure: record.failure,
                 acknowledged,
+                intent_at: record.intent_at,
+                sent_by,
             });
         }
+        // The diff the run was previewed with, which a person approved: the
+        // engine writes each record only through the binding it names.
+        let approved = match row.diff {
+            Some(blob) => {
+                let opened = store.blobs().get(&blob).await?;
+                Some(Diff::decode(opened.expose())?)
+            }
+            None => None,
+        };
         Ok(Some(RunSnapshot {
             state: row.state,
             diff: row.diff_hash,
             cleared: row.cleared_to_write(),
             records,
+            approved,
         }))
     }
 

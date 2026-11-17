@@ -213,7 +213,7 @@ pub struct Matched {
     pub pages: Vec<usize>,
 }
 
-fn plain(segment: &str) -> bool {
+pub(crate) fn plain(segment: &str) -> bool {
     !segment.is_empty()
         && segment != "."
         && segment != ".."
@@ -224,7 +224,7 @@ fn plain(segment: &str) -> bool {
 
 /// The name of the placeholder at `at`: the plain word before it, as one
 /// record of it, with `_id`; `key` when there is none.
-fn placeholder(segments: &[&str], at: usize) -> String {
+pub(crate) fn placeholder(segments: &[&str], at: usize) -> String {
     let word: String = at
         .checked_sub(1)
         .and_then(|before| segments.get(before))

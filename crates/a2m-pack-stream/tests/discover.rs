@@ -212,7 +212,8 @@ async fn drafts_state_what_the_broker_stated_and_leave_the_judgments_open() {
         }
         std::fs::read_to_string(on_disk).unwrap()
     };
-    // What the broker stated is there; what is a judgment is a question.
+    // What the broker stated is there. What a message is (`role`) is a
+    // judgment only a publish needs, and is not asked here.
     let status = read("channels/orders_status.yaml");
     assert!(
         status.contains(r#"address: "example.orders.status""#),
@@ -220,7 +221,7 @@ async fn drafts_state_what_the_broker_stated_and_leave_the_judgments_open() {
     );
     assert!(status.contains(r#"shape: "retained""#), "{status}");
     assert!(status.contains(r#"field: "order_id""#), "{status}");
-    assert!(status.contains("open_question"), "{status}");
+    assert!(!status.contains("role"), "{status}");
     for path in &written {
         let text = read(path);
         for never in [
@@ -239,12 +240,14 @@ async fn drafts_state_what_the_broker_stated_and_leave_the_judgments_open() {
         .iter()
         .map(|question| question.file.as_str())
         .collect();
+    // The broker names every retained channel's key: no channel file holds
+    // a question, so the drafted reads compile as they are.
     assert_eq!(
         asked
             .iter()
             .filter(|file| file.starts_with("channels/"))
             .count(),
-        4
+        0
     );
     // A schema within what the pack checks is drafted whole, and compiles.
     assert!(
@@ -297,7 +300,7 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
         "{get}"
     );
     // A person answers the one judgment each channel leaves open.
-    common::answer_roles(&root);
+    common::answer_keys(&root);
     scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
         Ok(compiled) => compiled.plan,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
@@ -354,6 +357,23 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
             "{operation}"
         );
         assert_eq!(result.get("more"), Some(&a2m_core::Value::Bool(false)));
+        // Each field of the messages, as a list in their order: what the
+        // broker holds, as its own state says.
+        let held: Vec<&serde_json::Value> = contents
+            .log
+            .iter()
+            .map(|message| &message.body)
+            .chain(contents.queue.iter().map(|held| &held.message.body))
+            .collect();
+        let wanted: Vec<a2m_core::Value> = held
+            .iter()
+            .map(|body| a2m_core::Value::from(body["order_id"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            result.get("order_id"),
+            Some(&a2m_core::Value::List(wanted)),
+            "{operation}"
+        );
     }
     handle.release(prepared, false).await;
 

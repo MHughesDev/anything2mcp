@@ -26,7 +26,7 @@ It was written from the protocol's public documentation and from the server's pu
 | The duplicate window | A message id is kept with the time of the message; an entry is purged when `now - stored >= window`; the default window is two minutes, at least 100 ms, never above the stream's maximum age; after a restart only ids of messages still stored within the window are rebuilt | The same rule on the stand's own clock. No purge timer and no restart |
 | What a publish acknowledgement carries | `{"stream":..,"seq":..}`; for a duplicate, `"duplicate": true` and the sequence first stored, written by hand with a space before `true`; an error is an `error` object with `code`, `err_code`, and `description`, beside `stream` | The same text |
 | An expected-sequence mismatch | Error 10071, "wrong last sequence", and nothing stored | A refusal under any code, as a fault; the expected-sequence headers themselves are not imitated |
-| A pulled message's redelivery and acknowledgement | A pull of `batch` with `expires` delivers on the request's reply subject with a `$JS.ACK.<stream>.<consumer>.<count>.<stream seq>.<consumer seq>.<time>.<pending>` reply; it ends with status `408` when it expires and `404` with `no_wait`; an acknowledgement sent with a reply is answered with an empty message once carried out; on a work queue the acknowledged message is removed, pending or not; `-NAK` gives a pending message back; an unacknowledged message comes back after the acknowledgement wait | The same, except that redelivery after the wait happens only when a test calls `redeliver_unacknowledged`, and nothing comes back when a connection drops |
+| A pulled message's redelivery and acknowledgement | A pull of `batch` with `expires` delivers on the request's reply subject with a `$JS.ACK.<stream>.<consumer>.<count>.<stream seq>.<consumer seq>.<time>.<pending>` reply; it ends with status `408` when it expires and `404` with `no_wait`; an acknowledgement sent with a reply is answered with an empty message once carried out; on a work queue the acknowledged message is removed, pending or not; `-NAK` gives a pending message back; an unacknowledged message comes back after the acknowledgement wait | The same. Each consumer has its own wait (30 s unless a test sets it), and a delivery whose wait has run out on the stand's clock goes out again, with its count raised, when a test moves the clock; nothing comes back when a connection drops |
 | Maximum payload | `INFO` states `max_payload` (1 MiB by default); a larger `PUB` is refused with `-ERR 'Maximum Payload Violation'` and the connection is closed; a stream's `max_msg_size` refuses with error 10054 | The same |
 | Nobody listening | With `headers` and `no_responders` in `CONNECT`, a request to a subject nobody listens on is answered with status `503` | The same, for a publish to a subject no stream stores, an unknown JetStream request, and an acknowledgement for a consumer that is gone |
 | The error codes the client maps | 10059 stream not found, 10014 consumer not found, 10037 no message found, 10071 and 10070 wrong last sequence or id, 10077 store failed, 10054 too large, 10099 a second consumer on a work queue | Each, where the case occurs |
@@ -49,8 +49,8 @@ Every stream has the default window of two minutes. The topic `example.orders.no
 | `received` | Every publish, by which connection, with its headers, and whether it was stored, a duplicate, refused, or stored nowhere |
 | `deliveries`, `acknowledgements` | Every message handed to a consumer, with its attempt; every acknowledgement, with its word and whether the delivery was pending |
 | `api_calls`, `connects` | Every JetStream request by subject; every `CONNECT`, with how it signed in and whether it was let in, never the credential |
-| `advance` | Moves the clock on, for the duplicate window |
-| `declare_stream`, `remove_stream`, `declare_consumer`, `remove_consumer`, `redeliver_unacknowledged` | Change the server under the code being tested |
+| `advance` | Moves the clock on, for the duplicate window and the acknowledgement wait |
+| `declare_stream`, `remove_stream`, `declare_consumer`, `remove_consumer`, `set_ack_wait`, `remove_message`, `redeliver_unacknowledged` | Change the server under the code being tested. A stream may keep a number of messages per subject (`StreamSpec::per_subject`), evicting the oldest of the subject from inside the stream |
 | `require_token`, `require_user`, `set_max_payload`, `set_tls_required` | Settings of the next connection |
 | `publish` | Publish as another producer would |
 | `set_fault`, `clear_faults` | The faults below, on until cleared |
@@ -65,6 +65,9 @@ Every stream has the default window of two minutes. The topic `example.orders.no
 | `UnknownAckReply` | Carries out an acknowledgement and answers with a payload that has no rule |
 | `UnknownLine` | Answers each request and ping with a line the protocol does not have |
 | `DeliverExtra` | Hands over one message more than a pull asked for |
+| `ExpireAuthAfterStore` | Stores a publish, then sends `-ERR 'User Authentication Expired'` and closes the connection before the acknowledgement |
+| `ExpireAuthAfterAck` | Carries out an acknowledgement, then sends the same `-ERR` and closes before its answer |
+| `ForeignDelivery` | Hands over deliveries whose acknowledgement subject names another consumer |
 
 ## What it leaves out
 

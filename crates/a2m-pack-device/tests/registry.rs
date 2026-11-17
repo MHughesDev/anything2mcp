@@ -45,7 +45,9 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
     let verbs: Vec<&str> = set.verbs(&mode).iter().map(|verb| verb.as_str()).collect();
     assert_eq!(verbs, ["read", "submit", "update"]);
     assert_eq!(set.file_kinds().count(), 1);
-    assert_eq!(set.drafting_rules().count(), 1);
+    // From an identity, the start of a map; from a published map, a map
+    // and its reads.
+    assert_eq!(set.drafting_rules().count(), 3);
     let codes: Vec<String> = set.lint_codes().into_iter().map(|(code, _)| code).collect();
     for rule in [
         "device.writable_without_hazard",
@@ -62,10 +64,16 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
         facts: Values::new(),
     };
     let discoverers = first.discoverers_for(&surface);
-    assert_eq!(discoverers.len(), 1);
+    let levels: Vec<(&str, a2m_core::EvidenceLevel)> = discoverers
+        .iter()
+        .map(|found| (found.declared().name.as_str(), found.declared().max_level))
+        .collect();
     assert_eq!(
-        discoverers[0].declared().max_level,
-        a2m_core::EvidenceLevel::Discovered
+        levels,
+        [
+            ("device_identity", a2m_core::EvidenceLevel::Discovered),
+            ("device_register_map", a2m_core::EvidenceLevel::Inferred),
+        ]
     );
     let listing = first.listing();
     assert_eq!(listing.len(), 1);

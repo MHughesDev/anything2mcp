@@ -125,7 +125,8 @@ mod tests {
 
     #[test]
     fn only_plain_http_to_an_address_that_is_not_loopback_is_another_machine() {
-        let judged = |address: &str| plain_to_another_machine(&reqwest::Url::parse(address).unwrap());
+        let judged =
+            |address: &str| plain_to_another_machine(&reqwest::Url::parse(address).unwrap());
         for (address, remote) in [
             ("http://127.0.0.1:8080", false),
             ("http://127.9.0.1", false),

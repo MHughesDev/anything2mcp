@@ -21,8 +21,11 @@ pub struct StreamSpec {
     pub subjects: Vec<String>,
     /// How it keeps messages.
     pub retention: Retention,
-    /// 1 to keep the last message per subject; -1 for no limit.
+    /// How many messages of one subject it keeps, the oldest evicted first,
+    /// from inside the stream; -1 for no limit.
     pub max_msgs_per_subject: i64,
+    /// Whether a message may carry its own time to live.
+    pub allow_msg_ttl: bool,
     /// How long a message id is remembered.
     pub duplicate_window: Duration,
     /// The largest message, headers included, it stores.
@@ -37,6 +40,7 @@ impl StreamSpec {
             subjects: subjects.iter().map(|s| (*s).to_owned()).collect(),
             retention: Retention::Limits,
             max_msgs_per_subject: -1,
+            allow_msg_ttl: false,
             duplicate_window: Duration::from_secs(120),
             max_msg_size: None,
         }
@@ -46,6 +50,13 @@ impl StreamSpec {
     #[must_use]
     pub fn one_per_subject(mut self) -> Self {
         self.max_msgs_per_subject = 1;
+        self
+    }
+
+    /// Keeps the last `count` messages of each subject.
+    #[must_use]
+    pub fn per_subject(mut self, count: i64) -> Self {
+        self.max_msgs_per_subject = count;
         self
     }
 
@@ -91,10 +102,14 @@ pub struct ConsumerSpec {
     pub filter: Option<String>,
     /// Starts at the stream's next message rather than its first.
     pub deliver_new: bool,
+    /// How long a delivery waits for its acknowledgement before the message
+    /// goes out again, on the stand's clock.
+    pub ack_wait: Duration,
 }
 
 impl ConsumerSpec {
-    /// A consumer that starts at the first message.
+    /// A consumer that starts at the first message, with the server's
+    /// default acknowledgement wait of thirty seconds.
     #[must_use]
     pub fn new(name: &str, ack: AckPolicy) -> Self {
         Self {
@@ -102,7 +117,15 @@ impl ConsumerSpec {
             ack,
             filter: None,
             deliver_new: false,
+            ack_wait: Duration::from_secs(30),
         }
+    }
+
+    /// Sets the acknowledgement wait.
+    #[must_use]
+    pub fn ack_wait(mut self, wait: Duration) -> Self {
+        self.ack_wait = wait;
+        self
     }
 }
 
@@ -248,6 +271,10 @@ pub enum Fault {
     UnknownLine,
     /// Hand over one message more than a pull asked for.
     DeliverExtra,
+    /// Hand over a delivery whose acknowledgement subject names another
+    /// consumer than the one pulled, as another client that sees the
+    /// inbox could.
+    ForeignDelivery,
     /// Store a publish, then send `-ERR 'User Authentication Expired'` and
     /// close the connection before the acknowledgement: the server's timer
     /// on a credential that expires fires while the publish is in flight.

@@ -52,6 +52,48 @@ const ANSWER_MARGIN: Duration = Duration::from_millis(250);
 /// How long letting go of a subscription may take when a run ends.
 const RELEASE_LIMIT: Duration = Duration::from_secs(2);
 
+/// What is kept back from a consumer's acknowledgement wait: an
+/// acknowledgement sent later than this before the wait ends could reach
+/// the broker after it handed the message to someone else.
+const ACK_WAIT_MARGIN: Duration = Duration::from_secs(1);
+
+/// The most marks the driver keeps before it forgets the messages given
+/// back.
+const MARKS_MOST: usize = 100_000;
+
+/// Which message of which channel of which broker: a mark's key.
+type MessageAt = (String, String, String);
+
+/// What the driver knows of a message of a queue it took from, in this
+/// engine's life: whether a record may hold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// A record recorded it as taken, and nothing has settled that record:
+    /// its acknowledgement was not answered, or it was never sent past the
+    /// broker's wait. No other record takes it.
+    Held,
+    /// It was handed out and given back with no record holding it, or the
+    /// record that took it was settled as not taken: another take may have
+    /// it, even delivered again.
+    GivenBack,
+}
+
+/// A consumer one run takes from. Two runs of this engine never take from
+/// one consumer at once; the mark goes when the run is let go or dropped.
+struct ConsumerHold {
+    taking: Arc<Mutex<BTreeSet<(String, String)>>>,
+    key: (String, String),
+}
+
+impl Drop for ConsumerHold {
+    fn drop(&mut self) {
+        self.taking
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.key);
+    }
+}
+
 /// What a surface of kind `broker` states beside its address.
 #[derive(Debug, Deserialize)]
 struct SurfaceDetail {
@@ -144,6 +186,8 @@ struct Open {
     /// Whether the broker said where in the channel it stands. Only then
     /// can a wait that saw nothing say what it covered.
     placed: bool,
+    /// How long the broker waits for an acknowledgement, where it says.
+    ack_wait: Option<Duration>,
 }
 
 /// A message delivered to the run and not yet acknowledged.
@@ -152,6 +196,12 @@ struct Held {
     handle: String,
     delivery: String,
     message_id: String,
+    /// The channel's address, for the message's mark.
+    address: String,
+    /// When the broker handed it over, and how long it waits for the
+    /// acknowledgement.
+    delivered_at: tokio::time::Instant,
+    ack_wait: Option<Duration>,
 }
 
 /// What one run holds between `prepare` and `release`.
@@ -179,6 +229,8 @@ struct Run {
     /// How the step being carried out is done, for its trace record: set
     /// up when the step starts, and handed over as its `acting` capture.
     acting: Acting,
+    /// The consumers the run takes from, held against every other run.
+    holds: Vec<ConsumerHold>,
 }
 
 /// The driver.
@@ -187,6 +239,11 @@ pub(crate) struct StreamDriver {
     protocols: Vec<Arc<dyn Protocol>>,
     idle: Mutex<BTreeMap<PoolKey, Vec<Box<dyn Link>>>>,
     idle_limit: usize,
+    /// The consumers some run of this engine takes from now: the broker's
+    /// address, and the channel's address with the consumer's name.
+    taking: Arc<Mutex<BTreeSet<(String, String)>>>,
+    /// What this engine knows of the messages its runs took.
+    marks: Mutex<BTreeMap<MessageAt, Mark>>,
 }
 
 fn wrong_plan(what: &str) -> StepFailure {
@@ -593,6 +650,44 @@ impl StreamDriver {
             protocols,
             idle: Mutex::new(BTreeMap::new()),
             idle_limit,
+            taking: Arc::new(Mutex::new(BTreeSet::new())),
+            marks: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn mark(&self, at: MessageAt, mark: Option<Mark>) {
+        let mut marks = self.marks.lock().unwrap_or_else(PoisonError::into_inner);
+        match mark {
+            Some(mark) => {
+                // Bounded: forgetting that a message was given back only
+                // makes a later take of it stricter, never looser.
+                if marks.len() >= MARKS_MOST {
+                    marks.retain(|_, kept| *kept == Mark::Held);
+                }
+                marks.insert(at, mark);
+            }
+            None => {
+                marks.remove(&at);
+            }
+        }
+    }
+
+    fn mark_of(&self, at: &MessageAt) -> Option<Mark> {
+        self.marks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(at)
+            .copied()
+    }
+
+    /// Whether a delivery may be taken as new: never one a record of this
+    /// engine holds, and one the broker delivered before only when this
+    /// engine saw it given back with no record holding it.
+    fn may_take(&self, at: &MessageAt, attempt: Option<u64>) -> bool {
+        match (self.mark_of(at), attempt) {
+            (Some(Mark::Held), _) => false,
+            (mark, Some(attempt)) if attempt > 1 => mark == Some(Mark::GivenBack),
+            _ => true,
         }
     }
 
@@ -689,8 +784,38 @@ impl StreamDriver {
             .collect::<Result<Vec<Value>, StepFailure>>()?;
         run.measure("messages", messages.len());
         let count = i64::try_from(messages.len()).unwrap_or(i64::MAX);
+        // Each field of the messages as one list of its values in their
+        // order, `null` where a message has none: what a list's outputs are
+        // read from, since an output is one value or a list of values. The
+        // fields are the channel's schema's, or else those the messages
+        // hold; none takes over a name the look states of itself.
+        let fields: BTreeSet<String> =
+            match entry.schema.as_ref().and_then(|name| run.schemas.get(name)) {
+                Some(schema) => schema.fields.keys().cloned().collect(),
+                None => messages
+                    .iter()
+                    .filter_map(Value::as_record)
+                    .flat_map(|record| record.iter().map(|(name, _)| name.to_owned()))
+                    .collect(),
+            };
+        let mut values = Values::new();
+        for field in fields.iter().filter(|field| {
+            field.as_str() != MESSAGE_META && !crate::draft::LOOK_FACTS.contains(&field.as_str())
+        }) {
+            let list: Vec<Value> = messages
+                .iter()
+                .map(|message| {
+                    message
+                        .as_record()
+                        .and_then(|record| record.get(field))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                })
+                .collect();
+            values.insert(field.clone(), Value::List(list));
+        }
         Ok(self.done(
-            Values::new()
+            values
                 .with("messages", messages)
                 .with("count", count)
                 .with("more", page.more)
@@ -788,7 +913,11 @@ impl StreamDriver {
                     })?,
             ),
         };
-        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+        // The stream's own configuration, read now: one that can lose a
+        // message from inside its range between the publish and this look
+        // never lets the look say "absent".
+        let facts = run
+            .described(&*self.redact, &name, &entry, input.deadline)
             .await?;
         // Where this run's own publish was confirmed, read that one place;
         // else from where the log ended before it; else from the start.
@@ -800,6 +929,14 @@ impl StreamDriver {
         };
         let known = confirmed.is_some();
         run.mean("from", began);
+        // "Absent" rests on two things: a stream that loses nothing from
+        // inside its range, and a range read whole, every position present,
+        // from where the log ended before the publish to where it ends now.
+        // A gap is a message gone from inside, whatever removed it; with no
+        // place recorded before the publish, the range has no beginning.
+        let may_say_absent = !facts.may_lose_inside && (known || recorded_from.is_some());
+        let mut expect = from;
+        let mut whole = true;
         let mut pages = 0_usize;
         let mut looked = 0_usize;
         for _ in 0..SCAN_PAGES {
@@ -821,9 +958,17 @@ impl StreamDriver {
             {
                 return Ok(self.done(run.record(&entry, found)?));
             }
+            for message in &page.messages {
+                match (expect, message.position) {
+                    (Some(wanted), Some(at)) if at == wanted => expect = Some(at + 1),
+                    _ => whole = false,
+                }
+            }
             if known {
-                // The one place this run's own publish was confirmed at.
-                return Ok(StepOutcome::Absent(Observed::default()));
+                // The one place this run's own publish was confirmed at
+                // holds another message, or none: the broker confirmed a
+                // message that is not there now.
+                return Err(inconclusive(&name));
             }
             // "Absent" is said only of a log that was covered to its end.
             // Where the look says more is held, the scan goes on from the
@@ -839,6 +984,9 @@ impl StreamDriver {
                 let reached = next.or(from).or(page.start).unwrap_or(0);
                 if page.end.is_some_and(|end| reached < end) {
                     return Err(uncovered(&name));
+                }
+                if !may_say_absent || !whole || (page.end.is_some() && expect != page.end) {
+                    return Err(inconclusive(&name));
                 }
                 return Ok(StepOutcome::Absent(Observed::default()));
             }
@@ -880,6 +1028,37 @@ impl StreamDriver {
             return Ok(self.done(Values::new().with("position", Value::Null)));
         }
         let from = position_arg(input)?;
+        if detail.take {
+            // One run of this engine at a time takes from one consumer: a
+            // second would be handed what the first may hold.
+            let key = (
+                run.key.0.clone(),
+                format!(
+                    "{}#{}",
+                    entry.address,
+                    entry.subscription.as_deref().unwrap_or_default()
+                ),
+            );
+            let fresh = self
+                .taking
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(key.clone());
+            if !fresh {
+                return Err(stopped(
+                    Sent::NotSent,
+                    codes::SUBSCRIPTION_IN_USE,
+                    format!(
+                        "Another run takes from the channel `{name}` through the same subscription now."
+                    ),
+                    "Wait for the other run to end, then try again.",
+                ));
+            }
+            run.holds.push(ConsumerHold {
+                taking: Arc::clone(&self.taking),
+                key,
+            });
+        }
         run.check_shape(&*self.redact, &name, &entry, input.deadline)
             .await?;
         // On a queue the runtime owns, the consumer a person made for its
@@ -899,6 +1078,7 @@ impl StreamDriver {
             Open {
                 handle: opened.handle,
                 placed: opened.position.is_some(),
+                ack_wait: opened.ack_wait,
             },
         );
         Ok(self.done(Values::new().with("position", position)))
@@ -916,10 +1096,10 @@ impl StreamDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
-        let Some((handle, placed)) = run
+        let Some((handle, placed, ack_wait)) = run
             .open
             .get(&name)
-            .map(|open| (open.handle.clone(), open.placed))
+            .map(|open| (open.handle.clone(), open.placed, open.ack_wait))
         else {
             return Err(wrong_plan("a wait before its subscription was opened"));
         };
@@ -943,9 +1123,12 @@ impl StreamDriver {
         let mut examined = 0_i64;
         // Deliveries of a queue that did not match: given back when the
         // wait ends, so that they are not handed to this run again first.
-        let mut passed_over: Vec<String> = Vec::new();
+        let mut passed_over: Vec<(String, MessageAt)> = Vec::new();
         let mut outcome: Result<Option<Message>, StepFailure> = Ok(None);
         let mut delivery_held = None;
+        let mut delivered_at = tokio::time::Instant::now();
+        let broker = run_address(run);
+        let at = |id: &str| (broker.clone(), entry.address.clone(), id.to_owned());
         loop {
             let left = limit.saturating_sub(started.elapsed());
             let wait = left.min(input.deadline.remaining().saturating_sub(ANSWER_MARGIN));
@@ -994,28 +1177,50 @@ impl StreamDriver {
                 continue;
             }
             let message = delivered.message;
+            // A message delivered before, or one a record of this engine
+            // took and has not settled, may be held by that record: it is
+            // never taken as new, and nothing is acknowledged.
+            let taken_here = at(&message.id);
+            let free = self.may_take(&taken_here, delivered.attempt);
+            if detail.take && !free {
+                outcome = Err(stopped(
+                    Sent::Answered,
+                    codes::MESSAGE_MAY_BE_HELD,
+                    format!(
+                        "A message of the channel `{name}` was delivered before{}, and the record that took it first may hold it. Nothing was taken.",
+                        delivered
+                            .attempt
+                            .map(|attempt| format!(" ({attempt} deliveries)"))
+                            .unwrap_or_default()
+                    ),
+                    "Settle the record that took the message first; or, where none did, remove the message from the queue by hand.",
+                ));
+                break;
+            }
             let matches = key.is_none_or(|key| message.key.as_deref() == Some(key))
                 && correlation.is_none_or(|wanted| {
                     correlation_of(&entry, &message).as_deref() == Some(wanted)
                 });
             if !matches {
                 if detail.take {
-                    passed_over.push(delivered.delivery);
+                    passed_over.push((delivered.delivery, taken_here));
                 }
                 continue;
             }
             delivery_held = Some(delivered.delivery);
+            delivered_at = tokio::time::Instant::now();
             outcome = Ok(Some(message));
             break;
         }
-        for delivery in passed_over {
+        for (delivery, message_at) in passed_over {
             if let Ok(link) = run.link() {
                 // Best effort: what is not given back here goes back when
-                // the subscription is let go.
+                // the subscription is let go. Either way no record holds it.
                 let _ = link
                     .release(&handle, &delivery, Deadline::after(RELEASE_LIMIT))
                     .await;
             }
+            self.mark(message_at, Some(Mark::GivenBack));
         }
         run.measure("examined", usize::try_from(examined).unwrap_or(usize::MAX));
         let Some(message) = outcome? else {
@@ -1091,11 +1296,17 @@ impl StreamDriver {
             }
             observed.assigned_key = RecordKey::new(vec![Value::from(message.id.as_str())]).ok();
             observed.for_reconcile = for_reconcile;
+            // From here a record holds it, until its acknowledgement is
+            // answered or the record is settled.
+            self.mark(at(&message.id), Some(Mark::Held));
             run.held = Some(Held {
                 channel: name,
                 handle,
                 delivery,
                 message_id: message.id,
+                address: entry.address.clone(),
+                delivered_at,
+                ack_wait,
             });
         }
         observed.values = Values::new()
@@ -1121,10 +1332,43 @@ impl StreamDriver {
         let Some(held) = run.held.take_if(|held| held.channel == name) else {
             return Err(wrong_plan("an acknowledgement with no message taken"));
         };
-        run.link()?
+        let at: MessageAt = (
+            run_address(run),
+            held.address.clone(),
+            held.message_id.clone(),
+        );
+        // An acknowledgement that could reach the broker after its wait
+        // ran out could remove a message the broker has handed to someone
+        // else since. It is not sent; the record is in doubt, and its
+        // reconcile looks at the queue.
+        if held
+            .ack_wait
+            .is_some_and(|wait| held.delivered_at.elapsed() + ACK_WAIT_MARGIN >= wait)
+        {
+            return Err(stopped(
+                Sent::Unknown,
+                codes::NO_CONFIRMATION,
+                format!(
+                    "The message taken from the channel `{name}` was held longer than the broker waits for its acknowledgement, which was therefore not sent: the broker may have handed the message to someone else."
+                ),
+                "Reconcile the record: a look at the queue says whether the message is still there.",
+            ));
+        }
+        let acknowledged = run
+            .link()?
             .acknowledge(&held.handle, &held.delivery, input.deadline)
-            .await
-            .map_err(|error| doubtful(&*self.redact, &error, "acknowledge the message"))?;
+            .await;
+        match acknowledged {
+            Ok(()) => self.mark(at, None),
+            Err(error) => {
+                let failed = doubtful(&*self.redact, &error, "acknowledge the message");
+                if failed.sent != Sent::Unknown {
+                    // Answered as not carried out: no record holds it.
+                    self.mark(at, Some(Mark::GivenBack));
+                }
+                return Err(failed);
+            }
+        }
         Ok(self.done(
             Values::new()
                 .with("acknowledged", true)
@@ -1164,6 +1408,19 @@ impl StreamDriver {
                     Json::from_value(value).map_err(unsendable)?,
                 );
             } else if let Some(header) = arg.strip_prefix(ARG_HEADER) {
+                // A header the server acts on would change what the publish
+                // does beyond what the channel's effect declares; the record's
+                // token is placed below, never from an argument.
+                if crate::lower::is_server_header(header)
+                    || entry
+                        .token_header
+                        .as_deref()
+                        .is_some_and(|token| token.eq_ignore_ascii_case(header))
+                {
+                    return Err(unsendable(
+                        "a header of the binding is one the broker acts on, or the record's token header",
+                    ));
+                }
                 let text = value
                     .as_text()
                     .ok_or_else(|| unsendable("a header is not text"))?;
@@ -1371,9 +1628,13 @@ impl StreamDriver {
                 false
             }
         };
+        let at: MessageAt = (run_address(run), entry.address.clone(), id.to_owned());
         if held {
+            // Settled as not taken: no record holds it any more.
+            self.mark(at, Some(Mark::GivenBack));
             return Ok(StepOutcome::Absent(Observed::default()));
         }
+        self.mark(at, None);
         Ok(self.done(
             Values::new()
                 .with("acknowledged", true)
@@ -1413,6 +1674,25 @@ impl StreamDriver {
         run.measure("channels", channels.len());
         Ok(self.done(Values::new().with("channels", channels)))
     }
+}
+
+/// The broker's address a run reaches.
+fn run_address(run: &Run) -> String {
+    run.key.0.clone()
+}
+
+/// A scan that cannot say "absent": the stream may lose a message from
+/// inside its range, the range read had a gap, or nothing recorded where
+/// it began. The record stays in doubt with what it recorded.
+fn inconclusive(name: &str) -> StepFailure {
+    stopped(
+        Sent::Answered,
+        codes::SCAN_INCONCLUSIVE,
+        format!(
+            "A look at the log `{name}` cannot say whether the record's message is there: the stream can lose a message from inside its range (a limit per key, a time to live per message, or a retention that removes what is read), a message is missing from inside the range read, or nothing recorded where the range begins."
+        ),
+        "Look at the log by hand before anything is sent again: the record stays in doubt.",
+    )
 }
 
 /// A look at a log that does not say how far it reached. The scan cannot
@@ -1610,6 +1890,7 @@ impl Driver for StreamDriver {
                 failed: false,
                 protocol: protocol.name(),
                 acting: Acting::default(),
+                holds: Vec::new(),
             }))
         })
     }
@@ -1705,8 +1986,21 @@ impl Driver for StreamDriver {
                 key,
                 open,
                 failed,
+                held,
+                holds,
                 ..
             } = *run;
+            // A message taken and never acknowledged: the acknowledgement
+            // was not sent, so no record holds it. It goes back with the
+            // subscription, or with the connection.
+            if let Some(held) = held {
+                self.mark(
+                    (key.0.clone(), held.address, held.message_id),
+                    Some(Mark::GivenBack),
+                );
+            }
+            // Held until the subscriptions are let go.
+            let _holds = holds;
             // A connection that is dropped takes its subscriptions with it,
             // and the broker takes back what they held.
             let Some(mut link) = link.filter(|_| !poisoned && !failed) else {

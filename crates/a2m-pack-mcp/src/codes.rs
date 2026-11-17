@@ -28,6 +28,10 @@ pub const CONNECTION_LOST: FailureCode = FailureCode::fixed("connection_lost");
 pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unavailable");
 /// A call to a tool the mapping does not allow.
 pub const NOT_GRANTED: FailureCode = FailureCode::fixed("not_granted");
+/// A credential would cross plain `http` to an address that is not a
+/// loopback address, from a surface that does not accept it. Nothing is
+/// sent (decision 0188).
+pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
 /// The arguments of a call do not fit the tool's pinned input schema.
 pub const ARGUMENTS_INVALID: FailureCode = FailureCode::fixed("arguments_invalid");
 /// The server is reached over HTTPS, and this build cannot make HTTPS
@@ -48,6 +52,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Transient, "connection_lost"),
     (FailureClass::Transient, "upstream_unavailable"),
     (FailureClass::Policy, "not_granted"),
+    (FailureClass::Policy, "link_not_encrypted"),
     (FailureClass::Input, "arguments_invalid"),
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "not_built"),
@@ -60,6 +65,16 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "certificate_not_verified"),
     (FailureClass::UnknownVariant, "tls_handshake_failed"),
 ];
+
+/// A credential would cross an unencrypted link to another machine.
+pub(crate) fn link_not_encrypted() -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        LINK_NOT_ENCRYPTED,
+        "The upstream server is reached over plain `http` at an address that is not a loopback address, and the connection would carry the session's credential over that unencrypted link; nothing was sent.",
+        "Reach the server over `https`. For a server on a private network that offers nothing else, the surface may declare `unencrypted_credentials: accepted` in `target.yaml`.",
+    )
+}
 
 const RE_PIN: &str = "Run discovery on the surface, review what changed, and pin the tool's new digest in the mapping.";
 

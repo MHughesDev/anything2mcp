@@ -1,12 +1,20 @@
 //! Drafting: from a `file_layout` finding to a `documents/` file, and to the
 //! reads over it, by rule.
 //!
-//! A cell of delimited text or of a workbook's table holds text, whatever a
-//! person later says it means. A field there whose type nobody stated is
-//! drafted as the built-in `untrusted_text`: what the file holds, marked as
-//! the system's words, and no guess. A key is not needed to list. So the
-//! document drafted for such a file holds no open question and compiles,
-//! and a `list` read over each of its record kinds is drafted beside it.
+//! A cell of delimited text holds text, whatever a person later says it
+//! means. A field there whose type nobody stated is drafted as the built-in
+//! `untrusted_text`: what the file holds, marked as the system's words, and
+//! no guess. A workbook stores the kind of each cell: a column of text is
+//! `untrusted_text`, a column of numbers `decimal`, a column of true or
+//! false `boolean`, and a column that holds a formula is marked `formula:
+//! true` and read as the result the workbook kept, which section 308 says
+//! a read of a formula's place returns; the pack never calculates one. A
+//! column of cells of more than one kind is left out of the document and
+//! the list, and its type is asked in the read by key (decision 0188). A
+//! key is not needed to list. So the document drafted for such a file holds
+//! no open question and compiles, and a `list` read over each of its record
+//! kinds is drafted beside it. The document names the surface its file was
+//! observed on.
 //!
 //! What the file does not state stays a question, where it blocks only what
 //! needs it: the key and the types of the key's fields are asked in a
@@ -29,7 +37,7 @@ use std::collections::BTreeSet;
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 
-use crate::discover::{FILE_LAYOUT, LayoutFound, invalid};
+use crate::discover::{CellKind, ColumnFound, FILE_LAYOUT, LayoutFound, invalid};
 use crate::model::{DOCUMENT_KIND, Format, MODE, TRUNCATED};
 
 /// The kernel's file kind for operations.
@@ -60,14 +68,66 @@ fn name_from(text: &str, taken: &mut BTreeSet<String>) -> String {
     unique
 }
 
+/// How a drafted field's values are read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Typed {
+    /// As the built-in type named, and, when `formula`, from the result a
+    /// formula kept: section 308 reads a formula's place as its kept
+    /// result, and the pack never calculates one.
+    As(&'static str, bool),
+    /// The file names no type: a JSON value. A question.
+    Unknown,
+    /// A workbook's column of cells of more than one kind: no one type
+    /// reads them all, so the field is left out of the document and the
+    /// list, and its type is asked in the read by key.
+    LeftOut,
+}
+
+impl Typed {
+    /// A delimited cell is text. A workbook's cell is of the kind the
+    /// workbook stores: text, which is marked untrusted, a number, read as
+    /// an exact decimal, or true or false.
+    fn of_cells(column: Option<&ColumnFound>) -> Self {
+        let Some(column) = column else {
+            return Self::As(UNTRUSTED_TEXT, false);
+        };
+        match column.cells {
+            CellKind::Text => Self::As(UNTRUSTED_TEXT, column.formula),
+            CellKind::Number => Self::As("decimal", column.formula),
+            CellKind::Boolean => Self::As("boolean", column.formula),
+            CellKind::Mixed => Self::LeftOut,
+        }
+    }
+}
+
+/// One field as both rules draft it.
+struct FieldDraft {
+    /// Its name in the document.
+    name: String,
+    /// Its place within the record: the key that states it, and its value.
+    at: (&'static str, DraftValue),
+    /// How its values are read.
+    typed: Typed,
+}
+
 /// One record kind as both rules draft it.
 struct KindDraft {
     /// Its name in the document.
     name: String,
     /// Its place in the file: the key that states it, and its value.
     place: (&'static str, DraftValue),
-    /// Each field: its name, and how it is found.
-    fields: Vec<(String, (&'static str, DraftValue))>,
+    /// Each field.
+    fields: Vec<FieldDraft>,
+}
+
+impl KindDraft {
+    /// The fields a read returns: every one whose type the file states.
+    fn read(&self) -> impl Iterator<Item = (&FieldDraft, &'static str)> {
+        self.fields.iter().filter_map(|field| match field.typed {
+            Typed::As(ty, _) => Some((field, ty)),
+            Typed::Unknown | Typed::LeftOut => None,
+        })
+    }
 }
 
 /// What both rules make of one layout.
@@ -84,19 +144,31 @@ impl LayoutDraft {
         let texts = |items: &[String]| {
             DraftValue::List(items.iter().map(|item| DraftValue::text(item)).collect())
         };
-        let kind = |name: String, place: (&'static str, DraftValue), headers: &[String]| {
+        let kind = |name: String,
+                    place: (&'static str, DraftValue),
+                    headers: &[String],
+                    columns: &[ColumnFound]| {
             let json = found.format == Format::Json;
             let mut taken = BTreeSet::new();
             let fields = headers
                 .iter()
-                .filter(|header| !header.is_empty())
-                .map(|header| {
+                .enumerate()
+                .filter(|(_, header)| !header.is_empty())
+                .map(|(position, header)| {
                     let at = if json {
                         ("path", texts(std::slice::from_ref(header)))
                     } else {
                         ("header", DraftValue::text(header))
                     };
-                    (name_from(header, &mut taken), at)
+                    FieldDraft {
+                        name: name_from(header, &mut taken),
+                        at,
+                        typed: if json {
+                            Typed::Unknown
+                        } else {
+                            Typed::of_cells(columns.get(position))
+                        },
+                    }
                 })
                 .collect();
             KindDraft {
@@ -115,6 +187,7 @@ impl LayoutDraft {
                     "rows".to_owned(),
                     ("rows", DraftValue::text("all")),
                     &found.headers,
+                    &[],
                 ));
             }
             Format::Json => {
@@ -125,6 +198,7 @@ impl LayoutDraft {
                         name_from(&table.name, &mut taken),
                         place,
                         &table.headers,
+                        &[],
                     ));
                 }
             }
@@ -148,6 +222,7 @@ impl LayoutDraft {
                         name_from(&table.name, &mut taken),
                         place,
                         &table.headers,
+                        &table.columns,
                     ));
                 }
             }
@@ -184,6 +259,22 @@ impl LayoutDraft {
         }
     }
 
+    /// How a read returns the record kind's values, in the pack's words.
+    fn values_read(&self, kind: &KindDraft) -> String {
+        if self.format == Format::Delimited {
+            return "each value as the text the file holds, marked untrusted.".to_owned();
+        }
+        let mut said = "each value as the workbook stores it: text as the text it holds, marked untrusted, and a number as an exact decimal.".to_owned();
+        if kind
+            .fields
+            .iter()
+            .any(|field| matches!(field.typed, Typed::As(_, true)))
+        {
+            said.push_str(" A field that holds a formula gives the result the workbook kept from its last calculation, which the pack never calculates.");
+        }
+        said
+    }
+
     /// The object a read over a record kind names: the document, and the
     /// record kind where a file holds several.
     fn object(&self, kind: &KindDraft) -> String {
@@ -192,6 +283,19 @@ impl LayoutDraft {
         } else {
             format!("{}_{}", self.document, kind.name)
         }
+    }
+}
+
+/// What a list's description says of the fields it left out.
+fn left_out(kind: &KindDraft) -> &'static str {
+    if kind
+        .fields
+        .iter()
+        .any(|field| field.typed == Typed::LeftOut)
+    {
+        " A column whose cells are of more than one kind is left out until its type is stated."
+    } else {
+        ""
     }
 }
 
@@ -245,18 +349,24 @@ impl DraftingRule for DocumentFromLayout {
                 .fields
                 .iter()
                 .zip(1_usize..)
-                .map(|((name, at), field)| {
-                    let field_type = if layout.as_text() {
-                        DraftValue::text(UNTRUSTED_TEXT)
-                    } else {
-                        cx.open_question(&format!(
-                            "Which field type do the values of field {field} of record kind {number} of this draft have?"
-                        ))
-                    };
-                    (
-                        name.clone(),
-                        DraftValue::map(vec![at.clone(), ("type", field_type)]),
-                    )
+                .filter_map(|(drafted, field)| {
+                    let mut entry = vec![drafted.at.clone()];
+                    match drafted.typed {
+                        Typed::As(ty, formula) => {
+                            entry.push(("type", DraftValue::text(ty)));
+                            if formula {
+                                entry.push(("formula", DraftValue::Bool(true)));
+                            }
+                        }
+                        Typed::Unknown => entry.push((
+                            "type",
+                            cx.open_question(&format!(
+                                "Which field type do the values of field {field} of record kind {number} of this draft have?"
+                            )),
+                        )),
+                        Typed::LeftOut => return None,
+                    }
+                    Some((drafted.name.clone(), DraftValue::map(entry)))
                 })
                 .collect();
             let mut body = vec![kind.place.clone()];
@@ -271,10 +381,16 @@ impl DraftingRule for DocumentFromLayout {
             body.push(("fields", DraftValue::Map(fields)));
             records.push((kind.name.clone(), DraftValue::map(body)));
         }
-        let mut body = vec![
+        // The surface the file was observed on, so that in a target of
+        // several file surfaces the document is not taken for the first's.
+        let mut body = Vec::new();
+        if let Some(surface) = &found.surface {
+            body.push(("surface", DraftValue::text(surface)));
+        }
+        body.extend([
             ("file", DraftValue::text(&found.file)),
             ("format", DraftValue::text(found.format.as_str())),
-        ];
+        ]);
         if let Some(delimiter) = &found.delimiter {
             body.push((
                 "dialect",
@@ -310,9 +426,9 @@ impl ReadsFromLayout {
     }
 }
 
-/// An output of the type a drafted cell holds.
-fn text_output(list: bool) -> DraftValue {
-    let mut output = vec![("type", DraftValue::text(UNTRUSTED_TEXT))];
+/// An output of the type a drafted cell is read as.
+fn output_of(ty: &'static str, list: bool) -> DraftValue {
+    let mut output = vec![("type", DraftValue::text(ty))];
     if list {
         output.push(("list", DraftValue::Bool(true)));
     }
@@ -339,7 +455,11 @@ impl DraftingRule for ReadsFromLayout {
             return Ok(Vec::new());
         }
         let mut docs = Vec::new();
-        for kind in layout.kinds.iter().filter(|kind| !kind.fields.is_empty()) {
+        for kind in layout
+            .kinds
+            .iter()
+            .filter(|kind| kind.read().next().is_some())
+        {
             let object = layout.object(kind);
             let list_name = format!("{}_{object}_list", target.as_str());
             let get_name = format!("{}_{object}_get", target.as_str());
@@ -357,11 +477,10 @@ impl DraftingRule for ReadsFromLayout {
             // Each field as a list of its values in the file's order, and
             // whether the file held more rows than the list read.
             let mut outputs: Vec<(String, DraftValue)> = kind
-                .fields
-                .iter()
-                .map(|(name, _)| (name.clone(), text_output(true)))
+                .read()
+                .map(|(field, ty)| (field.name.clone(), output_of(ty, true)))
                 .collect();
-            if !kind.fields.iter().any(|(name, _)| name == TRUNCATED) {
+            if !kind.fields.iter().any(|field| field.name == TRUNCATED) {
                 outputs.push((
                     TRUNCATED.to_owned(),
                     DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
@@ -378,8 +497,10 @@ impl DraftingRule for ReadsFromLayout {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Lists the rows of {} in the order the file holds them, as many as the list limit allows, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional.",
-                            layout.named(kind)
+                            "Lists the rows of {} in the order the file holds them, as many as the list limit allows, {}{} Drafted by rule from the file's layout; its name is provisional.",
+                            layout.named(kind),
+                            layout.values_read(kind),
+                            left_out(kind),
                         )),
                     ),
                 ]),
@@ -415,7 +536,18 @@ impl DraftingRule for ReadsFromLayout {
                         DraftValue::Map(
                             kind.fields
                                 .iter()
-                                .map(|(name, _)| (name.clone(), text_output(false)))
+                                .zip(1_usize..)
+                                .map(|(field, number)| match field.typed {
+                                    Typed::As(ty, _) => (field.name.clone(), output_of(ty, false)),
+                                    // A column no one type reads is asked
+                                    // here, where nothing else waits on it.
+                                    Typed::Unknown | Typed::LeftOut => (
+                                        field.name.clone(),
+                                        cx.open_question(&format!(
+                                            "Field {number} of the record kind this read names holds cells of more than one kind, and was left out of the document and the list. Which field type do its values have? State it in the document too."
+                                        )),
+                                    ),
+                                })
                                 .collect(),
                         ),
                     ),
@@ -423,8 +555,9 @@ impl DraftingRule for ReadsFromLayout {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Reads one row of {} by its key, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.",
-                            layout.named(kind)
+                            "Reads one row of {} by its key, {} Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.",
+                            layout.named(kind),
+                            layout.values_read(kind),
                         )),
                     ),
                 ]),

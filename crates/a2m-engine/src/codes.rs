@@ -52,6 +52,9 @@ pub const SANDBOX_READ_ONLY: FailureCode = FailureCode::fixed("sandbox_read_only
 pub const JOB_KIND_NOT_BUILT: FailureCode = FailureCode::fixed("job_kind_not_built");
 /// `busy`: evidence could not be stored, so nothing can be marked verified.
 pub const EVIDENCE_NOT_STORED: FailureCode = FailureCode::fixed("evidence_not_stored");
+/// `policy`: the binding that would write a record is not one the approved
+/// diff names for it, or the stored diff is not the approved one.
+pub const APPROVAL_STALE: FailureCode = FailureCode::fixed("approval_stale");
 
 /// `transient`: a driver was not ready within the time preparing may take.
 pub const PREPARE_TIMED_OUT: FailureCode = FailureCode::fixed("prepare_timed_out");
@@ -107,6 +110,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Policy, "sandbox_read_only"),
     (FailureClass::Busy, "job_kind_not_built"),
     (FailureClass::Busy, "evidence_not_stored"),
+    (FailureClass::Policy, "approval_stale"),
     (FailureClass::Transient, "prepare_timed_out"),
     (FailureClass::Busy, "no_rate_budget"),
     (FailureClass::Policy, "intent_token_missing"),

@@ -41,9 +41,12 @@
 
 pub mod codes;
 mod draft;
+mod draft_request;
 mod driver;
 mod lower;
 mod model;
+mod page_http;
+mod requests;
 mod screens;
 
 use std::sync::Arc;
@@ -55,6 +58,8 @@ use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, Registry
 
 pub use a2m_pack_web_browser::SharedBrowsers;
 pub use lower::{GOTO, INVOKE, READ, SET, WAIT};
+pub use page_http::{PAGE_HTTP_MODE, REQUEST};
+pub use requests::REQUEST_KIND;
 pub use screens::{CONTROLS, PACK, SCREEN_KIND, WEB_SURFACE};
 
 /// The name of the mode this pack drives.
@@ -118,6 +123,11 @@ impl Pack for WebUiPack {
             settings.max_read_chars = most;
         }
         let browsers = self.browsers.get_or_create(cx, settings)?;
+        let page_http = Mode::new(PAGE_HTTP_MODE)?;
+        to.driver(
+            page_http.clone(),
+            Arc::new(page_http::PageHttpDriver::new(browsers.clone())),
+        )?;
         to.driver(
             mode.clone(),
             Arc::new(driver::UiDriver::new(
@@ -132,7 +142,9 @@ impl Pack for WebUiPack {
                 surface_fields(),
             ))
             .file_kind(Arc::new(screens::ScreenKind::new()))
+            .file_kind(Arc::new(requests::RequestKind::new()))
             .lowering(Arc::new(lower::UiLowering::new(mode)))
+            .lowering(Arc::new(page_http::PageHttpLowering::new(page_http)))
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::CssUsed))
             .lint_rule(Arc::new(screens::NoFingerprint))
@@ -141,6 +153,12 @@ impl Pack for WebUiPack {
             }))
             .drafting_rule(Arc::new(draft::TableReadRule {
                 kind: FindingKind::new(draft::SCREEN_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft_request::RequestEntryRule {
+                kind: FindingKind::new(draft_request::EXCHANGE_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft_request::RequestReadRule {
+                kind: FindingKind::new(draft_request::EXCHANGE_FINDING)?,
             }));
         for control in CONTROLS {
             compiler = compiler.control(ControlName::new(control)?);

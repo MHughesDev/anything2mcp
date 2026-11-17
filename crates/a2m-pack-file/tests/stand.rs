@@ -1626,6 +1626,7 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
 /// `target.yaml`, so that reads are drafted beside the documents.
 async fn drafted_from(
     scene: &Scene,
+    label: &str,
     names: &[&str],
 ) -> (std::path::PathBuf, a2m_files::DraftReport) {
     use a2m_core::{Archetype, SurfaceKind};
@@ -1663,7 +1664,7 @@ async fn drafted_from(
     let (handle, prepared) = port.into_parts();
     handle.release(prepared, false).await;
     let folder = std::env::temp_dir().join(format!(
-        "a2m-pack-file-drafted-reads-{}",
+        "a2m-pack-file-drafted-{label}-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&folder);
@@ -1685,7 +1686,8 @@ async fn drafted_from(
 #[tokio::test]
 async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_the_key() {
     let mut scene = Scene::new();
-    let (folder, report) = drafted_from(&scene, &[seed::STOCK_CSV, seed::ADJUSTMENTS_CSV]).await;
+    let (folder, report) =
+        drafted_from(&scene, "lists", &[seed::STOCK_CSV, seed::ADJUSTMENTS_CSV]).await;
     let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
     assert_eq!(
         written,
@@ -1860,6 +1862,46 @@ description: >
                 && problem.message.contains("untrusted_text")),
         "{refused:?}"
     );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn the_drafted_document_names_the_surface_its_file_was_observed_on() {
+    let mut scene = Scene::new();
+    let (folder, report) = drafted_from(&scene, "surface", &[seed::STOCK_CSV]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
+    assert!(stock.contains("surface: \"price_files\""), "{stock}");
+    // In a target whose first file surface is another, the document is
+    // still the file of the surface it was observed on.
+    let target = std::fs::read_to_string(folder.join("target.yaml")).unwrap();
+    let first = "  price_files:\n    kind: file\n    folder: prices\n    stands: alone\n";
+    let second = "  config_files:\n    kind: file\n    folder: config\n    stands: alone\n";
+    assert!(target.contains(&format!("{first}{second}")), "{target}");
+    std::fs::write(
+        folder.join("target.yaml"),
+        target.replace(&format!("{first}{second}"), &format!("{second}{first}")),
+    )
+    .unwrap();
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    assert_eq!(scene.plan.surfaces[0].name.as_str(), "config_files");
+    let (_, surface) = scene.binding("example_stock_list");
+    assert_eq!(surface.surface.name.as_str(), "price_files");
+    let observed = scene
+        .read_operation("example_stock_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(&scene.plan, "example_stock_list", last_values(&observed));
+    let stored = scene.stand.stored_rows(seed::STOCK_CSV, ',').unwrap();
+    let codes = result.get("item_code").and_then(Value::as_list).unwrap();
+    assert_eq!(codes.len(), stored.len() - 1);
+    assert_eq!(codes[0], text(&stored[1][0]));
+    assert!(scene.stand.observe().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -2150,4 +2192,67 @@ async fn five_reads_say_the_same_of_how_each_step_was_done() {
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
     assert_eq!(first, [("format", "delimited"), ("open_for", "read")]);
+}
+
+#[tokio::test]
+async fn a_drafted_workbook_list_reads_each_cell_as_stored_and_a_formula_as_its_kept_result() {
+    let mut scene = Scene::new();
+    let (folder, report) = drafted_from(&scene, "workbook", &[seed::PRICE_LIST_WORKBOOK]).await;
+    let document =
+        std::fs::read_to_string(folder.join("documents").join("price_list.yaml")).unwrap();
+    // Text is marked; a number is an exact decimal; the column of formulas
+    // says so, and is read as the result the workbook kept (section 308).
+    assert!(
+        document
+            .contains("header: \"Line value\"\n        type: \"decimal\"\n        formula: true"),
+        "{document}"
+    );
+    assert!(
+        document.contains("header: \"Item code\"\n        type: \"untrusted_text\"\n"),
+        "{document}"
+    );
+    assert_eq!(document.matches("formula: true").count(), 1, "{document}");
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let list = "example_price_list_price_table_list";
+    let observed = scene.read_operation(list, &Values::new()).await.unwrap();
+    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    assert_eq!(
+        column("item_code"),
+        [text("EX-1001"), text("EX-1002"), text("EX-1003")]
+    );
+    assert_eq!(
+        column("unit_price"),
+        [decimal("4.5"), decimal("10"), decimal("1250")]
+    );
+    // What the stand wrote as each formula's kept result, never the
+    // formula's text, and never calculated here.
+    assert_eq!(
+        column("line_value"),
+        [decimal("54"), decimal("400"), decimal("50000")]
+    );
+    assert!(!format!("{result:?}").contains('*'), "{result:?}");
+    assert!(scene.stand.observe().unwrap().is_empty());
+
+    // A formula where the drafted document declares a value, as another
+    // writer may leave one, still stops the read by name.
+    scene
+        .stand
+        .set_fault(Fault::formula_at_declared_value())
+        .unwrap();
+    let stopped = scene
+        .read_operation(list, &Values::new())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::UnknownVariant, "formula_at_place")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+    let _ = std::fs::remove_dir_all(&folder);
 }

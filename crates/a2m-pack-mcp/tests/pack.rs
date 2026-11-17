@@ -69,6 +69,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
             "mcp.program_unpinned",
             "mcp.tool_unmapped",
             "mcp.tool_unpinned",
+            "mcp.unencrypted_credentials",
             "mcp.write_no_readback"
         ]
     );

@@ -817,6 +817,33 @@ async fn a_step_of_a_kind_that_always_commits_is_refused_when_sent_as_a_read() {
     assert!(handle.release(prepared, false).await.complete);
 }
 
+/// "Absent" proves that a record is not there only from steps whose kinds
+/// the mode's manifest states in `absence_steps`; by default no kind is
+/// stated, and nothing proves absence (decision 0185).
+#[tokio::test]
+async fn absence_is_proved_only_by_the_kinds_the_manifest_states() {
+    let plain = scene();
+    let (handle, prepared) = plain.prepared(None, Posture::Live).await;
+    assert!(!handle.proves_absence(&[plain.step("fetch", false, true)]));
+    assert!(handle.release(prepared, false).await.complete);
+
+    let declares = manifest("alpha", "request", "").replace(
+        "steps = [\"fetch\", \"send\"]",
+        "steps = [\"fetch\", \"send\"]\nabsence_steps = [\"fetch\"]",
+    );
+    let scene = scene_of(
+        TestPack::with_manifest("alpha", declares),
+        Arc::new(a2m_core::NoSecrets),
+    );
+    let (handle, prepared) = scene.prepared(None, Posture::Live).await;
+    let fetch = scene.step("fetch", false, true);
+    assert!(handle.proves_absence(std::slice::from_ref(&fetch)));
+    // Every step must be of a stated kind, and there must be one.
+    assert!(!handle.proves_absence(&[fetch.clone(), scene.step("send", false, false)]));
+    assert!(!handle.proves_absence(&[]));
+    assert!(handle.release(prepared, false).await.complete);
+}
+
 /// A code that states the kernel's own bookkeeping never comes from a
 /// driver, also where a step's own `fails_as` would let it pass.
 #[tokio::test]

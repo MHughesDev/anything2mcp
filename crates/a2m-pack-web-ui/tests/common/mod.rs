@@ -281,6 +281,10 @@ pub fn ui_mode() -> Mode {
     Mode::new("ui").unwrap()
 }
 
+pub fn page_http_mode() -> Mode {
+    Mode::new("page_http").unwrap()
+}
+
 /// What a list of steps gave when none of them failed.
 #[derive(Debug, Default)]
 pub struct Ran {
@@ -357,7 +361,12 @@ impl Scene {
     }
 
     pub fn handle(&self) -> DriverHandle {
-        self.stand.registry.driver(&ui_mode()).unwrap()
+        self.handle_of(&ui_mode())
+    }
+
+    /// The registry's handle on the driver of a mode.
+    pub fn handle_of(&self, mode: &Mode) -> DriverHandle {
+        self.stand.registry.driver(mode).unwrap()
     }
 
     pub async fn try_prepare(
@@ -365,7 +374,17 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.handle();
+        self.try_prepare_in(&ui_mode(), fence, posture).await
+    }
+
+    /// The same, for the driver of a mode.
+    pub async fn try_prepare_in(
+        &self,
+        mode: &Mode,
+        fence: Option<Fence>,
+        posture: Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle_of(mode);
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -402,6 +421,11 @@ impl Scene {
 
     /// The first `ui` binding of an operation.
     pub fn binding(&self, operation: &str) -> &BindingPlan {
+        self.binding_in(operation, &ui_mode())
+    }
+
+    /// The first binding of an operation in a mode.
+    pub fn binding_in(&self, operation: &str, mode: &Mode) -> &BindingPlan {
         self.plan
             .operations
             .iter()
@@ -409,7 +433,7 @@ impl Scene {
             .unwrap_or_else(|| panic!("no operation named `{operation}`"))
             .bindings
             .iter()
-            .find(|binding| binding.mode == ui_mode())
+            .find(|binding| binding.mode == *mode)
             .unwrap()
     }
 
@@ -478,6 +502,20 @@ impl Scene {
         inputs: &Values,
     ) -> Result<Ran, StepFailure> {
         let steps = &self.binding(operation).act;
+        self.run(handle, prepared, steps, inputs, None).await
+    }
+
+    /// Reads through the `act` steps of a read operation's binding in a
+    /// mode.
+    pub async fn read_in(
+        &self,
+        mode: &Mode,
+        handle: &DriverHandle,
+        prepared: &mut Prepared,
+        operation: &str,
+        inputs: &Values,
+    ) -> Result<Ran, StepFailure> {
+        let steps = &self.binding_in(operation, mode).act;
         self.run(handle, prepared, steps, inputs, None).await
     }
 }

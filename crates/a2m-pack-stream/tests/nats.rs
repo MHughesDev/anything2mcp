@@ -27,7 +27,7 @@ use a2m_provider::{
     Prepared, Registry, Sent, StepFailure, StepOutcome, SurfaceRef,
 };
 use common::{Folder, Ledger, Planted, done, failed, input, read, record, text};
-use example_nats::model::{AckKind, Fault, Outcome, StreamSpec};
+use example_nats::model::{AckKind, AckPolicy, ConsumerSpec, Fault, Outcome, StreamSpec};
 use example_nats::{MSG_ID, SEED_CONSUMER, SEED_EVENTS, SEED_STATUS, SEED_WORK, TestNats};
 
 fn nats_root() -> TargetRoot {
@@ -95,7 +95,18 @@ impl Scene {
         posture: Posture,
         fence: Option<Fence>,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.registry.driver(&common::mode()).unwrap();
+        self.try_prepare_in(&self.registry, posture, fence).await
+    }
+
+    /// Prepared by the driver of `registry`: another engine's, when it is
+    /// not the scene's own.
+    async fn try_prepare_in(
+        &self,
+        registry: &Registry,
+        posture: Posture,
+        fence: Option<Fence>,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = registry.driver(&common::mode()).unwrap();
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -492,6 +503,37 @@ async fn a_lost_or_unreadable_acknowledgement_is_a_write_in_doubt_and_a_refusal_
         assert!(matches!(found, StepOutcome::Done(_)), "{fault:?}");
         handle.release(prepared, false).await;
     }
+
+    // A credential that expires on the server's timer while the publish is
+    // in flight: the `-ERR` says nothing of the publish, which was stored.
+    scene.stand.clear_faults();
+    let write = ledger.write("tok-expired").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    scene.stand.set_fault(Fault::ExpireAuthAfterStore);
+    let mut step = write.input(&args, Some("tok-expired"));
+    step.deadline = Deadline::after(Duration::from_secs(2));
+    let doubt = failed(
+        handle
+            .act(&mut prepared, &binding.act[1], &step, write.authority())
+            .await,
+    );
+    assert_eq!(
+        doubt,
+        (
+            "possible_commit".to_owned(),
+            "no_confirmation".to_owned(),
+            Sent::Unknown
+        )
+    );
+    handle.release(prepared, true).await;
+    stored += 1;
+    let log = scene.stand.messages(SEED_EVENTS);
+    assert_eq!(log.len(), stored);
+    assert_eq!(log[stored - 1].headers[MSG_ID], "tok-expired");
+    scene.stand.clear_faults();
 
     // A refusal the protocol defines: answered, and nothing stored.
     scene
@@ -995,7 +1037,15 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
             "operations/orders_work_list.yaml"
         ]
     );
-    common::answer_roles(&root);
+    // No drafted file asks what a message is; the one question left is the
+    // key of the retained channel, which the server does not name.
+    let asked: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    assert_eq!(asked, ["channels/orders_status.yaml"], "{asked:?}");
+    common::answer_keys(&root);
     scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
         Ok(compiled) => compiled.plan,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
@@ -1027,6 +1077,22 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
             "{operation} over {stream}"
         );
         assert_eq!(result.get("more"), Some(&Value::Bool(false)));
+        // Each field of the messages a look saw, as a list in their order:
+        // what the server stores, as its control interface says.
+        let wanted: Vec<Value> = scene
+            .stand
+            .messages(stream)
+            .iter()
+            .map(|message| {
+                let body: serde_json::Value = serde_json::from_slice(&message.data).unwrap();
+                Value::from(body["order_id"].as_str().unwrap())
+            })
+            .collect();
+        assert_eq!(
+            result.get("order_id"),
+            Some(&Value::List(wanted)),
+            "{operation} over {stream}"
+        );
     }
     handle.release(prepared, false).await;
     // The server: no consumer made, nothing delivered, acknowledged, or
@@ -1083,6 +1149,18 @@ async fn a_channel_states_only_what_the_protocol_can_carry() {
         ),
         // A take with no consumer a person made.
         ("subscription: example_runtime\n", ""),
+        // A topic among the server's own subjects, and another client's
+        // replies.
+        (
+            "address: example.orders.notices",
+            "address: $JS.API.STREAM.DELETE",
+        ),
+        ("address: example.orders.notices", "address: _INBOX.notices"),
+        // A stream whose subject is the server's own.
+        (
+            "address: ORDERS_EVENTS/example.orders.events",
+            "address: ORDERS_EVENTS/$KV.orders",
+        ),
     ] {
         assert!(original.contains(from), "{from}");
         std::fs::write(&channels, original.replace(from, to)).unwrap();
@@ -1093,6 +1171,65 @@ async fn a_channel_states_only_what_the_protocol_can_carry() {
             problems.to_string().contains("stream.protocol_unfit"),
             "{problems}"
         );
+    }
+}
+
+#[tokio::test]
+async fn a_binding_never_sets_a_header_the_server_acts_on() {
+    let folder = Folder::new("nats-headers");
+    let registry = common::registry(&folder);
+    let root = folder.path().join("target");
+    copy_tree(nats_root().path(), &root);
+    let operations = root.join("operations").join("order_events.yaml");
+    let original = std::fs::read_to_string(&operations).unwrap();
+    let from = "    body: {order_id: input.order_id, event: input.event}\n    read_back:";
+    assert!(original.contains(from));
+    for header in [
+        "Nats-Rollup: sub",
+        "nats-ttl: 1s",
+        "NATS-MSG-ID: input.order_id",
+    ] {
+        let to = format!("    headers: {{{header}}}\n{from}");
+        std::fs::write(&operations, original.replace(from, &to)).unwrap();
+        let problems = common::compile(&registry, &TargetRoot::new(root.clone()))
+            .err()
+            .unwrap_or_else(|| panic!("compiled with `{header}`"));
+        assert!(
+            problems.to_string().contains("binding_invalid"),
+            "{problems}"
+        );
+    }
+    // A channel that does not say what its messages are: its reads compile,
+    // and a publish to it asks.
+    std::fs::write(&operations, &original).unwrap();
+    let channels = root.join("channels").join("orders.yaml");
+    let text = std::fs::read_to_string(&channels).unwrap();
+    std::fs::write(&channels, text.replace("role: events\n", "")).unwrap();
+    let problems = common::compile(&registry, &TargetRoot::new(root.clone()))
+        .err()
+        .unwrap()
+        .to_string();
+    let errors: Vec<&str> = problems
+        .lines()
+        .filter(|line| line.contains(" error "))
+        .collect();
+    assert!(!errors.is_empty(), "{problems}");
+    assert!(
+        errors.iter().all(|line| line.contains("states no `role`")),
+        "{problems}"
+    );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
     }
 }
 
@@ -1446,6 +1583,342 @@ async fn a_take_in_doubt_is_settled_by_a_look_at_the_sequence_it_recorded() {
     handle.release(prepared, false).await;
     assert_eq!(scene.stand.acknowledgements().len(), 1);
     assert_eq!(scene.stand.messages(SEED_WORK).len(), 1);
+}
+
+#[tokio::test]
+async fn an_acknowledgement_in_flight_when_the_credential_expires_is_in_doubt() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap();
+    scene.stand.set_fault(Fault::ExpireAuthAfterAck);
+    let mut step = write.keyless(&none);
+    step.deadline = Deadline::after(Duration::from_secs(2));
+    let doubt = failed(
+        handle
+            .act(&mut prepared, &take[2], &step, write.authority())
+            .await,
+    );
+    assert_eq!(
+        doubt,
+        (
+            "possible_commit".to_owned(),
+            "no_confirmation".to_owned(),
+            Sent::Unknown
+        )
+    );
+    handle.release(prepared, true).await;
+    // The server carried it out: the message is gone.
+    let acks = scene.stand.acknowledgements();
+    assert_eq!((acks.len(), acks[0].kind), (1, AckKind::Ack));
+    assert_eq!(scene.stand.messages(SEED_WORK).len(), 1);
+}
+
+#[tokio::test]
+async fn a_message_delivered_again_is_never_taken_by_a_second_record() {
+    let scene = Scene::start().await;
+    // The consumer waits half a second for an acknowledgement.
+    scene.stand.declare_consumer(
+        SEED_WORK,
+        ConsumerSpec::new(SEED_CONSUMER, AckPolicy::Explicit).ack_wait(Duration::from_millis(500)),
+    );
+    let ledger = Ledger::open().await;
+    let binding = scene.binding("example_order_work_take");
+    let (take, look) = (&binding.act, &binding.read_back[0]);
+    let none = Values::new();
+
+    // The first record takes the first message. Its work outlives the
+    // consumer's wait, so its acknowledgement is not sent: it is in doubt.
+    let first = ledger.write("first").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(first.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
+    else {
+        panic!("a message");
+    };
+    let row = stored_and_read_again(&taken.for_reconcile);
+    let doubt = failed(
+        handle
+            .act(
+                &mut prepared,
+                &take[2],
+                &first.keyless(&none),
+                first.authority(),
+            )
+            .await,
+    );
+    assert_eq!(
+        doubt,
+        (
+            "possible_commit".to_owned(),
+            "no_confirmation".to_owned(),
+            Sent::Unknown
+        )
+    );
+    handle.release(prepared, true).await;
+    assert!(scene.stand.acknowledgements().is_empty());
+
+    // The server's wait runs out and it hands the message out again. In an
+    // engine that never saw the first record, the delivery's own count says
+    // it went out before: nothing is taken.
+    scene.stand.advance(Duration::from_secs(1));
+    let other_folder = Folder::new("nats-other-engine");
+    let other = common::registry(&other_folder);
+    let second = ledger.write("second").await;
+    let (other_handle, mut prepared) = scene
+        .try_prepare_in(&other, Posture::Live, Some(second.fence))
+        .await
+        .unwrap();
+    let held = failed(read(&other_handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(
+        held,
+        (
+            "busy".to_owned(),
+            "message_may_be_held".to_owned(),
+            Sent::Answered
+        )
+    );
+    other_handle.release(prepared, true).await;
+
+    // The first record is reconciled: the message is still there, so it
+    // was not taken, and no record holds it any more.
+    let (handle, mut prepared) = scene.reading().await;
+    let settled = handle
+        .act_recorded(
+            &mut prepared,
+            look,
+            &first.keyless(&none),
+            Authority::Read,
+            &row,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(settled, StepOutcome::Absent(_)), "{settled:?}");
+    handle.release(prepared, false).await;
+
+    // Now a record of the engine that settled it takes it, and its
+    // acknowledgement, inside the wait, removes it.
+    scene.stand.advance(Duration::from_secs(1));
+    scene
+        .stand
+        .set_ack_wait(SEED_WORK, SEED_CONSUMER, Duration::from_secs(30));
+    let third = ledger.write("third").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(third.fence))
+        .await
+        .unwrap();
+    read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap();
+    handle
+        .act(
+            &mut prepared,
+            &take[2],
+            &third.keyless(&none),
+            third.authority(),
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    // The server: one acknowledgement, of the first message, which is gone;
+    // it went out three times.
+    let acks = scene.stand.acknowledgements();
+    assert_eq!(acks.len(), 1);
+    assert_eq!((acks[0].kind, acks[0].seq), (AckKind::Ack, 1));
+    let left = scene.stand.messages(SEED_WORK);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].seq, 2);
+    let attempts: Vec<u64> = scene
+        .stand
+        .deliveries()
+        .iter()
+        .filter(|delivery| delivery.seq == 1)
+        .map(|delivery| delivery.attempt)
+        .collect();
+    assert_eq!(attempts, [1, 2, 3]);
+}
+
+#[tokio::test]
+async fn two_runs_never_take_from_one_consumer_at_once() {
+    let scene = Scene::start().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    let (first, mut holding) = scene.reading().await;
+    read(&first, &mut holding, &take[..1], &none).await.unwrap();
+    let (second, mut waiting) = scene.reading().await;
+    let busy = failed(read(&second, &mut waiting, &take[..1], &none).await);
+    assert_eq!(
+        busy,
+        (
+            "busy".to_owned(),
+            "subscription_in_use".to_owned(),
+            Sent::NotSent
+        )
+    );
+    second.release(waiting, false).await;
+    first.release(holding, false).await;
+    // Let go, the consumer is free again.
+    let (third, mut prepared) = scene.reading().await;
+    read(&third, &mut prepared, &take[..1], &none)
+        .await
+        .unwrap();
+    third.release(prepared, false).await;
+    assert!(scene.stand.deliveries().is_empty());
+}
+
+#[tokio::test]
+async fn a_delivery_for_another_consumer_is_never_taken() {
+    let scene = Scene::start().await;
+    let take = &scene.binding("example_order_work_take").act;
+    let none = Values::new();
+    scene.stand.set_fault(Fault::ForeignDelivery);
+    let (handle, mut prepared) = scene.reading().await;
+    let refused = failed(read(&handle, &mut prepared, &take[..2], &none).await);
+    assert_eq!(refused.1, "unexpected_reply");
+    handle.release(prepared, true).await;
+    assert!(scene.stand.acknowledgements().is_empty());
+    assert_eq!(scene.stand.messages(SEED_WORK).len(), 2);
+}
+
+/// A publish whose acknowledgement is lost, after its position is
+/// recorded: the record's recorded values, as the ledger keeps them.
+async fn publish_in_doubt(scene: &Scene, ledger: &Ledger, token: &str) -> Values {
+    let binding = scene.binding("example_order_event_record");
+    let args = event_args("A-101", "shipped");
+    let write = ledger.write(token).await;
+    let (handle, mut prepared) = scene
+        .try_prepare(Posture::Live, Some(write.fence))
+        .await
+        .unwrap();
+    let StepOutcome::Done(marked) = handle
+        .act(
+            &mut prepared,
+            &binding.act[0],
+            &write.input(&args, Some(token)),
+            Authority::Read,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("a position");
+    };
+    scene.stand.set_fault(Fault::DropPublishAck);
+    let mut step = write.input(&args, Some(token));
+    step.deadline = Deadline::after(Duration::from_secs(2));
+    let doubt = failed(
+        handle
+            .act(&mut prepared, &binding.act[1], &step, write.authority())
+            .await,
+    );
+    assert_eq!(doubt.0, "possible_commit");
+    handle.release(prepared, true).await;
+    scene.stand.clear_faults();
+    stored_and_read_again(&marked.for_reconcile)
+}
+
+async fn scan_for(scene: &Scene, token: &str, row: &Values) -> Result<StepOutcome, StepFailure> {
+    let binding = scene.binding("example_order_event_record");
+    let args = event_args("A-101", "shipped");
+    let mut stamped = input(&args);
+    stamped.stamp = Some(token);
+    let (handle, mut prepared) = scene.reading().await;
+    let outcome = handle
+        .act_recorded(
+            &mut prepared,
+            &binding.read_back[0],
+            &stamped,
+            Authority::Read,
+            row,
+        )
+        .await;
+    handle.release(prepared, false).await;
+    outcome
+}
+
+#[tokio::test]
+async fn a_scan_never_says_absent_of_a_log_that_lost_a_message_from_inside() {
+    // A stream that keeps two messages of each key: the record's message is
+    // evicted from inside the stream by two more of its key.
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    scene
+        .stand
+        .declare_stream(StreamSpec::new(SEED_EVENTS, ["example.orders.events.*"]).per_subject(2));
+    scene.stand.publish(
+        "example.orders.events.A-102",
+        &[],
+        "{\"order_id\":\"A-102\",\"event\":\"first\"}",
+    );
+    let row = publish_in_doubt(&scene, &ledger, "tok-evicted").await;
+    for n in 0..2 {
+        scene.stand.publish(
+            "example.orders.events.A-101",
+            &[],
+            &format!("{{\"order_id\":\"A-101\",\"event\":\"e{n}\"}}"),
+        );
+    }
+    assert!(
+        scene
+            .stand
+            .messages(SEED_EVENTS)
+            .iter()
+            .all(|message| message.headers.get(MSG_ID).map(String::as_str) != Some("tok-evicted"))
+    );
+    assert_eq!(
+        failed(scan_for(&scene, "tok-evicted", &row).await),
+        (
+            "policy".to_owned(),
+            "scan_inconclusive".to_owned(),
+            Sent::Answered
+        )
+    );
+
+    // A stream that loses nothing by its configuration, whose message a
+    // person deleted by hand: the gap in the range says so.
+    let scene = Scene::start().await;
+    let row = publish_in_doubt(&scene, &ledger, "tok-deleted").await;
+    let seq = scene
+        .stand
+        .messages(SEED_EVENTS)
+        .iter()
+        .find(|message| message.headers.get(MSG_ID).map(String::as_str) == Some("tok-deleted"))
+        .unwrap()
+        .seq;
+    scene.stand.publish(
+        "example.orders.events.A-102",
+        &[],
+        "{\"order_id\":\"A-102\",\"event\":\"later\"}",
+    );
+    assert!(scene.stand.remove_message(SEED_EVENTS, seq));
+    assert_eq!(
+        failed(scan_for(&scene, "tok-deleted", &row).await),
+        (
+            "policy".to_owned(),
+            "scan_inconclusive".to_owned(),
+            Sent::Answered
+        )
+    );
+    // Nothing deleted: the same scan says absent of a token never sent.
+    let scene = Scene::start().await;
+    let row = publish_in_doubt(&scene, &ledger, "tok-kept").await;
+    assert!(matches!(
+        scan_for(&scene, "tok-never", &row).await.unwrap(),
+        StepOutcome::Absent(_)
+    ));
+    // Nothing was sent again by any scan.
+    assert_eq!(scene.stand.received().len(), 1);
 }
 
 #[tokio::test]

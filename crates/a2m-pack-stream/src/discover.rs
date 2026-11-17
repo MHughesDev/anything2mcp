@@ -160,6 +160,10 @@ impl Discoverer for BrokerLook {
                 // its channel cannot be looked at is an answer: no sample.
                 let mut look = "none";
                 let mut shape_finding = None;
+                // The fields the look saw, each with the one plain JSON type
+                // every message gave it: what a drafted list returns where
+                // the broker holds no schema the pack reads.
+                let mut sampled_fields = Json::Null;
                 if self.sample > 0 && shape.is_some_and(|shape| LOOKABLE.contains(&shape)) {
                     let detail = StepDetail {
                         address: Some(address.to_owned()),
@@ -202,6 +206,21 @@ impl Discoverer for BrokerLook {
                                 .and_then(|count| u64::try_from(count).ok())
                                 .unwrap_or(0);
                             if sampled > 0 {
+                                sampled_fields = Json::Object(
+                                    fields
+                                        .iter()
+                                        .filter_map(|(name, types)| match types.as_list()? {
+                                            [one] => {
+                                                let one = one.as_str()?;
+                                                ["string", "integer", "number", "boolean"]
+                                                    .contains(&one)
+                                                    .then(|| (name.clone(), Json::text(one)))
+                                            }
+                                            _ => None,
+                                        })
+                                        .filter(|(name, _)| !name.is_empty())
+                                        .collect(),
+                                );
                                 let more = sample.values.get("more").and_then(Value::as_bool)
                                     == Some(true);
                                 shape_finding = Some((
@@ -265,6 +284,7 @@ impl Discoverer for BrokerLook {
                     ("look", Json::text(look)),
                     ("schema", Json::Bool(schema.is_some())),
                     ("schema_fields", schema_fields),
+                    ("sampled_fields", sampled_fields),
                 ])
                 .to_line();
                 bytes += u64::try_from(found.len()).unwrap_or(u64::MAX);

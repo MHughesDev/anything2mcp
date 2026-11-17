@@ -24,7 +24,7 @@ use a2m_provider::{
 use serde_json::Value as Json;
 
 use crate::SURFACE_KIND;
-use crate::infer::{Answer, Exchange, infer_endpoints};
+use crate::infer::{Answer, Exchange, infer_endpoints, matched_requests};
 use crate::look::{
     Arrival, Claim, Core, FOCUS_TIER_TWO, Place, Standing, failure, json_body, link, link_target,
     looks_like_an_action,
@@ -719,37 +719,83 @@ impl WebCapture {
             }
         }
 
-        let mut findings = Vec::new();
-        for (exchange, limitations) in &exchanges {
+        // Requests a page made by itself that are one read by key are given
+        // as one finding, at the place of the first, with the segment that
+        // differs as a placeholder, and the requests' own are not given
+        // (decision 0190).
+        let only: Vec<Exchange> = exchanges.iter().map(|(one, _)| one.clone()).collect();
+        let groups = matched_requests(&only);
+        // The finding each exchange is given in, by its place, for the
+        // parents of the endpoints below.
+        let mut given: Vec<Option<Finding>> = vec![None; exchanges.len()];
+        for (at, (exchange, limitations)) in exchanges.iter().enumerate() {
+            let group = groups.iter().find(|group| group.members.contains(&at));
+            if let Some(group) = group
+                && group.members.first() != Some(&at)
+            {
+                continue;
+            }
+            let (path, found, limitations) = match group {
+                Some(group) => {
+                    let mut found = exchange.found();
+                    if let Json::Object(fields) = &mut found {
+                        fields.insert("path".to_owned(), Json::from(group.pattern.as_str()));
+                        fields.insert("made_by".to_owned(), Json::from(group.page.as_str()));
+                        fields.insert(
+                            "paths".to_owned(),
+                            Json::Array(
+                                group
+                                    .members
+                                    .iter()
+                                    .map(|member| Json::from(only[*member].path.as_str()))
+                                    .collect(),
+                            ),
+                        );
+                        found = Json::Object(crate::shape::sorted(fields.clone()));
+                    }
+                    let mut limitations = limitations.clone();
+                    limitations.push((
+                        LimitationCode::Sampled,
+                        format!(
+                            "Matched from {} requests whose paths differ in one segment, made by pages whose paths differ in the same value, with one answer's shape; the names are of the first.",
+                            group.members.len()
+                        ),
+                    ));
+                    (group.pattern.clone(), found, limitations)
+                }
+                None => (exchange.path.clone(), exchange.found(), limitations.clone()),
+            };
             let place = Place {
                 origin: exchange.origin.clone(),
-                path: exchange.path.clone(),
+                path,
                 query: BTreeMap::new(),
             };
             let finding = core.finding(
                 scope,
                 place.subject(scope.redact)?,
                 &kinds.exchange,
-                &exchange.found(),
+                &found,
                 &Claim {
                     level: if exchange.answered() {
                         EvidenceLevel::Discovered
                     } else {
                         EvidenceLevel::Inferred
                     },
-                    limitations: limitations.clone(),
+                    limitations,
                     parents: Vec::new(),
                 },
             )?;
             out.found(&finding)?;
-            findings.push(finding);
+            match group {
+                Some(group) => {
+                    for member in &group.members {
+                        given[*member] = Some(finding.clone());
+                    }
+                }
+                None => given[at] = Some(finding),
+            }
         }
-
         let tier_two = matches!(scope.focus.get(FOCUS_TIER_TWO), Some(Value::Bool(true)));
-        let only: Vec<Exchange> = exchanges
-            .into_iter()
-            .map(|(exchange, _)| exchange)
-            .collect();
         for endpoint in infer_endpoints(&only, tier_two) {
             let mut limitations = vec![(
                 LimitationCode::Sampled,
@@ -785,7 +831,7 @@ impl WebCapture {
             }
             let mut parents: Vec<&Finding> = Vec::new();
             for source in &endpoint.sources {
-                if let Some(parent) = findings.get(*source)
+                if let Some(parent) = given.get(*source).and_then(Option::as_ref)
                     && !parents.iter().any(|known| known.id() == parent.id())
                 {
                     parents.push(parent);

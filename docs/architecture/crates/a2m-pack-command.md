@@ -190,6 +190,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 3. Done: the driver for reads: `prepare`, `spawn`, `expect`, `parse`, and stopping, which is the supervisor's.
 4. Done: writes with read-back, the assigned key, the stamp, and lookup.
 5. Done: the discoverer, its describer, and the drafting rule.
+5a. Done: a drafted question that quotes the program's own words (the command's words, a usage placeholder) quotes them through `quoted`: at most 40 characters, control characters, backticks, quotes, angle brackets, and backslashes removed, in straight quotes, with a sentence saying the quoted words are the program's ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). When `DraftContext` can carry the system's words beside a question, the call becomes `cx.open_question_quoting(sentence, words)` and `quoted` goes. Proven by the unit test `a_question_quotes_the_programs_words_bounded_cleaned_and_set_off`.
 6. Not built: `upsert`, `upload`, `download`, and the `collect` step.
 7. Not built: secrets. No credential reaches a program yet: standard input is always closed, and the lease is not applied. `{session.state_dir}` does not compile.
 8. Not built: `stdin` from a param or a blob; a working folder other than a fresh one; an encoding other than UTF-8; a table split at fixed positions; the fixed pair of an interpreter and a script; reading a manual page or a completion file; a grace period before a forced stop; more than one start at a time on a surface.

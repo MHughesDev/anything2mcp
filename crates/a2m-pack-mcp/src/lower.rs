@@ -653,10 +653,11 @@ pub(crate) enum Rule {
     DiscoveryBound,
     FreeText,
     EnvironmentRefused,
+    UnencryptedCredentials,
 }
 
 impl Rule {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::ToolUnmapped,
         Self::ToolUnpinned,
         Self::ProgramUnpinned,
@@ -664,6 +665,7 @@ impl Rule {
         Self::DiscoveryBound,
         Self::FreeText,
         Self::EnvironmentRefused,
+        Self::UnencryptedCredentials,
     ];
 }
 
@@ -699,12 +701,13 @@ impl LintRule for Rule {
             Self::DiscoveryBound => names::DISCOVERY_BOUND,
             Self::FreeText => names::FREE_TEXT,
             Self::EnvironmentRefused => names::ENVIRONMENT_REFUSED,
+            Self::UnencryptedCredentials => names::UNENCRYPTED_CREDENTIALS,
         }
     }
 
     fn level(&self, _mode: CompileMode) -> Level {
         match self {
-            Self::FreeText => Level::Warning,
+            Self::FreeText | Self::UnencryptedCredentials => Level::Warning,
             _ => Level::Error,
         }
     }
@@ -725,6 +728,9 @@ impl LintRule for Rule {
             }
             Self::EnvironmentRefused => {
                 "A local server program is handed no variable of the engine's and none named for a credential."
+            }
+            Self::UnencryptedCredentials => {
+                "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
             }
         }
     }
@@ -794,6 +800,25 @@ impl LintRule for Rule {
                         ),
                         "Add `digest:` with the SHA-256 digest of the program that was reviewed.",
                     )
+                })
+                .collect(),
+            Self::UnencryptedCredentials => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .filter_map(|surface| {
+                    let field = surface.doc.get(crate::mapping::UNENCRYPTED_CREDENTIALS)?;
+                    (field.as_text() == Some(crate::mapping::ACCEPTED)).then(|| {
+                        problem(
+                            &field.at,
+                            format!(
+                                "The surface `{}` accepts that its credentials cross an unencrypted link to another machine, where anyone on the path can read them.",
+                                surface.name
+                            ),
+                            "Reach the server over `https` and remove `unencrypted_credentials`, once it offers it.",
+                        )
+                        .as_warning()
+                    })
                 })
                 .collect(),
             Self::EnvironmentRefused => target

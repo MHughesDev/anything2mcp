@@ -25,7 +25,7 @@ use a2m_core::{
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
     ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
-    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
+    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -39,7 +39,7 @@ use crate::model::{
     Fingerprint, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
     ScreenSection, Segment, SetStep, SurfaceFields, WaitStep,
 };
-use crate::screens::{PACK, SCREEN_KIND, unreserved};
+use crate::screens::{PACK, SCREEN_KIND};
 
 /// What the browser engine reports a move of the tab that it ended
 /// under. A window it closed, and a download it denied, have words of
@@ -212,7 +212,7 @@ pub(crate) fn origin_of(address: &str) -> Result<String, Failure> {
 }
 
 /// The time zone of the target as a browser takes it.
-fn time_zone(stated: Option<&str>) -> Result<String, StepFailure> {
+pub(crate) fn time_zone(stated: Option<&str>) -> Result<String, StepFailure> {
     let Some(stated) = stated.filter(|zone| *zone != "UTC") else {
         return Ok("UTC".to_owned());
     };
@@ -266,12 +266,12 @@ impl CredentialSink for NoPlace {
 
 /// When a step must be done: the earlier of its own timeout and the
 /// deadline it was handed.
-fn until(step: &Step, input: &StepInput<'_>) -> Deadline {
+pub(crate) fn until(step: &Step, input: &StepInput<'_>) -> Deadline {
     let own = Duration::from_millis(u64::from(step.timeout_ms));
     Deadline::after(own.min(input.deadline.remaining()))
 }
 
-fn fail(class: FailureClass, code: FailureCode, message: String, next: &str) -> Failure {
+pub(crate) fn fail(class: FailureClass, code: FailureCode, message: String, next: &str) -> Failure {
     codes::failure(class, code, message, next)
 }
 
@@ -286,7 +286,7 @@ fn sent(error: &BrowserError, failure: Failure) -> StepFailure {
 /// The failure of a step for an error of the base, where the step has no
 /// meaning of its own for it. `what` names the thing looked for or acted
 /// on, from the target's files.
-fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
+pub(crate) fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
     if let Some(failure) = error.failure() {
         return sent(error, failure);
     }
@@ -387,7 +387,7 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
     }
 }
 
-fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
+pub(crate) fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
     Capture::acting(&Acting { means, measured })
 }
 
@@ -396,7 +396,7 @@ fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
 /// `-`, `.`, `_`, and `~`, not made of dots only. A value of any other form
 /// is refused before the tab is sent anywhere, never encoded: an input
 /// cannot change where a request goes (decision 0187).
-fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
+pub(crate) fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
     let refused = |why: &str| {
         StepFailure::not_sent(fail(
             FailureClass::Input,
@@ -414,10 +414,12 @@ fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
     if text.is_empty() || text.chars().all(|c| c == '.') {
         return Err(refused("it is empty, or made of dots only"));
     }
-    if text.len() > 512 {
+    if text.len() > a2m_pack_web_browser::MAX_SEGMENT_BYTES {
         return Err(refused("it is longer than 512 bytes"));
     }
-    if !text.chars().all(unreserved) {
+    // One rule for every placeholder, in the browser engine: a `goto` and a
+    // read from inside the page hold a value to the same form.
+    if !plain_segment(&text) {
         return Err(refused(
             "it holds a character that is not a letter, a digit, `-`, `.`, `_`, or `~`",
         ));
@@ -428,7 +430,7 @@ fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
 /// Whether a made path is the screen's own pattern: one segment for each
 /// of the pattern's, each literal as written, each placeholder one plain
 /// segment.
-fn within_pattern(path: &str, reach: &[Segment]) -> bool {
+pub(crate) fn within_pattern(path: &str, reach: &[Segment]) -> bool {
     let Some(rest) = path.strip_prefix('/') else {
         return false;
     };
@@ -440,9 +442,7 @@ fn within_pattern(path: &str, reach: &[Segment]) -> bool {
     made.len() == reach.len()
         && made.iter().zip(reach).all(|(made, part)| match part {
             Segment::Literal(text) => made == text,
-            Segment::Hole(_) => {
-                !made.is_empty() && !made.chars().all(|c| c == '.') && made.chars().all(unreserved)
-            }
+            Segment::Hole(_) => plain_segment(made),
         })
 }
 
@@ -541,37 +541,45 @@ impl Session {
     /// or a download, which was denied, is a state no screen declares.
     /// `None` when it refused nothing.
     fn refused(&self, what: &str) -> Option<Failure> {
-        Self::refusal(&self.tab.blocked(), what)
+        refusal(&self.tab.blocked(), what)
     }
+}
 
-    fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
-        let first = refused.first()?;
-        let place = Address::new(&first.address)
-            .map(|address| address.origin())
-            .unwrap_or_default();
-        let place = shown(&place);
-        Some(if first.method == NAVIGATION {
-            fail(
-                FailureClass::Policy,
-                codes::SURFACE_NOT_DECLARED,
-                format!(
-                    "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
-                ),
-                "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
-            )
-        } else {
-            fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
-                format!(
-                    "The page tried something no screen declares, at {what}: a new window, a download, or, in a tab that may only look, a request that could change the system (`{}`) for `{place}`. The browser refused it.",
-                    shown(&first.method)
-                ),
-                "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
-            )
-        })
-    }
+/// What a tab refused since it was last asked, as a failure: a move of the
+/// page, which the browser ended, is `policy`, `surface_not_declared`; a
+/// window the page opened, which was closed, a download, which was denied,
+/// and a request of the page that could change the system, which an
+/// observing tab failed, are a state no screen declares. `None` when it
+/// refused nothing.
+pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
+    let first = refused.first()?;
+    let place = Address::new(&first.address)
+        .map(|address| address.origin())
+        .unwrap_or_default();
+    let place = shown(&place);
+    Some(if first.method == NAVIGATION {
+        fail(
+            FailureClass::Policy,
+            codes::SURFACE_NOT_DECLARED,
+            format!(
+                "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
+            ),
+            "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
+        )
+    } else {
+        fail(
+            FailureClass::UnknownVariant,
+            codes::UNEXPECTED_PAGE,
+            format!(
+                "The page tried something no screen declares, at {what}: a new window, a download, or, in a tab that may only look, a request that could change the system (`{}`) for `{place}`. The browser refused it.",
+                shown(&first.method)
+            ),
+            "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
+        )
+    })
+}
 
+impl Session {
     /// The variants of the screen the page shows now, by name.
     async fn variants_now(
         &self,
@@ -1330,30 +1338,133 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
     }
 }
 
+/// What every tab of a `web` surface is opened with: the surface's origin,
+/// whose profile, the target's fixed environment, and the one origin the
+/// tab may be on. The `ui` and the `page_http` drivers open their tabs
+/// alike.
+pub(crate) struct TabSetup {
+    /// `scheme://host`, with a port when the surface has one.
+    pub origin: String,
+    pub profile: ProfileKey,
+    pub environment: PageEnvironment,
+    pub origins: Origins,
+}
+
+/// The tab's setup, from the run's context and its session.
+pub(crate) fn tab_setup(
+    cx: &PrepareContext<'_>,
+    lease: Option<&SessionLease>,
+) -> Result<TabSetup, StepFailure> {
+    let unsent = StepFailure::not_sent;
+    let surface = &cx.surface.surface;
+    let origin = origin_of(&surface.address).map_err(unsent)?;
+    if !cx.destinations.contains(&surface.address) {
+        return Err(unsent(codes::surface_not_declared(&format!(
+            "The address of the surface `{}`",
+            surface.name
+        ))));
+    }
+    if cx.deadline.passed() {
+        return Err(unsent(fail(
+            FailureClass::Transient,
+            a2m_provider::codes::TIMEOUT,
+            "The time for preparing a tab had passed before it began.".to_owned(),
+            "Run the tool again.",
+        )));
+    }
+
+    // The fixed environment: set once for the tab, from the target.
+    let fields = if surface.payload.is_none() {
+        SurfaceFields::default()
+    } else {
+        surface
+            .payload
+            .decode::<SurfaceFields>()
+            .map_err(|_| codes::not_usable("the surface's fields do not decode"))?
+    };
+    let mut environment = PageEnvironment::default();
+    if let Some(viewport) = fields.viewport {
+        environment.viewport = (viewport.width, viewport.height);
+    }
+    if let Some(scheme) = &fields.color_scheme {
+        environment.dark = scheme == "dark";
+    }
+    if let Some(reduced) = fields.reduced_motion {
+        environment.reduced_motion = reduced;
+    }
+    if let Some(locale) = &cx.plan.target.locale {
+        environment.locale.clone_from(locale);
+    }
+    environment.time_zone = time_zone(cx.plan.target.timezone.as_deref())?;
+
+    // Whose browser: the session's, or the one of a surface that needs
+    // no sign-in. A browser's session lives in its own profile; a
+    // credential handed over to be placed cannot be, yet.
+    let account = match lease {
+        None => ANONYMOUS.to_owned(),
+        Some(lease) => {
+            let mut sink = NoPlace::default();
+            lease.apply(&mut sink).map_err(unsent)?;
+            if sink.placed {
+                return Err(codes::not_usable(
+                    "the session's provider hands over a credential to place, and this version of the web pack uses only a session that lives in the browser's own profile",
+                ));
+            }
+            match lease.profile() {
+                // The names of the profiles a run with no session and
+                // a discovery use are never a session's.
+                Some(profile) if RESERVED_PROFILES.contains(&profile.as_str()) => {
+                    return Err(codes::not_usable(
+                        "the session's profile has the name of a profile a run with no session, or a discovery, uses",
+                    ));
+                }
+                Some(profile) => profile.as_str().to_owned(),
+                None => {
+                    let digest = Digest::of(lease.session().to_string().as_bytes()).to_string();
+                    let short: String = digest
+                        .chars()
+                        .filter(char::is_ascii_hexdigit)
+                        .take(32)
+                        .collect();
+                    format!("s{short}")
+                }
+            }
+        }
+    };
+    let profile = ProfileKey {
+        target: cx.surface.target.clone(),
+        environment: cx.surface.environment.clone(),
+        identity: Identity::Account(AccountName::new(&account).map_err(|_| {
+            codes::not_usable("the session's profile has no name an account may have")
+        })?),
+    };
+    // The tab may be on the surface's own origin and on no other. The
+    // surface's address is one of the run's destinations, checked
+    // above; another destination is another surface, whose screens
+    // this run does not hold, and a page of it is not acted on.
+    let own = Address::new(&surface.address).map_err(unsent)?;
+    let origins = Origins::of([&own]);
+    Ok(TabSetup {
+        origin,
+        profile,
+        environment,
+        origins,
+    })
+}
+
 impl UiDriver {
     async fn prepared(
         &self,
         cx: &PrepareContext<'_>,
         lease: Option<&SessionLease>,
     ) -> Result<Session, StepFailure> {
-        let unsent = StepFailure::not_sent;
+        let TabSetup {
+            origin,
+            profile,
+            environment,
+            origins,
+        } = tab_setup(cx, lease)?;
         let surface = &cx.surface.surface;
-        let origin = origin_of(&surface.address).map_err(unsent)?;
-        if !cx.destinations.contains(&surface.address) {
-            return Err(unsent(codes::surface_not_declared(&format!(
-                "The address of the surface `{}`",
-                surface.name
-            ))));
-        }
-        if cx.deadline.passed() {
-            return Err(unsent(fail(
-                FailureClass::Transient,
-                a2m_provider::codes::TIMEOUT,
-                "The time for preparing a tab had passed before it began.".to_owned(),
-                "Run the tool again.",
-            )));
-        }
-
         let mut sections = BTreeMap::new();
         for (position, section) in cx.plan.packs.iter().enumerate() {
             let own = section.pack == PACK
@@ -1377,77 +1488,6 @@ impl UiDriver {
             );
         }
 
-        // The fixed environment: set once for the tab, from the target.
-        let fields = if surface.payload.is_none() {
-            SurfaceFields::default()
-        } else {
-            surface
-                .payload
-                .decode::<SurfaceFields>()
-                .map_err(|_| codes::not_usable("the surface's fields do not decode"))?
-        };
-        let mut environment = PageEnvironment::default();
-        if let Some(viewport) = fields.viewport {
-            environment.viewport = (viewport.width, viewport.height);
-        }
-        if let Some(scheme) = &fields.color_scheme {
-            environment.dark = scheme == "dark";
-        }
-        if let Some(reduced) = fields.reduced_motion {
-            environment.reduced_motion = reduced;
-        }
-        if let Some(locale) = &cx.plan.target.locale {
-            environment.locale.clone_from(locale);
-        }
-        environment.time_zone = time_zone(cx.plan.target.timezone.as_deref())?;
-
-        // Whose browser: the session's, or the one of a surface that needs
-        // no sign-in. A browser's session lives in its own profile; a
-        // credential handed over to be placed cannot be, yet.
-        let account = match lease {
-            None => ANONYMOUS.to_owned(),
-            Some(lease) => {
-                let mut sink = NoPlace::default();
-                lease.apply(&mut sink).map_err(unsent)?;
-                if sink.placed {
-                    return Err(codes::not_usable(
-                        "the session's provider hands over a credential to place, and this version of the web pack uses only a session that lives in the browser's own profile",
-                    ));
-                }
-                match lease.profile() {
-                    // The names of the profiles a run with no session and
-                    // a discovery use are never a session's.
-                    Some(profile) if RESERVED_PROFILES.contains(&profile.as_str()) => {
-                        return Err(codes::not_usable(
-                            "the session's profile has the name of a profile a run with no session, or a discovery, uses",
-                        ));
-                    }
-                    Some(profile) => profile.as_str().to_owned(),
-                    None => {
-                        let digest = Digest::of(lease.session().to_string().as_bytes()).to_string();
-                        let short: String = digest
-                            .chars()
-                            .filter(char::is_ascii_hexdigit)
-                            .take(32)
-                            .collect();
-                        format!("s{short}")
-                    }
-                }
-            }
-        };
-        let profile = ProfileKey {
-            target: cx.surface.target.clone(),
-            environment: cx.surface.environment.clone(),
-            identity: Identity::Account(AccountName::new(&account).map_err(|_| {
-                codes::not_usable("the session's profile has no name an account may have")
-            })?),
-        };
-        // The tab may be on the surface's own origin and on no other. The
-        // surface's address is one of the run's destinations, checked
-        // above; another destination is another surface, whose screens
-        // this run does not hold, and a page of it is not acted on.
-        let own = Address::new(&surface.address).map_err(unsent)?;
-        let origins = Origins::of([&own]);
         // A run that may only look has a tab that cannot act: the browser
         // fails every request of its page whose method could change the
         // system, and none is marked safe.

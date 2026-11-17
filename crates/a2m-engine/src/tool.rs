@@ -8,7 +8,7 @@ use std::time::Duration;
 use a2m_core::{
     BindingPlan, Digest, EffectClass, ExprIndex, Failure, FailureClass, IdentityStrategy,
     InputPlan, OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RecordState,
-    RunState, StepArg, ToolRuns, Value, Values, WriteEvidence,
+    RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
 };
 use a2m_expr::names;
 use a2m_ledger::{
@@ -22,7 +22,7 @@ use a2m_telemetry::Phase;
 use crate::codes;
 use crate::compare::{self, Field};
 use crate::control::{Clearance, EngineEvent, Evidence, GuardQuestion, Preview};
-use crate::diff::{Diff, DiffAction, DiffField, DiffRecord};
+use crate::diff::{Diff, DiffAction, DiffBinding, DiffField, DiffRecord};
 use crate::job::{JobKind, RecordSnapshot};
 use crate::loaded::{Loaded, Scope};
 use crate::run::{Candidate, RecordCx, Run, StepCx, Stop, masked, merge, operation};
@@ -108,6 +108,11 @@ struct Planned {
     /// True when the record's write was accepted by the system and cannot
     /// be read back: it ends `acted`, never `verified`.
     acknowledged: bool,
+    /// The positions of the bindings the approval lets write the record:
+    /// the one its diff record names, or every one it could take when its
+    /// binding is chosen only once its key is known. Empty until a diff is
+    /// known, and a record with none is never written.
+    approved: Vec<usize>,
 }
 
 /// The key a step that does the work of a record is given: the record's
@@ -178,6 +183,17 @@ const SETTLES: [FailureClass; 3] = [
     FailureClass::Stale,
     FailureClass::Input,
 ];
+
+/// The approval was given for something other than what would now be
+/// written: nothing is sent, and a new preview and approval are needed.
+fn stale_approval(what: &str) -> Failure {
+    codes::fail(
+        FailureClass::Policy,
+        codes::APPROVAL_STALE,
+        what,
+        "Preview the run again and approve the new diff.",
+    )
+}
 
 fn settles(class: FailureClass) -> bool {
     SETTLES.contains(&class)
@@ -1054,6 +1070,18 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                     Clearance::Cleared => run.state = RunState::Running,
                 }
             }
+            // What the approval was given for is the diff whose hash the run
+            // carries; a diff read back under another hash names nothing that
+            // was approved.
+            if snapshot
+                .approved
+                .as_ref()
+                .is_some_and(|approved| Some(approved.hash()) != snapshot.diff)
+            {
+                return Err(Stop::Fail(stale_approval(
+                    "The stored diff is not the one the run was approved on.",
+                )));
+            }
             // The leading reads run again: approval can take minutes, and
             // the diff was approved on what they showed.
             read_steps_of(run, loaded, tool, 0, first_write).await?;
@@ -1063,7 +1091,12 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                 }
                 let from = planned.len();
                 derive_step(run, loaded, tool, position, &mut planned)?;
-                adopt(loaded, &mut planned[from..], &snapshot.records)?;
+                adopt(
+                    loaded,
+                    &mut planned[from..],
+                    &snapshot.records,
+                    snapshot.approved.as_ref(),
+                )?;
                 // A record that was found unchanged has no outputs in the
                 // ledger: it is read once more, for the steps after it and
                 // for the tool's result. One that reconcile found had
@@ -1279,6 +1312,7 @@ fn derive_step(
             place_keyed,
             recorded_values: Values::new(),
             acknowledged: false,
+            approved: Vec::new(),
         });
     }
     Ok(())
@@ -1350,8 +1384,23 @@ fn adopt(
     loaded: &Loaded,
     planned: &mut [Planned],
     snapshot: &[RecordSnapshot],
+    approved: Option<&Diff>,
 ) -> Result<(), Stop> {
     for record in planned {
+        // The bindings the approved diff lets write the record. A record the
+        // diff does not hold, or a run with no diff read back, has none, and
+        // nothing writes it.
+        if let Some(diffed) = approved.and_then(|diff| {
+            diff.records.iter().find(|diffed| {
+                diffed.step_seq == record.record.step_seq
+                    && diffed.record_seq == record.record.record_seq
+            })
+        }) {
+            record.approved = diffed.approved_bindings();
+            if let Some(binding) = &diffed.binding {
+                record.binding = usize::try_from(binding.position).unwrap_or(usize::MAX);
+            }
+        }
         let Some(held) = snapshot.iter().find(|held| held.record == record.record) else {
             return Err(Stop::Fail(stale(
                 "The run would touch a record its approved diff does not hold.",
@@ -1419,7 +1468,10 @@ fn adopt(
             .collect();
         record.assigned = assigned.and_then(parse_key);
         record.known = known;
-        if held.state == RecordState::Verified {
+        // A record that ended on the system's acknowledgement gave its
+        // outputs with its save, and they were stored with it: the steps
+        // after it take them, as they take a verified record's.
+        if held.state == RecordState::Verified || held.acknowledged {
             record.outputs = outputs_of(loaded, found, &record.known, false)?;
         }
     }
@@ -1511,48 +1563,11 @@ async fn read_record(
             "Give the binding a read-back and publish the target again.",
         )));
     }
-    // A read is given the record's key in the system, never its place in
-    // the run: a key is never guessed.
-    let key = read_key(found, record);
-    let stamp = record.stamp.clone();
-    let ledger_key = record.key.clone();
-    let recorded = record.recorded_values.clone();
     let mut waited = false;
     loop {
-        let mut scope = run.base.with_input(&record.inputs);
-        scope.result = Value::Record(record.known.clone());
-        scope.current = record.current.clone().map_or(Value::Null, Value::Record);
-        scope.record = Scope::record_of(key.as_ref());
-        let cx = RecordCx {
-            record: record.record,
-            ledger_key: &ledger_key,
-            key: key.as_ref(),
-            stamp: stamp.as_deref(),
-            recorded: &recorded,
-        };
-        let read = run
-            .read_steps(
-                held,
-                Phase::ReadBack,
-                steps,
-                &mut scope,
-                Some(cx),
-                &record.fields,
-            )
-            .await;
-        match read {
-            Ok(Some(observed)) => {
-                if searches {
-                    for (name, value) in observed.values.iter() {
-                        record.known.insert(name.to_owned(), value.clone());
-                    }
-                    if observed.assigned_key.is_some() {
-                        record.assigned = observed.assigned_key;
-                    }
-                }
-                return Ok(Some(observed.values));
-            }
-            Ok(None) => {
+        match read_once(run, found, record, held, steps, searches).await? {
+            Some(values) => return Ok(Some(values)),
+            None => {
                 if searches && settles && !waited && binding.settle_ms > 0 {
                     // Inside the settle time, nothing found means not
                     // known yet. The wait is the one the binding declares
@@ -1569,14 +1584,68 @@ async fn read_record(
                 }
                 return Ok(None);
             }
-            Err(failure) => {
-                if failure.failure.class() == FailureClass::SessionExpired {
-                    run.report_expiry(held).await;
-                } else {
-                    run.poison(held);
+        }
+    }
+}
+
+/// One pass of a record's read steps: its read-back, or, with `searches`,
+/// its lookup, whose finding is kept as what is known of the record.
+/// `Ok(None)` when a step answered that the record is absent.
+async fn read_once(
+    run: &mut Run<'_>,
+    found: &OperationPlan,
+    record: &mut Planned,
+    held: usize,
+    steps: &[a2m_core::Step],
+    searches: bool,
+) -> Result<Option<Values>, Stop> {
+    // A read is given the record's key in the system, never its place in
+    // the run: a key is never guessed.
+    let key = read_key(found, record);
+    let stamp = record.stamp.clone();
+    let ledger_key = record.key.clone();
+    let recorded = record.recorded_values.clone();
+    let mut scope = run.base.with_input(&record.inputs);
+    scope.result = Value::Record(record.known.clone());
+    scope.current = record.current.clone().map_or(Value::Null, Value::Record);
+    scope.record = Scope::record_of(key.as_ref());
+    let cx = RecordCx {
+        record: record.record,
+        ledger_key: &ledger_key,
+        key: key.as_ref(),
+        stamp: stamp.as_deref(),
+        recorded: &recorded,
+    };
+    let read = run
+        .read_steps(
+            held,
+            Phase::ReadBack,
+            steps,
+            &mut scope,
+            Some(cx),
+            &record.fields,
+        )
+        .await;
+    match read {
+        Ok(Some(observed)) => {
+            if searches {
+                for (name, value) in observed.values.iter() {
+                    record.known.insert(name.to_owned(), value.clone());
                 }
-                return Err(Stop::Fail(failure.failure));
+                if observed.assigned_key.is_some() {
+                    record.assigned = observed.assigned_key;
+                }
             }
+            Ok(Some(observed.values))
+        }
+        Ok(None) => Ok(None),
+        Err(failure) => {
+            if failure.failure.class() == FailureClass::SessionExpired {
+                run.report_expiry(held).await;
+            } else {
+                run.poison(held);
+            }
+            Err(Stop::Fail(failure.failure))
         }
     }
 }
@@ -1711,6 +1780,48 @@ async fn preview_record(
         Some(seen) => Some(store(run, BlobKind::Values, encode_values(seen)?).await?),
         None => None,
     };
+    // The binding that writes the record, as the person who approves the
+    // diff is shown it. A record whose key waits for an earlier record has
+    // its binding chosen only then: every binding it could take is named,
+    // and its evidence is the weakest of theirs, so that the page warns of
+    // a write that may not be read back.
+    let named = |position: usize, binding: &a2m_core::BindingPlan| DiffBinding {
+        position: u32::try_from(position).unwrap_or(u32::MAX),
+        mode: binding.mode.clone(),
+        evidence: binding.evidence,
+    };
+    let (binding, could_take) = if record.pending {
+        let all: Vec<DiffBinding> = found
+            .bindings
+            .iter()
+            .enumerate()
+            .map(|(position, binding)| named(position, binding))
+            .collect();
+        (None, all)
+    } else {
+        (
+            found
+                .bindings
+                .get(record.binding)
+                .map(|binding| named(record.binding, binding)),
+            Vec::new(),
+        )
+    };
+    let evidence = binding
+        .iter()
+        .chain(&could_take)
+        .map(|binding| binding.evidence)
+        .min_by_key(|evidence| match evidence {
+            WriteEvidence::Acknowledged => 0,
+            WriteEvidence::Response => 1,
+            WriteEvidence::ReadBack => 2,
+        })
+        .unwrap_or(WriteEvidence::ReadBack);
+    record.approved = binding
+        .iter()
+        .chain(&could_take)
+        .filter_map(|binding| usize::try_from(binding.position).ok())
+        .collect();
     record.before = seen_kept;
     record.current = raw;
     record.seen_at = Some(run.engine.deps.clock.elapsed());
@@ -1728,10 +1839,9 @@ async fn preview_record(
             key: record.key.clone(),
             action,
             fields,
-            evidence: found
-                .bindings
-                .get(record.binding)
-                .map_or(WriteEvidence::ReadBack, |binding| binding.evidence),
+            evidence,
+            binding,
+            could_take,
         },
         PlannedRecord {
             step_seq: record.record.step_seq,
@@ -1816,26 +1926,9 @@ async fn reconcile(
         let found = operation(loaded, record.operation)?;
         let mode = held.and_then(|held| held.mode.clone());
         if found.identity.strategy == IdentityStrategy::None {
-            // A record of no identity is found again only by what its own
-            // earlier steps recorded, through its binding's read-back
-            // (decision 0176). With neither, nothing can find it.
-            let readable = found
-                .bindings
-                .get(record.binding)
-                .is_some_and(|binding| !binding.read_back.is_empty())
-                && !record.recorded_values.is_empty();
-            if !readable {
-                return Err(Stop::Fail(codes::fail(
-                    FailureClass::PossibleCommit,
-                    codes::CANNOT_RECONCILE,
-                    format!(
-                        "A record of `{}` may have been written and cannot be found again.",
-                        found.name
-                    ),
-                    "Look at the system, then cancel the run or settle the record by hand.",
-                )));
-            }
-            reconcile_keyless(run, loaded, found, record, mode.as_ref()).await?;
+            // A record of no identity has no key to be read by: it is
+            // settled only as `reconcile_keyless` says (decision 0185).
+            reconcile_keyless(run, loaded, found, record, held).await?;
             continue;
         }
         let binding = found.bindings.get(record.binding);
@@ -1943,11 +2036,12 @@ async fn reconcile(
             }
             Settled::Planned => {
                 // Nothing landed, so what was recorded for the lost write
-                // names nothing.
+                // names nothing, and the next attempt records its own.
                 record.state = RecordState::Planned;
                 record.known = Values::new();
                 record.assigned = None;
                 record.recorded = false;
+                record.recorded_values = Values::new();
                 record.current = raw;
                 record.seen_at = Some(run.engine.deps.clock.elapsed());
                 record.seen_in = Some(run.serial_of(context));
@@ -1962,9 +2056,16 @@ async fn reconcile(
     Ok(())
 }
 
-/// What a record of no identity in doubt is left as, with what was
-/// recorded before its save shown as the system's data.
-fn keyless_in_doubt(run: &Run<'_>, found: &OperationPlan, record: &Planned, why: &str) -> Stop {
+/// What a record of no identity in doubt is left as: `cannot_reconcile`,
+/// with what was recorded before its save and, when a look found it, what
+/// was found, shown as the system's data. Nothing is sent.
+fn keyless_in_doubt(
+    run: &Run<'_>,
+    found: &OperationPlan,
+    record: &Planned,
+    why: &str,
+    seen: Option<&Values>,
+) -> Stop {
     let mut failure = codes::fail(
         FailureClass::PossibleCommit,
         codes::CANNOT_RECONCILE,
@@ -1974,101 +2075,146 @@ fn keyless_in_doubt(run: &Run<'_>, found: &OperationPlan, record: &Planned, why:
         ),
         "Look at the system with what was recorded before the save, then resume the run, cancel it, or settle the record by hand.",
     );
+    let mut said = Vec::new();
     if let Ok(bytes) = encode_values(&kept(run, &record.recorded_values)) {
-        failure = failure.with_said(format!(
+        said.push(format!(
             "recorded before the save: {}",
             String::from_utf8_lossy(&bytes)
         ));
     }
+    if let Some(seen) = seen
+        && let Ok(bytes) = encode_values(&kept(run, seen))
+    {
+        said.push(format!("found: {}", String::from_utf8_lossy(&bytes)));
+    }
+    if !said.is_empty() {
+        failure = failure.with_said(said.join("; "));
+    }
     Stop::Fail(failure)
 }
 
-/// Settles a record of no identity that is in doubt, through its binding's
-/// read-back, which looks for what the record's earlier steps recorded
-/// (decision 0176). Found: the write landed, and the record is settled as
-/// verified, the finding standing for the intended values, since a record
-/// of no identity has nothing else to compare. Absent: it did not land, and
-/// the record goes back to `planned` with the read's evidence. Anything
-/// else, a failed look included, leaves it in doubt. A binding whose only
-/// evidence is the acknowledgement is not settled here: the ledger ends a
-/// record on an acknowledgement only under the lease that sent it, so it
-/// stays in doubt with what the look found.
+/// Settles a record of no identity that is in doubt (decision 0185). It has
+/// no key, so "absent" is never proof by itself:
+///
+/// - a record whose recorded values were masked is not read at all, as
+///   `read_in_doubt` refuses the same case;
+/// - its binding's read-back, given what the record's earlier steps
+///   recorded, may find it, and then what it found is compared with the
+///   intended values as any read-back is; what the read-back does not find
+///   proves nothing;
+/// - it goes back to `planned` only when its binding's lookup is one the
+///   mode's manifest states is authoritative for absence, asked once the
+///   binding's settle time has passed since the send was recorded, answers
+///   "absent", and answers it again after another settle time.
+///
+/// In every other case the record stays in doubt with `cannot_reconcile`,
+/// showing what was recorded, and nothing is sent.
 async fn reconcile_keyless(
     run: &mut Run<'_>,
     loaded: &Loaded,
     found: &OperationPlan,
     record: &mut Planned,
-    mode: Option<&a2m_core::Mode>,
+    held: Option<&RecordSnapshot>,
 ) -> Result<(), Stop> {
     run.checkpoint(Duration::ZERO)?;
+    if record.masked {
+        // What would find the record again was masked when it was stored.
+        // Reading without it could find nothing, and nothing found must not
+        // be taken for a write that did not land.
+        return Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "what would find it again holds a registered secret and was not stored",
+            None,
+        ));
+    }
+    let mode = held.and_then(|held| held.mode.clone());
     run.control.lock(record.record).await?;
-    let context = hold_for(run, found, record, mode, false).await?;
-    let raw = match read_record(run, found, record, context, true).await {
-        Ok(raw) => raw,
-        Err(Stop::Fail(failure)) => {
-            return Err(keyless_in_doubt(
-                run,
-                found,
-                record,
-                &format!(
-                    "the look for it did not answer (`{}/{}`)",
-                    failure.class(),
-                    failure.code()
-                ),
-            ));
-        }
-        Err(stop) => return Err(stop),
+    let context = hold_for(run, found, record, mode.as_ref(), false).await?;
+    let binding = &found.bindings[record.binding];
+    let unanswered = |failure: &Failure| {
+        format!(
+            "the look for it did not answer (`{}/{}`)",
+            failure.class(),
+            failure.code()
+        )
     };
-    let evidence = read_evidence(run, record, raw.as_ref(), None).await?;
-    let acknowledged = found
-        .bindings
-        .get(record.binding)
-        .is_some_and(|binding| binding.evidence == WriteEvidence::Acknowledged);
-    let reconciled = match &raw {
-        None => Reconciled::NotLanded { evidence },
-        Some(_) if acknowledged => {
-            return Err(keyless_in_doubt(
-                run,
-                found,
-                record,
-                "the look found that it landed, and a write that ends on the system's acknowledgement is ended only under the lease that sent it",
-            ));
-        }
-        Some(raw) => {
-            let mut observed = record.known.clone();
-            for (name, value) in raw.clone() {
-                observed.insert(name, value);
+    if !binding.read_back.is_empty() && !record.recorded_values.is_empty() {
+        match read_once(run, found, record, context, &binding.read_back, false).await {
+            Ok(Some(raw)) => return keyless_found(run, loaded, found, record, raw).await,
+            // A read-back that finds nothing may lag, scan a window, or read
+            // one page: it proves nothing.
+            Ok(None) => {}
+            Err(Stop::Fail(failure)) => {
+                return Err(keyless_in_doubt(run, found, record, &unanswered(&failure), None));
             }
-            let outputs = if observed.is_empty() {
-                None
-            } else {
-                Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
-            };
-            Reconciled::Landed {
-                read: ReadBack {
-                    digest: record.digest,
-                    after: None,
-                    evidence,
-                },
-                acted: Acted {
-                    assigned_key: record
-                        .assigned
-                        .as_ref()
-                        .map(|key| run.engine.deps.redact.redact(&key_text(key))),
-                    outputs,
-                },
-            }
+            Err(stop) => return Err(stop),
         }
+    }
+    if !run.proves_absence(context, &binding.lookup) {
+        return Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "nothing its binding declares can prove that it did not land",
+            None,
+        ));
+    }
+    // The lookup is asked only once the settle time has passed since the
+    // send was recorded. Where the ledger recorded nothing after the
+    // intent, the send was made, if at all, within the time the binding's
+    // act steps may take after it.
+    let settle_ms = i64::from(binding.settle_ms);
+    let act_ms = i64::try_from(run.time_of(&binding.act).as_millis()).unwrap_or(i64::MAX);
+    let sent_by = held.and_then(|held| {
+        held.sent_by
+            .map(Timestamp::as_unix_millis)
+            .or_else(|| {
+                held.intent_at
+                    .map(|at| at.as_unix_millis().saturating_add(act_ms))
+            })
+    });
+    let Some(sent_by) = sent_by else {
+        return Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "the ledger holds no time for its send, so its settle time cannot be counted",
+            None,
+        ));
     };
-    match run.control.settle(record.record, reconciled).await? {
-        Settled::Verified => {
-            record.state = RecordState::Verified;
-            let mut observed = record.known.clone();
-            for (name, value) in raw.unwrap_or_default() {
-                observed.insert(name, value);
-            }
-            record.outputs = outputs_of(loaded, found, &observed, false)?;
+    let now = run.engine.deps.clock.now().as_unix_millis();
+    let first = Duration::from_millis(
+        u64::try_from(sent_by.saturating_add(settle_ms).saturating_sub(now)).unwrap_or(0),
+    );
+    let settle = Duration::from_millis(u64::from(binding.settle_ms));
+    let looks = run.time_of(&binding.lookup);
+    if !run.job.lease.leaves(first + settle + looks + looks) {
+        // The lease does not cover both looks and the waits: the job ends
+        // with the record still in doubt.
+        return Err(Stop::LeaseEnding);
+    }
+    tokio::time::sleep(first).await;
+    for look in 0..2 {
+        if look == 1 {
+            tokio::time::sleep(settle).await;
         }
+        match read_once(run, found, record, context, &binding.lookup, true).await {
+            Ok(Some(raw)) => return keyless_found(run, loaded, found, record, raw).await,
+            Ok(None) => {}
+            Err(Stop::Fail(failure)) => {
+                return Err(keyless_in_doubt(run, found, record, &unanswered(&failure), None));
+            }
+            Err(stop) => return Err(stop),
+        }
+    }
+    let evidence = read_evidence(run, record, None, None).await?;
+    match run
+        .control
+        .settle(record.record, Reconciled::NotLanded { evidence })
+        .await?
+    {
         Settled::Planned => {
             record.state = RecordState::Planned;
             record.known = Values::new();
@@ -2078,14 +2224,116 @@ async fn reconcile_keyless(
             record.current = None;
             record.seen_at = Some(run.engine.deps.clock.elapsed());
             record.seen_in = Some(run.serial_of(context));
+            Ok(())
         }
-        Settled::Stale => {
-            return Err(Stop::Fail(stale(
-                "A record in doubt holds neither the values intended nor the values seen before the write.",
-            )));
-        }
+        Settled::Verified | Settled::Stale => Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "the ledger did not return it to `planned`",
+            None,
+        )),
     }
-    Ok(())
+}
+
+/// A record of no identity in doubt that a look found: what was found is
+/// compared, field by field after normalization, with the intended values,
+/// as every read-back is (rule 2). Equal settles it as verified, on the
+/// digest of what was read. Different is a mismatch: never verified, never
+/// sent again, and left in doubt for a person. A binding whose evidence is
+/// the acknowledgement alone is not ended here, because the ledger ends a
+/// record on an acknowledgement only under the lease that sent it
+/// (decision 0172): it stays in doubt with what was found shown.
+async fn keyless_found(
+    run: &mut Run<'_>,
+    loaded: &Loaded,
+    found: &OperationPlan,
+    record: &mut Planned,
+    raw: Values,
+) -> Result<(), Stop> {
+    let acknowledged = found
+        .bindings
+        .get(record.binding)
+        .is_some_and(|binding| binding.evidence == WriteEvidence::Acknowledged);
+    if acknowledged {
+        return Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "a look found it, and a write that ends on the system's acknowledgement is ended only under the lease that sent it",
+            Some(&raw),
+        ));
+    }
+    let seen = match compare::seen(loaded, &record.fields, &record.intended, &raw) {
+        Ok(seen) => seen,
+        Err(failure) => {
+            return Err(keyless_in_doubt(
+                run,
+                found,
+                record,
+                &format!(
+                    "what a look found could not be compared (`{}/{}`)",
+                    failure.class(),
+                    failure.code()
+                ),
+                None,
+            ));
+        }
+    };
+    let evidence = read_evidence(run, record, Some(&raw), Some(&seen)).await?;
+    if seen != record.intended {
+        let differing = match compare::compare(&record.fields, &record.intended, &seen) {
+            compare::Comparison::Differs(names) => names.join(", "),
+            compare::Comparison::Equal => String::new(),
+        };
+        return Err(Stop::Fail(codes::fail(
+            FailureClass::Mismatch,
+            codes::READ_BACK_DIFFERS,
+            format!(
+                "A record of `{}` that was in doubt was found, and differs from what was intended: {differing}.",
+                found.name
+            ),
+            "Compare the values in the evidence, then cancel the run or settle the record by hand; nothing sends it again.",
+        )));
+    }
+    let after = store(run, BlobKind::Values, encode_values(&kept(run, &seen))?).await?;
+    let mut observed = record.known.clone();
+    for (name, value) in raw {
+        observed.insert(name, value);
+    }
+    let outputs = if observed.is_empty() {
+        None
+    } else {
+        Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
+    };
+    let reconciled = Reconciled::Landed {
+        read: ReadBack {
+            digest: seen.digest(),
+            after: Some(after),
+            evidence,
+        },
+        acted: Acted {
+            assigned_key: record
+                .assigned
+                .as_ref()
+                .map(|key| run.engine.deps.redact.redact(&key_text(key))),
+            outputs,
+        },
+    };
+    match run.control.settle(record.record, reconciled).await? {
+        Settled::Verified => {
+            record.state = RecordState::Verified;
+            record.outputs = outputs_of(loaded, found, &observed, false)?;
+            Ok(())
+        }
+        Settled::Planned | Settled::Stale => Err(keyless_in_doubt(
+            run,
+            found,
+            record,
+            "the ledger did not settle it as found",
+            Some(&seen),
+        )),
+    }
 }
 
 /// Reads one record in doubt, through the mode its intent was stored for:
@@ -2220,6 +2468,14 @@ async fn commit_point(
     // preview's lookups among them, runs with the driver's own read-only
     // guard on.
     let held = hold_for(run, found, record, None, true).await?;
+    if !record.approved.contains(&record.binding) {
+        // The person approved the write through another binding, and was
+        // shown that binding's evidence: nothing is sent through this one.
+        return Err(Stop::Fail(stale_approval(&format!(
+            "The binding that would write a record of `{}` now is not one the approved diff names for it.",
+            found.name
+        ))));
+    }
     let binding = &found.bindings[record.binding];
     // The binding chosen now may not be the one the records were worked
     // out with: it is checked for its one save before anything is sent.
@@ -2683,11 +2939,10 @@ async fn acknowledge(
     }
     record.state = RecordState::Acted;
     record.acknowledged = true;
-    let mut observed = record.known.clone();
-    for (name, value) in answer {
-        observed.insert(name, value);
-    }
-    record.outputs = outputs_of(loaded, found, &observed, false)?;
+    // Its outputs are what its steps gave up to and with the save, which
+    // the ledger stored with its `acted` mark: the same a resume hands back.
+    // A confirm step's values are evidence, not outputs.
+    record.outputs = outputs_of(loaded, found, &record.known, false)?;
     Ok(())
 }
 

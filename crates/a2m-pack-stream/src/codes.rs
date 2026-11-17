@@ -74,6 +74,13 @@ codes! {
     NO_CONFIRMATION = PossibleCommit, "no_confirmation";
     /// The runtime's own subscription is held by another run.
     SUBSCRIPTION_IN_USE = Busy, "subscription_in_use";
+    /// A message delivered again may be held by the record that took it
+    /// first; nothing was taken.
+    MESSAGE_MAY_BE_HELD = Busy, "message_may_be_held";
+    /// A look cannot say whether the record's message is in the log: the
+    /// stream may lose a message from inside its range, or the range read
+    /// was not whole.
+    SCAN_INCONCLUSIVE = Policy, "scan_inconclusive";
 }
 
 /// The codes the provider contract and the session keeper already define.

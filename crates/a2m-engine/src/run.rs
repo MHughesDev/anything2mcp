@@ -632,6 +632,13 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Whether "absent" from these steps, in the held context's mode,
+    /// proves that a record is not there: the mode's manifest states every
+    /// one of their kinds as authoritative for absence (decision 0185).
+    pub fn proves_absence(&self, held: usize, steps: &[Step]) -> bool {
+        self.held[held].handle.proves_absence(steps)
+    }
+
     /// The time a list of steps may take, each at its time limit.
     pub fn time_of<'s>(&self, steps: impl IntoIterator<Item = &'s Step>) -> Duration {
         steps.into_iter().map(|step| self.limit_of(step)).sum()

@@ -78,6 +78,16 @@ pub(crate) struct StreamLowering {
     ceiling_ms: u32,
 }
 
+/// Whether a header is one a broker acts on: a NATS server reads every
+/// header whose name begins `Nats-` (a roll-up that removes messages, a
+/// time to live, an expected sequence or stream), in any case. No binding
+/// sets one; the record's token header, which the channel declares, is
+/// placed by the driver alone.
+pub(crate) fn is_server_header(name: &str) -> bool {
+    name.get(..5)
+        .is_some_and(|start| start.eq_ignore_ascii_case("nats-"))
+}
+
 impl StreamLowering {
     pub(crate) fn new(mode: Mode, ceiling_ms: u32) -> Self {
         Self {
@@ -502,6 +512,19 @@ impl Work<'_, '_> {
             self.no_field(key);
         }
         let operation = self.binding.operation;
+        // What a message is decides what a publish is: the one question a
+        // drafted channel leaves to a person, asked where it is needed.
+        if self.entry.role.is_none() {
+            self.wrong(
+                "binding_invalid",
+                self.binding.doc,
+                format!(
+                    "The channel `{}` states no `role`, and a publish to it needs one: is each message the latest state for its key (`state`), or a thing that happened (`events`)?",
+                    self.name
+                ),
+                "Add `role: state` or `role: events` to the channel file.",
+            );
+        }
         let private = self.entry.is_private_state();
         if !private
             && (operation.effect() != EffectClass::Irreversible
@@ -519,7 +542,7 @@ impl Work<'_, '_> {
         }
         let strategy_fits = match operation.strategy() {
             IdentityStrategy::Natural => {
-                self.entry.shape == Shape::Retained && self.entry.role == Role::State
+                self.entry.shape == Shape::Retained && self.entry.role == Some(Role::State)
             }
             // A stamp needs somewhere the runtime can find it again: a log,
             // or a retained value. On a queue or a topic the token still
@@ -564,16 +587,27 @@ impl Work<'_, '_> {
             );
         }
         let mut args: Vec<StepArg> = key.iter().cloned().collect();
-        if let (Some(headers), Some(token)) =
-            (self.binding.field("headers"), &self.entry.token_header)
-            && headers.get(token).is_some()
-        {
-            self.wrong(
-                "binding_invalid",
-                headers,
-                format!("The header `{token}` carries the record's idempotency token, which the ledger gives."),
-                "Remove the header from the binding.",
-            );
+        if let Some(headers) = self.binding.field("headers") {
+            for entry in headers.entries() {
+                let name = entry.key.value.as_str();
+                if let Some(token) = &self.entry.token_header
+                    && token.eq_ignore_ascii_case(name)
+                {
+                    self.wrong(
+                        "binding_invalid",
+                        headers,
+                        format!("The header `{token}` carries the record's idempotency token, which the ledger gives."),
+                        "Remove the header from the binding.",
+                    );
+                } else if is_server_header(name) {
+                    self.wrong(
+                        "binding_invalid",
+                        headers,
+                        format!("The header `{name}` is one the broker acts on: it would change what the publish does beyond what the channel's effect declares."),
+                        "Remove the header from the binding; a header whose name begins `Nats-` is the broker's.",
+                    );
+                }
+            }
         }
         args.extend(self.map_args("headers", ARG_HEADER, Some(&ValueType::Text)));
         args.extend(self.map_args("body", ARG_BODY, None));

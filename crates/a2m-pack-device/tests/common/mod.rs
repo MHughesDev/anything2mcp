@@ -178,6 +178,16 @@ pub fn compile_files(
     a2m_files::compile(&sources, set, mode, version)
 }
 
+/// A target folder on disk, compiled as a draft; a test stops if it does
+/// not compile.
+pub fn compile_folder(root: &Path, set: &CompilerSet) -> Plan {
+    let sources = a2m_files::load(&TargetRoot::new(root), set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .plan
+}
+
 /// The example target, compiled as a draft: publishing also asks for an
 /// offline test of every operation, and a fixture of recorded frames is
 /// not built.

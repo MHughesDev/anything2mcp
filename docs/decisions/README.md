@@ -188,3 +188,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0182 | [The file, data, and stream packs after the first drafted reads](0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md) | Accepted (design decision) |
 | 0187 | [The web pack matches a screen by its address, reads by key, and reads labelled values](0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md) | Accepted (design decision) |
 | 0180 | [A target's offline tests cover writes, and nothing is published unless they pass](0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md) | Accepted (design decision) |
+| 0184 | [The data and stream packs after their second safety audit](0184-the-data-and-stream-packs-after-their-second-safety-audit.md) | Accepted (design decision) |
+| 0188 | [Credentials over plain links, drafted workbooks, and published device maps](0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md) | Accepted (design decision) |
