@@ -268,7 +268,7 @@ A test finds its browser as the product does: in the known places. Two variables
 
 1. Done: slice 0.4, in `spikes/browser-base/`, not here: each candidate base against launching, reading, waiting, intercepting, and a killed browser. [Decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [research note 17](../../research/17-browser-engine-base.md).
 2. Done: the typed protocol module, and the protocol client over two byte streams, tested against a scripted peer with no browser.
-3. Done: the browser finder; launch through the scoped supervisor with the fixed arguments and a checked data directory; `Browsers::new`, `open`, `list`, `close`, `shutdown`; ownership by digest and by the answer over the pipe. Run on Linux only: the first browser test on Windows proves the Windows handoff or refutes it.
+3. Done: the browser finder; launch through the scoped supervisor with the fixed arguments and a checked data directory; `Browsers::new`, `open`, `list`, `close`, `shutdown`; ownership by digest and by the answer over the pipe. Run on Linux and macOS. On Windows the first run failed in the supervisor's pipes (see the open points); the next run proves the handoff or refutes it.
 4. Done: `ActTab` and `Look`: `goto` on a protocol event, the helper in an isolated world, `locate` by every `By` with exactly one or a failure, `within`, open shadow roots, `read`, every `Primitive`, `snapshot`.
 5. Done: `input` with `Dispatch` reported, `answer_dialog`, and `fetch` from inside the page.
 6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets.
@@ -278,7 +278,7 @@ A test finds its browser as the product does: in the known places. Two variables
 
 ## Open points
 
-- The Windows handoff of the pipe has only been compiled, never run. The first browser test on Windows settles it. Decision 0070 says what follows if it does not work. The variables passed to the browser on Windows and macOS are reasoned, not run.
+- The Windows handoff of the pipe ran for the first time on the hosted machine and failed: the browser was found and started, and no request reached it in 30 seconds. The engine's ends of the two named pipes had never been connected, and the runtime neither writes nor reads such an end. The supervisor now connects them when it makes them, and has a test of the pipes without a child. Whether the browser then takes the two handles is what the next run on Windows shows; the failure now says whether the request was written and whether the pipe ended. Decision 0070 says what follows if it does not work. macOS ran and passed, with the variables passed there. The variables passed on Windows are still reasoned, not proven.
 - The first browser version that takes `--remote-debugging-io-pipes` is not known, so the minimum browser version is not set, and the version a browser reports is not compared with anything.
 - The fixed list of known places was written from what the hosted build machines and the common installers use. It has not been collected from a primary source, and per-person installs, which have no fixed path, are not on it.
 - The supervisor digests the program before every start. A browser program is about 300 MB, and digesting it is most of a cold start in an unoptimized build. Whether the digest of an unchanged file may be remembered is the supervisor's question.

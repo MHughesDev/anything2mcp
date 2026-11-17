@@ -140,30 +140,6 @@ dependencies = [
 [[package]]
 name = "a2m-local"
 version = "0.0.1"
-dependencies = [
- "a2m-actions",
- "a2m-auth",
- "a2m-core",
- "a2m-engine",
- "a2m-expr",
- "a2m-files",
- "a2m-ledger",
- "a2m-policy",
- "a2m-provider",
- "a2m-sources",
- "a2m-telemetry",
- "a2m-vault",
- "axum",
- "example-app",
- "hyper",
- "hyper-util",
- "reqwest",
- "rustix",
- "serde",
- "serde_json",
- "tokio",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "a2m-mcp"
@@ -500,25 +476,6 @@ dependencies = [
 [[package]]
 name = "anything2mcp"
 version = "0.0.1"
-dependencies = [
- "a2m-actions",
- "a2m-auth",
- "a2m-core",
- "a2m-pack-command",
- "a2m-pack-data",
- "a2m-pack-device",
- "a2m-pack-file",
- "a2m-pack-http",
- "a2m-pack-mcp",
- "a2m-pack-stream",
- "a2m-policy",
- "a2m-provider",
- "a2m-telemetry",
- "a2m-vault",
- "example-app",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "apple-native-keyring-store"

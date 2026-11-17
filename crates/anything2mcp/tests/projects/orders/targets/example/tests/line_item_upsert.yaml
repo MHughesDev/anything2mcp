@@ -1,5 +1,0 @@
-test: example_line_item_upsert
-kind: offline
-fixture: line_item_upsert
-inputs: {order_id: "A-102", item_code: "L-900", description: "Test rail", quantity: 2, length_in: "90.5"}
-expect: {description: "Test rail", quantity: 2, length_in: "90.5"}

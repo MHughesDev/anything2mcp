@@ -1,5 +1,0 @@
-test: example_account_get
-kind: offline
-fixture: account_get
-inputs: {}
-expect: {name: "service", echo: "none"}

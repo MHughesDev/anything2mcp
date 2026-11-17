@@ -80,7 +80,11 @@ async fn main() -> R<()> {
     let mut app = None;
     for child in root.get_children().await? {
         let p = child.clone().into_accessible_proxy(&conn).await?;
-        if p.name().await? == APP {
+        let n = p.name().await?;
+        if std::env::var_os("SPIKE_DUMP").is_some() {
+            println!("  app {n:?}");
+        }
+        if n == APP {
             app = Some(child);
         }
     }

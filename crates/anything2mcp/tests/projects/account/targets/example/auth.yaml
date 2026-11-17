@@ -1,8 +1,0 @@
-auth:
-  - surfaces: [api]
-    mode: custom
-    provider: bearer_static
-    probe: account_get
-    credentials:
-      token: "vault://example/service/token"
-    attempt_limit: 1

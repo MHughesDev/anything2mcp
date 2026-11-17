@@ -1,0 +1,14 @@
+# Throwaway. Package 8.1: could case 28 be one Rust program on all three
+# systems? egui draws its own widgets and publishes their accessibility tree
+# through AccessKit (UI Automation, NSAccessibility, AT-SPI).
+[package]
+name = "spike-desktop-stand-egui"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11"] }
