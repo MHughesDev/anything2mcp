@@ -28,6 +28,8 @@ There are two ways to start it:
 - **Push a version tag.** `git tag v0.1.0 && git push origin v0.1.0`, on a commit that is on `main`.
 - **Start it by hand.** In the repository's Actions tab, run the "Release" workflow on `main` and type the version to publish. Left empty, the run builds and checks everything and publishes nothing, which is how to rehearse a release.
 
+The workflow builds eight platform wheels and a source distribution with maturin, checks all nine files together, and then publishes them to PyPI through one job that waits on the `pypi` environment. What it publishes is the real pre-alpha package, not a placeholder. It does not yet publish to npm or crates.io: the npm packages and the crates need a first publish by the owner and a decision on the crates; see [publishing setup](docs/plan/publishing-setup.md).
+
 Either way the workflow refuses to publish a version that is not the package's own, or a commit that is not on `main`.
 
 The order, once more than one registry is involved: crates.io, the release page, PyPI, npm, then everything that installs from those.

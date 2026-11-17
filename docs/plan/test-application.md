@@ -105,6 +105,8 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 34 | A redirect to the other loopback name on the same port | |
 
 Set a mode now exists for signing in only: the one-time code step and one session per account.
+
+The fault "redirect after commit" was added after case 17 ([decision 0139](../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): the write is carried out and stored, then the answer is `303` with a `Location` the test names. It applies to requests that may write, as "lost after commit" does, and it shows that a write answered by a redirect is not settled as unsent.
 - **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.

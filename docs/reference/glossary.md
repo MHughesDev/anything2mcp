@@ -5,6 +5,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Term | Meaning |
 | --- | --- |
 | Action | An authoring or administration function defined once in the action registry and exposed as a command, an MCP tool, a REST route, and an SDK method |
+| Application's verdict | The system's own answer to a write that was sent: it saved, or it refused or found the record changed. Only a verdict settles a sent write; an answer that is not one, such as a redirect, a reply too large to read, or a refusal made before the system looked, leaves the write in doubt until it is verified |
 | Approval | A person's decision to allow one exact diff, stored as a single-use record |
 | Archetype | One of the seven ways a system is reached: interface, request, command, bridge, artifact, stream, device. Fixes how a step is acted, confirmed, and read back |
 | Artifact | A large piece of evidence: a snapshot, a network exchange, a screenshot. Also the name of the archetype that reads and writes files; context makes clear which |
@@ -18,6 +19,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Control plane | The part that decides, records, and hands out work |
 | Coverage | How much of what could have been looked at was looked at: complete, partial, or unknown. An empty result with anything less than complete coverage is not absence |
 | Crate design | The page in `docs/architecture/crates/` that says what one crate owns, offers, uses, stores, and must never do |
+| Creation lock | An exclusive operating-system lock taken while something that must exist once is made, such as an installation's root key or the passphrase route's salt, so that two engines starting together make one |
 | Decision point | A question a person may have to answer during a run, declared by the operation with a name and its wording. A run asks only what its operation declares, and waits at `needs_input` |
 | Diff | Current values against proposed values, record by record, shown before a write |
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |

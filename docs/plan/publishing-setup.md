@@ -8,9 +8,9 @@ A name is held only when a release is published under it. An account on a regist
 
 | Registry | Name | Status on 2026-11-17 | What remains |
 | --- | --- | --- | --- |
-| PyPI | `anything2mcp` | **Not held.** The registry shows no project of this name. The owner reports the registration done; the first publish from the release workflow is the test | Start the release workflow for version 0.0.1; see "Publishing a release" below |
-| crates.io | `anything2mcp` | **Not held.** The registry shows no crate of this name | A first publish. crates.io offers trusted publishing only to a crate that already exists, so the first publish needs the owner's account once |
-| npm | `anything2mcp` | **Not held.** The registry shows no package of this name | A first publish, by the owner's account once; trusted publishing can be configured after it |
+| PyPI | `anything2mcp` | **Not held.** The registry shows no project of this name. The owner reports the registration done; the first publish from the release workflow is the test | Start the release workflow for version 0.0.1; see "Publishing a release" below. It publishes the real pre-alpha wheels and the source distribution, not a placeholder |
+| crates.io | `anything2mcp` | **Not held.** The registry shows no crate of this name | A first publish. crates.io offers trusted publishing only to a crate that already exists, so the first publish needs the owner's account once. It is also blocked by `publish = false` in the workspace and by the `a2m-*` crates it depends on, which are not published; whether to publish them needs a decision ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)) |
+| npm | `anything2mcp` | **Not held.** The registry shows no package of this name | An npm organization named `anything2mcp`, then a first publish by the owner's account once of each of the nine packages (the launcher and the eight `@anything2mcp/<os>-<cpu>` packages); trusted publishing can be configured after it. The workflow has no npm job yet ([research note 21](../research/21-wheel-and-npm-packaging.md)) |
 
 The status column is what each registry's public index answered on that date from the build session. It cannot see a private or pending registration.
 
@@ -43,10 +43,10 @@ The design calls for short-lived credentials issued to the release pipeline, nev
 
 [RELEASING.md](../../RELEASING.md) has the steps. In short:
 
-- `bindings/python/` holds the pip package. At version 0.0.1 it is a placeholder with no working software, and says so.
-- `.github/workflows/release.yml` builds and checks the package on every pull request that touches it.
+- `bindings/python/` holds the pip package: the real pre-alpha software, one maturin wheel for each of eight platforms and a source distribution. It is no longer a placeholder ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)).
+- `.github/workflows/release.yml` builds the eight wheels and the source distribution on every pull request that touches the package, and checks them together (it expects eight wheels and one source distribution). It has never run yet.
 - It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own.
-- **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the placeholder to be published as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)).
+- **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the name to be held as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)); a publish now sends the real pre-alpha wheels, not a placeholder.
 - After a publish, check `pip install anything2mcp` in a clean environment and mark the name as held in the table above.
 
 A build session could do neither on 2026-11-17: its access to GitHub does not let it push a tag or start a workflow. Both routes are therefore the owner's for now. The manual start needs no terminal: Actions, Release, Run workflow, on `main`, with the version typed in.
