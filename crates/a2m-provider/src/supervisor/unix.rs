@@ -215,7 +215,7 @@ impl Program {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn by_handle(&self, clear_of: i32) -> Option<Start> {
         use std::os::fd::AsRawFd;
-        if self.script {
+        if self.script || true /*TEMP-EXPERIMENT*/ {
             return None;
         }
         let held = rustix::io::fcntl_dupfd_cloexec(&self.file, clear_of.max(2) + 1).ok()?;

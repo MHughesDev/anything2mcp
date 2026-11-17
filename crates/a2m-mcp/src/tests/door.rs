@@ -713,6 +713,8 @@ async fn the_project_folder_is_what_the_mount_stated_and_nothing_a_caller_writes
     let world = World::ready().await;
     let project = world.folder.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
+    // What marks a folder as a project.
+    std::fs::write(project.join("anything2mcp.toml"), "").unwrap();
     let lint = call(1, "a2m_draft_lint", json!({"target": "example"}));
 
     // Stated by the mount, beside the caller: the action looks in the
@@ -890,4 +892,14 @@ async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_r
     assert_eq!(notes.len(), 2, "{notes:?}");
     assert!(answer["result"]["structuredContent"]["run_id"].is_string());
     assert_eq!(service.dispatched(), before + 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zz_debug_no_runner_wait_zero() {
+    let world = World::open(false).await;
+    let http = Http::new(world.service("use", McpSettings::local()));
+    let asked = call(1, "a2m_tool_call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "wait_seconds": 0}));
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(10), http.post(&asked)).await;
+    eprintln!("DBG {:?}", reply.map(|r| r.messages));
+    panic!("debug");
 }

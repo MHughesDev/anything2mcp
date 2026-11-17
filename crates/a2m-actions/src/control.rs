@@ -356,6 +356,9 @@ impl Control for InProcessControl {
             let fence = self.fence;
             let run = self.run.id;
             let diff = *diff;
+            // Unknown is off: only the setting read as true lets a
+            // pre-approval begin a write.
+            let pre_approval = self.kernel.settings().flag(crate::bounds::PRE_APPROVAL) == Some(true);
             let module = self
                 .plan
                 .tool(&self.run.tool_name)
@@ -388,14 +391,20 @@ impl Control for InProcessControl {
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     let decision = policy.decide(tx, &request);
-                    if let Some(clearance) = decision.clearance() {
+                    // A pre-approval begins a write only where the
+                    // installation lets one: with `policy.pre_approval` off
+                    // every write waits for a person, whatever rule the
+                    // set in force holds.
+                    let pre_approved = decision.clearance();
+                    if pre_approval && let Some(clearance) = pre_approved {
                         tx.ledger().begin_writes(&fence, clearance)?;
                         return Ok(Ok(Clearance::Cleared));
                     }
-                    // A kill switch stops the run here; it is not a wait.
-                    if let Outcome::Refused(refusal) = decision.outcome()
-                        && refusal.code() == &a2m_policy::KILL_SWITCH_ON
-                    {
+                    // A refusal stops the run here; it is not a wait. That
+                    // is a kill switch, and it is a policy engine that
+                    // could not decide: a decider that cannot decide never
+                    // leaves the write to an approval (fail closed).
+                    if let Outcome::Refused(refusal) = decision.outcome() {
                         return Ok(Err(refusal.clone()));
                     }
                     match policy.consume(tx, run, &diff) {
@@ -414,6 +423,11 @@ impl Control for InProcessControl {
                                     "needs": "approval",
                                     "decision": decision.id.to_string(),
                                     "diff": diff.to_string(),
+                                    "pre_approval": if pre_approved.is_some() {
+                                        "off by the setting `policy.pre_approval`"
+                                    } else {
+                                        "none applies"
+                                    },
                                 }),
                                 None,
                             )?;

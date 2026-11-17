@@ -819,6 +819,18 @@ fn check<V: Checkable>(node: &Node, value: &V, at: &V::At, out: &mut Found<V::At
         return;
     }
     match (node, view) {
+        // Any value fits, and an open question is still refused wherever it
+        // stands inside one.
+        (Node::Any, View::List(items)) => {
+            for (item_at, entry) in &items {
+                check(node, *entry, item_at, out);
+            }
+        }
+        (Node::Any, View::Map(members)) => {
+            for member in &members {
+                check(node, member.value, &member.at, out);
+            }
+        }
         (Node::Any, _)
         | (Node::Bool, View::Bool(_))
         | (Node::Text, View::Text(_))

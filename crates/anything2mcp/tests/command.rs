@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::process::{Command, Output, Stdio};
 
 use a2m_actions::{PROCESS_COMMANDS, SHORTCUTS, command_faces};
-use common::Folder;
+use common::{Folder, Machine};
 use serde_json::Value as Json;
 
 /// Both names of the command.
@@ -466,6 +466,12 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     assert_eq!(add.status.code(), Some(1), "{added}");
     assert_eq!(added["action"], "target.probe");
     assert_eq!(added["error"]["code"], "action_not_built");
+    // The step it stopped before was never begun, and the note says what
+    // was done and what was not.
+    let note = added["error"]["message"].as_str().unwrap();
+    assert!(note.contains("stopped before `target.probe`"), "{note}");
+    assert!(note.contains("Done: `target.add`"), "{note}");
+    assert!(note.contains("`session.login`"), "{note}");
     let file = bare
         .project
         .path()
@@ -505,4 +511,108 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     // `doctor` checks the machine and prints one object.
     let doctor = bare.run(&["doctor"]);
     assert_eq!(object(&doctor)["action"], "doctor.run");
+}
+
+/// Runs the program with `input` on its standard input, and waits for it.
+fn run_with_stdin(mut command: Command, input: &'static [u8]) -> Output {
+    use std::io::Write;
+    let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
+    // The pipe is closed when the handle is dropped: the program reads to
+    // the end of its input.
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_secret_typed_on_standard_input_is_stored_and_is_in_no_output() {
+    use example_app::harness::{BEARER_TOKEN, TestApp};
+
+    let app = TestApp::start().await.unwrap();
+    let machine =
+        Machine::new("secured", &[("http://127.0.0.1:4010", &app.url(""))]).with_passphrase();
+    // A person publishes the target; the engine is then closed, so that
+    // each command below is the real program with an engine of its own.
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+
+    let run = |args: &'static [&'static str], input: &'static [u8]| {
+        let command = machine.program(args);
+        tokio::task::spawn_blocking(move || run_with_stdin(command, input))
+    };
+    let mut outputs = Vec::new();
+
+    // Both ways at once are refused, by the names of the two arguments.
+    // What was given is in neither output.
+    let both = run(
+        &[
+            "secret",
+            "set",
+            "example/service/token",
+            "--stdin",
+            "--value",
+            "example-value-given-as-an-argument",
+        ],
+        b"example-value-given-on-standard-input\n",
+    )
+    .await
+    .unwrap();
+    assert_eq!(both.status.code(), Some(2), "{both:?}");
+    let refused = object(&both);
+    assert_eq!(refused["error"]["code"], "schema_invalid");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--stdin") && message.contains("--value"));
+    for given in [
+        "example-value-given-as-an-argument",
+        "example-value-given-on-standard-input",
+    ] {
+        assert!(!text(&both.stdout).contains(given), "{both:?}");
+        assert!(!text(&both.stderr).contains(given), "{both:?}");
+    }
+
+    // The secret, typed on standard input with a line ending after it.
+    let token: &'static [u8] = Box::leak(
+        format!("{BEARER_TOKEN}\r\n")
+            .into_bytes()
+            .into_boxed_slice(),
+    );
+    let stored = run(
+        &["secret", "set", "example/service/token", "--stdin"],
+        token,
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.status.code(), Some(0), "{stored:?}");
+    let answer = object(&stored);
+    assert_eq!(answer["action"], "secret.set");
+    assert_eq!(answer["result"]["stored"], true);
+    outputs.push(stored);
+
+    // The test application takes the token the vault now holds: the read
+    // is signed in, and the application refused no token. So what was
+    // stored is the text that was typed, without its line ending.
+    let read = run(
+        &[
+            "tool",
+            "call",
+            "example_order_get",
+            "--input",
+            r#"{"order_id": "A-100"}"#,
+        ],
+        b"",
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    let result = object(&read)["result"].clone();
+    assert_eq!(result["status"], "completed", "{result}");
+    assert_eq!(result["result"]["customer"], "Example Customer One");
+    assert_eq!(app.auth_report().await.unwrap().refused_tokens, 0);
+    outputs.push(read);
+
+    for output in &outputs {
+        assert!(!text(&output.stdout).contains(BEARER_TOKEN), "{output:?}");
+        assert!(!text(&output.stderr).contains(BEARER_TOKEN), "{output:?}");
+    }
 }

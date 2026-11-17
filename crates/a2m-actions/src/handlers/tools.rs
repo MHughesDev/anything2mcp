@@ -9,7 +9,7 @@ use a2m_core::{
 use a2m_engine::encode_values;
 use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, RunRow, ToolKind};
 use a2m_policy::{Context, ModuleName, PrincipalKind, Question, Resource, ToolRef};
-use a2m_provider::{Access, RootName, Roots};
+use a2m_provider::{Access, EntryKind, RootName, Roots};
 use a2m_sched::{
     Admitted, CancelOutcome, Enqueue, HealthState as SchedHealth, JobKind, JobRequirements,
     Priority, Scheduler, SessionLimits, Submission,
@@ -159,7 +159,11 @@ struct GivenSource {
 /// none, gives both forms, or gives one to a tool that reads none, and for
 /// rows given to a source that another reader reads;
 /// `input`/`path_not_allowed` and `input`/`file_unavailable` for the file.
-async fn given_source(call: &Call, found: &FoundTool) -> Result<Option<GivenSource>, Failure> {
+async fn given_source(
+    kernel: &Kernel,
+    call: &Call,
+    found: &FoundTool,
+) -> Result<Option<GivenSource>, Failure> {
     let reads = match found.tool.runs {
         ToolRuns::Pipeline(index) => found
             .plan
@@ -188,22 +192,61 @@ async fn given_source(call: &Call, found: &FoundTool) -> Result<Option<GivenSour
             "Give `source_file` or `source_rows`, not both.",
         )),
         (Some(_), Some(path), None) => {
-            let folder = call.project_folder()?;
-            let root = RootName::new("project")?;
-            let mut roots = Roots::none();
-            roots.add(root.clone(), folder, Access::Read)?;
-            let file = roots.folder(&root, Access::Read)?.join(path)?;
+            let folder = call.project_folder()?.to_path_buf();
+            // A source is read from the project's `sources` folder and from
+            // nowhere else in the project: not its target files, not its
+            // project file, not a hidden file.
+            crate::project::source_path(path).map_err(|why| {
+                codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!("The source file of this call is not read: {why}."),
+                    format!(
+                        "Put the file in the project's `{}` folder and give its path from the project folder, such as `{}/items.csv`.",
+                        crate::project::SOURCES_FOLDER,
+                        crate::project::SOURCES_FOLDER
+                    ),
+                )
+            })?;
+            // The size ceiling is the smaller of what a caller may hand in
+            // here and what a source may be at all.
             let most = a2m_engine::EngineSettings::default().source_limits.bytes;
-            // Reading a file waits on the disk: off the async threads.
-            let bytes = tokio::task::spawn_blocking(move || file.read(most))
-                .await
-                .map_err(|_| {
-                    codes::input(
+            let most = kernel
+                .settings()
+                .int("files.max_upload_bytes")
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .map_or(most, |allowed| allowed.min(most));
+            let wanted = path.to_owned();
+            // Looking at the disk and reading a file wait: off the async
+            // threads. The checked path follows a link only while it stays
+            // inside the project, and what stands at the name must be a
+            // file: a link, a device, or a pipe is not read.
+            let bytes = tokio::task::spawn_blocking(move || {
+                let root = RootName::new("project")?;
+                let mut roots = Roots::none();
+                roots.add(root.clone(), &folder, Access::Read)?;
+                let file = roots.folder(&root, Access::Read)?.join(&wanted)?;
+                match file.entry_kind()? {
+                    EntryKind::File => file.read(most),
+                    EntryKind::Absent => Err(codes::input(
                         a2m_provider::codes::FILE_UNAVAILABLE,
-                        "The source file could not be read.",
-                        "Try again.",
-                    )
-                })??;
+                        "The source file is not there.",
+                        "Check the path, from the project folder.",
+                    )),
+                    _ => Err(codes::input(
+                        codes::PATH_NOT_ALLOWED,
+                        "The source file of this call is not read: what stands at its name is not a file.",
+                        "Give the path of a file; a link, a folder, or a device is not read.",
+                    )),
+                }
+            })
+            .await
+            .map_err(|_| {
+                codes::input(
+                    a2m_provider::codes::FILE_UNAVAILABLE,
+                    "The source file could not be read.",
+                    "Try again.",
+                )
+            })??;
             Ok(Some(GivenSource {
                 kind: SourceKind::File,
                 name: codes::shown(path),
@@ -382,7 +425,18 @@ handler!(
     |kernel, call| {
         let name = OperationName::new(call.required("tool")?)?;
         let found = kernel.find_tool(&name).await?;
-        let (effect, _) = found.effect();
+        let (effect, hazard) = found.effect();
+        // The decision about this call, and the health check before it,
+        // were made for the tool as it stood then. A version published in
+        // between may have made a read a write: the call is then not the
+        // one that was decided, and it is refused.
+        if call.decided != Some((effect, hazard)) {
+            return Err(codes::busy(
+                codes::TOOL_CHANGED,
+                format!("`{name}` was published again while this call was being decided, with another effect."),
+                "Call the tool again.",
+            ));
+        }
         let input: Values = match call.input.get("input") {
             Some(given) => serde_json::from_value(given.clone()).map_err(|_| {
                 codes::input(
@@ -417,7 +471,7 @@ handler!(
                 "Leave `environment` out to use the target's default.",
             ));
         }
-        let given = given_source(&call, &found).await?;
+        let given = given_source(kernel, &call, &found).await?;
         let store = kernel.store()?;
         let principal = &call.caller.principal;
         let identity = (principal.principal.kind == PrincipalKind::Person)
@@ -552,6 +606,14 @@ fn wait_of(call: &Call) -> Duration {
     Duration::from_secs(u64::try_from(seconds).unwrap_or(0))
 }
 
+fn no_such_run() -> Failure {
+    codes::input(
+        codes::NOT_FOUND,
+        "There is no such run.",
+        "Call `run.list` to see your runs.",
+    )
+}
+
 fn run_id(call: &Call) -> Result<RunId, Failure> {
     call.required("run_id")?.parse::<RunId>().map_err(|_| {
         codes::input(
@@ -563,17 +625,88 @@ fn run_id(call: &Call) -> Result<RunId, Failure> {
 }
 
 impl Kernel {
-    /// The run, when it belongs to the caller's workspace.
-    async fn run_row(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+    /// The run, when it is the caller's own: in the caller's workspace, and
+    /// started by the person the caller is or was proved to act for. A run
+    /// is read, resumed, and cancelled by that person and by nobody else,
+    /// whatever role they hold: a run acts under its person's session, and
+    /// a session is its person's alone. Another person's run is answered
+    /// as no run at all.
+    async fn own_run(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+        let row = self.run_in_workspace(call, run).await?;
+        if call.caller.principal.person() == Some(row.principal) {
+            Ok(row)
+        } else {
+            Err(no_such_run())
+        }
+    }
+
+    /// The run, when it belongs to the caller's workspace, whoever started
+    /// it. Only for `trace.show`: reading a run's evidence is what the
+    /// auditor's role is for, and the dispatcher's decision was that the
+    /// caller holds the role the action needs. It shows what happened and
+    /// can neither resume nor change the run.
+    async fn run_in_workspace(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
         let row = self.store()?.read(move |tx| tx.ledger().run(run)).await?;
         if row.workspace == call.caller.principal.workspace {
             Ok(row)
         } else {
-            Err(codes::input(
-                codes::NOT_FOUND,
-                "There is no such run.",
-                "Call `run.list` to see your runs.",
-            ))
+            Err(no_such_run())
+        }
+    }
+
+    /// Asks the policy engine whether whoever resumes a run may use its
+    /// tool, and records the answer (spec section 212, step 9). The run's
+    /// own caller, kept when it was made, is asked about again at guard.
+    async fn may_resume(&self, call: &Call, row: &RunRow) -> Result<(), Failure> {
+        let policy = self.policy().cloned().ok_or_else(|| {
+            codes::busy(
+                codes::ENGINE_DEGRADED,
+                "No policy set is loaded, so nothing can be decided.",
+                "Call `doctor.run` for the fix.",
+            )
+        })?;
+        let tool = self
+            .plan_by_hash(&row.target, &row.target_version)
+            .await
+            .ok()
+            .and_then(|plan| {
+                let tool = plan.tool(&row.tool_name)?.clone();
+                let hazard = match tool.runs {
+                    ToolRuns::Operation(index) => plan.operation(index).map(|found| found.hazard),
+                    ToolRuns::Pipeline(index) => plan.pipeline(index).map(|found| found.hazard),
+                };
+                Some((tool.module, hazard?))
+            });
+        let (module, hazard) = tool.unwrap_or((None, a2m_core::Hazard::None));
+        let caller = &call.caller;
+        let mut context = Context::plain(caller.principal.workspace, row.environment.clone());
+        context.effect = row.effect;
+        context.hazard = hazard;
+        context.toolset = caller.toolset.clone();
+        context.caller_is_agent = caller.is_agent;
+        context.acting_for = caller.principal.acting_for.clone();
+        let decision = policy
+            .decide_alone(a2m_policy::Request {
+                principal: caller.principal.principal.clone(),
+                question: Question::UseTool,
+                resource: Resource::Tool(ToolRef {
+                    target: row.target.clone(),
+                    module: ModuleName::new(module.as_deref().unwrap_or("main"))?,
+                    tool: row.tool_name.clone(),
+                }),
+                context,
+                run: Some(row.id),
+                diff_hash: None,
+            })
+            .await;
+        match decision.refusal {
+            Some(refusal) => Err(refusal),
+            None if decision.allowed() => Ok(()),
+            None => Err(codes::policy(
+                a2m_policy::NOT_GRANTED,
+                "Policy did not allow this caller to use the run's tool.",
+                "Ask an administrator for a grant on this tool.",
+            )),
         }
     }
 
@@ -894,7 +1027,7 @@ handler!(
     /// `run.get`: where one run stands.
     run_get,
     |kernel, call| {
-        let row = kernel.run_row(&call, run_id(&call)?).await?;
+        let row = kernel.own_run(&call, run_id(&call)?).await?;
         run_output(kernel, &call, row, Tell::Nobody).await
     }
 );
@@ -907,7 +1040,7 @@ handler!(
     run_resume,
     |kernel, call| {
         let run = run_id(&call)?;
-        let row = kernel.run_row(&call, run).await?;
+        let row = kernel.own_run(&call, run).await?;
         if !matches!(
             row.state,
             RunState::NeedsApproval
@@ -917,16 +1050,11 @@ handler!(
         ) {
             return run_output(kernel, &call, row, Tell::Nobody).await;
         }
-        // The caller's facts are kept again, so that the guard's question
-        // is asked about whoever resumes.
-        let facts = CallerFacts::of(&call.caller, call.decision);
-        let for_run = row.clone();
-        kernel
-            .store()?
-            .write(Durability::Synced, move |tx| {
-                crate::runner::rekeep_caller(tx, &for_run, &facts)
-            })
-            .await?;
+        // Whoever resumes must be allowed the run's tool now; a kill
+        // switch that covers the work answers here as well. The facts of
+        // the caller that started the run are left as they were kept: a
+        // resume never changes whose run it is, or what its caller was.
+        kernel.may_resume(&call, &row).await?;
         let give_up = tokio::time::Instant::now() + wait_of(&call);
         let mut row = row;
         // Twice at most: a job for the run may be waiting or leased already,
@@ -985,7 +1113,7 @@ handler!(
     run_cancel,
     |kernel, call| {
         let run = run_id(&call)?;
-        kernel.run_row(&call, run).await?;
+        kernel.own_run(&call, run).await?;
         let outcome = kernel.sched()?.cancel(run).await?;
         kernel.run_changed();
         let said = match outcome {
@@ -1008,7 +1136,7 @@ handler!(
     trace_show,
     |kernel, call| {
         let run = run_id(&call)?;
-        let row = kernel.run_row(&call, run).await?;
+        let row = kernel.run_in_workspace(&call, run).await?;
         let events = kernel
             .store()?
             .read(move |tx| tx.ledger().events(run, 0, 10_000))
@@ -1031,12 +1159,20 @@ handler!(
             // The trace signature is the last line of the stored trace. A
             // trace that cannot be opened or read is shown by its reference
             // alone.
+            // The lines are checked against their own chain first: a trace
+            // with a line missing, added, or moved is shown as broken, and
+            // its signature is not passed on as if it stood.
             if let Ok(opened) = kernel.store()?.blobs().get(&trace).await
                 && let Ok(lines) = a2m_telemetry::read_trace(opened.expose())
-                && let Some(a2m_telemetry::TraceLine::End(end)) = lines.last()
             {
-                map.insert("signature".to_owned(), json!(end.signature.to_string()));
-                map.insert("records".to_owned(), json!(end.records));
+                let check = a2m_telemetry::check_trace(&lines);
+                map.insert("trace_check".to_owned(), json!(check.as_str()));
+                if check != a2m_telemetry::TraceCheck::Broken
+                    && let Some(a2m_telemetry::TraceLine::End(end)) = lines.last()
+                {
+                    map.insert("signature".to_owned(), json!(end.signature.to_string()));
+                    map.insert("records".to_owned(), json!(end.records));
+                }
             }
         }
         Ok(Output::ok(out))

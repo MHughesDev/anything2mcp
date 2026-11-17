@@ -389,10 +389,16 @@ fn deliver(shared: &Shared, frame: &[u8]) -> Result<(), Why> {
             let from = event.session.clone().unwrap_or_default();
             match &event.kind {
                 // A worker or a frame attached under a session is heard by
-                // that session's subscriber, from its first event on.
+                // that session's subscriber, from its first event on. A
+                // session that already has a subscriber of its own keeps
+                // it: a tab subscribes to the session it attached, and the
+                // browser's word of that attachment can come after.
                 EventKind::Attached(attached) => {
                     if let Some(route) = state.routes.get(&from).cloned() {
-                        state.routes.insert(attached.session_id.clone(), route);
+                        state
+                            .routes
+                            .entry(attached.session_id.clone())
+                            .or_insert(route);
                     }
                 }
                 EventKind::Detached(detached) => {

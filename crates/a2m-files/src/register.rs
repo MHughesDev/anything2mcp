@@ -10,14 +10,15 @@ use std::fmt;
 use std::sync::Arc;
 
 use a2m_core::{
-    ControlName, Failure, FailureClass, FileKindName, Finding, FindingKind, IdentityStrategy,
-    LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding, FindingKind,
+    IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName,
+    ValueType, Verb,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
 use crate::doc::{Doc, Located, Place};
 use crate::draft::{DraftContext, DraftDoc};
-use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FOLDERS, KERNEL_OWNER};
+use crate::kernel::{KERNEL_FILE_KINDS, KERNEL_FOLDERS, KERNEL_OWNER, OPERATION, SOURCE};
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
 
@@ -104,6 +105,36 @@ pub trait FileKind: Send + Sync {
         docs: &[Located<Doc>],
         cx: &KindContext<'_>,
     ) -> Result<CompiledSection, Diagnostics>;
+    /// Whether a document of this kind describes something that changes the
+    /// system: a request that writes, an action that saves, a statement that
+    /// is not a query. The drafter asks this of every document it is about
+    /// to write, and writes none for which the answer is yes: a write is
+    /// written by the developer, never drafted.
+    ///
+    /// A kind that has entries of both sorts answers from the document. One
+    /// that does not answer is taken to describe no write, so a pack whose
+    /// kind can describe one must say so here.
+    fn writes(&self, _doc: &Located<Doc>) -> bool {
+        false
+    }
+}
+
+/// Whether a step of one kind saves in the system. A pack states it once
+/// for each kind of step its lowering emits, and the compiler holds every
+/// lowered step to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepCommits {
+    /// A step of this kind never saves. One that is marked `commits` is
+    /// refused.
+    Never,
+    /// A step of this kind always saves. One that is not marked `commits`
+    /// is refused, so it can never run with no intent recorded.
+    Always,
+    /// A step of this kind saves when the pack's own files say that what it
+    /// refers to does, such as a request whose endpoint is declared a
+    /// write. The lowering's mark stands, and the compiler has no second
+    /// opinion of it.
+    AsDeclared,
 }
 
 /// Whether an identity strategy can be carried out by a binding.
@@ -150,6 +181,23 @@ pub trait Lowering: Send + Sync {
     fn reads(&self) -> &[(FileKindName, SurfaceKind)];
     /// Every kind its steps may carry; the mode's driver must know each.
     fn step_kinds(&self) -> &[StepKind];
+    /// Whether a step of `kind` saves in the system. Stated once for the
+    /// kind, whatever a target's files say; a lowered step marked otherwise
+    /// does not compile. A lowering that does not say leaves every kind
+    /// [`StepCommits::AsDeclared`], and the compiler then has only the
+    /// lowering's own mark on each step.
+    fn commits(&self, _kind: &StepKind) -> StepCommits {
+        StepCommits::AsDeclared
+    }
+    /// The least effect class an operation with this binding can have, by
+    /// what the binding does: `write` for a verb that changes a record,
+    /// `irreversible` for one that deletes, sends, or cannot be undone. The
+    /// compiler refuses an operation that declares less. A lowering that
+    /// does not say claims nothing, and the operation's effect is then held
+    /// only to its steps' `commits` marks.
+    fn least_effect(&self, _binding: &ResolvedBinding<'_>) -> EffectClass {
+        EffectClass::Read
+    }
     /// The fields this mode adds to a binding: an object schema. The kernel
     /// owns `mode`, `verb`, `status`, and `precondition`; everything else in
     /// a binding, `read_back` included, is checked against this.
@@ -296,6 +344,29 @@ impl fmt::Debug for CompilerSet {
 }
 
 impl CompilerSet {
+    /// Whether a drafting rule of `pack` may write files of `kind`: a read
+    /// operation or a source, which the kernel owns and any pack may draft,
+    /// or a kind the pack itself registered. Never another kernel kind: a
+    /// drafted `target.yaml` or `auth.yaml` would widen what the target
+    /// reaches, and a drafted pipeline or test would stand for a person's
+    /// judgment. A kind nobody has registered yet is not refused here.
+    pub(crate) fn may_draft(&self, pack: &str, kind: &FileKindName) -> bool {
+        if KERNEL_FILE_KINDS.contains(&kind.as_str()) {
+            return kind.as_str() == OPERATION || kind.as_str() == SOURCE;
+        }
+        self.file_kinds
+            .iter()
+            .filter(|((name, _), _)| name == kind)
+            .all(|(_, owner)| owner.pack == pack)
+    }
+
+    /// Whether `pack` registered the file kind `kind` for some surface kind.
+    pub(crate) fn owns_kind(&self, pack: &str, kind: &FileKindName) -> bool {
+        self.file_kinds
+            .iter()
+            .any(|((name, _), owner)| name == kind && owner.pack == pack)
+    }
+
     /// A builder that holds nothing yet.
     #[must_use]
     pub fn builder() -> CompilerSetBuilder {
@@ -646,7 +717,11 @@ impl CompilerSetBuilder {
     /// # Errors
     ///
     /// `registration_conflict` when a rule from the same kind of finding to
-    /// the same kind of file is already registered.
+    /// the same kind of file is already registered; when the file kind is
+    /// one of the kernel's other than `operation` and `source`, which are
+    /// the two a draft may be made of; and when the file kind is one another
+    /// pack registered. The drafter checks the owner again when it drafts,
+    /// since a kind may be registered after its rule.
     pub fn drafting_rule(
         &mut self,
         pack: &str,
@@ -654,6 +729,12 @@ impl CompilerSetBuilder {
     ) -> Result<&mut Self, Failure> {
         check_pack(pack)?;
         let key = (rule.finding_kind(), rule.file_kind());
+        if !self.set.may_draft(pack, &key.1) {
+            return Err(conflict(format!(
+                "A drafting rule of `{pack}` writes `{}` files, which are not its own and are not operations or sources.",
+                key.1
+            )));
+        }
         if let Some(first) = self.set.drafting_rules.get(&key) {
             return Err(conflict(format!(
                 "A drafting rule from `{}` findings to `{}` files is registered by `{}` and again by `{pack}`.",

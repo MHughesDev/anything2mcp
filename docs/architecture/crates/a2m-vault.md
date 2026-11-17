@@ -266,9 +266,9 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 3. Done: `KeyStore` with the operating-system back end and the in-memory one; `KeyRecords` with an in-memory implementation; `seal`, `open`, `open_secret`; `keyed_digest`. The operating-system back end is proven against the outside crates' in-memory credential store on every machine. Against a real key store it is one ignored test, which has not been run on any of the three systems: this build machine has none. The Windows and macOS code is type-checked from Linux and has never run.
 4. Done here: the restart test, over the in-memory records. Not done: `KeyRecords` in `a2m-ledger`.
 5. Done: the passphrase route, behind `PassphraseRoute`, which the caller fills from the protected setting.
-5a. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: the creation lock for the root and the salt, the passphrase floor, the redactor's stream and its further forms, the registered set without digests, and the check on a random source that repeats itself. The creation lock's Windows and macOS code is the standard library's file lock; it is type-checked from Linux and has run only on Linux.
 6. Not built: a key-service back end, for the server profile. Phase 6.
 7. Not built: `rotate`, with `vault.rotate`. Phase 9. `KeyRecords` already keeps one row per generation and has `replace` for it.
+8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: the creation lock for the root and the salt, the passphrase floor, the redactor's stream and its further forms, the registered set without digests, and the check on a random source that repeats itself. The creation lock's Windows and macOS code is the standard library's file lock; it is type-checked from Linux and has run only on Linux.
 
 ## Open points
 

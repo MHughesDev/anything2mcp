@@ -777,7 +777,10 @@ async fn a_runs_events_are_read_from_a_number_and_streamed_until_the_run_settles
     assert_eq!(page["result"]["run_id"], run.as_str());
     assert_eq!(page["result"]["last"], last);
     assert_eq!(page["result"]["settled"], true);
-    assert_eq!(page["result"]["events"].as_array().unwrap().len() as u64, last);
+    assert_eq!(
+        page["result"]["events"].as_array().unwrap().len() as u64,
+        last
+    );
     let (status, part) = world
         .get(&format!("{}?after=2&limit=2", events_of(&run)))
         .await;

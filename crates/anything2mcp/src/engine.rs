@@ -256,31 +256,6 @@ fn passphrase_failure(message: &str, fix: &str) -> Failure {
     )
 }
 
-/// Reads the salt of the passphrase route, or makes and keeps a new one.
-fn salt(paths: &Paths, random: &dyn RandomSource) -> Result<PassphraseSalt, Failure> {
-    let file = paths.data.join(SALT_FILE);
-    let unusable = || {
-        passphrase_failure(
-            "The salt of the vault's passphrase cannot be read or kept in the data directory.",
-            "Make the data directory writable, and run `anything2mcp doctor`.",
-        )
-    };
-    match std::fs::read(&file) {
-        Ok(bytes) => {
-            let bytes: [u8; PassphraseSalt::LENGTH] =
-                bytes.as_slice().try_into().map_err(|_| unusable())?;
-            Ok(PassphraseSalt::from_bytes(bytes))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let made = PassphraseSalt::generate(random)?;
-            std::fs::create_dir_all(&paths.data).map_err(|_| unusable())?;
-            std::fs::write(&file, made.as_bytes()).map_err(|_| unusable())?;
-            Ok(made)
-        }
-        Err(_) => Err(unusable()),
-    }
-}
-
 /// This machine's key store, as the installation's settings choose it.
 /// Never fails: a store that cannot be reached is one that does not
 /// answer, and the kernel opens degraded and says why.
@@ -300,7 +275,15 @@ async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<
                 ),
             );
         };
-        let salt = match salt(&options.paths, options.random.as_ref()) {
+        // The vault makes the salt once, under a lock beside the file, so two
+        // commands that start together on a new installation end with one
+        // salt and one root (decision 0138).
+        let salt = match PassphraseSalt::load_or_create(
+            &options.paths.data.join(SALT_FILE),
+            options.random.as_ref(),
+        )
+        .await
+        {
             Ok(salt) => salt,
             Err(failure) => return no_key_store(name, failure),
         };

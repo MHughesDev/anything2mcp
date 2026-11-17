@@ -16,12 +16,14 @@ const DEEPEST: u32 = 64;
 
 /// The text of a file as the compiler reads and digests it: no byte-order
 /// mark, and every line ending a line feed, so a file checked out with other
-/// line endings is the same file.
+/// line endings is the same file. A carriage return with a line feed after
+/// it and one that stands alone are both line endings.
 #[must_use]
 pub fn normalize_text(text: &str) -> String {
     text.strip_prefix('\u{feff}')
         .unwrap_or(text)
         .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 /// Reads the documents of one YAML file.

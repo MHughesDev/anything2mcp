@@ -2,7 +2,7 @@
 //! scoped supervisor with a data directory inside the profile root, owned
 //! by what it answers over its pipe, and stopped with nothing left behind.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -216,6 +216,20 @@ pub(crate) struct BrowserInner {
     /// The open tabs, by the browser's name for each, so that what the
     /// browser itself refuses can be reported by the tab it concerns.
     pages: Mutex<BTreeMap<String, Weak<Page>>>,
+    held: Mutex<Held>,
+}
+
+/// The new pages the browser holds before they run. Only the session the
+/// browser attached a page on can let it run (measured, decision 0143),
+/// and the browser's word of that session and its answer to the engine's
+/// request for the page come in either order. So each side leaves a note
+/// for the other: a page nobody made here is never let run.
+#[derive(Default)]
+struct Held {
+    /// Pages the browser holds, with the session each is held on.
+    waiting: BTreeMap<String, String>,
+    /// Pages the engine made, and has not yet been told are held.
+    made: BTreeSet<String>,
 }
 
 impl BrowserInner {
@@ -223,6 +237,34 @@ impl BrowserInner {
         self.pages
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The engine made this page. The session to let it run on, when the
+    /// browser has already said it holds the page.
+    pub(crate) fn made(&self, target: &str) -> Option<String> {
+        let mut held = self.held();
+        let session = held.waiting.remove(target);
+        if session.is_none() {
+            held.made.insert(target.to_owned());
+        }
+        session
+    }
+
+    /// The browser holds this page on this session. Whether the engine
+    /// made it, so that it may be let run now.
+    pub(crate) fn holds(&self, target: &str, session: &str) -> bool {
+        let mut held = self.held();
+        let ours = held.made.remove(target);
+        if !ours {
+            held.waiting.insert(target.to_owned(), session.to_owned());
+        }
+        ours
     }
 
     /// Has the tab that opened something report it. When what opened it
@@ -611,6 +653,7 @@ impl Browsers {
             tabs: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
+            held: Mutex::new(Held::default()),
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine

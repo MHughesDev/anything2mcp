@@ -1,7 +1,9 @@
 //! The loader: a target folder, and only that folder, read into located
 //! documents.
 
+use std::collections::BTreeSet;
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use a2m_core::{Digest, FileKindName};
@@ -15,6 +17,38 @@ use crate::yaml;
 
 /// How deep folders may be nested inside a target folder.
 const DEEPEST_FOLDER: u32 = 16;
+/// The most bytes a target file, which is YAML, may hold.
+pub const LARGEST_TARGET_FILE: usize = 1024 * 1024;
+/// The most bytes a fixture's recorded file may hold.
+pub const LARGEST_RECORDED_FILE: usize = 16 * 1024 * 1024;
+
+/// Whether the file at `path` is a fixture's recorded file, which is read
+/// as bytes and digested, never parsed.
+fn is_recorded(path: &RelPath) -> bool {
+    path.folder() == Some("fixtures") && path.file_name() != FIXTURE_MARKER
+}
+
+/// The most bytes the file at `path` may hold.
+fn largest(path: &RelPath) -> usize {
+    if is_recorded(path) {
+        LARGEST_RECORDED_FILE
+    } else {
+        LARGEST_TARGET_FILE
+    }
+}
+
+fn too_large(path: &RelPath) -> Diagnostic {
+    Diagnostic::error(
+        kernel(codes::FILE_TOO_LARGE),
+        Stage::Parse,
+        &Place::start_of(path),
+        format!(
+            "`{path}` is larger than the {} bytes a file of its kind may hold.",
+            largest(path)
+        ),
+        "Split the file, or keep a smaller recording in the fixture; a target file is at most 1 MiB and a fixture's recorded file at most 16 MiB.",
+    )
+}
 
 /// The folder that holds one target's files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +184,9 @@ impl SourceFile {
         let Some(kind) = kind_of(&path, set) else {
             return Err(unknown_file(&path, set));
         };
+        if bytes.len() > largest(&path) {
+            return Err(too_large(&path));
+        }
         let recorded = kind.as_str() == FIXTURE && path.file_name() != FIXTURE_MARKER;
         if recorded {
             return Ok(Self {
@@ -234,13 +271,23 @@ pub fn load(root: &TargetRoot, set: &CompilerSet) -> Result<Sources, Diagnostics
     };
     let mut found: Vec<(RelPath, PathBuf)> = Vec::new();
     let mut problems = Diagnostics::new();
-    walk(&real_root, &real_root, None, 0, &mut found, &mut problems);
+    let mut seen = BTreeSet::from([real_root.clone()]);
+    walk(
+        &real_root,
+        &real_root,
+        None,
+        0,
+        &mut seen,
+        &mut found,
+        &mut problems,
+    );
     found.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut files = Vec::new();
     for (path, on_disk) in found {
-        match fs::read(&on_disk) {
-            Ok(bytes) => match SourceFile::read(path, &bytes, set) {
+        match read_at_most(&on_disk, largest(&path)) {
+            Ok(None) => problems.push(too_large(&path)),
+            Ok(Some(bytes)) => match SourceFile::read(path, &bytes, set) {
                 Ok(file) => files.push(file),
                 Err(problem) => problems.push(problem),
             },
@@ -263,11 +310,23 @@ pub fn load(root: &TargetRoot, set: &CompilerSet) -> Result<Sources, Diagnostics
     }
 }
 
+/// The bytes of the file at `path`, or nothing when it holds more than
+/// `limit`. No more than one byte past the limit is ever read, so a file of
+/// any size costs a bounded amount of memory.
+fn read_at_most(path: &Path, limit: usize) -> std::io::Result<Option<Vec<u8>>> {
+    let file = fs::File::open(path)?;
+    let most = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(most).read_to_end(&mut bytes)?;
+    Ok((bytes.len() <= limit).then_some(bytes))
+}
+
 fn walk(
     real_root: &Path,
     folder: &Path,
     prefix: Option<&RelPath>,
     depth: u32,
+    seen: &mut BTreeSet<PathBuf>,
     found: &mut Vec<(RelPath, PathBuf)>,
     problems: &mut Diagnostics,
 ) {
@@ -307,8 +366,10 @@ fn walk(
             continue;
         };
         // A link may point anywhere; what it points at must be inside.
-        let inside = fs::canonicalize(&on_disk).is_ok_and(|real| real.starts_with(real_root));
-        if !inside {
+        let real = fs::canonicalize(&on_disk)
+            .ok()
+            .filter(|real| real.starts_with(real_root));
+        let Some(real) = real else {
             problems.push(Diagnostic::error(
                 kernel(codes::PATH_OUTSIDE_TARGET),
                 Stage::Parse,
@@ -317,8 +378,23 @@ fn walk(
                 "Copy the file into the target folder, or remove the link.",
             ));
             continue;
-        }
+        };
         if on_disk.is_dir() {
+            // A folder is read once, where it is. A link to a folder would
+            // have it read again under another name, and a link to a folder
+            // above itself would have it read without end.
+            let linked = fs::symlink_metadata(&on_disk)
+                .map_or(true, |found| found.file_type().is_symlink());
+            if linked || !seen.insert(real) {
+                problems.push(Diagnostic::error(
+                    kernel(codes::PATH_OUTSIDE_TARGET),
+                    Stage::Parse,
+                    &Place::start_of(&path),
+                    format!("`{path}` is a link to a folder; a target's folders are read where they are, once."),
+                    "Remove the link, and keep each file in one folder of the target.",
+                ));
+                continue;
+            }
             if depth >= DEEPEST_FOLDER {
                 problems.push(Diagnostic::error(
                     kernel(codes::UNKNOWN_FILE),
@@ -329,7 +405,15 @@ fn walk(
                 ));
                 continue;
             }
-            walk(real_root, &on_disk, Some(&path), depth + 1, found, problems);
+            walk(
+                real_root,
+                &on_disk,
+                Some(&path),
+                depth + 1,
+                seen,
+                found,
+                problems,
+            );
         } else {
             found.push((path, on_disk));
         }

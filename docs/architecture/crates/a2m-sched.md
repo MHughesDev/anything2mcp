@@ -287,3 +287,5 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 - Whether a `session_keepalive` job should be scheduled here at all, or run by the keeper's `KeeperWork` outside the queues.
 - A waiter woken for a record lock can lose it to a run that never waited. Closing this needs the ledger to grant a lock to a named waiter.
 - A run that ends final with a record in doubt keeps its quarantined lock, and a reconcile job is queued only for a run that is not final.
+- Only a `Stopped` end asks the ledger for records in doubt. A `Done` or `Rests` end of a run that holds one is a defect of the engine and is not caught here.
+- A key for a screen cannot name the runner, because the runner is chosen at lease; see "What a mode holds alone".

@@ -2128,8 +2128,10 @@ fn fetch_documents() -> FetchEnable<'static> {
 /// the browser's link lasts.
 ///
 /// The browser is told, when it starts, to attach every new page before it
-/// runs. A page the engine made carries no opener, and its own tab lets it
-/// run. A page with an opener is a window some page opened: every request
+/// runs. A page with no opener is let run when it is one the engine made,
+/// and never otherwise. A page with an opener is a window some page
+/// opened, also when the page asked for a window with no opener (measured,
+/// decision 0143): every request
 /// of it is ended before it leaves the browser, it is let run only so that
 /// the page that opened it is not left waiting, and it is closed; the tab
 /// that opened it reports it. A window is never let run without that lock:
@@ -2151,9 +2153,16 @@ pub(crate) async fn watch_windows(
             EventKind::Attached(Attached {
                 session_id,
                 target_info,
-                ..
+                waiting_for_debugger,
             }) if event.session.is_none() => {
                 let Some(opener) = target_info.opener_id else {
+                    // The browser also announces a session the engine
+                    // attached itself; only one it holds a page on counts.
+                    if waiting_for_debugger && browser.holds(&target_info.target_id, &session_id) {
+                        let _ = client
+                            .call(Some(&session_id), &RunIfWaiting {}, deadline)
+                            .await;
+                    }
                     continue;
                 };
                 unreported.insert(session_id.clone(), opener);
@@ -2243,6 +2252,15 @@ pub(crate) async fn open_page(
         .call(None, &CreateTarget { url: "about:blank" }, deadline)
         .await
         .map_err(lost)?;
+    // The browser holds every new page before it runs. This one is the
+    // engine's own, on `about:blank`: it is let run, and is locked below
+    // before it is sent anywhere.
+    if let Some(held_on) = browser.made(&created.target_id) {
+        client
+            .call(Some(&held_on), &RunIfWaiting {}, deadline)
+            .await
+            .map_err(lost)?;
+    }
     let attached = client
         .call(
             None,
@@ -2299,10 +2317,6 @@ async fn prepare(
     env: &PageEnvironment,
     deadline: Deadline,
 ) -> Result<(), BrowserError> {
-    // The browser attaches every new page before it runs, to catch the
-    // windows that pages open. This page is the engine's own, on
-    // `about:blank`: it is let run, and locked before it is sent anywhere.
-    page.call(&RunIfWaiting {}, deadline).await?;
     if page.safe.is_some() {
         // The lock goes on before the page can do anything: requests are
         // intercepted, workers wait until they are locked too, service

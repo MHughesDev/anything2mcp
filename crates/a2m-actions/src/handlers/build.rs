@@ -10,6 +10,7 @@ use a2m_files::{CompileMode, Compiled, DRAFT_VERSION, Diagnostics, TargetRoot};
 use a2m_ledger::{Durability, PublishedVersion};
 use a2m_provider::{Access, CheckedPath, RootName, Roots};
 use serde_json::{Value as Json, json};
+use std::path::Path;
 
 use super::handler;
 use crate::codes;
@@ -21,18 +22,17 @@ const TARGETS_FOLDER: &str = "targets";
 
 /// The project folder of a call, as a checked path. The folder a local
 /// command was run in is the one root a project's files may be read from
-/// and written to.
-fn project(call: &Call) -> Result<CheckedPath, Failure> {
-    let folder = call.project_folder()?;
+/// and written to. Looks at the disk.
+fn project(folder: &Path) -> Result<CheckedPath, Failure> {
     let name = RootName::new("project")?;
     let mut roots = Roots::none();
     roots.add(name.clone(), folder, Access::Write)?;
     roots.folder(&name, Access::Write)
 }
 
-/// The folder of one target of the project.
-fn target_folder(call: &Call, target: &TargetName) -> Result<CheckedPath, Failure> {
-    project(call)?.join(&format!("{TARGETS_FOLDER}/{target}"))
+/// The folder of one target of the project. Looks at the disk.
+fn target_folder(project_folder: &Path, target: &TargetName) -> Result<CheckedPath, Failure> {
+    project(project_folder)?.join(&format!("{TARGETS_FOLDER}/{target}"))
 }
 
 fn problems_json(problems: &Diagnostics) -> Vec<Json> {
@@ -42,7 +42,8 @@ fn problems_json(problems: &Diagnostics) -> Vec<Json> {
     }
 }
 
-/// Loads and compiles the target's drafts.
+/// Loads and compiles the target's drafts. Reads every draft file and
+/// compiles them, so it is called off the async threads.
 fn compile_target(
     kernel: &Kernel,
     folder: &CheckedPath,
@@ -54,21 +55,44 @@ fn compile_target(
     a2m_files::compile(&sources, set, mode, version)
 }
 
+/// Runs work that waits on the disk, or that computes for long, on a
+/// thread that may wait: never on an async thread.
+async fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
+) -> Result<T, Failure> {
+    tokio::task::spawn_blocking(work).await.map_err(|_| {
+        codes::busy(
+            codes::ENGINE_DEGRADED,
+            "The work on the project's files was interrupted.",
+            "Try again.",
+        )
+    })?
+}
+
+/// Finds the target's folder in the project and compiles its drafts, off
+/// the async threads.
+async fn compiled_target(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+    mode: CompileMode,
+    version: Version,
+) -> Result<Result<Compiled, Diagnostics>, Failure> {
+    let project_folder = call.project_folder()?.to_path_buf();
+    let (kernel, target) = (kernel.clone(), target.clone());
+    off_thread(move || {
+        let folder = target_folder(&project_folder, &target)?;
+        Ok(compile_target(&kernel, &folder, mode, version))
+    })
+    .await
+}
+
 handler!(
     /// `target.add`: makes the target's folder and a first file to fill in.
     target_add,
     |_kernel, call| {
         let target = TargetName::new(call.required("name")?)?;
-        let folder = target_folder(&call, &target)?;
-        let file = folder.join("target.yaml")?;
-        if file.exists() {
-            return Err(codes::input(
-                codes::SCHEMA_INVALID,
-                format!("The project already has a target named `{target}`."),
-                "Choose another name, or work on the target that is there.",
-            ));
-        }
-        folder.create_dir_all()?;
+        let project_folder = call.project_folder()?.to_path_buf();
         let mut text = format!(
             "# The target `{target}`. Fill in its surfaces, then run `anything2mcp draft lint {target}`.\n\
              schema_version: 1\ntarget: {target}\ntitle: {target}\n"
@@ -85,7 +109,22 @@ handler!(
             ));
         }
         text.push_str("surfaces: {}\n");
-        file.write(text.as_bytes())?;
+        let named = target.clone();
+        // Looking at the folder and writing the file wait on the disk.
+        off_thread(move || {
+            let folder = target_folder(&project_folder, &named)?;
+            let file = folder.join("target.yaml")?;
+            if file.exists() {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("The project already has a target named `{named}`."),
+                    "Choose another name, or work on the target that is there.",
+                ));
+            }
+            folder.create_dir_all()?;
+            file.write(text.as_bytes())
+        })
+        .await?;
         Ok(Output::ok(json!({
             "target": target.as_str(),
             "folder": format!("{TARGETS_FOLDER}/{target}"),
@@ -104,8 +143,9 @@ handler!(
     draft_lint,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let folder = target_folder(&call, &target)?;
-        let output = match compile_target(kernel, &folder, CompileMode::Draft, DRAFT_VERSION) {
+        let compiled =
+            compiled_target(kernel, &call, &target, CompileMode::Draft, DRAFT_VERSION).await?;
+        let output = match compiled {
             Ok(compiled) => Output::ok(json!({
                 "target": target.as_str(),
                 "ok": true,
@@ -201,7 +241,6 @@ handler!(
     version_publish,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let folder = target_folder(&call, &target)?;
         let workspace = call.caller.principal.workspace;
         let listed = target.clone();
         let earlier = kernel
@@ -230,7 +269,8 @@ handler!(
                 "Publish under the next version.",
             ));
         }
-        let compiled = compile_target(kernel, &folder, CompileMode::Publish, version)
+        let compiled = compiled_target(kernel, &call, &target, CompileMode::Publish, version)
+            .await?
             .map_err(Failure::from)?;
         let tools: Vec<String> = compiled
             .plan

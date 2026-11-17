@@ -145,7 +145,7 @@ impl Kernel {
         after: u64,
         limit: u32,
     ) -> Result<RunEvents, Failure> {
-        let (workspace, principal) = (caller.workspace, caller.principal.id);
+        let (workspace, person) = (caller.workspace, caller.person());
         let limit = limit.clamp(1, EVENTS_PAGE);
         let (row, events, working) = self
             .store()?
@@ -153,7 +153,7 @@ impl Kernel {
                 let working = Scheduler::unfinished_job(tx, run)?.is_some();
                 let mut ledger = tx.ledger();
                 let row = ledger.run(run)?;
-                if row.workspace != workspace || row.principal != principal {
+                if row.workspace != workspace || Some(row.principal) != person {
                     return Err(codes::input(
                         codes::NOT_FOUND,
                         "There is no such run.",

@@ -205,7 +205,15 @@ pub(crate) struct Inner {
     local: bool,
     health: Mutex<Health>,
     fixed: Vec<Impaired>,
-    pub(crate) plans: Mutex<BTreeMap<Digest, Arc<Plan>>>,
+    /// The protected settings whose value is not the one in force. Any
+    /// one of them stops the kernel; `config.show` marks each.
+    pub(crate) not_in_force: Vec<crate::bounds::NotInForce>,
+    /// Where other programs keep their data on this machine: what a
+    /// project folder may not be.
+    pub(crate) places: crate::project::Places,
+    /// The plans read from the store, by target and hash, the newest
+    /// [`PLANS_KEPT`] of them.
+    pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
     pub(crate) runner: crate::runner::RunnerState,
     pub(crate) signals: Arc<RunSignals>,
     pub(crate) wake: Arc<Notify>,
@@ -362,12 +370,25 @@ impl Kernel {
                 }),
             }
         }
+        let mut not_in_force = Vec::new();
         if let (Some(store), Some(found)) = (&prepared.store, installation) {
+            // What the policy engine is opened with: the built-in set of
+            // the profile, and nothing else. The protected settings the
+            // policy engine works by are then that set's own, so a
+            // setting that says otherwise says what is not in force, and
+            // the kernel stops with its name (see `bounds`).
             let built_in = if local {
                 BuiltIn::local(found.user, found.workspace)
             } else {
                 BuiltIn::server()
             };
+            not_in_force = crate::bounds::not_in_force(&prepared.settings, &built_in);
+            for refused in &not_in_force {
+                fixed.push(Impaired {
+                    part: Part::Policy,
+                    failure: refused.failure.clone(),
+                });
+            }
             match Policy::open(store, built_in).await {
                 Ok((opened, surface)) => {
                     // The one handle that can record an approval goes to the
@@ -472,6 +493,8 @@ impl Kernel {
                 local,
                 health: Mutex::new(Health::of(Vec::new())),
                 fixed,
+                not_in_force,
+                places: crate::project::Places::of_process(),
                 plans: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
                 signals,
@@ -558,22 +581,40 @@ impl Kernel {
             std::mem::replace(&mut *held, health.clone())
         };
         if health.state > before.state {
-            self.audit(
-                "engine",
-                "health.lowered",
-                health.state.as_str(),
-                &health.cause(),
-            )
-            .await;
+            // See `audit`: nobody is told here when it cannot be written.
+            let _ = self
+                .audit(
+                    "engine",
+                    "health.lowered",
+                    health.state.as_str(),
+                    &health.cause(),
+                )
+                .await;
         }
         health
     }
 
     /// Writes one entry to the audit log, when there is a store to write
     /// it to. The detail passes the redactor inside the store.
-    pub(crate) async fn audit(&self, actor: &str, action: &str, subject: &str, detail: &str) {
+    ///
+    /// An action that changed something tells its caller when its entry
+    /// could not be written. The engine's own entries, a lowered health
+    /// state, changed settings, a close, have nobody to tell: an entry
+    /// that cannot be appended means the store cannot commit, which the
+    /// next look at the health state finds and reports.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub(crate) async fn audit(
+        &self,
+        actor: &str,
+        action: &str,
+        subject: &str,
+        detail: &str,
+    ) -> Result<(), Failure> {
         let (Some(store), Some(installation)) = (&self.inner.store, self.inner.installation) else {
-            return;
+            return Ok(());
         };
         let entry = AuditEntry {
             workspace: installation.workspace,
@@ -582,11 +623,11 @@ impl Kernel {
             subject: subject.to_owned(),
             detail: detail.to_owned(),
         };
-        let _ = store
+        store
             .write(Durability::Synced, move |tx| {
                 tx.audit().append(&entry).map(|_| ())
             })
-            .await;
+            .await
     }
 
     /// Records the digest of the effective settings and of the catalog at
@@ -609,7 +650,9 @@ impl Kernel {
             .await
             .unwrap_or(false);
         if changed {
-            self.audit("engine", "settings.changed", "settings", &settings)
+            // See `audit`: nobody is told here when it cannot be written.
+            let _ = self
+                .audit("engine", "settings.changed", "settings", &settings)
                 .await;
         }
     }
@@ -658,21 +701,17 @@ impl Kernel {
         }
     }
 
-    /// The caller a stopped engine answers status to: the local user when
-    /// the store never opened and so nobody can be named.
+    /// The caller a stopped engine answers status to, when the store never
+    /// opened and so nobody can be named: nobody. It is a principal of no
+    /// installation, which holds no role and no grant under any policy
+    /// set, so it is served only what a stopped kernel serves without a
+    /// decision: the engine's own status. A caller is named, with what it
+    /// may do, by [`Kernel::verify_caller`] and by nothing else.
     #[must_use]
     pub fn status_only_caller(&self) -> Principal {
-        let zero_workspace = WorkspaceId::from_bytes([0; 16]);
-        let zero_user = PrincipalId::from_bytes([0; 16]);
-        let (workspace, user) = self
-            .inner
-            .installation
-            .map_or((zero_workspace, zero_user), |found| {
-                (found.workspace, found.user)
-            });
         Principal {
-            principal: PrincipalRef::person(user),
-            workspace,
+            principal: PrincipalRef::person(PrincipalId::from_bytes([0; 16])),
+            workspace: WorkspaceId::from_bytes([0; 16]),
             acting_for: None,
         }
     }
@@ -861,19 +900,24 @@ impl Kernel {
         if let Some(keeper) = &self.inner.keeper {
             keeper.idle().await;
         }
-        self.audit(
-            "engine",
-            "engine.closed",
-            "engine",
-            match why {
-                CloseReason::Idle => "idle",
-                CloseReason::Asked => "asked",
-                CloseReason::Restart => "restart",
-            },
-        )
-        .await;
+        // See `audit`: nobody is told here when it cannot be written.
+        let _ = self
+            .audit(
+                "engine",
+                "engine.closed",
+                "engine",
+                match why {
+                    CloseReason::Idle => "idle",
+                    CloseReason::Asked => "asked",
+                    CloseReason::Restart => "restart",
+                },
+            )
+            .await;
     }
 }
+
+/// How many plans read from the store are kept in memory.
+pub(crate) const PLANS_KEPT: usize = 64;
 
 /// The shortest lease the in-process runner works under: three of the
 /// engine's default step limits and a heartbeat.

@@ -18,6 +18,7 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 6.
 
+mod bounds;
 mod catalog;
 pub mod codes;
 mod control;

@@ -48,8 +48,8 @@ pub type HttpRequest = axum::http::Request<axum::body::Body>;
 pub type HttpResponse = axum::http::Response<axum::body::Body>;
 
 /// Who the local channel saw connect. The mount puts one in each request's extensions,
-/// or a `Caller` the kernel already checked. Beside it the mount may put an
-/// `a2m_actions::ProjectFolder`: the folder the client end works in.
+/// or a `Caller` the kernel already checked. Beside it the mount may put the
+/// `ProjectFolder` of the action layer: the folder the client end works in.
 pub struct McpPeer { pub user: String, pub label: String }
 
 pub struct McpSettings {
@@ -166,7 +166,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 - **Where a list comes from.** It is built on each request: the registry's MCP faces, then the published tools, read through `tool.search` with `full`, twenty to a page, dispatched as the caller: one dispatch for each page, and one in all for a target of twenty tools or fewer. A page that the result size cap cut is asked for again at half the size. Nothing is kept between requests.
 - **Schemas.** The input schema in a list may be the compact form, provided every difference is exact or wider; today the full schema is listed. Output schemas are left out of the list; `tool.describe` returns them.
 - **Annotations.** `readOnlyHint` for `read`; `destructiveHint` for `irreversible` and for writes without a key; `idempotentHint` from the key.
-- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_limit`, which counts the built-in tools too; past it, pipelines beyond the cap move to search. The server instructions do not yet say so. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
+- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_limit`, which counts the built-in tools too; past it, pipelines beyond the cap move to search. The server instructions say that a tool that is not listed is found with `a2m_tool_search` and called with `a2m_tool_call`. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
 - **Full listing** is a setting for clients with their own tool search. It lists every operation, and changes nothing about how calls are checked.
 
 ## Calls and results

@@ -29,7 +29,7 @@ One service serves both revisions with no session for either ([decision 0071](..
 - **Explicit handles.** Because the protocol has no sessions, all continuity is carried by `run_id`, which matches the ledger's design exactly.
 - **One endpoint per toolset.** A toolset's list is the same for every caller connected to it; rights are checked at call time, and a refused call is a clear `policy` result. What each toolset lists, the names, descriptions, schemas, annotations, and results agents see, are in [section 221](221-the-tool-surface-agents-see.md).
 - **Calls.** A tool name of the form `a2m_<noun>_<verb>` is the action `noun.verb`. Any other name is `tool.call` with that name as its tool. The response is rendered as structured content matching the published output schema, a one-line summary, resource links for kept blobs, and, for a failure, the class, code, message, fix, and whether a retry is safe.
-- **Long jobs.** A long-running action returns its `run_id` at once. Pipelines are exposed through the official Tasks extension, where clients poll with `tasks/get`, answered by `run.get`, and can cancel, through `run.cancel`; and equally through `a2m_run_get` for clients without the extension. Progress is sent only to a caller that asked, as a rising count from the run's events.
+- **Long jobs.** A long-running action returns its `run_id` at once. Pipelines are exposed through the official Tasks extension, where clients poll with `tasks/get`, answered by `run.get`, and can cancel, through `run.cancel`; and equally through `a2m_run_get` for clients without the extension. Progress is sent only to a caller that asked, from the run's events: a rising count, and for each event that matters a sentence of the server's own, never text a system gave.
 - **Sign-in and approval links.** When a run rests at `needs_login` or `needs_approval`, the result carries the link the person surface gave. Where the client supports URL-mode elicitation, the same link is also sent as an elicitation. Following the link is never an approval by itself, so giving it to an agent is safe ([section 503](../5-security/503-approval-and-sign-in-surfaces.md)).
 - **Resources.** Traces, diffs, screenshots, and downloaded files are MCP resources, linked from results and never inlined.
 - **Found tools.** The stateless revision has no per-connection tool list. Until a client can be told of a changed list without a session, a tool found by search is called through the generic `a2m_tool_call`, and every call is checked against the full schema either way.
@@ -45,7 +45,7 @@ One service serves both revisions with no session for either ([decision 0071](..
 
 ## REST
 
-Every route is generated from an action. There are two forms: the action route, `POST /api/v1/actions/<noun>.<verb>`, for every action; and resource-shaped aliases that an action's definition declares.
+Every route is generated from an action, but two that dispatch none: the OpenAPI document and a run's events. There are two forms of a generated route: the action route, `POST /api/v1/actions/<noun>.<verb>`, for every action; and resource-shaped aliases that an action's definition declares.
 
 | Route | Action |
 | --- | --- |
@@ -54,14 +54,14 @@ Every route is generated from an action. There are two forms: the action route, 
 | `GET /api/v1/runs/{id}` | `run.get` |
 | `POST /api/v1/runs/{id}/resume`, `/cancel` | `run.resume`, `run.cancel` |
 | `GET /api/v1/sessions` | `session.status` |
-| `GET /api/v1/runs/{id}/events` | The event stream below, authorized as `run.get` |
+| `GET /api/v1/runs/{id}/events` | A run's events, below; served by `a2m-api`, not an action. The kernel shows a caller only a run the same caller started |
 | `GET /api/v1/openapi.json` | Generated from the registry; served by `a2m-api`, not an action |
 
 The two aliases of `tool.call` are not served yet: the catalog gives `tool.call` no alias, and an action has at most one, so an operation or a pipeline is called through `POST /api/v1/actions/tool.call` for now ([`a2m-api`](../../architecture/crates/a2m-api.md)).
 
 - **Calls.** `POST /api/v1/operations/{name}/calls` starts a call and returns a result or a `run_id`. An `Idempotency-Key` header is accepted on every call whose effect is a write.
 - **Status codes** come from the response's exit class alone: 200 for success; 202 for a run that rests waiting for a person or is still running; 400 for malformed; 401 for no caller; 403 for `policy`; 409 for `stale`; 429 and 503 for `busy`, with a retry time; 500 for anything else. The body is always the full response, so a client never needs the status code to know what happened.
-- **Events.** A run's events are a server-sent stream. It starts with every stored event after the `Last-Event-ID` the client sent, then follows new ones. Each event's identifier is its sequence number in the ledger, so a reconnecting client misses nothing and sees nothing twice. The stream ends with the run's final state. Events pass the redactor before they are stored.
+- **Events.** A run's events are read as one page of JSON from a sequence number, or, by a caller that accepts it, as a server-sent stream. The stream starts with every stored event after the `Last-Event-ID` the client sent, then follows new ones. Each event's identifier is its sequence number in the ledger, so a reconnecting client misses nothing and sees nothing twice. The stream ends when the run settles: when it has ended, or rests until someone acts, in which case the client opens the stream again after the run is resumed. Events pass the redactor before they are stored.
 - **Webhooks.** Run events are also delivered as signed webhooks, from an outbox written in the same transaction as the event it reports, so that no event is reported that did not happen and none that happened is lost. Delivery is at least once, with growing delays up to a limit; signed over the body and a timestamp with a key from the vault; deduplicable by the event's identifier. The destination comes from settings, is checked against the egress allowlist, and never comes from an input. With no destination configured, nothing is sent.
 - **Toolset export.** Any toolset can be exported as an OpenAPI document listing its target tools as operations, so platforms that consume OpenAPI actions instead of MCP can use the same tools.
 

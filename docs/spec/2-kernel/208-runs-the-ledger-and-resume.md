@@ -112,7 +112,7 @@ Then, for each record in a write run:
 1. Take the record lock.
 2. If the preview is older than the freshness window (60 seconds by default), or policy is strict, read the record again and compare it with what the preview saw. A difference stops the run with the class `stale` and the code `changed_since_preview`, because the approved diff no longer describes what would happen.
 3. Store the intent and receive its token. In a single process this is one synchronous database commit; on a split deployment the runner waits for the control plane's acknowledgement.
-4. Act: one commit point in the system, sent with the token.
+4. Act: one commit point in the system, sent with the token, and only while the job's lease covers the step's time limit.
 5. Mark `acted`, with any key the system assigned.
 6. Read back, normalize, compare. Mark `verified`, or stop with `mismatch` after one re-read.
 
@@ -171,6 +171,8 @@ The class alone decides what happens next ([section 207](207-the-engine-loop.md)
 | `possible_commit` | `stopped` | Quarantined until reconcile |
 
 The class `rejected` (the system refused the input) and the run state `rejected` (the inputs were invalid before anything ran) are different things; the first ends in `stopped`.
+
+**After the save was sent.** A record whose committing step was sent is failed with `policy`, `stale`, or `input`, the classes that release its lock, only when the system itself answered that it refused the write: `stale` for the version sent with it. Any other failure of those classes between the save and `verified`, in the save's own answer, a confirm step, or the read-back, is `possible_commit`: the lock is kept and reconcile decides. The engine holds this whatever a driver reports ([decision 0147](../../decisions/0147-the-engine-after-its-safety-audit.md)).
 
 A run stopped as `stale` ends `failed`, because resuming could never succeed: its approved diff no longer describes the system. It is therefore final, and rule 6 does not hand it back to an identical call; that call starts a new run with a new preview.
 

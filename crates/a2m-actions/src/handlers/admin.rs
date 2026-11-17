@@ -107,13 +107,23 @@ handler!(
     /// read back by any action.
     secret_set,
     |kernel, call| {
+        let mut call = call;
         let name = call.required("name")?.to_owned();
         // Standard input is the command line's to read: it sends what it
         // read as `value` and never sends the flag. A call that still
         // carries the flag came from a face with no standard input, or from
         // a command line that did not read it.
-        let value = match (call.text("value"), call.flag("stdin").unwrap_or(false)) {
-            (Some(value), false) => value,
+        let from_stdin = call.flag("stdin").unwrap_or(false);
+        // The value is taken out of the call, so that nothing that prints
+        // or keeps the call afterwards holds it, and the bytes it was
+        // handed over in are overwritten once the secret holds its own.
+        let secret = match (call.input.remove("value"), from_stdin) {
+            (Some(Json::String(value)), false) => {
+                let secret = Secret::new(value.as_str());
+                let mut handed = value.into_bytes();
+                handed.fill(0);
+                secret
+            }
             (Some(_), true) => {
                 return Err(codes::input(
                     codes::SCHEMA_INVALID,
@@ -128,7 +138,7 @@ handler!(
                     "Pipe the secret into `anything2mcp secret set <name> --stdin`.",
                 ));
             }
-            (None, false) => {
+            _ => {
                 return Err(codes::input(
                     codes::SCHEMA_INVALID,
                     "`secret.set` needs the secret.",
@@ -136,7 +146,6 @@ handler!(
                 ));
             }
         };
-        let secret = Secret::new(value);
         let reference = CredentialRef::new(&format!("{}{name}", CredentialRef::SCHEME))
             .map_err(|_| {
                 codes::input(
@@ -161,6 +170,8 @@ handler!(
                 &secret,
             )
             .await?;
+        // The secret is sealed. A change that cannot be written to the
+        // audit log is not reported as done.
         kernel
             .audit(
                 &principal.principal.id.to_string(),
@@ -168,7 +179,8 @@ handler!(
                 reference.as_str(),
                 "stored",
             )
-            .await;
+            .await
+            .map_err(|_| not_audited("The secret was stored"))?;
         Ok(Output::ok(
             json!({"name": reference.as_str(), "stored": true}),
         ))
@@ -204,18 +216,22 @@ handler!(
             }
             _ => (KillScope::Everything, HoldScope::Everything),
         };
+        // Releasing a switch is a person's act. The dispatcher asked for
+        // the proof before this ran, and checked that it is this caller's
+        // and of now; a call that reached here without one releases
+        // nothing.
         let presence = if on {
             None
         } else {
-            let def = kernel
-                .actions()
-                .find("killswitch.set")
-                .cloned()
-                .ok_or_else(not_registered)?;
             Some(
-                kernel
-                    .presence(&call.caller, &def, a2m_core::EffectClass::Write)
-                    .await?
+                call.presence
+                    .ok_or_else(|| {
+                        codes::policy(
+                            a2m_policy::PRESENCE_REQUIRED,
+                            "Releasing a kill switch is a person's act, and the call carries no proof that one is present.",
+                            "Run the command yourself, at a terminal, and answer the prompt.",
+                        )
+                    })?
                     .check(),
             )
         };
@@ -233,27 +249,45 @@ handler!(
             by,
             presence,
         };
-        let epoch = kernel
+        let scope = call.required("scope")?.to_owned();
+        let sched = kernel.sched()?;
+        // The policy engine's switch and the scheduler's hold are two
+        // writes. They are ordered so that a failure between them leaves
+        // the stricter state, and one the policy engine explains: a switch
+        // is set in the policy engine first, and released there last. The
+        // audit entry is written in the policy engine's own transaction.
+        if !on {
+            sched.release_hold(hold.clone()).await?;
+        }
+        let entry = a2m_ledger::AuditEntry {
+            workspace,
+            actor: by.to_string(),
+            action: "killswitch.set".to_owned(),
+            subject: scope.clone(),
+            detail: if on { "on" } else { "released" }.to_owned(),
+        };
+        let switched = kernel
             .store()?
             .write(Durability::Synced, move |tx| {
-                policy.set_kill_switch(tx, &switch)
+                let epoch = policy.set_kill_switch(tx, &switch)?;
+                tx.audit().append(&entry)?;
+                Ok(epoch)
             })
-            .await?;
-        let sched = kernel.sched()?;
+            .await;
+        let epoch = match switched {
+            Ok(epoch) => epoch,
+            Err(failure) => {
+                // The switch is still set in the policy engine: the hold
+                // goes back, so that the queue and the decisions agree.
+                if !on {
+                    let _ = sched.hold(hold).await;
+                }
+                return Err(failure);
+            }
+        };
         if on {
             sched.hold(hold).await?;
-        } else {
-            sched.release_hold(hold).await?;
         }
-        let scope = call.required("scope")?;
-        kernel
-            .audit(
-                &by.to_string(),
-                "killswitch.set",
-                scope,
-                if on { "on" } else { "released" },
-            )
-            .await;
         Ok(
             Output::ok(json!({"scope": scope, "on": on, "epoch": epoch})).then(Next::new(
                 "engine.status",
@@ -264,11 +298,13 @@ handler!(
     }
 );
 
-fn not_registered() -> Failure {
-    codes::input(
-        codes::NOT_FOUND,
-        "The action is not in the registry.",
-        "Call `action.search` to list the actions.",
+/// What a caller is told when a change was made and its audit entry could
+/// not be written.
+fn not_audited(done: &str) -> Failure {
+    codes::busy(
+        a2m_ledger::codes::STORE_UNAVAILABLE,
+        format!("{done}, and the audit entry for it could not be written."),
+        "Call `doctor.run`: the store may not be able to commit. Then do it again, so that the change is in the audit log.",
     )
 }
 

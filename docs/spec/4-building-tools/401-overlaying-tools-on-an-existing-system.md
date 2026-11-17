@@ -146,7 +146,7 @@ A real system is reachable at several levels at once: an interface, a backend, a
 The sandbox is where a draft runs before it is a version: `draft.try`, the drafted reads the scout tries, and every discovery job.
 
 - **Reads freely, writes only to declared test records.** A draft may read whatever its identity may read. It may write only to a record the developer declared as a test record ([section 403](403-testing-and-publish-gates.md)). Declaring one on a real system is a person's act ([section 402](402-the-scout-and-who-does-what.md)). Without one, a write can be drafted and can never be verified.
-- **A try is not a run.** The sandbox records its runs as tries, so no binding's health or shadow count changes. Drivers are prepared in a posture other than live, so each pack's own read-only guard is on.
+- **A try is not a run.** The sandbox records its runs as tries, so no binding's health or shadow count changes. Drivers are prepared in a posture other than live, so each pack's own read-only guard is on. The one exception is the driver context in which a declared test record is written: it is prepared for that write alone, and in it a pack lets through the step that commits and nothing else that changes the system.
 - **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside what a person registered for the target needs that person's confirmation ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)).
 - **Bounded.** Every try and every discovery has limits on time, size, and depth, and reports which it hit.
 

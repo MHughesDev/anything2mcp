@@ -532,6 +532,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("locked", JsonSchema::bool())
                     .optional("origin", text())
                     .optional("doc", text())
+                    .optional("in_force", JsonSchema::bool())
                     .optional("overridden", list_of(any_map()))))
                 .required("presets", list_of(text()))
                 .required("digest", text()))
@@ -575,6 +576,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("run_id", text())
                 .required("events", list_of(any_map()))
                 .optional("trace", text())
+                .optional("trace_check", text())
                 .optional("signature", text())
                 .optional("records", JsonSchema::int_between(0, i64::from(u32::MAX))))
             .done(),

@@ -59,12 +59,16 @@ impl Kernel {
         target: &TargetName,
         hash: &Digest,
     ) -> Result<Arc<Plan>, Failure> {
+        // A plan is kept under its target as well as its hash, and only
+        // after the store gave it for this installation's workspace, so a
+        // hash alone never finds a plan of another target.
+        let key = (target.clone(), *hash);
         if let Some(plan) = self
             .inner
             .plans
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(hash)
+            .get(&key)
         {
             return Ok(Arc::clone(plan));
         }
@@ -75,11 +79,18 @@ impl Kernel {
             .read(move |tx| tx.versions().load(&workspace, &target, &wanted))
             .await?;
         let plan = Arc::new(Plan::decode(&encoded.bytes, hash)?);
-        self.inner
+        let mut plans = self
+            .inner
             .plans
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(*hash, Arc::clone(&plan));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Bounded: when it is full it is emptied, and a plan is read from
+        // the store once more.
+        if plans.len() >= crate::kernel::PLANS_KEPT {
+            plans.clear();
+        }
+        plans.insert(key, Arc::clone(&plan));
+        drop(plans);
         Ok(plan)
     }
 

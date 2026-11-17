@@ -29,6 +29,7 @@ kernel_codes! {
     PATH_OUTSIDE_TARGET = "path_outside_target": "Nothing is read outside the target folder.",
     UNKNOWN_FILE = "unknown_file": "Every file belongs to a file kind somebody registered.",
     FILE_MISSING = "file_missing": "A target has a `target.yaml`.",
+    FILE_TOO_LARGE = "file_too_large": "A target file is at most 1 MiB, and a fixture's recorded file at most 16 MiB.",
     // Stage 2: validate.
     UNKNOWN_KEY = "unknown_key": "A map holds only the keys its schema lists.",
     MISSING_FIELD = "missing_field": "A required field is given.",
@@ -64,10 +65,14 @@ kernel_codes! {
     EFFECT_LOWER_THAN_DERIVED = "effect_lower_than_derived": "A declared effect is never lower than the derived one.",
     STEP_CYCLE = "step_cycle": "A pipeline step uses only the results of steps before it.",
     SURFACE_NOT_DECLARED = "surface_not_declared": "Nothing names a surface the target does not declare.",
+    SCOPE_INVALID = "scope_invalid": "A permission names one exact address or one name, once: no wildcard, no range of addresses, no path, and no user information.",
+    SURFACE_OF_ANOTHER_PACK = "surface_of_another_pack": "A lowering names a surface of a kind its own pack registered.",
     // Stage 7: lint.
     FOR_EACH_WITHOUT_CHECKPOINT = "for_each_without_checkpoint": "A `for_each` over a write has a checkpoint.",
     WRITE_PIPELINE_WITHOUT_LIMIT = "write_pipeline_without_limit": "A pipeline that writes declares a record limit.",
     CREDENTIAL_IN_FILE = "credential_in_file": "No file holds a credential; credentials are vault references.",
+    CREDENTIAL_SUSPECTED = "credential_suspected": "A value under a key that names a token, a cookie, an authorization, or a PIN is a name, an expression, or a vault reference.",
+    DRAFT_WITH_VERSION = "draft_with_version": "A draft is compiled as version 0.0.0, so that its plan cannot pass for a published one.",
     PROBE_INVALID = "probe_invalid": "A sign-in's probe is a read that can be made as the file gives it, and no surface is signed in to twice.",
     OPERATION_WITHOUT_TEST = "operation_without_test": "Every operation and pipeline has an offline test.",
     FIXTURE_NOT_SCRUBBED = "fixture_not_scrubbed": "A fixture a test names exists and carries the scrubbed marker.",
