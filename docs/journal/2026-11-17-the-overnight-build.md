@@ -33,6 +33,15 @@ The owner asked for the whole system to be built end to end, without stopping, b
 
 Pull request 11 carries everything above. It merged green on Windows, macOS, and Linux, after four runs: the first found the advisory, the second and third the three defects described under Learned.
 
+**Wave 5: the loop, the registry, and the first packs.**
+
+- `a2m-engine`: build-order steps 1 to 7 proven against the test application through a real driver and a real store behind `Control`: a read through every layer, the signed trace, the plan's hash checked at guard, `needs_login`, a verified write, comparison after normalization, and resume without a duplicate. Steps 8 to 10 (identity strategies, dependent records, pipelines, sources, the fault rows of section 224, the sandbox) are written and have no test yet.
+- `a2m-actions`: all 91 catalog actions as data, 26 served; the settings loader; `Kernel::prepare` and `Kernel::open`; the in-process `Control` and runner loop; the dispatcher; the person surface and the approval desk (0094, 0095). A tool call reads end to end, and a write rests for approval, is approved at the desk, and is written once.
+- Seven packs, each proven against its test stand through the driver handle with real intent tokens: HTTP (0096, 0097), command (0098, 0099), data (0100, 0101), file (0102, 0103), stream (0104, 0105), device, and MCP. None had yet run through the engine loop when this was written.
+- `a2m-pack-web-browser`: the browser engine on our own DevTools client, with 13 tests that drive a real browser against the test application (0110, 0111).
+
+Pull request 12 carries wave 5.
+
 ## Learned
 
 - **The designs were ready to be built in parallel, with one exception so far.** Sixteen crates were built by sixteen agents, and the interfaces between layers held. The exception was the plan: the compiler validated a dozen things from target files that the plan had no place for, above all the whole of the sign-in file. One follow-up pass fixed it before any crate above was written against the gap.
@@ -40,6 +49,8 @@ Pull request 11 carries everything above. It merged green on Windows, macOS, and
 - **Every large outside crate that the design named was refused on evidence,** and its replacement was small: the CEL interpreter, Cedar, a JSON Schema validator, the spreadsheet and csv readers, a DevTools client. What was kept from outside is what should not be written twice: a cipher, a key store, SQLite, a TLS stack, the MCP SDK, a YAML event parser, Unicode normalization, decimals.
 - **The closed licence list earned its keep.** It refused Cedar's build tree, two DevTools crates, and a WebDriver client, each for a real reason that a looser list would have let through.
 - **The three operating systems found four things in their first hour, and each was real.** The advisory check refused three unmaintained crates under the Linux key store, so that back end was removed and the check left alone ([decision 0123](../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)). On macOS, a signal to a process group whose only member is its exited leader answers "not permitted", which the supervisor read as a group it could not end. On Windows, a program that the supervisor ended looked like one that exited by itself with status 1, so a write cut off by shutdown would have read as an ordinary failure and not as a write in doubt. And a keeper test read what the keeper's task does after its last write without waiting for it, which the scheduling on Windows exposed; tracing it found two real inaccuracies in how the keeper reported being idle. None of the four could have been found on Linux.
+- **Every pack asked the provider contract for the same few things.** A place in a step's outcome for how the step was done, so the trace's signature can cover it; untrusted text from the system in a failure; the values kept for reconcile handed back to a step on resume; a clock for a discoverer; a session's lease at the moment of a request. Six agents who never saw each other's work each listed them. That agreement is the measurement hypothesis H-26 asked for: the kernel is neutral in shape, and its contract was a little too thin. The command pack forced one change to the plan (decision 0124); the rest wait for one pass after the end-to-end proofs exist.
+- **A disk that fills destroys files quietly.** A dozen agents building into one target folder filled the disk; files being written at that moment were left empty, and two agents had to rewrite theirs. Builds now carry no debug information and no incremental state, which made the folder nine times smaller.
 - **A shared tree needs shared numbers.** Decision records and store migrations are numbered, and agents working at once need their numbers handed out before they start.
 
 ## Changed in the design

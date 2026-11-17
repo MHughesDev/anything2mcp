@@ -195,6 +195,9 @@ impl StdioShared {
 
     /// Ends the connection after output that is not a message: every
     /// waiting request is given something that is not a response.
+    // A local server program is started on Unix only so far (the design says why),
+    // so nothing builds this link elsewhere yet.
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn poison(&self) {
         self.end_with(Some(Json::Null));
     }
@@ -225,6 +228,9 @@ pub(crate) struct StdioLink {
 
 /// Reads the program's output, one line a message, and hands each answer to
 /// the request that waits for it. Its end is the end of the program.
+// A local server program is started on Unix only so far (the design says why),
+// so nothing builds this link elsewhere yet.
+#[cfg_attr(not(unix), allow(dead_code))]
 async fn read_lines(
     from_child: Box<dyn AsyncRead + Send + Unpin>,
     shared: Arc<StdioShared>,
@@ -314,6 +320,9 @@ impl Drop for CancelOnDrop {
 }
 
 impl StdioLink {
+    // A local server program is started on Unix only so far (the design says why),
+    // so nothing builds this link elsewhere yet.
+    #[cfg_attr(not(unix), allow(dead_code))]
     /// A link over the two ends of a program's standard streams.
     pub(crate) fn new(
         to_child: Box<dyn AsyncWrite + Send + Unpin>,
@@ -648,6 +657,9 @@ impl HttpLink {
 
 /// The stream a client speaks over.
 pub(crate) enum Link {
+    // A local server program is started on Unix only so far (the design says why),
+    // so nothing builds this link elsewhere yet.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Stdio(StdioLink),
     Http(HttpLink),
 }
