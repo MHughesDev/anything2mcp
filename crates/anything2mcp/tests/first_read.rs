@@ -2,6 +2,12 @@
 //! value read from the test application, through the command line and the
 //! HTTP pack.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use common::Machine;

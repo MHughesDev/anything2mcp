@@ -1,6 +1,6 @@
 # 0071. The MCP server stands on the official SDK behind a seam, and serves two revisions
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision. Superseded in part by [decision 0130](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md): the server no longer stands on the SDK; the revisions served and the rule for agreeing on one stand. The owner had not read this record when it was merged.
 
 **Date:** 2026-11-17
 

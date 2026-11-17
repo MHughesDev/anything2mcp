@@ -1,6 +1,6 @@
 # 0115. The MCP endpoint as built: checks in front of the SDK, and a redactor on the way out
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision. Superseded in part by [decision 0130](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md): what it says of the SDK. The owner had not read this record when it was merged.
 
 **Date:** 2026-11-17
 

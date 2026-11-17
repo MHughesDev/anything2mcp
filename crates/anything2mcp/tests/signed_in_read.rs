@@ -8,6 +8,12 @@
 //! its answer, so that a secret the system itself returns is seen to be
 //! masked.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use common::service::Service;

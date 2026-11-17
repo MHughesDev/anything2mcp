@@ -3,6 +3,12 @@
 //! of system. Target files in a project folder, lint, publish, and one
 //! value read from the pack's test stand, which is asked what it holds.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use std::path::Path;

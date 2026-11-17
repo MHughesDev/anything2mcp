@@ -12,6 +12,7 @@ Does the product's MCP server stand on the official Rust SDK crate, `rmcp`, or o
 - Serving both is what keeps any client from being preferred. Of the eight client configurations tried, all eight worked against a server that serves both. Three could not use a server that serves only 2026-07-28, and two could not use a server that serves only 2025-11-25.
 - The SDK passes the licence check with the closed list unchanged, builds for all three operating systems, takes its tool list from data at run time, and costs about 25 seconds of processor time in a cold release build and 13 to 17 crates the product does not have yet.
 - The hand-written layer is smaller and passed every check. It was only built for stdio. The part still to write, the HTTP binding of the newer revision, is where most of the rules are.
+- Since then the product has left the SDK for a layer of its own, HTTP binding included, because the advisory check refused a crate in the SDK's tree ([decision 0130](../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)).
 
 ## What was run, and what was only read
 

@@ -247,13 +247,13 @@ impl Tree {
                 parse_args(face, &face.args, step.argument, rest)?
             } else {
                 // Several actions share one argument and nothing else.
-                let (positional, flags) = tokens(rest)?;
-                if let Some((flag, _)) = flags.first() {
+                let (positional, flag) = tokens(rest);
+                if let Some(flag) = flag {
                     return Err(malformed(
                         format!(
                             "The shortcut `{}` takes one argument and no flag, and `{}` was given.",
                             shortcut.word,
-                            shown(flag)
+                            shown(&flag)
                         ),
                         format!("Run `{PROGRAM} {} --help`.", shortcut.word),
                     ));
@@ -419,13 +419,11 @@ fn split_globals(args: &[String]) -> Result<(Globals, bool, Vec<String>), Failur
     Ok((globals, help, rest))
 }
 
-/// Splits a command's own arguments into the words given without a flag
-/// and the flags, each with its value when one was written with `=`.
-/// Whether a flag takes the next word is the caller's to say, so this
-/// keeps the order and the caller walks it.
-fn tokens(rest: &[String]) -> Result<(Vec<String>, Vec<(String, Option<String>)>), Failure> {
+/// Splits a shortcut's arguments into the words given without a flag and
+/// the first flag among them, if there is one.
+fn tokens(rest: &[String]) -> (Vec<String>, Option<String>) {
     let mut positional = Vec::new();
-    let mut flags = Vec::new();
+    let mut flag = None;
     let mut literal = false;
     for arg in rest {
         if literal {
@@ -433,15 +431,12 @@ fn tokens(rest: &[String]) -> Result<(Vec<String>, Vec<(String, Option<String>)>
         } else if arg == "--" {
             literal = true;
         } else if arg.starts_with("--") {
-            match arg.split_once('=') {
-                Some((name, value)) => flags.push((name.to_owned(), Some(value.to_owned()))),
-                None => flags.push((arg.clone(), None)),
-            }
+            flag.get_or_insert_with(|| arg.clone());
         } else {
             positional.push(arg.clone());
         }
     }
-    Ok((positional, flags))
+    (positional, flag)
 }
 
 /// One argument's written value as the JSON its type asks for.

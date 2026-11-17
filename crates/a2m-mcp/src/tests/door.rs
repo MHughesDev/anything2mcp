@@ -62,6 +62,34 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
         assert_eq!(service.handle(request).await.status().as_u16(), 405);
     }
 
+    // The message is JSON, and its caller takes either kind of answer.
+    for (headers, status) in [
+        (vec![("content-type", "text/plain")], 415),
+        (vec![("accept", "text/html")], 406),
+        (vec![("accept", "application/json")], 406),
+        (vec![("accept", "*/*")], 200),
+        (
+            vec![("content-type", "application/json; charset=utf-8")],
+            200,
+        ),
+    ] {
+        let mut request = axum::http::Request::post("/mcp/use").header("host", "localhost");
+        for (name, value) in [
+            ("content-type", "application/json"),
+            ("accept", "application/json, text/event-stream"),
+        ] {
+            let given = headers.iter().find(|(given, _)| *given == name);
+            request = request.header(name, given.map_or(value, |(_, value)| *value));
+        }
+        let mut request = request.body(axum::body::Body::from(ping.clone())).unwrap();
+        request.extensions_mut().insert(super::world::peer());
+        assert_eq!(
+            service.handle(request).await.status().as_u16(),
+            status,
+            "{headers:?}"
+        );
+    }
+
     // A caller the channel did not name, a peer that is not this engine's
     // user, and a bearer token, which this build's kernel refuses. The
     // token is in nothing that comes back.

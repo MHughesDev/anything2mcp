@@ -3,6 +3,12 @@
 //! the approval surface lets `run resume` complete it, and the test
 //! application confirms exactly one write.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use a2m_actions::PresenceProof;

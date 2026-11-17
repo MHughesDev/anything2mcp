@@ -3,6 +3,12 @@
 //! output contract holds for every command, and the exit code follows the
 //! failure.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
 mod common;
 
 use std::collections::BTreeSet;
