@@ -298,7 +298,8 @@ impl JsonSchema {
     ///
     /// # Errors
     ///
-    /// Every place that does not fit, in the order the values are walked.
+    /// Every place that does not fit, in the order the values are walked:
+    /// a map's members in order of name, then its missing fields.
     pub fn check_values(&self, values: &Values) -> Result<(), Misfits> {
         self.check_value(&Value::Record(values.clone()))
     }
@@ -613,7 +614,15 @@ impl Checkable for serde_json::Value {
             Self::String(text) => View::Text(text),
             Self::Array(items) => list_view(at, items),
             Self::Object(members) => {
-                map_view(at, members.iter().map(|(key, value)| (key.as_str(), value)))
+                // In order of name, as named values are, whichever order the
+                // JSON library keeps: the order of the findings is the same
+                // in every build.
+                let mut sorted: Vec<(&str, &Self)> = members
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value))
+                    .collect();
+                sorted.sort_by_key(|(key, _)| *key);
+                map_view(at, sorted.into_iter())
             }
             Self::Null => View::Other,
         }
@@ -962,6 +971,8 @@ pub(crate) fn shown(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use a2m_core::{Decimal, Failure, FailureClass, FailureCode, Value, Values};
+
     use super::{JsonSchema, Reference};
     use crate::doc::RelPath;
     use crate::yaml::parse;
@@ -1027,6 +1038,276 @@ mod tests {
             check("screen: order.form\ncontrol: {open_question: \"Which control is this?\"}\n");
         assert_eq!(checked.diagnostics.len(), 1);
         assert_eq!(checked.diagnostics[0].code.as_str(), "kernel.open_question");
+    }
+
+    /// The input of an imaginary action that enters an order.
+    fn input() -> JsonSchema {
+        let line = JsonSchema::object()
+            .required("sku", JsonSchema::name())
+            .required("quantity", JsonSchema::int_between(1, 99))
+            .optional("price", JsonSchema::decimal());
+        JsonSchema::object()
+            .required("order_id", JsonSchema::text())
+            .required("lines", JsonSchema::non_empty_list(line))
+            .optional("status", JsonSchema::words(&["draft", "verified"]))
+            .optional("urgent", JsonSchema::bool())
+            .optional("surface", JsonSchema::surface())
+            .optional("labels", JsonSchema::map_of(JsonSchema::text()))
+            .optional(
+                "key",
+                JsonSchema::either(vec![
+                    JsonSchema::name(),
+                    JsonSchema::non_empty_list(JsonSchema::name()),
+                ]),
+            )
+    }
+
+    fn line(sku: &str, quantity: i64) -> Value {
+        Value::Record(Values::new().with("sku", sku).with("quantity", quantity))
+    }
+
+    fn fitting() -> Values {
+        let priced = Values::new()
+            .with("sku", "widget")
+            .with("quantity", 2_i64)
+            .with("price", Decimal::parse("12.50").unwrap());
+        Values::new()
+            .with("order_id", "SO-1001")
+            .with("lines", vec![Value::Record(priced), line("gadget", 99)])
+            .with("status", "draft")
+            .with("urgent", true)
+            .with("surface", "desk")
+            .with("labels", Values::new().with("open_question", "none"))
+            .with("key", vec![Value::from("order_id")])
+    }
+
+    fn fitting_json() -> serde_json::Value {
+        serde_json::json!({
+            "order_id": "SO-1001",
+            "lines": [
+                {"sku": "widget", "quantity": 2, "price": "12.50"},
+                {"sku": "gadget", "quantity": 99, "price": 12},
+            ],
+            "status": "verified",
+            "urgent": false,
+            "labels": {"colour": "red"},
+            "key": "order_id",
+        })
+    }
+
+    #[test]
+    fn run_time_values_and_json_that_fit_a_schema_pass() {
+        assert_eq!(input().check_values(&fitting()), Ok(()));
+        assert_eq!(input().check_json(&fitting_json()), Ok(()));
+        assert_eq!(
+            JsonSchema::text().check_value(&Value::from("SO-1001")),
+            Ok(())
+        );
+        assert_eq!(
+            JsonSchema::any().check_value(&Value::Date(a2m_core::Date::new(2026, 11, 17).unwrap())),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn each_kind_of_misfit_in_run_time_values_is_refused_with_the_path_of_the_field() {
+        type Change = fn(&mut Values);
+        fn lines(values: &mut Values, change: fn(&mut Vec<Value>)) {
+            let Some(Value::List(mut items)) = values.remove("lines") else {
+                panic!("no lines");
+            };
+            change(&mut items);
+            values.insert("lines", items);
+        }
+        let cases: [(Change, &str, &str, &str); 10] = [
+            (
+                |values| {
+                    values.remove("order_id");
+                },
+                "",
+                "kernel.missing_field",
+                "`order_id`",
+            ),
+            (
+                |values| {
+                    values.insert("order_id", 1001_i64);
+                },
+                "order_id",
+                "kernel.wrong_type",
+                "whole number",
+            ),
+            (
+                |values| lines(values, Vec::clear),
+                "lines",
+                "kernel.missing_field",
+                "at least 1",
+            ),
+            (
+                |values| lines(values, |items| items[0] = line("widget", 100)),
+                "lines[0].quantity",
+                "kernel.unknown_value",
+                "from 1 to 99",
+            ),
+            (
+                |values| lines(values, |items| items[1] = line("Not A Name", 1)),
+                "lines[1].sku",
+                "kernel.name_malformed",
+                "not a name",
+            ),
+            (
+                |values| {
+                    lines(values, |items| {
+                        let day = a2m_core::Date::new(2026, 11, 17).unwrap();
+                        items[1] = Value::Record(
+                            Values::new()
+                                .with("sku", "gadget")
+                                .with("quantity", 1_i64)
+                                .with("price", day),
+                        );
+                    });
+                },
+                "lines[1].price",
+                "kernel.wrong_type",
+                "a date",
+            ),
+            (
+                |values| {
+                    values.insert("status", "secret-word");
+                },
+                "status",
+                "kernel.unknown_value",
+                "one of the words",
+            ),
+            (
+                |values| {
+                    values.insert("statuss", "draft");
+                },
+                "statuss",
+                "kernel.unknown_key",
+                "`statuss`",
+            ),
+            (
+                |values| {
+                    values.insert("labels", Values::new().with("colour", 7_i64));
+                },
+                "labels.colour",
+                "kernel.wrong_type",
+                "needs text",
+            ),
+            (
+                |values| {
+                    values.insert("key", Values::new());
+                },
+                "key",
+                "kernel.wrong_type",
+                "a name, or a list",
+            ),
+        ];
+        for (change, path, code, says) in cases {
+            let mut values = fitting();
+            change(&mut values);
+            let misfits = input().check_values(&values).unwrap_err();
+            let [misfit] = misfits.as_slice() else {
+                panic!("{path}: {misfits}");
+            };
+            assert_eq!((misfit.path.as_str(), misfit.code.as_str()), (path, code));
+            assert!(misfit.message.contains(says), "{misfit}");
+            assert!(!misfit.fix.is_empty(), "{path}");
+            // A message names the kind and the path, never the value.
+            for value in ["Not A Name", "secret-word", "100", "1001"] {
+                assert!(!misfits.to_string().contains(value), "{misfits}");
+            }
+            let failure = Failure::from(misfits);
+            assert_eq!(failure.class(), FailureClass::Input);
+            assert_eq!(failure.code(), &FailureCode::SCHEMA_INVALID);
+            assert!(
+                path.is_empty() || failure.message().contains(path),
+                "{failure}"
+            );
+            assert!(!failure.next_step().is_empty());
+        }
+    }
+
+    #[test]
+    fn json_is_checked_as_the_published_schema_describes_it() {
+        type Change = fn(&mut serde_json::Value);
+        let cases: [(Change, &str, &str); 6] = [
+            // A number with a fraction is no exact number and no whole one.
+            (
+                |json| json["lines"][0]["price"] = serde_json::json!(12.5),
+                "lines[0].price",
+                "kernel.wrong_type",
+            ),
+            (
+                |json| json["lines"][1]["quantity"] = serde_json::json!(1.0),
+                "lines[1].quantity",
+                "kernel.wrong_type",
+            ),
+            (
+                |json| json["lines"][1]["quantity"] = serde_json::json!("2"),
+                "lines[1].quantity",
+                "kernel.wrong_type",
+            ),
+            // In JSON a truth value is never one of a list of words.
+            (
+                |json| json["status"] = serde_json::json!(true),
+                "status",
+                "kernel.wrong_type",
+            ),
+            (
+                |json| json["urgent"] = serde_json::Value::Null,
+                "urgent",
+                "kernel.wrong_type",
+            ),
+            (
+                |json| json["lines"][0]["note"] = serde_json::json!("x"),
+                "lines[0].note",
+                "kernel.unknown_key",
+            ),
+        ];
+        for (change, path, code) in cases {
+            let mut json = fitting_json();
+            change(&mut json);
+            let misfits = input().check_json(&json).unwrap_err();
+            let found: Vec<(&str, &str)> = misfits
+                .as_slice()
+                .iter()
+                .map(|misfit| (misfit.path.as_str(), misfit.code.as_str()))
+                .collect();
+            assert_eq!(found, vec![(path, code)]);
+        }
+        // The root itself, and every place at once, in the order walked.
+        let misfits = input().check_json(&serde_json::json!([])).unwrap_err();
+        assert_eq!(misfits.paths().collect::<Vec<_>>(), vec![""]);
+        let misfits = input()
+            .check_json(
+                &serde_json::json!({"order_id": 1, "lines": [{"sku": "a"}], "urgent": "no"}),
+            )
+            .unwrap_err();
+        assert_eq!(
+            misfits.paths().collect::<Vec<_>>(),
+            vec!["lines[0]", "order_id", "urgent"]
+        );
+        let failure = Failure::from(misfits);
+        assert!(failure.message().contains("`lines[0]`"), "{failure}");
+        assert!(failure.message().contains("`quantity`"), "{failure}");
+        assert!(failure.message().contains("2 more places"), "{failure}");
+    }
+
+    #[test]
+    fn a_file_and_run_time_values_break_the_same_rule_in_the_same_words() {
+        let checked = check("screen: order.form\ncontrol: text\nfields: [a]\n");
+        let from_file = &checked.diagnostics[0];
+        let values = Values::new()
+            .with("screen", "order.form")
+            .with("control", "text")
+            .with("fields", vec![Value::from("a")]);
+        let misfits = schema().check_values(&values).unwrap_err();
+        let at_run_time = &misfits.as_slice()[0];
+        assert_eq!(from_file.code, at_run_time.code);
+        assert_eq!(from_file.message, at_run_time.message);
+        assert_eq!(from_file.fix, at_run_time.fix);
+        assert_eq!(at_run_time.path, "fields");
     }
 
     #[test]

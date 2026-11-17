@@ -1,10 +1,7 @@
 //! The names the pack registers, and its failure and lint codes. Each is
 //! written once, here.
 
-use a2m_core::{
-    Failure, FailureClass, FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind,
-    SurfaceKind, Verb,
-};
+use a2m_core::{Failure, FileKindName, FindingKind, Mode, StepKind, SurfaceKind, Verb};
 
 /// The pack's own name, as its manifest states it.
 pub(crate) const PACK: &str = "data";
@@ -151,10 +148,3 @@ pub(crate) mod lint {
     }
 }
 
-#[allow(unused_imports)] // the macro above is used inside `codes` only
-pub(crate) use codes as failure_codes;
-
-/// A lint code of the pack, for a place that takes one by value.
-pub(crate) fn code(code: &LintCode) -> LintCode {
-    code.clone()
-}

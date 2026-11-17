@@ -96,6 +96,10 @@ code = "tls_not_enabled"
 class = "input"
 code = "not_built"
 
+[[failure_codes]]
+class = "input"
+code = "payload_unreadable"
+
 [[lint_rules]]
 code = "mcp.tool_unmapped"
 level = "error"

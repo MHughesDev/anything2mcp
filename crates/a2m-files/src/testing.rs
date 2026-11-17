@@ -7,6 +7,23 @@
 //! `upsert` of the mode `stand` into steps of the kinds `fetch` and `send`.
 //! It registers one control, one lint rule, and one drafting rule. The
 //! `example` target under `targets/example/` is written for it.
+//!
+//! Two ways to use it. [`stand_set`] gives a compiler set with the pack in
+//! it, for a test that only compiles. A test that needs a whole pack, with
+//! a driver beside the compiler side, registers the parts itself through
+//! `a2m-provider`: [`surface_kind_spec`], [`control`], [`file_kind`],
+//! [`lowering`], [`lint_rule`], and [`drafting_rule`] are the objects, and
+//! [`PACK`], [`FOLDER`], [`surface_kind`], [`call_kind`], [`mode`],
+//! [`verbs`], [`step_kinds`], [`lint_code`], and [`finding_kind`] are the
+//! names its manifest declares.
+//!
+//! What a driver for the pack meets in a plan: a `fetch` step reads and may
+//! report a record absent; a `send` step writes, and commits when its call's
+//! effect is `write`. Each step refers to its call by name in the pack
+//! section of the kind `call`, whose payload is a JSON map from the call's
+//! name to its `path`, its `effect`, its `surface`, and, where the call has
+//! one, `accept`, the index of an expression. A step's arguments are the
+//! placeholders of the call's path, then the binding's other `args`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -63,6 +80,39 @@ pub fn mode() -> Mode {
     name!(Mode, "stand")
 }
 
+/// The folder the pack's file kind lives in.
+pub const FOLDER: &str = "calls";
+
+/// The one control the pack registers.
+#[must_use]
+pub fn control() -> ControlName {
+    name!(ControlName, "box")
+}
+
+/// The verbs the pack lowers. The first is the mode's default verb.
+#[must_use]
+pub fn verbs() -> Vec<Verb> {
+    vec![name!(Verb, "read"), name!(Verb, "upsert")]
+}
+
+/// The kinds of step the pack's lowering emits, which its driver must know.
+#[must_use]
+pub fn step_kinds() -> Vec<StepKind> {
+    vec![name!(StepKind, "fetch"), name!(StepKind, "send")]
+}
+
+/// The code of the pack's lint rule.
+#[must_use]
+pub fn lint_code() -> LintCode {
+    code("path_not_rooted")
+}
+
+/// The kind of finding the pack's drafting rule reads.
+#[must_use]
+pub fn finding_kind() -> FindingKind {
+    name!(FindingKind, "stand_call")
+}
+
 fn code(rule: &str) -> LintCode {
     name!(LintCode, &format!("{PACK}.{rule}"))
 }
@@ -100,7 +150,7 @@ impl FileKind for CallKind {
     }
 
     fn folder(&self) -> &str {
-        "calls"
+        FOLDER
     }
 
     fn schema(&self) -> &JsonSchema {
@@ -378,7 +428,7 @@ struct CallHasLeadingSlash;
 
 impl LintRule for CallHasLeadingSlash {
     fn code(&self) -> LintCode {
-        code("path_not_rooted")
+        lint_code()
     }
 
     fn level(&self, mode: CompileMode) -> Level {
@@ -414,7 +464,7 @@ struct CallFromFinding;
 
 impl DraftingRule for CallFromFinding {
     fn finding_kind(&self) -> FindingKind {
-        name!(FindingKind, "stand_call")
+        finding_kind()
     }
 
     fn file_kind(&self) -> FileKindName {
@@ -448,6 +498,72 @@ impl DraftingRule for CallFromFinding {
     }
 }
 
+/// The pack's surface kind, as data: an address, an optional profile, and
+/// an optional helper program with its digest, which is the one program a
+/// surface of this kind declares.
+#[must_use]
+pub fn surface_kind_spec() -> SurfaceKindSpec {
+    SurfaceKindSpec {
+        kind: surface_kind(),
+        address_key: "address".to_owned(),
+        fields: JsonSchema::object()
+            .required("address", JsonSchema::text())
+            .optional("profile", JsonSchema::name())
+            .optional("helper", JsonSchema::text())
+            .optional("helper_digest", JsonSchema::text()),
+        programs: vec![ProgramField {
+            path_key: "helper".to_owned(),
+            digest_key: Some("helper_digest".to_owned()),
+        }],
+    }
+}
+
+/// The pack's file kind, `call`, for surfaces of the kind `stand`.
+#[must_use]
+pub fn file_kind() -> Arc<dyn FileKind> {
+    Arc::new(CallKind {
+        schema: JsonSchema::object()
+            .required("call", JsonSchema::name())
+            .optional("surface", JsonSchema::surface())
+            .required("path", JsonSchema::text())
+            .required("effect", JsonSchema::words(&["read", "write"]))
+            .optional("control", JsonSchema::control())
+            .optional("accept", JsonSchema::expression()),
+        kinds: vec![surface_kind()],
+    })
+}
+
+/// The pack's lowering of the mode `stand`, for the verbs of [`verbs`].
+#[must_use]
+pub fn lowering() -> Arc<dyn Lowering> {
+    Arc::new(StandLowering {
+        schema: JsonSchema::object()
+            .required("call", JsonSchema::name())
+            .optional("args", JsonSchema::map_of(JsonSchema::expression()))
+            .optional(
+                "read_back",
+                JsonSchema::object()
+                    .required("call", JsonSchema::name())
+                    .optional("prefer", JsonSchema::words(&["response"])),
+            ),
+        verbs: verbs(),
+        reads: Vec::new(),
+        step_kinds: step_kinds(),
+    })
+}
+
+/// The pack's lint rule: a call's path starts with a slash.
+#[must_use]
+pub fn lint_rule() -> Arc<dyn LintRule> {
+    Arc::new(CallHasLeadingSlash)
+}
+
+/// The pack's drafting rule: from a `stand_call` finding to a `call` file.
+#[must_use]
+pub fn drafting_rule() -> Arc<dyn DraftingRule> {
+    Arc::new(CallFromFinding)
+}
+
 /// The kinds of thing the pack registers, as [`register_part`] names them.
 pub const STAND_PARTS: &[&str] = &[
     "surface_kind",
@@ -469,55 +585,12 @@ pub fn register_part(
     part: &str,
 ) -> Result<(), Failure> {
     match part {
-        "surface_kind" => builder.surface_kind(
-            pack,
-            SurfaceKindSpec {
-                kind: surface_kind(),
-                address_key: "address".to_owned(),
-                fields: JsonSchema::object()
-                    .required("address", JsonSchema::text())
-                    .optional("profile", JsonSchema::name())
-                    .optional("helper", JsonSchema::text())
-                    .optional("helper_digest", JsonSchema::text()),
-                programs: vec![ProgramField {
-                    path_key: "helper".to_owned(),
-                    digest_key: Some("helper_digest".to_owned()),
-                }],
-            },
-        )?,
-        "control" => builder.control(pack, name!(ControlName, "box"))?,
-        "file_kind" => builder.file_kind(
-            pack,
-            Arc::new(CallKind {
-                schema: JsonSchema::object()
-                    .required("call", JsonSchema::name())
-                    .optional("surface", JsonSchema::surface())
-                    .required("path", JsonSchema::text())
-                    .required("effect", JsonSchema::words(&["read", "write"]))
-                    .optional("control", JsonSchema::control())
-                    .optional("accept", JsonSchema::expression()),
-                kinds: vec![surface_kind()],
-            }),
-        )?,
-        "lowering" => builder.lowering(
-            pack,
-            Arc::new(StandLowering {
-                schema: JsonSchema::object()
-                    .required("call", JsonSchema::name())
-                    .optional("args", JsonSchema::map_of(JsonSchema::expression()))
-                    .optional(
-                        "read_back",
-                        JsonSchema::object()
-                            .required("call", JsonSchema::name())
-                            .optional("prefer", JsonSchema::words(&["response"])),
-                    ),
-                verbs: vec![name!(Verb, "read"), name!(Verb, "upsert")],
-                reads: Vec::new(),
-                step_kinds: vec![name!(StepKind, "fetch"), name!(StepKind, "send")],
-            }),
-        )?,
-        "lint_rule" => builder.lint_rule(pack, Arc::new(CallHasLeadingSlash))?,
-        _ => builder.drafting_rule(pack, Arc::new(CallFromFinding))?,
+        "surface_kind" => builder.surface_kind(pack, surface_kind_spec())?,
+        "control" => builder.control(pack, control())?,
+        "file_kind" => builder.file_kind(pack, file_kind())?,
+        "lowering" => builder.lowering(pack, lowering())?,
+        "lint_rule" => builder.lint_rule(pack, lint_rule())?,
+        _ => builder.drafting_rule(pack, drafting_rule())?,
     };
     Ok(())
 }
