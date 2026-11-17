@@ -9,7 +9,7 @@ Turns an input into validated records. It defines `SourceReader`, carries the bu
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`, for values, the plan's `SourcePlan` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). It does not depend on `a2m-files`: the compiler writes the source definition into the plan as data, and this crate reads that data back. It does not use `a2m-telemetry` yet |
+| Depends on | `a2m-core`, for values, the plan's `SourcePlan` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). `a2m-files`, for the source definition's types, which are defined there once, beside the file formats, and used here ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): the compiler writes a `SourceSpec` into the plan, and this crate reads the same type back. It does not use `a2m-telemetry` yet |
 | Built in | Phase 3, group D and slice 3.9 |
 | Carries out | Spec sections [210](../../spec/2-kernel/210-sources-and-value-normalization.md), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (a file is read once, its content checked), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) (step 1 of the preview), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (the structure of a real file, for the drafter); the `sources/*.yaml` part of the [file formats](../../reference/file-formats.md#sourcesyaml) |
 
@@ -18,7 +18,7 @@ Turns an input into validated records. It defines `SourceReader`, carries the bu
 - `SourceReader`, the extension point for a format.
 - The built-in readers for xlsx, csv, and json, and the content check that an input is the format it claims.
 - Template fingerprints: how each is computed, and the list of differences when an input matches no known version.
-- `SourceSpec`, the compiled source definition: the payload of the plan's `SourcePlan`.
+- Loading `SourceSpec`, the compiled source definition, from the payload of the plan's `SourcePlan`. The type is `a2m-files`'s; this crate names it again for its callers and has no copy.
 - Applying a mapping: locating the data, filtering rows, turning cells into row fields of declared types.
 - `ValidatedRecords`: the only form in which the engine receives a source's rows.
 - Describing an input's structure, for a discoverer to turn into a finding.
@@ -34,7 +34,7 @@ As built. The names are the ones `src/lib.rs` exports.
 /// One input: bytes the caller has already read once and stored. There is no path.
 pub struct SourceInput<'a> { pub bytes: &'a [u8], pub limits: Limits, pub options: ReaderOptions }
 pub struct Limits { pub bytes: u64, pub unpacked_bytes: u64, pub rows: u32, pub cells: u32, pub cell_bytes: u32 }
-pub struct ReaderOptions { pub delimiter: Option<char> }   // the dialect a source definition declares
+pub struct ReaderOptions { pub delimiter: Option<char> }   // the dialect a source definition declares; defined in the compiler's crate
 
 pub trait SourceReader: Send + Sync {
     fn name(&self) -> &ReaderName;                           // `xlsx`, `csv`, `json`, or a plug-in's
@@ -60,10 +60,11 @@ pub enum RawCell { Empty, Text(String), Number(String), Bool(bool), DateSerial(S
 pub struct Structure { pub date_system: Option<DateSystem>, pub sheets: Vec<SheetStructure>, pub names: Vec<DefinedName>, pub macros: bool, pub signed: bool }
 pub struct SheetStructure { pub name: String, pub hidden: bool, pub headers: Vec<String>, pub merged: Vec<CellRange>, pub tables: Vec<TableStructure>, pub lists: Vec<DropdownList> }
 impl Structure { pub fn fingerprint(&self) -> Fingerprint; }
-pub struct Fingerprint { pub digest: Digest, pub parts: Vec<FingerprintPart> }
-impl Fingerprint { pub fn differences(&self, found: &Fingerprint) -> Vec<Problem>; pub fn is_sound(&self) -> bool; }
+pub fn differences(known: &Fingerprint, found: &Fingerprint) -> Vec<Problem>;   // what an input lacks, adds, or changes
 
-/// The compiled source definition: the payload of the plan's `SourcePlan`.
+// The source definition's types. Defined in `a2m-files`, which fills them; named again here, with no copy:
+// Fingerprint (digest, parts; of_parts, is_sound), FingerprintPart, PartKind, SourceSpec, TemplateVersion,
+// RowField, Locate, HiddenRule, ReaderOptions, OPERATION_READER.
 pub struct SourceSpec { pub versions: Vec<TemplateVersion>, pub locate: Locate, pub columns: Vec<String>, pub fields: Vec<RowField>,
                         pub key: Vec<String>, pub missing: Vec<String>, pub hidden: HiddenRule, pub options: ReaderOptions }
 pub struct TemplateVersion { pub version: String, pub fingerprint: Fingerprint }
@@ -158,7 +159,7 @@ Steps 3 to 8 are pure: the same bytes and the same plan give the same result, wh
 | `a2m-provider` | `SourceReader`, to register plug-in readers alongside the built-in ones; `Sources::validate` for what a plug-in parsed |
 | The file pack, once it exists (section 308) | `Sources::parse`, `Parsed` and its positions, `Structure::fingerprint`, `locate`, `typed`, `FieldTyper`, `json::parse_document`, `field_text` |
 | `a2m-actions` | `Sources::new` with the registry's readers; `describe` for the discoverer of a real file's structure that feeds the drafter |
-| `a2m-files` | Nothing in code. It writes a `SourceSpec` into the payload of a `SourcePlan`, in the shape this crate reads |
+| `a2m-files` | Nothing of this crate. It defines `SourceSpec` and the types it is made of, and writes one into the payload of a `SourcePlan`; this crate depends on it for those types |
 
 ## State
 
@@ -198,6 +199,7 @@ Every failure is of class `input`: the input was refused and nothing ran.
 | A formula with no kept result is a problem | `a_formula_with_no_kept_result_is_a_problem_not_an_empty_cell` |
 | Limits stop an input that is too large | `limits_stop_an_input_that_is_too_large`, for each limit and reader |
 | A package cannot make the reader read something else or grow without bound | The package and XML tests: a wrong checksum, an encrypted part, a document type, a declared entity |
+| What the compiler writes, this crate reads | `tests/example_target.rs`: the `example` target compiles, its plan is decoded from its bytes, and its source reads the target's fixture sheet into typed rows; a sheet of another layout is refused by the fingerprint the compiler wrote; a header with a space is read by a bare column and by a mapping expression |
 
 ## Build order
 
@@ -207,6 +209,7 @@ Every failure is of class `input`: the input was refused and nothing ran.
 4. Done: the json reader and `from_rows`.
 5. Done: `Sources::parse` with positions, and `typed` as a public call.
 6. Done: `describe`.
+7. Done: the source definition's types come from `a2m-files`, and the test over the compiled `example` target ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)).
 
 Not built:
 
@@ -221,5 +224,5 @@ Not built:
 - Settled: the type of a bare column in a mapping. Every row field carries a field type in the definition, whether it reads a column or an expression ([decision 0087](../../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md)).
 - Settled: no outside xlsx reader is used; the reader reads the workbook's parts directly ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)).
 - Settled: a csv file's delimiter is declared in the source definition, a comma when absent, and its encoding is UTF-8. Nothing is detected.
-- The compiler in `a2m-files` and this crate share the shape of `SourceSpec` only as data. If the two drift, a plan fails to load with `payload_unreadable`. Moving the type to `a2m-core` would make the compiler hold it to the shape at build time.
+- Settled: the compiler in `a2m-files` and this crate share one definition of `SourceSpec`, in `a2m-files`, and a test reads a compiled target's sheet ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)).
 - Whether a cached formula result is stale cannot be told without calculating the workbook, as the [research](../../research/05-data-sources-and-normalization.md) says. The reader takes the kept result.

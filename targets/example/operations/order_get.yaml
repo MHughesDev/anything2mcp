@@ -8,6 +8,8 @@ outputs:
   status: {type: order_status}
   total: {type: amount}
   note: {type: note}
+examples:
+  - {order_id: "SO-1001"}
 bindings:
   - mode: stand
     status: verified

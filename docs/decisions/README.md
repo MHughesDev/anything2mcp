@@ -98,3 +98,8 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0084 | [The session keeper's outside crates, and TLS for identity services](0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md) | Accepted (design decision) |
 | 0085 | [The session keeper's interface, as building it settled it](0085-the-session-keepers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0093 | [The scheduler's interface, as building it settled it](0093-the-schedulers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0088 | [The provider contract's outside crates: a TOML parser, a descriptor helper, safe process calls, and the Windows calls](0088-the-provider-contracts-outside-crates.md) | Accepted (design decision) |
+| 0089 | [The provider contract as building it settled it](0089-the-provider-contract-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0090 | [The supervisor ends a group only while its leader is unreaped, and its links are started by three calls](0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) | Accepted (design decision) |
+| 0121 | [The plan carries what the run time needs from target files](0121-the-plan-carries-what-the-run-time-needs-from-target-files.md) | Accepted (design decision) |
+| 0122 | [Small things the core crate gives its builders, and a secret is wiped when dropped](0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) | Accepted (design decision) |

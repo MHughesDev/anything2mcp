@@ -440,6 +440,15 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
     );
     assert_eq!(inputs.get("order_id"), Some(&Value::from("SO-1001")));
 
+    // What the tool surface shows a caller.
+    let get = plan.operation(*operation).unwrap();
+    assert_eq!(get.examples.len(), 1);
+    assert_eq!(
+        get.examples[0].get("order_id"),
+        Some(&Value::from("SO-1001"))
+    );
+    assert!(get.decision_points.is_empty());
+
     let upsert = plan
         .operations
         .iter()
@@ -1167,8 +1176,7 @@ fn the_plan_carries_what_the_run_time_needs_from_every_target_file() {
         Case::Edit(
             ORDER_GET,
             "bindings:",
-            "examples:\n  - {order_id: \"SO-1001\"}\n\
-             decision_points:\n  - {name: which_order, question: \"Two orders match. Which one?\"}\n\
+            "decision_points:\n  - {name: which_order, question: \"Two orders match. Which one?\"}\n\
              bindings:",
         ),
     ]);
@@ -1353,14 +1361,14 @@ fn what_the_new_parts_refuse() {
     );
     refused(
         ORDER_GET,
-        "bindings:",
-        "examples:\n  - {order: \"SO-1001\"}\nbindings:",
+        "  - {order_id: \"SO-1001\"}",
+        "  - {order: \"SO-1001\"}",
         "kernel.unknown_name",
     );
     refused(
         ORDER_GET,
-        "bindings:",
-        "examples:\n  - {order_id: 7}\nbindings:",
+        "  - {order_id: \"SO-1001\"}",
+        "  - {order_id: 7}",
         "kernel.value_not_of_type",
     );
     refused(

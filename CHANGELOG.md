@@ -20,7 +20,7 @@ Nothing usable yet. The project is in its foundation phase.
 - A test application with a web interface, a JSON interface, a control interface, and injectable faults.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
 - A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start.
-- The design: a specification of 59 sections in seven parts, 77 decision records, 18 research notes, and a register of 40 hypotheses.
+- The design: a specification of 59 sections in seven parts, 93 decision records, 18 research notes, and a register of 40 hypotheses.
 - The design of configuration: eight layers, twelve scopes, presets, a group of settings for every pack, and the rules that no setting can loosen.
 - The bar: what being the best of its kind means, as twelve things that can be measured, with a scorecard.
 - The architecture: which crate defines, implements, and joins every interface, with a design for each of the 24 crates, and designs for five further packs: command, data, file, stream, and device.

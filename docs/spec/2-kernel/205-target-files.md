@@ -34,9 +34,9 @@ A surface's `kind` is a surface kind its pack registers; a binding's `mode` is a
 schema_version: 1
 target: example
 surfaces:
-  web: {kind: web, origin: "https://app.example.com", profile: auto}
+  web: {kind: web, origin: "https://app.example.com", profile: auto, viewport: [1440, 900]}
   api: {kind: http, base: "https://api.example.com", same_session_as: web}
-environment: {locale: en-US, timezone: UTC, viewport: [1440, 900]}
+environment: {locale: en-US, timezone: UTC}
 ```
 
 **Operation with two bindings.** Inputs, outputs, effect, and key are defined once; each binding says how one mode does it. A line item is unique by its order and its code together, so both inputs form the key ([section 209](209-record-identity-and-dependent-records.md)). A placeholder in a path or a `reach` address takes the input of the same name.

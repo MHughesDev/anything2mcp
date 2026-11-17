@@ -9,9 +9,9 @@ The words every other crate shares: the closed vocabularies, the checked names t
 | Side | Kernel |
 | Layer | 1, Types |
 | May depend on | Nothing internal |
-| Depends on | Outside: `serde`; `serde_json`, for the plan's encoding; `sha2`, for `Digest`, the plan's hash, and keyed digests; `rust_decimal`, wrapped by `Decimal` and named by no other crate ([decision 0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md)) |
+| Depends on | Outside: `serde`; `serde_json`, for the plan's encoding; `sha2`, for `Digest`, the plan's hash, and keyed digests; `rust_decimal`, wrapped by `Decimal` and named by no other crate ([decision 0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md)); `zeroize`, which wipes a dropped `Secret` ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)) |
 | Built in | Stage B. Every step of the build order below is built |
-| Carries out | Spec sections [105](../../spec/1-product/105-core-concepts.md), [207](../../spec/2-kernel/207-the-engine-loop.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (what the plan contains, and its encoding), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [203](../../spec/2-kernel/203-the-provider-contract.md) (availability), [204](../../spec/2-kernel/204-supervising-subsystems.md) (subsystem states), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (identity strategies, the record key), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (values), [218](../../spec/2-kernel/218-discovery-and-findings.md), [219](../../spec/2-kernel/219-the-evidence-ladder.md), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); decisions [0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md), [0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), and [0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
+| Carries out | Spec sections [105](../../spec/1-product/105-core-concepts.md), [207](../../spec/2-kernel/207-the-engine-loop.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (what the plan contains, and its encoding), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [203](../../spec/2-kernel/203-the-provider-contract.md) (availability), [204](../../spec/2-kernel/204-supervising-subsystems.md) (subsystem states), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (identity strategies, the record key), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (values), [218](../../spec/2-kernel/218-discovery-and-findings.md), [219](../../spec/2-kernel/219-the-evidence-ladder.md), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (what a sign-in is made of, as data); decisions [0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md), [0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), [0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md), [0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md), and [0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) |
 
 ## Owns
 
@@ -63,11 +63,20 @@ pub enum FieldBase { Text, Integer, Decimal, Money, Measurement, Date, Datetime,
 pub enum EnvironmentKind { Test, Production }
 pub enum TestKind { Offline, Live }
 pub enum Checkpoint { PerRecord, PerStep }
+pub enum SignInMode { UseExisting, ManagedSession, Custom }   // section 215
+pub enum DriftRisk { Low, Medium, High }                       // ordered
+pub enum CaptureLevel { Minimal, Standard, Full }              // section 217; ordered
+pub enum ApproveWrites { CallerConfirms, PersonEachRun, NamedApprover }   // section 226; ordered, least strict first
+pub enum WhitespaceRule { Collapse, Trim, Exact }
+pub enum DecimalMark { Point /* "." */, Comma /* "," */ }
 pub enum Rounding { HalfUp, HalfEven, HalfDown, Up, Down, Ceiling, Floor }
 pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey }
 
 // Checked names: lowercase letters, digits, and underscores, starting with a letter. Each has
-// LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name.
+// LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name. Each one
+// made by the macro also has `const fn fixed(&'static str)`: in a `const`, a bad name fails the build.
+checked_name! { /// Any crate declares one of its own.
+    pub struct QueueName: "queue", 32; }                       // or `: "lint code", 64, dotted;` for owner.rule
 pub struct Mode(/* 32 */);            pub struct FailureCode(/* 64; `fixed` for constants */);
 pub struct FindingKind(/* 32 */);     pub struct SurfaceKind(/* 32 */);
 pub struct StepKind(/* 32 */);        pub struct Verb(/* 32 */);
@@ -75,12 +84,14 @@ pub struct FileKindName(/* 32 */);    pub struct ControlName(/* 32 */);
 pub struct TargetName(/* 32 */);      pub struct SurfaceName(/* 32 */);
 pub struct Environment(/* 32 */);     pub struct AccountName(/* 64 */);
 pub struct OperationName(/* 64 */);   impl OperationName { pub fn belongs_to(&self, target: &TargetName) -> bool; }
+pub struct AuthProviderName(/* 32 */);                         // such as api_key; `a2m-auth` names it `ProviderName`
+pub struct CredentialRef(/* vault:// and one to four parts; a refusal never shows the text */);   // SCHEME, new, as_str
 pub struct LintCode(/* owner and rule joined by one dot, 64 in all: kernel.no_fixed_wait */);
 impl LintCode { pub fn owner(&self) -> &str; pub fn rule(&self) -> &str; }
 pub struct InvalidName; pub struct UnknownName;               // both convert to Failure
 
 pub struct Failure { /* class, code, message, next_step */ }
-pub struct Secret(/* prints as [redacted]; no Serialize, no Clone */);
+pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 
 // Opaque identifiers: 16 bytes, time-ordered, written as a prefix, an underscore, and 32 hex characters.
@@ -96,6 +107,7 @@ pub enum Identity { Person(PrincipalId), Account(AccountName) }   // text: perso
 pub struct Epoch(u64);                                           // a lease number; new, get, next
 pub struct Version { pub major: u32, pub minor: u32, pub patch: u32 }   // text: 1.4.0
 pub struct Digest(/* sha-256, as lowercase hex */);              // of, from_bytes, as_bytes
+pub struct FieldHasher;                                          // new, field(name, value), finish: the digest of named fields
 pub struct Timestamp(/* a moment: milliseconds since 1970 in UTC */);
 
 // Values. What a field holds after it is read and before it is compared.
@@ -169,18 +181,54 @@ pub enum Subject {
 pub const PLAN_FORMAT: u16 = 1;
 pub struct Plan {
     pub header: PlanHeader,                 // format, minimum_engine, compiler, target, version, sources
-    pub surfaces: Vec<SurfacePlan>,         // name, kind, address, same_session_as, rate, payload
-    pub environments: Vec<EnvironmentPlan>, // name, kind, addresses: Vec<AddressOverride>
-    pub field_types: Vec<FieldTypePlan>,    // name, base, ty, places, rounding, unit, display_unit, currency, zone, codes, sensitivity, untrusted, normalizer
+    pub target: TargetPlan,                 // what holds for the target as a whole; below
+    pub surfaces: Vec<SurfacePlan>,         // name, kind, address, same_session_as, stands, rate, payload
+    pub environments: Vec<EnvironmentPlan>, // name, kind, addresses, test_records: Vec<RecordKey>, approve_writes: Option<ApproveWrites>
+    pub auth: Vec<AuthPlan>,                // one per group of surfaces that share a sign-in; below
+    pub field_types: Vec<FieldTypePlan>,    // name, base, ty, places, rounding, step, unit, display_unit, currency, zone, codes, sensitivity, untrusted, format, normalizer
     pub expressions: Vec<PlanExpr>,         // every expression once; referred to by ExprIndex
     pub operations: Vec<OperationPlan>,
     pub pipelines: Vec<PipelinePlan>,       // name, effect, hazard, inputs, source, limits, steps, success, headroom_ms
-    pub tools: Vec<ToolPlan>,               // name, runs, title, description, input_schema, output_schema, annotations
+    pub tools: Vec<ToolPlan>,               // name, runs, module, title, description, input_schema, output_schema, annotations
     pub packs: Vec<PackSection>,            // each pack's own compiled knowledge, opaque here
     pub tests: Vec<TestPlan>,               // name, tool, kind, fixture, inputs, expect, restore
 }
 pub struct PlanExpr { pub source: String, pub result: ValueType, pub library: u32 }   // canonical CEL text, already checked
-pub struct ExprIndex(u32);   // and SurfaceIndex, FieldTypeIndex, InputIndex, OperationIndex, PipelineIndex, SectionIndex, ToolIndex: new, get
+pub struct ExprIndex(u32);   // and SurfaceIndex, EnvironmentIndex, FieldTypeIndex, InputIndex, OperationIndex, PipelineIndex, SectionIndex, ToolIndex: new, get
+
+pub struct TargetPlan {                     // from `target.yaml`; nothing here belongs to one kind of surface
+    pub title: String, pub modules: Vec<String>,
+    pub default_environment: EnvironmentIndex,
+    pub locale: Option<String>, pub timezone: Option<String>,   // `UTC` or an offset such as `+02:00`
+    pub capture: Option<CaptureLevel>,
+    pub exclusive_session: bool, pub drift_risk: Option<DriftRisk>,
+    pub authorization: Option<String>,      // a reference to the record, never the record
+}
+pub enum Stands { Alone, Beneath(SurfaceIndex) }
+
+pub struct AuthPlan {                       // one entry of `auth.yaml`
+    pub surfaces: Vec<SurfaceIndex>,        // no surface is in two entries
+    pub mode: SignInMode, pub provider: AuthProviderName,
+    pub probe: ProbePlan,
+    pub expiry_signals: Vec<PackPayload>,   // each in the form the surface's pack defines
+    pub idle_ms: Option<u64>, pub absolute_ms: Option<u64>,
+    pub sign_out: Option<String>,           // a name the provider resolves
+    pub settings: Vec<AuthSetting>,         // name, value: text; sorted by name
+    pub credentials: Vec<CredentialUse>,    // role, reference: CredentialRef; sorted by role
+    pub attempt_limit: u32, pub movable: bool,
+}
+pub enum ProbePlan {
+    Operation { operation: OperationIndex, inputs: Values },   // a read, run through the engine
+    Entry(PackRef),                                            // an entry of a pack section, such as an endpoint
+}
+
+pub enum FieldFormat {                      // how the system shows a value; data beside the normalizer
+    Text { case_sensitive: bool, whitespace: WhitespaceRule },
+    Number { decimal_mark: DecimalMark },
+    Calendar { pattern: String, utc_offset_minutes: Option<i32> },
+    Boolean { true_text: String, false_text: String },
+    Choice,
+}
 
 pub struct OperationPlan {
     pub name: OperationName, pub effect: EffectClass, pub hazard: Hazard,
@@ -190,6 +238,8 @@ pub struct OperationPlan {
     pub commit_points: u32,
     pub bindings: Vec<BindingPlan>,         // declared order: the order `choose` tries them
     pub manifest: PermissionManifest,       // surfaces, uploads, downloads, destinations
+    pub examples: Vec<Values>,              // example inputs, each typed by the inputs
+    pub decision_points: Vec<DecisionPoint>,   // name, question
 }
 pub struct BindingPlan {
     pub mode: Mode, pub verb: Verb, pub status: BindingStatus, pub surface: SurfaceIndex,
@@ -233,7 +283,9 @@ impl Plan {
     pub fn decode(bytes: &[u8], expected: &Digest) -> Result<Plan, Failure>;   // checks the hash before anything else
     pub fn check(&self) -> Result<(), Failure>;                                 // the format, and every reference
     pub fn show(&self) -> Result<String, Failure>;                              // stable text, for `plan.show`
-    pub fn expression(&self, index: ExprIndex) -> Option<&PlanExpr>;            // and surface, field_type, operation, pipeline, section
+    pub fn expression(&self, index: ExprIndex) -> Option<&PlanExpr>;            // and surface, environment, field_type, operation, pipeline, section
+    pub fn default_environment(&self) -> Option<&EnvironmentPlan>;              // and environment_named(&Environment)
+    pub fn auth_of(&self, surface: SurfaceIndex) -> Option<&AuthPlan>;          // follows same_session_as
     pub fn tool(&self, name: &OperationName) -> Option<&ToolPlan>;
     pub fn section_of(&self, kind: &FileKindName, surface_kind: &SurfaceKind) -> Option<&PackSection>;
 }
@@ -256,6 +308,9 @@ Contracts that the signatures do not show:
 - **Nothing here reads a clock or a random source.** `RunId::from_parts` takes the moment and the random bytes. Whoever makes an identifier brings both.
 - **A plan is immutable data.** Nothing here builds one from target files; the compiler in `a2m-files` is the only producer, and tests the only other builders. The engine receives a plan only through `decode`, so it never runs bytes whose hash it has not checked.
 - **The same plan encodes to the same bytes.** On every machine and every run. `Plan::encode`, `CanonicalJson::encode`, and `Value::canonical_bytes` use one deterministic encoding, canonical JSON: no spaces, keys sorted by their bytes, whole numbers only. A pack cannot choose another for its payload. A float is refused.
+- **A plan holds no credential.** A sign-in's credentials are `CredentialRef`s, which have one shape and nothing else; bytes that hold other text in a reference's place do not decode, and the refusal does not show the text.
+- **A field type's format and its normalizer say the same thing.** The compiler makes both from one rule. The format is for writing a value and describing the type; only the normalizer decides whether two values are equal.
+- **The plan names no kind of surface.** What one kind has, such as a viewport, is in that surface's payload. An expiry signal is a payload for the same reason.
 - **A plan's references are checked on the way out and on the way in.** `encode` and `decode` both refuse an index that points at a part the plan does not hold, so the engine indexes a decoded plan without checking again.
 - **A plan holds expressions as text with their type.** `a2m-expr` turns its compiled form into a `PlanExpr` and back. This crate never parses one.
 - **The minimum engine version is the engine's to check.** `decode` cannot know which engine is running.
@@ -272,7 +327,7 @@ Every crate uses it. It uses nothing in the workspace.
 | `a2m-ledger` | States, the identifiers, `RecordKey`, `Digest`, `Finding`, `Redact`, `KeyedDigest` for blob names and record keys; stores plan bytes without decoding them |
 | `a2m-telemetry` | `Redact`, `KeyedDigest` for restricted values, `Sensitivity`, `StepKind`, identifiers |
 | `a2m-policy` | `EffectClass`, `Hazard`, `Identity`, `Sensitivity`, the identifiers, `Failure` |
-| `a2m-auth` | `SessionState`, `Identity`, `SessionId`, `WorkspaceId`, `Secret` |
+| `a2m-auth` | `SessionState`, `Identity`, `SessionId`, `WorkspaceId`, `Secret`, `AuthProviderName`, `CredentialRef`; `a2m-actions` builds the keeper's entry from an `AuthPlan` |
 | `a2m-sched` | `RunId`, `JobId`, `RunnerId`, `Epoch`, `Mode`, `Identity`, `FailureClass`, `FailureCode` |
 | `a2m-provider` and packs | `Archetype`, the checked names, `Availability`, `SubsystemState`, `SubsystemMove`, `Finding`, `Subject`, `Value`, `Values`, `Failure`, `Secret`; packs build `Step` and `PackPayload` in their lowerings and decode their payloads in their drivers |
 | `a2m-engine` | All of it; the `Plan` through `decode` |
@@ -302,7 +357,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 
 | Must always hold | Proven by |
 | --- | --- |
-| Code and documents agree on every vocabulary, in content and order | `tests/documents.rs`, 27 cases |
+| Code and documents agree on every vocabulary, in content and order | `tests/documents.rs`, 32 cases |
 | A secret is never shown by any formatter, alone or inside another structure | `secret::tests` |
 | `Secret` is neither serializable nor copyable | A test that fails to compile otherwise |
 | A badly formed name is refused with a failure of class `input`, and the refusal never echoes more than 64 characters of input | `name::tests`, `ident::tests` over every checked name |
@@ -315,7 +370,11 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 | A plan encodes to the same bytes twice, and on three operating systems | `plan::tests`, which holds the hash of a sample plan to a constant, on each system in CI |
 | A plan decodes to an equal plan, and encodes back to the same bytes | `plan::tests` |
 | No plan type is written as a float, and no map's own order reaches the bytes | `plan::tests` walks an encoded plan that uses every part; `canonical::tests` encodes a hash map twenty times and refuses a float |
-| A plan with a loose reference is refused by `encode` and by `decode` | `plan::tests`, one case for each kind of reference |
+| A plan with a loose reference is refused by `encode` and by `decode` | `plan::tests`, one case for each kind of reference, and one for a surface signed in to twice |
+| A credential in a plan is a reference; other text in its place is refused and never shown | `plan::tests`, `ident::tests` |
+| A name written in the source is checked when the crate is built | `ident::tests`, whose constants would not compile otherwise; the doc test of `checked_name!` |
+| A dropped secret's bytes are zeros | `secret::tests`, on what `Drop` calls; memory that was given back cannot be read by a test |
+| The digest of named fields has one encoding | `digest::tests`, against a digest worked out apart from the crate |
 | The trait's own helpers redact a failure and values at every depth, names included | `redact::tests`, with a redactor that implements `redact` alone |
 | A keyed digest differs by key, by workspace, and by purpose, and HMAC gives the standard answers | `redact::tests`, with three cases of RFC 4231 |
 | An identifier reads back what it writes, sorts by the moment it was made, and refuses another kind's prefix | `ident::tests` |
@@ -332,11 +391,15 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 8. Done: `Redact` with `contains_secret` and its helpers, `NoSecrets`, `KeyedDigest`, `keyed_digest_under`.
 9. Done: `Identity`, `RunId`, and the other identifiers the store, the scheduler, and policy share; `Epoch`; `Version`.
 10. Done: `SubsystemState`, `SubsystemMove`, `DoctorState`.
+11. Done: what the run time needs from target files and the plan lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetPlan`, `AuthPlan` with `ProbePlan`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and decision points, a tool's module, `FieldFormat` and a field type's step; with `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
+12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
 
 ## Open points
 
-- The plan's parts beyond the first operation are a first shape. `PipelinePlan`, `SourcePlan`, `TestPlan`, `ToolPlan`, and `PermissionManifest` have not met a compiler or an engine; the slice that first fills each one confirms it or changes it, and a change that old plans cannot be read under raises the format number.
-- A plan holds an environment's kind and its address overrides, and nothing else about it. Test records and a stricter approval rule per environment are not in the plan; whether they belong there or with policy is settled by the slice that first writes in a test environment.
+- The plan's parts have met the compiler and not yet an engine. The engine's slice confirms each one or changes it. The format number is still 1 because no release has carried a plan; from the first release on, a change that stored plans cannot be read under raises it.
+- `CaptureLevel` and `ApproveWrites` are here because the plan carries them. `a2m-telemetry` and `a2m-policy` each have a list of their own with the same names, which should become these.
+- A decision point is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.
+- `Mode` and `FindingKind` are written by hand and have no `fixed`. They can be declared with `checked_name!` when a pack wants a constant of one.
 - The long form of `identity` for `stamped` and `find` is not fixed in the file formats. The plan carries a `lookup` step list and a settle time per binding for it; slice 3.8 confirms.
 - `PackSection::pack` and `ProducedBy::provider` are plain text. A provider's name becomes a checked name when the manifest's shape is built in `a2m-provider`.
 - Whether plan loading as JSON meets the 20 ms target of section 206. If not, a binary encoding is format 2 behind the same two functions.

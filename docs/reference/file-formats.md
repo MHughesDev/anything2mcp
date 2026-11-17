@@ -17,10 +17,10 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | `title` | Name shown to people |
 | `surfaces` (required) | Map of surface name to a surface (below) |
 | `environments` | Map of environment name to an environment (below); at least `production` is implied |
-| `default_environment` | Used when a call names none |
-| `environment` | Fixed run settings: `locale`, `timezone`, `viewport` |
+| `default_environment` | Used when a call names none; `production` unless given |
+| `environment` | Fixed run settings that hold for every kind of surface: `locale`, and `timezone`, which is `UTC` or an offset such as `+02:00`. What only one kind of surface has, such as a viewport, is a field of that surface, which its pack registers |
 | `modules` | Module names, for large applications |
-| `defaults` | `timeouts`, `limits`, and `capture` level applied to every operation unless overridden |
+| `defaults` | What applies unless overridden. `timeouts` is a map from a name to milliseconds, which a pack's lowering gives to a step that states none. `limits` holds `max_records` and `max_duration_ms`, which a pipeline that states none takes. `capture` is the capture level of a run: one of the levels of [spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md). The compiler applies the timeouts and the limits, so the plan holds the result and the engine applies no default; the capture level travels in the plan |
 | `exclusive_session` | True when the application allows one session per account |
 | `drift_risk` | `low`, `medium`, or `high`; sets how often canaries run |
 | `authorization` | Reference to the record of who agreed to this target being wrapped; required to publish on a server |
@@ -42,8 +42,8 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | --- | --- |
 | `kind` (required) | `test` or `production` |
 | `surfaces` | Address overrides per surface |
-| `test_records` | Record keys that drafts and publish gates may write to |
-| `approve_writes` | A stricter approval rule for this environment |
+| `test_records` | Record keys that drafts and publish gates may write to. Each is one plain value, or a list of them for a key of several parts, parent first, written as the system shows it; text goes in quotes |
+| `approve_writes` | The approval rule of this environment: one of the values of `policy.approve_writes` in [spec section 226](../spec/2-kernel/226-configuration.md). Policy applies whichever of this and the installation's own rule is the stricter, so a target can tighten the rule and never loosen it |
 
 ## `auth.yaml`
 
@@ -54,11 +54,12 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `surfaces` (required) | The surfaces this entry covers |
 | `mode` (required) | `use_existing`, `managed_session`, or `custom` |
 | `provider` (required) | An auth provider from the technical reference |
-| `probe` (required) | A cheap signed-in read: an operation name or an endpoint |
+| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile |
+| `probe_inputs` | For a probe that is an operation: the inputs it is called with. Every required input with no default is given here, so the probe can be run as written |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
-| `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know does not compile. Never a credential |
+| `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know is refused by the provider's own check when the version is published, because the compiler holds no list of providers. Never a credential |
 | `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`. References only |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
 | `movable` | `auto` or `false`; `false` pins the session to its runner |
@@ -74,7 +75,7 @@ Field types say how a value is formatted, normalized, compared, and classified. 
 | `step` | The smallest increment, such as 1/16 inch |
 | `places`, `rounding` | Decimal places and rounding mode |
 | `currency` | For money |
-| `format` | How the application displays and accepts the value. For a number it is the decimal mark: `.` or `,` |
+| `format` | For a date or a time: the pattern the application displays and accepts, such as `MM/DD/YYYY` |
 | `timezone` | For dates and times: `fixed`, `user`, or a named zone. Only `UTC` and a fixed offset such as `+02:00` are built so far; a named zone or the `user` rule cannot be normalized yet |
 | `case`, `whitespace` | Text comparison rules. `case` is `sensitive` or `insensitive`; `whitespace` is `collapse`, `trim`, or `exact` |
 | `decimal_mark` | For numbers: `.` or `,`, the decimal mark the application shows; `.` unless given |
@@ -185,9 +186,9 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `hazard` | What the operation could damage beyond its record ([spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md)); `none` unless given. Any other hazard requires the effect `irreversible` |
 | `bindings` (required) | One or more bindings (below) |
 | `description` (required) | What it does, when to prefer something else, side effects, limits |
-| `examples` | One to three example inputs |
+| `examples` | One to three example inputs, each a map from an input's name to a value of its type |
 | `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use |
-| `decision_points` | Named questions a person may have to answer during a run |
+| `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
 
 **Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`.
 

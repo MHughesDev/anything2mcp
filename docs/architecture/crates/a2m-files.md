@@ -151,7 +151,11 @@ These are data, with the serde form `a2m-sources` reads ([decision 0087](../../d
 | `expressions` | 4 and 5 | Every expression once, as canonical text with its type; steps and bindings refer to them by index |
 | `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's step lists are the lowering's, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one payload for each surface kind that has documents; the kernel wraps it with the owner's name, stores and hashes it, and never decodes it. Sections are in order of file kind, then surface kind |
-| `tools` | 8 | Operations, then pipelines. A decimal travels as text in a tool's schema |
+| `tools` | 8 | Operations, then pipelines. A decimal travels as text in a tool's schema. A tool's module is the longest of the target's modules that follows the target's name in its own |
+| `target` | 2 and 3 | The target's own facts. `defaults.timeouts` and `defaults.limits` are not here: a lowering reads a timeout and writes it into its steps, and a pipeline that states no limit takes the default, so the engine applies none |
+| `environments` | 3 | Test records as record keys, as written; the approval rule. `production` is added when the file does not declare it, and is the default environment unless the file names one |
+| `auth` | 3, after the operations and the pack sections | One entry per group of surfaces. A probe is a `read` operation with the inputs `probe_inputs` gives, or a name a pack's document defines on one of the entry's surfaces; anything else is `unknown_name` or `probe_invalid`. A credential that is not a vault reference is `credential_in_file`, and is never shown |
+| `field_types` | 3 | The normalizer and, from the same rule, the format as data: decimal mark, step, pattern, zone offset, case and whitespace |
 | `pipelines` | 3 to 7 | A source's bare columns go in its payload, a `SourceSpec`; its expressions in `mapping` |
 | `tests` | 7 | One for each document under `tests/` |
 
@@ -245,7 +249,7 @@ The views are read-only.
 
 | View | Given to | Shows |
 | --- | --- | --- |
-| `TargetView` | Every view, through `target()` | `name()`, `surfaces()`, `surface(name)`, `field_type(name)` |
+| `TargetView` | Every view, through `target()` | `name()`, `surfaces()`, `surface(name)`, `field_type(name)`, and `default_timeout_ms(name)`, a timeout from `defaults.timeouts` for a lowering to give a step that states none |
 | `KindContext` | `FileKind::compile` | `target()`, `surface_kind()`, `surface_of(doc)`, and `expr(&ExprSite) -> Result<ExprIndex, Diagnostic>` |
 | `ResolvedBinding` | `Lowering::identity` and `lower` | `operation`, `index`, `mode`, `verb`, `status`, `doc`, `field(key)` |
 | `OperationView` | Through a binding or a `ResolvedView` | `name()`, `effect()`, `hazard()`, `strategy()`, `key()`, `inputs()`, `input(name)`, `outputs()`, `doc()` |
@@ -330,7 +334,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 3. Done: the registration traits and `CompilerSet`; stages 1 to 9, proven through the test pack `stand`. Not done: no real pack is registered yet; the web pack's screen kind and the HTTP pack's endpoint kind are their packs' packages. Package 1.3.
 4. Done: field types compiled to normalizers, built in and from `types.yaml`. Package 3.4.
 5. Done: identity strategies for `natural` and `composite`, commit-point counting for writes, and the write lint rules. Not done: the long form of `identity` for `stamped` and `find` has only its strategy and inputs; the stamped field and the lookup are written with the first operation that needs one. Packages 3.3 and 3.8.
-6. Done: pipelines, and sources compiled to `SourceSpec`. The `example` target's source was loaded, and its fixture sheet read, by `a2m-sources`, once and by hand; `a2m-sources` still holds its own copy of the types, to be replaced by these. Package 3.9.
+6. Done: pipelines, and sources compiled to `SourceSpec`. `a2m-sources` uses these types and has no copy, and a test there compiles the `example` target and reads its fixture sheet. Package 3.9.
 7. Done: the drafter and its rules for what a draft may hold, proven with the test pack's drafting rule. Not done: no pack's drafting rules exist. Package E4.
 
 Not built, in any step:
@@ -338,9 +342,10 @@ Not built, in any step:
 - `lint_one` compiles the whole target again; nothing is reused by file digest.
 - An operation's outputs by reference to a pack's schema, and nested records.
 - Binding order from each mode's rank in its provider's manifest; bindings are a list and keep their order.
-- The `stands` rule for surfaces that may sit under an application.
+- The `stands` rule for surfaces that may sit under an application. The plan carries where a surface stands; refusing a write on a surface that does not say is the rule of the pack whose kind needs it, and no such pack is built.
 - Lint rules that are errors only on a server.
-- A place in the plan for what decision 0079 lists as validated and then dropped.
+- The count of an operation's examples below one: an operation may have none.
+- A check that an auth provider knows each setting's name. The compiler holds no list of auth providers; the provider's own check refuses an unknown name when the version is published.
 
 ## Open points
 
@@ -348,5 +353,6 @@ Not built, in any step:
 - How a plug-in registers file kinds and lint rules across a process boundary: as data at start, most likely, with its lowerings answered over the plug-in protocol. `JsonSchema` and `SurfaceKindSpec` are already data; the traits are not.
 - Whether a lint rule may be silenced, and where the reason is written.
 - Where drafts are written inside a project, and whether they are kept apart from files a person wrote. Today they are written among them and told apart by their first line.
-- Where the parts of the files that the plan cannot carry go: `auth.yaml`, the target's fixed settings, test records. `a2m-auth` and `a2m-policy` need them.
+- Settled: everything the run time needs from the files is in the plan, and what only changes what the compiler emits is applied by the compiler ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)). The step "Done" for it is this list's: `auth.yaml`, the target's own facts, an environment's test records and approval rule, a surface's `stands`, an operation's examples and decision points, a field type's format.
+- The names under `defaults.timeouts` are whatever a pack's lowering asks for. No pack exists to say which; the first real pack fixes its names in its own section.
 - A reader's name is checked for shape only; `a2m-sources` knows which readers exist.

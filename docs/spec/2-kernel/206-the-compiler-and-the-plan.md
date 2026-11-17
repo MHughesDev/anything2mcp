@@ -39,10 +39,13 @@ All problems from stages 2 to 8 are reported together, each with a code, a plain
 | Part | Contents |
 | --- | --- |
 | Header | Plan format version, minimum engine version, target, version, compiler version, hash of the source files |
-| Surfaces | Each surface with its registered surface kind; how they share sessions |
-| Field types | Normalizers and comparison rules, as host-function calls |
+| Target | What holds for the target as a whole: its title, modules, default environment, locale and time zone, capture level, whether it allows one session per account, its drift risk, and the reference to its authorization record |
+| Surfaces | Each surface with its registered surface kind; how they share sessions; where a surface stands to an application that owns its data |
+| Environments | Each environment's kind and address overrides, its declared test records, and its approval rule |
+| Sign-in | For each group of surfaces that share a sign-in: the mode, the auth provider, the probe, the expiry signals, declared timeouts, the provider's settings, and credential references. Never a credential |
+| Field types | Normalizers and comparison rules, as host-function calls; beside each, as data, how the system shows a value: decimal mark, step, pattern, zone offset, case and whitespace rules |
 | Pack sections | What each pack's file kinds compiled to, such as the web pack's screens or the HTTP pack's endpoints, as one opaque payload per kind |
-| Operations | Inputs, outputs, key, effect, commit-point count, and one step list per binding, in the order the bindings are tried |
+| Operations | Inputs, outputs, key, effect, commit-point count, example inputs, declared decision points, and one step list per binding, in the order the bindings are tried |
 | Pipelines | The step graph, checkpoints, limits, success checks |
 | Expressions | Every expression, already parsed and type-checked |
 | Tools | Names, descriptions, schemas, annotations, as the front doors will list them |
