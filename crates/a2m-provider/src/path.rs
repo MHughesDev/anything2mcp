@@ -818,11 +818,17 @@ impl CheckedPath {
         let file = folder
             .create_new(&temporary)
             .map_err(|error| self.io_failure(&error, "cannot be saved"))?;
+        // Its own identity, from its handle, before anything else can stand
+        // at its name: it is removed only while its name still holds it.
+        let own = place::handle_identity(&file)
+            .ok()
+            .map(|(device, file)| FileIdentity { device, file });
         Ok(Temporary {
             target: self.clone(),
             folder,
             name: temporary,
             file: Some(file),
+            own,
         })
     }
 
@@ -970,6 +976,29 @@ pub struct Temporary {
     folder: place::Folder,
     name: std::ffi::OsString,
     file: Option<fs::File>,
+    /// The identity of the file it made, read from its handle.
+    own: Option<FileIdentity>,
+}
+
+impl FileIdentity {
+    /// The identity of an open file, from its handle: comparable with
+    /// [`CheckedPath::identity`] of the name it was opened by, to tell
+    /// whether that name still holds this file.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_unavailable` where the system gives none.
+    pub fn of_open(file: &fs::File) -> Result<Self, Failure> {
+        place::handle_identity(file)
+            .map(|(device, file)| Self { device, file })
+            .map_err(|_| {
+                codes::input(
+                    codes::FILE_UNAVAILABLE,
+                    "An open file's identity could not be read.",
+                    "Try again; if it persists, check the file system.",
+                )
+            })
+    }
 }
 
 impl fmt::Debug for Temporary {
@@ -985,6 +1014,54 @@ impl Temporary {
     #[must_use]
     pub fn target(&self) -> &CheckedPath {
         &self.target
+    }
+
+    /// The temporary file's identity, read from its own handle when it was
+    /// made: comparable with [`CheckedPath::identity`].
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_unavailable` where the system gave none.
+    pub fn identity(&self) -> Result<FileIdentity, Failure> {
+        self.own
+            .ok_or_else(|| self.target.unavailable("has a temporary file whose identity is not known"))
+    }
+
+    /// Gives the temporary file the owner, the group, and the permission
+    /// bits of the target, which is looked at without following a link,
+    /// through the temporary file's own handle, and then checks that it has
+    /// them. Callable before the first write and again after the last.
+    /// `Ok(false)` where any of the three cannot be kept: the target is not
+    /// there or is no regular file, it carries a set-user, set-group, or
+    /// sticky bit, or the system refuses the owner or the group to the
+    /// engine's user. On Windows only the read-only flag is kept, and the
+    /// answer is always `false`: the owner and the access list are the
+    /// security descriptor the folder passes down.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_unavailable` and the other kinds of a failed look or
+    /// change.
+    pub fn keep_owner_and_mode(&mut self) -> Result<bool, Failure> {
+        let Some(name) = self.target.named.file_name().map(std::ffi::OsStr::to_owned) else {
+            return Err(self.target.unavailable("is a root and not a file"));
+        };
+        let target = self.target.clone();
+        let file = self
+            .file
+            .as_ref()
+            .ok_or_else(|| target.unavailable("cannot be saved: its temporary file was closed"))?;
+        let kept = self.folder.keep_owner_and_mode(&name, file);
+        kept.map_err(|error| target.io_failure(&error, "cannot have its owner and mode kept"))
+    }
+
+    /// Whether the temporary file's name still holds the file it made.
+    fn still_its_own(&self) -> bool {
+        self.own.is_some_and(|own| {
+            self.folder
+                .identity(&self.name)
+                .is_ok_and(|(device, file)| own == FileIdentity { device, file })
+        })
     }
 
     fn open(&mut self) -> Result<&mut fs::File, Failure> {
@@ -1074,8 +1151,10 @@ impl Temporary {
 impl Drop for Temporary {
     fn drop(&mut self) {
         drop(self.file.take());
-        if !self.name.is_empty() {
-            // Nothing is left behind when a save does not finish.
+        // Nothing is left behind when a save does not finish; and nothing
+        // that stands at the name in its place is removed: only while the
+        // name holds the file this made.
+        if !self.name.is_empty() && self.still_its_own() {
             let _ = self.folder.remove(&self.name);
         }
     }

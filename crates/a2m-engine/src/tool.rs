@@ -1787,18 +1787,30 @@ async fn reconcile(
         let record = &mut planned[position];
         let held = snapshot.iter().find(|held| held.record == record.record);
         let found = operation(loaded, record.operation)?;
-        if found.identity.strategy == IdentityStrategy::None {
-            return Err(Stop::Fail(codes::fail(
-                FailureClass::PossibleCommit,
-                codes::CANNOT_RECONCILE,
-                format!(
-                    "A record of `{}` may have been written and cannot be found again.",
-                    found.name
-                ),
-                "Look at the system, then cancel the run or settle the record by hand.",
-            )));
-        }
         let mode = held.and_then(|held| held.mode.clone());
+        if found.identity.strategy == IdentityStrategy::None {
+            // A record of no identity is found again only by what its own
+            // earlier steps recorded, through its binding's read-back
+            // (decision 0176). With neither, nothing can find it.
+            let readable = found
+                .bindings
+                .get(record.binding)
+                .is_some_and(|binding| !binding.read_back.is_empty())
+                && !record.recorded_values.is_empty();
+            if !readable {
+                return Err(Stop::Fail(codes::fail(
+                    FailureClass::PossibleCommit,
+                    codes::CANNOT_RECONCILE,
+                    format!(
+                        "A record of `{}` may have been written and cannot be found again.",
+                        found.name
+                    ),
+                    "Look at the system, then cancel the run or settle the record by hand.",
+                )));
+            }
+            reconcile_keyless(run, loaded, found, record, mode.as_ref()).await?;
+            continue;
+        }
         let binding = found.bindings.get(record.binding);
         if binding.is_some_and(|binding| {
             binding.evidence == WriteEvidence::Acknowledged
@@ -1918,6 +1930,132 @@ async fn reconcile(
                     "A record in doubt holds neither the values intended nor the values seen before the write.",
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+/// What a record of no identity in doubt is left as, with what was
+/// recorded before its save shown as the system's data.
+fn keyless_in_doubt(run: &Run<'_>, found: &OperationPlan, record: &Planned, why: &str) -> Stop {
+    let mut failure = codes::fail(
+        FailureClass::PossibleCommit,
+        codes::CANNOT_RECONCILE,
+        format!(
+            "A record of `{}` may have been written, and {why}.",
+            found.name
+        ),
+        "Look at the system with what was recorded before the save, then resume the run, cancel it, or settle the record by hand.",
+    );
+    if let Ok(bytes) = encode_values(&kept(run, &record.recorded_values)) {
+        failure = failure.with_said(format!(
+            "recorded before the save: {}",
+            String::from_utf8_lossy(&bytes)
+        ));
+    }
+    Stop::Fail(failure)
+}
+
+/// Settles a record of no identity that is in doubt, through its binding's
+/// read-back, which looks for what the record's earlier steps recorded
+/// (decision 0176). Found: the write landed, and the record is settled as
+/// verified, the finding standing for the intended values, since a record
+/// of no identity has nothing else to compare. Absent: it did not land, and
+/// the record goes back to `planned` with the read's evidence. Anything
+/// else, a failed look included, leaves it in doubt. A binding whose only
+/// evidence is the acknowledgement is not settled here: the ledger ends a
+/// record on an acknowledgement only under the lease that sent it, so it
+/// stays in doubt with what the look found.
+async fn reconcile_keyless(
+    run: &mut Run<'_>,
+    loaded: &Loaded,
+    found: &OperationPlan,
+    record: &mut Planned,
+    mode: Option<&a2m_core::Mode>,
+) -> Result<(), Stop> {
+    run.checkpoint(Duration::ZERO)?;
+    run.control.lock(record.record).await?;
+    let context = hold_for(run, found, record, mode, false).await?;
+    let raw = match read_record(run, found, record, context, true).await {
+        Ok(raw) => raw,
+        Err(Stop::Fail(failure)) => {
+            return Err(keyless_in_doubt(
+                run,
+                found,
+                record,
+                &format!(
+                    "the look for it did not answer (`{}/{}`)",
+                    failure.class(),
+                    failure.code()
+                ),
+            ));
+        }
+        Err(stop) => return Err(stop),
+    };
+    let evidence = read_evidence(run, record, raw.as_ref(), None).await?;
+    let acknowledged = found
+        .bindings
+        .get(record.binding)
+        .is_some_and(|binding| binding.evidence == WriteEvidence::Acknowledged);
+    let reconciled = match &raw {
+        None => Reconciled::NotLanded { evidence },
+        Some(_) if acknowledged => {
+            return Err(keyless_in_doubt(
+                run,
+                found,
+                record,
+                "the look found that it landed, and a write that ends on the system's acknowledgement is ended only under the lease that sent it",
+            ));
+        }
+        Some(raw) => {
+            let mut observed = record.known.clone();
+            for (name, value) in raw.clone() {
+                observed.insert(name, value);
+            }
+            let outputs = if observed.is_empty() {
+                None
+            } else {
+                Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
+            };
+            Reconciled::Landed {
+                read: ReadBack {
+                    digest: record.digest,
+                    after: None,
+                    evidence,
+                },
+                acted: Acted {
+                    assigned_key: record
+                        .assigned
+                        .as_ref()
+                        .map(|key| run.engine.deps.redact.redact(&key_text(key))),
+                    outputs,
+                },
+            }
+        }
+    };
+    match run.control.settle(record.record, reconciled).await? {
+        Settled::Verified => {
+            record.state = RecordState::Verified;
+            let mut observed = record.known.clone();
+            for (name, value) in raw.unwrap_or_default() {
+                observed.insert(name, value);
+            }
+            record.outputs = outputs_of(loaded, found, &observed, false)?;
+        }
+        Settled::Planned => {
+            record.state = RecordState::Planned;
+            record.known = Values::new();
+            record.assigned = None;
+            record.recorded = false;
+            record.recorded_values = Values::new();
+            record.current = None;
+            record.seen_at = Some(run.engine.deps.clock.elapsed());
+            record.seen_in = Some(run.serial_of(context));
+        }
+        Settled::Stale => {
+            return Err(Stop::Fail(stale(
+                "A record in doubt holds neither the values intended nor the values seen before the write.",
+            )));
         }
     }
     Ok(())

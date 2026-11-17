@@ -94,9 +94,64 @@ mod os {
                 &self.0,
                 name,
                 OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o666),
+                // Private to the engine's user: the new bytes are read by
+                // nobody else before the file is put in place.
+                Mode::from_raw_mode(0o600),
             )?;
             Ok(File::from(handle))
+        }
+
+        /// Gives `file` the owner, the group, and the permission bits of
+        /// what stands at `name`, which is looked at without following a
+        /// link, through the file's own handle, and then checks that it has
+        /// them. `false` where any of the three cannot be kept: the target
+        /// is not there or is no regular file, it has a set-user, set-group,
+        /// or sticky bit, or the system refuses the owner or the group to
+        /// this user.
+        pub(in super::super) fn keep_owner_and_mode(
+            &self,
+            name: &OsStr,
+            file: &File,
+        ) -> io::Result<bool> {
+            let target = match statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(target) => target,
+                Err(Errno::NOENT) => return Ok(false),
+                Err(error) => return Err(error.into()),
+            };
+            if FileType::from_raw_mode(target.st_mode) != FileType::RegularFile {
+                return Ok(false);
+            }
+            #[allow(
+                clippy::useless_conversion,
+                reason = "the width of the mode differs between operating systems"
+            )]
+            let bits = u32::from(target.st_mode) & 0o7777;
+            if bits & 0o7000 != 0 {
+                return Ok(false);
+            }
+            let own = rustix::fs::fstat(file)?;
+            if own.st_uid != target.st_uid || own.st_gid != target.st_gid {
+                match rustix::fs::fchown(
+                    file,
+                    Some(rustix::fs::Uid::from_raw(target.st_uid)),
+                    Some(rustix::fs::Gid::from_raw(target.st_gid)),
+                ) {
+                    Ok(()) => {}
+                    Err(Errno::PERM | Errno::ACCESS) => return Ok(false),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            // After the owner: a change of owner may clear bits.
+            rustix::fs::fchmod(file, Mode::from_raw_mode(bits as _))?;
+            let now = rustix::fs::fstat(file)?;
+            #[allow(
+                clippy::useless_conversion,
+                reason = "the width of the mode differs between operating systems"
+            )]
+            let kept = u32::from(now.st_mode) & 0o7777 == bits
+                && now.st_uid == target.st_uid
+                && now.st_gid == target.st_gid;
+            Ok(kept)
         }
 
         /// Opens the file of that name for writing, and changes nothing in
@@ -127,6 +182,19 @@ mod os {
         pub(in super::super) fn sync(&self) -> io::Result<()> {
             Ok(rustix::fs::fsync(&self.0)?)
         }
+    }
+
+    /// The device and the file number of an open file.
+    pub(in super::super) fn handle_identity(file: &File) -> io::Result<(u64, u128)> {
+        let found = rustix::fs::fstat(file)?;
+        #[allow(
+            clippy::useless_conversion,
+            reason = "the width of these fields differs between operating systems"
+        )]
+        Ok((u64::from(found.st_dev), u128::from(found.st_ino)))
+    }
+
+    impl Folder {
 
         /// Makes a new folder of that name. It fails when anything stands
         /// at the name, a link included.
@@ -222,6 +290,18 @@ mod os {
     /// A folder inside a root, resolved at this moment.
     pub(in super::super) struct Folder(PathBuf);
 
+    /// The volume and the file identifier of an open file.
+    #[cfg(windows)]
+    pub(in super::super) fn handle_identity(file: &File) -> io::Result<(u64, u128)> {
+        super::windows::identity(file)
+    }
+
+    /// No identity can be had of a file on this system.
+    #[cfg(not(windows))]
+    pub(in super::super) fn handle_identity(_file: &File) -> io::Result<(u64, u128)> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
     impl Folder {
         /// Resolves `folder` now. It must lie inside `base`.
         pub(in super::super) fn reach(base: &Path, folder: &Path) -> Result<Self, Unreached> {
@@ -312,6 +392,28 @@ mod os {
             Err(io::Error::from(io::ErrorKind::Unsupported))
         }
 
+        /// Windows keeps no owner, group, or permission bits a program can
+        /// copy through the standard library: a file's access is its
+        /// security descriptor, and a new file takes the one its folder
+        /// passes down. The read-only flag is kept through the file's own
+        /// handle; the owner and the access list are not, so this answers
+        /// `false` (decision 0176).
+        pub(in super::super) fn keep_owner_and_mode(
+            &self,
+            name: &OsStr,
+            file: &File,
+        ) -> io::Result<bool> {
+            match fs::symlink_metadata(self.0.join(name)) {
+                Ok(target) if target.file_type().is_file() => {
+                    file.set_permissions(target.permissions())?;
+                    Ok(false)
+                }
+                Ok(_) => Ok(false),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error),
+            }
+        }
+
         /// Writes the folder's list of names to the disk. Windows keeps a
         /// folder's names in its file system's journal and gives no handle
         /// to a folder that could be flushed, so there is nothing more to do.
@@ -337,4 +439,4 @@ mod os {
     }
 }
 
-pub(super) use os::Folder;
+pub(super) use os::{Folder, handle_identity};

@@ -247,6 +247,6 @@ jobs:
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
       - name: Lint with TLS on
-        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --all-targets --locked --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls -- -D warnings
+        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --features anything2mcp/tls -- -D warnings
       - name: Test with TLS on
-        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --locked --no-fail-fast --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --features anything2mcp/tls

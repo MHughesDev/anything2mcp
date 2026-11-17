@@ -135,7 +135,7 @@ kind = "pack"
 name = "app_json"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
 rank = 40
 session_reads = 4
 
@@ -143,7 +143,7 @@ session_reads = 4
 name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
 rank = 50
 session_reads = 4
 
@@ -207,6 +207,14 @@ code = "example_gone"
 [[failure_codes]]
 class = "busy"
 code = "example_busy"
+
+[[failure_codes]]
+class = "transient"
+code = "example_not_covered"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "example_nothing_recorded"
 
 [effects]
 network = "surfaces"
@@ -274,6 +282,10 @@ pub struct Hooks {
     /// A step of this kind returns, beside what it observed, a capture
     /// named `screen`, of `text/plain`, that holds this text.
     pub captures_with: Mutex<Option<(String, String)>>,
+    /// What every `taken` look answers while it is set, whatever is
+    /// stored: `absent`, or `nothing`, a look that did not cover what it
+    /// looked in.
+    pub taken_answer: Mutex<Option<&'static str>>,
 }
 
 /// What one step was given.
@@ -495,6 +507,7 @@ impl AppDriver {
                 .unwrap()
                 .push((self.mode.to_string(), step.kind.to_string()));
             let recorded = prepared.recorded().clone();
+            let recorded_code = recorded.get("item_code").cloned();
             hooks.given.lock().unwrap().push(Given {
                 recorded,
                 kind: step.kind.to_string(),
@@ -631,6 +644,47 @@ impl AppDriver {
                             FailureClass::UnknownVariant,
                             "example_unexpected",
                             "The application answered a read in a way no rule covers.",
+                        ))),
+                    }
+                }
+                // A look for a record of no identity, by the code its earlier
+                // step recorded: found, absent, or a look that did not
+                // cover the order.
+                "taken" => {
+                    let order = text(args, "order_id")?;
+                    let code = match &recorded_code {
+                        Some(Value::Text(code)) => code.clone(),
+                        _ => {
+                            return Err(StepFailure::not_sent(failure(
+                                FailureClass::UnknownVariant,
+                                "example_nothing_recorded",
+                                "The look was handed no recorded code.",
+                            )));
+                        }
+                    };
+                    match *hooks.taken_answer.lock().unwrap() {
+                        Some("absent") => return Ok(StepOutcome::Absent(Observed::default())),
+                        Some(_) => {
+                            return Err(StepFailure::answered(failure(
+                                FailureClass::Transient,
+                                "example_not_covered",
+                                "The look did not cover the order.",
+                            )));
+                        }
+                        None => {}
+                    }
+                    let path = format!("/api/orders/{order}/items/{code}");
+                    let (status, body) = self.get(state, &path).await?;
+                    match status {
+                        200 => Ok(StepOutcome::Done(Observed {
+                            values: item_values(&body),
+                            ..Observed::default()
+                        })),
+                        404 => Ok(StepOutcome::Absent(Observed::default())),
+                        _ => Err(StepFailure::answered(failure(
+                            FailureClass::UnknownVariant,
+                            "example_unexpected",
+                            "The application answered a look in a way no rule covers.",
                         ))),
                     }
                 }
@@ -1835,6 +1889,30 @@ pub fn plan(address: &str) -> Plan {
         ToolRuns::Pipeline(PipelineIndex::new(2)),
     ));
     plan
+}
+
+/// The plan changed so that the create whose code a step hands out before
+/// the save is a record of no identity: it is found again only by the code
+/// its earlier step recorded, through a read-back that looks for it
+/// (`taken`), as a take from a queue is by the message id it recorded. A
+/// write of no identity is irreversible.
+pub fn keyless_slot_add(plan: &mut Plan) {
+    for operation in &mut plan.operations {
+        if operation.name.as_str() == SLOT_ADD {
+            // A record that cannot be found by a key is written only by an
+            // irreversible operation.
+            operation.effect = EffectClass::Irreversible;
+            operation.identity = IdentityPlan {
+                strategy: IdentityStrategy::None,
+                key: Vec::new(),
+            };
+            for binding in &mut operation.bindings {
+                let order_id = binding.read_back[0].args[0].value;
+                binding.read_back = vec![step("taken", &[("order_id", order_id)], false, true)];
+                binding.lookup = Vec::new();
+            }
+        }
+    }
 }
 
 /// The plan changed so that the upsert is irreversible and its only
