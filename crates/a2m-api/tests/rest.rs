@@ -278,6 +278,7 @@ async fn a_refusal_carries_its_class_code_message_and_fix_and_nothing_else() {
             &json!({"tool": "example_nothing_get", "input": {}}),
         )
         .await;
+    eprintln!("REFUSAL {status} {body}");
     assert!((400..500).contains(&status), "{status} {body}");
     assert_refusal(&body, body["error"]["class"].as_str().unwrap(), body["error"]["code"].as_str().unwrap());
 

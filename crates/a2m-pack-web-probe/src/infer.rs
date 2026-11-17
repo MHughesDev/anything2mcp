@@ -350,21 +350,24 @@ fn one_difference(one: &[Segment], other: &[Segment]) -> Option<usize> {
     place
 }
 
-/// Whether two endpoints answer alike: the same names at the top of their
-/// JSON answers, or no JSON answer on either side.
+/// Whether two endpoints answer alike: both answered with JSON, and the
+/// tops of their answers hold the same names. Pages, and requests that
+/// were never answered, are not joined by variance: nothing says they
+/// are one endpoint.
 fn answers_alike(one: &Endpoint, other: &Endpoint) -> bool {
-    let top = |shape: &Option<Shape>| {
-        shape.as_ref().map(|shape| {
-            let json = shape.to_json();
-            let names: Vec<String> = json
-                .get("fields")
-                .and_then(Json::as_object)
-                .map(|fields| fields.keys().cloned().collect())
-                .unwrap_or_default();
-            (json.get("type").cloned(), names)
-        })
+    let top = |shape: &Shape| {
+        let json = shape.to_json();
+        let names: Vec<String> = json
+            .get("fields")
+            .and_then(Json::as_object)
+            .map(|fields| fields.keys().cloned().collect())
+            .unwrap_or_default();
+        (json.get("type").cloned(), names)
     };
-    top(&one.response) == top(&other.response)
+    match (&one.response, &other.response) {
+        (Some(mine), Some(theirs)) => top(mine) == top(theirs),
+        _ => false,
+    }
 }
 
 fn widen(segment: &Segment, tier: Tier) -> Segment {
