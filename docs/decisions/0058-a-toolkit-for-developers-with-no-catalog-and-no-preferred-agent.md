@@ -15,8 +15,8 @@ The long-term plan asked the owner who the product is for, whether ready-made to
 3. **No preferred agent.** Any client that speaks the protocol is served alike, whoever made it, a home-built runtime included. Nothing in the kernel knows a client's brand. Conformance is tested against the protocol, with at least two unrelated clients. A client's quirk, where one must be handled, is data in a profile.
 4. **Proven on test systems; real systems at the end.** Every kind of system is proven against a test stand in this repository. Real systems are tried with the owner once the core works.
 5. **Test stands are as real as is cheap.** A stand imitates the part of its kind that makes the kind hard, and nothing else. The suite is kept small on purpose: tests secure the system and do not advance it. The rules that make a test count do not loosen: a write is proven by asking the stand what it stored.
-6. **Reverse engineering is in scope.** The product automates the work of finding out what a system can do: reading what it publishes, watching it in use, and, through optional providers, decoding and decompiling its artifacts. [Section 67](../spec/67-the-scout-and-who-does-what.md) says what runs by itself. The limits already decided stand: discovery cannot write, a finding cannot run, and nothing gets past a sign-in, a licence check, or a device's protection ([0053](0053-rea-is-studied-for-method-and-used-only-as-an-optional-provider.md), [0054](0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md), rule 5).
-7. **Breadth is the aim.** Software, services, data, and devices with their firmware are all in scope, each arriving as a pack that clears the bar in [section 55](../spec/55-kernel-and-packs.md).
+6. **Reverse engineering is in scope.** The product automates the work of finding out what a system can do: reading what it publishes, watching it in use, and, through optional providers, decoding and decompiling its artifacts. [Section 67](../spec/4-building-tools/402-the-scout-and-who-does-what.md) says what runs by itself. The limits already decided stand: discovery cannot write, a finding cannot run, and nothing gets past a sign-in, a licence check, or a device's protection ([0053](0053-rea-is-studied-for-method-and-used-only-as-an-optional-provider.md), [0054](0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md), rule 5).
+7. **Breadth is the aim.** Software, services, data, and devices with their firmware are all in scope, each arriving as a pack that clears the bar in [section 55](../spec/2-kernel/202-kernel-and-packs.md).
 
 ## Consequences
 
@@ -35,6 +35,6 @@ Developers ask, repeatedly, for somewhere to share targets.
 
 ## Spec sections
 
-- [01-summary.md](../spec/01-summary.md)
-- [53-the-universal-runtime.md](../spec/53-the-universal-runtime.md)
-- [67-the-scout-and-who-does-what.md](../spec/67-the-scout-and-who-does-what.md)
+- [01-summary.md](../archive/spec-2026-11/01-summary.md)
+- [53-the-universal-runtime.md](../archive/spec-2026-11/53-the-universal-runtime.md)
+- [67-the-scout-and-who-does-what.md](../spec/4-building-tools/402-the-scout-and-who-does-what.md)

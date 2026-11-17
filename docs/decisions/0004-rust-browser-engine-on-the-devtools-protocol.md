@@ -29,4 +29,4 @@ The spike shows reliable acting and waiting cannot be reached in reasonable time
 
 ## Spec sections
 
-- [17-browser-engine-and-runtime.md](../spec/17-browser-engine-and-runtime.md)
+- [17-browser-engine-and-runtime.md](../spec/3-packs/302-the-web-pack-browser-engine.md)

@@ -29,5 +29,5 @@ A platform offers a better native way to show a large confirmation.
 
 ## Spec sections
 
-- [49-approval-and-sign-in-surfaces.md](../spec/49-approval-and-sign-in-surfaces.md)
-- [39-local-engine-and-clients.md](../spec/39-local-engine-and-clients.md)
+- [49-approval-and-sign-in-surfaces.md](../spec/5-security/503-approval-and-sign-in-surfaces.md)
+- [39-local-engine-and-clients.md](../archive/spec-2026-11/39-local-engine-and-clients.md)

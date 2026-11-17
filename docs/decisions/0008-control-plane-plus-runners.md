@@ -28,5 +28,5 @@ The split adds more complexity than the Solo profile can hide.
 
 ## Spec sections
 
-- [04-system-overview.md](../spec/04-system-overview.md)
-- [23-deployment-configurations.md](../spec/23-deployment-configurations.md)
+- [04-system-overview.md](../archive/spec-2026-11/04-system-overview.md)
+- [23-deployment-configurations.md](../spec/6-running-it/601-deployment-configurations.md)

@@ -40,6 +40,6 @@ For the owner:
 
 ## Next
 
-1. Read AGENTS.md, then the [working method](../plan/working-method.md) and [core first](../plan/core-first.md).
+1. Read AGENTS.md, then the [working method](../plan/working-method.md) and [core first](../archive/plans-2026-11/core-first.md).
 2. Before any code, run design review lens 6 or 7 as a first exercise. It is a cheap way to learn the design and it will find something.
 3. Then start slice 0.1 from core first: the repository skeleton and CI. Plan it, show the owner, and wait for a go-ahead.

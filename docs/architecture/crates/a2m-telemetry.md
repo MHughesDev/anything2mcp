@@ -11,7 +11,7 @@ Emitting what the engine did: the step trace and its signature, the capture of a
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside, each to be verified and recorded: a span and logging framework; an OpenTelemetry exporter, behind a cargo feature; `serde` and a JSON writer; a SHA-256 crate, shared with `a2m-core`'s `Digest` |
 | Built in | Roadmap package 1.2, the step trace and its signature; package 2.1, redaction at capture and the check on the way out; the OpenTelemetry export with the server profile, Phase 6, or earlier if a slice needs it |
-| Carries out | Spec sections [47](../../spec/47-traces-and-evidence.md) and [28](../../spec/28-observability-audit-and-repair.md); [decision 0037](../../decisions/0037-evidence-events-a-step-trace-and-artifacts-redacted-at-capture.md); the determinism gate's input in [section 27](../../spec/27-testing-and-publish-gates.md) |
+| Carries out | Spec sections [217](../../spec/2-kernel/217-traces-evidence-and-repair.md) and [217](../../spec/2-kernel/217-traces-evidence-and-repair.md); [decision 0037](../../decisions/0037-evidence-events-a-step-trace-and-artifacts-redacted-at-capture.md); the determinism gate's input in [section 403](../../spec/4-building-tools/403-testing-and-publish-gates.md) |
 
 ## Owns
 
@@ -45,7 +45,7 @@ pub struct TraceBuilder { /* ... */ }
 impl TraceBuilder {
     pub fn new(identity: TraceIdentity, level: CaptureLevel, redact: Arc<dyn Redact>) -> Self;
 
-    /// One record per step, as section 47 defines the groups. Redacted on entry.
+    /// One record per step, as section 217 defines the groups. Redacted on entry.
     pub fn record(&mut self, step: StepRecord);
 
     /// Offers an artifact. Returns `Kept` with redacted bytes for the ledger, or `Dropped` with a
@@ -57,7 +57,7 @@ impl TraceBuilder {
 }
 
 pub struct TraceIdentity { pub run: RunId, pub attempt: u32, pub operation: OperationName, pub plan: Digest, pub engine: Version }
-pub enum CaptureLevel { Minimal, Standard, Full }      // names as section 47
+pub enum CaptureLevel { Minimal, Standard, Full }      // names as section 217
 
 pub struct StepRecord {
     pub index: u32, pub kind: StepKindName, pub record: Option<RecordKey>,
@@ -159,7 +159,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 
 ## Open points
 
-- **The unit of a record.** Section 47 leaves open whether a record is per step or per pass of the engine loop. The proposal: one record per step, as the glossary says, with the binding choice on the first record of each pass and timings per step. Package 1.2 decides before the signature is defined over it.
+- **The unit of a record.** Section 217 leaves open whether a record is per step or per pass of the engine loop. The proposal: one record per step, as the glossary says, with the binding choice on the first record of each pass and timings per step. Package 1.2 decides before the signature is defined over it.
 - How a restricted value enters the signature. A plain digest of a short value can be reversed by guessing; a keyed digest differs between installations. The proposal is a keyed digest, and the determinism gate compares within one installation.
 - Whether the check on the way out is a method of `Redact` in `a2m-core`. Proposed, as `contains_secret`.
 - The allowlist of headers, written once and shared by every pack that records exchanges.

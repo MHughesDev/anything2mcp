@@ -11,7 +11,7 @@ Turns an input file into validated records. It defines `SourceReader`, carries t
 | May depend on | Layers 1 to 3 |
 | Depends on | `a2m-core`; `a2m-expr` for mappings, row filters, and the host functions for units, numbers, and dates; `a2m-files` for the compiled source definition and the field types in a plan; `a2m-telemetry`. Outside: an xlsx reader, a csv reader, and a json reader that keeps a number's text, each to be verified |
 | Built in | Phase 3, group D and slice 3.9. Group C's normalization rules arrive with slice 3.4 and are used here for typing cells |
-| Carries out | Spec sections [12](../../spec/12-data-sources-and-value-normalization.md), [51](../../spec/51-defending-against-a-manipulated-agent.md) (a file is read once, its content checked), [42](../../spec/42-run-ledger-design.md) (step 1 of the preview), [67](../../spec/67-the-scout-and-who-does-what.md) (the structure of a real file, for the drafter); the `sources/*.yaml` part of the [file formats](../../reference/file-formats.md#sourcesyaml) |
+| Carries out | Spec sections [210](../../spec/2-kernel/210-sources-and-value-normalization.md), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (a file is read once, its content checked), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) (step 1 of the preview), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (the structure of a real file, for the drafter); the `sources/*.yaml` part of the [file formats](../../reference/file-formats.md#sourcesyaml) |
 
 ## Owns
 
@@ -89,7 +89,7 @@ Contracts that the signatures do not show:
 - **Mappings are expressions.** A row field that is not a bare column is a CEL expression over `row` and `source`, evaluated by `a2m-expr`. The `rows` filter is one too. An expression that fails on a row is a problem for that row.
 - **All problems, then nothing.** `read` returns `ValidatedRecords` only if no row has a problem. Otherwise it returns every problem, each with its cell and field, and the run is `rejected` with nothing changed.
 - **Record limits are not here.** The count of rows goes to `a2m-policy`'s `check_limits`. This crate does not know a limit.
-- **One parser, one meaning.** The file pack of section 70 depends on this crate for parsing, fingerprints, and `typed`, so a value never means one thing to a source and another to the file pack. A `ByteSpan` points into the part as stored, after unpacking a workbook's archive, so the file pack can replace a value's bytes and leave the rest of the part as it was. Re-packing and checking the patched file are the file pack's work.
+- **One parser, one meaning.** The file pack of section 308 depends on this crate for parsing, fingerprints, and `typed`, so a value never means one thing to a source and another to the file pack. A `ByteSpan` points into the part as stored, after unpacking a workbook's archive, so the file pack can replace a value's bytes and leave the rest of the part as it was. Re-packing and checking the patched file are the file pack's work.
 - **Plug-in readers** reach this trait through the plug-in host in `a2m-provider`, with the methods `read` and `fingerprint` of the plug-in protocol. A plug-in reader returns cells, and typing and mapping still happen here, so a plug-in cannot bypass validation.
 
 ## A read, step by step
@@ -116,7 +116,7 @@ Steps 3 to 7 are pure: the same bytes and the same plan give the same result, wh
 | --- | --- |
 | `a2m-engine` | `Sources::read` and `from_rows` at step 1 of the preview |
 | `a2m-provider` | `SourceReader`, to register plug-in readers alongside the built-in ones |
-| The file pack, once it exists (section 70) | `SourceReader::parse`, `Parsed` and its positions, fingerprints, `Sources::typed` |
+| The file pack, once it exists (section 308) | `SourceReader::parse`, `Parsed` and its positions, fingerprints, `Sources::typed` |
 | `a2m-actions` | `Sources::new` with the registry's readers; `describe` for the discoverer of a real file's structure that feeds the drafter |
 
 It uses `a2m-files` for `CompiledSource` and field types, `a2m-expr` for expressions and host functions, and `a2m-telemetry` for spans.
@@ -155,7 +155,7 @@ None. Inputs arrive as bytes already stored; results go back to the caller, whic
 3. Typing by field types, once slice 3.4 has the normalization rules.
 4. The json reader and `from_rows`.
 5. `parse` with positions, and `typed` as a public call, when the file pack is built.
-6. `describe`, with the first discoverer that drafts a source definition. Stage E, or the file pack of section 70.
+6. `describe`, with the first discoverer that drafts a source definition. Stage E, or the file pack of section 308.
 
 ## Open points
 

@@ -28,5 +28,5 @@ A mode proves unworkable under common Entra configurations.
 
 ## Spec sections
 
-- [16-identity-on-a-shared-server.md](../spec/16-identity-on-a-shared-server.md)
-- [15-identity-sign-in-and-sessions.md](../spec/15-identity-sign-in-and-sessions.md)
+- [16-identity-on-a-shared-server.md](../spec/6-running-it/602-identity-on-a-shared-server.md)
+- [15-identity-sign-in-and-sessions.md](../archive/spec-2026-11/15-identity-sign-in-and-sessions.md)

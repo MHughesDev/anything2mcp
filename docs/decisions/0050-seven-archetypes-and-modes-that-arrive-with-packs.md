@@ -35,5 +35,5 @@ A system of real interest fits none of the seven. That is hypothesis H-29.
 
 ## Spec sections
 
-- [54-interaction-archetypes.md](../spec/54-interaction-archetypes.md)
-- [62-catalog-of-surface-kinds.md](../spec/62-catalog-of-surface-kinds.md)
+- [54-interaction-archetypes.md](../archive/spec-2026-11/54-interaction-archetypes.md)
+- [62-catalog-of-surface-kinds.md](../archive/spec-2026-11/62-catalog-of-surface-kinds.md)

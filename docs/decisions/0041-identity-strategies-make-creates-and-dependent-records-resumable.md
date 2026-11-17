@@ -29,5 +29,5 @@ A common class of application defeats all four strategies.
 
 ## Spec sections
 
-- [50-record-identity-and-dependent-records.md](../spec/50-record-identity-and-dependent-records.md)
-- [42-run-ledger-design.md](../spec/42-run-ledger-design.md)
+- [50-record-identity-and-dependent-records.md](../spec/2-kernel/209-record-identity-and-dependent-records.md)
+- [42-run-ledger-design.md](../archive/spec-2026-11/42-run-ledger-design.md)

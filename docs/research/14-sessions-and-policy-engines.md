@@ -2,7 +2,7 @@
 
 **Status:** Partial. Built from search-result summaries on 2026-11-15; no primary page was opened in full. It answers part of open briefs 4, 5, and 15, which stay open.
 
-Feeds spec sections [44](../spec/44-session-keeper.md) and [45](../spec/45-policy-engine.md).
+Feeds spec sections [215](../spec/2-kernel/215-sessions-and-the-session-keeper.md) and [212](../spec/2-kernel/212-policy-and-approvals.md).
 
 ## The user's own browser profile is off limits
 

@@ -11,11 +11,11 @@ The session keeper and the auth providers. The keeper is the only code that sign
 | May depend on | Layers 1 to 3 |
 | Depends on | `a2m-core`; `a2m-vault` to seal saved state; `a2m-ledger` for its tables; `a2m-telemetry`. Outside: an HTTP client for identity services' token endpoints, and OAuth and certificate crates, each to be verified |
 | Built in | Phase 2: slices 2.3 to 2.6, groups C, D, E, H. Phase 7: moving sessions between runners, the operating system's broker, hosted sign-in |
-| Carries out | Spec sections [15](../../spec/15-identity-sign-in-and-sessions.md), [16](../../spec/16-identity-on-a-shared-server.md), [44](../../spec/44-session-keeper.md), [49](../../spec/49-approval-and-sign-in-surfaces.md) (sign-in), [52](../../spec/52-when-the-engine-itself-fails.md) (the key store unreachable); the [auth provider interface](../../reference/technical-reference.md#auth-provider-interface); decisions 0030, 0032, and 0035 |
+| Carries out | Spec sections [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [602](../../spec/6-running-it/602-identity-on-a-shared-server.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (sign-in), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (the key store unreachable); the [auth provider interface](../../reference/technical-reference.md#auth-provider-interface); decisions 0030, 0032, and 0035 |
 
 ## Owns
 
-- The session state machine: the eight states of section 44, and every transition between them.
+- The session state machine: the eight states of section 215, and every transition between them.
 - The three clocks: the declared ones, and the ones it learns from each session's history.
 - When to check, when to renew, when to ask a person, and when to let a session lapse.
 - One renewal per session at a time, and a stored credential tried once.
@@ -27,7 +27,7 @@ It must never: call a crate above it; read, copy, or decrypt a cookie store it d
 
 ## Where each provider lives
 
-Section 55 left this open, and package A7 of the long-term plan was to settle it. It is settled: **a provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system.**
+Section 202 left this open, and package A7 of the long-term plan was to settle it. It is settled: **a provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system.**
 
 | Provider | Lives in | Why |
 | --- | --- | --- |
@@ -167,7 +167,7 @@ Tables, through `a2m-ledger`: `sessions` as in the ledger schema; `session_event
 | --- | --- |
 | Ten runs that meet an expired session cause one renewal | The keeper's ten-runs-one-renewal test, slice 2.5; hypothesis H-04 |
 | A refused stored credential is not tried again | A test with the test application's lockout counter |
-| No transition outside section 44's table | A table-driven test over every pair of states |
+| No transition outside section 215's table | A table-driven test over every pair of states |
 | No credential appears in a lease, a status, the timeline, a log, or a failure | The planted-secret test of slice 2.1, run against every provider here |
 | `AuthProvider` is called only by the keeper's two halves | A source check, and the layering: no crate below the contract can name a pack's provider |
 | An expired session stops every call with `needs_login` | Slice 2.4 |

@@ -27,4 +27,4 @@ A target has a documented, validated API; then `api` can be the first binding.
 
 ## Spec sections
 
-- [06-modes-and-drivers.md](../spec/06-modes-and-drivers.md)
+- [06-modes-and-drivers.md](../archive/spec-2026-11/06-modes-and-drivers.md)

@@ -29,5 +29,5 @@ A target proves to misbehave with several tabs under one sign-in.
 
 ## Spec sections
 
-- [44-session-keeper.md](../spec/44-session-keeper.md)
-- [11-concurrency-many-agents-at-once.md](../spec/11-concurrency-many-agents-at-once.md)
+- [44-session-keeper.md](../archive/spec-2026-11/44-session-keeper.md)
+- [11-concurrency-many-agents-at-once.md](../spec/2-kernel/211-concurrency.md)

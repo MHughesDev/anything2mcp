@@ -11,7 +11,7 @@ The runner role, for a runner on another machine than the control plane. A runne
 | May depend on | Layers 1 to 7 |
 | Depends on | `a2m-core`, `a2m-vault` (the runner's key and unwrapping session material), `a2m-telemetry`, `a2m-auth` (the keeper's work half), `a2m-provider` (the registry the product crate fills), `a2m-engine`, `a2m-sched` (the job and lease types), `a2m-actions` (`Paths`, settings, and, on the control plane's end, the `Kernel`). Outside: Tokio, Hyper with rustls, to be verified |
 | Built in | Roadmap packages 7.1 (the link), 7.2 (enrollment, lost leases, reconcile after a lost runner), 7.3 (user-device runners) |
-| Carries out | Spec section [43](../../spec/43-runner-protocol.md); the runner half of [44](../../spec/44-session-keeper.md); the [runner protocol](../../reference/technical-reference.md#runner-protocol) of the technical reference |
+| Carries out | Spec section [223](../../spec/2-kernel/223-the-runner-protocol.md); the runner half of [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [runner protocol](../../reference/technical-reference.md#runner-protocol) of the technical reference |
 
 ## Owns
 
@@ -49,7 +49,7 @@ impl LinkService {
 
 ## Calls
 
-Every call is a request from the runner over mutually authenticated HTTPS, to one path. Every message carries the job's lease number and a sequence number; repeats are recognized and older lease numbers refused. The calls and their purposes are those of spec section 43. What each does in this crate:
+Every call is a request from the runner over mutually authenticated HTTPS, to one path. Every message carries the job's lease number and a sequence number; repeats are recognized and older lease numbers refused. The calls and their purposes are those of spec section 223. What each does in this crate:
 
 | Call | Runner side | Control plane side, in `LinkService` |
 | --- | --- | --- |

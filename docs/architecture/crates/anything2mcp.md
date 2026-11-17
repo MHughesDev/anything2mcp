@@ -11,7 +11,7 @@ The product: the one program, and the only code that names a pack. It reads the 
 | May depend on | Everything |
 | Depends on | Today, nothing internal. To come: every kernel crate and every pack crate. Outside: a command-line parser, `clap` as research note 9 suggests, to be verified; Tokio |
 | Built in | Roadmap package 1.1 (a command that prints one read, in process); 1.4 (`serve` on one machine, commands as thin clients); 1.5 (the command tree from the registry); 5.2 (shortcuts and `init`); 6.2 and 7.1 (server and runner roles). Today it reports its version |
-| Carries out | Spec sections [30](../../spec/30-settings.md) for loading, [39](../../spec/39-local-engine-and-clients.md) for the clients, [40](../../spec/40-authoring-interface.md) for the command face, [41](../../spec/41-packaging-and-release.md) and [65](../../spec/65-python-first-packaging.md) for what is shipped |
+| Carries out | Spec sections [226](../../spec/2-kernel/226-configuration.md) for loading, [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for the clients, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the command face, [605](../../spec/6-running-it/605-packaging-and-release.md) and [605](../../spec/6-running-it/605-packaging-and-release.md) for what is shipped |
 
 ## Owns
 
@@ -53,7 +53,7 @@ pub mod embed {
 }
 ```
 
-In the sketch `web_browser`, `web_ui`, `web_probe`, and `http_pack` stand for `a2m-pack-web-browser`, `a2m-pack-web-ui`, `a2m-pack-web-probe`, and `a2m-pack-http`. Joining a pack's own crates, as for the web pack's browser handle, is the only other thing this crate does with a pack; each pack crate exposes one register function that takes the registry and its own settings group and registers its manifest and its six kinds of thing ([spec section 55](../../spec/55-kernel-and-packs.md)). A pack that is switched off is never registered, so it cannot be reached and costs nothing at run time.
+In the sketch `web_browser`, `web_ui`, `web_probe`, and `http_pack` stand for `a2m-pack-web-browser`, `a2m-pack-web-ui`, `a2m-pack-web-probe`, and `a2m-pack-http`. Joining a pack's own crates, as for the web pack's browser handle, is the only other thing this crate does with a pack; each pack crate exposes one register function that takes the registry and its own settings group and registers its manifest and its six kinds of thing ([spec section 202](../../spec/2-kernel/202-kernel-and-packs.md)). A pack that is switched off is never registered, so it cannot be reached and costs nothing at run time.
 
 ## Starting a process
 
@@ -108,9 +108,9 @@ The `engine.*` actions are carried out in the client end of `a2m-local`, because
 | crates.io | This crate | `cargo install anything2mcp` builds both small targets from the one module |
 | Standalone | Installers, Homebrew and winget entries, a container image, an offline bundle | The binary, and a link or copy for `a2m` |
 
-Every first-party pack is compiled in and switched off until enabled ([spec section 65](../../spec/65-python-first-packaging.md)). The SDKs start `bridge` for a local engine, or speak HTTPS to a server; both are generated from the recorded catalog and the OpenAPI document.
+Every first-party pack is compiled in and switched off until enabled ([spec section 605](../../spec/6-running-it/605-packaging-and-release.md)). The SDKs start `bridge` for a local engine, or speak HTTPS to a server; both are generated from the recorded catalog and the OpenAPI document.
 
-**`a2m` is the same program.** One binary is shipped. On each install route `a2m` is a link to it or the smallest launcher that route supports, and the cost of each in start time is measured against the 30 ms budget of spec section 39. The workspace today builds two small binary targets, `anything2mcp` and `a2m`, from one module for convenience; each is a one-line `main` calling `run`, and the output names the product whatever name started it. The package build is where the link replaces the second target, because two shipped copies would count twice against the 25 MB target of hypothesis H-28.
+**`a2m` is the same program.** One binary is shipped. On each install route `a2m` is a link to it or the smallest launcher that route supports, and the cost of each in start time is measured against the 30 ms budget of spec section 222. The workspace today builds two small binary targets, `anything2mcp` and `a2m`, from one module for convenience; each is a one-line `main` calling `run`, and the output names the product whatever name started it. The package build is where the link replaces the second target, because two shipped copies would count twice against the 25 MB target of hypothesis H-28.
 
 ## Used by, and uses
 
@@ -137,7 +137,7 @@ None of its own. Settings are read once at start and handed down.
 | Every command but the process commands is an action or a shortcut | The parity test in `a2m-actions`, over the command tree |
 | Non-terminal output is one JSON object | A test over every action with output redirected |
 | A pack that is switched off is not in the registry | A test with each pack disabled in turn |
-| An unconfigured engine opens no outside connection | The CI test of spec section 41 |
+| An unconfigured engine opens no outside connection | The CI test of spec section 605 |
 
 ## Build order
 
@@ -153,5 +153,5 @@ None of its own. Settings are read once at start and handed down.
 
 - `init` is a shortcut with no action behind it in the catalog; it needs one, for a project and its guidance file.
 - Which link or launcher provides `a2m` on each route: research brief 28.
-- Whether the embedding facade publishes the `a2m-*` crates, which spec section 41 leaves to a decision record.
+- Whether the embedding facade publishes the `a2m-*` crates, which spec section 605 leaves to a decision record.
 - The global flag names, and whether `--idempotency-key` is a global flag or a field of the write actions' schemas.

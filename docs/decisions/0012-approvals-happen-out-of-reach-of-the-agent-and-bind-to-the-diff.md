@@ -28,4 +28,4 @@ Never for irreversible operations.
 
 ## Spec sections
 
-- [18-safety-policy-and-approvals.md](../spec/18-safety-policy-and-approvals.md)
+- [18-safety-policy-and-approvals.md](../archive/spec-2026-11/18-safety-policy-and-approvals.md)

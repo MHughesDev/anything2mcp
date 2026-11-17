@@ -17,7 +17,7 @@ AGENTS.md said that modes, like every other fixed word, are an enum in the core 
 - The archetype is the closed type. `Archetype` is an enum of seven values, and the engine's handling differs by archetype and never by mode.
 - Every other fixed word stays an enum: effect classes, hazards, failure classes, evidence levels, coverage, and the states of a run, a record, a session, and a binding.
 - Failure codes are checked names as well. The classes are closed; each crate names the codes it can produce, and a code never changes once a release has carried it.
-- A first-party pack's new mode still needs a decision record, as 0050 says. A plug-in's mode needs its manifest approved by an administrator, as [section 56](../spec/56-the-provider-contract.md) says.
+- A first-party pack's new mode still needs a decision record, as 0050 says. A plug-in's mode needs its manifest approved by an administrator, as [section 56](../spec/2-kernel/203-the-provider-contract.md) says.
 
 ## Consequences
 
@@ -36,6 +36,6 @@ Load-time checking of modes lets a class of mistake through that the Rust compil
 
 ## Spec sections
 
-- [54-interaction-archetypes.md](../spec/54-interaction-archetypes.md)
-- [55-kernel-and-packs.md](../spec/55-kernel-and-packs.md)
+- [54-interaction-archetypes.md](../archive/spec-2026-11/54-interaction-archetypes.md)
+- [55-kernel-and-packs.md](../spec/2-kernel/202-kernel-and-packs.md)
 - [The technical reference](../reference/technical-reference.md#core-types)

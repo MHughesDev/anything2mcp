@@ -46,8 +46,8 @@ The command pack, built first, shows that the designs of the other four rest on 
 
 ## Spec sections
 
-- [68-the-command-pack.md](../spec/68-the-command-pack.md)
-- [69-the-data-pack.md](../spec/69-the-data-pack.md)
-- [70-the-file-pack.md](../spec/70-the-file-pack.md)
-- [71-the-stream-pack.md](../spec/71-the-stream-pack.md)
-- [72-the-device-pack.md](../spec/72-the-device-pack.md)
+- [68-the-command-pack.md](../spec/3-packs/306-the-command-pack.md)
+- [69-the-data-pack.md](../spec/3-packs/307-the-data-pack.md)
+- [70-the-file-pack.md](../spec/3-packs/308-the-file-pack.md)
+- [71-the-stream-pack.md](../spec/3-packs/309-the-stream-pack.md)
+- [72-the-device-pack.md](../archive/spec-2026-11/72-the-device-pack.md)

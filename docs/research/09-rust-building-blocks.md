@@ -1,6 +1,6 @@
 # Research: Rust building blocks
 
-**Status:** partial. The MCP SDK, browser engine options, and desktop accessibility library were looked up on 2026-11-15. Everything under "Candidates from general knowledge" is unverified and must be confirmed in Phase 0 before it is added to `Cargo.toml`. Feeds [spec section 29](../spec/29-repository-crates-and-packaging.md) and [section 17](../spec/17-browser-engine-and-runtime.md).
+**Status:** partial. The MCP SDK, browser engine options, and desktop accessibility library were looked up on 2026-11-15. Everything under "Candidates from general knowledge" is unverified and must be confirmed in Phase 0 before it is added to `Cargo.toml`. Feeds [spec section 605](../spec/6-running-it/605-packaging-and-release.md) and [section 302](../spec/3-packs/302-the-web-pack-browser-engine.md).
 
 ## Verified by search
 

@@ -29,5 +29,5 @@ An operating system offers no usable check and the dialog-only fallback is judge
 
 ## Spec sections
 
-- [39-local-engine-and-clients.md](../spec/39-local-engine-and-clients.md)
-- [18-safety-policy-and-approvals.md](../spec/18-safety-policy-and-approvals.md)
+- [39-local-engine-and-clients.md](../archive/spec-2026-11/39-local-engine-and-clients.md)
+- [18-safety-policy-and-approvals.md](../archive/spec-2026-11/18-safety-policy-and-approvals.md)

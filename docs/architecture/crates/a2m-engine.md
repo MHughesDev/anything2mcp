@@ -11,7 +11,7 @@ The engine loop: one job in, one outcome out. It carries out a compiled plan thr
 | May depend on | Layers 1 to 5, except `a2m-files` and `a2m-policy`, which the audit refuses. Never `a2m-sched`, never a pack |
 | Depends on | `a2m-core`, including `Plan` and `Step` as data and the check of a plan's hash; `a2m-expr` to evaluate compiled expressions and field-type normalizers; `a2m-telemetry` for spans and the step trace; `a2m-ledger` for the types `IntentToken` and `RecordLock` only, never to open a store; `a2m-auth` for `SessionLease`; `a2m-sources` for `SourceReader`; `a2m-provider` for the registry, `DriverHandle`, and `SandboxPort`. Outside: `tokio` |
 | Built in | Phase 1 (slices 1.1 to 1.3, reads), Phase 2 (slice 2.4, sessions), Phase 3 (slices 3.3 to 3.10, writes, preview, resume, identity, pipelines, faults), package E1 (the sandbox for discovery), Phase 4 (shadow) |
-| Carries out | Spec sections [8](../../spec/08-execution-engine.md), [6](../../spec/06-modes-and-drivers.md) for choosing, [10](../../spec/10-runs-ledger-and-resume.md) and [42](../../spec/42-run-ledger-design.md) for the write path and resume, [50](../../spec/50-record-identity-and-dependent-records.md), [52](../../spec/52-when-the-engine-itself-fails.md), [54](../../spec/54-interaction-archetypes.md), [26](../../spec/26-agent-toolkit-how-tools-get-built.md) and [58](../../spec/58-discovery-and-findings.md) for the sandbox; the [diffs](../../reference/steps-snapshots-and-diffs.md#diffs) |
+| Carries out | Spec sections [207](../../spec/2-kernel/207-the-engine-loop.md), [201](../../spec/2-kernel/201-archetypes-and-modes.md) for choosing, [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) and [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for the write path and resume, [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) and [218](../../spec/2-kernel/218-discovery-and-findings.md) for the sandbox; the [diffs](../../reference/steps-snapshots-and-diffs.md#diffs) |
 
 ## Owns
 
@@ -116,7 +116,7 @@ Every operation call runs these parts. A read skips intend and confirm, and runs
 | 7. Read back | Runs the read-back steps, or uses the values the save response carried where the binding says `prefer: response`. Normalizes and compares | None | `mismatch`, `read_back_differs`, after one re-read |
 | 8. Record | Sends the commit point as `verified` with raw and normalized values and its evidence; the ledger releases the lock in the same transaction. For a read, sends the result | `evidence`, `send` | `busy`, `storage_full` if evidence cannot be stored, which leaves the record unverified |
 
-**Choosing among verified bindings.** A binding qualifies when its status is `verified` (in the sandbox, any status but `retired`); the registry has a driver for its mode whose `health` is `Ready`; its surface has not drifted; and its session state is valid or the surface needs none. Drift, edge blocks, and session states are read from `JobSpec::conditions`; a session that turned out to be invalid is learned at prepare, when the lease is refused. A pinned mode removes every other binding, compared by name. The default order, when an operation states none, is set by the compiler from each mode's `rank` in its manifest, so the cheapest-first rule of section 6 lives in data and the engine never knows which mode is cheap. The engine only walks the plan's order.
+**Choosing among verified bindings.** A binding qualifies when its status is `verified` (in the sandbox, any status but `retired`); the registry has a driver for its mode whose `health` is `Ready`; its surface has not drifted; and its session state is valid or the surface needs none. Drift, edge blocks, and session states are read from `JobSpec::conditions`; a session that turned out to be invalid is learned at prepare, when the lease is refused. A pinned mode removes every other binding, compared by name. The default order, when an operation states none, is set by the compiler from each mode's `rank` in its manifest, so the cheapest-first rule of section 201 lives in data and the engine never knows which mode is cheap. The engine only walks the plan's order.
 
 **Falling back.** A read falls to the next qualifying binding after `drift`, an exhausted `transient`, or a driver that becomes unavailable. A write falls back only if nothing was sent for the current record (`Sent::NotSent` on every `commits` step so far), or after reconcile has shown that nothing landed. A record is never carried by two modes.
 
@@ -136,9 +136,9 @@ Every operation call runs these parts. A read skips intend and confirm, and runs
 
 ## The preview, the diff, and the hash
 
-A `Preview` job runs the order of section 42: read the source through the registry's `SourceReader` once, apply limits, run the leading read steps with their `expect`, look each record up by its identity strategy, class it `create`, `update`, or `unchanged`, build the diff, and hash it by the canonical form in the reference. The engine computes the hash; nothing else does, so that an approval and a run can never disagree about it. A diff with nothing to create or update and no other effect ends `completed` with no approval. Otherwise the run rests at `needs_approval`.
+A `Preview` job runs the order of section 208: read the source through the registry's `SourceReader` once, apply limits, run the leading read steps with their `expect`, look each record up by its identity strategy, class it `create`, `update`, or `unchanged`, build the diff, and hash it by the canonical form in the reference. The engine computes the hash; nothing else does, so that an approval and a run can never disagree about it. A diff with nothing to create or update and no other effect ends `completed` with no approval. Otherwise the run rests at `needs_approval`.
 
-An `Execute` job for a write first calls `approval`, which consumes the approval bound to the diff hash and moves the run to `running` in one transaction. It then **runs the leading read steps again and stops if an `expect` that held at preview fails now.** That settles an open point of section 42 in favor of the safe answer. Each record is then written by the path above, with the freshness check against the values the preview stored.
+An `Execute` job for a write first calls `approval`, which consumes the approval bound to the diff hash and moves the run to `running` in one transaction. It then **runs the leading read steps again and stops if an `expect` that held at preview fails now.** That settles an open point of section 208 in favor of the safe answer. Each record is then written by the path above, with the freshness check against the values the preview stored.
 
 ## Reconcile and resume
 
@@ -153,13 +153,13 @@ A `Reconcile` job, and the start of any resumed `Execute` job, read `JobSpec::sn
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
 | `none` | Cannot be read. The run is never resumed by itself and stops for a person |
 
-Then the table of section 42: equal to the intended values, mark `verified` and write nothing; equal to the values seen before, return to `planned`; neither, stop with `stale`, `changed_since_preview`. Only after every doubtful record is settled does any write run. A dependent record takes its parent's assigned key from the snapshot and never runs the parent again.
+Then the table of section 208: equal to the intended values, mark `verified` and write nothing; equal to the values seen before, return to `planned`; neither, stop with `stale`, `changed_since_preview`. Only after every doubtful record is settled does any write run. A dependent record takes its parent's assigned key from the snapshot and never runs the parent again.
 
 A `VerifyAfterLoss` job reads every record the ledger says was verified in the lost run, later, and reports any difference as evidence and an alert; it changes no state.
 
 ## Failure classes and run states
 
-Section 42 leaves open which state each class ends in. This design proposes the following, to be recorded.
+Section 208 leaves open which state each class ends in. This design proposes the following, to be recorded.
 
 | Class | Run state | Lock on a record in `intent` or `acted` |
 | --- | --- | --- |
@@ -247,7 +247,7 @@ It produces every class through the loop. Codes it defines itself:
 6. Slices 3.4 and 3.5: normalization and comparison; the preview, the diff, the hash.
 7. Slice 3.7: reconcile and resume; the state table above.
 8. Slices 3.8 and 3.9: identity strategies, dependent records, pipelines, sources.
-9. Slice 3.10: the fault rows of section 52.
+9. Slice 3.10: the fault rows of section 224.
 10. Package E1: the sandbox as `SandboxPort`, and `discover` for `Discover` jobs. Phase 5: `Try` jobs. Phase 4: shadow, where a binding predicts without acting.
 
 ## Open points

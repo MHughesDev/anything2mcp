@@ -28,5 +28,5 @@ Decision storage becomes a cost problem at scale.
 
 ## Spec sections
 
-- [45-policy-engine.md](../spec/45-policy-engine.md)
-- [18-safety-policy-and-approvals.md](../spec/18-safety-policy-and-approvals.md)
+- [45-policy-engine.md](../archive/spec-2026-11/45-policy-engine.md)
+- [18-safety-policy-and-approvals.md](../archive/spec-2026-11/18-safety-policy-and-approvals.md)

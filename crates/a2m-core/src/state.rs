@@ -3,7 +3,7 @@
 use crate::vocabulary::vocabulary;
 
 vocabulary! {
-    /// Where a run stands (spec section 42). This is the `status` a caller
+    /// Where a run stands (spec section 208). This is the `status` a caller
     /// sees.
     pub enum RunState: "run state" {
         /// Accepted, waiting for a session or a runner.
@@ -45,7 +45,7 @@ impl RunState {
 }
 
 vocabulary! {
-    /// Where one record of a run stands in the ledger (spec section 42).
+    /// Where one record of a run stands in the ledger (spec section 208).
     pub enum RecordState: "record state" {
         /// Known from the source; nothing done.
         Planned => "planned",
@@ -63,7 +63,7 @@ vocabulary! {
 }
 
 vocabulary! {
-    /// Where a signed-in session stands (spec section 44).
+    /// Where a signed-in session stands (spec section 215).
     pub enum SessionState: "session state" {
         /// Never signed in, or ended.
         Absent => "absent",

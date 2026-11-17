@@ -29,5 +29,5 @@ The verification read ever finds a stale overwrite in practice.
 
 ## Spec sections
 
-- [43-runner-protocol.md](../spec/43-runner-protocol.md)
-- [42-run-ledger-design.md](../spec/42-run-ledger-design.md)
+- [43-runner-protocol.md](../spec/2-kernel/223-the-runner-protocol.md)
+- [42-run-ledger-design.md](../archive/spec-2026-11/42-run-ledger-design.md)

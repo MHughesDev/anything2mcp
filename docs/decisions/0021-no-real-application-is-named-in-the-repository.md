@@ -28,5 +28,5 @@ A vendor agrees in writing to be a public reference target.
 
 ## Spec sections
 
-- [34-first-target-archetypes.md](../spec/34-first-target-archetypes.md)
-- [07-files-and-formats.md](../spec/07-files-and-formats.md)
+- [34-first-target-archetypes.md](../archive/spec-2026-11/34-first-target-archetypes.md)
+- [07-files-and-formats.md](../spec/2-kernel/205-target-files.md)

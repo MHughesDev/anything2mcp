@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 42](../spec/42-run-ledger-design.md) and the scheduling tables used by [spec section 43](../spec/43-runner-protocol.md). This is a design draft: names and types are to be settled when the first migration is written in Phase 3, and any change after that is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). This is a design draft: names and types are to be settled when the first migration is written in Phase 3, and any change after that is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 

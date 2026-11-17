@@ -72,7 +72,7 @@ fn failure_classes_are_the_ones_in_the_technical_reference() {
 #[test]
 fn failure_classes_are_the_ones_the_engine_section_responds_to() {
     let mut in_spec = column(
-        &document("spec/08-execution-engine.md"),
+        &document("spec/2-kernel/207-the-engine-loop.md"),
         "| Class | Example | Response |",
         0,
     );
@@ -87,14 +87,14 @@ fn failure_classes_are_the_ones_the_engine_section_responds_to() {
 
 #[test]
 fn run_states_are_the_ones_in_the_ledger_design() {
-    let spec = document("spec/42-run-ledger-design.md");
+    let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
     let section = between(&spec, "## Run states", "## Record states");
     assert_eq!(column(section, "| State |", 0), RunState::NAMES);
 }
 
 #[test]
 fn final_run_states_are_the_ones_the_ledger_design_marks_final() {
-    let spec = document("spec/42-run-ledger-design.md");
+    let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
     let section = between(&spec, "## Run states", "## Record states");
     let marked: Vec<String> = table(section, "| State |")
         .into_iter()
@@ -111,39 +111,39 @@ fn final_run_states_are_the_ones_the_ledger_design_marks_final() {
 
 #[test]
 fn record_states_are_the_ones_in_the_ledger_design() {
-    let spec = document("spec/42-run-ledger-design.md");
+    let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
     let section = between(&spec, "## Record states", "## Rules that must");
     assert_eq!(column(section, "| State |", 0), RecordState::NAMES);
 }
 
 #[test]
 fn session_states_are_the_ones_in_the_session_keeper() {
-    let spec = document("spec/44-session-keeper.md");
+    let spec = document("spec/2-kernel/215-sessions-and-the-session-keeper.md");
     let section = between(&spec, "## States", "## Three clocks");
     assert_eq!(column(section, "| State |", 0), SessionState::NAMES);
 }
 
 #[test]
 fn effect_classes_are_the_ones_in_the_safety_section() {
-    let spec = document("spec/18-safety-policy-and-approvals.md");
+    let spec = document("spec/2-kernel/212-policy-and-approvals.md");
     assert_eq!(column(&spec, "| Effect |", 0), EffectClass::NAMES);
 }
 
 #[test]
 fn hazards_are_the_ones_in_the_effects_section() {
-    let spec = document("spec/61-effects-hazards-and-consent.md");
+    let spec = document("spec/2-kernel/213-effects-hazards-and-consent.md");
     assert_eq!(column(&spec, "| Hazard |", 0), Hazard::NAMES);
 }
 
 #[test]
 fn evidence_levels_are_the_ladder_in_its_section() {
-    let spec = document("spec/59-the-evidence-ladder.md");
+    let spec = document("spec/2-kernel/219-the-evidence-ladder.md");
     assert_eq!(column(&spec, "| Level |", 0), EvidenceLevel::NAMES);
 }
 
 #[test]
 fn archetypes_are_the_seven_in_their_section() {
-    let spec = document("spec/54-interaction-archetypes.md");
+    let spec = document("spec/2-kernel/201-archetypes-and-modes.md");
     let section = between(
         &spec,
         "## The seven",
@@ -169,7 +169,7 @@ fn binding_statuses_are_the_ones_in_the_file_formats() {
 
 #[test]
 fn coverage_values_are_the_ones_a_finding_may_carry() {
-    let spec = document("spec/58-discovery-and-findings.md");
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     let row = table(&spec, "| Field | Meaning |")
         .into_iter()
         .find(|row| row[0] == "`coverage`")
@@ -179,13 +179,13 @@ fn coverage_values_are_the_ones_a_finding_may_carry() {
 
 #[test]
 fn finding_sources_are_the_ones_in_the_discovery_section() {
-    let spec = document("spec/58-discovery-and-findings.md");
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     assert_eq!(column(&spec, "| Source |", 0), Source::NAMES);
 }
 
 #[test]
 fn each_source_supports_the_level_the_discovery_section_gives() {
-    let spec = document("spec/58-discovery-and-findings.md");
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     let in_spec: Vec<String> = table(&spec, "| Source |")
         .into_iter()
         .map(|row| row[2].trim_matches('`').to_owned())
@@ -199,13 +199,13 @@ fn each_source_supports_the_level_the_discovery_section_gives() {
 
 #[test]
 fn limitation_codes_are_the_ones_in_the_discovery_section() {
-    let spec = document("spec/58-discovery-and-findings.md");
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     assert_eq!(column(&spec, "| Code |", 0), LimitationCode::NAMES);
 }
 
 #[test]
 fn kinds_of_subject_are_the_ones_in_the_discovery_section() {
-    let spec = document("spec/58-discovery-and-findings.md");
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     assert_eq!(column(&spec, "| Tag |", 0), Subject::TAGS);
 }
 

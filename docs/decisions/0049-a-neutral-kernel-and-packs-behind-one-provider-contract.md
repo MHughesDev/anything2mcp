@@ -36,6 +36,6 @@ The second pack cannot be added without reshaping the kernel. That is hypothesis
 
 ## Spec sections
 
-- [55-kernel-and-packs.md](../spec/55-kernel-and-packs.md)
-- [56-the-provider-contract.md](../spec/56-the-provider-contract.md)
-- [65-python-first-packaging.md](../spec/65-python-first-packaging.md)
+- [55-kernel-and-packs.md](../spec/2-kernel/202-kernel-and-packs.md)
+- [56-the-provider-contract.md](../spec/2-kernel/203-the-provider-contract.md)
+- [65-python-first-packaging.md](../archive/spec-2026-11/65-python-first-packaging.md)

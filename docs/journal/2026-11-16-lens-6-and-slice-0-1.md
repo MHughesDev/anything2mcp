@@ -41,7 +41,7 @@ The repository has its first code: a Cargo workspace of 23 empty crates that is 
 
 ## Changed in the design
 
-- From lens 6: see the fourth pass in the [readiness report](../plan/readiness.md). In short: section 7's example now connects; one reading of sources; a preview procedure and open points in section 42; rule 3 no longer forbids resume; `version_conflict` moved from `rejected` to `stale`; the glossary names the engine loop and the pipeline step; hypotheses H-23, H-24, and H-25 added.
+- From lens 6: see the fourth pass in the [readiness report](../archive/plans-2026-11/readiness.md). In short: section 7's example now connects; one reading of sources; a preview procedure and open points in section 42; rule 3 no longer forbids resume; `version_conflict` moved from `rejected` to `stale`; the glossary names the engine loop and the pipeline step; hypotheses H-23, H-24, and H-25 added.
 - From slice 0.1: [decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md). Phase 0 task A3 no longer asks for dependency edges on empty crates. The technical reference states that a crate may not depend on a crate in its own layer.
 - From slice 0.3: [decision 0047](../decisions/0047-the-test-application-is-a-small-server-in-the-workspace-with-a-closed-licence-list.md), which the owner has not read. "What is built" in the [test application plan](../plan/test-application.md). The crates verified by use in [research note 9](../research/09-rust-building-blocks.md).
 - From slice 0.2: [decision 0046](../decisions/0046-the-pip-name-is-held-by-a-placeholder-published-on-a-version-tag.md), which the owner has not read. [Publishing setup](../plan/publishing-setup.md) now says how the placeholder is published.

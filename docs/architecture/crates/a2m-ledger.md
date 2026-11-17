@@ -11,13 +11,13 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 | May depend on | Layers 1 and 2 |
 | Depends on | `a2m-core`; `a2m-vault` to seal blobs and to implement its `KeyRecords`; `a2m-telemetry` for spans. Outside: an SQL crate that speaks both databases, a time-ordered UUID crate, and a SHA-256 crate, each to be verified |
 | Built in | Phase 1, group H: runs, events, blobs, migrations, on SQLite. Phase 3, group A and slice 3.1: record rows, locks, the nine rules. Stage E, package E1: findings and open questions. Phase 6: Postgres |
-| Carries out | Spec sections [10](../../spec/10-runs-ledger-and-resume.md), [42](../../spec/42-run-ledger-design.md), [50](../../spec/50-record-identity-and-dependent-records.md) (assigned keys and stored outputs), [47](../../spec/47-traces-and-evidence.md) (where evidence is kept), [52](../../spec/52-when-the-engine-itself-fails.md) (no ledger, no write), [58](../../spec/58-discovery-and-findings.md) (the findings store and the unknowns ledger); the [ledger schema](../../reference/ledger-schema.md) |
+| Carries out | Spec sections [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (assigned keys and stored outputs), [217](../../spec/2-kernel/217-traces-evidence-and-repair.md) (where evidence is kept), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (no ledger, no write), [218](../../spec/2-kernel/218-discovery-and-findings.md) (the findings store and the unknowns ledger); the [ledger schema](../../reference/ledger-schema.md) |
 
 ## Owns
 
 - Opening the store, checking its integrity, and running migrations: numbered, forward-only, one sequence for the whole schema, tested on both databases.
 - Transactions. A `Tx` is the only way to read or write a table, and every crate that persists is handed one.
-- The ledger proper: run rows, pipeline step rows, one record row per commit point, and run events, with the nine rules of section 42 enforced where the data is, not by callers' good behavior.
+- The ledger proper: run rows, pipeline step rows, one record row per commit point, and run events, with the nine rules of section 208 enforced where the data is, not by callers' good behavior.
 - The intent token: proof, as a type, that an intent was durably stored.
 - Evidence blobs, named by the keyed digest of their plain content and sealed through the vault; their retention and legal hold.
 - The vault's wrapped keys, kept through the vault's `KeyRecords`, which this crate implements.
@@ -194,7 +194,7 @@ The tables in the owner table above that are its own, the migration files, and t
 
 | Must always hold | Proven by |
 | --- | --- |
-| Each of the nine rules of section 42 | One test per rule, with no application, that breaks the rule and sees the refusal. Slice 3.1 |
+| Each of the nine rules of section 208 | One test per rule, with no application, that breaks the rule and sees the refusal. Slice 3.1 |
 | Current state equals the state rebuilt from events | A property test over random sequences of calls |
 | No event or audit row can be updated or deleted outside retention | A test that tries, through raw SQL, on both databases |
 | An intent returned is on disk | A test that kills the process right after `store_intents` returns and finds the rows |
@@ -212,10 +212,10 @@ The tables in the owner table above that are its own, the migration files, and t
 4. Assigned keys and stored outputs on record rows. Slice 3.8.
 5. Findings and the unknowns ledger. Package E1.
 6. The audit chain and the outbox, with their first writers.
-7. Postgres, with the queue patterns of section 42. Phase 6.
+7. Postgres, with the queue patterns of section 208. Phase 6.
 
 ## Open points
 
 - Which outside SQL crate, and how per-commit durability is chosen on SQLite, where synchronous mode is a connection setting: two writer connections, or a setting changed per transaction. Measured against hypothesis H-15.
-- The open points of section 42 about locks when a run stops and which failure class ends where. The ledger stores whatever they decide; the decision is the engine's.
+- The open points of section 208 about locks when a run stops and which failure class ends where. The ledger stores whatever they decide; the decision is the engine's.
 - Whether reads' decision rows and run rows are summarized at scale, as decision 0034 allows.

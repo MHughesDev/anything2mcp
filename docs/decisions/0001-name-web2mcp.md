@@ -27,5 +27,5 @@ A registry or trademark conflict blocks distribution.
 
 ## Spec sections
 
-- [01-summary.md](../spec/01-summary.md)
-- [35-prior-art.md](../spec/35-prior-art.md)
+- [01-summary.md](../archive/spec-2026-11/01-summary.md)
+- [35-prior-art.md](../spec/7-project/701-prior-art.md)

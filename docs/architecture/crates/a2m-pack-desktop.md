@@ -11,14 +11,14 @@ The desktop pack: the `desktop` driver, which reaches a desktop application thro
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-expr`, `a2m-files` (registration), `a2m-auth` (`SessionLease`), `a2m-provider` (`Driver`, `Discoverer`, `Describer`, `SandboxPort`, `PackContext` with its scoped supervisor and checked paths, registration), `a2m-telemetry`. Outside: one library over the three accessibility interfaces, or one crate per operating system; slice 8.1 chooses, with brief 19 ([research note 09](../../research/09-rust-building-blocks.md) lists the candidates, none yet verified by use) |
 | Built in | Slice 8.1, the spike; package 8.3, the pack, which also waits on D4: the command pack's count of kernel changes says whether the kernel is ready for another pack |
-| Carries out | Spec sections [6](../../spec/06-modes-and-drivers.md) (`desktop`), [54](../../spec/54-interaction-archetypes.md) (interface), [57](../../spec/57-supervising-subsystems.md) (one request at a time, starting and attaching), [61](../../spec/61-effects-hazards-and-consent.md) (changing what is on a person's screen; attaching to a process), [62](../../spec/62-catalog-of-surface-kinds.md) (the desktop row) |
+| Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (`desktop`), [201](../../spec/2-kernel/201-archetypes-and-modes.md) (interface), [204](../../spec/2-kernel/204-supervising-subsystems.md) (one request at a time, starting and attaching), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (changing what is on a person's screen; attaching to a process), [106](../../spec/1-product/106-what-it-latches-onto.md) (the desktop row) |
 
 ## What is settled, and what is not
 
 | Settled by an existing document | Not settled |
 | --- | --- |
 | The mode `desktop`, archetype interface (decisions 0005, 0050) | The accessibility library, or libraries |
-| Elements are found by role and name in the accessibility tree; never by position on a picture of the screen ([section 62](../../spec/62-catalog-of-surface-kinds.md), refused kinds) | How a window is reached: started, attached, matched by title or by process |
+| Elements are found by role and name in the accessibility tree; never by position on a picture of the screen ([section 106](../../spec/1-product/106-what-it-latches-onto.md), refused kinds) | How a window is reached: started, attached, matched by title or by process |
 | Its steps are those of `ui` except `observe` ([steps](../../reference/steps-snapshots-and-diffs.md#steps)) | Which conditions each operating system can signal as events |
 | Its verbs are the `desktop` column of [verbs by mode](../../reference/technical-reference.md#verbs-by-mode) | How a desktop application's own sign-in is kept, and by which auth provider |
 | Widget drivers share names with `ui` where the control exists in both | Profiles for toolkits, and what a support tier means here |
@@ -41,7 +41,7 @@ A pack may not depend on another pack's crates, so this crate cannot use `a2m-pa
 
 | Shared | Held by |
 | --- | --- |
-| The names of controls, locator kinds, conditions, steps, and the `screens/` fields | The [technical reference](../../reference/technical-reference.md#widget-drivers), the [file formats](../../reference/file-formats.md#screensyaml), and the [steps reference](../../reference/steps-snapshots-and-diffs.md). Each pack's schema is checked against them by a test |
+| The names of controls, locator kinds, conditions, steps, and the `screens/` fields | The [technical reference](../../spec/3-packs/301-the-web-pack.md#widget-drivers), the [file formats](../../reference/file-formats.md#screensyaml), and the [steps reference](../../reference/steps-snapshots-and-diffs.md). Each pack's schema is checked against them by a test |
 | The snapshot's text form | The steps reference. An agent reads a window and a page the same way |
 | What a driver must do | The conformance suite's groups for locating, waiting, acting, and snapshots, run against case 28 as against the web cases |
 
@@ -64,7 +64,7 @@ The code is written twice, each over its own element handle. That is the price o
 | Finding kinds | `surface`, `screen`, `field`, `action` for desktop subjects, checked names with this crate's `found` schemas |
 | Discoverers | `desktop_probe`: the program, its version and digest, and how many controls have no name, which sets a support tier. `desktop_snapshot`: the window's tree as screen, field, and action findings |
 | Describer | `desktop_describer`, in the snapshot text form |
-| Auth providers | None yet. A desktop application's own sign-in lives inside the application ([section 44](../../spec/44-session-keeper.md)); a provider that checks it through a probe screen and asks a person to sign in is the likely shape, and is not designed |
+| Auth providers | None yet. A desktop application's own sign-in lives inside the application ([section 215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md)); a provider that checks it through a probe screen and asks a person to sign in is the likely shape, and is not designed |
 
 ## Interface
 
@@ -81,7 +81,7 @@ impl Driver for DesktopDriver {                                    // mode and c
     async fn release(&self, p: Prepared);
 }
 
-/// Inside the crate. One queue per desktop session: one request at a time, as section 57 says.
+/// Inside the crate. One queue per desktop session: one request at a time, as section 204 says.
 pub(crate) struct Desktop { /* apps started or attached, by surface; the queue */ }
 
 /// Inside the crate. One implementation per operating system, or one over a library that covers all three.
@@ -96,7 +96,7 @@ pub(crate) trait AxBackend: Send + Sync {
 }
 ```
 
-What the kernel gives this crate: the same as `a2m-pack-web-ui` has of `Driver`, `Plan`, `Step`, and `SessionLease`, including the handle that refuses a committing step without an intent token and failures that say whether an act was not sent, was answered, or is unknown; checked paths for the staging folder of file dialogs; discovery as a job inside the engine's sandbox, given only what `SandboxPort` offers; and that the scheduler serializes work that changes what is on a person's screen, as [section 61](../../spec/61-effects-hazards-and-consent.md) says, so that two runs never type into one desktop at once.
+What the kernel gives this crate: the same as `a2m-pack-web-ui` has of `Driver`, `Plan`, `Step`, and `SessionLease`, including the handle that refuses a committing step without an intent token and failures that say whether an act was not sent, was answered, or is unknown; checked paths for the staging folder of file dialogs; discovery as a job inside the engine's sandbox, given only what `SandboxPort` offers; and that the scheduler serializes work that changes what is on a person's screen, as [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md) says, so that two runs never type into one desktop at once.
 
 ### How the mode fills the loop
 
@@ -167,7 +167,7 @@ It uses its scoped supervisor to start an application and to prove a process is 
 
 ## Open points
 
-- **Applications built on a browser runtime.** Spec section 6 says the `desktop` mode reaches them "through the browser engine". The browser engine is the web pack's, so in this arrangement such an application is a web surface whose browser the supervisor starts, served by `ui`. The section needs correcting.
+- **Applications built on a browser runtime.** Spec section 201 says the `desktop` mode reaches them "through the browser engine". The browser engine is the web pack's, so in this arrangement such an application is a web surface whose browser the supervisor starts, served by `ui`. The section needs correcting.
 - The library or libraries, and whether one interface over three systems hides differences a driver needs to see.
 - How a window is named in `reach` so that two windows of the same program are told apart.
 - Where a desktop run may happen: a user's own machine with an interactive session is the only case designed. A server has no desktop by default.

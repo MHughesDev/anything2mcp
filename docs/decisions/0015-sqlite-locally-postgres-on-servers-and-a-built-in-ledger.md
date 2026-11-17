@@ -27,4 +27,4 @@ The ledger cannot give the resume guarantees under concurrency.
 
 ## Spec sections
 
-- [10-runs-ledger-and-resume.md](../spec/10-runs-ledger-and-resume.md)
+- [10-runs-ledger-and-resume.md](../archive/spec-2026-11/10-runs-ledger-and-resume.md)

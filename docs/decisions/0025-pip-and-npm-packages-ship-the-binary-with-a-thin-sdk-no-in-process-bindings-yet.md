@@ -29,5 +29,5 @@ A host application needs in-process calls and the Rust crate does not serve it.
 
 ## Spec sections
 
-- [41-packaging-and-release.md](../spec/41-packaging-and-release.md)
-- [22-front-doors.md](../spec/22-front-doors.md)
+- [41-packaging-and-release.md](../archive/spec-2026-11/41-packaging-and-release.md)
+- [22-front-doors.md](../archive/spec-2026-11/22-front-doors.md)

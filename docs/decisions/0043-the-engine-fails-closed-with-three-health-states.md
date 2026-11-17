@@ -28,4 +28,4 @@ Never for writes.
 
 ## Spec sections
 
-- [52-when-the-engine-itself-fails.md](../spec/52-when-the-engine-itself-fails.md)
+- [52-when-the-engine-itself-fails.md](../spec/2-kernel/224-when-the-engine-itself-fails.md)

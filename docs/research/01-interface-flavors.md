@@ -1,6 +1,6 @@
 # Research: interface flavors and their automation pitfalls
 
-**Status:** completed by a research agent on 2026-11-15. Findings come from pages the agent opened unless marked otherwise. Feeds [spec section 13](../spec/13-interface-flavors.md).
+**Status:** completed by a research agent on 2026-11-15. Findings come from pages the agent opened unless marked otherwise. Feeds [spec section 301](../spec/3-packs/301-the-web-pack.md).
 
 ## Question
 

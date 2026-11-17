@@ -27,4 +27,4 @@ Real targets repeatedly need logic the format cannot express.
 
 ## Spec sections
 
-- [07-files-and-formats.md](../spec/07-files-and-formats.md)
+- [07-files-and-formats.md](../spec/2-kernel/205-target-files.md)

@@ -5,7 +5,7 @@ How this project is built: slowly, core first, one small proven step at a time, 
 ## The stance
 
 - **Small steps are the plan.** The design is large. The way through it is small steps that each work, not a wide front of half-built parts. One slice per session is a good pace for one agent. To go faster, add agents on separate packages; never make the step bigger.
-- **Core first.** The engine loop, one driver, sessions, the ledger, the policy gate, and the compiler are the product. Servers, runners, extra modes, and consoles are built on a core that already works. [Core first](core-first.md) gives the order.
+- **Core first.** The engine loop, one driver, sessions, the ledger, the policy gate, and the compiler are the product. Servers, runners, extra modes, and consoles are built on a core that already works. [Core first](roadmap.md) gives the order.
 - **The design is a set of bets.** Much of it has never met running code, and most of its research is second-hand. Every slice is a chance to find out that a section is wrong. Finding that out is success, not a setback.
 - **Improving the design is part of the job.** An agent working here is expected to question the documents, propose better designs, and record what it learns, as well as write code.
 
@@ -59,7 +59,7 @@ An agent starts each session knowing nothing of the last one. The repository is 
 
 ## Working in parallel
 
-- One work package, one branch, one pull request. The [long-term plan](anything2mcp-master-plan.md) says which packages can run at once.
+- One work package, one branch, one pull request. The [roadmap](roadmap.md) says which packages can run at once.
 - Two agents do not change the same crate at the same time. Documents that many packages touch, such as the indexes, are changed last and in small edits.
 - An agent that leads others gives each a package with a stated proof, checks the proof, and merges what passes. It does not hand over its conclusion and ask for it to be confirmed.
 - Whoever merges second brings their branch up to date first. Nobody rewrites another agent's history.

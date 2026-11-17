@@ -9,9 +9,9 @@ The REST face of the kernel, and the server's network listener. It serves `/api/
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: Tokio, Axum, Hyper with rustls, as spec section 29 lists them, to be verified; an HTTP client for webhooks, to be verified |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: Tokio, Axum, Hyper with rustls, as spec section 605 lists them, to be verified; an HTTP client for webhooks, to be verified |
 | Built in | Roadmap package 1.4 (the router on the local channel, the action route); 6.4 (the full interface, OpenAPI, events, webhooks); 6.5 (the approval and sign-in pages and the console on a server); 7.3 (the hosted sign-in page) |
-| Carries out | Spec sections [22](../../spec/22-front-doors.md) for REST, [23](../../spec/23-deployment-configurations.md), [49](../../spec/49-approval-and-sign-in-surfaces.md) on a server; the [REST endpoints](../../reference/technical-reference.md#rest-endpoints) of the technical reference |
+| Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for REST, [601](../../spec/6-running-it/601-deployment-configurations.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on a server; the [REST endpoints](../../reference/technical-reference.md#rest-endpoints) of the technical reference |
 
 ## Owns
 
@@ -76,7 +76,7 @@ The `/api/v1/admin/...` row of the technical reference is not a separate surface
 
 ## OpenAPI
 
-The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 22).
+The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
 
 ## Events
 
@@ -110,7 +110,7 @@ A webhook is delivered from the outbox, a table in the store written in the same
 | Hosted sign-in | Shows the server runner's browser to the person; design waits for research brief 17 | 7 |
 | A plain link | `give_link`: the link a sign-in provider outside the web pack needs the person to open, shown in the console and returned to the caller; nothing drives the person's browser | 6 |
 
-The pages are the TypeScript of `web/console`, built and handed to this crate by the product crate. Every rule for every surface in spec section 49 applies: equally easy approve and decline, an expiry with the approval window, restricted fields shown only to approvers allowed to see them, a timeout as a decline. An agent's identity can never hold the approver role, so its sign-in is never a proof of a person.
+The pages are the TypeScript of `web/console`, built and handed to this crate by the product crate. Every rule for every surface in spec section 503 applies: equally easy approve and decline, an expiry with the approval window, restricted fields shown only to approvers allowed to see them, a timeout as a decline. An agent's identity can never hold the approver role, so its sign-in is never a proof of a person.
 
 On the local channel, with `Carrier::Local`, none of these pages and no approval route exist; the local surfaces are `a2m-local`'s.
 

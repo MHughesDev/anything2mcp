@@ -36,5 +36,5 @@ Agents building tools ignore the levels in practice, or seven prove too many to 
 
 ## Spec sections
 
-- [58-discovery-and-findings.md](../spec/58-discovery-and-findings.md)
-- [59-the-evidence-ladder.md](../spec/59-the-evidence-ladder.md)
+- [58-discovery-and-findings.md](../spec/2-kernel/218-discovery-and-findings.md)
+- [59-the-evidence-ladder.md](../spec/2-kernel/219-the-evidence-ladder.md)

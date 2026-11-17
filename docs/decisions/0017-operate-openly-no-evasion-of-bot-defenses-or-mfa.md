@@ -27,5 +27,5 @@ Never.
 
 ## Spec sections
 
-- [17-browser-engine-and-runtime.md](../spec/17-browser-engine-and-runtime.md)
-- [19-security-model.md](../spec/19-security-model.md)
+- [17-browser-engine-and-runtime.md](../spec/3-packs/302-the-web-pack-browser-engine.md)
+- [19-security-model.md](../spec/5-security/501-security-model.md)

@@ -4,7 +4,7 @@
 
 **Status:** Partial. Built from search-result summaries and three registry checks on 2026-11-15. No primary page was opened in full. Re-check each detail before relying on it.
 
-Feeds spec sections [39](../spec/39-local-engine-and-clients.md), [40](../spec/40-authoring-interface.md), and [41](../spec/41-packaging-and-release.md).
+Feeds spec sections [222](../spec/2-kernel/222-front-doors-and-the-local-engine.md), [220](../spec/2-kernel/220-actions-and-the-authoring-interface.md), and [605](../spec/6-running-it/605-packaging-and-release.md).
 
 ## Package names
 

@@ -48,4 +48,4 @@ Also in scope: the release pipeline, and anything that would let a tampered buil
 
 ## The design
 
-The security model is written down: [the security model](docs/spec/19-security-model.md), [defending against a manipulated agent](docs/spec/51-defending-against-a-manipulated-agent.md), [when the engine itself fails](docs/spec/52-when-the-engine-itself-fails.md), and [effects, hazards, and consent](docs/spec/61-effects-hazards-and-consent.md). A gap in the design is as welcome a report as a bug in the code.
+The security model is written down: [the security model](docs/spec/5-security/501-security-model.md), [defending against a manipulated agent](docs/spec/5-security/502-defending-against-a-manipulated-agent.md), [when the engine itself fails](docs/spec/2-kernel/224-when-the-engine-itself-fails.md), and [effects, hazards, and consent](docs/spec/2-kernel/213-effects-hazards-and-consent.md). A gap in the design is as welcome a report as a bug in the code.

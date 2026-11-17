@@ -29,5 +29,5 @@ A consented, vendor-supported way to work inside the user's profile becomes avai
 
 ## Spec sections
 
-- [44-session-keeper.md](../spec/44-session-keeper.md)
-- [17-browser-engine-and-runtime.md](../spec/17-browser-engine-and-runtime.md)
+- [44-session-keeper.md](../archive/spec-2026-11/44-session-keeper.md)
+- [17-browser-engine-and-runtime.md](../spec/3-packs/302-the-web-pack-browser-engine.md)

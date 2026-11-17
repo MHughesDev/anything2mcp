@@ -215,7 +215,7 @@ This part is web pack material. It is kept here because it is the session keeper
 **The engine never drives the user's everyday browser profile, and does not try** ([decision 0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md); rule 5). Since Chrome 136 the switches that open the DevTools protocol are ignored for the default profile and work only with a separate data directory, a change Google made because that route was being used to steal cookies ([research note 14](../../research/14-sessions-and-policy-engines.md)). Chrome on Windows also encrypts its cookie store so that other programs cannot read it. The web pack therefore:
 
 - always runs the browser with its own data directory, one per identity;
-- never reads, copies, or decrypts another program's cookie store, and never attaches to a browser already running on a user's device;
+- never reads, copies, or decrypts another program's cookie store, and never connects to a browser already running on a user's device;
 - treats "use the existing sign-in" as meaning the sign-in the device provides (the operating system's broker, or a browser that signs its own new profile in silently through the device's account), not the user's existing browser profile.
 
 A first sign-in in the engine's browser may therefore be needed even on a device that is already signed in.

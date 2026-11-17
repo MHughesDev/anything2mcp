@@ -134,7 +134,7 @@ An application built on a browser runtime is a web surface.
 ## Open points
 
 - Whether every system of interest fits one of the seven archetypes. Hypothesis H-29.
-- Whether the kernel can stay neutral once a second pack exists. Hypothesis H-26, tested by Stage D of the [long-term plan](../../plan/anything2mcp-master-plan.md).
+- Whether the kernel can stay neutral once a second pack exists. Hypothesis H-26, tested by Stage D of the [long-term plan](../../plan/roadmap.md).
 - The order of building after the command pack. The data pack, reads only, is the likely next.
 - Whether the terminal kind is its own mode or an interface mode of the command pack.
 - Which mobile automation interface, and whether real devices are in scope or emulators only.

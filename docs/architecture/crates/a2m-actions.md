@@ -11,7 +11,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 | May depend on | Layers 1 to 6 |
 | Depends on | Every kernel crate below it. Outside: `serde`, `serde_json`, Tokio, and a JSON Schema validator, an outside crate to be verified |
 | Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles) |
-| Carries out | Spec sections [40](../../spec/40-authoring-interface.md), [52](../../spec/52-when-the-engine-itself-fails.md), [64](../../spec/64-rules-for-tools-and-capability-discovery.md), [67](../../spec/67-the-scout-and-who-does-what.md); the in-process half of [43](../../spec/43-runner-protocol.md) and [44](../../spec/44-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
+| Carries out | Spec sections [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md); the in-process half of [223](../../spec/2-kernel/223-the-runner-protocol.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
 
 ## Owns
 
@@ -35,7 +35,7 @@ It must never: decide whether something may happen (that is `a2m-policy`); sign 
 /// One action. Every face is generated from this and nothing else.
 pub struct ActionDef {
     pub name: ActionName,              // noun.verb, checked; the noun is a word of the command line
-    pub summary: &'static str,         // one line; the first 240 characters choose the tool (spec section 64)
+    pub summary: &'static str,         // one line; the first 240 characters choose the tool (spec section 220)
     pub input: Schema,                 // strict: no unknown fields; flat; at most about ten properties
     pub output: Schema,                // published; not sent in a tool list unless asked
     pub examples: &'static [Example],  // one to three, from recorded tests
@@ -121,7 +121,7 @@ pub struct Shortcut { pub word: &'static str, pub steps: &'static [ShortcutStep]
 A front door authenticates and builds a `Request`; it decides nothing. `dispatch` then does, in this order, and every refusal is an ordinary `Failure`:
 
 1. **Find.** An unknown name is `input` / `schema_invalid`, with the nearest names as the fix.
-2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 64).
+2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 220).
 3. **Health.** The action's `needs` against the kernel's state. A write in `degraded`, or anything but a `Nothing` action in `stopped`, returns `busy` / `engine_degraded` with the reason.
 4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one.
 5. **Person.** For an action with `PersonNeed::Presence`, `confirm_presence` on the role's surface. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt.
@@ -144,7 +144,7 @@ The `Response` is the same structure for every face: `ok`, `action`, `result` or
 
 The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 
-Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 39](../../spec/39-local-engine-and-clients.md)). Their reconcile is a job like any other.
+Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other.
 
 ### The in-process runner loop
 
@@ -162,7 +162,7 @@ loop {
 }
 ```
 
-Slots come from settings per mode, as a runner on another machine states them in `hello`. Keeper jobs have a reserved slot, so a run waiting for a renewal can never hold the only slot the renewal needs. The lease rules of spec section 43 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+Slots come from settings per mode, as a runner on another machine states them in `hello`. Keeper jobs have a reserved slot, so a run waiting for a renewal can never hold the only slot the renewal needs. The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
 
 The list is the spine's, in its order. The engine opens nothing itself: no store, no policy engine, no compiler.
 
@@ -260,7 +260,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | --- | --- |
 | Every dispatch records exactly one decision before the handler runs | A test that dispatches every action with an allowing and a refusing policy and counts decisions |
 | No action, route, tool, or command reaches `ApprovalDesk` | A test that walks every generated face; a review rule on the desk's callers |
-| The four faces of an action give the same result for the same input | The parity test of spec section 64 |
+| The four faces of an action give the same result for the same input | The parity test of spec section 220 |
 | Nothing leaves `dispatch` without passing `Redact` | The planted-secret fault test, through every face |
 | A write never runs in `degraded` or `stopped` | Fault tests that remove the store, the vault, and the policy set |
 | The registry equals the action catalog, in names, roles, and listing | A test that reads the catalog document |

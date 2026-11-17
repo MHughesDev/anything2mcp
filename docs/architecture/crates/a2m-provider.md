@@ -11,7 +11,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 | May depend on | Layers 1 to 4 |
 | Depends on | `a2m-core`, including `Plan` and `Step` as data; `a2m-files` for the compiler registration traits only; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken`; `a2m-telemetry` for spans. Outside: `serde`, a TOML parser and a JSON Schema validator, each an outside crate to be verified |
 | Built in | Stage B, package B3 (manifest, registry); slice 1.1 (`Driver`); slice 1.3 (compiler registrations); Stage E, package E1 (`Discoverer`, `Describer`); package F3 and Phase 8 (plug-in host) |
-| Carries out | Spec sections [55](../../spec/55-kernel-and-packs.md), [56](../../spec/56-the-provider-contract.md), [57](../../spec/57-supervising-subsystems.md), [58](../../spec/58-discovery-and-findings.md) for the discoverer's side, [61](../../spec/61-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
+| Carries out | Spec sections [202](../../spec/2-kernel/202-kernel-and-packs.md), [203](../../spec/2-kernel/203-the-provider-contract.md), [204](../../spec/2-kernel/204-supervising-subsystems.md), [218](../../spec/2-kernel/218-discovery-and-findings.md) for the discoverer's side, [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
 
 ## Owns
 
@@ -20,10 +20,10 @@ The one doorway between the kernel and everything that knows a kind of system. I
 - The traits `Driver`, `Discoverer`, `Describer`, and `ProviderAction`, and the `DriverHandle` through which alone the engine reaches a driver.
 - The registered names a provider brings: modes with their archetypes, surface kinds, step kinds, file kinds, lint codes, finding kinds. Each is a checked name from `a2m-core`; the registry is the only list of them.
 - The choice between two providers that could fill the same place, and its recorded reason.
-- File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 51](../../spec/51-defending-against-a-manipulated-agent.md), [section 61](../../spec/61-effects-hazards-and-consent.md)).
+- File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md), [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 - The supervisor: the only way anything starts a process, with the handshake, the framing, deadlines, and ownership-proven stopping.
 - The plug-in host, and the plug-in protocol's message list and version.
-- The availability check of section 56, which inspects the machine and starts nothing.
+- The availability check of section 203, which inspects the machine and starts nothing.
 
 It must never: decide whether something may happen; sign in or renew; write a ledger row; open the vault; retry a step; hold a list of modes or name a pack; let a caller's input choose a program, a file, or a destination.
 
@@ -222,7 +222,7 @@ impl Registry {
 
 **There is no priority and no silent fallback.** If one mode is driven by two ready providers and no setting names one, `driver` fails with `input`, `provider_ambiguous`, and the message lists each candidate with its availability. If the named one is not ready, it fails with `busy`, `provider_unavailable`, carrying the availability state and its fix; it never falls to the other. Registration order never affects the result, and a test builds the registry in every order and compares digests.
 
-**Declared against observed.** `ProviderListing` carries three separate answers: the manifest (what it can do), the availability (can it here, now), and the health (is it working). Availability is computed by looking for each requirement at its declared paths and taking its digest. It starts no process. Its states are the eight of section 56; the subsystem states of section 57 are separate. Both are status words, so they belong in `a2m-core` as enums with a test against the documents.
+**Declared against observed.** `ProviderListing` carries three separate answers: the manifest (what it can do), the availability (can it here, now), and the health (is it working). Availability is computed by looking for each requirement at its declared paths and taking its digest. It starts no process. Its states are the eight of section 203; the subsystem states of section 204 are separate. Both are status words, so they belong in `a2m-core` as enums with a test against the documents.
 
 ### The extension points
 
@@ -359,7 +359,7 @@ pub struct Cleanup { pub complete: bool, pub remaining: Vec<Leftover> }
 | Incomplete cleanup is a state | It names what remains, blocks new starts of that kind with `busy`, `cleanup_incomplete`, and is shown by `doctor.run` |
 | Fixed system paths | The process list is read through the operating system's own interfaces, never through a program found on a search path |
 
-Two cases section 57 does not cover:
+Two cases section 204 does not cover:
 
 | Link | Identified and owned by | What the supervisor still does |
 | --- | --- | --- |

@@ -9,7 +9,7 @@ use crate::name::{InvalidName, UnknownName, check_name, is_name};
 use crate::vocabulary::vocabulary;
 
 vocabulary! {
-    /// What kind of failure stopped a call (spec section 8). The class alone
+    /// What kind of failure stopped a call (spec section 207). The class alone
     /// decides what happens next: whether to retry, stop, reconcile, or ask a
     /// person. The list is closed; a new kind of system maps its failures to
     /// these.

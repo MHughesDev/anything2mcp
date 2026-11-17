@@ -27,4 +27,4 @@ The owner prefers a different license before the first release.
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)

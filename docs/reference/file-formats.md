@@ -1,6 +1,6 @@
 # Target file formats
 
-Every field of every target file. [Spec section 7](../spec/07-files-and-formats.md) shows worked examples; this is the field-by-field reference the JSON Schemas are written from in Phase 0, task B3.
+Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the JSON Schemas are written from in Phase 0, task B3.
 
 This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
 
@@ -80,7 +80,7 @@ Field types say how a value is formatted, normalized, compared, and classified.
 | `sensitivity` | `public`, `internal`, or `restricted` |
 | `untrusted` | True for free text that came from the application |
 
-Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`. A `url` input accepts only destinations the operation declares. A `file` input is a blob reference on a server and a path inside an allowed root on one machine ([spec section 51](../spec/51-defending-against-a-manipulated-agent.md)). A target adds its own by extending one of them.
+Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`. A `url` input accepts only destinations the operation declares. A `file` input is a blob reference on a server and a path inside an allowed root on one machine ([spec section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)). A target adds its own by extending one of them.
 
 ## `screens/*.yaml`
 
@@ -115,7 +115,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | --- | --- |
 | `locate` (required) | Ordered list of locators |
 | `confirm` (required) | The condition that shows the action took effect |
-| `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 46](../spec/46-target-compiler-and-plan.md)); an action without it is not a save |
+| `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md)); an action without it is not a save |
 
 ### Locators
 
@@ -173,7 +173,7 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | --- | --- |
 | `operation` (required) | The tool name: `{target}_{module}_{object}_{verb}`. The module part is left out when the target declares no `modules`. The verb in the name is a plain word for callers; it need not be one of the built-in verbs a binding uses |
 | `effect` (required) | `read`, `write`, or `irreversible` |
-| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 50](../spec/50-record-identity-and-dependent-records.md)); required for `write` |
+| `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write` |
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
 | `commit_points` | How many times the application saves; default 1; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
@@ -197,7 +197,7 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 
 **Placeholders.** A placeholder in an endpoint's `path` or a screen's `reach` address takes the operation input of the same name. `path_params` is needed only to rename or compute one. A placeholder that matches no input and has no entry does not compile.
 
-**`read_back` is also the record's lookup.** For `natural` and `composite` identity it is the only declared way to read the record, so the preview, the freshness check, and reconcile all use it as well as the check after a write ([spec section 42](../spec/42-run-ledger-design.md)). It must therefore work on its own before any write, reached from the identity inputs alone, and it must report a record that does not exist as absent, not as a failure. `prefer: response` applies only straight after a save; the other three reads always go to the application.
+**`read_back` is also the record's lookup.** For `natural` and `composite` identity it is the only declared way to read the record, so the preview, the freshness check, and reconcile all use it as well as the check after a write ([spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md)). It must therefore work on its own before any write, reached from the identity inputs alone, and it must report a record that does not exist as absent, not as a failure. `prefer: response` applies only straight after a save; the other three reads always go to the application.
 
 ## `pipelines/*.yaml`
 
@@ -219,7 +219,7 @@ A lookup used by `identity: find` may declare a `settle` time for applications w
 | `id`, `operation` (required) | A name and the operation to call |
 | `with` | Map of the operation's inputs to expressions. Inputs are passed only here; nothing is passed by matching names |
 | `for_each` | An expression giving the rows to repeat over, in order |
-| `checkpoint` | `per_record` or `per_step`: where a snapshot is taken as evidence ([spec section 47](../spec/47-traces-and-evidence.md)). It does not decide where a write can resume; the ledger makes every commit point a resume point whatever this says |
+| `checkpoint` | `per_record` or `per_step`: where a snapshot is taken as evidence ([spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md)). It does not decide where a write can resume; the ledger makes every commit point a resume point whatever this says |
 | `when` | An expression; the step is skipped when false |
 | `expect` | An expression that must be true of the result, or the run stops |
 

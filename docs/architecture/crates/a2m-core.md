@@ -11,7 +11,7 @@ The words every other crate shares: the closed vocabularies, the checked names t
 | May depend on | Nothing internal |
 | Depends on | Outside: `serde`. To add, each verified and recorded: an outside crate for SHA-256, for `Digest` and the plan's hash; the plan's binary encoding, chosen in package 1.3 |
 | Built in | Stage B, packages B1 and B2. The vocabularies, `Failure`, and `Secret` exist; the rest is to build. The plan types with package 1.1 |
-| Carries out | Spec sections [5](../../spec/05-core-concepts.md), [8](../../spec/08-execution-engine.md), [18](../../spec/18-safety-policy-and-approvals.md), [42](../../spec/42-run-ledger-design.md), [46](../../spec/46-target-compiler-and-plan.md) (what the plan contains), [54](../../spec/54-interaction-archetypes.md), [56](../../spec/56-the-provider-contract.md) (availability), [57](../../spec/57-supervising-subsystems.md) (subsystem states), [58](../../spec/58-discovery-and-findings.md), [59](../../spec/59-the-evidence-ladder.md), [61](../../spec/61-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); [decision 0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) |
+| Carries out | Spec sections [105](../../spec/1-product/105-core-concepts.md), [207](../../spec/2-kernel/207-the-engine-loop.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (what the plan contains), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [203](../../spec/2-kernel/203-the-provider-contract.md) (availability), [204](../../spec/2-kernel/204-supervising-subsystems.md) (subsystem states), [218](../../spec/2-kernel/218-discovery-and-findings.md), [219](../../spec/2-kernel/219-the-evidence-ladder.md), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); [decision 0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) |
 
 ## Owns
 
@@ -43,13 +43,13 @@ pub enum SessionState { /* eight */ }
 pub enum BindingStatus { Draft, Shadow, Verified, Retired }
 
 // To build. Closed vocabularies of the provider contract and the supervisor.
-pub enum Availability {                                        // section 56; one per availability check
+pub enum Availability {                                        // section 203; one per availability check
     Ready, NotEnabled, ComponentMissing, ComponentUnverified,
     UnsupportedHost, UnsupportedVersion, Misconfigured, Unknown,   // Unknown is never reported as Ready
 }
-pub enum SubsystemState { Idle, Busy, Exited, Unreachable }     // section 57; a long-lived connection's health
+pub enum SubsystemState { Idle, Busy, Exited, Unreachable }     // section 204; a long-lived connection's health
 pub enum SubsystemMove { Retry, Wait, Restart }                 // what to do, given with each state
-pub enum DoctorState {                                         // section 57; what `doctor.run` reports per provider and subsystem
+pub enum DoctorState {                                         // section 204; what `doctor.run` reports per provider and subsystem
     Healthy, ComponentMissing, RuntimeFailure, UnsupportedHost, UnsupportedTarget, ConfigDrift, Unknown,
 }
 
@@ -108,7 +108,7 @@ pub trait KeyedDigest: Send + Sync {
 }
 pub enum DigestPurpose { BlobName, RestrictedValue }
 
-// To build: findings, as data. Spec section 58 defines every field.
+// To build: findings, as data. Spec section 218 defines every field.
 pub struct Finding { /* id, subject, kind: FindingKind, found, level, source, coverage, limitations, derived_from, provider, observed_at, evidence */ }
 pub enum Subject {
     File { digest: Digest, format: String, part: Option<String> },
@@ -220,7 +220,7 @@ None.
 | --- | --- | --- |
 | `input` | `schema_invalid` | A name is not one of a vocabulary's values, or is badly formed. The next step lists what would have been accepted |
 | `input` | `value_out_of_range` | A decimal, a date, or a key part cannot be represented |
-| `input` | `plan_hash_mismatch` | A plan's bytes do not match the hash it was published with. That tool is unavailable ([section 52](../../spec/52-when-the-engine-itself-fails.md)) |
+| `input` | `plan_hash_mismatch` | A plan's bytes do not match the hash it was published with. That tool is unavailable ([section 224](../../spec/2-kernel/224-when-the-engine-itself-fails.md)) |
 | `input` | `plan_format_unsupported` | A plan's format is neither the current one nor the one before |
 | `input` | `payload_unreadable` | A pack's payload does not decode as the type its driver expects |
 
@@ -245,7 +245,7 @@ It produces no other class. A crate that needs a new code defines it itself, as 
 
 1. Done: vocabularies, `Mode`, `FailureCode`, `Failure`, `Secret`.
 2. Done: `Digest`, on the `sha2` crate; `Subject`, `Address`, `UnknownReason`, `Source`, `LimitationCode`, `FindingKind`, `Timestamp`, and `Finding` with its builder, the identifier rule, and the level rules. Package B2.
-3. `Availability`, held to section 56 by the documents test. Package B3, the manifest's first user.
+3. `Availability`, held to section 203 by the documents test. Package B3, the manifest's first user.
 4. The checked identifiers `TargetName`, `OperationName`, `SurfaceName`, `Environment`, and `SurfaceKind`. Package B4, their first user.
 5. `Plan` and its parts, `Step`, `StepKind`, `Verb`, `PackPayload`, with a provisional encoding. Package 1.1, whose hand-written plan is the first.
 6. `FileKindName`, `LintCode`, and the encoding chosen by measurement. Package 1.3, with the compiler.
@@ -258,7 +258,7 @@ It produces no other class. A crate that needs a new code defines it itself, as 
 
 - The decimal crate, and whether dates and instants come from the standard library, one outside crate, or a small type of our own.
 - Whether `OperationName` enforces the four-part form or only the shape of a name; the compiler can check the parts either way.
-- The closed lists section 58 still owes: limitation codes, which become an enum here. Finding kinds are a checked name, because packs bring their own.
+- The closed lists section 218 still owes: limitation codes, which become an enum here. Finding kinds are a checked name, because packs bring their own.
 - Whether `Values` keeps declared order or sorts by name. Order matters to trace signatures, so it must be one or the other everywhere.
 - **Whether `Verb` should stay a closed enum.** For: a binding's verb decides how the engine treats it (a read cannot commit, an `upsert` needs an identity strategy), the technical reference fixes the verbs in one table, and a closed list stops synonyms such as `put` and `save` from spreading. Against: packs beyond the web bring verbs of their own, such as subscribing to a stream or setting a device object, and a closed list makes the kernel change for each. The checked name is the default, with the engine's treatment declared by the lowering rather than read from the verb's spelling. Package 1.1 decides.
 - `ValueType`, the type stored with each `PlanExpr`, would replace the expression type sketched in `a2m-expr`, so that the two crates share one description of a type.

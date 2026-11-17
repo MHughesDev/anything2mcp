@@ -4,7 +4,7 @@ use crate::vocabulary::vocabulary;
 
 vocabulary! {
     /// How far a finding, a draft, or a tool has been proven (spec section
-    /// 59). The order is the ladder, from the weakest level to the strongest.
+    /// 219). The order is the ladder, from the weakest level to the strongest.
     ///
     /// A level is earned, never declared: nothing in this crate lets a caller
     /// set one by hand, and the weakest is the default.
@@ -30,7 +30,7 @@ vocabulary! {
 
 vocabulary! {
     /// How much of what could have been looked at was looked at (spec section
-    /// 58). Where it is not stated it is `unknown`, the weakest claim.
+    /// 218). Where it is not stated it is `unknown`, the weakest claim.
     #[derive(Default)]
     pub enum Coverage: "coverage" {
         /// Everything that could be looked at was.

@@ -11,7 +11,7 @@ Expressions: a CEL program is checked and compiled once, when a plan is built, a
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside: a CEL interpreter crate, to be verified; the decimal crate that `a2m-core` chooses; `serde` |
 | Built in | Phase 1: slice 1.3 builds compiling and type-checking for the read files; slice 3.4 builds the normalizers; slice 3.9 builds the mapping functions for sources |
-| Carries out | Spec sections [7](../../spec/07-files-and-formats.md) (expressions), [12](../../spec/12-data-sources-and-value-normalization.md) (normalization), [46](../../spec/46-target-compiler-and-plan.md) (stage 4); the [expressions](../../reference/file-formats.md#expressions) and field types of the file formats; [decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md) |
+| Carries out | Spec sections [205](../../spec/2-kernel/205-target-files.md) (expressions), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (normalization), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md) (stage 4); the [expressions](../../reference/file-formats.md#expressions) and field types of the file formats; [decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md) |
 
 ## Owns
 
@@ -78,7 +78,7 @@ pub struct Normalizer { /* a loaded Program, from the PlanExpr `a2m-files` built
 impl Normalizer {
     pub fn normalize(&self, raw: &Value) -> Result<Normalized, Failure>;
 }
-pub struct Normalized { pub raw: Value, pub normalized: Value }   // both kept, as section 12 says
+pub struct Normalized { pub raw: Value, pub normalized: Value }   // both kept, as section 210 says
 
 /// A compile error: a code, a sentence, and a place inside the expression. `a2m-files` adds the
 /// file and line of the expression itself.
@@ -94,7 +94,7 @@ Contracts that the signatures do not show:
 - **Time is always given, never read.** There is no `now()`. Where an expression needs the moment of the run, the engine binds it as a name, and the trace records the value bound.
 - **A zone rule is never assumed.** `parse_date` and `format_date` take the zone rule from the field type, compiled into the call; an expression with no rule for an instant does not compile.
 - **The plan stores text, not the interpreter's tree.** A `PlanExpr` holds canonical source, so a plan does not depend on the outside crate's internal format, and the plan stays byte-identical across builds of that crate. `Program::load` reparses at plan load. If that misses the plan-load budget, a cached form is added behind the same type.
-- **Host functions are the kernel's.** A pack cannot add one. A conversion the library lacks is added here, with tests, or done in a reviewed plug-in ([section 7](../../spec/07-files-and-formats.md)).
+- **Host functions are the kernel's.** A pack cannot add one. A conversion the library lacks is added here, with tests, or done in a reviewed plug-in ([section 205](../../spec/2-kernel/205-target-files.md)).
 
 ### The host-function library
 
@@ -102,9 +102,9 @@ The starting list is the one in the [file formats](../../reference/file-formats.
 
 | Group | Functions | Notes |
 | --- | --- | --- |
-| Measurement | `to_inches`, `to_feet_inches`, `to_unit`, `snap_to_step` | A measurement is a decimal in the field's base unit; units are named by the field type, never by the expression ([rule 8](../../spec/03-design-principles.md)) |
+| Measurement | `to_inches`, `to_feet_inches`, `to_unit`, `snap_to_step` | A measurement is a decimal in the field's base unit; units are named by the field type, never by the expression ([rule 8](../../spec/1-product/103-design-principles.md)) |
 | Numbers | `parse_decimal`, `round_to`, `decimal`, `add`, `sub`, `mul`, `div`, `cmp` | `div` takes a rounding mode and places; there is no division without them |
-| Dates | `parse_date`, `format_date`, `excel_serial_to_date` | The last takes the workbook's date system ([section 12](../../spec/12-data-sources-and-value-normalization.md)) |
+| Dates | `parse_date`, `format_date`, `excel_serial_to_date` | The last takes the workbook's date system ([section 210](../../spec/2-kernel/210-sources-and-value-normalization.md)) |
 | Text | `trim`, `lower`, `upper`, `nfc`, `collapse_space` | `collapse_space` treats non-breaking and narrow no-break spaces as spaces |
 | Choices | `code_for`, `label_for` | Against a code list compiled into the call |
 | Absence | `coalesce` | The only way to give a default |
@@ -164,4 +164,4 @@ Run-time failures carry the expression's name in the plan and the host function,
 - Whether decimals use CEL operators or named functions. This changes how every file is written, so the slice that settles it records a decision and updates the file formats.
 - Whether `Dyn` should reach a plan at all. As written it cannot: a draft with an unknown type lints with a warning but cannot be tried until the type is stated. If that proves too strict while drafting, `ValueType` would need an unknown member, which `a2m-core` would own.
 - Whether a pack should be able to add a host function through the compiler set, with tests. The proposal is no: units live in field types, and field types are the kernel's.
-- Section 9 sets no budget for evaluation. A target of a few microseconds for a typical mapping is proposed, to be measured in slice 1.7.
+- Section 225 sets no budget for evaluation. A target of a few microseconds for a typical mapping is proposed, to be measured in slice 1.7.

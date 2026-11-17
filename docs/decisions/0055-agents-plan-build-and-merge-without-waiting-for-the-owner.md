@@ -25,7 +25,7 @@ The repository's rules were written for an owner who read every plan and every c
 
 ## What this does not change
 
-This record is about how the repository is built. The product's own approvals are a feature of the product: a person approving a write at run time, a protected setting, a consent record. They stay out of an agent's reach exactly as designed ([section 18](../spec/18-safety-policy-and-approvals.md), [section 39](../spec/39-local-engine-and-clients.md), [section 61](../spec/61-effects-hazards-and-consent.md)).
+This record is about how the repository is built. The product's own approvals are a feature of the product: a person approving a write at run time, a protected setting, a consent record. They stay out of an agent's reach exactly as designed ([section 18](../archive/spec-2026-11/18-safety-policy-and-approvals.md), [section 39](../archive/spec-2026-11/39-local-engine-and-clients.md), [section 61](../spec/2-kernel/213-effects-hazards-and-consent.md)).
 
 ## Consequences
 
@@ -45,4 +45,4 @@ Merged work has to be undone often enough that a second reader, human or agent, 
 ## Spec sections
 
 - [The working method](../plan/working-method.md)
-- [The long-term plan](../plan/anything2mcp-master-plan.md)
+- [The long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md)

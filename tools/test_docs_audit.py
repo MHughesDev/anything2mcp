@@ -158,11 +158,11 @@ class AuditCatches(unittest.TestCase):
 
     def test_an_earlier_name_in_a_living_file_is_refused(self):
         earlier = "Web" + "2MCP"
-        page = self.root / "docs" / "spec" / "01-summary.md"
+        page = self.root / "docs" / "spec" / "1-product" / "101-summary.md"
         page.write_text(page.read_text(encoding="utf-8") + f"\n{earlier} does this.\n", encoding="utf-8")
         source = self.root / "crates" / "a2m-core" / "src" / "lib.rs"
         source.write_text(source.read_text(encoding="utf-8") + f"// {earlier.lower()}\n", encoding="utf-8")
-        self.assert_finding("names", "docs/spec/01-summary.md", "crates/a2m-core/src/lib.rs")
+        self.assert_finding("names", "docs/spec/1-product/101-summary.md", "crates/a2m-core/src/lib.rs")
 
     def test_an_earlier_name_in_a_decision_record_is_allowed(self):
         record = sorted((self.root / "docs" / "decisions").glob("0001-*.md"))[0]
@@ -187,15 +187,35 @@ class AuditCatches(unittest.TestCase):
         design.write_text(changed, encoding="utf-8")
         self.assert_finding("designs", "a2m-core.md must state layer 1")
 
+    def test_an_old_section_number_in_a_living_document_is_refused(self):
+        page = self.root / "docs" / "plan" / "roadmap.md"
+        page.write_text(page.read_text(encoding="utf-8") + "\nSee section 42.\n", encoding="utf-8")
+        self.assert_finding("refs", "docs/plan/roadmap.md: section 42 does not exist")
+
+    def test_an_old_section_number_in_a_decision_record_is_allowed(self):
+        record = sorted((self.root / "docs" / "decisions").glob("0001-*.md"))[0]
+        record.write_text(record.read_text(encoding="utf-8") + "\nSee section 42.\n", encoding="utf-8")
+        code, out = self.audit()
+        self.assertEqual(code, 0, out)
+
+    def test_a_section_in_the_wrong_part_is_refused(self):
+        spec = self.root / "docs" / "spec"
+        (spec / "2-kernel" / "225-performance.md").rename(spec / "3-packs" / "225-performance.md")
+        self.assert_finding("structure", "section 225 is not in the part its first digit names")
+
+    def test_a_file_loose_in_the_spec_folder_is_refused(self):
+        (self.root / "docs" / "spec" / "99-loose.md").write_text("# 99. Loose\n", encoding="utf-8")
+        self.assert_finding("structure", "docs/spec/99-loose.md: not a section")
+
     def test_a_broken_link_is_refused(self):
         page = self.root / "docs" / "README.md"
         page.write_text(page.read_text(encoding="utf-8") + "\n[nothing](no-such-file.md)\n", encoding="utf-8")
         self.assert_finding("links", "broken link to no-such-file.md")
 
     def test_a_replaced_statement_is_refused(self):
-        page = self.root / "docs" / "spec" / "39-local-engine-and-clients.md"
+        page = self.root / "docs" / "spec" / "2-kernel" / "207-the-engine-loop.md"
         page.write_text(page.read_text(encoding="utf-8") + "\nRuns are marked interrupted.\n", encoding="utf-8")
-        self.assert_finding("replaced", "39-local-engine-and-clients.md")
+        self.assert_finding("replaced", "207-the-engine-loop.md")
 
 
 if __name__ == "__main__":

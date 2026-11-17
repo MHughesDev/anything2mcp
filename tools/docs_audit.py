@@ -86,23 +86,31 @@ def main():
             if not (repo / k).parent.joinpath(target.split("#")[0]).resolve().exists():
                 note("links", f"{k}: broken link to {target}")
 
-    spec = {k: v for k, v in md.items() if re.match(r"docs/spec/\d\d-", k)}
+    spec = {k: v for k, v in md.items() if re.match(r"docs/spec/\d-[a-z-]+/\d{3}-", k)}
     ref = md["docs/reference/technical-reference.md"]
     catalog = md["docs/reference/action-catalog.md"]
     schema = md["docs/reference/ledger-schema.md"]
 
     # 2. Spec numbering and index.
+    #    A section is docs/spec/<part>-<name>/<number>-<name>.md; its number has three digits and
+    #    begins with its part's digit. Nothing else may sit in docs/spec/ but the index.
     index = md["docs/spec/README.md"]
     nums = []
     for k, v in spec.items():
-        n = int(Path(k).name[:2])
+        n = int(Path(k).name[:3])
+        if n in nums:
+            note("structure", f"{k}: section number {n} is used twice")
         nums.append(n)
         if not v.startswith(f"# {n}. "):
             note("structure", f"{k}: heading does not match its number")
+        if str(n)[0] != Path(k).parent.name[0]:
+            note("structure", f"{k}: section {n} is not in the part its first digit names")
         if Path(k).name not in index:
             note("structure", f"{k}: missing from docs/spec/README.md")
-    if sorted(nums) != list(range(1, max(nums) + 1)):
-        note("structure", "spec section numbers are not contiguous")
+    for k in md:
+        if k.startswith("docs/spec/") and k not in spec and k != "docs/spec/README.md":
+            note("structure", f"{k}: not a section; a section is docs/spec/<part>/<number>-<name>.md")
+    history = ("docs/decisions/", "docs/journal/", "docs/archive/")
 
     # 3. Built-in tools are actions in the catalog.
     actions = set(re.findall(r"`([a-z]+\.[a-z_]+)`", catalog))
@@ -115,34 +123,34 @@ def main():
                 note("naming", f"{k}: {t} has no action in the catalog")
 
     # 4. Crates: spec 29 layout and the layering table agree; nothing else is named.
-    layout = set(re.findall(r"\b(a2m-[a-z-]+)/", md["docs/spec/29-repository-crates-and-packaging.md"]))
+    layout = set(re.findall(r"\b(a2m-[a-z-]+)/", md["docs/spec/6-running-it/605-packaging-and-release.md"]))
     layer_text = ref[ref.index("## Crate layering"):ref.index("## Driver interface")]
     layering = set(re.findall(r"`(a2m-[a-z-]+)`", layer_text))
     for c in sorted(layout ^ layering):
-        note("crates", f"{c} is in only one of the spec 29 layout and the layering table")
+        note("crates", f"{c} is in only one of the layout in spec section 605 and the layering table")
     for k, v in md.items():
         for c in set(re.findall(r"`(a2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
-            note("crates", f"{k}: {c} is not in the spec 29 layout")
+            note("crates", f"{k}: {c} is not in the layout in spec section 605")
 
     # 5. Failure classes agree between the engine section and the reference.
-    s08 = md["docs/spec/08-execution-engine.md"]
+    s08 = md["docs/spec/2-kernel/207-the-engine-loop.md"]
     c08 = set(re.findall(r"^\| `([a-z_]+)` \|", s08[s08.index("| Class | Example | Response |"):], re.M))
     codes = ref[ref.index("## Failure codes"):ref.index("## Command line")]
     cref = set(re.findall(r"^\| `([a-z_]+)` \|", codes, re.M))
     for c in sorted(c08 ^ cref):
-        note("failures", f"class `{c}` is in only one of spec 08 and the reference")
+        note("failures", f"class `{c}` is in only one of spec section 207 and the reference")
 
     # 6. States agree.
-    s42 = md["docs/spec/42-run-ledger-design.md"]
-    s44 = md["docs/spec/44-session-keeper.md"]
-    s21 = md["docs/spec/21-agent-facing-tool-surface.md"]
+    s42 = md["docs/spec/2-kernel/208-runs-the-ledger-and-resume.md"]
+    s44 = md["docs/spec/2-kernel/215-sessions-and-the-session-keeper.md"]
+    s21 = md["docs/spec/2-kernel/221-the-tool-surface-agents-see.md"]
 
     def states(text, start, end):
         return re.findall(r"^\| `([a-z_]+)` \|", text[text.index(start):text.index(end)], re.M)
 
     for st in states(s42, "## Run states", "## Record states"):
         if f"`{st}`" not in s21:
-            note("states", f"run state `{st}` is missing from the status list in spec 21")
+            note("states", f"run state `{st}` is missing from the status list in spec section 221")
     for st in states(s42, "## Record states", "## Rules that must"):
         if f"`{st}`" not in schema:
             note("states", f"record state `{st}` is missing from the ledger schema")
@@ -177,7 +185,7 @@ def main():
     }
     for pat, why in replaced.items():
         for k, v in md.items():
-            if k.startswith(("docs/decisions/", "docs/research/", "docs/plan/readiness", "docs/journal/")):
+            if k.startswith(history + ("docs/research/", "docs/spec/7-project/704-")):
                 continue
             for i, line in enumerate(v.splitlines(), 1):
                 if re.search(pat, line) and "withdrawn" not in line and "arlier" not in line:
@@ -190,7 +198,7 @@ def main():
         note("research", f"brief table and brief texts differ: {sorted(briefs ^ texts)}")
     for k, v in md.items():
         for m in re.finditer(r"\b[Ss]ections? (\d+)", v):
-            if int(m.group(1)) > max(nums):
+            if int(m.group(1)) not in nums and not k.startswith(history):
                 note("refs", f"{k}: section {m.group(1)} does not exist")
         for m in re.finditer(r"\bPhase (\d+)", v):
             if int(m.group(1)) > 9:
@@ -332,8 +340,8 @@ def main():
 
     # 15. The product's earlier names appear only in history (decision 0056).
     earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")
-    history = ("docs/decisions/", "docs/journal/", "docs/plan/publishing-setup.md",
-               "docs/plan/anything2mcp-master-plan.md", "docs/research/10-", "docs/research/12-",
+    history = ("docs/decisions/", "docs/journal/", "docs/archive/", "docs/plan/publishing-setup.md",
+               "docs/research/10-", "docs/research/12-",
                "docs/references/sources.md",
                "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
     kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}

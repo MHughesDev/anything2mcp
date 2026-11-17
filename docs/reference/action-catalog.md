@@ -1,6 +1,6 @@
 # Action catalog
 
-The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 40](../spec/40-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
+The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 220](../spec/2-kernel/220-actions-and-the-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
 
 | Face | Form | For `target.probe` |
 | --- | --- | --- |
@@ -11,7 +11,7 @@ The single list of everything a person, an agent, or a program can ask Anything2
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record.
 
-**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 20](../spec/20-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built.
+**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built.
 
 ## Using tools
 
@@ -57,7 +57,7 @@ This is a design draft. The list is settled action by action as each phase build
 
 ## Providers and discovery
 
-Added with spec sections 56, 58, 64, and 67. Built with the stage of the [long-term plan](../plan/anything2mcp-master-plan.md) named.
+Added with spec sections 203, 218, 220, and 402. Built with the stage of the [long-term plan](../plan/roadmap.md) named.
 
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
@@ -120,7 +120,7 @@ Added with spec sections 56, 58, 64, and 67. Built with the stage of the [long-t
 
 ## What is deliberately absent
 
-- No action approves a write or a publish on a local machine ([spec section 39](../spec/39-local-engine-and-clients.md)).
+- No action approves a write or a publish on a local machine ([spec section 222](../spec/2-kernel/222-front-doors-and-the-local-engine.md)).
 - No action reads a secret back.
 - No action runs as another person, and `session.end` cannot be used to enter a session.
 

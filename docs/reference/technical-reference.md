@@ -6,7 +6,7 @@ This file holds the engineering detail behind the [system design](../spec/README
 
 Crates depend only downward, which keeps build times short and the core small. A crate may depend only on the layers its row names, never on a crate in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge. The reasoning behind each layer, and which crate defines each interface, are in [the architecture](../architecture/README.md) ([decision 0061](../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md)).
 
-Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 55](../spec/55-kernel-and-packs.md)).
+Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](../spec/2-kernel/202-kernel-and-packs.md)).
 
 | Layer | Crates | May depend on |
 | --- | --- | --- |
@@ -36,18 +36,18 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 
 | Type | Values | Defined in |
 | --- | --- | --- |
-| `Archetype` | Seven, fixed | [Spec section 54](../spec/54-interaction-archetypes.md) |
-| `EffectClass` | Three, ordered from least to most serious | [Spec section 18](../spec/18-safety-policy-and-approvals.md) |
-| `Hazard` | Five, ordered from least to most serious | [Spec section 61](../spec/61-effects-hazards-and-consent.md) |
-| `FailureClass` | Twelve | "Failure codes" below, and [spec section 8](../spec/08-execution-engine.md) |
-| `EvidenceLevel` | Seven, ordered as the ladder; the default is the weakest | [Spec section 59](../spec/59-the-evidence-ladder.md) |
-| `Coverage` | Three; the default is `unknown` | [Spec section 58](../spec/58-discovery-and-findings.md) |
-| `RunState`, `RecordState` | Twelve and six | [Spec section 42](../spec/42-run-ledger-design.md) |
-| `SessionState` | Eight | [Spec section 44](../spec/44-session-keeper.md) |
+| `Archetype` | Seven, fixed | [Spec section 201](../spec/2-kernel/201-archetypes-and-modes.md) |
+| `EffectClass` | Three, ordered from least to most serious | [Spec section 212](../spec/2-kernel/212-policy-and-approvals.md) |
+| `Hazard` | Five, ordered from least to most serious | [Spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md) |
+| `FailureClass` | Twelve | "Failure codes" below, and [spec section 207](../spec/2-kernel/207-the-engine-loop.md) |
+| `EvidenceLevel` | Seven, ordered as the ladder; the default is the weakest | [Spec section 219](../spec/2-kernel/219-the-evidence-ladder.md) |
+| `Coverage` | Three; the default is `unknown` | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
+| `RunState`, `RecordState` | Twelve and six | [Spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) |
+| `SessionState` | Eight | [Spec section 215](../spec/2-kernel/215-sessions-and-the-session-keeper.md) |
 | `BindingStatus` | Four | [File formats](file-formats.md) |
-| `Source` | Five; each has the strongest level a finding from it can have | [Spec section 58](../spec/58-discovery-and-findings.md) |
-| `LimitationCode` | Eight | [Spec section 58](../spec/58-discovery-and-findings.md) |
-| `UnknownReason` | Four | [Spec section 58](../spec/58-discovery-and-findings.md) |
+| `Source` | Five; each has the strongest level a finding from it can have | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
+| `LimitationCode` | Eight | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
+| `UnknownReason` | Four | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 
 Two words are checked names and not enums, because their values arrive with packs and crates ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)):
 
@@ -98,46 +98,9 @@ Rules for every driver:
 
 The columns are the modes of the first four packs. Every further pack adds a column in its own design: the command, data, file, stream, and device packs each state the verbs they offer and how each lowers into steps.
 
-## Widget drivers
+## Widget drivers and platform profiles
 
-One driver per control type, shared by the `ui` and `desktop` modes where the control exists in both.
-
-| Control | Set | Read back |
-| --- | --- | --- |
-| `text`, `textarea` | Fill; escalate to key-by-key typing, then the native value setter with events | Input value |
-| `number`, `currency`, `measurement` | As text, formatted by the field type | Input value, normalized |
-| `select` | Choose by stored code | Selected code |
-| `combobox`, `autocomplete` | Open, type to filter, choose the option whose code or exact label matches | Selected code or label map |
-| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker | Value, normalized to the field's time-zone rule |
-| `checkbox`, `toggle` | Set to the target state only if different | Live checked state |
-| `radio` | Choose by stored code | Checked option |
-| `slider` | Keyboard steps to the value | Current value |
-| `file` | Attach the file to the input directly | File name shown |
-| `rich_text` | Editor-specific command, or paste as plain text | Editor content, normalized |
-| `grid` | Address a cell by row key and column id; scroll or filter to find the row | Cell value; network response preferred |
-| `tree` | Expand along a path of labels | Selected path |
-| `tabs`, `accordion` | Activate by name | Active name |
-| `dialog` | Declared as expected; confirm or dismiss by named action | Closed state |
-| `toast` | Observed only | Text, used as a confirmation |
-
-## Platform profile schema
-
-```yaml
-profile: aspnet_webforms
-detect:                       # Wappalyzer-style rules
-  any:
-    - {dom: "input[name='__VIEWSTATE']"}
-    - {js: "Sys.WebForms.PageRequestManager"}
-ready:
-  js: "!Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack()"
-locators:
-  priority: [label, role, text, css]
-  reject_id_patterns: ["^ctl\\d+_", "^MainContent_"]
-input_commit: blur_then_wait_ready
-frames: {mode: declared}
-drift_risk: low               # how often the vendor ships interface changes
-support_tier: full
-```
+Both are the web pack's knowledge and live in its section: [widget drivers](../spec/3-packs/301-the-web-pack.md#widget-drivers) and [platform profiles](../spec/3-packs/301-the-web-pack.md#platform-profiles).
 
 ## Auth provider interface
 
@@ -185,7 +148,7 @@ The same schema runs on SQLite and Postgres. Column-level definitions for the ru
 
 ## Runner protocol
 
-Runners open every connection themselves, over mutually authenticated HTTPS; `lease` is the reply to a long-polled `claim`. The full design, including leases, lost-lease handling, and secrets, is in spec section 43.
+Runners open every connection themselves, over mutually authenticated HTTPS; `lease` is the reply to a long-polled `claim`. The full design, including leases, lost-lease handling, and secrets, is in spec section 223.
 
 | Message | Direction | Purpose |
 | --- | --- | --- |
@@ -227,7 +190,7 @@ Every action in the [action catalog](action-catalog.md) is a command of the form
 | Shortcuts | `init`, `add`, `learn`, `lint`, `try`, `test`, `publish`, `status`, `call`, `run`, `diff`, `bundle`, `rollback`, `migrate`, `connect`, `doctor`, `docs` |
 | Process commands | `serve`, `runner`, `bridge` |
 
-On a local machine no command approves a write; see spec section 39. On a server, approvals are given in the console or a chat card after the approver signs in.
+On a local machine no command approves a write; see spec section 222. On a server, approvals are given in the console or a chat card after the approver signs in.
 
 ### Command output contract
 
@@ -277,7 +240,6 @@ Inside the data directory: `store/` for the database, `blobs/` for evidence, `pr
 | `GET /api/v1/sessions` | Session status for the caller |
 | `POST /api/v1/actions/{noun}.{verb}` | Run an authoring or admin action from the registry |
 | `GET /api/v1/openapi.json` | The generated API description |
-| `/api/v1/admin/...` | Targets, versions, toolsets, grants, runners, audit |
 
 ## Plug-in protocol
 

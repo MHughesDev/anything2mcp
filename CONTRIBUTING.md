@@ -7,7 +7,7 @@ Thank you for wanting to help. This page says how the project works and what a c
 - **The design is written down, and it is part of the product.** [docs/spec/](docs/spec/README.md) holds it, one section per file. Code and design change together: when they disagree, one of them is fixed in the same change.
 - **Decisions have records.** A choice between real alternatives gets a numbered file in [docs/decisions/](docs/decisions/README.md). An old record is never rewritten; a new one supersedes it.
 - **The design is a set of bets.** [docs/hypotheses/](docs/hypotheses/README.md) lists them, each with an alternative and a test. Showing that one is wrong is a welcome contribution.
-- **It grows core first, in small proven steps.** The [long-term plan](docs/plan/anything2mcp-master-plan.md) gives the order. A change that jumps ahead of it will usually be asked to wait.
+- **It grows core first, in small proven steps.** The [roadmap](docs/plan/roadmap.md) gives the order. A change that jumps ahead of it will usually be asked to wait.
 
 ## Before you start
 

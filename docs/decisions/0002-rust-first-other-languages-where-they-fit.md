@@ -30,5 +30,5 @@ The Phase 0 browser-engine spike fails on all three candidate bases.
 
 ## Spec sections
 
-- [29-repository-crates-and-packaging.md](../spec/29-repository-crates-and-packaging.md)
-- [09-performance.md](../spec/09-performance.md)
+- [29-repository-crates-and-packaging.md](../archive/spec-2026-11/29-repository-crates-and-packaging.md)
+- [09-performance.md](../spec/2-kernel/225-performance.md)

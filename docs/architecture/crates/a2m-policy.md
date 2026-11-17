@@ -11,11 +11,11 @@ The one decider. It answers every question of the form "may this happen?" with a
 | May depend on | Layers 1 to 3 |
 | Depends on | `a2m-core`; `a2m-ledger` for its tables; `a2m-expr` for pre-approval conditions; `a2m-telemetry`. Outside: the Cedar crate named by [decision 0033](../../decisions/0033-policy-decisions-use-cedar-with-grants-compiled-to-it.md), its licence and size still to be verified by research brief 31 |
 | Built in | Phase 3, group B and slice 3.2: the built-in local policy set, guardrails, limits, kill switches, approvals. Slice 3.6: approvals from the approval surface. Phase 6: grants, roles, published policy sets, standing approvals, chat and console channels. Phase 7: delegations |
-| Carries out | Spec sections [18](../../spec/18-safety-policy-and-approvals.md), [20](../../spec/20-access-control-toolsets-and-tenancy.md), [45](../../spec/45-policy-engine.md), [49](../../spec/49-approval-and-sign-in-surfaces.md) (what an approval records), [51](../../spec/51-defending-against-a-manipulated-agent.md) (an agent cannot loosen its limits), [61](../../spec/61-effects-hazards-and-consent.md) (hazards raise the approval; consent); decisions 0033, 0034, and [0035](../../decisions/0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) |
+| Carries out | Spec sections [212](../../spec/2-kernel/212-policy-and-approvals.md), [214](../../spec/2-kernel/214-access-control-toolsets-and-tenancy.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (what an approval records), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (an agent cannot loosen its limits), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards raise the approval; consent); decisions 0033, 0034, and [0035](../../decisions/0035-a-user-s-session-is-used-only-by-that-user-and-agents-acting-for-them.md) |
 
 ## Owns
 
-- `decide`: the seven questions of section 45, each one request in and one recorded decision out.
+- `decide`: the seven questions of section 212, each one request in and one recorded decision out.
 - The policy set: built-in guardrails, the layers written by administrators, grants and roles compiled to Cedar, the schema that every policy is validated against, and the test table that must pass before a version is published.
 - The limiter beside the decision core: records per run, quotas, kill switches.
 - Approvals: single-use records bound to a diff hash, and their consumption at the start of a write phase. Standing approvals.
@@ -95,13 +95,13 @@ impl Policy {
 
 Contracts that the signatures do not show:
 
-- **The order of evaluation is section 45's, and kill switches come first.** `decide` consults the kill switches before the decision core on every question, so a switch needs no separate call.
-- **Guardrails are in every set.** `compile` appends the built-in forbids, which are Cedar text compiled into the binary with their own hash. A `CandidateSet` cannot be built without them, so no published version lacks them. The guardrails are the seven of section 45, plus the hazard rules of section 61: any hazard other than `none` forbids `WriteWithoutPerson`; `irreversible`, `device_function`, and `physical` forbid the use of a standing approval.
+- **The order of evaluation is section 212's, and kill switches come first.** `decide` consults the kill switches before the decision core on every question, so a switch needs no separate call.
+- **Guardrails are in every set.** `compile` appends the built-in forbids, which are Cedar text compiled into the binary with their own hash. A `CandidateSet` cannot be built without them, so no published version lacks them. The guardrails are the seven of section 212, plus the hazard rules of section 213: any hazard other than `none` forbids `WriteWithoutPerson`; `irreversible`, `device_function`, and `physical` forbid the use of a standing approval.
 - **Cedar's skipped policy is a denial.** The decision core runs the Cedar validator before publishing, and at decision time any error reported with an answer turns it into a deny with the code `policy_evaluation_failed`. If research brief 31 rules Cedar out, an in-house matcher with the same two semantics sits behind the same `decide`, and nothing outside this crate changes.
-- **Approval binds and is used once.** `record_approval` refuses unless the approver is a person and not an agent identity, the question `Approve` allows them for this run, the diff hash equals the one stored on the run, and the run is waiting at `needs_approval`. Where policy names an approver, the caller's own confirmation is refused. `consume` refuses an expired, used, or revoked approval, or one for another diff, and marks it used in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. One transaction, so rule 3 of section 42 holds.
+- **Approval binds and is used once.** `record_approval` refuses unless the approver is a person and not an agent identity, the question `Approve` allows them for this run, the diff hash equals the one stored on the run, and the run is waiting at `needs_approval`. Where policy names an approver, the caller's own confirmation is refused. `consume` refuses an expired, used, or revoked approval, or one for another diff, and marks it used in the caller's `tx`, which also carries `a2m-ledger`'s `begin_writes`. One transaction, so rule 3 of section 208 holds.
 - **There is no approve action.** `record_approval` is called by an approval surface: the loopback listener in `a2m-local` after the operating system's prompt, or a server's console page after the approver signs in. `a2m-actions` passes the surface a handle that can reach these calls and nothing else. No command, MCP tool, REST route, or SDK method is generated for them.
 - **Silence is a decline.** An approval window that ends is recorded as a decline by nobody, and the run ends `expired`.
-- **A session belongs to its owner.** `ActAs` on a resource whose `session_owner` is a person is denied unless the principal is that person or `acting_for` names them through one of the three cases of section 44. A delegation counts only while it is unrevoked and unexpired, and only for the toolset it names.
+- **A session belongs to its owner.** `ActAs` on a resource whose `session_owner` is a person is denied unless the principal is that person or `acting_for` names them through one of the three cases of section 215. A delegation counts only while it is unrevoked and unexpired, and only for the toolset it names.
 - **Policy only narrows.** A lower layer's policy is compiled as a further restriction; `compile` refuses a target file, toolset, or workspace layer that contains a permit wider than its parent's.
 - **On one machine,** the built-in set gives the operating-system user every role, requires approval for writes, and holds the guardrails. `publish` of a tighter local set needs a `PublishProof` carrying the user-presence check, because the approval rules and record limits are protected settings. A looser local set cannot be compiled.
 - **A denial says what to ask for, not why.** The `refusal` carries a code from the table below and a next step; the determining rules are kept for `policy.explain`, which only an auditor or administrator may run.
@@ -119,7 +119,7 @@ It uses `a2m-ledger` for its tables, `a2m-expr` to evaluate the conditions of pr
 
 ## State
 
-Tables, through `a2m-ledger`: `principals`, `grants`, `policy_versions`, `decisions`, `approvals`, `consents`, `delegations`, `kill_switches`, `quota_counters`. In memory: the current compiled set behind an atomic swap, and a small cache of principals' groups with the bound of section 45.
+Tables, through `a2m-ledger`: `principals`, `grants`, `policy_versions`, `decisions`, `approvals`, `consents`, `delegations`, `kill_switches`, `quota_counters`. In memory: the current compiled set behind an atomic swap, and a small cache of principals' groups with the bound of section 212.
 
 ## Failures
 
@@ -142,7 +142,7 @@ Tables, through `a2m-ledger`: `principals`, `grants`, `policy_versions`, `decisi
 | Every action's dispatch records a decision, allow or deny | A test in `a2m-actions` over the whole registry |
 | No setting, file, or layer removes a guardrail | A test that tries each through `compile` and through the local protected settings |
 | An agent identity can never approve | A guardrail test, and a test that calls `record_approval` with one |
-| An approval is used once, and only for its diff | Rule 3 of section 42, tested together with `a2m-ledger` |
+| An approval is used once, and only for its diff | Rule 3 of section 208, tested together with `a2m-ledger` |
 | An evaluation error is a denial | A test with a policy that raises an error at evaluation, planted past the validator |
 | The same request on the same version gives the same answer | A property test over random requests |
 | A version that fails its test table is not published | A test that publishes one that lets a viewer write |

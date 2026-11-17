@@ -2,7 +2,7 @@
 
 **Status:** Partial. Built from search-result summaries on 2026-11-15; no primary page was opened in full. It answers part of open briefs 5 and 22.
 
-Feeds spec sections [47](../spec/47-traces-and-evidence.md) and [48](../spec/48-vault-and-keys.md).
+Feeds spec sections [217](../spec/2-kernel/217-traces-evidence-and-repair.md) and [216](../spec/2-kernel/216-the-vault-and-its-keys.md).
 
 ## OpenTelemetry has conventions for MCP
 
@@ -22,7 +22,7 @@ Feeds spec sections [47](../spec/47-traces-and-evidence.md) and [48](../spec/48-
 - A package index lists a 4.x line under the Apache 2.0 license, restructured around a core crate with separate store crates ([openapps.pro](https://openapps.pro/packages/keyring-rs)).
 - The `uv` project vendors this crate for its own credential storage ([uv source mirror](https://git.joshthomas.dev/mirrors/uv/src/branch/main/crates/uv-keyring)).
 
-**Consequence.** The local root key can be held through this crate on all three desktop systems. Synchronous access means calls go on a blocking thread. The headless-Linux case needs its own answer, which spec section 48 gives.
+**Consequence.** The local root key can be held through this crate on all three desktop systems. Synchronous access means calls go on a blocking thread. The headless-Linux case needs its own answer, which spec section 216 gives.
 
 ## Not verified
 

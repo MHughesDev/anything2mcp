@@ -2,7 +2,7 @@
 
 ## State at the end
 
-The owner decided that the system becomes Anything2MCP, a universal and modular runtime, and asked for an audit and one long-term document before any refactor. That document exists: the [long-term plan](../plan/anything2mcp-master-plan.md). No code changed and nothing was renamed. Pull request 4 (slice 0.3, the test application) had been merged before this session's work began. The pip placeholder is still not published.
+The owner decided that the system becomes Anything2MCP, a universal and modular runtime, and asked for an audit and one long-term document before any refactor. That document exists: the [long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md). No code changed and nothing was renamed. Pull request 4 (slice 0.3, the test application) had been merged before this session's work began. The pip placeholder is still not published.
 
 ## Done
 
@@ -41,6 +41,6 @@ Still open from before: how much agents do without asking, since AGENTS.md and t
 
 ## Next
 
-1. Read the [long-term plan](../plan/anything2mcp-master-plan.md), sections 7 and 9.
+1. Read the [long-term plan](../archive/plans-2026-11/anything2mcp-master-plan.md), sections 7 and 9.
 2. Get the owner's answers to questions 1 to 3.
 3. Start Stage A with package A1: the decision records for the names and for the kernel and pack rule. Then the mechanical renames, A2 to A6, each proven by the audit script and CI.

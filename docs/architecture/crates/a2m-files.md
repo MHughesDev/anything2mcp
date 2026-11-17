@@ -11,7 +11,7 @@ What a target is: the target files' schemas, the loader that reads them with fil
 | May depend on | Layers 1 and 2 |
 | Depends on | `a2m-core`, `a2m-expr`. Outside, each to be verified and recorded: a YAML parser that keeps the place of every value; a JSON Schema validator; `serde_json` for schemas and diagnostics. The plan's encoding and hash come from `a2m-core` |
 | Built in | Roadmap package B4, schemas and the loader for the kernel's file kinds; package 1.3, the compiler for reads and the registration traits; 3.4, field types; 3.8, identity strategies; 3.9, pipelines and sources; E4, the drafter |
-| Carries out | Spec sections [7](../../spec/07-files-and-formats.md), [46](../../spec/46-target-compiler-and-plan.md), [50](../../spec/50-record-identity-and-dependent-records.md) (what the compiler checks), [51](../../spec/51-defending-against-a-manipulated-agent.md) (typed templates, the review summary), [55](../../spec/55-kernel-and-packs.md) (what a pack registers), [67](../../spec/67-the-scout-and-who-does-what.md) (the drafter); the [file formats](../../reference/file-formats.md) and the [steps](../../reference/steps-snapshots-and-diffs.md#steps); [decision 0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) |
+| Carries out | Spec sections [205](../../spec/2-kernel/205-target-files.md), [206](../../spec/2-kernel/206-the-compiler-and-the-plan.md), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (what the compiler checks), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (typed templates, the review summary), [202](../../spec/2-kernel/202-kernel-and-packs.md) (what a pack registers), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (the drafter); the [file formats](../../reference/file-formats.md) and the [steps](../../reference/steps-snapshots-and-diffs.md#steps); [decision 0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md) |
 
 ## Owns
 
@@ -62,7 +62,7 @@ pub struct Compiled { pub plan: Plan, pub warnings: Diagnostics, pub review: Rev
 pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Diagnostics;
 ```
 
-Stages 1 to 9 are those of [section 46](../../spec/46-target-compiler-and-plan.md). This crate adds what a builder needs to know about each.
+Stages 1 to 9 are those of [section 206](../../spec/2-kernel/206-the-compiler-and-the-plan.md). This crate adds what a builder needs to know about each.
 
 | Stage | Kernel work | Pack work, through `CompilerSet` |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ Lowering comes before analysis so that commit points are counted from the lowere
 | `expressions` | 4 | Every expression once, as canonical text with its type; steps and bindings refer to them by index |
 | `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's `act`, `confirm`, and `read_back` are the lowering's three step lists, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one `PackSection`; the kernel stores and hashes it and never decodes it |
-| `tools`, `manifests` | 8 and 6 | As section 46 says |
+| `tools`, `manifests` | 8 and 6 | As section 206 says |
 
 Encoding and hashing are `a2m-core`'s, so the compiler and the engine cannot disagree on either.
 

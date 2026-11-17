@@ -27,5 +27,5 @@ Never for the default.
 
 ## Spec sections
 
-- [41-packaging-and-release.md](../spec/41-packaging-and-release.md)
-- [19-security-model.md](../spec/19-security-model.md)
+- [41-packaging-and-release.md](../archive/spec-2026-11/41-packaging-and-release.md)
+- [19-security-model.md](../spec/5-security/501-security-model.md)

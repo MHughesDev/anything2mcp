@@ -1,6 +1,6 @@
 ---
 name: build-slice
-description: Build one slice of the Anything2MCP core, slowly and with proof. Use when implementing any slice from docs/plan/core-first.md or any other piece of product code.
+description: Build one slice of the Anything2MCP core, slowly and with proof. Use when implementing any package from docs/plan/roadmap.md or any other piece of product code.
 ---
 
 # Build one slice
@@ -19,7 +19,7 @@ Follow the eight steps in `docs/plan/working-method.md`. This is the checklist f
 5. **Spike** anything uncertain in `spikes/`, in the cheapest way that gives an answer. Spike code is never promoted; real code is written fresh.
 6. **Build** the smallest real implementation. Follow every rule in `AGENTS.md`. Verify each new dependency before adding it: it exists, is maintained, carries a licence on the closed list in `deny.toml`, and supports Windows, macOS, and Linux.
 7. **Prove** it with tests against a test stand, asking the stand what it stored. No test, no claim. Write the fewest tests that prove the slice; tests secure the system and do not advance it.
-8. **Measure** anything with a budget in spec section 9 or in the slice's own section.
+8. **Measure** anything with a budget in spec section 225 or in the slice's own section.
 
 ## After building
 

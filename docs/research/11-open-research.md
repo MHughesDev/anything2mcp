@@ -2,7 +2,7 @@
 
 Research that was planned but not completed. Each item is a ready brief: hand it to a research agent, write the result up as a new file in this folder, then update the spec section it feeds and remove the item from this list.
 
-Run an item before the build phase that depends on it. The phase numbers refer to the [build plan](../spec/36-build-plan.md).
+Run an item before the build phase that depends on it. The phase numbers refer to the [build plan](../plan/roadmap.md).
 
 | # | Topic | Needed before | Feeds spec section |
 | --- | --- | --- | --- |
@@ -48,11 +48,11 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **4. Session persistence and Entra session rules.** (Partly answered by [note 14](14-sessions-and-policy-engines.md).) How cookies, localStorage, IndexedDB, and sessionStorage persist in Chromium profiles; where MSAL-based apps keep tokens; what controls Entra session length (sign-in frequency, persistent browser session, refresh-token lifetime, continuous access evaluation); what Token Protection and device-compliance rules do to a session used from a server; what Microsoft recommends for automation identities; what to ask IT to approve.
 
-**5. Vault design per operating system.** (Partly answered by [note 15](15-traces-and-key-stores.md); the design is in spec section 48.) Windows DPAPI and Credential Manager, macOS Keychain, Linux Secret Service; Rust crates for each; envelope encryption of profile directories; how Chromium encrypts cookies on each OS, including app-bound encryption on Windows, and whether a copied profile still works; options on servers and in containers; keeping secrets out of logs and traces.
+**5. Vault design per operating system.** (Partly answered by [note 15](15-traces-and-key-stores.md); the design is in spec section 216.) Windows DPAPI and Credential Manager, macOS Keychain, Linux Secret Service; Rust crates for each; envelope encryption of profile directories; how Chromium encrypts cookies on each OS, including app-bound encryption on Windows, and whether a copied profile still works; options on servers and in containers; keeping secrets out of logs and traces.
 
 **6. Web sign-in methods and auto-detection.** For OIDC and SAML redirects, pop-up sign-in, form login, HTTP Basic and Digest, NTLM and Kerberos, client certificates, and passkeys: what Chromium supports under automation, the pitfalls, and how to detect each method from a URL and detect expiry mid-run.
 
-**7. Durable execution and idempotency.** (Partly answered by [note 13](13-ledger-leases-and-runner-links.md); check the design in spec section 42 against primary sources.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
+**7. Durable execution and idempotency.** (Partly answered by [note 13](13-ledger-leases-and-runner-links.md); check the design in spec section 208 against primary sources.) The minimal sound design for the run ledger, checkpointing, and resume when the side effect is in a system with no transactions. Draw on Temporal, Restate, DBOS, the saga pattern, and idempotency-key practice. Address the crash between sending a write and recording it. Recommend a ledger schema for SQLite and Postgres.
 
 **8. Human approval patterns.** MCP elicitation and client support; approval pages; Teams, Slack, and email approvals; binding an approval to a content hash with expiry and single use; tiering and batching to avoid fatigue; what to record for audit; how LangGraph, the OpenAI Agents SDK, Temporal, GitHub environments, and Terraform handle it.
 
@@ -88,7 +88,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **24. WebMCP standard status.** The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
 
-**25. Gap-review components.** For each component in [spec section 32](../spec/32-components-added-by-the-gap-review.md), find prior art and pitfalls before designing it in detail: environments, triggers, mid-run input, undo, read caching, data classification, identity isolation, single-session apps, tool versioning, authorization records, usage metering, updates, and target packs.
+**25. Gap-review components.** For each component in [spec section 604](../spec/6-running-it/604-management-and-operations.md), find prior art and pitfalls before designing it in detail: environments, triggers, mid-run input, undo, read caching, data classification, identity isolation, single-session apps, tool versioning, authorization records, usage metering, updates, and target packs.
 
 **26. Local channel on three operating systems.** Rust crates for Unix domain sockets and Windows named pipes behind one interface; serving HTTP over them with the chosen web framework; reading the connecting user's identity on each system; directory and access-list permissions; starting a detached background process and guarding it with a lock file; how comparable tools (language servers, container and database daemons) handle version skew and idle shutdown.
 
