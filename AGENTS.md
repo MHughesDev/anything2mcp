@@ -12,7 +12,7 @@ Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral
 
 ## How this project grows
 
-- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. [docs/plan/core-first.md](docs/plan/core-first.md) gives the order, and the [long-term plan](docs/plan/anything2mcp-master-plan.md) gives the stages around it.
+- **Slowly, and core first.** Build the engine loop, one driver, sessions, the ledger, the policy gate, and the compiler before anything else, as thin slices that each work end to end. The [roadmap](docs/plan/roadmap.md) lists every package in order; [docs/plan/core-first.md](docs/plan/core-first.md) and the [long-term plan](docs/plan/anything2mcp-master-plan.md) give the reasoning.
 - **Every slice tests the design.** The design is a set of bets, listed in [docs/hypotheses/README.md](docs/hypotheses/README.md). Before building, name an alternative to the documented design. After building, write down what the work showed.
 - **Keep improving the design.** Question the documents. When something is ambiguous, fix it. When evidence shows a section is wrong, correct it and record the decision. When a different design looks better, test it or propose it. [docs/plan/working-method.md](docs/plan/working-method.md) says how each kind of change is made.
 - **Review the whole design regularly,** one lens at a time, with [docs/plan/design-review-lenses.md](docs/plan/design-review-lenses.md).
@@ -34,7 +34,8 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 ## Read these first, in this order
 
 0. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md)
-1. [docs/plan/anything2mcp-master-plan.md](docs/plan/anything2mcp-master-plan.md): the stages of work, and which can run at once
+1. [docs/architecture/README.md](docs/architecture/README.md): how the crates fit together, and the design of the crate you are about to touch
+1. [docs/plan/roadmap.md](docs/plan/roadmap.md): every work package, what it needs, what proves it, and which are ready now. The [long-term plan](docs/plan/anything2mcp-master-plan.md) holds the reasoning behind it
 2. [docs/plan/readiness.md](docs/plan/readiness.md) and [spec section 66](docs/spec/66-readiness-of-the-universal-design.md): what is ready, the risks, and what is deliberately not designed yet
 3. [docs/spec/01-summary.md](docs/spec/01-summary.md), [02](docs/spec/02-requirements-and-guarantees.md), [03](docs/spec/03-design-principles.md), [04](docs/spec/04-system-overview.md), [05](docs/spec/05-core-concepts.md), then [53](docs/spec/53-the-universal-runtime.md), [55](docs/spec/55-kernel-and-packs.md), and [67](docs/spec/67-the-scout-and-who-does-what.md)
 4. [docs/decisions/README.md](docs/decisions/README.md): the decisions already made
@@ -62,7 +63,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 ## How to work
 
 - **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the build plan ends with an exit test; the next phase starts when it passes and the result is in the journal.
-- **Start each slice with a plan.** State the slice, the hypotheses it tests, an alternative you considered, the crates and interfaces involved, which side of the kernel boundary each piece falls on, and the tests that will prove it. Write it down, then build.
+- **Start each slice with a plan.** Take a package marked ready in the roadmap, and read the design of each crate it touches in `docs/architecture/crates/`. State the slice, the hypotheses it tests, an alternative you considered, the crates and interfaces involved, which side of the kernel boundary each piece falls on, and the tests that will prove it. Write it down, then build. When the package merges, mark it done in the roadmap in the same pull request.
 - **Run the research first.** Before a phase, check [docs/research/11-open-research.md](docs/research/11-open-research.md) for briefs marked as needed before it. Run them, write each up as a new file in `docs/research/`, and update the spec sections they feed.
 - **Verify before you depend.** Many crate names in the docs are unverified. Before adding a dependency, confirm it exists, is maintained, carries a licence on the closed list in `deny.toml`, and supports Windows, macOS, and Linux. Record the choice.
 - **Treat the whole design as open to evidence.** [docs/research/README.md](docs/research/README.md) lists the spec sections that rest on judgment alone, but any section can be wrong. If implementation shows a better design, say so and record it; never silently diverge and never silently conform to something you believe is wrong.
@@ -85,7 +86,7 @@ Everything else is yours to decide and record.
 ## Code conventions
 
 - **Workspace.** One Cargo workspace. Kernel crates are named `a2m-*`, pack crates `a2m-pack-*`, and the product crate `anything2mcp`, laid out as in [spec section 29](docs/spec/29-repository-crates-and-packaging.md).
-- **Kernel and packs.** A kernel crate never depends on a pack crate. A pack crate sees only the kernel's first three layers and the base of its own pack. Only the product crate names packs. The layering table in the technical reference is the rule, and the audit enforces it.
+- **Kernel and packs.** A kernel crate never depends on a pack crate. A pack crate sees the kernel up to the provider contract, layers 1 to 5, and the base of its own pack. Only the product crate names packs. The layering table in the technical reference is the rule, and the audit enforces it.
 - **Toolchain.** Stable Rust, pinned in `rust-toolchain.toml`. `cargo fmt` and `cargo clippy -- -D warnings` must pass.
 - **Errors.** Library crates return typed errors that map to exactly one failure class and code from the technical reference. No `unwrap` or `expect` in library code outside tests. No panics across crate boundaries.
 - **Unsafe.** None without a comment explaining why it is sound and a test that exercises it.
@@ -133,12 +134,13 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `crates/` | The kernel (`a2m-*`), the packs (`a2m-pack-*`), and the product crate (`anything2mcp`) |
 | `targets/` | The imaginary `example` target and the test stands |
 | `bindings/` | The pip and npm packages |
+| `docs/architecture/` | How the code is put together: who defines, implements, and joins each interface, and one design per crate |
 | `docs/spec/` | The system design, one section per file |
 | `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, settings examples |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
 | `docs/references/` | Every source URL cited |
-| `docs/plan/` | The long-term plan, working method, core-first slice order, design review lenses, readiness report, phase map, task lists for Phases 0 to 3, the test application plan, publishing setup |
+| `docs/plan/` | The roadmap, the long-term plan, working method, core-first slice order, design review lenses, readiness report, phase map, task lists for Phases 0 to 3, the test application plan, publishing setup |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
 | `docs/journal/` | One entry per session; read the newest first |
 | `.claude/skills/` | Procedures for starting and ending a session, building a slice, testing a hypothesis, reviewing the design, and running research |

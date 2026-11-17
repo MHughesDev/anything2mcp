@@ -288,8 +288,17 @@ def main():
             note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")
         for c in sorted(set(layer) - set(on_disk)):
             note("layering", f"{c} is in the layering table but crates/{c} does not exist")
+    # Edges the layers would allow and the design forbids (docs/architecture/README.md).
+    forbidden = {
+        ("a2m-engine", "a2m-files"): "the engine runs only compiled plans and never depends on the compiler "
+                                     "(decision 0036)",
+        ("a2m-engine", "a2m-policy"): "only the control plane decides; the engine asks through Control",
+    }
     for c, deps in sorted(on_disk.items()):
         for d in sorted(deps):
+            if (c, d) in forbidden:
+                note("layering", f"{c} depends on {d}; {forbidden[(c, d)]}")
+                continue
             if d not in layer:
                 if d.startswith("a2m-") or d == "anything2mcp":
                     note("layering", f"{c} depends on {d}, which is not in the layering table")
@@ -343,6 +352,23 @@ def main():
             if found_name:
                 note("names", f"{rel}:{i}: `{found_name.group(0)}` is an earlier name; "
                               "the product is Anything2MCP, its crates are a2m-*")
+
+    # 16. Every crate has a design in docs/architecture/crates/, every design names a crate that
+    #     exists, and each design states the layer the layering table gives (decision 0061).
+    designs_dir = docs / "architecture" / "crates"
+    if designs_dir.is_dir():
+        designs = {f.stem: f.read_text(encoding="utf-8") for f in sorted(designs_dir.glob("*.md"))}
+        for c in sorted(set(on_disk) - set(designs)):
+            note("designs", f"crates/{c} has no design at docs/architecture/crates/{c}.md")
+        for c in sorted(set(designs) - set(on_disk)):
+            note("designs", f"docs/architecture/crates/{c}.md describes a crate that does not exist")
+        for c, text in sorted(designs.items()):
+            if not text.startswith(f"# `{c}`\n"):
+                note("designs", f"docs/architecture/crates/{c}.md must begin with the heading # `{c}`")
+            stated = re.search(r"^\| Layer \| (\d+)", text, re.M)
+            if c in layer and (not stated or int(stated.group(1)) != layer[c]):
+                note("designs", f"docs/architecture/crates/{c}.md must state layer {layer[c]} in its Facts table, "
+                                f"as the layering table does")
 
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "

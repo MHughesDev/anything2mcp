@@ -16,7 +16,9 @@ Nothing usable yet. The project is in its foundation phase.
 - A test application with a web interface, a JSON interface, a control interface, and injectable faults.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
 - A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start.
-- The design: 67 specification sections, 60 decision records, 16 research notes, and a register of 31 hypotheses.
+- The design: 72 specification sections, 64 decision records, 16 research notes, and a register of 39 hypotheses.
+- The architecture: which crate defines, implements, and joins every interface, with a design for each of the 24 crates, and designs for five further packs: command, data, file, stream, and device.
+- A roadmap of every work package to version 1.0.
 
 ### Changed
 
