@@ -587,14 +587,12 @@ async fn read_body(settings: &ApiSettings, parts: &Parts, mut body: axum::body::
         }
     }
     let mut bytes = Vec::new();
-    let whole = tokio::time::timeout(settings.body_timeout, async {
+    let mut over: Option<usize> = None;
+    let read = tokio::time::timeout(settings.body_timeout, async {
         while let Some(data) = next_data(&mut body).await {
             let Ok(data) = data else { return false };
             if bytes.len() + data.len() > limit {
-                let seen = bytes.len() + data.len();
-                bytes.clear();
-                bytes.shrink_to_fit();
-                discard(settings, &mut body, seen).await;
+                over = Some(bytes.len() + data.len());
                 return false;
             }
             bytes.extend_from_slice(&data);
@@ -602,11 +600,17 @@ async fn read_body(settings: &ApiSettings, parts: &Parts, mut body: axum::body::
         true
     })
     .await;
-    match whole {
-        Ok(true) => Read::Whole(bytes),
+    match (read, over) {
+        (Ok(true), _) => Read::Whole(bytes),
+        // Over the limit: drained, with its own time, then refused.
+        (_, Some(seen)) => {
+            drop(bytes);
+            discard(settings, &mut body, seen).await;
+            Read::TooLarge
+        }
         // A body that broke off is reported as too large or ended early.
-        Ok(false) => Read::TooLarge,
-        Err(_) => Read::TimedOut,
+        (Ok(false), None) => Read::TooLarge,
+        (Err(_), None) => Read::TimedOut,
     }
 }
 

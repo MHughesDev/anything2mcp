@@ -46,3 +46,7 @@ On Linux, seven runs against a GTK 3 window and an egui window: the field found 
 
 - [305. The desktop pack](../spec/3-packs/305-the-desktop-pack.md)
 - [106. What it latches onto](../spec/1-product/106-what-it-latches-onto.md)
+
+## A note added when the record was merged
+
+The Linux choice was checked for licences and not for advisories. The `atspi` crates stand on version 5 of `zbus`, whose tree holds three crates that were declared unmaintained in 2026; the vault's Linux key store was removed for the same three ([record 0123](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)). Before the Linux back end is added to the workspace, run the advisory check on its tree. If it still fails, the Linux back end waits for a release on maintained crates, and the build order starts with Windows.
