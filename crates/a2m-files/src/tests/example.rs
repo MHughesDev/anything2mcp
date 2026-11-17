@@ -10,14 +10,14 @@ use crate::codes::KERNEL_CODES;
 use crate::testing::{example_root, stand_set, surface_kind};
 use crate::{
     CompileMode, Compiled, CompilerSet, Diagnostics, JsonSchema, Level, LowerContext, Lowered,
-    Lowering, Possible, RelPath, ResolvedBinding, SourceFile, TargetRoot, compile, lint_one, load,
-    load_files,
+    Lowering, Possible, ProgramField, RelPath, ResolvedBinding, SourceFile, SurfaceKindSpec,
+    TargetRoot, compile, lint_one, load, load_files,
 };
 use a2m_core::{
-    ApproveWrites, CaptureLevel, DecimalMark, DriftRisk, EffectClass, FailsAs, FailureClass,
-    FailureCode, FieldFormat, FileKindName, IdentityStrategy, Mode, PackPayload, Plan, ProbePlan,
-    RecordKey, SignInMode, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName,
-    Value, Verb, Version,
+    ApproveWrites, CaptureLevel, DecimalMark, DeclaredProgram, Digest, DriftRisk, EffectClass,
+    FailsAs, FailureClass, FailureCode, FieldFormat, FileKindName, IdentityStrategy, Mode,
+    PackPayload, Plan, ProbePlan, RecordKey, SignInMode, Stands, Step, StepArg, StepKind,
+    SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
 };
 
 const VERSION: Version = Version::new(1, 0, 0);
@@ -186,6 +186,14 @@ fn cases() -> Vec<(&'static str, Case)> {
                 "calls/orders.yaml",
                 "effect: write",
                 "effect: write\ncontrol: dial",
+            ),
+        ),
+        (
+            "kernel.program_invalid",
+            Case::Edit(
+                "target.yaml",
+                "    address: \"https://app.example.com\"\n",
+                "    address: \"https://app.example.com\"\n    helper: bin/example-helper\n",
             ),
         ),
         (
@@ -1377,4 +1385,157 @@ fn what_the_new_parts_refuse() {
         "decision_points:\n  - {name: which, question: \"Which?\"}\n  - {name: which, question: \"Which one?\"}\nbindings:",
         "kernel.name_defined_twice",
     );
+}
+
+const DESK_ADDRESS: &str = "    address: \"https://app.example.com\"\n";
+
+#[test]
+fn a_surface_kind_that_names_a_program_puts_it_in_the_plan() {
+    // The example states no program, and its plan declares none.
+    assert!(compiled().plan.surfaces[0].programs.is_empty());
+
+    let digest = Digest::of(b"example-helper");
+    let stated = format!(
+        "{DESK_ADDRESS}    helper: /opt/example/bin/example-helper\n    helper_digest: \"sha256:{digest}\"\n"
+    );
+    let stated: &'static str = stated.leak();
+    let compiled = compiled_with(&[Case::Edit("target.yaml", DESK_ADDRESS, stated)]);
+    assert_eq!(
+        compiled.plan.surfaces[0].programs,
+        vec![DeclaredProgram {
+            path: "/opt/example/bin/example-helper".to_owned(),
+            digest: Some(digest),
+        }]
+    );
+    // The plan's bytes carry it, so a published version pins it.
+    let decoded = Plan::decode(&compiled.encoded.bytes, &compiled.encoded.hash).unwrap();
+    assert_eq!(decoded.surfaces[0].programs.len(), 1);
+
+    // A path on another system is absolute too, and a digest is optional.
+    let compiled = compiled_with(&[Case::Edit(
+        "target.yaml",
+        DESK_ADDRESS,
+        "    address: \"https://app.example.com\"\n    helper: 'C:\\example\\example-helper.exe'\n",
+    )]);
+    assert_eq!(
+        compiled.plan.surfaces[0].programs,
+        vec![DeclaredProgram {
+            path: "C:\\example\\example-helper.exe".to_owned(),
+            digest: None,
+        }]
+    );
+}
+
+#[test]
+fn a_program_named_any_other_way_is_refused_with_a_file_a_line_and_a_fix() {
+    let refused = |replace: &'static str, line: u32, says: &str| {
+        let problems = problems_of(&Case::Edit("target.yaml", DESK_ADDRESS, replace));
+        let problem = problems
+            .find("kernel.program_invalid")
+            .unwrap_or_else(|| panic!("{replace}:\n{problems}"));
+        assert_eq!(problem.at.file.as_str(), "target.yaml");
+        assert_eq!(problem.at.line, line, "{problem}");
+        assert!(problem.message.contains(says), "{problem}");
+        assert!(!problem.fix.is_empty());
+    };
+    for relative in ["example-helper", "bin/example-helper", "./example-helper"] {
+        let replace = format!("{DESK_ADDRESS}    helper: {relative}\n");
+        refused(replace.leak(), 11, "absolute path");
+    }
+    refused(
+        "    address: \"https://app.example.com\"\n    helper: /opt/example/bin/example-helper\n    helper_digest: abc\n",
+        12,
+        "digest",
+    );
+    let alone = format!(
+        "{DESK_ADDRESS}    helper_digest: {}\n",
+        Digest::of(b"example-helper")
+    );
+    refused(alone.leak(), 11, "no program");
+}
+
+/// The stand pack, with its surface kind reached by starting a program: the
+/// address is the program's path.
+fn program_set() -> CompilerSet {
+    let mut builder = CompilerSet::builder();
+    for part in crate::testing::STAND_PARTS {
+        if *part != "surface_kind" {
+            crate::testing::register_part(&mut builder, crate::testing::PACK, part).unwrap();
+        }
+    }
+    let fields = JsonSchema::object()
+        .required("address", JsonSchema::text())
+        .optional("digest", JsonSchema::text());
+    builder
+        .surface_kind(
+            crate::testing::PACK,
+            SurfaceKindSpec::new(surface_kind(), "address", fields)
+                .with_program("address", Some("digest")),
+        )
+        .unwrap();
+    builder.build()
+}
+
+#[test]
+fn where_the_address_is_a_program_each_environments_address_is_declared_too() {
+    let set = program_set();
+    let digest = Digest::of(b"example-tool");
+    let own = format!("    address: /opt/example/bin/example-tool\n    digest: {digest}\n");
+    let with = |test_address: &'static str| {
+        let mut files = changed(&Case::Edit("target.yaml", DESK_ADDRESS, own.clone().leak()));
+        let target = files
+            .iter_mut()
+            .find(|(path, _)| path.as_str() == "target.yaml")
+            .unwrap();
+        let text = String::from_utf8(target.1.clone()).unwrap();
+        assert!(text.contains("\"https://test.example.com\""));
+        target.1 = text
+            .replacen("\"https://test.example.com\"", test_address, 1)
+            .into_bytes();
+        files
+    };
+    let files = with("/opt/example-test/bin/example-tool");
+    let sources = load_files(&TargetRoot::new("example"), &files, &set).unwrap();
+    let compiled = compile(&sources, &set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let surface = &compiled.plan.surfaces[0];
+    assert_eq!(surface.address, "/opt/example/bin/example-tool");
+    assert_eq!(
+        surface.programs,
+        vec![
+            DeclaredProgram {
+                path: "/opt/example/bin/example-tool".to_owned(),
+                digest: Some(digest),
+            },
+            DeclaredProgram {
+                path: "/opt/example-test/bin/example-tool".to_owned(),
+                digest: Some(digest),
+            },
+        ]
+    );
+
+    // An environment cannot bring in a program by a relative path either.
+    let problems = problems_with(&with("bin/example-tool"), &set, CompileMode::Publish);
+    let problem = problems.find("kernel.program_invalid").unwrap();
+    assert_eq!(problem.at.file.as_str(), "target.yaml");
+    assert_eq!(problem.at.line, 16, "{problem}");
+
+    // A program field is one of the kind's own fields.
+    let mut builder = CompilerSet::builder();
+    let failure = builder
+        .surface_kind(
+            crate::testing::PACK,
+            SurfaceKindSpec {
+                kind: surface_kind(),
+                address_key: "address".to_owned(),
+                fields: JsonSchema::object().required("address", JsonSchema::text()),
+                programs: vec![ProgramField {
+                    path_key: "address".to_owned(),
+                    digest_key: Some("digest".to_owned()),
+                }],
+            },
+        )
+        .err()
+        .unwrap();
+    assert_eq!(failure.code().as_str(), "registration_conflict");
 }

@@ -208,6 +208,50 @@ pub struct SurfaceKindSpec {
     /// the address key. The kernel owns `kind`, `same_session_as`, `rate`,
     /// and `stands`. The other fields travel in the surface's payload.
     pub fields: JsonSchema,
+    /// Which of those fields name a program the surface's driver may start.
+    /// Empty for a kind that is not reached by starting a program. The
+    /// compiler copies what a surface states under them into
+    /// `SurfacePlan::programs`, and refuses a path that is not absolute.
+    pub programs: Vec<ProgramField>,
+}
+
+impl SurfaceKindSpec {
+    /// A surface kind that starts no program.
+    #[must_use]
+    pub fn new(kind: SurfaceKind, address_key: &str, fields: JsonSchema) -> Self {
+        Self {
+            kind,
+            address_key: address_key.to_owned(),
+            fields,
+            programs: Vec::new(),
+        }
+    }
+
+    /// Adds a field that names a program by its absolute path, and the
+    /// field that states its digest when the kind has one.
+    #[must_use]
+    pub fn with_program(mut self, path_key: &str, digest_key: Option<&str>) -> Self {
+        self.programs.push(ProgramField {
+            path_key: path_key.to_owned(),
+            digest_key: digest_key.map(str::to_owned),
+        });
+        self
+    }
+}
+
+/// The fields of a surface that name one program its driver may start.
+///
+/// The path field may be the address key: then the address of the surface in
+/// each environment is a program too. A surface that leaves the path field
+/// out declares no program by it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramField {
+    /// The key that holds the program's absolute path, as text.
+    pub path_key: String,
+    /// The key that holds its digest, as 64 lowercase hexadecimal
+    /// characters with or without `sha256:` before them, when the kind has
+    /// one. The digest holds wherever an environment reaches the program.
+    pub digest_key: Option<String>,
 }
 
 /// One registered thing, and the pack that registered it.
@@ -396,9 +440,9 @@ impl CompilerSetBuilder {
     ///
     /// # Errors
     ///
-    /// `registration_conflict` when the kind is already registered, or its
+    /// `registration_conflict` when the kind is already registered, its
     /// fields are not an object schema that lists the address key and none
-    /// of the kernel's keys.
+    /// of the kernel's keys, or a program field is not one of its fields.
     pub fn surface_kind(
         &mut self,
         pack: &str,
@@ -420,6 +464,18 @@ impl CompilerSetBuilder {
                 "The fields of the surface kind `{}` must list its address key `{}` and none of the kernel's keys.",
                 spec.kind,
                 crate::schema::shown(&spec.address_key)
+            )));
+        }
+        let unlisted = spec
+            .programs
+            .iter()
+            .flat_map(|program| std::iter::once(&program.path_key).chain(&program.digest_key))
+            .find(|key| !keys.contains(&key.as_str()));
+        if let Some(key) = unlisted {
+            return Err(conflict(format!(
+                "The surface kind `{}` names a program by the key `{}`, which its fields do not list.",
+                spec.kind,
+                crate::schema::shown(key)
             )));
         }
         self.set.surface_kinds.insert(

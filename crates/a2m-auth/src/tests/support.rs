@@ -165,6 +165,50 @@ impl AuthProvider for Fake {
     }
 }
 
+/// A place where the test can hold something the keeper's work does, and
+/// let it through when it chooses.
+#[derive(Default)]
+pub(super) struct Gate {
+    held: Mutex<bool>,
+    permits: Option<Semaphore>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            held: Mutex::new(false),
+            permits: Some(Semaphore::new(0)),
+        }
+    }
+
+    /// From now on, whatever comes here waits.
+    pub(super) fn hold(&self) {
+        *self.held.lock().unwrap() = true;
+    }
+
+    /// Lets the one that has waited longest through.
+    pub(super) fn release_one(&self) {
+        if let Some(permits) = &self.permits {
+            permits.add_permits(1);
+        }
+    }
+
+    /// Lets everything through, now and from now on.
+    pub(super) fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        if let Some(permits) = &self.permits {
+            permits.add_permits(1000);
+        }
+    }
+
+    async fn pass(&self) {
+        let held = *self.held.lock().unwrap();
+        if let (true, Some(permits)) = (held, &self.permits) {
+            permits.acquire().await.unwrap().forget();
+        }
+    }
+}
+
 type Answer = Box<dyn Fn(&PersonAsk) -> PersonAnswer + Send + Sync>;
 
 /// The session's own person, who answers as the test says and is never
@@ -172,6 +216,8 @@ type Answer = Box<dyn Fn(&PersonAsk) -> PersonAnswer + Send + Sync>;
 pub(super) struct Person {
     pub(super) asks: Mutex<Vec<PersonAsk>>,
     answer: Mutex<Answer>,
+    /// An ask waits here, before it is recorded, while the test holds it.
+    pub(super) gate: Gate,
 }
 
 impl Person {
@@ -179,6 +225,7 @@ impl Person {
         Self {
             asks: Mutex::new(Vec::new()),
             answer: Mutex::new(Box::new(|_| PersonAnswer::NoAnswer)),
+            gate: Gate::new(),
         }
     }
 
@@ -202,6 +249,7 @@ impl Person {
 impl AskPerson for Person {
     fn ask<'a>(&'a self, _session: &'a SessionRef, ask: PersonAsk) -> BoxFuture<'a, PersonAnswer> {
         Box::pin(async move {
+            self.gate.pass().await;
             let answer = (self.answer.lock().unwrap())(&ask);
             self.asks.lock().unwrap().push(ask);
             answer
@@ -217,6 +265,8 @@ impl AskPerson for Person {
 pub(super) struct Probe {
     pub(super) outcome: Mutex<ProbeOutcome>,
     calls: AtomicU32,
+    /// A probe waits here, after it is counted, while the test holds it.
+    pub(super) gate: Gate,
 }
 
 impl Probe {
@@ -229,6 +279,7 @@ impl RunProbe for Probe {
     fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.gate.pass().await;
             self.outcome.lock().unwrap().clone()
         })
     }
@@ -420,6 +471,7 @@ impl World {
             Arc::new(Probe {
                 outcome: Mutex::new(ProbeOutcome::SignedIn),
                 calls: AtomicU32::new(0),
+                gate: Gate::new(),
             }),
         )
         .await

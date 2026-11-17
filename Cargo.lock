@@ -5,6 +5,21 @@ version = 4
 [[package]]
 name = "a2m-actions"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-policy",
+ "a2m-provider",
+ "a2m-sched",
+ "a2m-telemetry",
+ "a2m-vault",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
 
 [[package]]
 name = "a2m-api"
@@ -55,6 +70,22 @@ dependencies = [
 [[package]]
 name = "a2m-engine"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-engine",
+ "a2m-expr",
+ "a2m-ledger",
+ "a2m-provider",
+ "a2m-sources",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-app",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-expr"
@@ -102,6 +133,21 @@ version = "0.0.1"
 [[package]]
 name = "a2m-pack-data"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-expr",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-provider",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-db",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-desktop"
@@ -110,6 +156,20 @@ version = "0.0.1"
 [[package]]
 name = "a2m-pack-device"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-expr",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-provider",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-device",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-file"
@@ -118,6 +178,20 @@ version = "0.0.1"
 [[package]]
 name = "a2m-pack-http"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-provider",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-app",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-mcp"
@@ -126,10 +200,32 @@ version = "0.0.1"
 [[package]]
 name = "a2m-pack-stream"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-provider",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-broker",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-web-browser"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-provider",
+ "a2m-telemetry",
+ "example-app",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-web-probe"

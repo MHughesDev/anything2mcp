@@ -44,9 +44,10 @@ pub use draft::{
 pub use load::{SourceFile, Sources, TargetRoot, load, load_files};
 pub use register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
-    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, SurfaceKindSpec,
+    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, ProgramField,
+    SurfaceKindSpec,
 };
-pub use schema::{Checked, JsonSchema, OPEN_QUESTION, Reference};
+pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, PartKind, ReaderOptions,
     RowField, SourceSpec, TemplateVersion,

@@ -419,3 +419,78 @@ async fn a_foreign_link_carries_bytes_both_ways_and_stop_ends_the_group() {
     link.from_child.read_to_end(&mut rest).await.unwrap();
     assert!(rest.is_empty());
 }
+
+/// A process that is not in the program's group holds the program's output
+/// pipe open after the program has ended: here one that left the group, and
+/// on a system that cannot make a pipe already marked close-on-exec it
+/// could be a child started elsewhere in the same moment. The run must not
+/// wait for the end of the pipe, must keep everything the program wrote,
+/// and must not call its own cleanup incomplete.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_holder_of_the_output_outside_the_group_neither_delays_a_run_nor_spoils_its_verdict() {
+    let setsid = std::path::Path::new("/usr/bin/setsid");
+    if !setsid.is_file() {
+        // Without the tool there is no way here to leave a group.
+        return;
+    }
+    let supervisor = supervisor();
+    // The shell starts, in a session of its own, a sleeper that keeps the
+    // shell's standard output, prints the sleeper's process number, and
+    // ends. Descriptor 3 carries the output past the command substitution.
+    let script = "exec 3>&1; \
+                  pid=$(/usr/bin/setsid /bin/sh -c 'echo $$; exec /bin/sleep 600 >&3 3>&-' &); \
+                  echo \"holder $pid\"";
+    let spec = LaunchSpec {
+        program: ProgramRef {
+            path: "/bin/sh".into(),
+            digest: None,
+        },
+        args: vec!["-c".into(), script.into()],
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    // An hour's limit: if the run waited on the holder, the test's own
+    // limit would end it long before.
+    let finished = tokio::time::timeout(WITHIN, supervisor.run(spec.clone(), one_shot(3600)))
+        .await
+        .expect("the run waited for a process that is not the program's")
+        .unwrap();
+    let stdout = String::from_utf8(finished.stdout.clone()).unwrap();
+    let holder: i32 = stdout
+        .trim()
+        .strip_prefix("holder ")
+        .and_then(|pid| pid.parse().ok())
+        .unwrap_or_else(|| panic!("the program's output was not kept: {stdout:?}"));
+    let holder = rustix::process::Pid::from_raw(holder).unwrap();
+    // The holder is alive, outside the group, and still holds the pipe.
+    let alive = rustix::process::test_kill_process(holder).is_ok();
+    let verdict = (
+        finished.exit,
+        finished.cleanup.complete,
+        supervisor.leftovers().is_empty(),
+    );
+    // A second run of the same kind is not blocked by the first.
+    let again = tokio::time::timeout(WITHIN, supervisor.run(spec, one_shot(3600))).await;
+    // End both holders before anything is asserted, so that none is left.
+    let _ = rustix::process::kill_process(holder, rustix::process::Signal::KILL);
+    if let Ok(Ok(second)) = &again {
+        let second = String::from_utf8_lossy(&second.stdout);
+        let second = second
+            .trim()
+            .strip_prefix("holder ")
+            .and_then(|pid| pid.parse().ok())
+            .and_then(rustix::process::Pid::from_raw);
+        if let Some(pid) = second {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
+    }
+    assert!(
+        alive,
+        "the holder was not alive, so the test proved nothing"
+    );
+    assert_eq!(verdict, (Exit::Code(0), true, true));
+    assert!(again.expect("the second run waited").is_ok());
+}

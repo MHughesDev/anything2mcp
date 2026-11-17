@@ -39,6 +39,7 @@ kernel_codes! {
     OPEN_QUESTION = "open_question": "No open question from the drafter is left in a file.",
     UNKNOWN_SURFACE_KIND = "unknown_surface_kind": "A surface's kind is one an enabled pack registered.",
     UNKNOWN_CONTROL = "unknown_control": "A control is one an enabled pack registered.",
+    PROGRAM_INVALID = "program_invalid": "A program a surface declares is named by an absolute path, and its digest is a digest.",
     // Stage 3: resolve.
     UNKNOWN_NAME = "unknown_name": "A name that is used is defined somewhere.",
     NAME_DEFINED_TWICE = "name_defined_twice": "A name is defined once.",

@@ -3,7 +3,9 @@
 //! and a column, and that is published as ordinary JSON Schema (decision
 //! 0078).
 
-use a2m_core::Decimal;
+use std::fmt;
+
+use a2m_core::{Decimal, Failure, FailureClass, FailureCode, LintCode, Value, Values};
 
 use crate::codes::{self, kernel};
 use crate::diag::{Diagnostic, Stage};
@@ -261,9 +263,360 @@ impl JsonSchema {
     /// Checks a located document against the schema.
     #[must_use]
     pub fn check(&self, doc: &Located<Doc>) -> Checked {
-        let mut checked = Checked::default();
-        check(&self.0, doc, &mut checked);
-        checked
+        let mut found = Found::default();
+        check(&self.0, doc, &doc.at, &mut found);
+        Checked {
+            diagnostics: found
+                .problems
+                .into_iter()
+                .map(|problem| {
+                    Diagnostic::error(
+                        kernel(problem.code),
+                        Stage::Validate,
+                        &problem.at,
+                        problem.message,
+                        problem.fix,
+                    )
+                })
+                .collect(),
+            references: found
+                .references
+                .into_iter()
+                .map(|(reference, name, at)| (reference, Located::new(name, at)))
+                .collect(),
+        }
+    }
+
+    /// Checks named run-time values, such as the input of an action,
+    /// against the schema: the rules of [`JsonSchema::check`], with a path
+    /// in place of a line and a column.
+    ///
+    /// Three things differ from a file, and nothing else. No message holds
+    /// a value, only its kind and its path. An open question is a drafter's
+    /// mark in a file and means nothing here. A value the schema says is a
+    /// reference is taken as text: only the compiler can resolve it.
+    ///
+    /// # Errors
+    ///
+    /// Every place that does not fit, in the order the values are walked.
+    pub fn check_values(&self, values: &Values) -> Result<(), Misfits> {
+        self.check_value(&Value::Record(values.clone()))
+    }
+
+    /// Checks one run-time value against the schema, as
+    /// [`JsonSchema::check_values`] does. A record is a map; a decimal is
+    /// taken where the schema needs an exact number; a date, a moment, and
+    /// a length of time fit only where any value does.
+    ///
+    /// # Errors
+    ///
+    /// Every place that does not fit.
+    pub fn check_value(&self, value: &Value) -> Result<(), Misfits> {
+        self.check_at_run_time(value)
+    }
+
+    /// Checks JSON as a front door received it against the schema, as
+    /// [`JsonSchema::check_values`] does. It takes what the document from
+    /// [`JsonSchema::to_json`] describes: a number with a fraction fits
+    /// nowhere but where any value does, and an exact number is written as
+    /// a whole number or as text.
+    ///
+    /// # Errors
+    ///
+    /// Every place that does not fit.
+    pub fn check_json(&self, value: &serde_json::Value) -> Result<(), Misfits> {
+        self.check_at_run_time(value)
+    }
+
+    fn check_at_run_time<V: Checkable<At = String>>(&self, value: &V) -> Result<(), Misfits> {
+        let mut found = Found::default();
+        check(&self.0, value, &String::new(), &mut found);
+        if found.problems.is_empty() {
+            return Ok(());
+        }
+        Err(Misfits(
+            found
+                .problems
+                .into_iter()
+                .map(|problem| Misfit {
+                    path: problem.at,
+                    code: kernel(problem.code),
+                    message: problem.message,
+                    fix: problem.fix,
+                })
+                .collect(),
+        ))
+    }
+}
+
+/// One place where a run-time value does not fit its schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Misfit {
+    /// The path of the value from the root: field names joined by dots,
+    /// with the position of a list's item in brackets, such as
+    /// `lines[2].quantity`. Empty for the root itself.
+    pub path: String,
+    /// The rule that was broken, under the code a file that broke it would
+    /// be reported with, such as `kernel.wrong_type`.
+    pub code: LintCode,
+    /// What is wrong, in one plain sentence. It never holds the value.
+    pub message: String,
+    /// What to do about it.
+    pub fix: String,
+}
+
+impl fmt::Display for Misfit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.path.is_empty() {
+            write!(f, "The value does not fit its schema. {}", self.message)
+        } else {
+            write!(
+                f,
+                "The value at `{}` does not fit its schema. {}",
+                self.path, self.message
+            )
+        }
+    }
+}
+
+/// Run-time values that do not fit their schema: at least one place, in the
+/// order the values were walked.
+///
+/// It maps to the failure class `input`, code `schema_invalid`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Misfits(Vec<Misfit>);
+
+impl Misfits {
+    /// Every place that does not fit. Never empty.
+    #[must_use]
+    pub fn as_slice(&self) -> &[Misfit] {
+        &self.0
+    }
+
+    /// The paths that do not fit, in order.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|misfit| misfit.path.as_str())
+    }
+}
+
+impl fmt::Display for Misfits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(first) = self.0.first() {
+            write!(f, "{first}")?;
+        }
+        match self.0.len().saturating_sub(1) {
+            0 => Ok(()),
+            1 => write!(f, " One more place does not fit."),
+            more => write!(f, " {more} more places do not fit."),
+        }
+    }
+}
+
+impl std::error::Error for Misfits {}
+
+impl From<Misfits> for Failure {
+    fn from(misfits: Misfits) -> Self {
+        let fix = misfits
+            .0
+            .first()
+            .map_or_else(String::new, |first| first.fix.clone());
+        Self::new(
+            FailureClass::Input,
+            FailureCode::SCHEMA_INVALID,
+            misfits.to_string(),
+            fix,
+        )
+    }
+}
+
+/// One thing the checker found, at a place of the kind its value has.
+struct Problem<At> {
+    code: &'static str,
+    at: At,
+    message: String,
+    fix: String,
+}
+
+/// What the checker found, before it is given the form its caller reads.
+struct Found<At> {
+    problems: Vec<Problem<At>>,
+    references: Vec<(Reference, String, At)>,
+}
+
+impl<At> Default for Found<At> {
+    fn default() -> Self {
+        Self {
+            problems: Vec::new(),
+            references: Vec::new(),
+        }
+    }
+}
+
+/// One member of a map, as the checker sees it.
+struct Member<'a, V: Checkable> {
+    key: &'a str,
+    key_at: V::At,
+    at: V::At,
+    value: &'a V,
+}
+
+/// What the checker sees of one value, whatever holds it.
+enum View<'a, V: Checkable> {
+    Bool(bool),
+    Int(i64),
+    Text(&'a str),
+    /// An exact number held as one, which only a run-time value can be.
+    Decimal,
+    List(Vec<(V::At, &'a V)>),
+    Map(Vec<Member<'a, V>>),
+    /// Nothing, or a kind that fits only where any value does.
+    Other,
+}
+
+/// A value the one checker can walk: a located document, a run-time value,
+/// or JSON. The rules are written once, over what this trait shows.
+trait Checkable: Sized {
+    /// Where a value is: a place in a file, or a path from the root.
+    type At: Clone;
+    /// True for a document from a file. A message may then quote what the
+    /// file wrote, and a drafter's open question is looked for.
+    const FROM_FILE: bool;
+    /// What kind of value this is, for a message.
+    fn kind(&self) -> &'static str;
+    /// What the checker sees of the value, which is at `at`.
+    fn view<'a>(&'a self, at: &Self::At) -> View<'a, Self>;
+}
+
+impl Checkable for Located<Doc> {
+    type At = Place;
+    const FROM_FILE: bool = true;
+
+    fn kind(&self) -> &'static str {
+        self.value.kind()
+    }
+
+    fn view<'a>(&'a self, _at: &Place) -> View<'a, Self> {
+        match &self.value {
+            Doc::Null => View::Other,
+            Doc::Bool(flag) => View::Bool(*flag),
+            Doc::Int(number) => View::Int(*number),
+            Doc::Text(text) => View::Text(text),
+            Doc::List(items) => {
+                View::List(items.iter().map(|item| (item.at.clone(), item)).collect())
+            }
+            Doc::Map(entries) => View::Map(
+                entries
+                    .iter()
+                    .map(|entry| Member {
+                        key: &entry.key.value,
+                        key_at: entry.key.at.clone(),
+                        at: entry.value.at.clone(),
+                        value: &entry.value,
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// The path of the member `key` of the map at `at`.
+fn member_path(at: &str, key: &str) -> String {
+    if at.is_empty() {
+        shown(key)
+    } else {
+        format!("{at}.{}", shown(key))
+    }
+}
+
+/// What the checker sees of a run-time list and of a run-time map.
+fn list_view<'a, V: Checkable<At = String>>(at: &str, items: &'a [V]) -> View<'a, V> {
+    View::List(
+        items
+            .iter()
+            .enumerate()
+            .map(|(position, item)| (format!("{at}[{position}]"), item))
+            .collect(),
+    )
+}
+
+fn map_view<'a, V: Checkable<At = String> + 'a>(
+    at: &str,
+    members: impl Iterator<Item = (&'a str, &'a V)>,
+) -> View<'a, V> {
+    View::Map(
+        members
+            .map(|(key, value)| {
+                let path = member_path(at, key);
+                Member {
+                    key,
+                    key_at: path.clone(),
+                    at: path,
+                    value,
+                }
+            })
+            .collect(),
+    )
+}
+
+impl Checkable for Value {
+    type At = String;
+    const FROM_FILE: bool = false;
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Null => "nothing",
+            Self::Bool(_) => "true or false",
+            Self::Int(_) => "whole number",
+            Self::Text(_) => "text",
+            Self::Decimal(_) => "decimal number",
+            Self::Instant(_) => "moment",
+            Self::Date(_) => "date",
+            Self::Duration(_) => "length of time",
+            Self::List(_) => "list",
+            Self::Record(_) => "map",
+        }
+    }
+
+    fn view<'a>(&'a self, at: &String) -> View<'a, Self> {
+        match self {
+            Self::Bool(flag) => View::Bool(*flag),
+            Self::Int(number) => View::Int(*number),
+            Self::Text(text) => View::Text(text),
+            Self::Decimal(_) => View::Decimal,
+            Self::List(items) => list_view(at, items),
+            Self::Record(values) => map_view(at, values.iter()),
+            Self::Null | Self::Instant(_) | Self::Date(_) | Self::Duration(_) => View::Other,
+        }
+    }
+}
+
+impl Checkable for serde_json::Value {
+    type At = String;
+    const FROM_FILE: bool = false;
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Null => "nothing",
+            Self::Bool(_) => "true or false",
+            Self::Number(number) if number.as_i64().is_some() => "whole number",
+            Self::Number(_) => "number that is not a whole number this engine holds",
+            Self::String(_) => "text",
+            Self::Array(_) => "list",
+            Self::Object(_) => "map",
+        }
+    }
+
+    fn view<'a>(&'a self, at: &String) -> View<'a, Self> {
+        match self {
+            Self::Bool(flag) => View::Bool(*flag),
+            Self::Number(number) => number.as_i64().map_or(View::Other, View::Int),
+            Self::String(text) => View::Text(text),
+            Self::Array(items) => list_view(at, items),
+            Self::Object(members) => {
+                map_view(at, members.iter().map(|(key, value)| (key.as_str(), value)))
+            }
+            Self::Null => View::Other,
+        }
     }
 }
 
@@ -375,18 +728,27 @@ pub(crate) fn is_dotted_name(text: &str) -> bool {
         })
 }
 
-fn wrong_type(node: &Node, doc: &Located<Doc>, out: &mut Checked) {
-    out.diagnostics.push(Diagnostic::error(
-        kernel(codes::WRONG_TYPE),
-        Stage::Validate,
-        &doc.at,
-        format!(
+fn wrong_type<V: Checkable>(node: &Node, value: &V, at: &V::At, out: &mut Found<V::At>) {
+    out.problems.push(Problem {
+        code: codes::WRONG_TYPE,
+        at: at.clone(),
+        message: format!(
             "This value is a {}, and the schema needs {}.",
-            doc.value.kind(),
+            value.kind(),
             describe(node)
         ),
-        format!("Write {} here.", describe(node)),
-    ));
+        fix: format!("Write {} here.", describe(node)),
+    });
+}
+
+/// How a message names text a value holds: as the file wrote it, or, for a
+/// run-time value, not at all.
+fn named<V: Checkable>(text: &str) -> String {
+    if V::FROM_FILE {
+        format!("`{}`", shown(text))
+    } else {
+        "This text".to_owned()
+    }
 }
 
 /// The known word nearest to `word`, when one is near enough to be meant.
@@ -424,170 +786,167 @@ pub(crate) fn fix_for_unknown(word: &str, known: &[&str]) -> String {
     }
 }
 
-/// The diagnostic for an open question left by the drafter, when `doc` is
-/// one.
-pub(crate) fn open_question(doc: &Located<Doc>) -> Option<Diagnostic> {
-    let entries = doc.entries();
-    let [entry] = entries else { return None };
-    (entry.key.value == OPEN_QUESTION).then(|| {
-        let question = entry
-            .value
-            .as_text()
-            .unwrap_or("the system did not state this value");
-        Diagnostic::error(
-            kernel(codes::OPEN_QUESTION),
-            Stage::Validate,
-            &doc.at,
-            format!("An open question stands where a value is needed: {question}"),
-            "Answer the question from the system or its owner, and write the value in its place.",
-        )
+/// The question, when `members` are an open question left by the drafter.
+fn open_question<'a, V: Checkable>(members: &'a [Member<'a, V>]) -> Option<&'a str> {
+    let [only] = members else { return None };
+    (only.key == OPEN_QUESTION).then(|| match only.value.view(&only.at) {
+        View::Text(question) => question,
+        _ => "the system did not state this value",
     })
 }
 
-fn check(node: &Node, doc: &Located<Doc>, out: &mut Checked) {
-    if let Some(question) = open_question(doc) {
-        out.diagnostics.push(question);
+fn check<V: Checkable>(node: &Node, value: &V, at: &V::At, out: &mut Found<V::At>) {
+    let view = value.view(at);
+    if V::FROM_FILE
+        && let View::Map(members) = &view
+        && let Some(question) = open_question(members)
+    {
+        out.problems.push(Problem {
+            code: codes::OPEN_QUESTION,
+            at: at.clone(),
+            message: format!("An open question stands where a value is needed: {question}"),
+            fix: "Answer the question from the system or its owner, and write the value in its place.".to_owned(),
+        });
         return;
     }
-    match (node, &doc.value) {
+    match (node, view) {
         (Node::Any, _)
-        | (Node::Bool, Doc::Bool(_))
-        | (Node::Text, Doc::Text(_))
-        | (Node::Scalar | Node::Expression, Doc::Text(_) | Doc::Int(_) | Doc::Bool(_))
-        | (Node::Decimal, Doc::Int(_)) => {}
-        (Node::Int { min, max }, Doc::Int(number)) => {
-            if min.is_some_and(|min| *number < min) || max.is_some_and(|max| *number > max) {
+        | (Node::Bool, View::Bool(_))
+        | (Node::Text, View::Text(_))
+        | (Node::Scalar | Node::Expression, View::Text(_) | View::Int(_) | View::Bool(_))
+        | (Node::Decimal, View::Int(_) | View::Decimal) => {}
+        (Node::Int { min, max }, View::Int(number)) => {
+            if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
                 let range = match (min, max) {
                     (Some(min), Some(max)) => format!("from {min} to {max}"),
                     (Some(min), None) => format!("at least {min}"),
                     (None, Some(max)) => format!("at most {max}"),
                     (None, None) => "any whole number".to_owned(),
                 };
-                out.diagnostics.push(Diagnostic::error(
-                    kernel(codes::UNKNOWN_VALUE),
-                    Stage::Validate,
-                    &doc.at,
-                    format!("The number {number} is outside what this field takes: {range}."),
-                    format!("Write a whole number {range}."),
-                ));
+                let subject = if V::FROM_FILE {
+                    format!("The number {number}")
+                } else {
+                    "This number".to_owned()
+                };
+                out.problems.push(Problem {
+                    code: codes::UNKNOWN_VALUE,
+                    at: at.clone(),
+                    message: format!("{subject} is outside what this field takes: {range}."),
+                    fix: format!("Write a whole number {range}."),
+                });
             }
         }
-        (Node::Decimal, Doc::Text(text)) => {
+        (Node::Decimal, View::Text(text)) => {
             if Decimal::parse(text).is_err() {
-                wrong_type(node, doc, out);
+                wrong_type(node, value, at, out);
             }
         }
-        (Node::Name, Doc::Text(text)) => {
+        (Node::Name, View::Text(text)) => {
             if !is_dotted_name(text) {
-                out.diagnostics.push(Diagnostic::error(
-                    kernel(codes::NAME_MALFORMED),
-                    Stage::Validate,
-                    &doc.at,
-                    format!("`{}` is not a name.", shown(text)),
-                    "Write the name in lowercase letters, digits, and underscores, starting with a letter, such as `order_id`.",
-                ));
+                out.problems.push(Problem {
+                    code: codes::NAME_MALFORMED,
+                    at: at.clone(),
+                    message: format!("{} is not a name.", named::<V>(text)),
+                    fix: "Write the name in lowercase letters, digits, and underscores, starting with a letter, such as `order_id`.".to_owned(),
+                });
             }
         }
-        (Node::Words(words), Doc::Text(text)) => unknown_word(words, text, &doc.at, out),
-        (Node::Words(words), Doc::Bool(flag)) => {
-            // `movable: false` is the word `false`, not a truth value.
-            unknown_word(words, if *flag { "true" } else { "false" }, &doc.at, out);
+        (Node::Words(words), View::Text(text)) => unknown_word::<V>(words, text, at, out),
+        // In a file `movable: false` is the word `false`, not a truth value.
+        (Node::Words(words), View::Bool(flag)) if V::FROM_FILE => {
+            unknown_word::<V>(words, if flag { "true" } else { "false" }, at, out);
         }
-        (Node::Refers(reference), Doc::Text(text)) => {
+        (Node::Refers(reference), View::Text(text)) => {
             out.references
-                .push((*reference, Located::new(text.clone(), doc.at.clone())));
+                .push((*reference, text.to_owned(), at.clone()));
         }
-        (Node::List { item, min }, Doc::List(items)) => {
+        (Node::List { item, min }, View::List(items)) => {
             if items.len() < *min {
-                out.diagnostics.push(Diagnostic::error(
-                    kernel(codes::MISSING_FIELD),
-                    Stage::Validate,
-                    &doc.at,
-                    format!(
+                out.problems.push(Problem {
+                    code: codes::MISSING_FIELD,
+                    at: at.clone(),
+                    message: format!(
                         "This list has {} items and needs at least {min}.",
                         items.len()
                     ),
-                    "Add an item to the list.",
-                ));
+                    fix: "Add an item to the list.".to_owned(),
+                });
             }
-            for entry in items {
-                check(item, entry, out);
+            for (item_at, entry) in &items {
+                check(item, *entry, item_at, out);
             }
         }
-        (Node::Object { fields, rest }, Doc::Map(entries)) => {
-            for entry in entries {
-                if let Some(field) = fields.iter().find(|field| field.name == entry.key.value) {
-                    check(&field.schema, &entry.value, out);
+        (Node::Object { fields, rest }, View::Map(members)) => {
+            for member in &members {
+                if let Some(field) = fields.iter().find(|field| field.name == member.key) {
+                    check(&field.schema, member.value, &member.at, out);
                 } else if let Some(rest) = rest {
-                    check(rest, &entry.value, out);
+                    check(rest, member.value, &member.at, out);
                 } else {
                     let known: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
-                    out.diagnostics.push(Diagnostic::error(
-                        kernel(codes::UNKNOWN_KEY),
-                        Stage::Validate,
-                        &entry.key.at,
-                        format!(
+                    out.problems.push(Problem {
+                        code: codes::UNKNOWN_KEY,
+                        at: member.key_at.clone(),
+                        message: format!(
                             "The key `{}` is not one this map takes.",
-                            shown(&entry.key.value)
+                            shown(member.key)
                         ),
-                        fix_for_unknown(&entry.key.value, &known),
-                    ));
+                        fix: fix_for_unknown(member.key, &known),
+                    });
                 }
             }
             for field in fields.iter().filter(|field| field.required) {
-                if !entries.iter().any(|entry| entry.key.value == field.name) {
-                    out.diagnostics.push(Diagnostic::error(
-                        kernel(codes::MISSING_FIELD),
-                        Stage::Validate,
-                        &doc.at,
-                        format!("The required field `{}` is missing.", field.name),
-                        format!("Add `{}:` with {}.", field.name, describe(&field.schema)),
-                    ));
+                if !members.iter().any(|member| member.key == field.name) {
+                    out.problems.push(Problem {
+                        code: codes::MISSING_FIELD,
+                        at: at.clone(),
+                        message: format!("The required field `{}` is missing.", field.name),
+                        fix: format!("Add `{}:` with {}.", field.name, describe(&field.schema)),
+                    });
                 }
             }
         }
         (Node::Either(choices), _) => {
-            let mut best: Option<Checked> = None;
+            let mut best: Option<Found<V::At>> = None;
             for choice in choices {
-                let mut tried = Checked::default();
-                check(choice, doc, &mut tried);
-                if tried.diagnostics.is_empty() {
+                let mut tried = Found::default();
+                check(choice, value, at, &mut tried);
+                if tried.problems.is_empty() {
                     out.references.extend(tried.references);
                     return;
                 }
                 if best
                     .as_ref()
-                    .is_none_or(|best| tried.diagnostics.len() < best.diagnostics.len())
+                    .is_none_or(|best| tried.problems.len() < best.problems.len())
                 {
                     best = Some(tried);
                 }
             }
             match best {
-                Some(best) if best.diagnostics.len() > 1 || choices.len() == 1 => {
-                    out.diagnostics.extend(best.diagnostics);
+                Some(best) if best.problems.len() > 1 || choices.len() == 1 => {
+                    out.problems.extend(best.problems);
                 }
-                _ => wrong_type(node, doc, out),
+                _ => wrong_type(node, value, at, out),
             }
         }
-        _ => wrong_type(node, doc, out),
+        _ => wrong_type(node, value, at, out),
     }
 }
 
-fn unknown_word(words: &[String], text: &str, at: &Place, out: &mut Checked) {
+fn unknown_word<V: Checkable>(words: &[String], text: &str, at: &V::At, out: &mut Found<V::At>) {
     if words.iter().any(|word| word == text) {
         return;
     }
     let known: Vec<&str> = words.iter().map(String::as_str).collect();
-    out.diagnostics.push(Diagnostic::error(
-        kernel(codes::UNKNOWN_VALUE),
-        Stage::Validate,
-        at,
-        format!(
-            "`{}` is not one of the words this field takes.",
-            shown(text)
+    out.problems.push(Problem {
+        code: codes::UNKNOWN_VALUE,
+        at: at.clone(),
+        message: format!(
+            "{} is not one of the words this field takes.",
+            named::<V>(text)
         ),
-        fix_for_unknown(text, &known),
-    ));
+        fix: fix_for_unknown(text, &known),
+    });
 }
 
 /// At most 64 characters of a word from a file, for a message.

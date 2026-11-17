@@ -46,6 +46,25 @@ pub(crate) struct Group {
     child: tokio::sync::Mutex<Option<Child>>,
 }
 
+/// How long a run waits for the end of its program's output once the job
+/// is ended. The pipe ends when the last process holding it is gone, which
+/// ending the job brings about; the wait only bounds a process that broke
+/// away from the job.
+pub(crate) const END_OF_OUTPUT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Reading what is in a pipe now, without waiting for more. Not offered on
+/// Windows, where a run reads to the end of the pipe.
+pub(crate) trait ReadNow {
+    /// Always `None` here.
+    fn read_now(&self, buffer: &mut [u8]) -> Option<usize>;
+}
+
+impl<T> ReadNow for T {
+    fn read_now(&self, _buffer: &mut [u8]) -> Option<usize> {
+        None
+    }
+}
+
 fn other(message: &'static str) -> io::Error {
     io::Error::other(message)
 }

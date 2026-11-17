@@ -553,8 +553,9 @@ What the built part holds:
 | --- | --- |
 | Identify before starting | The program is named by an absolute path and digested before it starts. A declared digest that differs is refused, `policy`, `effect_not_declared`. With no declared digest it starts and is marked unverified |
 | Nothing inherited | The child's environment is cleared; only the names listed are passed through and only the pairs listed are set, plus the owner mark, 128 random bits in `ANYTHING2MCP_OWNER_MARK` |
-| A group the supervisor can end | A process group on Linux and macOS, signalled only while its leader is unreaped; a job object on Windows that ends its processes when its last handle closes |
-| Bounded | A one-shot run has a time limit, at which the whole group is ended and the run is `transient`, `timeout` with `Ran::Unknown`; each output stream is kept up to its bound, and read and counted beyond it |
+| A group the supervisor can end | A process group on Linux and macOS, signalled only while its leader is unreaped; a job object on Windows that ends its processes when its last handle closes. On macOS the answer "not permitted" from a group whose leader has exited means nothing is left in it |
+| One start at a time | Every start holds one lock from before its pipes are made until the child exists, on every operating system, so that no child inherits another's pipe or handle |
+| Bounded | A one-shot run has a time limit, at which the whole group is ended and the run is `transient`, `timeout` with `Ran::Unknown`; each output stream is kept up to its bound, and read and counted beyond it. Once the group is gone the run takes what is in its pipes and does not wait for their end, which a process outside the group may hold back; such a holder is no part of the cleanup verdict |
 | Nothing left behind | At a program's exit its whole group is ended; `stop` and `shutdown` end the group and wait for it; a run whose future is dropped ends its group |
 | Counted, and one per place | Each kind has a limit, and a taken place is refused, both `busy`, `subsystem_limit` |
 | Incomplete cleanup is a state | It names what remains and blocks new starts of that kind with `busy`, `cleanup_incomplete`, until a person clears it |
@@ -662,6 +663,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 | A path outside its root, through `..`, an absolute or drive or network form, or a link, can never become a `CheckedPath` | `tests/paths.rs`: thirty-seven escape forms, refused on every operating system; planted links, on Linux and macOS, and on Windows where the test may make a link |
 | A pack can start only what its manifest and the published plan declare | `tests/supervisor.rs`: a pack whose manifest names the stand's program starts it, and is refused another |
 | A one-shot run captures its output, is ended at its time limit with everything it started, keeps output to its bound, and leaves no process | `tests/supervisor.rs`, against the command-line test stand, which is asked which of its children are alive |
+| A process outside the group that holds a run's output neither delays the run nor spoils its cleanup verdict | `tests/supervisor.rs`, on Linux, with a sleeper that left the group and kept the pipe. The tests start programs only through the supervisor, so its start lock covers them; the stand builds its binaries before any test starts one |
 | A foreign link carries bytes both ways on descriptors 3 and 4, and stopping it ends the group | `tests/supervisor.rs`, on Linux and macOS. The Windows handles are compiled and linted, and not run from here |
 | A malformed or oversized frame closes the connection and fails every pending request | Not built |
 | The supervisor never signals a process it cannot prove it started | By construction on Linux and macOS: a group is signalled only while its leader is unreaped (decision 0090). No test places a foreign process in reach |
@@ -683,7 +685,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 - Whether an upstream MCP server's mapping file is its manifest. This design assumes so, listed under the `mcp` pack, and checked by that pack's file kind.
 - Which operating-system mechanism backs `confined` on each platform. Until it is researched, a plug-in's effects are listed as `declared`.
 - The widget driver extension point has no trait yet. First-party widget drivers stay inside the web pack's driver; the trait is written when a plug-in first needs to supply one.
-- A process that leaves its group on Linux or macOS is not found, and nothing ends the children of an engine that crashed there; both wait for the ownership records. Whether job-object membership is enough on Windows in every case.
+- A process that leaves its group on Linux or macOS is not found, even when it holds the program's output, and nothing ends the children of an engine that crashed there; both wait for the ownership records. The macOS answer for a group with only its exited leader left is taken from the system's documented behavior and has not been run from here. Whether job-object membership is enough on Windows in every case.
 - Where the published plan names the programs a command surface starts, so that the engine can pass them to `DriverHandle::supervisor` without reading a pack's payload.
 - A requirement's version is not checked, because the availability check starts nothing.
 - Whether `Posture::Discovery` and `Posture::Sandbox` should be one posture with a flag; they differ today only in whether test records exist.

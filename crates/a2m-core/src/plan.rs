@@ -1728,7 +1728,7 @@ mod tests {
     /// Windows, macOS, and Linux, in every run. If the encoding or the
     /// sample changes on purpose, this changes with it, and the plan format
     /// number says whether stored plans still load.
-    const SAMPLE_HASH: &str = "d09fe3110bbf66555e5e30d5a4bbe2c0a6a58fe7e6bb13f659efbfbab3ca6817";
+    const SAMPLE_HASH: &str = "be84dc86e03c4018510b74b9e4dba718d2633d3201b0d2bc9aa9065c8d2b917f";
 
     #[test]
     fn a_plan_encodes_to_the_same_bytes_every_time_and_on_every_machine() {
@@ -1951,6 +1951,46 @@ mod tests {
         let failure = decode_own(loose.as_bytes()).unwrap_err();
         assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
         assert!(failure.message().contains("tool 2"), "{failure}");
+    }
+
+    #[test]
+    fn a_declared_program_is_named_by_an_absolute_path_on_every_machine() {
+        for path in [
+            "/opt/example/bin/example-tool",
+            "C:\\example\\example-tool.exe",
+            "c:/example/example-tool.exe",
+            "\\\\server\\share\\example-tool.exe",
+        ] {
+            assert!(DeclaredProgram::is_absolute_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "example-tool",
+            "bin/example-tool",
+            "./example-tool",
+            "..\\example-tool.exe",
+            "C:example-tool.exe",
+            "1:\\example-tool.exe",
+            "\\example-tool.exe",
+            "\\\\",
+            "\\\\\\server",
+            "/opt/example\0/tool",
+        ] {
+            assert!(!DeclaredProgram::is_absolute_path(path), "{path:?}");
+        }
+        // The plan carries them in its bytes, and a plan that names a
+        // program any other way neither encodes nor decodes.
+        let good = String::from_utf8(sample().encode().unwrap().bytes).unwrap();
+        assert!(good.contains("\"path\":\"/opt/example/bin/example-tool\""));
+        let mut plan = sample();
+        plan.surfaces[0].programs[0].path = "example-tool".to_owned();
+        let failure = plan.encode().unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(!failure.message().contains("example"), "{failure}");
+        let loose = good.replacen("\"/opt/example/bin/", "\"opt/example/bin/", 1);
+        assert_ne!(loose, good);
+        let failure = decode_own(loose.as_bytes()).unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
     }
 
     #[test]

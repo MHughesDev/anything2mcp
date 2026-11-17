@@ -41,10 +41,6 @@ use windows as os;
 /// The variable that carries the owner mark into a child's environment.
 pub const OWNER_MARK_VARIABLE: &str = "ANYTHING2MCP_OWNER_MARK";
 
-/// How long output is still read after a group was ended. Only a process
-/// that left its group can keep a stream open that long.
-const DRAIN: Duration = Duration::from_secs(5);
-
 /// A program to start: where it is, and the digest it must have when one
 /// was declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +49,20 @@ pub struct ProgramRef {
     pub path: PathBuf,
     /// The digest a manifest or a published plan declared for it.
     pub digest: Option<Digest>,
+}
+
+impl From<&a2m_core::DeclaredProgram> for ProgramRef {
+    /// A program a published plan declares for a surface, as the supervisor
+    /// takes it. The engine makes the list for [`DriverHandle::supervisor`]
+    /// with `surface.programs.iter().map(ProgramRef::from).collect()`.
+    ///
+    /// [`DriverHandle::supervisor`]: crate::DriverHandle::supervisor
+    fn from(program: &a2m_core::DeclaredProgram) -> Self {
+        Self {
+            path: PathBuf::from(&program.path),
+            digest: program.digest,
+        }
+    }
 }
 
 /// The whole environment of a child. Nothing else of the engine's
@@ -367,19 +377,49 @@ fn owner_mark() -> Result<String, Failure> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// What is kept of one output stream, and how many bytes it wrote in all.
+type Kept = Arc<Mutex<(Vec<u8>, u64)>>;
+
+/// Keeps at most `max` bytes of what was read and counts all of it. False
+/// when the store is broken.
+fn keep(into: &Kept, max: u64, bytes: &[u8]) -> bool {
+    let Ok(mut kept) = into.lock() else {
+        return false;
+    };
+    kept.1 += bytes.len() as u64;
+    let room = usize::try_from(max.saturating_sub(kept.0.len() as u64)).unwrap_or(usize::MAX);
+    let take = bytes.len().min(room);
+    kept.0.extend_from_slice(&bytes[..take]);
+    true
+}
+
 /// Reads a stream to its end, keeping at most `max` bytes and counting all.
-async fn capture(mut stream: impl AsyncRead + Unpin, max: u64, into: Arc<Mutex<(Vec<u8>, u64)>>) {
+/// When `gone` says the program's group is gone, it takes what is in the
+/// pipe now and stops: the end of the pipe may be held back by a process
+/// that is not the program's, and is not waited for.
+async fn capture<S>(mut stream: S, max: u64, into: Kept, gone: Arc<tokio::sync::Notify>)
+where
+    S: AsyncRead + Unpin + os::ReadNow,
+{
     let mut buffer = vec![0_u8; 16 * 1024];
     loop {
-        let read = match stream.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
-        };
-        let Ok(mut kept) = into.lock() else { break };
-        kept.1 += read as u64;
-        let room = usize::try_from(max.saturating_sub(kept.0.len() as u64)).unwrap_or(usize::MAX);
-        let take = read.min(room);
-        kept.0.extend_from_slice(&buffer[..take]);
+        tokio::select! {
+            biased;
+            read = stream.read(&mut buffer) => match read {
+                Ok(0) | Err(_) => return,
+                Ok(read) => {
+                    if !keep(&into, max, &buffer[..read]) {
+                        return;
+                    }
+                }
+            },
+            () = gone.notified() => break,
+        }
+    }
+    while let Some(read) = stream.read_now(&mut buffer) {
+        if !keep(&into, max, &buffer[..read]) {
+            return;
+        }
     }
 }
 
@@ -668,18 +708,24 @@ impl Supervisor {
         let err = Arc::new(Mutex::new((Vec::new(), 0_u64)));
         let mut readers = Vec::new();
         if let Some(stream) = stdout {
-            readers.push(tokio::spawn(capture(
+            let gone = Arc::new(tokio::sync::Notify::new());
+            let reader = tokio::spawn(capture(
                 stream,
                 link.max_output_bytes,
                 Arc::clone(&out),
-            )));
+                Arc::clone(&gone),
+            ));
+            readers.push((reader, gone));
         }
         if let Some(stream) = stderr {
-            readers.push(tokio::spawn(capture(
+            let gone = Arc::new(tokio::sync::Notify::new());
+            let reader = tokio::spawn(capture(
                 stream,
                 link.max_output_bytes,
                 Arc::clone(&err),
-            )));
+                Arc::clone(&gone),
+            ));
+            readers.push((reader, gone));
         }
         if let (Some(mut stream), Some(input)) = (stdin, link.stdin) {
             tokio::spawn(async move {
@@ -709,17 +755,17 @@ impl Supervisor {
                 ),
             });
         }
-        for reader in readers {
-            let abort = reader.abort_handle();
-            if tokio::time::timeout(DRAIN, reader).await.is_err() {
-                abort.abort();
-                remaining.push(Leftover {
-                    kind: Some(kind.clone()),
-                    what: format!(
-                        "a process started by {} left its group and still holds its output",
-                        SubsystemId(id)
-                    ),
-                });
+        // The group is gone, so everything it wrote is in the pipes. A
+        // reader that has not seen the end of its pipe is told to take what
+        // is there and stop. Who else may hold the pipe is not the
+        // program's doing, and is no part of the verdict on its cleanup.
+        for (mut reader, gone) in readers {
+            if tokio::time::timeout(os::END_OF_OUTPUT_WAIT, &mut reader)
+                .await
+                .is_err()
+            {
+                gone.notify_one();
+                let _ = reader.await;
             }
         }
         if !remaining.is_empty()

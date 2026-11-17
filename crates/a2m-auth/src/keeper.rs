@@ -7,7 +7,7 @@
 //! session's state and epoch. The caller that wins a move starts the work
 //! that belongs to it; every other caller waits for the outcome.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -142,7 +142,7 @@ struct Inner {
     /// The auth file entry each session was last used under.
     entries: Mutex<BTreeMap<SessionId, Arc<AuthEntry>>>,
     /// Sessions with work in flight in this process.
-    busy: Mutex<BTreeSet<SessionId>>,
+    busy: Mutex<BTreeMap<SessionId, usize>>,
     /// Why each session's last sign-in or renewal failed, until one works.
     failures: Mutex<BTreeMap<SessionId, Failure>>,
     /// How many calls are waiting for a session now.
@@ -167,8 +167,28 @@ struct Busy {
 
 impl Drop for Busy {
     fn drop(&mut self) {
-        locked(&self.inner.busy).remove(&self.session);
+        {
+            // Marks are counted: two pieces of work on one session may
+            // overlap, and the session is busy until the last one ends.
+            let mut busy = locked(&self.inner.busy);
+            match busy.get_mut(&self.session) {
+                Some(marks) if *marks > 1 => *marks -= 1,
+                _ => {
+                    busy.remove(&self.session);
+                }
+            }
+        }
         self.inner.wake();
+    }
+}
+
+/// Counts one call as waiting until it is dropped, so that a call that is
+/// cancelled while it waits is no longer counted.
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -247,7 +267,7 @@ impl Keeper {
                 telemetry: None,
                 changed: watch::Sender::new(0),
                 entries: Mutex::new(BTreeMap::new()),
-                busy: Mutex::new(BTreeSet::new()),
+                busy: Mutex::new(BTreeMap::new()),
                 failures: Mutex::new(BTreeMap::new()),
                 waiting: AtomicUsize::new(0),
             },
@@ -274,6 +294,11 @@ impl Keeper {
     /// credential when its provider needs no person and the attempt limit
     /// allows; otherwise the call stops with `needs_login`.
     ///
+    /// A call returns as soon as the session's record decides it. The work
+    /// that wrote the record may still have steps to take: telling the
+    /// person, having the home runner drop what it held, counting a metric.
+    /// [`Keeper::idle`] waits for those.
+    ///
     /// # Errors
     ///
     /// `policy`/`identity_not_allowed` when the run does not act for the
@@ -299,6 +324,9 @@ impl Keeper {
         if row.epoch != lease.epoch() || row.state != SessionState::Valid {
             return;
         }
+        // Marked before the move, so that the session is never seen in a
+        // state that work belongs to with nobody marked as doing the work.
+        let busy = inner.mark_busy(row.id);
         let moved = inner
             .advance(
                 &row,
@@ -311,7 +339,6 @@ impl Keeper {
             .await;
         if let Ok(Some(suspect)) = moved {
             inner.count(CHECKS_FAILED);
-            let busy = inner.mark_busy(suspect.id);
             let inner = Arc::clone(inner);
             tokio::spawn(async move {
                 let _busy = busy;
@@ -353,6 +380,7 @@ impl Keeper {
                     state: row.state,
                 });
             }
+            let busy = inner.mark_busy(row.id);
             let moved = inner
                 .advance(
                     &row,
@@ -371,7 +399,7 @@ impl Keeper {
                     session: signing.id,
                     state: signing.state,
                 };
-                inner.spawn_sign_in(signing, entry, false);
+                inner.spawn_sign_in(signing, entry, false, busy);
                 return Ok(ticket);
             }
         }
@@ -477,7 +505,11 @@ impl Keeper {
     }
 
     /// Waits until no sign-in, check, or renewal that this keeper started is
-    /// still in flight. For closing down in order, and for tests.
+    /// still in flight: from before the session's record says the work has
+    /// begun until the task that does the work has ended, with everything it
+    /// does after its last write: the notice to the person, the home runner
+    /// dropping what it held, the metrics. For closing down in order, and
+    /// for anything that reads what that work leaves behind.
     pub async fn idle(&self) {
         let mut changes = self.inner.changed.subscribe();
         while !locked(&self.inner.busy).is_empty() {
@@ -552,7 +584,7 @@ impl Inner {
     }
 
     fn mark_busy(self: &Arc<Self>, session: SessionId) -> Busy {
-        locked(&self.busy).insert(session);
+        *locked(&self.busy).entry(session).or_insert(0) += 1;
         Busy {
             inner: Arc::clone(self),
             session,
@@ -560,7 +592,7 @@ impl Inner {
     }
 
     fn is_busy(&self, session: SessionId) -> bool {
-        locked(&self.busy).contains(&session)
+        locked(&self.busy).contains_key(&session)
     }
 
     fn fail(&self, session: SessionId, failure: Failure) {
@@ -832,8 +864,13 @@ impl Inner {
         Ok(())
     }
 
-    fn spawn_sign_in(self: &Arc<Self>, row: SessionRow, entry: Arc<AuthEntry>, automatic: bool) {
-        let busy = self.mark_busy(row.id);
+    fn spawn_sign_in(
+        self: &Arc<Self>,
+        row: SessionRow,
+        entry: Arc<AuthEntry>,
+        automatic: bool,
+        busy: Busy,
+    ) {
         let inner = Arc::clone(self);
         tokio::spawn(async move {
             let _busy = busy;
@@ -896,8 +933,7 @@ impl Inner {
         }
     }
 
-    fn spawn_renewal(self: &Arc<Self>, row: SessionRow, entry: Arc<AuthEntry>) {
-        let busy = self.mark_busy(row.id);
+    fn spawn_renewal(self: &Arc<Self>, row: SessionRow, entry: Arc<AuthEntry>, busy: Busy) {
         let inner = Arc::clone(self);
         tokio::spawn(async move {
             let _busy = busy;
@@ -1156,6 +1192,7 @@ impl Inner {
                             }));
                         }
                         acted = true;
+                        let busy = self.mark_busy(row.id);
                         let moved = self
                             .advance(
                                 &row,
@@ -1167,7 +1204,7 @@ impl Inner {
                             )
                             .await?;
                         if let Some(renewing) = moved {
-                            self.spawn_renewal(renewing, Arc::clone(&req.entry));
+                            self.spawn_renewal(renewing, Arc::clone(&req.entry), busy);
                         }
                         continue;
                     }
@@ -1245,6 +1282,7 @@ impl Inner {
                     // A stored credential and no person to wait for: the
                     // keeper signs in, once.
                     acted = true;
+                    let busy = self.mark_busy(row.id);
                     let moved = self
                         .advance(
                             &row,
@@ -1256,7 +1294,7 @@ impl Inner {
                         )
                         .await?;
                     if let Some(signing) = moved {
-                        self.spawn_sign_in(signing, Arc::clone(&req.entry), true);
+                        self.spawn_sign_in(signing, Arc::clone(&req.entry), true, busy);
                     }
                 }
             }
@@ -1267,9 +1305,8 @@ impl Inner {
     /// the keeper is gone and nothing will change again.
     async fn changed_or_closed(&self, changes: &mut watch::Receiver<u64>) -> bool {
         self.waiting.fetch_add(1, Ordering::SeqCst);
-        let closed = changes.changed().await.is_err();
-        self.waiting.fetch_sub(1, Ordering::SeqCst);
-        closed
+        let _waiting = Waiting(&self.waiting);
+        changes.changed().await.is_err()
     }
 
     /// Opens a valid session's saved state on the home runner after a

@@ -1,0 +1,152 @@
+# The device pack's manifest: what it brings and what it may do. A person
+# reviews this file; the registry refuses anything the pack registers that is
+# not declared here.
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "device"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+# One request at a time on one link, and one run at a time on one device.
+[[modes]]
+name = "device"
+archetype = "device"
+verbs = ["read", "update", "submit"]
+steps = ["open", "write_frame", "read_frame", "expect"]
+rank = 60
+intent_window = 1
+session_reads = 1
+session_writes = 1
+exclusive = "link"
+
+[[surface_kinds]]
+name = "device_link"
+archetype = "device"
+session = true
+
+[points]
+driver = ["device"]
+discoverer = ["device_identity"]
+
+# Asks the device to identify itself, and nothing else.
+[[discoverers]]
+name = "device_identity"
+archetype = "device"
+surface_kinds = ["device_link"]
+kinds = ["device_identity"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 4096, depth = 1 }
+
+[[file_kinds]]
+name = "register"
+directory = "registers/"
+surface_kinds = ["device_link"]
+
+[[finding_kinds]]
+name = "device_identity"
+surface_kinds = ["device_link"]
+
+[[lint_rules]]
+code = "device.writable_without_hazard"
+level = "error"
+summary = "Every writable register declares a hazard."
+
+[[lint_rules]]
+code = "device.writable_without_range"
+level = "error"
+summary = "Every writable register that holds a number declares its safe range."
+
+[[lint_rules]]
+code = "device.command_hazard_none"
+level = "error"
+summary = "A register that can only be written is a command, and a command's hazard is not `none`."
+
+[[lint_rules]]
+code = "device.firmware_without_recovery"
+level = "error"
+summary = "A map's firmware update declares its recovery route, what cannot be undone, and whether the device checks a signature."
+
+[[drafting_rules]]
+finding_kind = "device_identity"
+file_kind = "register"
+
+[[failure_codes]]
+class = "input"
+code = "value_out_of_range"
+
+[[failure_codes]]
+class = "input"
+code = "schema_invalid"
+
+[[failure_codes]]
+class = "input"
+code = "payload_unreadable"
+
+[[failure_codes]]
+class = "policy"
+code = "surface_not_declared"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "device_identity_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_reply"
+
+[[failure_codes]]
+class = "rejected"
+code = "device_refused"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "device_protected"
+
+[[failure_codes]]
+class = "transient"
+code = "timeout"
+
+[[failure_codes]]
+class = "transient"
+code = "connection_lost"
+
+[[failure_codes]]
+class = "transient"
+code = "frame_corrupt"
+
+[[failure_codes]]
+class = "transient"
+code = "device_busy"
+
+[[failure_codes]]
+class = "possible_commit"
+code = "no_confirmation"
+
+[[failure_codes]]
+class = "possible_commit"
+code = "device_not_returned"
+
+[effects]
+network = "surfaces"
+sessions = ["device_link"]
+devices = true
+
+[[settings]]
+key = "reply_within_ms"
+type = "int"
+default = 1000
+min = 10
+max = 60000
+doc = "How long a reply may take when a map states no pace."
+
+[[settings]]
+key = "min_gap_ms"
+type = "int"
+default = 50
+min = 0
+max = 60000
+doc = "The least time between two frames when a map states no pace."

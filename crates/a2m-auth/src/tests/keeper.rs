@@ -84,7 +84,7 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
             tokio::spawn(async move { keeper.lease(req).await })
         })
         .collect();
-    until(|| world.keeper.waiting() == 10).await;
+    until(|| world.keeper.waiting() == 10 && world.fake.refreshes() == 1).await;
     assert_eq!(world.fake.refreshes(), 1);
     assert_eq!(world.state(&key).await, SessionState::Renewing);
 
@@ -104,6 +104,9 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
             .count(),
         1
     );
+    // The count is made by the renewal's own task after its last write, so
+    // it is read once that task has ended.
+    world.keeper.idle().await;
     assert_eq!(world.telemetry.metrics().counter(RENEWALS, &[]), 1);
 
     // The lease from before the renewal is stale, and says so.
@@ -241,6 +244,7 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
         assert_eq!(stopped.code(), &codes::NEEDS_LOGIN);
     }
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    world.keeper.idle().await;
     assert_eq!(world.person.notices(), 1);
     assert_eq!((world.fake.sign_ins(), world.fake.refreshes()), (1, 0));
 
@@ -321,6 +325,10 @@ async fn a_second_factor_nobody_gives_is_needs_mfa() {
         .unwrap();
     assert_eq!(status[0].state, SessionState::NeedsPerson);
     assert_eq!(status[0].wants, Some(PersonReason::SecondFactor));
+    // The call returned on the record. The notice is sent by the renewal's
+    // own task after it wrote the record, so it is read once that task has
+    // ended.
+    world.keeper.idle().await;
     assert!(matches!(
         world.person.asks.lock().unwrap()[0],
         PersonAsk::Notify {
@@ -353,6 +361,7 @@ async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
     }
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+    world.keeper.idle().await;
     assert_eq!(world.person.notices(), 1);
 }
 
@@ -374,6 +383,7 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     }
     assert_eq!(world.fake.sign_ins(), 1);
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    world.keeper.idle().await;
     assert_eq!(world.person.notices(), 1);
 
     // A person looks at it and asks for a sign-in: one more try, no more.
@@ -707,4 +717,125 @@ async fn work_that_was_interrupted_is_ended_and_not_left_waiting() {
     after.clock.advance(KeeperSettings::default().work_limit);
     after.keeper.tick().await;
     assert_eq!(after.state(&key).await, SessionState::Expired);
+}
+
+/// Lets every task that is ready run once, a few times over. Used only to
+/// show that a task has not finished: one that could finish would, since
+/// nothing it waits for here is on another thread.
+async fn give_way() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn a_call_returns_on_the_record_and_idle_waits_for_what_the_work_does_after_it() {
+    let world = World::new(PERSON_RENEWING).await;
+    let key = person_key(1);
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    world.clock.advance(2 * HOUR);
+    *world.fake.on_refresh.lock().unwrap() = Step::WantsSecondFactor;
+
+    // The notice to the person is held. The call is still answered: it is
+    // decided by the session's record, which the renewal wrote before it
+    // went to tell the person.
+    world.person.gate.hold();
+    let stopped = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(stopped.code(), &codes::NEEDS_MFA);
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    assert_eq!(world.person.notices(), 0);
+
+    // The keeper is not idle while the notice is on its way, and is idle
+    // once it has been given.
+    let idle = {
+        let keeper = world.keeper.clone();
+        tokio::spawn(async move { keeper.idle().await })
+    };
+    give_way().await;
+    assert!(!idle.is_finished());
+    world.person.gate.release();
+    idle.await.unwrap();
+    assert_eq!(world.person.notices(), 1);
+}
+
+#[tokio::test]
+async fn work_that_overlaps_on_one_session_keeps_it_busy_until_the_last_ends() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = fake_entry();
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+
+    // A routine probe is in flight when a driver reports a sign on the same
+    // session, which starts a re-check: two pieces of work at once.
+    world.probe.gate.hold();
+    world.clock.advance(HOUR / 2);
+    let tick = {
+        let keeper = world.keeper.clone();
+        tokio::spawn(async move { keeper.tick().await })
+    };
+    until(|| world.probe.calls() == 1).await;
+    world.keeper.report(&lease, ExpirySign::Refused).await;
+    until(|| world.probe.calls() == 2).await;
+
+    // The routine probe ends. The re-check has not, so the keeper is not
+    // idle yet.
+    world.probe.gate.release_one();
+    tick.await.unwrap();
+    let idle = {
+        let keeper = world.keeper.clone();
+        tokio::spawn(async move { keeper.idle().await })
+    };
+    give_way().await;
+    assert!(!idle.is_finished());
+    assert_eq!(world.state(&key).await, SessionState::Suspect);
+
+    world.probe.gate.release();
+    idle.await.unwrap();
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    assert_eq!(world.fake.refreshes(), 0);
+}
+
+#[tokio::test]
+async fn a_call_that_is_cancelled_while_it_waits_is_no_longer_counted() {
+    let world = World::new(PERSON_ONLY).await;
+    let key = person_key(1);
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    world.clock.advance(2 * HOUR);
+    let waiting = {
+        let keeper = world.keeper.clone();
+        let req = request(&key, &entry, Wait::DEFAULT);
+        tokio::spawn(async move { keeper.lease(req).await })
+    };
+    until(|| world.keeper.waiting() == 1).await;
+    world.keeper.idle().await;
+    assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+    // The call has seen that a person is wanted and waits for one.
+    until(|| world.keeper.waiting() == 1).await;
+    give_way().await;
+    assert_eq!(world.keeper.waiting(), 1);
+
+    // The caller goes away.
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    assert_eq!(world.keeper.waiting(), 0);
 }

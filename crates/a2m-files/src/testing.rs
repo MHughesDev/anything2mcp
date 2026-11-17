@@ -23,7 +23,8 @@ use crate::draft::{DraftContext, DraftDoc, DraftValue};
 use crate::load::TargetRoot;
 use crate::register::{
     CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
-    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, SurfaceKindSpec,
+    DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, ProgramField,
+    SurfaceKindSpec,
 };
 use crate::schema::JsonSchema;
 use crate::view::{KindContext, LowerContext, ResolvedBinding, ResolvedView};
@@ -475,7 +476,13 @@ pub fn register_part(
                 address_key: "address".to_owned(),
                 fields: JsonSchema::object()
                     .required("address", JsonSchema::text())
-                    .optional("profile", JsonSchema::name()),
+                    .optional("profile", JsonSchema::name())
+                    .optional("helper", JsonSchema::text())
+                    .optional("helper_digest", JsonSchema::text()),
+                programs: vec![ProgramField {
+                    path_key: "helper".to_owned(),
+                    digest_key: Some("helper_digest".to_owned()),
+                }],
             },
         )?,
         "control" => builder.control(pack, name!(ControlName, "box"))?,

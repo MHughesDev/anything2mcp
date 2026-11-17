@@ -7,8 +7,17 @@
 //! nothing the supervisor did not start. The leader's exit is therefore
 //! observed without reaping it, the group is ended, and only then is the
 //! leader reaped.
+//!
+//! Two things differ between the systems and are handled here. macOS
+//! answers "not permitted", where Linux answers success, when a group is
+//! signalled in which nothing is left alive but its exited leader; that
+//! answer means the group is gone. And macOS makes a pipe and marks it
+//! close-on-exec in two steps, so a child started by another thread in
+//! between would inherit the pipe; every start therefore holds one lock,
+//! as on Windows.
 
 use std::io;
+use std::os::fd::AsFd;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Mutex;
 
@@ -34,8 +43,72 @@ pub(crate) struct Group {
     child: Mutex<Option<Child>>,
 }
 
+/// Held by every start of a process, from before its pipes are made until
+/// the child exists. Without it, on a system that cannot make a pipe
+/// already marked close-on-exec, a child started by another thread could
+/// inherit this child's pipe and hold it open after this child has ended.
+static START: Mutex<()> = Mutex::new(());
+
+/// How long a run waits for the end of its program's output once the group
+/// is gone: not at all. What the group wrote is in the pipe by then, and is
+/// taken with [`ReadNow`]; the end of the pipe may be held back by a process
+/// that is not the program's.
+pub(crate) const END_OF_OUTPUT_WAIT: std::time::Duration = std::time::Duration::ZERO;
+
+/// Reading what is in a pipe now, without waiting for more.
+pub(crate) trait ReadNow {
+    /// The bytes read, or `None` when nothing is there now, the pipe has
+    /// ended, or it cannot be read.
+    fn read_now(&self, buffer: &mut [u8]) -> Option<usize>;
+}
+
+impl<T: AsFd> ReadNow for T {
+    fn read_now(&self, buffer: &mut [u8]) -> Option<usize> {
+        loop {
+            // The descriptor does not block: the runtime set it so when it
+            // took the pipe. Nothing there is "try again", which ends this.
+            match rustix::io::read(self, &mut *buffer) {
+                Ok(0) => return None,
+                Ok(read) => return Some(read),
+                Err(error) if error == rustix::io::Errno::INTR => {}
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
 fn other(message: &'static str) -> io::Error {
     io::Error::other(message)
+}
+
+/// Whether the leader has exited. It is not reaped. Call it only while the
+/// leader is unreaped.
+fn leader_exited(pgid: Pid) -> bool {
+    !matches!(
+        waitid(
+            WaitId::Pid(pgid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+        ),
+        Ok(None)
+    )
+}
+
+/// Ends every process of the group, and says whether the group is gone.
+/// Call it only while the leader is unreaped, so that the group is ours.
+fn end_group(pgid: Pid) -> bool {
+    match kill_process_group(pgid, Signal::KILL) {
+        // Signalled, or no such group: nothing is left to end.
+        Ok(()) => true,
+        Err(error) if error == rustix::io::Errno::SRCH => true,
+        // macOS answers "not permitted" when the group holds nothing it can
+        // signal, and it does not count an exited process. With the leader
+        // exited that is the ordinary end of a program that left nothing
+        // running. Linux answers success there, and never this for a group
+        // whose leader is our own child. With the leader alive it would
+        // mean the group cannot be ended, and is reported as that.
+        Err(error) if error == rustix::io::Errno::PERM => leader_exited(pgid),
+        Err(_) => false,
+    }
 }
 
 /// Starts `command` as the leader of a new process group. With `foreign`,
@@ -44,6 +117,9 @@ pub(crate) fn spawn(
     mut command: Command,
     foreign: Option<&ForeignPipe>,
 ) -> io::Result<(Group, Option<Pipes>)> {
+    let _one_start = START
+        .lock()
+        .map_err(|_| other("the start lock is broken"))?;
     command.process_group(0);
     let pipes = match foreign {
         None => None,
@@ -101,11 +177,7 @@ impl Group {
         if child.is_none() {
             return true;
         }
-        // ESRCH means nothing is left to end, which is what was asked.
-        match kill_process_group(self.pgid, Signal::KILL) {
-            Ok(()) => true,
-            Err(error) => error == rustix::io::Errno::SRCH,
-        }
+        end_group(self.pgid)
     }
 
     /// Whether the leader has exited. It is not reaped.
@@ -116,13 +188,7 @@ impl Group {
         if child.is_none() {
             return true;
         }
-        !matches!(
-            waitid(
-                WaitId::Pid(self.pgid),
-                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
-            ),
-            Ok(None)
-        )
+        leader_exited(self.pgid)
     }
 
     /// Resolves when the leader has exited, without reaping it.
@@ -168,15 +234,8 @@ impl Group {
             let Ok(mut child) = self.child.lock() else {
                 return (None, false);
             };
-            let ended = if child.is_some() {
-                // The leader is unreaped here, so the group is still ours.
-                match kill_process_group(self.pgid, Signal::KILL) {
-                    Ok(()) => true,
-                    Err(error) => error == rustix::io::Errno::SRCH,
-                }
-            } else {
-                true
-            };
+            // The leader is unreaped while it is here, so the group is ours.
+            let ended = child.is_none() || end_group(self.pgid);
             (child.take(), ended)
         };
         match taken {

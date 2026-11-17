@@ -7,14 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_core::{
     AddressOverride, ApproveWrites, AuthPlan, AuthProviderName, AuthSetting, BindingPlan,
     BindingStatus, CanonicalJson, CaptureLevel, Checkpoint, CredentialRef, CredentialUse, Date,
-    Decimal, DecisionPoint, DriftRisk, EffectClass, EncodedPlan, Environment, EnvironmentIndex,
-    EnvironmentKind, EnvironmentPlan, FieldOf, FieldTypeIndex, FileKindName, Hazard, IdentityPlan,
-    IdentityStrategy, InputIndex, InputPlan, LintCode, Millis, Mode, OperationIndex, OperationName,
-    OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload, PackRef, PackSection, PermissionManifest,
-    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanHeader, ProbePlan,
-    RatePlan, RecordKey, SectionIndex, SignInMode, SourcePlan, Stands, Step, StepArg, SurfaceIndex,
-    SurfaceKind, SurfaceName, SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan,
-    ToolAnnotations, ToolIndex, ToolPlan, ToolRuns, Value, ValueType, Values, Verb, Version,
+    Decimal, DecisionPoint, DeclaredProgram, Digest, DriftRisk, EffectClass, EncodedPlan,
+    Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf, FieldTypeIndex,
+    FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, LintCode, Millis,
+    Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload,
+    PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
+    PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex, SignInMode,
+    SourcePlan, Stands, Step, StepArg, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
+    TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan, ToolRuns,
+    Value, ValueType, Values, Verb, Version,
 };
 use a2m_expr::TypeEnv;
 
@@ -25,7 +26,7 @@ use crate::kernel::{
     self as k, ALL_RECORDS_VERIFIED, BINDING_KEYS, FIXTURE_MARKER, SCHEMA_VERSION, SURFACE_KEYS,
 };
 use crate::load::{SourceFile, Sources};
-use crate::register::{CompileMode, CompilerSet, Lowered, Possible};
+use crate::register::{CompileMode, CompilerSet, Lowered, Possible, SurfaceKindSpec};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -175,6 +176,12 @@ struct Compiler<'a> {
 
 fn index(position: usize) -> u32 {
     u32::try_from(position).unwrap_or(u32::MAX)
+}
+
+/// The digest a file states for a program: 64 lowercase hexadecimal
+/// characters, with or without `sha256:` before them.
+fn digest_of(text: &str) -> Option<Digest> {
+    text.strip_prefix("sha256:").unwrap_or(text).parse().ok()
 }
 
 fn to_u32(number: i64) -> u32 {
@@ -705,6 +712,7 @@ impl<'a> Compiler<'a> {
                 PackPayload::encode(&rest.to_json()).ok()
             };
             let Some(payload) = payload else { continue };
+            let programs = self.declared_programs(&spec, &pack_part);
             let rate = doc.get("rate").map(|rate| RatePlan {
                 requests: to_u32(rate.get("requests").and_then(Located::as_int).unwrap_or(1)),
                 per_ms: to_u32(rate.get("per_ms").and_then(Located::as_int).unwrap_or(1)),
@@ -725,7 +733,7 @@ impl<'a> Compiler<'a> {
                     same_session_as: None,
                     stands: None,
                     rate,
-                    programs: Vec::new(),
+                    programs,
                     payload,
                 },
                 doc: doc.clone(),
@@ -768,6 +776,117 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The programs a surface declares under the fields its kind names. A
+    /// path that is not absolute and a digest that is not one are reported
+    /// and left out.
+    fn declared_programs(
+        &mut self,
+        spec: &SurfaceKindSpec,
+        fields: &Located<Doc>,
+    ) -> Vec<DeclaredProgram> {
+        let mut programs = Vec::new();
+        for field in &spec.programs {
+            let stated = field.digest_key.as_deref().and_then(|key| fields.get(key));
+            let digest = stated.map(|stated| {
+                let digest = stated.as_text().and_then(digest_of);
+                if digest.is_none() {
+                    self.error(
+                        codes::PROGRAM_INVALID,
+                        Stage::Validate,
+                        &stated.at,
+                        "The digest of the program is not a SHA-256 digest.".to_owned(),
+                        "Write the 64 lowercase hexadecimal characters of the file's SHA-256 digest, with or without `sha256:` before them.".to_owned(),
+                    );
+                }
+                digest
+            });
+            let Some(path) = fields.get(&field.path_key) else {
+                if let Some(stated) = stated {
+                    self.error(
+                        codes::PROGRAM_INVALID,
+                        Stage::Validate,
+                        &stated.at,
+                        format!(
+                            "The surface states a digest and no program under `{}`.",
+                            field.path_key
+                        ),
+                        format!(
+                            "Add `{}:` with the absolute path of the program, or remove the digest.",
+                            field.path_key
+                        ),
+                    );
+                }
+                continue;
+            };
+            // A program whose digest is stated badly is left out: it would
+            // otherwise be declared with no digest at all.
+            let stated_badly = digest == Some(None);
+            if let Some(program) = self.declared_program(path, digest.flatten())
+                && !stated_badly
+                && !programs.contains(&program)
+            {
+                programs.push(program);
+            }
+        }
+        programs
+    }
+
+    /// Where a surface's address is a program, its address in an
+    /// environment is one too, with the digest the surface states.
+    fn program_at_address(&mut self, surface: SurfaceIndex, address: &Located<Doc>) {
+        let Some(info) = self.model.surfaces.get(surface.get()) else {
+            return;
+        };
+        let Some(spec) = self.set.surface_kinds.get(&info.plan.kind) else {
+            return;
+        };
+        let Some(field) = spec
+            .item
+            .programs
+            .iter()
+            .find(|field| field.path_key == spec.item.address_key)
+        else {
+            return;
+        };
+        let digest = field
+            .digest_key
+            .as_deref()
+            .and_then(|key| info.doc.text(key))
+            .and_then(digest_of);
+        if let Some(program) = self.declared_program(address, digest)
+            && let Some(info) = self.model.surfaces.get_mut(surface.get())
+            && !info.plan.programs.contains(&program)
+        {
+            info.plan.programs.push(program);
+        }
+    }
+
+    /// One declared program, when its path is text and absolute.
+    fn declared_program(
+        &mut self,
+        path: &Located<Doc>,
+        digest: Option<Digest>,
+    ) -> Option<DeclaredProgram> {
+        let text = path.as_text().unwrap_or_default();
+        if DeclaredProgram::is_absolute_path(text) {
+            return Some(DeclaredProgram {
+                path: text.to_owned(),
+                digest,
+            });
+        }
+        self.error(
+            codes::PROGRAM_INVALID,
+            Stage::Validate,
+            &path.at,
+            format!(
+                "A program is named by its absolute path, and `{}` is not one.",
+                shown(text)
+            ),
+            "Write the whole path from the root or the drive, such as `/opt/example/bin/example-tool`; a program is never found by searching.".to_owned(),
+        );
+        None
+    }
+
     /// The target's environments, and which of them a call runs in when it
     /// names none: the one the target states, or `production`.
     fn environments(&mut self, doc: &Located<Doc>) -> EnvironmentIndex {
@@ -803,10 +922,12 @@ impl<'a> Compiler<'a> {
                         && let Some(found) = self.model.surface(&surface.value)
                         && let Some(text) = address.value.as_text()
                     {
+                        let index = found.index;
                         addresses.push(AddressOverride {
-                            surface: found.index,
+                            surface: index,
                             address: text.to_owned(),
                         });
+                        self.program_at_address(index, &address.value);
                     }
                 }
                 let mut test_records = Vec::new();

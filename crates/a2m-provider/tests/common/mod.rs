@@ -476,6 +476,7 @@ impl Pack for TestPack {
                     kind: surface_kind.clone(),
                     address_key: "address".to_owned(),
                     fields: JsonSchema::object().required("address", JsonSchema::text()),
+                    programs: Vec::new(),
                 })
                 .file_kind(Arc::new(CallKind {
                     name: FileKindName::new(&format!("{}_call", self.name)).unwrap(),
