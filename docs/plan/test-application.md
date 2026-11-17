@@ -54,7 +54,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 25 | Shows one of two layouts depending on a flag | Ordered locators; a new variant stops | 8 |
 | 26 | Switches language and number format | Fixed locale; comparison by code, not label | 8 |
 | 27 | Returns text containing instructions aimed at an agent | Untrusted fields; the manipulation test suite | 3 |
-| 28 | Exists as a small native desktop program with the same data | The desktop driver | 8 |
+| 28 | Exists as a small native desktop program with the same data. Built as `targets/example-desk` for Linux: a test hosts it, and it publishes an accessibility tree over a session bus of the test's own and draws no window. It holds the labelled values of one order, a table of its line items, a control with no accessible name, two controls of one role and name, a password field, a value that appears late, and a Save button, and counts each press of Save as a write and each ask for the password's text ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)). Windows and macOS stands are not built | The desktop driver | 8 |
 | 29 | Takes a bearer token or an API key on its JSON interface, and revokes one when told to | Credentials in the HTTP modes; a refused credential is not tried again | 2 |
 | 30 | Serves a description of its JSON interface | Reading a described interface; the description held to what is served | 4 |
 | 31 | Answers in a changed shape when told to | An unknown response shape stops, never guessed at | 1 |
