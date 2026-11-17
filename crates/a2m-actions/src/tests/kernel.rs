@@ -169,9 +169,21 @@ pub(super) struct Options {
     pub(super) settings: Settings,
     /// What is done to the folders before the kernel opens.
     pub(super) before_open: Option<fn(&Paths)>,
+    /// The test application's pack also registers its surface kind with
+    /// the compiler, with a notice for `profile: open`.
+    pub(super) notices: bool,
 }
 
 impl Options {
+    /// The defaults, with the test application's surface kind registered
+    /// with the compiler and a notice for `profile: open`.
+    pub(super) fn with_notices() -> Self {
+        Self {
+            notices: true,
+            ..Self::default()
+        }
+    }
+
     /// The defaults, with `before` done to the folders before the kernel
     /// opens.
     pub(super) fn before_open(before: fn(&Paths)) -> Self {
@@ -190,6 +202,7 @@ impl Default for Options {
             block_store: false,
             settings: Settings::defaults(),
             before_open: None,
+            notices: false,
         }
     }
 }
@@ -239,10 +252,15 @@ pub(super) async fn world(options: Options) -> World {
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
     let hooks = Arc::new(engine::Hooks::default());
     let discoverer = Arc::new(engine::WritingDiscoverer::default());
-    builder.add_pack(&AppPack {
+    let app_pack = AppPack {
         hooks: Arc::clone(&hooks),
         discoverer: Arc::clone(&discoverer),
-    });
+    };
+    if options.notices {
+        builder.add_pack(&NoticedAppPack(app_pack));
+    } else {
+        builder.add_pack(&app_pack);
+    }
     builder.add_pack(&ProjectPack);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -969,6 +987,44 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     );
 
     world.kernel.close(CloseReason::Asked).await;
+}
+
+// ---- a surface kind that carries a notice ----
+
+/// The test application's pack, which also registers its surface kind with
+/// the compiler, as a pack does whose surfaces a person must be told of:
+/// `profile: open` carries the notice of credentials over an unencrypted
+/// link (decision 0193).
+struct NoticedAppPack(AppPack);
+
+impl a2m_provider::Pack for NoticedAppPack {
+    fn manifest(&self) -> &'static str {
+        self.0.manifest()
+    }
+
+    fn register(
+        &self,
+        cx: &a2m_provider::PackContext,
+        to: &mut a2m_provider::Registrar<'_>,
+    ) -> Result<(), a2m_core::Failure> {
+        self.0.register(cx, to)?;
+        to.compiler(
+            a2m_provider::CompilerRegistrations::new().surface_kind(
+                a2m_files::SurfaceKindSpec::new(
+                    a2m_core::SurfaceKind::new("json_app")?,
+                    "address",
+                    a2m_files::JsonSchema::object()
+                        .required("address", a2m_files::JsonSchema::text())
+                        .optional("profile", a2m_files::JsonSchema::name()),
+                )
+                .with_notice(
+                    "profile",
+                    "open",
+                    a2m_core::SurfaceNotice::UnencryptedCredentials,
+                ),
+            ),
+        )
+    }
 }
 
 // ---- a provider action that reads its project root ----

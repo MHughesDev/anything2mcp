@@ -31,8 +31,8 @@ pub use scheduler::{
 pub use types::{
     Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
     JobKind, JobLease, JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION,
-    Priority, RateGrant, RateLimit, Renewal, ResourceKey, RunnerOffer, RunnerTerms, SchedSettings,
-    SessionLimits, SessionNeed, Slots, Submission, SweepReport,
+    Priority, RateGrant, RateLimit, Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer,
+    RunnerTerms, SchedSettings, SessionLimits, SessionNeed, Slots, Submission, SweepReport,
 };
 pub use waits::LockTicket;
 
@@ -40,7 +40,7 @@ pub use waits::LockTicket;
 pub mod codes {
     pub use crate::failure::{
         CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, ON_HOLD, QUEUE_FULL,
-        RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUNNER_LOST,
+        RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
         RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SESSION_IN_USE,
     };
 }

@@ -208,16 +208,10 @@ impl a2m_provider::Driver for Postured {
             // A read of choices: one, and a list of them.
             Some("order_state") => Box::pin(async move {
                 let text = |code: &str| a2m_core::Value::Text(code.to_owned());
-                seen(
-                    a2m_core::Values::new().with("status", "draft").with(
-                        "history",
-                        a2m_core::Value::List(vec![
-                            text("draft"),
-                            text("released"),
-                            text("draft"),
-                        ]),
-                    ),
-                )
+                seen(a2m_core::Values::new().with("status", "draft").with(
+                    "history",
+                    a2m_core::Value::List(vec![text("draft"), text("released"), text("draft")]),
+                ))
             }),
             Some("order_flaky") => {
                 let made = self.more.flaky.fetch_add(1, Ordering::SeqCst) + 1;
@@ -947,7 +941,11 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
     )
     .await;
     assert!(
-        unknown.error.unwrap().message.contains("No enabled pack registered a surface of the kind `nothing_has_it`."),
+        unknown
+            .error
+            .unwrap()
+            .message
+            .contains("No enabled pack registered a surface of the kind `nothing_has_it`."),
     );
     // What the compiler refuses for the surface is refused, by name, and
     // nothing is written: an address of blanks states none.
@@ -958,7 +956,14 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
             && error.message.contains("kernel.missing_field"),
         "{error:?}"
     );
-    assert!(!project.path().join("targets").join("example").join("target.yaml").exists());
+    assert!(
+        !project
+            .path()
+            .join("targets")
+            .join("example")
+            .join("target.yaml")
+            .exists()
+    );
     // With the address and its kind, the target file declares one surface
     // of the kind, under the key its pack registered, and a test
     // environment, and it compiles; the next step is the scout.
@@ -971,7 +976,11 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
     assert!(surfaced.ok, "{:?}", surfaced.error);
     assert_eq!(surfaced.next.unwrap().action, "scout.run");
     let written = std::fs::read_to_string(
-        project.path().join("targets").join("surfaced").join("target.yaml"),
+        project
+            .path()
+            .join("targets")
+            .join("surfaced")
+            .join("target.yaml"),
     )
     .unwrap();
     assert!(
@@ -981,8 +990,12 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
     let linted = world
         .kernel
         .dispatch(
-            Request::new("draft.lint", json!({"target": "surfaced"}), world.person.clone())
-                .in_project(project.path()),
+            Request::new(
+                "draft.lint",
+                json!({"target": "surfaced"}),
+                world.person.clone(),
+            )
+            .in_project(project.path()),
         )
         .await;
     let linted = linted.result.unwrap();

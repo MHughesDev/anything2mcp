@@ -77,6 +77,11 @@ pub struct BrowserSettings {
     /// build, and nothing in the product can set it.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) without_sandbox: bool,
+    /// This crate's own tests only: variables set in the browser's
+    /// environment, to stand for what a machine around the engine may hold,
+    /// such as a proxy.
+    #[cfg(test)]
+    pub(crate) environment_for_tests: Vec<(String, std::ffi::OsString)>,
 }
 
 impl Default for BrowserSettings {
@@ -91,6 +96,8 @@ impl Default for BrowserSettings {
             max_read_chars: 1024 * 1024,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
+            #[cfg(test)]
+            environment_for_tests: Vec::new(),
         }
     }
 }
@@ -600,6 +607,11 @@ impl Browsers {
         if shared.settings.without_sandbox {
             args.push(crate::test_support::WITHOUT_SANDBOX.into());
         }
+        #[allow(unused_mut, reason = "only this crate's tests add a variable")]
+        let mut env = launch::environment();
+        #[cfg(test)]
+        env.set
+            .extend(shared.settings.environment_for_tests.iter().cloned());
         let kind = SubsystemKind::new(BROWSER_KIND)
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
         // One start at a time in the whole process, from the start of the
@@ -618,7 +630,7 @@ impl Browsers {
                         digest: None,
                     },
                     args,
-                    env: launch::environment(),
+                    env,
                     cwd: None,
                     kind,
                     place: Some(place),

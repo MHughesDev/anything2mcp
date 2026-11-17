@@ -198,7 +198,13 @@ impl Desk {
     /// publish out as the person: the page is read, Carry out is pressed
     /// from the page's own origin, and the presence prompt is passed, for
     /// the `presses`-th time. The page says the surface leads to `address`.
-    async fn publish_as_a_person(&self, prompt: &Passed, version: &str, presses: u32, address: &str) {
+    async fn publish_as_a_person(
+        &self,
+        prompt: &Passed,
+        version: &str,
+        presses: u32,
+        address: &str,
+    ) {
         let (code, asked) = self
             .run(&["publish", "example", "--version", version])
             .await;

@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 
+use crate::types::Reconciling;
+
 /// The target's queue is full. Class `busy`.
 pub const QUEUE_FULL: FailureCode = FailureCode::fixed("queue_full");
 /// The caller has as many jobs waiting as it may. Class `busy`.
@@ -42,6 +44,9 @@ pub const RUNNER_LOST: FailureCode = a2m_ledger::codes::RUNNER_LOST;
 /// `unknown_variant`.
 pub const RUNNER_PROTOCOL_UNSUPPORTED: FailureCode =
     FailureCode::fixed("runner_protocol_unsupported");
+/// A resume found the run's reconcile as its one job: what is in doubt is
+/// settled first. Class `busy`.
+pub const RUN_RECONCILING: FailureCode = FailureCode::fixed("run_reconciling");
 /// There is no such job. Class `input`.
 pub const NOT_FOUND: FailureCode = a2m_ledger::codes::NOT_FOUND;
 
@@ -180,6 +185,46 @@ pub(crate) fn protocol_unsupported(offered: u32) -> Failure {
         RUNNER_PROTOCOL_UNSUPPORTED,
         format!("The runner speaks protocol version {offered}, which this scheduler does not."),
         "Upgrade the runner or the control plane so that their versions are at most one apart.",
+    )
+}
+
+/// When the reconcile a resume found reads the system, in words.
+fn reconcile_when(found: &Reconciling) -> String {
+    if found.leased {
+        "A runner is reading the system for it now; if it ends in doubt, the next reconcile is handed out at once".to_owned()
+    } else if let Some(left) = found.quarantine_left {
+        format!(
+            "It is handed out {}, when the quarantine that began with a lost lease has passed: until then the lost runner may still be sending",
+            about(left)
+        )
+    } else {
+        "It is handed out now".to_owned()
+    }
+}
+
+pub(crate) fn run_reconciling(found: &Reconciling) -> Failure {
+    busy(
+        RUN_RECONCILING,
+        format!(
+            "The run is being reconciled: what may have been written is read before the run goes on. {}.",
+            reconcile_when(found)
+        ),
+        "Wait for the reconcile to end, then resume the run again.",
+    )
+}
+
+/// The refusal of [`crate::Scheduler::enqueue`] for a run whose reconcile is
+/// its one job. The code stays `schema_invalid`, which its callers read as
+/// "the run has its job"; [`crate::Scheduler::resume`] names it.
+pub(crate) fn reconciling_refused(found: &Reconciling) -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        FailureCode::SCHEMA_INVALID,
+        format!(
+            "The run already has its one job, a reconcile, which settles what is in doubt first. {}.",
+            reconcile_when(found)
+        ),
+        "Wait for the reconcile to end, then queue the job again.",
     )
 }
 

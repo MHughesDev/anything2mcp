@@ -637,6 +637,46 @@ pub enum JobEnd {
     LeaseEnding,
 }
 
+/// What a resume found, from [`crate::Scheduler::resume`]. Found, and acted
+/// on, in one transaction of the store, so a reconcile that ends at the
+/// same moment is never missed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resumed {
+    /// The resume's own job is queued.
+    Queued(JobId),
+    /// The run's one job is a reconcile, which settles what is in doubt
+    /// before the run may go on. The resume is not queued, and it is not
+    /// lost: the reconcile is handed out now, or, while it is being read,
+    /// the reconcile it queues if it ends in doubt is; never before the end
+    /// of a quarantine a lost lease began (decision 0193). The caller waits
+    /// for it, then resumes again.
+    Reconciling(Reconciling),
+}
+
+/// The reconcile a resume found as its run's one job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reconciling {
+    /// The reconcile.
+    pub job: JobId,
+    /// It is leased: a runner reads the system now.
+    pub leased: bool,
+    /// When it is handed out: now, or the end of the quarantine. For a
+    /// leased reconcile, now.
+    pub from: Timestamp,
+    /// How long the quarantine a lost lease began still holds it back;
+    /// `None` when none does.
+    pub quarantine_left: Option<Duration>,
+}
+
+impl Reconciling {
+    /// The answer a door gives a person whose resume found the reconcile:
+    /// `busy`, `run_reconciling`, with how long a quarantine still holds.
+    #[must_use]
+    pub fn failure(&self) -> Failure {
+        failure::run_reconciling(self)
+    }
+}
+
 /// What cancelling a run did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelOutcome {

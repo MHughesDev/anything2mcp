@@ -2268,7 +2268,9 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
         .unwrap_or_else(|| panic!("{problems}"));
     assert_eq!(warned.level, Level::Warning, "{warned}");
     assert!(
-        warned.message.contains("asks the lookup only whether the record landed")
+        warned
+            .message
+            .contains("asks the lookup only whether the record landed")
             && warned.fix.contains("name it `read_back:`"),
         "{warned}"
     );
@@ -2290,7 +2292,10 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
         &set,
         CompileMode::Publish,
     );
-    assert!(problems.find("kernel.acknowledged_with_lookup").is_none(), "{problems}");
+    assert!(
+        problems.find("kernel.acknowledged_with_lookup").is_none(),
+        "{problems}"
+    );
     let problems = problems_with(
         &with(&[
             (read_back, with_lookup.as_str()),
@@ -2300,7 +2305,10 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
         &set,
         CompileMode::Publish,
     );
-    assert!(problems.find("kernel.acknowledged_with_lookup").is_none(), "{problems}");
+    assert!(
+        problems.find("kernel.acknowledged_with_lookup").is_none(),
+        "{problems}"
+    );
 
     // The response stands where the lowering prefers it.
     let binding = binding_of(&plan_of(&with(&[(
@@ -2454,5 +2462,8 @@ fn the_set_tells_the_key_a_kind_states_its_address_under() {
     let problem = problems
         .find("kernel.missing_field")
         .unwrap_or_else(|| panic!("{problems}"));
-    assert!(problem.message.contains("does not state its address"), "{problem}");
+    assert!(
+        problem.message.contains("does not state its address"),
+        "{problem}"
+    );
 }

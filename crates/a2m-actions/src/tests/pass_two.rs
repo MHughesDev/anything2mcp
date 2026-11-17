@@ -567,6 +567,39 @@ async fn a_driver_is_told_which_other_record_recorded_a_value_and_never_the_valu
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A record's preview carries the notices of its binding's surface, as the
+/// surface kind's pack registered them for the surface's own fields: none
+/// while the surface does not say `profile: open`, the notice in its fixed
+/// words once it does (decisions 0193 and 0199).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_records_preview_carries_the_notices_its_surface_kind_registers() {
+    use a2m_actions::PreviewNotice;
+    use a2m_core::SurfaceNotice;
+    let world = World::ready_with(super::kernel::Options::with_notices()).await;
+    let (_, id) = world.rest_a_write("L-641").await;
+    let preview = world.surface.desk().preview(id, 0).await.unwrap();
+    assert!(preview.records[0].notices.is_empty(), "{preview:?}");
+    world
+        .republish(|plan| {
+            for surface in &mut plan.surfaces {
+                surface.payload =
+                    a2m_core::PackPayload::encode(&json!({"profile": "open"})).unwrap();
+            }
+        })
+        .await;
+    let (_, id) = world.rest_a_write("L-642").await;
+    let preview = world.surface.desk().preview(id, 0).await.unwrap();
+    assert_eq!(
+        preview.records[0].notices,
+        [PreviewNotice {
+            code: SurfaceNotice::UnencryptedCredentials.as_str(),
+            words: SurfaceNotice::UnencryptedCredentials.words(),
+        }],
+        "{preview:?}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 /// One write of a slot, approved and resumed to its end.
 async fn slot_written(world: &World, length: &str) -> RunId {
     let call = json!({"tool": SLOT_ADD, "input": {"order_id": "A-102", "quantity": 1, "length_in": length}});

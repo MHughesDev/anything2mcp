@@ -162,6 +162,15 @@ pub const FIXED_ARGUMENTS: &[&str] = &[
     "--disable-component-update",
     "--disable-sync",
     "--disable-default-apps",
+    // Every connection is direct (decision 0197): no proxy from the
+    // environment, the operating system's settings, automatic discovery,
+    // or the profile's stored settings, all of which this flag outranks
+    // (decision 0201). Loopback is never sent to a proxy anyway.
+    "--no-proxy-server",
+    // No extension runs, so none can set a proxy, which would outrank the
+    // flag above: an extension another program installs into every
+    // profile included.
+    "--disable-extensions",
     // The data directory keeps its own key: the operating system's key
     // store, which holds the person's own browser's key, is never asked.
     "--password-store=basic",
@@ -261,6 +270,33 @@ mod tests {
             all.iter()
                 .any(|argument| argument == "--user-data-dir=profile")
         );
+    }
+
+    #[test]
+    fn every_launch_connects_directly_and_runs_no_extension() {
+        for window in [false, true] {
+            let all = arguments(Path::new("profile"), window)
+                .into_iter()
+                .map(|argument| argument.to_string_lossy().to_lowercase())
+                .collect::<Vec<_>>();
+            assert!(all.iter().any(|argument| argument == "--no-proxy-server"));
+            assert!(all.iter().any(|argument| argument == "--disable-extensions"));
+            // Nothing names a proxy, a way to find one, or an extension.
+            for named in [
+                "--proxy-server",
+                "--proxy-pac-url",
+                "--proxy-auto-detect",
+                "--proxy-bypass-list",
+                "--winhttp-proxy-resolver",
+                "--load-extension",
+                "--disable-extensions-except",
+            ] {
+                assert!(
+                    !all.iter().any(|argument| argument.starts_with(named)),
+                    "the launch arguments hold `{named}`"
+                );
+            }
+        }
     }
 
     #[cfg(unix)]

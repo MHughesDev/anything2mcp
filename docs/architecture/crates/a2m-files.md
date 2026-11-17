@@ -248,6 +248,9 @@ pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub
 // with_notice(key, word, SurfaceNotice): a surface of the kind carries the notice while its own field `key` holds `word`;
 // CompilerSet::surface_notices(&SurfacePlan) is what a door asks. Computed from the plan's surface and the registration,
 // so the plan's shape and pinned hash are unchanged; decision 0193
+// CompilerSet::address_key(&SurfaceKind) -> Option<&str>: the key a surface of the kind states its address under, as its
+// pack registered it, for `target.add` to write a surface from an address with no pack's knowledge; decision 0199.
+// An address of blanks states none: `kernel.missing_field`.
 impl SurfaceKindSpec {
     pub fn new(kind: SurfaceKind, address_key: &str, fields: JsonSchema) -> Self;       // starts no program
     pub fn with_program(self, path_key: &str, digest_key: Option<&str>) -> Self;
@@ -397,6 +400,8 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 **Two rules every pack is held to** (decision 0161). *A delete is `irreversible`*, unless its binding declares how the record is restored, which no binding can declare yet: a pack's `least_effect` gives `irreversible` for every verb that deletes, and the compiler's least-effect check then holds every operation of it there. Today the file pack says `write` for its `delete`; the data, command, MCP, and HTTP packs say `irreversible`; the web, device, and stream packs have no delete. *An effect left as an open question is undecided, not a write* ([decision 0178](../../decisions/0178-an-effect-left-as-an-open-question-is-undecided-not-a-write.md), which changes this half of decision 0161): `FileKind::writes` is true for an entry declared to write and false for one whose effect is an open question, so the drafter may write it; nothing can use it, because the schema checker refuses an open question wherever it stands, and the file does not compile until a person answers. A pack may be stricter where it has evidence of its own, as the HTTP pack is for an unsafe method.
 
 11. Done ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)): the built-in field type `untrusted_text`, `text` marked untrusted, exported as `UNTRUSTED_TEXT`, so that a drafting rule marks an output of the system's text without a `types.yaml`. It is the last of the built-in types, so a target's own types still follow them in the plan.
+
+12. Done ([decision 0199](../../decisions/0199-the-halves-left-for-each-other-are-joined.md)): `CompilerSet::address_key`; a surface whose address is blank is refused as stating none; and the warning `kernel.acknowledged_with_lookup`, always a warning, for a binding whose evidence is `acknowledged`, on a keyed record, with no read-back step and a lookup: the engine asks the lookup only whether the record landed, and a lookup that returns the record's values is a read-back by another name. The test pack's lowering takes `lookup: {call}`. No first-party pack's lowering makes such a binding: their compile tests pass unchanged.
 
 Not built, in any step:
 

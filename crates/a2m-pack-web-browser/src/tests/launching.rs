@@ -311,3 +311,63 @@ async fn a_dropped_tab_is_no_longer_counted_whichever_thread_hears_its_end_first
     }
     stand.end().await;
 }
+
+/// A listener on a loopback port of its own that stands for a proxy: it
+/// counts every connection made to it and answers each with an error.
+async fn stand_in_proxy() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&seen);
+    tokio::spawn(async move {
+        while let Ok((mut connection, _)) = listener.accept().await {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let mut first = [0_u8; 512];
+            let _ = connection.read(&mut first).await;
+            let _ = connection
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await;
+        }
+    });
+    (address, seen)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_browser_takes_no_proxy_from_the_environment_around_it() {
+    // Every variable by which a browser on Linux takes a proxy, set in the
+    // browser's own environment and naming a listener that stands for the
+    // proxy. The page is at a name that no resolver knows: only a proxy
+    // could answer for it.
+    let (proxy, seen) = stand_in_proxy().await;
+    let mut settings = test_support::settings();
+    settings.environment_for_tests = [
+        "http_proxy",
+        "HTTP_PROXY",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "all_proxy",
+        "ALL_PROXY",
+    ]
+    .into_iter()
+    .map(|name| (name.to_owned(), proxy.clone().into()))
+    .collect();
+    let stand = Stand::new("proxy", settings, &[]);
+    let browser = stand.open(&profile("clerk")).await;
+    let page = Address::new("http://a2m-proxy-check.invalid/").unwrap();
+    let tab = must(
+        browser
+            .acting_tab(&environment(), &Origins::of([&page]))
+            .await,
+    );
+    // The page cannot be reached without a proxy; that the browser tried,
+    // and how it failed, is not what is asked.
+    let _ = tab.goto(&page, soon()).await;
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        0,
+        "the browser connected to the proxy its environment named"
+    );
+    drop(tab);
+    stand.end().await;
+}
