@@ -95,9 +95,7 @@ fn nearest<'a>(wrong: &str, known: impl Iterator<Item = &'a str>) -> Vec<&'a str
             row[0] = i + 1;
             for (j, cb) in b.iter().enumerate() {
                 let old = row[j + 1];
-                row[j + 1] = (last + usize::from(ca != *cb))
-                    .min(row[j] + 1)
-                    .min(old + 1);
+                row[j + 1] = (last + usize::from(ca != *cb)).min(row[j] + 1).min(old + 1);
                 last = old;
             }
         }
@@ -568,9 +566,9 @@ fn parse_args(
             ("flag", None) => Json::Bool(true),
             (_, Some(written)) => value_of(arg, written)?,
             (_, None) => {
-                let written = rest.get(at).ok_or_else(|| {
-                    malformed(format!("`{name}` needs a value."), usage())
-                })?;
+                let written = rest
+                    .get(at)
+                    .ok_or_else(|| malformed(format!("`{name}` needs a value."), usage()))?;
                 at += 1;
                 value_of(arg, written)?
             }

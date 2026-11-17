@@ -8,12 +8,12 @@ mod common;
 use std::path::Path;
 
 use common::{Folder, Machine, World};
+use example_app::harness::TestApp;
 use example_broker::harness::TestBroker;
 use example_cli::harness::Stand;
 use example_db::harness::TestDb;
 use example_db::schema::Table;
 use example_device::TestDevice;
-use example_app::harness::TestApp;
 use example_files::harness::FileStand;
 use example_mcp::harness::HttpStand;
 use serde_json::Value as Json;
@@ -63,7 +63,13 @@ async fn a_command_line_program_is_read_through_the_command_pack() {
     let mut signatures = Vec::new();
     for _ in 0..2 {
         let ran = world
-            .agent(&["tool", "call", "example_item_get", "--input", r#"{"sku": "SK-1001"}"#])
+            .agent(&[
+                "tool",
+                "call",
+                "example_item_get",
+                "--input",
+                r#"{"sku": "SK-1001"}"#,
+            ])
             .await;
         assert_eq!(ran.finished.code, 0, "{:?}", ran.finished);
         let result = ran.result();
@@ -79,7 +85,10 @@ async fn a_command_line_program_is_read_through_the_command_pack() {
     // The program was started, and only to read.
     let starts = stand.control().invocations().unwrap();
     assert!(starts.len() > before, "{starts:?}");
-    assert_eq!(stand.control().stored_item("SK-1001").unwrap().unwrap(), held);
+    assert_eq!(
+        stand.control().stored_item("SK-1001").unwrap().unwrap(),
+        held
+    );
     world.close().await;
 }
 
@@ -157,7 +166,13 @@ async fn an_mcp_server_is_read_through_the_mcp_pack() {
     let stand = HttpStand::start().await.unwrap();
     let machine = Machine::new("upstream", &[("http://127.0.0.1:9/mcp", &stand.url())]);
     let world = published(&machine).await;
-    let read = read_twice(&world, "example_order_get", r#"{"order_id": "A-100"}"#, "mcp").await;
+    let read = read_twice(
+        &world,
+        "example_order_get",
+        r#"{"order_id": "A-100"}"#,
+        "mcp",
+    )
+    .await;
     // The value is what the server's own store holds, and the one tool
     // that was called is the one the mapping pins.
     let held = stand.control().stored_order("A-100").unwrap().unwrap();
@@ -199,7 +214,13 @@ async fn a_data_store_is_read_through_the_data_pack() {
     // names the store's file below it.
     let stand = TestDb::start().unwrap();
     let folder = Folder::of_another(stand.path().parent().unwrap());
-    let file = stand.path().file_name().unwrap().to_str().unwrap().to_owned();
+    let file = stand
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let machine = Machine::in_folder("storefile", &[("example.db", &file)], folder);
     let world = published(&machine).await;
     let writes = stand.writes().unwrap().len();

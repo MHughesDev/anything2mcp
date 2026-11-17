@@ -8,6 +8,7 @@ mod common;
 use a2m_actions::PresenceProof;
 use a2m_core::{RunId, Timestamp};
 use a2m_policy::{Channel, PresenceCheck, PrincipalRef};
+use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use common::proxy::Proxy;
 use common::{Machine, World};
 use example_app::faults::{Fault, FaultKind};
@@ -15,7 +16,6 @@ use example_app::harness::TestApp;
 use serde_json::Value as Json;
 use std::sync::Arc;
 use std::time::Duration;
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 
 const PLACEHOLDER: &str = "http://127.0.0.1:4010";
 const UPSERT: &str = "example_line_item_upsert";
@@ -43,7 +43,11 @@ async fn approve(world: &World, run: &str) {
         .principal
         .principal()
         .clone();
-    let proof = PresenceProof::new(PresenceCheck::OsPrompt, person.id, Timestamp::from_unix_millis(0));
+    let proof = PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        person.id,
+        Timestamp::from_unix_millis(0),
+    );
     // An agent cannot approve, whatever it holds.
     let by_agent = desk
         .approve(
@@ -77,7 +81,9 @@ async fn a_write_rests_is_approved_by_a_person_and_is_written_and_verified_exact
     let world = published(&app, &machine).await;
 
     // Called by an agent, the write rests, with the diff's reference.
-    let rested = world.agent(&["tool", "call", UPSERT, "--input", INPUT]).await;
+    let rested = world
+        .agent(&["tool", "call", UPSERT, "--input", INPUT])
+        .await;
     assert_eq!(rested.finished.code, 3, "{:?}", rested.finished);
     assert_eq!(rested.json["ok"], false);
     let result = rested.result();
@@ -141,8 +147,15 @@ async fn a_write_rests_is_approved_by_a_person_and_is_written_and_verified_exact
 
 /// A write that rested and was approved; the run is ready to resume.
 async fn approved_write(world: &World) -> String {
-    let rested = world.agent(&["tool", "call", UPSERT, "--input", INPUT]).await;
-    assert_eq!(rested.result()["status"], "needs_approval", "{:?}", rested.finished);
+    let rested = world
+        .agent(&["tool", "call", UPSERT, "--input", INPUT])
+        .await;
+    assert_eq!(
+        rested.result()["status"],
+        "needs_approval",
+        "{:?}",
+        rested.finished
+    );
     let run = rested.result()["run_id"].as_str().unwrap().to_owned();
     approve(world, &run).await;
     run
@@ -164,7 +177,12 @@ async fn an_answer_lost_after_the_write_was_sent_is_reconciled_and_not_written_t
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
     assert_eq!(lost.finished.code, 1, "{:?}", lost.finished);
     assert_eq!(lost.result()["status"], "stopped", "{:?}", lost.finished);
-    assert_eq!(lost.error()["class"], "possible_commit", "{:?}", lost.finished);
+    assert_eq!(
+        lost.error()["class"],
+        "possible_commit",
+        "{:?}",
+        lost.finished
+    );
     // Calling again is not safe, and the answer says so.
     assert_eq!(lost.error()["retry_safe"], false);
 

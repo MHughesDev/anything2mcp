@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use a2m_actions::{
-    Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, command_faces, codes,
+    Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes, command_faces,
 };
 use a2m_core::{Failure, FailureClass};
 use a2m_telemetry::SystemClock;
@@ -173,7 +173,15 @@ pub async fn run_on(engine: &Engine, args: &[String], json: bool, is_agent: bool
     let tree = Tree::new(command_faces(engine.kernel().actions()));
     match tree.parse(args) {
         Ok(Parsed::Invoke(globals, steps)) => {
-            run_steps(engine, &tree, &globals, steps, json || globals.json, is_agent).await
+            run_steps(
+                engine,
+                &tree,
+                &globals,
+                steps,
+                json || globals.json,
+                is_agent,
+            )
+            .await
         }
         Ok(other) => without_engine(&tree, other, json),
         Err(failure) => stopped(&tree, "", &failure, ExitClass::Malformed, json),
@@ -231,7 +239,13 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     let tree = match tree() {
         Ok(tree) => tree,
         Err(failure) => {
-            return stopped(&Tree::new(Vec::new()), "", &failure, ExitClass::Failed, json);
+            return stopped(
+                &Tree::new(Vec::new()),
+                "",
+                &failure,
+                ExitClass::Failed,
+                json,
+            );
         }
     };
     let (globals, steps) = match tree.parse(args) {

@@ -34,12 +34,18 @@ pub(crate) fn first_party() -> Vec<FirstParty> {
     let browsers = SharedBrowsers::default();
     let (for_ui, for_probe) = (browsers.clone(), browsers.clone());
     vec![
-        one(a2m_pack_web_ui::pack(browsers.clone()).manifest(), move |builder| {
-            a2m_pack_web_ui::add_to(builder, for_ui.clone());
-        }),
-        one(a2m_pack_web_probe::pack(browsers).manifest(), move |builder| {
-            a2m_pack_web_probe::add_to(builder, for_probe.clone());
-        }),
+        one(
+            a2m_pack_web_ui::pack(browsers.clone()).manifest(),
+            move |builder| {
+                a2m_pack_web_ui::add_to(builder, for_ui.clone());
+            },
+        ),
+        one(
+            a2m_pack_web_probe::pack(browsers).manifest(),
+            move |builder| {
+                a2m_pack_web_probe::add_to(builder, for_probe.clone());
+            },
+        ),
         one(a2m_pack_http::HttpPack.manifest(), a2m_pack_http::add_to),
         one(a2m_pack_mcp::MANIFEST, |builder| {
             builder.add_pack(&a2m_pack_mcp::pack());

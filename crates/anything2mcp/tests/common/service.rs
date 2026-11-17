@@ -50,10 +50,9 @@ impl Service {
                         .unwrap()
                         .push(format!("{first} signed_in={signed_in}"));
                     let (status, body) = match (first.as_str(), signed_in) {
-                        ("GET /account HTTP/1.1", true) => (
-                            "200 OK",
-                            format!(r#"{{"name":"service","echo":"{echo}"}}"#),
-                        ),
+                        ("GET /account HTTP/1.1", true) => {
+                            ("200 OK", format!(r#"{{"name":"service","echo":"{echo}"}}"#))
+                        }
                         ("GET /account HTTP/1.1", false) => {
                             ("401 Unauthorized", r#"{"error":"unauthorized"}"#.to_owned())
                         }

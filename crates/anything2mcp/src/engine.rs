@@ -278,10 +278,7 @@ fn salt(paths: &Paths, random: &dyn RandomSource) -> Result<PassphraseSalt, Fail
 /// This machine's key store, as the installation's settings choose it.
 /// Never fails: a store that cannot be reached is one that does not
 /// answer, and the kernel opens degraded and says why.
-async fn machine_key_store(
-    settings: &Settings,
-    options: &EngineOptions,
-) -> Arc<dyn KeyStore> {
+async fn machine_key_store(settings: &Settings, options: &EngineOptions) -> Arc<dyn KeyStore> {
     if settings.text("vault.backend") == Some("passphrase") {
         let name = "a passphrase given at start";
         let Some(passphrase) = options

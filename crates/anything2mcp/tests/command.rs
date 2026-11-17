@@ -227,7 +227,13 @@ fn the_command_tree_is_the_action_registry_and_nothing_else() {
             };
             assert!(help.contains(&shown), "{}: {shown}", face.action);
             // No argument of an action is taken for a global flag.
-            for global in ["--json", "--project", "--in-process", "--idempotency-key", "--help"] {
+            for global in [
+                "--json",
+                "--project",
+                "--in-process",
+                "--idempotency-key",
+                "--help",
+            ] {
                 assert_ne!(arg.flag, global, "{}", face.action);
             }
         }
@@ -276,7 +282,10 @@ fn output_that_is_not_a_terminal_is_one_json_object_for_every_action() {
         }
         codes.insert(code);
     }
-    assert!(codes.contains(&0) && codes.contains(&1) && codes.contains(&2), "{codes:?}");
+    assert!(
+        codes.contains(&0) && codes.contains(&1) && codes.contains(&2),
+        "{codes:?}"
+    );
 }
 
 #[test]
@@ -291,7 +300,10 @@ fn the_exit_code_follows_the_failure() {
     let missing = bare.run(&["provider", "describe", "nothing_here"]);
     assert_eq!(missing.status.code(), Some(1));
     let error = &object(&missing)["error"];
-    assert_eq!((error["class"].as_str(), error["code"].as_str()), (Some("input"), Some("not_found")));
+    assert_eq!(
+        (error["class"].as_str(), error["code"].as_str()),
+        (Some("input"), Some("not_found"))
+    );
 
     // 2: malformed, by the tree (an unknown word, a missing argument, an
     // unknown flag, a value of the wrong type) or by the dispatcher (a
@@ -300,13 +312,23 @@ fn the_exit_code_follows_the_failure() {
         vec!["nothing"],
         vec!["tool", "describe"],
         vec!["tool", "search", "--nope"],
-        vec!["tool", "call", "example_order_get", "--wait-seconds", "soon"],
+        vec![
+            "tool",
+            "call",
+            "example_order_get",
+            "--wait-seconds",
+            "soon",
+        ],
         vec!["tool", "call", "example_order_get", "--input", "not json"],
         vec!["killswitch", "set", "--scope", "somewhere"],
     ] {
         let output = bare.run(&args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert_eq!(object(&output)["error"]["code"], "schema_invalid", "{args:?}");
+        assert_eq!(
+            object(&output)["error"]["code"],
+            "schema_invalid",
+            "{args:?}"
+        );
     }
 
     // A machine whose key store does not answer is degraded: it reads,
@@ -315,7 +337,10 @@ fn the_exit_code_follows_the_failure() {
     assert_eq!(degraded.status.code(), Some(1));
     assert_eq!(object(&degraded)["error"]["code"], "engine_degraded");
     let doctor = text(&bare.run(&["doctor", "run"]).stdout);
-    assert!(doctor.contains(anything2mcp::PASSPHRASE_VARIABLE), "{doctor}");
+    assert!(
+        doctor.contains(anything2mcp::PASSPHRASE_VARIABLE),
+        "{doctor}"
+    );
 
     // 3: a person is needed. Nobody is at a command whose input and output
     // are not a terminal, so a person's act is refused, and the program
@@ -339,7 +364,10 @@ fn the_exit_code_follows_the_failure() {
     assert_eq!(broken.status.code(), Some(1));
     let error = &object(&broken)["error"];
     assert_eq!(error["code"], "settings_invalid", "{error}");
-    assert!(error["message"].as_str().unwrap().contains("no_such_key"), "{error}");
+    assert!(
+        error["message"].as_str().unwrap().contains("no_such_key"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -374,7 +402,10 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
                 assert_eq!(provider["registered"], false, "{provider}");
                 assert_eq!(provider["availability"], "not_enabled", "{provider}");
                 assert!(
-                    provider["fix"].as_str().unwrap().contains("provider enable"),
+                    provider["fix"]
+                        .as_str()
+                        .unwrap()
+                        .contains("provider enable"),
                     "{provider}"
                 );
             } else if !needs_a_program.contains(&name) {
@@ -417,7 +448,12 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     assert_eq!(add.status.code(), Some(1), "{added}");
     assert_eq!(added["action"], "target.probe");
     assert_eq!(added["error"]["code"], "action_not_built");
-    let file = bare.project.path().join("targets").join("example").join("target.yaml");
+    let file = bare
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("target.yaml");
     assert!(file.is_file());
 
     // `lint` checks the draft that `add` wrote.

@@ -15,7 +15,10 @@ use super::parse::{Tree, command_line};
 
 /// Exit code when the engine could not be reached or started. Not raised
 /// in this build: every command runs the engine in its own process.
-#[allow(dead_code, reason = "the code of the output contract; raised when commands become clients")]
+#[allow(
+    dead_code,
+    reason = "the code of the output contract; raised when commands become clients"
+)]
 pub(crate) const ENGINE_UNREACHABLE: u8 = 4;
 
 /// A response for a failure met before any action was dispatched.
@@ -124,8 +127,8 @@ pub(crate) fn render(response: &Response, tree: &Tree, json: bool) -> Finished {
             lines(result, 0, &mut stdout);
         }
         if let Some(next) = &response.next {
-            let line = command_line(tree, &next.action, &next.args)
-                .unwrap_or_else(|| next.action.clone());
+            let line =
+                command_line(tree, &next.action, &next.args).unwrap_or_else(|| next.action.clone());
             stdout.push_str(&format!("\nnext, {}:\n  {line}\n", next.when));
         }
     }

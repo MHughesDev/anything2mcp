@@ -303,9 +303,7 @@ async fn call(
         if matches!(outcome, Some(Called::Answered(_))) {
             let _ = messages.send(progress(PROGRESS_STEPS)).await;
         }
-        let _ = messages
-            .send(called(&id, &name, outcome, stateless))
-            .await;
+        let _ = messages.send(called(&id, &name, outcome, stateless)).await;
     });
     Answer::Stream(stream)
 }

@@ -275,7 +275,10 @@ impl McpService {
                 );
             }
         };
-        if message.get("params").is_some_and(|given| !given.is_object()) {
+        if message
+            .get("params")
+            .is_some_and(|given| !given.is_object())
+        {
             return malformed(
                 codes::INVALID_PARAMS,
                 id,

@@ -1,5 +1,7 @@
 //! What the process logs when the MCP endpoint is used, at the most
-//! verbose level. The SDK logs through the `tracing` crate.
+//! verbose level. The endpoint's protocol layer is this crate's own and
+//! logs nothing; this holds it to that, so that a caller's input, a
+//! result, or a token cannot reach a log through this door.
 //!
 //! This test is a program of its own, because which events a subscriber is
 //! offered is decided once for the whole process: beside other tests, the
@@ -101,7 +103,7 @@ impl tracing::Subscriber for Captured {
 /// One thread, so that everything the endpoint logs is logged where the
 /// capture is.
 #[tokio::test]
-async fn the_sdks_log_at_its_most_verbose_holds_no_secret_of_the_engine_and_no_token() {
+async fn the_log_at_its_most_verbose_holds_nothing_that_passed_through_the_door() {
     let log = Arc::new(Mutex::new(String::new()));
     let _guard = tracing::subscriber::set_default(Captured(Arc::clone(&log)));
     let world = World::ready().await;
@@ -141,16 +143,15 @@ async fn the_sdks_log_at_its_most_verbose_holds_no_secret_of_the_engine_and_no_t
     let (_, ended) = stdio.close().await;
     ended.unwrap();
 
+    tracing::info!("the capture is listening");
     let logged = log.lock().unwrap().clone();
-    // The capture works: the SDK's own events are in it, results included.
-    assert!(logged.contains("rmcp"), "{logged}");
-    assert!(logged.contains(a2m_core::REDACTED), "{logged}");
-    // What the engine holds as a secret reached the SDK redacted, and the
-    // caller's token never reached it.
-    assert!(!logged.contains(SECRET));
-    assert!(!logged.contains(token));
-    // What the SDK does log is the caller's own message, input included.
-    // The process's log must therefore pass the redactor or stay above the
-    // trace level; this crate cannot make the SDK say less.
-    assert!(logged.contains(marker));
+    // The capture works: an event made on this thread is in it.
+    assert!(logged.contains("the capture is listening"), "{logged}");
+    // This crate logs nothing of its own.
+    assert!(!logged.contains("a2m_mcp"), "{logged}");
+    // Nothing that passed through the door is in the log: no secret of
+    // the engine, no token, and none of the caller's input.
+    assert!(!logged.contains(SECRET), "{logged}");
+    assert!(!logged.contains(token), "{logged}");
+    assert!(!logged.contains(marker), "{logged}");
 }

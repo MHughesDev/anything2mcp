@@ -83,7 +83,13 @@ async fn a_read_behind_a_bearer_token_fails_without_it_reads_with_it_and_rests_w
 
     // The secret is stored, and storing it gives nothing back.
     let stored = world
-        .agent(&["secret", "set", "example/service/token", "--value", BEARER_TOKEN])
+        .agent(&[
+            "secret",
+            "set",
+            "example/service/token",
+            "--value",
+            BEARER_TOKEN,
+        ])
         .await;
     assert_eq!(stored.finished.code, 0, "{:?}", stored.finished);
     assert!(!stored.finished.stdout.contains(BEARER_TOKEN));
@@ -113,7 +119,12 @@ async fn a_read_behind_a_bearer_token_fails_without_it_reads_with_it_and_rests_w
     app.revoke(Credential::BearerToken).await.unwrap();
     let after = world.agent(&call).await;
     assert_eq!(after.finished.code, 3, "{:?}", after.finished);
-    assert_eq!(after.result()["status"], "needs_login", "{:?}", after.finished);
+    assert_eq!(
+        after.result()["status"],
+        "needs_login",
+        "{:?}",
+        after.finished
+    );
     assert!(app.auth_report().await.unwrap().refused_tokens >= 1);
     outputs.push(after.finished.clone());
 
@@ -137,7 +148,10 @@ async fn a_secret_the_system_itself_returns_is_masked_and_is_in_nothing() {
     let before = world.agent(&["tool", "call", TOOL]).await;
     assert_ne!(before.finished.code, 0, "{:?}", before.finished);
     assert!(
-        service.seen().iter().all(|seen| seen.ends_with("signed_in=true")),
+        service
+            .seen()
+            .iter()
+            .all(|seen| seen.ends_with("signed_in=true")),
         "{:?}",
         service.seen()
     );
