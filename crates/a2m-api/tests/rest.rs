@@ -911,3 +911,47 @@ async fn a_kill_switch_is_the_policy_engines_refusal_and_status_403() {
     assert_refusal(&body, "policy", "kill_switch_on");
     world.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_idempotency_key_is_the_same_run_and_the_run_list_shows_it() {
+    let world = World::ready().await;
+    let mut call = write_call();
+    call["input"]["item_code"] = json!("L-320");
+    call["wait_seconds"] = json!(5);
+    let url = format!("{}/api/v1/actions/tool.call", world.base);
+    let send = |body: Json| {
+        world.raw(
+            world
+                .http
+                .post(&url)
+                .header("content-type", "application/json")
+                .header("idempotency-key", "example-key-320")
+                .body(body.to_string()),
+        )
+    };
+    let (status, first) = send(call.clone()).await;
+    assert_eq!(status, 202, "{first}");
+    let run = first["result"]["run_id"].as_str().unwrap().to_owned();
+    let (_, again) = send(call.clone()).await;
+    assert_eq!(again["result"]["run_id"], run.as_str(), "{again}");
+    assert_eq!(again["result"]["repeated"], true);
+    // Another input under the key is refused by name.
+    let mut other = call.clone();
+    other["input"]["item_code"] = json!("L-321");
+    let (status, refused) = send(other).await;
+    assert_eq!(status, 400, "{refused}");
+    assert_refusal(&refused, "input", "idempotency_key_reused");
+    // The run list, by its route, holds the one run, and finds it by key.
+    let (status, listed) = world.get("/api/v1/runs?tool=example_item_upsert").await;
+    assert_eq!(status, 200, "{listed}");
+    let runs = listed["result"]["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{listed}");
+    assert_eq!(runs[0]["run_id"], run.as_str());
+    assert_eq!(runs[0]["waits_for_person"], true);
+    let (_, by_key) = world
+        .get("/api/v1/runs?idempotency_key=example-key-320")
+        .await;
+    assert_eq!(by_key["result"]["runs"][0]["run_id"], run.as_str());
+    assert_eq!(world.app.write_count("A-102", "L-320").await.unwrap(), 0);
+    world.close().await;
+}

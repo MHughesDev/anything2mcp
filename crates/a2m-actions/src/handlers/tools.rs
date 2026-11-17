@@ -543,7 +543,8 @@ handler!(
             None => None,
         };
         if let Some(keyed) = &keyed {
-            let looked = looked_up(kernel, principal, keyed, (&name, &environment, &input_hash)).await?;
+            let looked =
+                looked_up(kernel, principal, keyed, (&name, &environment, &input_hash)).await?;
             match looked {
                 Looked::Free | Looked::Held => {}
                 Looked::Reused => {
@@ -654,8 +655,11 @@ handler!(
                 // Nothing was admitted, so the key is let go: the same call
                 // may be made again with it.
                 if let Some(keyed) = &keyed {
-                    let (workspace, person, key) =
-                        (principal.workspace, principal.principal.id, keyed.key.clone());
+                    let (workspace, person, key) = (
+                        principal.workspace,
+                        principal.principal.id,
+                        keyed.key.clone(),
+                    );
                     let _ = store
                         .write(Durability::Synced, move |tx| {
                             tx.ledger().release_caller_key(&workspace, &person, &key)
@@ -677,8 +681,11 @@ handler!(
             Admitted::New { run, .. } | Admitted::Existing { run } => run,
         };
         if let Some(keyed) = &keyed {
-            let (workspace, person, key) =
-                (principal.workspace, principal.principal.id, keyed.key.clone());
+            let (workspace, person, key) = (
+                principal.workspace,
+                principal.principal.id,
+                keyed.key.clone(),
+            );
             store
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().bind_caller_key(&workspace, &person, &key, run)
@@ -843,9 +850,15 @@ handler!(
             principal: person,
             states,
             tool: call.text("tool").map(OperationName::new).transpose()?,
-            target: call.text("target").map(a2m_core::TargetName::new).transpose()?,
+            target: call
+                .text("target")
+                .map(a2m_core::TargetName::new)
+                .transpose()?,
             since: call.int("since").map(a2m_core::Timestamp::from_unix_millis),
-            caller_key: call.text("idempotency_key").map(CallerKey::new).transpose()?,
+            caller_key: call
+                .text("idempotency_key")
+                .map(CallerKey::new)
+                .transpose()?,
             after,
             // One more than is shown, to know whether the list goes on.
             limit: limit + 1,
@@ -858,7 +871,11 @@ handler!(
                 // is yes when it cannot be read.
                 let doubts = rows
                     .iter()
-                    .map(|row| tx.ledger().in_doubt(row.id).map_or(true, |found| !found.is_empty()))
+                    .map(|row| {
+                        tx.ledger()
+                            .in_doubt(row.id)
+                            .map_or(true, |found| !found.is_empty())
+                    })
                     .collect::<Vec<bool>>();
                 Ok((rows, doubts))
             })
@@ -884,7 +901,11 @@ handler!(
             out["after"] = json!(last.id.to_string());
             let mut args = call.input.clone();
             args.insert("after".to_owned(), json!(last.id.to_string()));
-            output = output.then(Next::new("run.list", Json::Object(args), "for the next page"));
+            output = output.then(Next::new(
+                "run.list",
+                Json::Object(args),
+                "for the next page",
+            ));
         }
         output.result = out;
         Ok(output)

@@ -29,12 +29,12 @@ fn code_of(response: &a2m_actions::Response) -> (FailureClass, String) {
 
 impl World {
     /// The same caller, as the person at a terminal and not their agent.
-    fn person(&self) -> Caller {
+    pub(super) fn person(&self) -> Caller {
         Caller::new(self.caller.principal.clone(), FrontDoor::Command, false)
     }
 
     /// Another person of the same workspace.
-    fn stranger(&self) -> Caller {
+    pub(super) fn stranger(&self) -> Caller {
         Caller::new(
             Principal {
                 principal: PrincipalRef::person(PrincipalId::from_bytes([0x5a; 16])),
@@ -46,7 +46,12 @@ impl World {
         )
     }
 
-    async fn call_as(&self, caller: &Caller, action: &str, input: Json) -> a2m_actions::Response {
+    pub(super) async fn call_as(
+        &self,
+        caller: &Caller,
+        action: &str,
+        input: Json,
+    ) -> a2m_actions::Response {
         self.kernel
             .dispatch(Request::new(action, input, caller.clone()))
             .await
@@ -54,7 +59,7 @@ impl World {
 
     /// Publishes the built-in set of this machine with `change` made to it,
     /// as an administrator with a person present would.
-    async fn publish(&self, change: impl FnOnce(&mut a2m_policy::PolicyLayers)) {
+    pub(super) async fn publish(&self, change: impl FnOnce(&mut a2m_policy::PolicyLayers)) {
         let user = self.caller.principal.principal().clone();
         let mut layers = BuiltIn::local(user.id, self.caller.principal.workspace())
             .layers()

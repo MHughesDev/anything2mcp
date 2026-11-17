@@ -67,7 +67,10 @@ pub enum Resource {
 pub struct Context {
     pub effect: EffectClass, pub hazard: Hazard, pub records: Option<u32>,
     pub workspace: WorkspaceId, pub toolset: Option<ToolsetName>, pub environment: Environment,
-    pub identity_mode: Option<IdentityMode>, pub caller_is_agent: bool, pub acting_for: Option<ActingFor>,
+    pub identity_mode: Option<IdentityMode>, pub acting_for: Option<ActingFor>,
+    pub caller_is_agent: bool, // true for every caller of the local channel, MCP, and an SDK; in one
+                               // process the process's view of its terminal: a claim, never proof of a
+                               // person, which only the presence prompt gives (decision 0158)
     pub test_records: bool, // every record of the run is a declared test record of a test environment
 }
 pub enum ActingFor { LocalUser(PrincipalId), TokenSubject(PrincipalId), Delegation(PrincipalId) }

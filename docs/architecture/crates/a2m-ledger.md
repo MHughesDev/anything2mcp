@@ -24,7 +24,7 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 - Findings and the unknowns ledger, as stored data.
 - Published versions and their plan bytes, with the hash checked on every load.
 - The audit chain, one per workspace.
-- The outbox and callers' idempotency keys.
+- The outbox, and callers' idempotency keys: the table `caller_idempotency` (migration `0013`), which keeps the workspace's keyed digest of a key, never the key. The digest is made under the purpose of record keys, with bytes that begin with a zero byte, which no record key's canonical form does; a purpose of its own in `a2m-core` would be cleaner, and moving to one makes the keys held then unknown.
 
 It must never: read or write a target system; decide whether something may happen; normalize or compare business values itself (it compares digests it is given); decode a plan; hold a secret in the clear; let a row be written outside a transaction.
 
@@ -44,7 +44,7 @@ Table owners. The ledger's and the policy engine's tables exist; the others are 
 
 | Owner | Tables |
 | --- | --- |
-| `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`. Not built yet: `workspaces`, `run_steps`, `outbox`, `caller_idempotency` |
+| `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`, `caller_idempotency`. Not built yet: `workspaces`, `run_steps`, `outbox` |
 | `a2m-policy` | `decisions`, `approvals`, and the rest of what its own migrations create: `principals`, `grants`, `policy_versions`, `consents`, `delegations`, `kill_switches`, `quota_counters` |
 | `a2m-auth` | `sessions`, `session_events`, `session_state` |
 | `a2m-sched` | Built: `jobs`, with its `session_key` column; `runners`; `resource_holds`; `caller_turns`; `scheduler_holds`; `budgets`, which holds the rate buckets |
@@ -162,7 +162,20 @@ impl Ledger<'_, '_> {
     pub fn records(&mut self, run: RunId) -> Result<Vec<RecordRow>, Failure>;
     pub fn record(&mut self, record: RecordRef) -> Result<RecordRow, Failure>;
     pub fn locks(&mut self, run: RunId) -> Result<Vec<LockRow>, Failure>;
+    // A caller's own runs and idempotency keys (decision 0160).
+    pub fn runs(&mut self, query: &RunQuery) -> Result<Vec<RunRow>, Failure>;  // newest first, at most RUN_PAGE_MOST (200)
+    pub fn caller_key(&mut self, ws: &WorkspaceId, who: &PrincipalId, key: &CallerKey) -> Result<Option<CallerKeyRow>, Failure>;
+    pub fn hold_caller_key(&mut self, ws, who, key, request: &Digest) -> Result<(), Failure>;   // before the run is admitted
+    pub fn bind_caller_key(&mut self, ws, who, key, run: RunId) -> Result<(), Failure>;        // once; a run of the same caller
+    pub fn release_caller_key(&mut self, ws, who, key) -> Result<(), Failure>;                 // an unbound key only
+    pub fn run_called_since(&mut self, ws, who, call: (&OperationName, &Environment, &Digest), since: Timestamp)
+        -> Result<Option<RunId>, Failure>;   // the run a held key's call was admitted as
 }
+pub struct RunQuery { pub workspace, pub principal, pub states: Vec<RunState>, pub tool, pub target,
+                      pub since: Option<Timestamp>, pub caller_key: Option<CallerKey>, pub after: Option<RunId>, pub limit: u32 }
+pub struct CallerKey(/* 1 to 200 printable ASCII, no space; debug prints nothing of it */);
+impl CallerKey { pub fn new(text: &str) -> Result<CallerKey, Failure>; pub fn as_str(&self) -> &str; }
+pub struct CallerKeyRow { pub request: Digest, pub run: Option<RunId>, pub held_at: Timestamp }
 pub struct RecordRef { pub run: RunId, pub step_seq: u32, pub record_seq: u32 }
 pub enum WriteClearance { Approval(ApprovalId), PreApproved(DecisionId) }
 pub struct ReadBack { pub digest: Digest, pub after: Option<BlobRef>, pub evidence: BlobRef }
@@ -297,7 +310,7 @@ The codes are constants in the crate's `codes` module.
 3. Done: reconcile: `in_doubt`, `settle`, quarantine. Not built: a way for a person to release the quarantined lock of a run that ended final with a record still in doubt.
 4. Done: assigned keys and stored outputs on record rows. Not built: values known before the commit point, recorded before `acted`.
 5. Done: findings and the unknowns ledger. Findings in an older format are kept and are not listed; marking them as old in a listing is not built.
-6. Done: the audit chain, and published versions with their plans. Not built: the outbox, callers' idempotency keys, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
+6. Done: the audit chain, and published versions with their plans. Done since (decision 0160): callers' idempotency keys and a caller's listing of their runs. Not built: the outbox, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
 7. Done (the safety audit, decision 0145): the policy engine's key; `begin_writes` reading the whole clearance; the triggers of migration 0012; a sent write in doubt whatever its class; the intent's mode, a landed record's outputs, and the evidence of a `not landed` read kept with the record; the `testing` feature.
 8. Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 

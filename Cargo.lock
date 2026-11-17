@@ -20,6 +20,7 @@ dependencies = [
  "a2m-vault",
  "example-app",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

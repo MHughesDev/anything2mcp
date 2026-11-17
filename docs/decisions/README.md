@@ -163,3 +163,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0157 | [TLS is switched on with the provider stated in each client](0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md) | Accepted (design decision) |
 | 0158 | [The product crate and the local engine after their safety audit](0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md) | Accepted (design decision) |
 | 0159 | [A lost answer is a write in doubt at the doors and in the clients](0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md) | Accepted (design decision) |
+| 0160 | [An idempotency key gives back its run, and `run.list` shows a caller's own runs](0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md) | Accepted (design decision) |

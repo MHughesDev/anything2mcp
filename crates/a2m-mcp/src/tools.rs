@@ -119,7 +119,15 @@ pub(crate) struct Route {
     /// How the call's run can be followed for a caller that asked for
     /// progress.
     pub(crate) follows: Follows,
+    /// The idempotency key the call carried in its `_meta`, under
+    /// [`KEY_META`]: the same call with the same key is the same run.
+    pub(crate) key: Option<String>,
 }
+
+/// The key of a call's idempotency key in a request's `_meta`. A request's
+/// JSON-RPC id is the connection's and not a key: it is not carried over a
+/// new connection, and the stateless revision has no connection at all.
+pub(crate) const KEY_META: &str = "anything2mcp/idempotency_key";
 
 /// How a call's run is followed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,13 +252,23 @@ impl Following {
 
 impl Core {
     async fn dispatch(&self, action: &str, input: Json, asker: &Asker) -> Response {
+        self.dispatch_keyed(action, input, None, asker).await
+    }
+
+    /// The same, with the idempotency key the call carried in its `_meta`.
+    /// The dispatcher checks it.
+    async fn dispatch_keyed(
+        &self,
+        action: &str,
+        input: Json,
+        key: Option<&str>,
+        asker: &Asker,
+    ) -> Response {
         self.dispatched.fetch_add(1, Ordering::Relaxed);
-        self.kernel
-            .dispatch(
-                Request::new(action, input, asker.caller.clone())
-                    .in_project_folder(asker.project.as_ref()),
-            )
-            .await
+        let mut request = Request::new(action, input, asker.caller.clone())
+            .in_project_folder(asker.project.as_ref());
+        request.idempotency_key = key.map(str::to_owned);
+        self.kernel.dispatch(request).await
     }
 
     /// The tools this endpoint lists: the same tools in the same order
@@ -381,6 +399,7 @@ impl Core {
             input,
             published,
             follows,
+            key: None,
         })
     }
 
@@ -388,7 +407,9 @@ impl Core {
     /// done. The input is validated by the dispatcher against the full
     /// schema, whatever a list showed.
     pub(crate) async fn call(&self, route: Route, asker: &Asker) -> Called {
-        let response = self.dispatch(&route.action, route.input, asker).await;
+        let response = self
+            .dispatch_keyed(&route.action, route.input, route.key.as_deref(), asker)
+            .await;
         self.called(&response, route.published)
     }
 
@@ -403,7 +424,12 @@ impl Core {
         asker: &Asker,
     ) -> Result<Following, Called> {
         let response = self
-            .dispatch(&route.action, without_wait(&route.input), asker)
+            .dispatch_keyed(
+                &route.action,
+                without_wait(&route.input),
+                route.key.as_deref(),
+                asker,
+            )
             .await;
         let called = self.called(&response, route.published);
         let run = response
@@ -507,8 +533,13 @@ impl Core {
     /// waits for them. Reading a run asks nobody anything.
     pub(crate) async fn finish(&self, route: Route, following: Following, asker: &Asker) -> Called {
         let response = if following.stand == Stand::Rests {
-            self.dispatch(&route.action, without_wait(&route.input), asker)
-                .await
+            self.dispatch_keyed(
+                &route.action,
+                without_wait(&route.input),
+                route.key.as_deref(),
+                asker,
+            )
+            .await
         } else {
             self.dispatch(
                 "run.get",

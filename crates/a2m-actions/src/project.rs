@@ -198,6 +198,27 @@ pub(crate) fn check(
     if !is_file {
         return Err("it holds no project file, `anything2mcp.toml`");
     }
+    // Nobody but the person, or the administrator, may change the folder or
+    // its project file: another account that can write either can make the
+    // folder a project, or change what it says. Inside the folder for
+    // temporary files, which everyone may write, every folder between it
+    // and the project is held to the same rule: that is what keeps the
+    // folder excused from the rules above.
+    let mut kept = vec![folder.clone(), file.clone()];
+    if temporary && let Some(temp) = places.temp.as_ref().map(|temp| resolved(temp)) {
+        kept.extend(
+            folder
+                .ancestors()
+                .skip(1)
+                .take_while(|above| above.starts_with(&temp) && *above != temp)
+                .map(Path::to_path_buf),
+        );
+    }
+    for path in &kept {
+        if let Some(why) = others_may_change(path) {
+            return Err(why);
+        }
+    }
     let text = std::fs::read_to_string(&file)
         .map_err(|_| "its project file, `anything2mcp.toml`, cannot be read")?;
     let alone = Sources {
@@ -224,6 +245,46 @@ pub(crate) fn check(
         return Err("it is not inside a folder the setting `files.allowed_roots` allows");
     }
     Ok(folder)
+}
+
+/// Why an account other than this process's user may change the file or
+/// folder at `path`, or `None` when only that user or the administrator
+/// may. The rule is the client's own (`kept_by` of `a2m-local`), kept here
+/// because this crate is below that one: the owner of the entry, and of
+/// what a link at the path leads to, is this user or the administrator;
+/// every account may not write it; and a group may write it only when the
+/// group is this user's primary group. On Windows the owner and the access
+/// list are not read yet, and nothing is refused by this rule.
+fn others_may_change(path: &Path) -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let me = rustix::process::getuid().as_raw();
+        let mine = rustix::process::getgid().as_raw();
+        let (Ok(link), Ok(found)) = (std::fs::symlink_metadata(path), std::fs::metadata(path))
+        else {
+            return Some("who may change it cannot be read");
+        };
+        if [&link, &found]
+            .iter()
+            .any(|meta| meta.uid() != me && meta.uid() != 0)
+        {
+            return Some("it, or its project file, belongs to another account");
+        }
+        let mode = found.mode();
+        if mode & 0o002 != 0 {
+            return Some("every account may change it, or its project file");
+        }
+        if mode & 0o020 != 0 && found.gid() != mine {
+            return Some("a group of other accounts may change it, or its project file");
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 /// Checks the path of a source file, as a call wrote it: a path inside the
@@ -357,6 +418,48 @@ mod tests {
             std::os::unix::fs::symlink(home.join(".keys"), &link).unwrap();
             assert!(look(&link).unwrap_err().contains("hidden folder"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_project_folder_or_file_that_others_may_change_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = Folder::new("kept");
+        let home = root.0.join("home").join("pat");
+        std::fs::create_dir_all(&home).unwrap();
+        let paths = Paths::under(&root.0.join("engine"));
+        let settings = Settings::defaults();
+        let places = places(&home, &[]);
+        let look = |folder: &Path| check(folder, &paths, &settings, &places);
+        let mode = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let work = root.project(&["home", "pat", "work"]);
+        mode(&work, 0o755);
+        mode(&work.join("anything2mcp.toml"), 0o644);
+        assert_eq!(look(&work).unwrap(), work);
+        // A project file every account may write.
+        mode(&work.join("anything2mcp.toml"), 0o666);
+        assert!(look(&work).unwrap_err().contains("every account"));
+        mode(&work.join("anything2mcp.toml"), 0o644);
+        // A folder every account may write.
+        mode(&work, 0o777);
+        assert!(look(&work).unwrap_err().contains("every account"));
+        mode(&work, 0o755);
+        assert_eq!(look(&work).unwrap(), work);
+
+        // Inside the folder for temporary files, the folders between it and
+        // the project are held to the rule as well.
+        let excused = Places::of(
+            &Env::with(OsFamily::Linux, &[("HOME", home.to_str().unwrap())]),
+            Some(root.0.clone()),
+        );
+        let shared = root.project(&["shared", "work"]);
+        mode(&root.0.join("shared"), 0o777);
+        let refused = check(&shared, &paths, &settings, &excused).unwrap_err();
+        assert!(refused.contains("every account"), "{refused}");
+        mode(&root.0.join("shared"), 0o755);
+        assert_eq!(check(&shared, &paths, &settings, &excused).unwrap(), shared);
     }
 
     #[test]

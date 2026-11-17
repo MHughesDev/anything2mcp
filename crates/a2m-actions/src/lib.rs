@@ -40,6 +40,8 @@ pub mod settings;
 mod signals;
 mod tools;
 
+/// An idempotency key, as the store keeps it (decision 0160).
+pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
     HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
@@ -81,6 +83,7 @@ extern crate self as a2m_actions;
 mod tests {
     mod audit;
     mod kernel;
+    mod keys;
     mod runs;
     mod second;
 }

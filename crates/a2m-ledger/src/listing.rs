@@ -102,7 +102,8 @@ pub struct CallerKeyRow {
     pub held_at: Timestamp,
 }
 
-const SELECT_RUNS: &str = "SELECT id, workspace_id, principal_id, client_label, tool_name, tool_kind, target,
+const SELECT_RUNS: &str =
+    "SELECT id, workspace_id, principal_id, client_label, tool_name, tool_kind, target,
         target_version_hash, environment, effect, input_hash, state, state_class,
         state_code, attempt, lease_epoch, diff_hash, diff_ref, approval_id,
         decision_id, result_ref, trace_ref, created_at, started_at, finished_at

@@ -942,3 +942,78 @@ async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_r
     assert!(answer["result"]["structuredContent"]["run_id"].is_string());
     assert_eq!(service.dispatched(), before + 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_made_again_with_its_key_is_the_same_run_and_one_write() {
+    let world = World::ready().await;
+    let http = Http::new(world.service("use", McpSettings::local()));
+    let input = json!({
+        "order_id": "A-102",
+        "item_code": "L-310",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    });
+    // By the tool's own name, the key in the call's `_meta`.
+    let by_name = |id: i64| {
+        m(
+            id,
+            "tools/call",
+            json!({"name": ITEM_UPSERT, "arguments": input,
+                "_meta": {"anything2mcp/idempotency_key": "example-key-310"}}),
+        )
+    };
+    let first = http.post(&by_name(1)).await;
+    let run = first.only()["result"]["structuredContent"]["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let again = http.post(&by_name(2)).await;
+    let again = &again.only()["result"]["structuredContent"];
+    assert_eq!(again["run_id"], run.as_str(), "{again}");
+    assert_eq!(again["repeated"], true);
+
+    // Approved and resumed, then made again: the finished run, one write.
+    world.approve(&run).await;
+    let done = http
+        .post(&call(3, "a2m_run_resume", json!({"run_id": run})))
+        .await;
+    assert_eq!(
+        done.only()["result"]["structuredContent"]["status"],
+        "completed"
+    );
+    let finished = http.post(&by_name(4)).await;
+    let finished = &finished.only()["result"]["structuredContent"];
+    assert_eq!(finished["run_id"], run.as_str());
+    assert_eq!(finished["status"], "completed");
+    assert_eq!(world.app.write_count("A-102", "L-310").await.unwrap(), 1);
+
+    // Through the generic call, the key as its argument: the same rules.
+    let generic = |id: i64, code: &str| {
+        let mut input = input.clone();
+        input["item_code"] = json!(code);
+        call(
+            id,
+            "a2m_tool_call",
+            json!({"tool": ITEM_UPSERT, "input": input, "idempotency_key": "example-key-311"}),
+        )
+    };
+    let one = http.post(&generic(5, "L-311")).await;
+    let one = one.only()["result"]["structuredContent"]["run_id"].clone();
+    let two = http.post(&generic(6, "L-311")).await;
+    assert_eq!(two.only()["result"]["structuredContent"]["run_id"], one);
+    // Another input under the key is refused by name.
+    let other = http.post(&generic(7, "L-312")).await;
+    let other = text_of(other.only());
+    assert_eq!(other["code"], "idempotency_key_reused", "{other}");
+    // A key that is not text is not a key.
+    let bad = http
+        .post(&m(
+            8,
+            "tools/call",
+            json!({"name": ITEM_UPSERT, "arguments": input,
+                "_meta": {"anything2mcp/idempotency_key": 7}}),
+        ))
+        .await;
+    assert_eq!(code(bad.only()), -32602);
+}

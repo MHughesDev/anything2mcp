@@ -200,6 +200,39 @@ async fn a_tool_call_whose_answer_is_lost_after_the_engine_took_it_is_a_write_in
 }
 
 #[tokio::test]
+async fn a_lost_answer_names_the_exact_next_call_with_a_key_and_without_one() {
+    let mut proxy = start(Engine::Drops);
+    // No key: the caller's runs of this tool since the call was sent, by
+    // the exact call that lists them.
+    let error = proxy.error_for(&tool_call(1)).await;
+    let fix = error["data"]["fix"].as_str().unwrap().to_owned();
+    assert!(fix.contains(r#""action":"run.list""#), "{fix}");
+    assert!(
+        fix.contains(r#""tool":"example_items_item_upsert""#),
+        "{fix}"
+    );
+    assert!(fix.contains(r#""since":"#), "{fix}");
+    // A key in `_meta`, or in the arguments of the generic call: the same
+    // call again with the same key.
+    let keyed = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "example_items_item_upsert", "arguments": {"code": "L-1"},
+            "_meta": {"anything2mcp/idempotency_key": "example-key-1"}}});
+    let generic = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "a2m_tool_call", "arguments": {"tool": "example_items_item_upsert",
+            "input": {"code": "L-1"}, "idempotency_key": "example-key-2"}}});
+    for message in [keyed, generic] {
+        let error = proxy.error_for(&message).await;
+        assert_eq!(error["data"]["retry_safe"], false, "{error}");
+        let fix = error["data"]["fix"].as_str().unwrap();
+        assert!(
+            fix.starts_with("Make the same call again, with the same idempotency key"),
+            "{fix}"
+        );
+        assert!(!fix.contains("example-key"), "{fix}");
+    }
+}
+
+#[tokio::test]
 async fn a_tool_call_refused_before_it_was_sent_may_be_made_again() {
     for (engine, code) in [
         (Engine::Unreachable, "engine_unreachable"),

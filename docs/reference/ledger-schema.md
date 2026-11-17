@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, and `0009-actions-installation-toolsets-and-scout-stages.sql`. There is no `0008`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, `0009-actions-installation-toolsets-and-scout-stages.sql`, `0011-actions-run-sources.sql`, `0012-ledger-rules-three-five-and-seven-in-triggers.sql`, and `0013-ledger-caller-idempotency.sql`. There is no `0008` or `0010`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -266,9 +266,11 @@ Rows are inserted in the same transaction as the change they announce, so a mess
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `principal_id`, `key` | id, text | Primary key; the caller's own idempotency key on REST calls |
-| `request_hash`, `run_id` | text, id | The same key with a different request is refused |
-| `expires_at` | ts | Cleanup |
+| `workspace_id`, `principal_id`, `key_digest` | id, id, text | Primary key; the workspace's keyed digest of the caller's own idempotency key, never the key |
+| `request_hash`, `run_id` | text, id | The digest of the call: tool, environment, input and source. The same key with a different request is refused. The run is empty from the moment the key is held, before the run is admitted, until it is bound |
+| `held_at` | ts | When the key was held. A bound key holds for as long as its run is kept, and leaves with it |
+
+As built by migration `0013-ledger-caller-idempotency.sql` ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)).
 
 ## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls, actions_run_sources
 

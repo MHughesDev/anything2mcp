@@ -41,8 +41,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinSet};
 
-use crate::codes;
+use crate::codes::{self, LostCall};
 use crate::http::{HttpRequest, HttpResponse, VERSION_HEADER, VERSION_KEY, mcp_path};
+use crate::tools::KEY_META;
 
 /// The longest line read, in bytes: the endpoint's own cap on a request
 /// body. A longer line is answered with -32600 and the rest of it is read
@@ -189,6 +190,7 @@ where
             Asked {
                 id: id.clone(),
                 may_write,
+                call: may_write.then(|| lost_call(&message)),
             },
             lines.clone(),
         ));
@@ -255,6 +257,57 @@ struct Asked {
     id: Option<Json>,
     /// Whether it is a tool call, which may start a run that writes.
     may_write: bool,
+    /// For a tool call, what its caller needs to find its run if the
+    /// answer is lost.
+    call: Option<LostCall>,
+}
+
+/// The name of the control tool that calls a published tool by name.
+const TOOL_CALL: &str = "a2m_tool_call";
+
+/// What a caller needs to find a tool call's run: whether it carries an
+/// idempotency key, and the published tool it names. A tool's name is
+/// shown only when it is one a target could publish.
+fn lost_call(message: &Json) -> LostCall {
+    let name = message.pointer("/params/name").and_then(Json::as_str);
+    let arguments = message.pointer("/params/arguments");
+    let in_meta = message
+        .pointer("/params/_meta")
+        .and_then(|meta| meta.get(KEY_META))
+        .is_some_and(Json::is_string);
+    let (tool, in_arguments) = match name {
+        Some(TOOL_CALL) => (
+            arguments
+                .and_then(|given| given.get("tool"))
+                .and_then(Json::as_str),
+            arguments
+                .and_then(|given| given.get("idempotency_key"))
+                .is_some_and(Json::is_string),
+        ),
+        Some(name) if !name.starts_with("a2m_") => (Some(name), false),
+        _ => (None, false),
+    };
+    let tool = tool
+        .filter(|tool| {
+            !tool.is_empty()
+                && tool.len() <= 128
+                && tool
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        })
+        .map(str::to_owned);
+    // The moment is shown to the caller and decides nothing; it is the
+    // wall clock of the machine the proxy runs on, a minute early.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        });
+    LostCall {
+        keyed: in_meta || in_arguments,
+        tool,
+        since: (now - 60_000).max(0),
+    }
 }
 
 /// The `data` of an error for a request that was not handed to the
@@ -266,9 +319,10 @@ fn not_sent(failure: &Failure) -> Json {
 }
 
 /// The `data` of an error for a tool call whose answer was lost after the
-/// engine may have had it: a write in doubt, never "not sent".
-fn in_doubt() -> Json {
-    let failure = codes::answer_lost();
+/// engine may have had it: a write in doubt, never "not sent", with the
+/// exact next step for this call.
+fn in_doubt(call: Option<&LostCall>) -> Json {
+    let failure = call.map_or_else(codes::answer_lost, codes::answer_lost_for);
     let mut data = codes::failure_data(&failure);
     data["retry_safe"] = json!(false);
     data
@@ -324,7 +378,10 @@ async fn exchange(
     // call is a write in doubt; any other request wrote nothing.
     let lost = |failure: &Failure| {
         if asked.may_write {
-            unanswered(codes::answer_lost().message(), Some(in_doubt()))
+            unanswered(
+                codes::answer_lost().message(),
+                Some(in_doubt(asked.call.as_ref())),
+            )
         } else {
             unanswered(failure.message(), Some(not_sent(failure)))
         }
@@ -428,7 +485,10 @@ async fn exchange(
             ),
         )
     } else {
-        unanswered(codes::answer_lost().message(), Some(in_doubt()))
+        unanswered(
+            codes::answer_lost().message(),
+            Some(in_doubt(asked.call.as_ref())),
+        )
     };
     if let Some(line) = line {
         let _ = lines.send(line).await;

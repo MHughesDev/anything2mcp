@@ -48,7 +48,46 @@ pub(crate) fn answer_lost() -> Failure {
         FailureClass::PossibleCommit,
         ANSWER_LOST,
         "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
-        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs (`run.list`), or tell the person that the answer was lost so that they can check.",
+        "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first in your recent runs: call `a2m_action_run` with the action `run.list` and `since` the moment the call was sent, and do what that run's `next` says.",
+    )
+}
+
+/// What the proxy knows of a tool call whose answer was lost: whether it
+/// carried an idempotency key, the published tool it named when it named
+/// one, and when it was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LostCall {
+    pub(crate) keyed: bool,
+    pub(crate) tool: Option<String>,
+    /// Whole milliseconds since 1970 in UTC, a minute before the call was
+    /// sent, so that a clock a little apart from the engine's still finds
+    /// the run.
+    pub(crate) since: i64,
+}
+
+/// The same failure, with the exact next step: with a key, the same call
+/// again with the same key; without one, the caller's runs since the call
+/// was sent, by the exact call that lists them.
+pub(crate) fn answer_lost_for(call: &LostCall) -> Failure {
+    let fix = if call.keyed {
+        "Make the same call again, with the same idempotency key and nothing changed: it gives back the run the first call started, finished or not, and starts no other.".to_owned()
+    } else {
+        let mut input = serde_json::Map::new();
+        input.insert("since".to_owned(), serde_json::json!(call.since));
+        if let Some(tool) = &call.tool {
+            input.insert("tool".to_owned(), serde_json::json!(tool));
+        }
+        let listing = serde_json::json!({"action": "run.list", "input": input});
+        format!(
+            "Do not call the tool again: a second call may start a second run and write twice. Find this call's run first: call `a2m_action_run` with {listing}, and do what that run's `next` says. A call that carries an idempotency key (`idempotency_key` of `a2m_tool_call`, or `{}` in the call's `_meta`) may be made again with the same key instead.",
+            crate::tools::KEY_META
+        )
+    };
+    Failure::new(
+        FailureClass::PossibleCommit,
+        ANSWER_LOST,
+        "The engine may have had the call, and its answer was lost: the call may have started a run, and that run may have written.",
+        fix,
     )
 }
 

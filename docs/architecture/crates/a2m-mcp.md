@@ -181,7 +181,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 ## Calls and results
 
 1. `tools/call` arrives with a name and arguments. A name of an action the toolset lists is that action. Any other name is `tool.call` with the name as its `tool` input: one dispatch. When the dispatcher answers `input`, `not_found` with no result, no such tool is published, and the answer is the protocol's unknown-tool error. `a2m_tool_call` is the same action called by name, and a tool it does not find is a failed call ([decision 0151](../../decisions/0151-the-doors-take-up-the-action-registrys-second-pass.md)).
-2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, the client label, and the project folder the mount stated. An idempotency key from the request's metadata is not built.
+2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, the client label, and the project folder the mount stated, and the idempotency key of the call's `_meta`, `anything2mcp/idempotency_key`, which the dispatcher checks (decision 0160). A request's JSON-RPC id is the connection's and is never taken as a key.
 3. `Kernel::dispatch` does the rest. This crate only renders the `Response`:
 
 | Part of the response | MCP result |
@@ -287,12 +287,12 @@ Every failure of a call is the dispatcher's, rendered. This crate adds five, non
 4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions. Not built: prompts, resources, instructions generated from the guidance file. Section 221 says nothing of the instructions; section 220 says they carry the handful of rules every caller needs and come from the same sources as the guidance file, which is now the `guidance` page of `docs.get`. The one sentence stays until that generation is built. Package 5.1.
 5. Done: stateless Streamable HTTP with the `Host` check, as a router to nest at `/mcp/<toolset>`. Not built: token checks, protected resource metadata, named toolsets. Package 6.2.
 
-Also not built: client profiles, the Tasks extension, an idempotency key from the request's metadata, compact schemas, and a byte budget for a list.
+Also not built: client profiles, the Tasks extension, compact schemas, and a byte budget for a list.
 
 ## Open points
 
 - A default listing reads every published tool in full to list the pipelines among them, because `tool.search` has no filter by kind. A `kind` input on `tool.search` would make a target of five hundred operations cost one page.
-- A tool call whose answer the proxy lost cannot be tied to its run: an MCP request carries no idempotency key, and the kernel does not yet tie a second call with the same key to the first one's run (decision 0159). The fix sends the caller to the run list, and `run.list` is not built yet.
+- A tool call whose answer the proxy lost is answered with the exact next step (decision 0160): when it carried an idempotency key, in its `_meta` or as the argument of `a2m_tool_call`, the same call again with the same key; when it did not, `a2m_action_run` with `run.list` since a minute before the call was sent, by the proxy's clock, and the tool it named. The moment is shown and decides nothing.
 - A followed call that comes to rest is made twice, so that the run's person is told. The kernel telling the person when a run comes to rest, whoever waits, would make `run.get` the answer in every case. Until then a `run.resume` that is followed is dispatched whole, so a note cannot say that the wait is over before the answer does.
 - How many notes a run of very many records sends. A note for each page of events is bounded by how fast the client reads; a rate of its own is not built.
 - Keep-alive comments on an event stream that stays open for minutes, which an intermediary that closes idle connections would need. The SDK sent them; this layer does not.

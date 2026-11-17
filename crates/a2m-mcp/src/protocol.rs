@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use crate::codes;
 use crate::http::{Answer, error_message, rpc_error};
 use crate::settings::Revision;
-use crate::tools::{Asker, Called, Core, Following, Follows, Rendered, Route, ToolEntry};
+use crate::tools::{Asker, Called, Core, Following, Follows, KEY_META, Rendered, Route, ToolEntry};
 
 /// The name the server gives itself.
 const SERVER_NAME: &str = "anything2mcp";
@@ -256,13 +256,29 @@ async fn call(core: &Arc<Core>, asker: Asker, params: &Json, id: &Json, stateles
             );
         }
     };
-    let Some(route) = core.route(&name, arguments) else {
+    // A key the caller gives so that the same call made again, after an
+    // answer was lost, is the same run. The dispatcher checks its form.
+    let key = match params.pointer("/_meta").and_then(|meta| meta.get(KEY_META)) {
+        None | Some(Json::Null) => None,
+        Some(Json::String(key)) => Some(key.clone()),
+        Some(_) => {
+            return rpc_error(
+                StatusCode::OK,
+                id,
+                codes::INVALID_PARAMS,
+                "An idempotency key is text.",
+                None,
+            );
+        }
+    };
+    let Some(mut route) = core.route(&name, arguments) else {
         // No dispatch: the name can be no tool of this endpoint.
         return Answer::Message(
             StatusCode::OK,
             called(id, &name, Some(Called::Unknown(None)), stateless),
         );
     };
+    route.key = key;
     let Some(token) = token else {
         // No progress was asked for: one message, when the call is done.
         let work = whole(core, route, asker);

@@ -55,7 +55,7 @@ The store also holds published versions and their plans, findings, and the audit
 
 The `status` a caller sees is this state. Reads skip the preview and approval, going from `validating` straight to `running`. Writes cannot reach `running` without an approval of their diff, unless policy pre-approved them. A stopped run re-enters `running` only after reconciliation. Resume does not create a new run: the same run gets a new attempt number and a new lease.
 
-**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished gets that run back instead of starting another (rule 6).
+**Run identity.** An unfinished run is identified by its caller, tool version, and input hash. The same caller calling the same tool with the same inputs while that run is unfinished gets that run back instead of starting another (rule 6). A call that carries the caller's own idempotency key goes further: the same caller making the same call with the same key gets back the run the first call started, unfinished or finished, for as long as that run is kept, and the same key with another call is refused by name. A key is scoped to its caller and workspace and kept as a keyed digest ([decision 0160](../../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)). `run.list` shows a caller its own runs, newest first, so that a caller whose answer was lost can find its run.
 
 ## Record states
 

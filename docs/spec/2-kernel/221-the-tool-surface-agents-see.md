@@ -32,6 +32,8 @@ Every tool is generated from published files, so names, descriptions, and result
 
 **Annotations.** `readOnlyHint`, `destructiveHint`, and `idempotentHint` are set from the effect class and key.
 
+**A repeated call.** A call that may write can carry an idempotency key of the caller's own, in its `_meta` as `anything2mcp/idempotency_key` or as the `idempotency_key` argument of `a2m_tool_call`. Made again with the same key, it gives back the run the first call started and starts no other; this is what an agent does after a lost answer. Without a key, it lists its runs since the call was sent with `run.list` first ([section 222](222-front-doors-and-the-local-engine.md)).
+
 **Results.** Structured content with a published output schema, plus a one-line summary. Concise by default, paginated by cursor, size-capped with a note when truncated. Every non-success names the next call:
 
 ```json

@@ -191,6 +191,6 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 - Actions to manage webhook destinations and toolset export: neither is in the action catalog yet.
 - The `/api/v1/admin/...` row of the technical reference should be removed or defined as aliases.
 - Where a remote caller fetches a kept blob: a generated alias of `trace.show`, most likely.
-- `engine_fault` and `request_timed_out` send the caller to `run.list` before it calls again, and `run.list` is not built yet. An `Idempotency-Key` is carried to the kernel, which does not yet tie a second call with the same key to the first one's run (decision 0159).
+- `engine_fault` and `request_timed_out` give the exact next step (decision 0160): with an `Idempotency-Key`, the same request again with the same key, which gives back the run the first one started; without one, `GET /api/v1/runs?since=<a minute before>&tool=<tool>`, by this machine's clock. `GET /api/v1/runs` is `run.list`, an alias its definition declares.
 - A second principal for this crate's tests, so that the refusal of another caller's run is proven through the door and not only in the kernel.
 - The health answer for a load balancer, which has no caller: a reduced, generated alias of `engine.status` that shows only the state.
