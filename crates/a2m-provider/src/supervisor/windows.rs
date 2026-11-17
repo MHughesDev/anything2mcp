@@ -65,6 +65,21 @@ impl<T> ReadNow for T {
     }
 }
 
+/// The exit status the supervisor gives every process it ends with the job.
+/// Windows has no signals: a process that is ended from outside exits with
+/// whatever status its ender names. This one is the supervisor's own mark,
+/// so that a program the supervisor ended is told apart from a program that
+/// exited by itself, whatever status that program chose.
+const ENDED_BY_SUPERVISOR: u32 = 0x4132_4D01;
+
+/// Whether the status is that of a program the supervisor ended. A program
+/// ended by someone else shows the status that ender named, as any exit.
+pub(crate) fn ended_from_outside(status: ExitStatus) -> bool {
+    status
+        .code()
+        .is_some_and(|code| u32::from_ne_bytes(code.to_ne_bytes()) == ENDED_BY_SUPERVISOR)
+}
+
 fn other(message: &'static str) -> io::Error {
     io::Error::other(message)
 }
@@ -226,7 +241,7 @@ impl Group {
     pub(crate) fn kill(&self) -> bool {
         // SAFETY: the job handle is open and owned by `self.job`. The call
         // touches no memory of ours. It reaches only processes in the job.
-        let ok = unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) };
+        let ok = unsafe { TerminateJobObject(self.job.as_raw_handle(), ENDED_BY_SUPERVISOR) };
         ok != 0
     }
 
@@ -281,7 +296,19 @@ impl Group {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_job, set_inherit};
+    use std::os::windows::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::{ENDED_BY_SUPERVISOR, ended_from_outside, new_job, set_inherit};
+
+    #[test]
+    fn only_the_supervisors_own_status_reads_as_ended_from_outside() {
+        assert!(ended_from_outside(ExitStatus::from_raw(
+            ENDED_BY_SUPERVISOR
+        )));
+        assert!(!ended_from_outside(ExitStatus::from_raw(0)));
+        assert!(!ended_from_outside(ExitStatus::from_raw(1)));
+    }
 
     #[test]
     fn the_inherit_mark_is_set_and_cleared_on_an_open_handle() {

@@ -77,6 +77,12 @@ impl<T: AsFd> ReadNow for T {
     }
 }
 
+/// Whether the status is that of a program ended by a signal, the
+/// supervisor's or anyone's, and not by its own exit.
+pub(crate) fn ended_from_outside(status: ExitStatus) -> bool {
+    status.code().is_none()
+}
+
 fn other(message: &'static str) -> io::Error {
     io::Error::other(message)
 }
@@ -250,5 +256,22 @@ impl Drop for Group {
         // A group that was never reaped is ended here. The runtime reaps
         // the dropped leader in the background.
         self.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::ended_from_outside;
+
+    #[test]
+    fn a_signal_reads_as_ended_from_outside_and_an_exit_does_not() {
+        // A wait status: a signal number in the low bits, an exit status
+        // in the next byte.
+        assert!(ended_from_outside(ExitStatus::from_raw(9)));
+        assert!(!ended_from_outside(ExitStatus::from_raw(0)));
+        assert!(!ended_from_outside(ExitStatus::from_raw(1 << 8)));
     }
 }

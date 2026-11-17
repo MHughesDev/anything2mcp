@@ -65,11 +65,6 @@ code = "device.command_hazard_none"
 level = "error"
 summary = "A register that can only be written is a command, and a command's hazard is not `none`."
 
-[[lint_rules]]
-code = "device.firmware_without_recovery"
-level = "error"
-summary = "A map's firmware update declares its recovery route, what cannot be undone, and whether the device checks a signature."
-
 [[drafting_rules]]
 finding_kind = "device_identity"
 file_kind = "register"

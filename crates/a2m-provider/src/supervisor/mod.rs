@@ -138,7 +138,10 @@ pub enum LinkKind {
 pub enum Exit {
     /// It exited with this status.
     Code(i32),
-    /// It was ended from outside, by a signal or by the supervisor.
+    /// It was ended from outside and did not exit by itself. On Linux and
+    /// macOS: by a signal, the supervisor's or anyone's. On Windows, which
+    /// has no signals: by the supervisor. A program ended there by someone
+    /// else shows the status that ender named, as `Code`.
     Killed,
 }
 
@@ -798,6 +801,7 @@ impl Supervisor {
         let (stderr, stderr_bytes) = take(&err);
         Ok(Finished {
             exit: status
+                .filter(|status| !os::ended_from_outside(*status))
                 .and_then(|status| status.code())
                 .map_or(Exit::Killed, Exit::Code),
             stdout,

@@ -145,6 +145,8 @@ struct Call<'a> {
     /// Whether the step is the binding's own act, which commits when the
     /// tool is mapped as a write.
     acts: bool,
+    /// Whether the step looks for one record, which may be absent.
+    one_record: bool,
 }
 
 fn step(call: Call<'_>, cx: &LowerContext<'_>) -> Option<Step> {
@@ -167,7 +169,7 @@ fn step(call: Call<'_>, cx: &LowerContext<'_>) -> Option<Step> {
             code: codes::UPSTREAM_TOOL_CHANGED,
         },
         commits: call.acts && call.entry.writes(),
-        lookup: !call.entry.writes() && call.entry.can_be_absent(),
+        lookup: call.one_record && !call.entry.writes() && call.entry.can_be_absent(),
         idempotent: false,
         when: None,
         payload,
@@ -366,6 +368,7 @@ impl Lowering for McpLowering {
                 args: args_of(binding.field("args"), cx, &mut problems),
                 timeout_ms,
                 acts: true,
+                one_record: binding.verb.as_str() == "read",
             },
             cx,
         );
@@ -391,6 +394,7 @@ impl Lowering for McpLowering {
                             args,
                             timeout_ms,
                             acts: false,
+                            one_record: true,
                         },
                         cx,
                     ));
@@ -433,6 +437,7 @@ impl Lowering for McpLowering {
                             args: args_of(lookup_doc.get("args"), cx, &mut problems),
                             timeout_ms,
                             acts: false,
+                            one_record: true,
                         },
                         cx,
                     ));

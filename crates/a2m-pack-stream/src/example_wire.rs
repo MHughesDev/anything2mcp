@@ -143,6 +143,22 @@ impl ExampleLink {
         fields: Vec<(&str, Json)>,
         deadline: Deadline,
     ) -> Result<Json, WireError> {
+        let reply = self.exchange(op, fields, deadline).await?;
+        match reply.get("ok").and_then(Json::as_bool) {
+            Some(true) => Ok(reply),
+            Some(false) => Err(refusal(&reply)),
+            None => Err(unexpected("the broker's answer says neither yes nor no")),
+        }
+    }
+
+    /// Sends one request and reads the one answer that belongs to it,
+    /// whatever it says.
+    async fn exchange(
+        &mut self,
+        op: &str,
+        fields: Vec<(&str, Json)>,
+        deadline: Deadline,
+    ) -> Result<Json, WireError> {
         if !self.alive() {
             self.broken = true;
             return Err(error(
@@ -205,11 +221,7 @@ impl ExampleLink {
         }
         // The answer is whole and is this request's: the link can go on.
         self.broken = false;
-        match reply.get("ok").and_then(Json::as_bool) {
-            Some(true) => Ok(reply),
-            Some(false) => Err(refusal(&reply)),
-            None => Err(unexpected("the broker's answer says neither yes nor no")),
-        }
+        Ok(reply)
     }
 }
 
@@ -508,41 +520,25 @@ impl Link for ExampleLink {
             if let Some(key) = &message.key {
                 fields.push(("key", Json::text(key.as_str())));
             }
-            let stored = |reply: &Json, duplicate: bool| -> Result<Receipt, WireError> {
-                Ok(Receipt {
-                    id: text_of(reply.get("id"))
-                        .ok_or_else(|| unexpected("a confirmation names no message"))?,
-                    position: number_of(reply, "position")?,
-                    duplicate,
-                })
+            let reply = self.exchange("publish", fields, deadline).await?;
+            let duplicate = match reply.get("ok").and_then(Json::as_bool) {
+                Some(true) => false,
+                // The one refusal that is good news: the broker already
+                // holds a message with this token, and stored nothing again.
+                Some(false)
+                    if reply.get("error").and_then(Json::as_str) == Some("duplicate_token") =>
+                {
+                    true
+                }
+                Some(false) => return Err(refusal(&reply)),
+                None => return Err(unexpected("the broker's answer says neither yes nor no")),
             };
-            if self.alive() {
-                // What `request` would do, kept apart for the one refusal
-                // that is good news: the broker already holds this token.
-                let id = self.next_id;
-                let sent = self.request("publish", fields, deadline).await;
-                return match sent {
-                    Ok(reply) => stored(&reply, false),
-                    Err(refused)
-                        if refused.kind == WireErrorKind::Unexpected
-                            && refused.sent == Sent::Answered
-                            && refused.detail.contains("duplicate_token") =>
-                    {
-                        // The answer was read whole; ask nothing more of it
-                        // than the first message's identifier.
-                        let _ = id;
-                        Err(error(
-                            WireErrorKind::Unexpected,
-                            Sent::Answered,
-                            "duplicate_token",
-                        ))
-                    }
-                    Err(other) => Err(other),
-                };
-            }
-            self.request("publish", fields, deadline)
-                .await
-                .and_then(|reply| stored(&reply, false))
+            Ok(Receipt {
+                id: text_of(reply.get("id"))
+                    .ok_or_else(|| unexpected("a confirmation names no message"))?,
+                position: number_of(&reply, "position")?,
+                duplicate,
+            })
         })
     }
 }
