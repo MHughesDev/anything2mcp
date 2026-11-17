@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 
 use a2m_actions::{
     ApprovalAsk, ApprovalDesk, BoxFuture, Caller, CallerCredential, CloseReason, ExitClass,
-    FrontDoor, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof, Request,
-    Response, SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
+    FrontDoor, Kernel, KernelParts, Paths, PersonActAsk, PersonActId, PersonSurface, PresenceAsk,
+    PresenceProof, Request, Response, SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, Timestamp};
@@ -122,16 +122,45 @@ impl Pack for StandPack {
     }
 }
 
-/// A person surface whose person is always at the machine.
+/// A person surface whose person is always at the machine. It shows a
+/// person's act an agent asked for only when `pages` is set, as a surface
+/// with a page for it does.
 #[derive(Default)]
 struct Present {
-    desk: Mutex<Option<ApprovalDesk>>,
+    desk: Mutex<Option<Arc<ApprovalDesk>>>,
     asked: Mutex<Vec<String>>,
+    pages: Mutex<bool>,
+    acts: Mutex<Vec<PersonActAsk>>,
+}
+
+impl Present {
+    fn desk(&self) -> Arc<ApprovalDesk> {
+        self.desk.lock().unwrap().clone().unwrap()
+    }
 }
 
 impl PersonSurface for Present {
     fn take_desk(&self, desk: ApprovalDesk) {
-        *self.desk.lock().unwrap() = Some(desk);
+        *self.desk.lock().unwrap() = Some(Arc::new(desk));
+    }
+
+    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
+        Box::pin(async move {
+            if !*self.pages.lock().unwrap() {
+                return Err(Failure::new(
+                    a2m_core::FailureClass::Policy,
+                    a2m_actions::codes::PERSON_REQUIRED,
+                    "No page here.",
+                    "Run it at a terminal.",
+                ));
+            }
+            let link = format!("http://127.0.0.1/act/{}", ask.act);
+            self.acts.lock().unwrap().push(ask);
+            Ok(SurfaceLink {
+                url: Some(link),
+                text: "Open the page to carry it out.".to_owned(),
+            })
+        })
     }
 
     fn ask_approval(&self, _ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
@@ -177,6 +206,7 @@ fn repository() -> PathBuf {
 }
 
 struct World {
+    clock: Arc<ManualClock>,
     kernel: Kernel,
     surface: Arc<Present>,
     person: Caller,
@@ -219,14 +249,15 @@ impl World {
                 .with_flag("packs.stand.page_budget", "8"),
         )
         .unwrap();
+        let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
+            1_800_000_000_000,
+        )));
         let prepared = Kernel::prepare(KernelParts {
             settings,
             paths: Paths::under(&folder_path(&folder)),
             place: StorePlace::Memory,
             key_store: Arc::new(MemoryKeyStore::new()),
-            clock: Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
-                1_800_000_000_000,
-            ))),
+            clock: Arc::clone(&clock) as _,
             random: Arc::new(a2m_vault::OsRandom),
             os_user: "pat".to_owned(),
         })
@@ -262,6 +293,7 @@ impl World {
                 .is_err()
         );
         Self {
+            clock,
             kernel,
             surface,
             person: Caller::new(principal, FrontDoor::Command, false),
@@ -453,5 +485,167 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
         )
         .await;
     assert!(linted.ok, "{:?}", linted.error);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A proof of presence from the page of `act`, of now by the engine's clock.
+fn proof_for(world: &World, act: PersonActId) -> PresenceProof {
+    PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        world.person.principal.principal().id,
+        a2m_telemetry::Clock::now(world.clock.as_ref()),
+    )
+    .for_act(act)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_persons_proof() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // The agent asks; nothing is published, and the person is shown the
+    // act on a page, with what it will store pinned.
+    let asked = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    assert!(asked.error.is_none());
+    let result = asked.result.clone().unwrap();
+    assert_eq!(result["state"], "needs_person");
+    assert!(result["link"].as_str().unwrap().contains("/act/"));
+    let next = asked.next.clone().unwrap();
+    assert_eq!(next.action, "version.publish");
+    // The result fits the action's published output schema.
+    let def = world.kernel.actions().find("version.publish").unwrap();
+    let mut shown = result.clone();
+    shown.as_object_mut().unwrap().insert("next".to_owned(), json!({"action": "version.publish", "tool": "a2m_version_publish", "args": {}, "when": "later"}));
+    def.output.check_json(&shown).unwrap();
+    assert!(world.surface.asked.lock().unwrap().is_empty(), "no prompt at the caller's end");
+    let ask = world.surface.acts.lock().unwrap()[0].clone();
+    let fields: Vec<(&str, &str)> = ask.input.iter().map(|field| (field.name.as_str(), field.value.as_str())).collect();
+    assert_eq!(fields[0], ("plan_hash", fields[0].1));
+    assert!(fields.contains(&("target", "example")) && fields.contains(&("version", "1.0.0")), "{fields:?}");
+    assert!(!ask.details.is_empty(), "the review summary is shown");
+    let nothing = world.call(&agent, "target.list", json!({})).await;
+    assert_eq!(nothing.result.unwrap()["targets"].as_array().unwrap().iter().filter(|row| !row["versions"].as_array().unwrap().is_empty()).count(), 0);
+
+    // The same call while it waits gives back the same page.
+    let again = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert_eq!(again.result.unwrap()["act"], result["act"]);
+    assert_eq!(world.surface.acts.lock().unwrap().len(), 1);
+
+    let desk = world.surface.desk();
+    let act = ask.act;
+    // A proof for no act, for another, of another person, or old does
+    // nothing, and the act goes on waiting.
+    let bare = PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        world.person.principal.principal().id,
+        a2m_telemetry::Clock::now(world.clock.as_ref()),
+    );
+    let other = PersonActId::from_bytes([7; 16]);
+    let someone = a2m_core::PrincipalId::from_bytes([9; 16]);
+    let refusals = [
+        desk.carry_out(act, bare).await,
+        desk.carry_out(act, proof_for(&world, other)).await,
+        desk.carry_out(act, PresenceProof::new(PresenceCheck::OsPrompt, someone, a2m_telemetry::Clock::now(world.clock.as_ref())).for_act(act)).await,
+        desk.carry_out(act, PresenceProof::new(PresenceCheck::OsPrompt, world.person.principal.principal().id, Timestamp::from_unix_millis(1_799_999_000_000)).for_act(act)).await,
+    ];
+    for refused in refusals {
+        assert_eq!(refused.unwrap_err().code().as_str(), "presence_required");
+    }
+    assert!(desk.person_act(act).is_ok());
+
+    // The person's proof from the act's page carries it out, as them.
+    let done = desk.carry_out(act, proof_for(&world, act)).await.unwrap();
+    assert!(done.ok, "{:?}", done.error);
+    let version = done.result.unwrap();
+    assert_eq!(version["version"], "1.0.0");
+    assert_eq!(version["plan_hash"], fields[0].1);
+    // Once: a second press does nothing.
+    let second = desk.carry_out(act, proof_for(&world, act)).await;
+    assert_eq!(second.unwrap_err().code().as_str(), "not_found");
+    assert!(desk.person_act(act).is_err());
+
+    // The store holds exactly one version, published by the person.
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    let targets = listed.result.unwrap();
+    let example: Vec<&Json> = targets["targets"].as_array().unwrap().iter().filter(|row| row["target"] == "example").collect();
+    assert_eq!(example[0]["versions"].as_array().unwrap().len(), 1, "{targets}");
+    let audit = world.call(&world.person, "audit.query", json!({})).await;
+    let audit = audit.result.unwrap().to_string();
+    assert!(audit.contains("version.publish"), "{audit}");
+
+    // The agent's same call gives back what was done, and does nothing more.
+    let repeated = world
+        .call(&agent, "version.publish", json!({"target": "example"}))
+        .await;
+    assert!(repeated.ok, "{:?}", repeated.error);
+    assert_eq!(repeated.result.unwrap()["version"], "1.0.0");
+    assert!(!repeated.warnings.is_empty());
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(listed.result.unwrap().to_string().matches("\"version\":\"").count() == 1);
+
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_its_window() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+
+    // `publish.request` asks; the person decides on the page.
+    let asked = world
+        .call(&agent, "publish.request", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap()[0].clone();
+    assert_eq!(ask.action.as_str(), "version.publish");
+
+    // The drafts change after the person was shown them: the press
+    // publishes nothing.
+    let file = world.project.path().join("targets").join("example").join("target.yaml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replacen("title: Example order entry", "title: Example order entry, changed", 1)).unwrap();
+    let changed = world.surface.desk().carry_out(ask.act, proof_for(&world, ask.act)).await.unwrap();
+    assert_eq!(changed.error.unwrap().code, "drafts_changed");
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+
+    // A new ask, declined: nothing is published, and the same call is told.
+    let asked = world
+        .call(&agent, "publish.request", json!({"target": "example", "version": "2.0.0"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded);
+    let ask = world.surface.acts.lock().unwrap().last().unwrap().clone();
+    world.surface.desk().decline_act(ask.act, true);
+    let told = world
+        .call(&agent, "publish.request", json!({"target": "example", "version": "2.0.0"}))
+        .await;
+    assert_eq!(told.error.unwrap().code, "approval_refused");
+
+    // An ask nobody answers ends with the window: a press after it does
+    // nothing.
+    let asked = world
+        .call(&agent, "publish.request", json!({"target": "example", "version": "3.0.0"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded);
+    let ask = world.surface.acts.lock().unwrap().last().unwrap().clone();
+    world.clock.advance(std::time::Duration::from_secs(16 * 60));
+    let late = world.surface.desk().carry_out(ask.act, proof_for(&world, ask.act)).await;
+    assert_eq!(late.unwrap_err().code().as_str(), "not_found");
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+
+    // A caller with no page to go to is refused by name, as before.
+    *world.surface.pages.lock().unwrap() = false;
+    let refused = world
+        .call(&agent, "version.publish", json!({"target": "example", "version": "4.0.0"}))
+        .await;
+    assert_eq!(refused.error.unwrap().code, "person_required");
     world.kernel.close(CloseReason::Asked).await;
 }

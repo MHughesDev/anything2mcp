@@ -12,7 +12,7 @@ use std::sync::Arc;
 use a2m_core::{
     ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding, FindingKind,
     IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName,
-    ValueType, Verb,
+    ValueType, Verb, WriteEvidence,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
@@ -197,6 +197,20 @@ pub trait Lowering: Send + Sync {
     /// only to its steps' `commits` marks.
     fn least_effect(&self, _binding: &ResolvedBinding<'_>) -> EffectClass {
         EffectClass::Read
+    }
+    /// What a write binding offers as the evidence that its write landed
+    /// (spec section 208). `acknowledged` is for a binding that has nothing
+    /// to read back and nothing to compare, such as a queue take or a call
+    /// of an irreversible tool: the compiler then holds the operation to
+    /// `irreversible`, and the engine ends its record `acted`, never
+    /// verified. The default is `response` where the lowering prefers the
+    /// save's answer, and `read_back` otherwise.
+    fn evidence(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
+        if lowered.prefer_response {
+            WriteEvidence::Response
+        } else {
+            WriteEvidence::ReadBack
+        }
     }
     /// The fields this mode adds to a binding: an object schema. The kernel
     /// owns `mode`, `verb`, `status`, and `precondition`; everything else in

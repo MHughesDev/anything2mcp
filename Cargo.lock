@@ -1041,6 +1041,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-nats"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

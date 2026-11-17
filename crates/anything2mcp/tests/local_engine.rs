@@ -738,12 +738,22 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
     )
     .unwrap();
     let link = connector.connect().await.unwrap();
-    let folder = machine.project.path().to_str().unwrap();
-    assert!(
-        folder
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte))
-    );
+    // The folder as the command line encodes it: each byte that is not
+    // plain, such as Windows's `\\` and `:`, as a percent escape.
+    let folder: String = machine
+        .project
+        .path()
+        .to_str()
+        .unwrap()
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
     let request = axum::http::Request::builder()
         .method("POST")
         .uri(format!(
@@ -752,7 +762,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         ))
         .header("content-type", "application/json")
         .header("a2m-person-at-terminal", "true")
-        .header("a2m-project", folder)
+        .header("a2m-project", folder.as_str())
         .body(axum::body::Body::from(r#"{"target": "example"}"#))
         .unwrap();
     let answer = link.send(request).await.unwrap();

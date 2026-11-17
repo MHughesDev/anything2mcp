@@ -36,6 +36,9 @@ const ANSWER_LIMIT: usize = 256 * 1024 * 1024;
 const STARTING_WAIT: Duration = Duration::from_secs(20);
 /// The pause between two looks at the channel during that wait.
 const STARTING_PAUSE: Duration = Duration::from_millis(25);
+/// How long a client waits for an engine it starts on demand to answer:
+/// the start of the program and the opening of its kernel.
+const START_WAIT: Duration = Duration::from_secs(30);
 
 /// What a command found on this machine.
 pub(crate) enum Found {
@@ -84,7 +87,7 @@ pub(crate) async fn find(
     let mut refused = None;
     if let Some(launch) = launch() {
         match connector
-            .connect_or_start(paths, &launch, STARTING_WAIT)
+            .connect_or_start(paths, &launch, START_WAIT)
             .await?
         {
             Started::Found(link) | Started::Launched(link) => return Ok(Found::Engine(link)),
@@ -147,7 +150,7 @@ pub(crate) async fn start(
     launch: &Launch,
 ) -> Result<(Link, bool), Failure> {
     match connector
-        .connect_or_start(paths, launch, STARTING_WAIT)
+        .connect_or_start(paths, launch, START_WAIT)
         .await?
     {
         Started::Found(link) => Ok((link, false)),

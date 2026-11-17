@@ -87,6 +87,14 @@ fn changed(case: &Case) -> Vec<(RelPath, Vec<u8>)> {
 }
 
 /// Everything the loader and the compiler say about `files`.
+/// The version a test compiles under: a draft's own, or a release.
+fn version_for(mode: CompileMode) -> Version {
+    match mode {
+        CompileMode::Draft => DRAFT_VERSION,
+        CompileMode::Publish => VERSION,
+    }
+}
+
 fn problems_with(
     files: &[(RelPath, Vec<u8>)],
     set: &CompilerSet,
@@ -95,7 +103,7 @@ fn problems_with(
     let root = TargetRoot::new("example");
     match load_files(&root, files, set) {
         Err(problems) => problems,
-        Ok(sources) => match compile(&sources, set, mode, VERSION) {
+        Ok(sources) => match compile(&sources, set, mode, version_for(mode)) {
             Ok(compiled) => compiled.warnings,
             Err(problems) => problems,
         },
@@ -1980,18 +1988,20 @@ fn a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic() {
     assert!(plain.to_string().contains("`draft`"), "{plain}");
 }
 
-/// Pins a limit that is known and not yet closed: nothing in a plan says
-/// which mode compiled it, so a draft compiled under a release version has
-/// the bytes and the hash of the published plan. The crate's design says
-/// why the refusal waits. When it lands, this test changes with it.
+/// A draft is never a published plan (decision 0161): compiled under a
+/// release version it is refused, and under the draft version it has bytes
+/// no published plan has.
 #[test]
-fn a_draft_compiled_under_a_release_version_has_the_published_plans_bytes() {
+fn a_draft_compiled_under_a_release_version_is_refused() {
     let set = stand_set().unwrap();
     let sources = load_files(&TargetRoot::new("example"), &example_files(), &set).unwrap();
-    let under_release = compile(&sources, &set, CompileMode::Draft, VERSION).unwrap();
-    assert_eq!(under_release.encoded.hash, compiled().encoded.hash);
-    // Compiled as a draft is compiled as `DRAFT_VERSION`, which no
-    // published plan carries.
+    let problems = compile(&sources, &set, CompileMode::Draft, VERSION).unwrap_err();
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.code.as_str() == "kernel.draft_under_release_version"),
+        "{problems}"
+    );
     let draft = compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION).unwrap();
     assert_ne!(draft.encoded.hash, compiled().encoded.hash);
     assert_eq!(draft.plan.header.version, DRAFT_VERSION);

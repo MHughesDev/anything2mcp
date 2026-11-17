@@ -9,6 +9,7 @@ members = [
     "targets/example-device",
     "targets/example-files",
     "targets/example-mcp",
+    "targets/example-nats",
     "bench",
 ]
 # Throwaway experiments are never part of the product or of its build.
