@@ -22,7 +22,7 @@ Most of what is described here is not built yet. The Rust in this folder is a sk
   │ 1 Types        a2m-core                                                                    │
   └──────────────▲────────────────────────────────────────────────────────────────────────────┘
                  │ registers through the contract, and is called back
-  Packs       web (browser, ui, probe) · http · mcp · desktop · command · data · file · stream · device    
+  Packs       web (browser, ui, probe) · http · mcp · desktop · command · data · file · stream · device
                  │
   Systems     whatever already exists and offers a surface the user is entitled to use
 ```

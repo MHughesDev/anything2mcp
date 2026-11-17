@@ -47,7 +47,7 @@ Table owners. The ledger's and the policy engine's tables exist; the others are 
 | `a2m-ledger` | Built: `runs`, `run_records`, `run_events`, `record_locks`, `blobs`, `target_versions`, `findings`, `unknowns`, `audit`, `vault_keys`, `schema_migrations`. Not built yet: `workspaces`, `run_steps`, `outbox`, `caller_idempotency` |
 | `a2m-policy` | `decisions`, `approvals`, and the rest of what its own migrations create: `principals`, `grants`, `policy_versions`, `consents`, `delegations`, `kill_switches`, `quota_counters` |
 | `a2m-auth` | `sessions`, `session_events`, `session_state` |
-| `a2m-sched` | `jobs`, with its `session_key` column; `runners`; `budgets`; later a rate-bucket table |
+| `a2m-sched` | Built: `jobs`, with its `session_key` column; `runners`; `resource_holds`; `caller_turns`; `scheduler_holds`; `budgets`, which holds the rate buckets |
 | `a2m-engine` | `bindings_health`, written through `Control` |
 | `a2m-actions` | `toolsets`, `toolset_items`; `scout_stages` (run, stage, input hash, result reference); `outbox_deliveries`, the outcomes of delivering the outbox's webhooks |
 

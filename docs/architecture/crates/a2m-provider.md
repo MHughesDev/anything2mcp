@@ -523,7 +523,7 @@ pub struct ForeignPipe {
 }
 pub enum LinkKind { OneShot(OneShot), Foreign(ForeignPipe) }
 pub struct Finished {
-    pub exit: Exit,                                            // Exit::Code(i32) | Exit::Killed
+    pub exit: Exit,                                            // Exit::Code(i32) | Exit::Killed: ended from outside (on Windows: by the supervisor)
     pub stdout: Vec<u8>, pub stderr: Vec<u8>,                  // each up to max_output_bytes
     pub stdout_bytes: u64, pub stderr_bytes: u64,              // all that was written; truncated() says whether more than was kept
     pub program_digest: Digest, pub verified: bool,            // verified: the digest is the declared one
@@ -558,6 +558,7 @@ What the built part holds:
 | A group the supervisor can end | A process group on Linux and macOS, signalled only while its leader is unreaped; a job object on Windows that ends its processes when its last handle closes. On macOS the answer "not permitted" from a group whose leader has exited means nothing is left in it |
 | One start at a time | Every start holds one lock from before its pipes are made until the child exists, on every operating system, so that no child inherits another's pipe or handle |
 | Bounded | A one-shot run has a time limit, at which the whole group is ended and the run is `transient`, `timeout` with `Ran::Unknown`; each output stream is kept up to its bound, and read and counted beyond it. Once the group is gone the run takes what is in its pipes and does not wait for their end, which a process outside the group may hold back; such a holder is no part of the cleanup verdict |
+| An ended program is told from an exited one | On Linux and macOS a program ended by a signal has no exit status, and is `Exit::Killed`. Windows has no signals, so the supervisor ends a job with an exit status of its own, and a program that shows it is `Exit::Killed`; a program someone else ended there shows the status that ender named |
 | Nothing left behind | At a program's exit its whole group is ended; `stop` and `shutdown` end the group and wait for it; a run whose future is dropped ends its group |
 | Counted, and one per place | Each kind has a limit, and a taken place is refused, both `busy`, `subsystem_limit` |
 | Incomplete cleanup is a state | It names what remains and blocks new starts of that kind with `busy`, `cleanup_incomplete`, until a person clears it |

@@ -7,22 +7,5 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[dependencies]
-a2m-auth = { path = "../a2m-auth" }
-a2m-core = { path = "../a2m-core" }
-a2m-files = { path = "../a2m-files" }
-a2m-provider = { path = "../a2m-provider" }
-a2m-telemetry = { path = "../a2m-telemetry" }
-rusqlite.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
-a2m-expr = { path = "../a2m-expr" }
-a2m-ledger = { path = "../a2m-ledger" }
-a2m-vault = { path = "../a2m-vault" }
-example-db = { path = "../../targets/example-db" }
-
 [lints]
 workspace = true
