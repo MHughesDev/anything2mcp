@@ -20,7 +20,7 @@ impl Digest {
     /// The digest of `bytes`.
     #[must_use]
     pub fn of(bytes: &[u8]) -> Self {
-        let mut hasher = Hasher::new();
+        let mut hasher = FieldHasher::new();
         hasher.raw(bytes);
         hasher.finish()
     }
@@ -119,11 +119,17 @@ impl<'de> serde::Deserialize<'de> for Digest {
 
 /// Builds a digest over several named fields, so that no two different sets
 /// of fields can give the same bytes to hash. Every field is written as its
-/// name's length, its name, its value's length, and its value.
-pub(crate) struct Hasher(Sha256);
+/// name's length, its name, its value's length, and its value; each length
+/// is eight bytes, least significant first.
+///
+/// This is the one way a kernel crate hashes more than one field. A crate
+/// that names what its digest is for adds that as the first field.
+pub struct FieldHasher(Sha256);
 
-impl Hasher {
-    pub(crate) fn new() -> Self {
+impl FieldHasher {
+    /// A hasher that has been given nothing.
+    #[must_use]
+    pub fn new() -> Self {
         Self(Sha256::new())
     }
 
@@ -133,23 +139,37 @@ impl Hasher {
     }
 
     /// Adds one named field.
-    pub(crate) fn field(&mut self, name: &str, value: &[u8]) {
+    pub fn field(&mut self, name: &str, value: &[u8]) {
         self.0.update((name.len() as u64).to_le_bytes());
         self.0.update(name.as_bytes());
         self.0.update((value.len() as u64).to_le_bytes());
         self.0.update(value);
     }
 
-    pub(crate) fn finish(self) -> Digest {
+    /// The digest of everything added, in the order it was added.
+    #[must_use]
+    pub fn finish(self) -> Digest {
         let mut out = [0u8; Digest::LENGTH];
         out.copy_from_slice(&self.0.finalize());
         Digest(out)
     }
 }
 
+impl Default for FieldHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for FieldHasher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FieldHasher")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Digest, Hasher};
+    use super::{Digest, FieldHasher};
 
     /// The digest of the empty input, from the SHA-256 standard.
     const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -192,7 +212,7 @@ mod tests {
     #[test]
     fn named_fields_cannot_be_confused_with_each_other() {
         let digest = |fields: &[(&str, &str)]| {
-            let mut hasher = Hasher::new();
+            let mut hasher = FieldHasher::new();
             for (name, value) in fields {
                 hasher.field(name, value.as_bytes());
             }
@@ -204,5 +224,10 @@ mod tests {
             digest(&[("a", "bc"), ("", "d")])
         );
         assert_eq!(digest(&[("a", "b")]), digest(&[("a", "b")]));
+        // The encoding is fixed: stored digests were made with it.
+        assert_eq!(
+            digest(&[("anything2mcp", "example"), ("a", "b")]).to_string(),
+            PINNED_FIELDS
+        );
     }
 }

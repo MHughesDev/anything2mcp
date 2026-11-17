@@ -42,7 +42,7 @@ pub mod __name {
 
 pub use canonical::{CanonicalJson, PackPayload};
 pub use decimal::{Decimal, Rounding};
-pub use digest::{Digest, InvalidDigest};
+pub use digest::{Digest, FieldHasher, InvalidDigest};
 pub use effect::{EffectClass, Hazard};
 pub use evidence::{Coverage, EvidenceLevel};
 pub use failure::{Failure, FailureClass, FailureCode};
