@@ -14,8 +14,10 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Blob | Any stored evidence or value, named by its content hash and encrypted |
 | Client | Anything that talks to the engine: a command, an MCP client, an SDK, the tray application |
 | Commit point | One save in the application. One ledger row |
+| Control | Everything the engine asks of the control plane while it runs a job: the plan, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
 | Control plane | The part that decides, records, and hands out work |
 | Coverage | How much of what could have been looked at was looked at: complete, partial, or unknown. An empty result with anything less than complete coverage is not absence |
+| Crate design | The page in `docs/architecture/crates/` that says what one crate owns, offers, uses, stores, and must never do |
 | Diff | Current values against proposed values, record by record, shown before a write |
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |
 | Diff hash | A hash of a diff in canonical form; what an approval is bound to |
@@ -40,15 +42,18 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Identity strategy | How a write's record is found again: natural, composite, stamped, find, or none |
 | Identity mode | How that identity is obtained: per-user token, per-user session, per-user device, or service account |
 | Intent | A ledger entry made before a write, recording what is about to be sent |
+| Intent token | What the ledger returns when an intent is recorded. A driver's handle refuses a step that commits without one |
 | Job | A piece of a run handed to a runner under a lease |
 | Kernel | The crates that are the same whatever kind of system is integrated |
 | Lease | Time-limited permission for one runner to work on one job, with a number that only increases |
 | Local channel | The per-user socket or named pipe between clients and the engine on one machine |
 | Managed component | An outside program a provider needs, detected and identified by digest, never bundled and never fetched during a run |
 | Manifest | A provider's declaration of what it supplies, reaches, needs, and may do |
-| Mode | One of the seven ways to reach an application: `ui`, `page_http`, `http`, `api`, `site_tools`, `mcp`, `desktop` |
+| Mapping file | The file that names which tools of an upstream MCP server may be reached, and as what. No other tool of that server is reachable |
+| Mode | One concrete way of reaching a system, brought by a pack and belonging to one archetype: `ui`, `http`, and `mcp` are three. The kernel holds no list of modes; a provider registers each one it brings |
 | Operation | One business action with typed inputs and outputs, defined once |
 | Owner | The person a user session belongs to |
+| Owner mark | A value the supervisor places in a child process's environment so that it can prove the process is its own before stopping it |
 | Pack | The crates that know one kind of system. Compiled into the binary; enabled by a setting |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
@@ -64,6 +69,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Read-back | Reading a value from the application after writing it |
 | Reconcile | Reading doubtful records back to learn whether their writes landed |
 | Record | One item in the application that a run reads or writes, identified by a key. A ledger row is a commit point, which usually carries one record but can carry several, or part of one |
+| Registered name | A word whose values arrive with packs and crates, checked for shape and registered by whoever brings it: a mode, a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name, a failure code |
 | Review summary | The risk-ordered list a person sees before publishing or importing a version |
 | Run | One call of an operation or pipeline, identified by a `run_id` |
 | Scenario | A short, declared sequence of named steps that exercises one thing in a target. The unit of observation during discovery |

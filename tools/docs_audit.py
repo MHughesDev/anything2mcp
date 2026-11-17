@@ -288,8 +288,17 @@ def main():
             note("layering", f"crates/{c} exists but is not in the layering table of the technical reference")
         for c in sorted(set(layer) - set(on_disk)):
             note("layering", f"{c} is in the layering table but crates/{c} does not exist")
+    # Edges the layers would allow and the design forbids (docs/architecture/README.md).
+    forbidden = {
+        ("a2m-engine", "a2m-files"): "the engine runs only compiled plans and never depends on the compiler "
+                                     "(decision 0036)",
+        ("a2m-engine", "a2m-policy"): "only the control plane decides; the engine asks through Control",
+    }
     for c, deps in sorted(on_disk.items()):
         for d in sorted(deps):
+            if (c, d) in forbidden:
+                note("layering", f"{c} depends on {d}; {forbidden[(c, d)]}")
+                continue
             if d not in layer:
                 if d.startswith("a2m-") or d == "anything2mcp":
                     note("layering", f"{c} depends on {d}, which is not in the layering table")

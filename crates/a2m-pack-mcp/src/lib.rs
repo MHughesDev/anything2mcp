@@ -1,4 +1,4 @@
-//! The MCP pack: the mcp and site_tools drivers, for upstream MCP servers and tools a site publishes.
+//! The MCP pack: the mcp driver, which passes calls through to an upstream MCP server named in a mapping file.
 //!
 //! Nothing is implemented yet. A pack crate sees the kernel up to the provider
 //! contract and the base of its own pack; the layering table in

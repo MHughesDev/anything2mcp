@@ -60,34 +60,23 @@ Two more types complete the crate:
 
 ## Driver interface
 
-Every mode implements one trait. The sketch is illustrative, not final.
+The driver interface, the manifest, the registry, the supervisor, and the plug-in protocol are designed in [`a2m-provider`](../architecture/crates/a2m-provider.md), and that design is the reference until slice 1.1 builds the interface and settles it by decision record. In brief:
 
-```rust
-#[async_trait]
-pub trait Driver: Send + Sync {
-    fn mode(&self) -> Mode;
-    fn capabilities(&self) -> DriverCapabilities;
+| Call | Does |
+| --- | --- |
+| `prepare` | Acquires what the steps need: a page, a client, a connection, a link |
+| `act` | Carries out one compiled step. Confirming and reading back are steps like any other, so there is no separate read-back call |
+| `health` | A cheap check used by canaries and by the choice of binding |
+| `release` | Gives back what `prepare` acquired |
 
-    /// Acquire what the step needs: a page, an HTTP client, a desktop handle.
-    async fn prepare(&self, ctx: &RunContext, lease: &SessionLease) -> Result<Prepared, Failure>;
+Rules for every driver:
 
-    /// Perform one compiled step. Must not retry internally.
-    async fn act(&self, p: &mut Prepared, step: &CompiledStep, input: &Values)
-        -> Result<ActOutcome, Failure>;
-
-    /// Re-read values for verification, without side effects.
-    async fn read_back(&self, p: &mut Prepared, rule: &ReadBackRule) -> Result<Values, Failure>;
-
-    /// Cheap check used by canaries and by mode selection.
-    async fn health(&self, surface: &Surface) -> Health;
-
-    async fn release(&self, p: Prepared);
-}
-```
-
-Rules for every driver: no retries inside `act`; every failure maps to exactly one failure class; no secret ever appears in `ActOutcome`, `Values`, or `Failure`.
-
-Two things in the sketch do not yet match the rest of the design, and slice 1.1 settles both with a decision record, since this is a public interface. First, [steps, snapshots, and diffs](steps-snapshots-and-diffs.md) makes confirm and read-back lists of steps, which `act` could carry out, while the sketch gives read-back a method of its own taking a rule. Second, `read_back` also serves the preview and reconcile ([file formats](file-formats.md)), so its result must be able to say that a record is absent.
+- No retries inside `act`. The engine decides what is tried again.
+- Every failure maps to exactly one failure class, and says whether the request was not sent, was answered, or is unknown.
+- No secret ever appears in a step's outcome or in a failure.
+- A driver is reached only through a handle that refuses a step that commits without the token the ledger gives for a recorded intent.
+- A step marked as a lookup may report that a record is absent. No other step may.
+- A step's outcome can carry values known before the commit point, such as a key the store assigned. The engine records them before the committing step runs.
 
 ## Verbs by mode
 
@@ -102,6 +91,8 @@ Two things in the sketch do not yet match the rest of the design, and slice 1.1 
 | `download` | Yes | Yes | Yes | Yes | No | If offered | No |
 | `submit` | Yes | Yes | Yes | Yes | If offered | If offered | Yes |
 | `call` | No | Yes | Yes | Yes | Yes | Yes | No |
+
+The columns are the modes of the first four packs. Every further pack adds a column in its own design: the command, data, file, stream, and device packs each state the verbs they offer and how each lowers into steps.
 
 ## Widget drivers
 
@@ -146,21 +137,25 @@ support_tier: full
 
 ## Auth provider interface
 
-Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them.
+Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider.
 
-| Provider | Covers |
-| --- | --- |
-| `sso_oidc`, `sso_saml` | Entra ID, Okta, Google Workspace, ADFS, Ping |
-| `os_broker` | Windows Web Account Manager, macOS Enterprise SSO, Linux identity broker; user devices only |
-| `obo_token` | OAuth On-Behalf-Of exchange from the caller's token |
-| `form_login` | Username and password pages |
-| `http_basic`, `http_digest` | Simple intranet apps |
-| `windows_integrated` | NTLM and Kerberos |
-| `client_certificate` | Mutual TLS |
-| `api_key`, `bearer_static` | Vendor APIs with fixed keys |
-| `oauth_client_credentials`, `oauth_authorization_code` | Vendor APIs with OAuth |
-| `upstream_mcp` | Authorization to an app's own MCP server |
-| `totp` | One-time codes for dedicated accounts, where IT allows |
+A provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system. A provider that needs a person's consent in a browser, and is not in the web pack, gives the person a link to open in their own browser; nothing drives that browser.
+
+| Provider | Covers | Lives in |
+| --- | --- | --- |
+| `sso_oidc`, `sso_saml` | Entra ID, Okta, Google Workspace, ADFS, Ping | `a2m-pack-web-ui` |
+| `form_login` | Username and password pages | `a2m-pack-web-ui` |
+| `os_broker` | Windows Web Account Manager, macOS Enterprise SSO, Linux identity broker; user devices only | `a2m-auth` |
+| `obo_token` | OAuth On-Behalf-Of exchange from the caller's token | `a2m-auth` |
+| `http_basic`, `http_digest` | Simple intranet systems. The provider holds the credential; the HTTP driver carries out the scheme | `a2m-auth` |
+| `windows_integrated` | NTLM and Kerberos, in the same division of work | `a2m-auth` |
+| `client_certificate` | Mutual TLS | `a2m-auth` |
+| `api_key`, `bearer_static` | Interfaces with fixed keys | `a2m-auth` |
+| `oauth_client_credentials`, `oauth_authorization_code` | Interfaces with OAuth | `a2m-auth` |
+| `upstream_mcp` | Authorization to a system's own MCP server | `a2m-pack-mcp` |
+| `totp` | One-time codes for dedicated accounts, where IT allows | `a2m-auth` |
+
+Further packs bring their own where a credential is bound to their kind of connection: the data pack brings a database password provider.
 
 ## Data model
 
@@ -202,7 +197,7 @@ Delivery is at-least-once. A job whose lease ends without a result is treated as
 
 ## Failure codes
 
-Every failure carries a class, a stable code, a plain sentence, and a next step.
+Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them.
 
 | Class | Example codes |
 | --- | --- |
@@ -282,16 +277,7 @@ Inside the data directory: `store/` for the database, `blobs/` for evidence, `pr
 
 ## Plug-in protocol
 
-A plug-in is a separate process that exchanges JSON-RPC messages over standard input and output.
-
-| Method | Purpose |
-| --- | --- |
-| `describe` | Kind (driver, auth provider, source reader, widget driver), version, capabilities requested |
-| `prepare`, `act`, `read_back`, `health`, `release` | The driver interface, for driver plug-ins |
-| `read`, `fingerprint` | For source readers |
-| `sign_in`, `refresh`, `inject` | For auth providers |
-
-A plug-in receives only the inputs for its step. Secrets reach it only through `inject`, and only if its declared capabilities were approved by an admin.
+A plug-in is a separate process that exchanges messages over standard input and output, started and stopped only by the supervisor. It receives only the inputs for its step. Secrets reach it only through `inject`, and only if an administrator approved the effects its manifest declares. The message list, its versioning, and the launch handshake are in the design of [`a2m-provider`](../architecture/crates/a2m-provider.md).
 
 ## Benchmark matrix
 

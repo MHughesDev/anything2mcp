@@ -27,6 +27,7 @@ A test stand imitates the part of one kind of system that makes the kind hard, a
 | Files in a temporary folder | Files in each supported format | The bytes on disk and their digests | [Section 70](../spec/70-the-file-pack.md) | H1 |
 | A small local broker | A queue and a topic, with retained and unretained messages | Every message received and delivered, and to whom | [Section 71](../spec/71-the-stream-pack.md) | J1 |
 | A simulated device | A device with readable and writable points, and its own update mechanism | Every frame received, and the state of its simulated outputs | [Section 72](../spec/72-the-device-pack.md) | K1 |
+| A small MCP server | An upstream server whose tools can change, and whose connection can drop after a commit | Every call it received | The design of [`a2m-pack-mcp`](crates/a2m-pack-mcp.md) | 8.2 |
 
 Rules for every stand:
 

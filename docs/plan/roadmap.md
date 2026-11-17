@@ -49,6 +49,7 @@ A package is one branch and one pull request. When it merges, its row changes to
 | AR | The architecture: who defines, implements, and joins every interface; one design per crate; the layers redrawn | Documents; the audit | A2 | The audit refuses a crate with no design and a design with no crate | done |
 | B1 | Core vocabularies, `Failure`, `Secret` | `a2m-core` | A2 | Names held to the documents by a test; a secret cannot be printed | done |
 | B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | ready |
+| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | held |
 | B3 | The provider manifest, the registry, and a pack registering nothing but its modes | `a2m-provider` | B1 | A manifest that asks for an undeclared effect is refused with a named failure; a mode registered twice is refused | ready |
 | B4 | Target file schemas and the loader, for the file kinds the kernel owns. This is slice 0.6 | `a2m-files`, `a2m-core` | B1 | The `example` target's files validate; a broken one fails with a file, a line, and a fix | ready |
 | B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | held |
@@ -62,7 +63,7 @@ Phase 1 of the build plan. One read travels through every layer, each as thin as
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| 1.1 | The skeleton: a hand-written plan, the engine loop, the driver interface, the interface driver reading one field, a result printed by a command | `a2m-core`, `a2m-provider`, `a2m-engine`, `a2m-pack-web-browser`, `a2m-pack-web-ui`, `anything2mcp` | 0.4, B3 | One command reads one value from the test application. Settles the driver interface by decision record | held |
+| 1.1 | The skeleton: a hand-written plan, the engine loop with an in-process `Control`, the driver interface, the interface driver reading one field, a result printed by a command | `a2m-core`, `a2m-provider`, `a2m-engine`, `a2m-actions`, `a2m-pack-web-browser`, `a2m-pack-web-ui`, `anything2mcp` | 0.4, B2a, B3 | One command reads one value from the test application. Settles the driver interface by decision record | held |
 | 1.2 | The step trace and its signature | `a2m-telemetry`, `a2m-engine` | 1.1 | Five runs, one signature | held |
 | 1.3 | The compiler replaces the hand-written plan; packs register their file kinds and lowerings | `a2m-files`, `a2m-expr`, `a2m-provider`, `a2m-pack-web-ui` | 1.1, B4 | The same read from target files; the plan is byte-identical on three operating systems | held |
 | 1.4 | The store for reads, and the local engine: one process, two clients | `a2m-ledger`, `a2m-local`, `a2m-actions` | 1.2 | Two commands at once share one browser; a different user is refused; a read leaves a run row and its events | held |
@@ -98,7 +99,7 @@ Phase 3. At its end the first usable product exists: stop, use it, and review th
 | 3.6 | The approval surface replaces the stub | `a2m-policy`, `a2m-local`, `a2m-api` | 3.5 | A person approves; a script cannot | held |
 | 3.7 | Stop and resume, with reconcile before any write | `a2m-engine`, `a2m-ledger`, `a2m-sched` | 3.6 | Killed at a random step and resumed: no duplicate, nothing unverified | held |
 | 3.8 | Identity strategies and dependent records | `a2m-engine`, `a2m-files` | 3.7 | A header and its lines, created once | held |
-| 3.9 | Sources and a full pipeline | `a2m-sources`, `a2m-engine` | 3.8 | A spreadsheet entered, then run again with nothing changed | held |
+| 3.9 | Sources and a full pipeline | `a2m-sources`, `a2m-expr`, `a2m-files`, `a2m-engine` | 3.8 | A spreadsheet entered, then run again with nothing changed | held |
 | 3.10 | Engine faults and the first manipulation tests; a design review round | All kernel crates | 3.9 | Each fault leaves no duplicate and no unverified record | held |
 | R1 | Release 0.1: the changelog, the notices file for third-party licences, a wheel that carries the binary | `bindings/python`, the release workflow | 3.10, F1 | The release steps in RELEASING.md pass; an install from the registry runs a read and a write against the test application | held |
 
@@ -199,7 +200,8 @@ Phase 8.
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | 8.1 | Spike: desktop accessibility, with research brief 19 | `spikes/` | None | A decision record choosing the base | ready |
-| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; tools a site publishes | `a2m-pack-mcp` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
+| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; a small MCP server as its test stand | `a2m-pack-mcp`, `targets/` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
+| 8.2a | Tools a site publishes, as a mode of the web pack | `a2m-pack-web-ui`, `targets/example-app` | 1.6 | A page of the test application registers a tool and it is called through the engine loop | held |
 | 8.3 | The desktop pack | `a2m-pack-desktop` | 8.1, D4 | Test application case 28 passes on three operating systems | held |
 | 8.4 | Platform profiles and the remaining widget drivers | `a2m-pack-web-ui`, `profiles/` | 1.6 | Every control in the test application is set and read back | held |
 | 8.5 | The edge-case handlers of spec section 14 | `a2m-pack-web-ui`, `a2m-pack-web-browser` | 8.4 | Every hard case in the test application passes on three operating systems | held |
@@ -232,7 +234,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are B2, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2 and B4 both touch `a2m-core`: run them one after the other.
+Right now, the packages marked `ready` are B2, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2, B2a, and B4 all touch `a2m-core`: run them one after the other.
 
 ## Rules for changing this document
 

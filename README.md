@@ -69,7 +69,8 @@ The [catalog of surface kinds](docs/spec/62-catalog-of-surface-kinds.md) has the
 - A Cargo workspace of 24 crates with the kernel, the packs, and the product in enforced layers. The first kernel crate holds the shared vocabulary and a secret type that cannot be printed; the product crate's `anything2mcp` command reports its version; the rest are empty.
 - A test application with a web interface, a JSON interface, a control interface that reports ground truth, and injectable faults.
 - Continuous checks on three operating systems: formatting, lints, build, tests, a closed list of dependency licences, and an audit that keeps the documents and the crates consistent with each other.
-- The design: 67 sections, the decisions behind them, the research they rest on, and a register of the bets still to be tested.
+- The design: 72 sections, the decisions behind them, the research they rest on, and a register of the bets still to be tested.
+- The architecture: a design for every crate, written before its code, and one page that says who defines and joins each interface.
 
 What comes next is in the [roadmap](docs/plan/roadmap.md). Progress is in the [changelog](CHANGELOG.md) and, session by session, in the [journal](docs/journal/README.md).
 

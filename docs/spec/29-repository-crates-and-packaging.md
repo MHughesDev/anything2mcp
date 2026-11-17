@@ -25,11 +25,11 @@ anything2mcp/
     a2m-api/              # REST API, OpenAPI generation, webhooks
     a2m-runner/           # runner role and the control-plane link
     # The packs: each knows one kind of system.
-    a2m-pack-web-browser/ # web pack base: DevTools-protocol engine: locate, act, wait, network
-    a2m-pack-web-ui/      # web pack: ui and page_http drivers, widget drivers, platform profiles
+    a2m-pack-web-browser/ # web pack base: DevTools-protocol engine: locate, act, wait, network; platform profiles
+    a2m-pack-web-ui/      # web pack: ui, page_http, and site_tools drivers; widget drivers; sign-in in a browser
     a2m-pack-web-probe/   # web pack: capability probe, traffic capture, endpoint inference
     a2m-pack-http/        # HTTP pack: http and api drivers; OpenAPI, GraphQL, OData import
-    a2m-pack-mcp/         # MCP pack: upstream MCP pass-through and site tools
+    a2m-pack-mcp/         # MCP pack: pass-through to an upstream MCP server, through a mapping file
     a2m-pack-desktop/     # desktop pack: Windows UI Automation, macOS Accessibility, Linux AT-SPI
     # The product: wires the packs into the kernel.
     anything2mcp/         # the `anything2mcp` and `a2m` commands and the embeddable library facade

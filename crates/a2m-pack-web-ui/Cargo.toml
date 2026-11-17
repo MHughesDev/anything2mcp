@@ -1,6 +1,6 @@
 [package]
 name = "a2m-pack-web-ui"
-description = "The web pack's drivers: the ui and page_http modes, widget drivers, and platform profiles."
+description = "The web pack's drivers: the ui, page_http, and site_tools modes, widget drivers, and sign-in in a browser."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

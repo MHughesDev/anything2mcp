@@ -98,6 +98,12 @@ class AuditCatches(unittest.TestCase):
         self.depend("a2m-engine", "a2m-sched")
         self.assert_finding("layering", "a2m-engine (layer 6) depends on a2m-sched (layer 6)")
 
+    def test_the_engine_may_not_depend_on_the_compiler_or_on_policy(self):
+        self.depend("a2m-engine", "a2m-files")
+        self.depend("a2m-engine", "a2m-policy")
+        self.assert_finding("layering", "a2m-engine depends on a2m-files; the engine runs only compiled plans",
+                            "a2m-engine depends on a2m-policy; only the control plane decides")
+
     def test_the_product_crate_may_depend_on_everything(self):
         self.depend("anything2mcp", "a2m-engine")
         self.depend("anything2mcp", "a2m-pack-web-ui")
