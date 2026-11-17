@@ -5,15 +5,11 @@
 //!
 //! The test pack, its driver over the test application's JSON interface,
 //! and the hand-built plan of the imaginary `example` target are the
-//! engine's own test helpers, used here as they are.
+//! engine's own test helpers, used here as they are. The tests are part of
+//! the library's own test build, because they publish that plan through
+//! `Kernel::publish_plan`, which exists only for tests.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "this file holds only tests; the helpers the tests share do not carry the test attribute"
-)]
-
-#[path = "../../a2m-engine/tests/common/mod.rs"]
+#[path = "../../../a2m-engine/tests/common/mod.rs"]
 mod engine;
 
 use std::path::Path;
@@ -26,9 +22,9 @@ use a2m_actions::{
     PresenceProof, Request, Response, SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
-use a2m_core::{Failure, FailureClass, FailureCode, Secret, Timestamp};
+use a2m_core::{Failure, FailureClass, Timestamp};
 use a2m_policy::{Channel, PresenceCheck, PrincipalRef};
-use a2m_provider::{ProviderSettings, RegistryBuilder, Roots, Supervisor, SupervisorLimits};
+use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
 use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::{BoxFuture as VaultFuture, KeyStore, MemoryKeyStore};
 use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
@@ -49,7 +45,11 @@ struct Surface {
 
 impl Surface {
     fn desk(&self) -> Arc<ApprovalDesk> {
-        self.desk.lock().unwrap().clone().expect("the kernel handed the desk over")
+        self.desk
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the kernel handed the desk over")
     }
 }
 
@@ -186,10 +186,7 @@ async fn world(options: Options) -> World {
         os_user: USER.to_owned(),
     })
     .await;
-    let host = prepared.host_services(
-        Supervisor::new(SupervisorLimits::default()),
-        Roots::none(),
-    );
+    let host = prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
     builder.add_pack(&AppPack {
         hooks: Arc::new(engine::Hooks::default()),
@@ -236,7 +233,12 @@ impl World {
     /// target published.
     async fn ready() -> Self {
         let world = world(Options::default()).await;
-        assert_eq!(world.kernel.health().state, HealthState::Ok, "{:?}", world.kernel.health());
+        assert_eq!(
+            world.kernel.health().state,
+            HealthState::Ok,
+            "{:?}",
+            world.kernel.health()
+        );
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
@@ -285,7 +287,10 @@ async fn a_read_goes_end_to_end_with_its_run_its_events_its_decision_and_its_tra
     assert_eq!(described["effect"], "read");
 
     let response = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(response.ok, "{:?} {:?}", response.error, response.result);
     assert_eq!(response.exit, ExitClass::Succeeded);
@@ -376,10 +381,21 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
 
     // The person approves, at the desk, the diff they were shown. An agent
     // cannot: the policy engine refuses an approver that is not a person.
-    let asked = world.surface.approvals.lock().unwrap().last().cloned().unwrap();
+    let asked = world
+        .surface
+        .approvals
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
     assert_eq!(asked.run, run_id);
-    let person = world.caller.principal.principal.clone();
-    let proof = PresenceProof::new(PresenceCheck::OsPrompt, person.id, Timestamp::from_unix_millis(START));
+    let person = world.caller.principal.principal().clone();
+    let proof = PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        person.id,
+        Timestamp::from_unix_millis(START),
+    );
     let by_agent = desk
         .approve(
             run_id,
@@ -395,14 +411,18 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
         .await
         .unwrap();
 
-    let done = world.call("run.resume", json!({"run_id": run, "wait_seconds": 5})).await;
-    eprintln!("{}", serde_json::to_string_pretty(&world.ok("trace.show", json!({"run_id": run})).await).unwrap());
+    let done = world.call("run.resume", json!({"run_id": run})).await;
     assert!(done.ok, "{:?} {:?}", done.error, done.result);
     assert_eq!(done.result.as_ref().unwrap()["status"], "completed");
 
     // The test application confirms exactly one write, with the values.
     assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
-    let stored = world.app.stored_item("A-102", "L-300").await.unwrap().unwrap();
+    let stored = world
+        .app
+        .stored_item("A-102", "L-300")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.description, "New rail");
     assert_eq!(stored.quantity, 3);
 
@@ -415,10 +435,18 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
         .iter()
         .map(|event| event["kind"].as_str().unwrap())
         .collect();
-    let at = |kind: &str| kinds.iter().position(|found| *found == kind).unwrap_or_else(|| panic!("no {kind} in {kinds:?}"));
+    let at = |kind: &str| {
+        kinds
+            .iter()
+            .position(|found| *found == kind)
+            .unwrap_or_else(|| panic!("no {kind} in {kinds:?}"))
+    };
     assert!(at("approval_bound") < at("intent"));
     assert!(at("intent") < at("acted"));
-    assert!(at("acted") < at("reconcile_read").min(kinds.len()) || kinds.contains(&"verified"));
+    // The read-back is compared by the ledger and recorded as the read that
+    // settled the record: see `InProcessControl::verified`.
+    assert!(at("acted") < at("reconcile_read"));
+    assert_eq!(kinds.last(), Some(&"state_changed"));
 
     // An approval is used once: resuming again writes nothing more.
     let again = world.call("run.resume", json!({"run_id": run})).await;
@@ -432,18 +460,32 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
 async fn two_calls_at_once_are_two_runs_and_both_read() {
     let world = World::ready().await;
     let (first, second) = tokio::join!(
-        world.call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}})),
-        world.call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-101"}})),
+        world.call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}})
+        ),
+        world.call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-101"}})
+        ),
     );
     for response in [&first, &second] {
         assert!(response.ok, "{:?}", response.error);
     }
-    let run = |response: &Response| response.result.as_ref().unwrap()["run_id"].as_str().unwrap().to_owned();
+    let run = |response: &Response| {
+        response.result.as_ref().unwrap()["run_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
     assert_ne!(run(&first), run(&second));
     // The same call again, while nothing changed, is a new run of its own:
     // the first has ended.
     let third = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(third.ok);
     assert_ne!(run(&first), run(&third));
@@ -458,7 +500,10 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
     let unknown = world.call("tool.cal", json!({})).await;
     assert_eq!(unknown.exit, ExitClass::Malformed);
     let error = unknown.error.unwrap();
-    assert_eq!((error.class, error.code.as_str()), (FailureClass::Input, "schema_invalid"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Input, "schema_invalid")
+    );
     assert!(error.fix.contains("tool.call"), "{}", error.fix);
     assert!(unknown.decision.is_none());
 
@@ -468,22 +513,33 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
         (json!({"tool": ORDER_GET, "inptu": {}}), "input"),
         (json!({}), "tool"),
         (json!({"tool": 7}), "tool"),
-        (json!({"tool": ORDER_GET, "wait_seconds": 100_000}), "wait_seconds"),
+        (
+            json!({"tool": ORDER_GET, "wait_seconds": 100_000}),
+            "wait_seconds",
+        ),
     ] {
         let response = world.call("tool.call", input).await;
         assert_eq!(response.exit, ExitClass::Malformed);
         let error = response.error.unwrap();
         assert_eq!(error.code, "schema_invalid");
-        assert!(error.message.contains(says) || error.fix.contains(says), "{error:?}");
+        assert!(
+            error.message.contains(says) || error.fix.contains(says),
+            "{error:?}"
+        );
         assert_eq!(response.next.unwrap().action, "action.describe");
     }
 
     // A valid input that names nothing is a different failure with a
     // different next step.
-    let missing = world.call("tool.call", json!({"tool": "example_nothing_here"})).await;
+    let missing = world
+        .call("tool.call", json!({"tool": "example_nothing_here"}))
+        .await;
     assert_eq!(missing.exit, ExitClass::Failed);
     let error = missing.error.clone().unwrap();
-    assert_eq!((error.class, error.code.as_str()), (FailureClass::Input, "not_found"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Input, "not_found")
+    );
     assert!(error.fix.contains("tool.search"));
     assert!(error.retry_safe);
     let decided = world.explained(&missing).await;
@@ -491,9 +547,14 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
 
     // An action in the catalog that is not built answers with one named
     // failure, after its decision was recorded.
-    let not_built = world.call("capture.start", json!({"target": "example"})).await;
+    let not_built = world
+        .call("capture.start", json!({"target": "example"}))
+        .await;
     let error = not_built.error.clone().unwrap();
-    assert_eq!((error.class, error.code.as_str()), (FailureClass::Input, "action_not_built"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Input, "action_not_built")
+    );
     assert!(not_built.decision.is_some());
 
     // An action the client end carries out says so.
@@ -505,8 +566,12 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
     let publish = world
         .kernel
         .dispatch(
-            Request::new("version.publish", json!({"target": "example"}), world.caller.clone())
-                .in_project(repository()),
+            Request::new(
+                "version.publish",
+                json!({"target": "example"}),
+                world.caller.clone(),
+            )
+            .in_project(repository()),
         )
         .await;
     assert_eq!(publish.exit, ExitClass::PersonNeeded);
@@ -515,11 +580,17 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
 
     // `action.run` reaches any action, and the action's own rules apply.
     let through = world
-        .ok("action.run", json!({"action": "action.describe", "input": {"action": "run.get"}}))
+        .ok(
+            "action.run",
+            json!({"action": "action.describe", "input": {"action": "run.get"}}),
+        )
         .await;
     assert_eq!(through["tool"], "a2m_run_get");
     let refused = world
-        .call("action.run", json!({"action": "run.get", "input": {"nope": 1}}))
+        .call(
+            "action.run",
+            json!({"action": "run.get", "input": {"nope": 1}}),
+        )
         .await;
     assert_eq!(refused.error.unwrap().code, "schema_invalid");
 
@@ -576,13 +647,24 @@ async fn a_stopped_store_serves_status_and_nothing_else() {
         ("tool.call", json!({"tool": ORDER_GET})),
         ("tool.search", json!({})),
         ("run.get", json!({"run_id": "r_0000000000000000000000000"})),
-        ("secret.set", json!({"name": "example_password", "value": "x"})),
+        (
+            "secret.set",
+            json!({"name": "example_password", "value": "x"}),
+        ),
         ("target.list", json!({})),
     ] {
         let response = world.call(action, input).await;
         let error = response.error.unwrap_or_else(|| panic!("{action} ran"));
-        assert_eq!((error.class, error.code.as_str()), (FailureClass::Busy, "engine_degraded"), "{action}");
-        assert!(error.message.contains("stopped"), "{action}: {}", error.message);
+        assert_eq!(
+            (error.class, error.code.as_str()),
+            (FailureClass::Busy, "engine_degraded"),
+            "{action}"
+        );
+        assert!(
+            error.message.contains("stopped"),
+            "{action}: {}",
+            error.message
+        );
         assert_eq!(response.next.unwrap().action, "doctor.run");
     }
     assert!(world.kernel.start_runner_loop(1).await.is_err());
@@ -604,8 +686,14 @@ async fn without_a_key_store_the_kernel_is_degraded_and_writes_nothing() {
     world.ok("tool.search", json!({})).await;
     // Nothing writes.
     for (action, input) in [
-        ("secret.set", json!({"name": "example_password", "value": "x"})),
-        ("run.cancel", json!({"run_id": "r_0000000000000000000000000"})),
+        (
+            "secret.set",
+            json!({"name": "example_password", "value": "x"}),
+        ),
+        (
+            "run.cancel",
+            json!({"run_id": "r_0000000000000000000000000"}),
+        ),
         ("killswitch.set", json!({"scope": "everything", "on": true})),
     ] {
         let response = world.call(action, input).await;
@@ -623,14 +711,20 @@ async fn a_planted_secret_appears_in_no_result() {
     // released as a secret: the customer's name of one order.
     let secret = "Example Customer One";
     let stored = world
-        .call("secret.set", json!({"name": "example_password", "value": secret}))
+        .call(
+            "secret.set",
+            json!({"name": "example_password", "value": secret}),
+        )
         .await;
     assert!(stored.ok, "{:?}", stored.error);
     // Storing a secret gives nothing back.
     assert!(!stored.to_json().to_string().contains(secret));
 
     let response = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(response.ok, "{:?}", response.error);
     let text = response.to_json().to_string();
@@ -638,7 +732,10 @@ async fn a_planted_secret_appears_in_no_result() {
     assert!(text.contains(a2m_core::REDACTED));
     // Nor does a later read of the same run, its events, or a failure that
     // quotes the caller's own input.
-    let run = response.result.as_ref().unwrap()["run_id"].as_str().unwrap().to_owned();
+    let run = response.result.as_ref().unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     for (action, input) in [
         ("run.get", json!({"run_id": run})),
         ("trace.show", json!({"run_id": run})),
@@ -648,8 +745,6 @@ async fn a_planted_secret_appears_in_no_result() {
         let text = world.call(action, input).await.to_json().to_string();
         assert!(!text.contains(secret), "{action}: {text}");
     }
-    let _ = Secret::new(secret);
-    let _ = FailureCode::SCHEMA_INVALID;
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -659,7 +754,9 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     let listed = world.ok("provider.list", json!({})).await;
     assert_eq!(listed["providers"][0]["name"], "example_json");
     assert_eq!(listed["providers"][0]["availability"], "ready");
-    let described = world.ok("provider.describe", json!({"provider": "example_json"})).await;
+    let described = world
+        .ok("provider.describe", json!({"provider": "example_json"}))
+        .await;
     assert_eq!(described["modes"], json!(["app_json", "app_json_spare"]));
     assert_eq!(
         world
@@ -671,7 +768,9 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
         "Use one of: example_json."
     );
 
-    let shown = world.ok("config.show", json!({"key": "policy.approve_writes"})).await;
+    let shown = world
+        .ok("config.show", json!({"key": "policy.approve_writes"}))
+        .await;
     assert_eq!(shown["settings"][0]["value"], "person_each_run");
     assert_eq!(shown["settings"][0]["layer"], "default");
 
@@ -682,9 +781,20 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     assert_eq!(doctor["state"], "ok");
 
     let docs = world.ok("docs.get", json!({"topic": "tool.call"})).await;
-    assert!(docs["text"].as_str().unwrap().contains("anything2mcp tool call <tool>"));
+    assert!(
+        docs["text"]
+            .as_str()
+            .unwrap()
+            .contains("anything2mcp tool call <tool>")
+    );
     let found = world.ok("action.search", json!({"query": "publish"})).await;
-    assert!(found["actions"].as_array().unwrap().iter().any(|action| action["name"] == "version.publish"));
+    assert!(
+        found["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["name"] == "version.publish")
+    );
 
     let targets = world.ok("target.list", json!({})).await;
     assert_eq!(targets["targets"][0]["target"], "example");
@@ -696,23 +806,40 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     assert_eq!(sessions["sessions"], json!([]));
 
     // A kill switch stops work at once, and only a person releases it.
-    let on = world.ok("killswitch.set", json!({"scope": "everything", "on": true})).await;
+    let on = world
+        .ok("killswitch.set", json!({"scope": "everything", "on": true}))
+        .await;
     assert_eq!(on["on"], true);
     let held = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(!held.ok, "{held:?}");
-    let release = world.call("killswitch.set", json!({"scope": "everything", "on": false})).await;
+    let release = world
+        .call(
+            "killswitch.set",
+            json!({"scope": "everything", "on": false}),
+        )
+        .await;
     assert_eq!(release.error.unwrap().code, "person_required");
     let person = Caller::new(world.caller.principal.clone(), FrontDoor::Command, false);
     let released = world
         .kernel
-        .dispatch(Request::new("killswitch.set", json!({"scope": "everything", "on": false}), person))
+        .dispatch(Request::new(
+            "killswitch.set",
+            json!({"scope": "everything", "on": false}),
+            person,
+        ))
         .await;
     assert!(released.ok, "{:?}", released.error);
     assert_eq!(world.surface.presence_asked.load(Ordering::SeqCst), 1);
     let after = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
         .await;
     assert!(after.ok, "{:?}", after.error);
 
@@ -725,7 +852,10 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
         .iter()
         .map(|entry| entry["action"].as_str().unwrap())
         .collect();
-    assert!(actions.contains(&"version.publish") && actions.contains(&"killswitch.set"), "{actions:?}");
+    assert!(
+        actions.contains(&"version.publish") && actions.contains(&"killswitch.set"),
+        "{actions:?}"
+    );
 
     world.kernel.close(CloseReason::Asked).await;
 }

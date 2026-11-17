@@ -14,7 +14,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use a2m_auth::{InProcessWork, Keeper, KeeperSettings, KeeperWorker, ProviderSet, SessionStore, StoredCredentials};
+use a2m_auth::{
+    InProcessWork, Keeper, KeeperSettings, KeeperWorker, ProviderSet, SessionStore,
+    StoredCredentials,
+};
 use a2m_core::{
     Digest, EffectClass, Environment, Failure, Hazard, OperationName, Plan, PrincipalId, Redact,
     Secret, TargetName, WorkspaceId,
@@ -185,7 +188,6 @@ pub(crate) struct Inner {
     pub(crate) settings: Settings,
     pub(crate) paths: Paths,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) random: Arc<dyn RandomSource>,
     os_user: String,
     pub(crate) store: Option<Store>,
     pub(crate) vault: Option<Arc<Vault>>,
@@ -193,7 +195,6 @@ pub(crate) struct Inner {
     pub(crate) telemetry: Telemetry,
     pub(crate) policy: Option<Policy>,
     pub(crate) keeper: Option<Keeper>,
-    pub(crate) worker: Option<Arc<KeeperWorker>>,
     pub(crate) credentials: Option<Arc<StoredCredentials>>,
     pub(crate) sched: Option<Scheduler>,
     pub(crate) providers: a2m_provider::Registry,
@@ -279,7 +280,8 @@ impl Kernel {
             Some("debug") => LogLevel::Debug,
             _ => LogLevel::Info,
         };
-        let in_memory = || Telemetry::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
+        let in_memory =
+            || Telemetry::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
         let telemetry = match parts.place {
             StorePlace::Memory => in_memory(),
             StorePlace::Disk => a2m_telemetry::start_with_clock(
@@ -346,7 +348,6 @@ impl Kernel {
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
-        let mut worker = None;
         let mut credentials = None;
         let mut sched = None;
         if let Some(store) = &prepared.store {
@@ -410,14 +411,20 @@ impl Kernel {
                     )
                     .with_random(Arc::clone(&prepared.random)),
                 );
-                let probe = Arc::new(ProbeBridge::default());
+                let probe = Arc::new(ProbeBridge);
                 let work = Arc::new(InProcessWork::new(
                     Arc::clone(&held),
                     Arc::new(PersonBridge::new(Arc::clone(&person))),
                     Arc::clone(&probe) as Arc<dyn a2m_auth::RunProbe>,
                 ));
-                let hours = prepared.settings.int("sessions.keep_alive_hours").unwrap_or(8);
-                let minutes = prepared.settings.int("sessions.probe_minutes").unwrap_or(15);
+                let hours = prepared
+                    .settings
+                    .int("sessions.keep_alive_hours")
+                    .unwrap_or(8);
+                let minutes = prepared
+                    .settings
+                    .int("sessions.probe_minutes")
+                    .unwrap_or(15);
                 let keeper_settings = KeeperSettings {
                     keep_alive: seconds(hours.saturating_mul(3600)),
                     probe_every: seconds(minutes.saturating_mul(60)),
@@ -431,7 +438,6 @@ impl Kernel {
                         .random(Arc::clone(&prepared.random))
                         .build(),
                 );
-                worker = Some(held);
                 credentials = Some(stored);
             }
         }
@@ -441,7 +447,6 @@ impl Kernel {
                 settings: prepared.settings,
                 paths: prepared.paths,
                 clock: prepared.clock,
-                random: prepared.random,
                 os_user: prepared.os_user,
                 store: prepared.store,
                 vault: prepared.vault,
@@ -449,7 +454,6 @@ impl Kernel {
                 telemetry: prepared.telemetry,
                 policy,
                 keeper,
-                worker,
                 credentials,
                 sched,
                 providers,
@@ -482,7 +486,8 @@ impl Kernel {
     pub async fn recheck(&self) -> Health {
         let inner = &self.inner;
         let mut reasons = inner.fixed.clone();
-        let has = |reasons: &[Impaired], part: Part| reasons.iter().any(|reason| reason.part == part);
+        let has =
+            |reasons: &[Impaired], part: Part| reasons.iter().any(|reason| reason.part == part);
         if let Some(store) = &inner.store {
             let health = store.health().await;
             if !health.can_commit && !has(&reasons, Part::Store) {
@@ -524,7 +529,9 @@ impl Kernel {
         }
         if let Some(vault) = &inner.vault {
             let health = vault.health().await;
-            if matches!(health.store_health, KeyStoreHealth::Unreachable) && !has(&reasons, Part::Vault) {
+            if matches!(health.store_health, KeyStoreHealth::Unreachable)
+                && !has(&reasons, Part::Vault)
+            {
                 reasons.push(Impaired {
                     part: Part::Vault,
                     failure: codes::busy(
@@ -566,7 +573,9 @@ impl Kernel {
             detail: detail.to_owned(),
         };
         let _ = store
-            .write(Durability::Synced, move |tx| tx.audit().append(&entry).map(|_| ()))
+            .write(Durability::Synced, move |tx| {
+                tx.audit().append(&entry).map(|_| ())
+            })
             .await;
     }
 
@@ -590,7 +599,8 @@ impl Kernel {
             .await
             .unwrap_or(false);
         if changed {
-            self.audit("engine", "settings.changed", "settings", &settings).await;
+            self.audit("engine", "settings.changed", "settings", &settings)
+                .await;
         }
     }
 
@@ -647,7 +657,9 @@ impl Kernel {
         let (workspace, user) = self
             .inner
             .installation
-            .map_or((zero_workspace, zero_user), |found| (found.workspace, found.user));
+            .map_or((zero_workspace, zero_user), |found| {
+                (found.workspace, found.user)
+            });
         Principal {
             principal: PrincipalRef::person(user),
             workspace,
@@ -787,7 +799,9 @@ impl Kernel {
                 // be added or removed, or for the keeper's next round.
                 let wait = match sched.next_due().await {
                     Ok(Some(at)) => {
-                        let ahead = at.as_unix_millis().saturating_sub(clock.now().as_unix_millis());
+                        let ahead = at
+                            .as_unix_millis()
+                            .saturating_sub(clock.now().as_unix_millis());
                         std::time::Duration::from_millis(u64::try_from(ahead).unwrap_or(0))
                             .min(probe_every)
                     }
@@ -887,7 +901,11 @@ pub(crate) fn set_fact(tx: &mut Tx<'_>, name: &str, value: &str) -> Result<(), F
     tx.tables(Owner::Actions).execute(
         "INSERT INTO actions_installation (name, value, set_at) VALUES (?1, ?2, ?3)
          ON CONFLICT (name) DO UPDATE SET value = excluded.value, set_at = excluded.set_at",
-        &[SqlValue::from(name), SqlValue::from(value), SqlValue::from(now)],
+        &[
+            SqlValue::from(name),
+            SqlValue::from(value),
+            SqlValue::from(now),
+        ],
     )?;
     Ok(())
 }

@@ -43,10 +43,10 @@ pub use dispatch::{
     Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, Request, Response,
 };
 pub use faces::{
-    McpResultFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX, TOOL_PREFIX, command_faces_of, tool_name,
-    CommandArg, CommandFace, McpToolFace, RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut,
-    ShortcutStep, ToolAnnotationsFace, command_faces, mcp_tool, mcp_tools, rest_routes,
-    sdk_methods,
+    CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
+    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutStep, TOOL_PREFIX,
+    ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
+    sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
@@ -58,3 +58,18 @@ pub use person::{
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;
 pub use settings::{Settings, Sources};
+
+/// The crate under its own name, so that the tests below read as the crates
+/// above this one will write them.
+#[cfg(test)]
+extern crate self as a2m_actions;
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests; the helpers they share do not carry the test attribute"
+)]
+mod tests {
+    mod kernel;
+}

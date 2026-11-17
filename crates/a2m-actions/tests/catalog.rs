@@ -3,6 +3,12 @@
 //! else is; every face is generated for every action; and no action can
 //! approve.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "this file holds only tests; the helpers the tests share do not carry the test attribute"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -92,15 +98,25 @@ fn every_action_has_all_four_faces_and_they_share_its_name() {
                 .starts_with(&format!("anything2mcp {noun} {verb}"))
         );
         assert!(command.args.iter().filter(|arg| arg.positional).count() <= 1);
-        let tool = registry.by_tool_name(&format!("a2m_{noun}_{verb}")).unwrap();
+        let tool = registry
+            .by_tool_name(&format!("a2m_{noun}_{verb}"))
+            .unwrap();
         assert_eq!(tool.name, def.name);
         assert!(routes.iter().any(|route| {
-            route.method == "POST" && route.path == format!("/api/v1/actions/{name}") && !route.alias
+            route.method == "POST"
+                && route.path == format!("/api/v1/actions/{name}")
+                && !route.alias
         }));
         let method = methods.iter().find(|face| face.action == name).unwrap();
-        assert_eq!((method.namespace.as_str(), method.method.as_str()), (noun, verb));
+        assert_eq!(
+            (method.namespace.as_str(), method.method.as_str()),
+            (noun, verb)
+        );
         // A summary whose first 240 characters choose the action.
-        assert!(def.summary.len() >= 15 && def.summary.ends_with('.'), "{name}");
+        assert!(
+            def.summary.len() >= 15 && def.summary.ends_with('.'),
+            "{name}"
+        );
         // Flat, about ten properties or fewer; examples that parse and fit.
         assert!(def.input.fields.len() <= 10, "{name}");
         for example in &def.examples {
@@ -178,7 +194,10 @@ fn no_action_can_approve() {
         for word in ["approve", "approval", "decline"] {
             assert!(!name.contains(word), "{name} is named for approving");
             assert!(
-                def.input.fields.iter().all(|field| !field.name.contains(word)),
+                def.input
+                    .fields
+                    .iter()
+                    .all(|field| !field.name.contains(word)),
                 "{name} takes a field named for approving"
             );
         }
@@ -206,7 +225,10 @@ fn the_shortcuts_and_process_commands_are_those_of_the_catalog_and_add_no_action
             words.insert(word.split_whitespace().next().unwrap().to_owned());
         }
     }
-    let ours: BTreeSet<String> = SHORTCUTS.iter().map(|shortcut| shortcut.word.to_owned()).collect();
+    let ours: BTreeSet<String> = SHORTCUTS
+        .iter()
+        .map(|shortcut| shortcut.word.to_owned())
+        .collect();
     assert_eq!(ours, words);
     let nouns: BTreeSet<&str> = registry.iter().map(|def| def.name.noun()).collect();
     for shortcut in SHORTCUTS {
@@ -227,7 +249,10 @@ fn the_shortcuts_and_process_commands_are_those_of_the_catalog_and_add_no_action
         .collect();
     assert_eq!(
         named,
-        PROCESS_COMMANDS.iter().map(|word| (*word).to_owned()).collect()
+        PROCESS_COMMANDS
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect()
     );
     // A word may be a noun as well (`runner`, `run`, `test`, `docs`): alone
     // it is the process command or the shortcut, and with a verb after it,

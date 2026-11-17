@@ -55,7 +55,10 @@ handler!(
     |kernel, call| {
         let name = call.required("provider")?;
         let listing = kernel.providers().listing();
-        let Some(provider) = listing.iter().find(|provider| provider.name.as_str() == name) else {
+        let Some(provider) = listing
+            .iter()
+            .find(|provider| provider.name.as_str() == name)
+        else {
             let near = codes::nearest(name, listing.iter().map(|provider| provider.name.as_str()));
             return Err(codes::input(
                 codes::NOT_FOUND,

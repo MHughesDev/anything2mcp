@@ -10,8 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{
-    DecisionId, Failure, Identity, Mode, PrincipalId, RunId, RunState, RunnerId,
-    Values,
+    DecisionId, Failure, Identity, Mode, PrincipalId, RunId, RunState, RunnerId, Values,
 };
 use a2m_engine::{
     Conditions, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
@@ -90,7 +89,9 @@ impl CallerFacts {
 
     pub(crate) fn from_json(text: &str) -> Option<Self> {
         let json: Json = serde_json::from_str(text).ok()?;
-        let person = json["acting_for"].as_str().and_then(|text| text.parse().ok());
+        let person = json["acting_for"]
+            .as_str()
+            .and_then(|text| text.parse().ok());
         let acting_for = match (json["acting_how"].as_str()?, person) {
             ("local_user", Some(person)) => Some(ActingFor::LocalUser(person)),
             ("token_subject", Some(person)) => Some(ActingFor::TokenSubject(person)),
@@ -318,7 +319,9 @@ impl Kernel {
                     break;
                 };
                 drop(permit);
-                let free = u32::try_from(permits.available_permits()).unwrap_or(1).max(1);
+                let free = u32::try_from(permits.available_permits())
+                    .unwrap_or(1)
+                    .max(1);
                 let offer = Slots {
                     total: free,
                     per_mode: modes.iter().map(|mode| (mode.clone(), free)).collect(),
@@ -466,7 +469,9 @@ impl Kernel {
                     is_agent: false,
                     acting_for: None,
                     toolset: None,
-                    decision: row.decision.unwrap_or_else(|| DecisionId::from_bytes([0; 16])),
+                    decision: row
+                        .decision
+                        .unwrap_or_else(|| DecisionId::from_bytes([0; 16])),
                 },
             ),
         };
@@ -507,7 +512,9 @@ impl Kernel {
                         health
                             .reasons
                             .first()
-                            .map_or(codes::ENGINE_DEGRADED, |reason| reason.failure.code().clone()),
+                            .map_or(codes::ENGINE_DEGRADED, |reason| {
+                                reason.failure.code().clone()
+                            }),
                     ),
                 },
                 ..Conditions::default()
@@ -551,14 +558,8 @@ impl Kernel {
             })
         };
 
-        let control = InProcessControl::new(
-            self.clone(),
-            fence,
-            lease.lease_ref(),
-            row,
-            plan,
-            caller,
-        );
+        let control =
+            InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller);
         let outcome = engine.run_job(&job, &control).await;
         beat.abort();
         let _ = beat.await;
@@ -664,7 +665,10 @@ impl Kernel {
         }))
     }
 
-    pub(crate) async fn stored_values(&self, blob: Option<BlobRef>) -> Result<Option<Values>, Failure> {
+    pub(crate) async fn stored_values(
+        &self,
+        blob: Option<BlobRef>,
+    ) -> Result<Option<Values>, Failure> {
         let Some(blob) = blob else {
             return Ok(None);
         };

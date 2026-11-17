@@ -35,7 +35,12 @@ handler!(
     |kernel, call| { Ok(Output::ok(kernel.settings().show(call.text("key"))?)) }
 );
 
-fn check(name: &str, state: DoctorState, detail: impl Into<String>, fix: impl Into<String>) -> Json {
+fn check(
+    name: &str,
+    state: DoctorState,
+    detail: impl Into<String>,
+    fix: impl Into<String>,
+) -> Json {
     json!({"check": name, "state": state.as_str(), "detail": detail.into(), "fix": fix.into()})
 }
 
@@ -53,10 +58,18 @@ handler!(
             None => check(
                 "settings",
                 DoctorState::Healthy,
-                format!("The settings loaded; their digest is {}.", kernel.settings().digest()),
+                format!(
+                    "The settings loaded; their digest is {}.",
+                    kernel.settings().digest()
+                ),
                 "",
             ),
-            Some(first) => check("settings", DoctorState::RuntimeFailure, first.message(), first.next_step()),
+            Some(first) => check(
+                "settings",
+                DoctorState::RuntimeFailure,
+                first.message(),
+                first.next_step(),
+            ),
         });
 
         // The store, and the audit chain inside it.
@@ -78,9 +91,12 @@ handler!(
                         .read(move |tx| tx.audit().verify(&installation.workspace))
                         .await;
                     checks.push(match chain {
-                        Ok(ChainCheck::Intact { .. }) => {
-                            check("audit_chain", DoctorState::Healthy, "The audit chain is whole.", "")
-                        }
+                        Ok(ChainCheck::Intact { .. }) => check(
+                            "audit_chain",
+                            DoctorState::Healthy,
+                            "The audit chain is whole.",
+                            "",
+                        ),
                         Ok(_) => check(
                             "audit_chain",
                             DoctorState::RuntimeFailure,
@@ -97,7 +113,12 @@ handler!(
                 }
             }
             Err(failure) => {
-                checks.push(check("store", DoctorState::RuntimeFailure, failure.message(), failure.next_step()));
+                checks.push(check(
+                    "store",
+                    DoctorState::RuntimeFailure,
+                    failure.message(),
+                    failure.next_step(),
+                ));
             }
         }
 
@@ -129,16 +150,28 @@ handler!(
         });
 
         // Policy, and the presence check this machine offers.
-        checks.push(if kernel.policy().is_some() && health.reasons.iter().all(|reason| reason.part != crate::health::Part::Policy) {
-            check("policy", DoctorState::Healthy, "A valid policy set is in force.", "")
-        } else {
-            check(
-                "policy",
-                DoctorState::RuntimeFailure,
-                "No valid policy set is in force, so every decision is a denial.",
-                "Publish a policy set whose tests pass.",
-            )
-        });
+        checks.push(
+            if kernel.policy().is_some()
+                && health
+                    .reasons
+                    .iter()
+                    .all(|reason| reason.part != crate::health::Part::Policy)
+            {
+                check(
+                    "policy",
+                    DoctorState::Healthy,
+                    "A valid policy set is in force.",
+                    "",
+                )
+            } else {
+                check(
+                    "policy",
+                    DoctorState::RuntimeFailure,
+                    "No valid policy set is in force, so every decision is a denial.",
+                    "Publish a policy set whose tests pass.",
+                )
+            },
+        );
 
         // The providers.
         for provider in kernel.providers().listing() {
@@ -150,7 +183,10 @@ handler!(
             checks.push(check(
                 &format!("provider.{}", provider.name),
                 state,
-                format!("{} {}: {}.", provider.name, provider.version, provider.availability),
+                format!(
+                    "{} {}: {}.",
+                    provider.name, provider.version, provider.availability
+                ),
                 provider.fix,
             ));
         }
@@ -177,7 +213,12 @@ handler!(
         // right, and approvals are judged by it.
         let now = kernel.inner.clock.now().as_unix_millis();
         checks.push(if now > 0 {
-            check("clock", DoctorState::Healthy, "The clock gives a time of day.", "")
+            check(
+                "clock",
+                DoctorState::Healthy,
+                "The clock gives a time of day.",
+                "",
+            )
         } else {
             check(
                 "clock",
@@ -195,6 +236,8 @@ handler!(
                 reason.failure.next_step(),
             ));
         }
-        Ok(Output::ok(json!({"state": health.state.as_str(), "checks": checks})))
+        Ok(Output::ok(
+            json!({"state": health.state.as_str(), "checks": checks}),
+        ))
     }
 );

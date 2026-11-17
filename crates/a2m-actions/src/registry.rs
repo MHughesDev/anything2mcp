@@ -117,12 +117,16 @@ impl ActionRegistry {
         let mut by_name = BTreeMap::new();
         for (at, def) in defs.iter().enumerate() {
             if by_name.insert(def.name.clone(), at).is_some() {
-                return Err(invalid(format!(
-                    "Two actions are named `{}`.",
-                    def.name
-                )));
+                return Err(invalid(format!("Two actions are named `{}`.", def.name)));
             }
-            if def.input.fields.iter().filter(|field| field.positional).count() > 1 {
+            if def
+                .input
+                .fields
+                .iter()
+                .filter(|field| field.positional)
+                .count()
+                > 1
+            {
                 return Err(invalid(format!(
                     "The action `{}` declares more than one positional field.",
                     def.name
@@ -204,8 +208,11 @@ impl ActionRegistry {
     /// The actions marked for a toolset that its cap leaves out of the list.
     #[must_use]
     pub fn past_cap(&self, toolset: BuiltInToolset) -> Vec<&ActionDef> {
-        let listed: BTreeSet<&ActionName> =
-            self.toolset(toolset).into_iter().map(|def| &def.name).collect();
+        let listed: BTreeSet<&ActionName> = self
+            .toolset(toolset)
+            .into_iter()
+            .map(|def| &def.name)
+            .collect();
         self.defs
             .iter()
             .filter(|def| def.listed.in_toolset(toolset) && !listed.contains(&def.name))
@@ -217,8 +224,8 @@ impl ActionRegistry {
     #[must_use]
     pub fn catalog(&self) -> Catalog {
         let actions: Vec<CatalogEntry> = self.defs.iter().map(CatalogEntry::of).collect();
-        let digest = CanonicalJson::encode(&actions)
-            .map_or_else(|_| Digest::of(b""), |json| json.digest());
+        let digest =
+            CanonicalJson::encode(&actions).map_or_else(|_| Digest::of(b""), |json| json.digest());
         Catalog {
             format: CATALOG_FORMAT,
             digest: digest.to_string(),

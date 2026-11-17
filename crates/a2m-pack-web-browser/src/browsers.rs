@@ -209,7 +209,7 @@ impl Shared {
 /// browsers.
 #[derive(Clone)]
 pub struct Browsers {
-    shared: Arc<Shared>,
+    pub(crate) shared: Arc<Shared>,
 }
 
 impl fmt::Debug for Browsers {
@@ -585,5 +585,63 @@ impl Address {
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// One set of browsers for the two crates of the web pack. A pack is handed
+/// its context only while it registers, and the drivers and the discoverers
+/// are two packs that must not each start a browser on one profile: the
+/// product crate makes one cell and gives a clone to both. The first of
+/// them to register builds the `Browsers`; the other receives the same.
+#[derive(Clone, Default)]
+pub struct SharedBrowsers {
+    cell: Arc<Mutex<Option<Browsers>>>,
+}
+
+impl fmt::Debug for SharedBrowsers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedBrowsers").finish_non_exhaustive()
+    }
+}
+
+impl SharedBrowsers {
+    /// The cell's browsers, built by [`Browsers::new`] from the context and
+    /// settings of the first caller. A later caller's context and settings
+    /// are not used: its manifest must declare the same effects, or it is
+    /// the first caller's supervisor that answers.
+    ///
+    /// # Errors
+    ///
+    /// As [`Browsers::new`]. A failed build leaves the cell empty.
+    pub fn get_or_create(
+        &self,
+        ctx: &PackContext,
+        settings: BrowserSettings,
+    ) -> Result<Browsers, Failure> {
+        let mut cell = self
+            .cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(browsers) = cell.as_ref() {
+            return Ok(browsers.clone());
+        }
+        let browsers = Browsers::new(ctx, settings)?;
+        *cell = Some(browsers.clone());
+        Ok(browsers)
+    }
+
+    /// The cell's browsers, when a pack has built them.
+    #[must_use]
+    pub fn get(&self) -> Option<Browsers> {
+        self.cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A handle that can only look, when a pack has built the browsers.
+    #[must_use]
+    pub fn observer(&self) -> Option<Observer> {
+        self.get().map(|browsers| browsers.observer())
     }
 }

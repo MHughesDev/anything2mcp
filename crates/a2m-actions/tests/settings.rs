@@ -1,6 +1,12 @@
 //! The settings loader: eight layers, what each may set, and where every
 //! value came from (spec section 226).
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "this file holds only tests; the helpers the tests share do not carry the test attribute"
+)]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -38,7 +44,11 @@ fn an_empty_file_is_a_complete_configuration() {
         let entry = none.entry(setting.key).unwrap();
         assert_eq!(entry.layer, Layer::Default, "{}", setting.key);
     }
-    assert!(none.presets().iter().any(|preset| preset.name == "standard" && preset.chosen));
+    assert!(
+        none.presets()
+            .iter()
+            .any(|preset| preset.name == "standard" && preset.chosen)
+    );
 }
 
 #[test]
@@ -48,10 +58,19 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
             "installation.toml",
             "[logging]\nlevel = \"warn\"\n\n[evidence]\ntrace_retention_days = 90\n",
         ),
-        user: file("user.toml", "[logging]\nlevel = \"debug\"\nformat = \"json\"\n"),
-        project: file("anything2mcp.toml", "[authoring.scout]\nrun = \"on_request\"\n"),
+        user: file(
+            "user.toml",
+            "[logging]\nlevel = \"debug\"\nformat = \"json\"\n",
+        ),
+        project: file(
+            "anything2mcp.toml",
+            "[authoring.scout]\nrun = \"on_request\"\n",
+        ),
         environment: BTreeMap::from([
-            ("A2M_EVIDENCE__TRACE_RETENTION_DAYS".to_owned(), "7".to_owned()),
+            (
+                "A2M_EVIDENCE__TRACE_RETENTION_DAYS".to_owned(),
+                "7".to_owned(),
+            ),
             ("A2M_HOME".to_owned(), "not a setting".to_owned()),
             ("PATH".to_owned(), "not ours".to_owned()),
         ]),
@@ -79,7 +98,10 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
         ]
     );
     assert_eq!(
-        settings.entry("evidence.trace_retention_days").unwrap().origin,
+        settings
+            .entry("evidence.trace_retention_days")
+            .unwrap()
+            .origin,
         "the variable `A2M_EVIDENCE__TRACE_RETENTION_DAYS`"
     );
 
@@ -88,7 +110,10 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
     let rows = shown["settings"].as_array().unwrap();
     assert_eq!(rows.len(), settings.entries().count());
     for row in rows {
-        assert!(row["layer"].is_string() && row["origin"].is_string(), "{row}");
+        assert!(
+            row["layer"].is_string() && row["origin"].is_string(),
+            "{row}"
+        );
     }
     let run = rows
         .iter()
@@ -98,22 +123,35 @@ fn a_higher_layer_wins_key_by_key_and_config_show_names_the_layer_of_every_value
     assert_eq!(run["value"], "on_request");
     // With a key, that key's documentation.
     let one = settings.show(Some("policy.max_records_per_run")).unwrap();
-    assert!(one["settings"][0]["doc"].as_str().unwrap().contains("most records"));
+    assert!(
+        one["settings"][0]["doc"]
+            .as_str()
+            .unwrap()
+            .contains("most records")
+    );
     assert_eq!(one["settings"][0]["protected"], true);
-    let unknown = settings.show(Some("policy.max_record_per_run")).unwrap_err();
+    let unknown = settings
+        .show(Some("policy.max_record_per_run"))
+        .unwrap_err();
     assert!(unknown.next_step().contains("policy.max_records_per_run"));
 }
 
 #[test]
 fn an_unknown_key_is_refused_with_its_file_its_line_and_the_nearest_keys() {
     let failure = Settings::load(&Sources {
-        user: file("user.toml", "[logging]\nlevel = \"info\"\n\n[policy]\nmax_record_per_run = 5\n"),
+        user: file(
+            "user.toml",
+            "[logging]\nlevel = \"info\"\n\n[policy]\nmax_record_per_run = 5\n",
+        ),
         ..Sources::none()
     })
     .unwrap_err();
     assert_eq!(failure.class(), FailureClass::Input);
     assert_eq!(failure.code().as_str(), "settings_invalid");
-    assert!(failure.message().contains("`user.toml`, line 5"), "{failure}");
+    assert!(
+        failure.message().contains("`user.toml`, line 5"),
+        "{failure}"
+    );
     assert!(failure.next_step().contains("policy.max_records_per_run"));
 
     let wrong_type = Settings::load(&Sources {
@@ -139,7 +177,10 @@ fn an_unknown_key_is_refused_with_its_file_its_line_and_the_nearest_keys() {
 
     // A guardrail has no key: a file that tries to set one fails as an
     // unknown key.
-    for guardrail in ["[engine]\nmodel = \"any\"\n", "[evidence.redaction]\nenabled = false\n"] {
+    for guardrail in [
+        "[engine]\nmodel = \"any\"\n",
+        "[evidence.redaction]\nenabled = false\n",
+    ] {
         assert!(
             Settings::load(&Sources {
                 installation: file("installation.toml", guardrail),
@@ -155,8 +196,20 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
     let loosen = "[policy]\nmax_records_per_run = 500\n";
     let tighten = "[policy]\nmax_records_per_run = 5\n";
     for (name, sources) in [
-        ("user", Sources { user: file("user.toml", loosen), ..Sources::none() }),
-        ("project", Sources { project: file("anything2mcp.toml", loosen), ..Sources::none() }),
+        (
+            "user",
+            Sources {
+                user: file("user.toml", loosen),
+                ..Sources::none()
+            },
+        ),
+        (
+            "project",
+            Sources {
+                project: file("anything2mcp.toml", loosen),
+                ..Sources::none()
+            },
+        ),
         (
             "environment",
             Sources {
@@ -167,12 +220,18 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
                 ..Sources::none()
             },
         ),
-        ("flag", Sources::none().with_flag("policy.max_records_per_run", "500")),
+        (
+            "flag",
+            Sources::none().with_flag("policy.max_records_per_run", "500"),
+        ),
     ] {
         let failure = Settings::load(&sources).unwrap_err();
         assert_eq!(failure.class(), FailureClass::Policy, "{name}");
         assert_eq!(failure.code().as_str(), "setting_protected", "{name}");
-        assert!(failure.message().contains("policy.max_records_per_run"), "{name}");
+        assert!(
+            failure.message().contains("policy.max_records_per_run"),
+            "{name}"
+        );
         assert!(failure.message().contains(name), "{name}: {failure}");
     }
     // Tightening is never protected, from any layer.
@@ -200,7 +259,10 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
         "[evidence]\ncapture_on_writes = \"standard\"\n[policy]\npre_approval = true\n",
     ] {
         let sources = Sources {
-            installation: file("installation.toml", "[evidence]\ncapture_on_writes = \"full\"\n[policy]\npre_approval = false\n"),
+            installation: file(
+                "installation.toml",
+                "[evidence]\ncapture_on_writes = \"full\"\n[policy]\npre_approval = false\n",
+            ),
             user: file("user.toml", loosening),
             ..Sources::none()
         };
@@ -209,7 +271,10 @@ fn the_upper_layers_may_tighten_a_protected_setting_and_never_loosen_it() {
     }
     // Every problem is reported, not only the first.
     let (_, problems) = Settings::load_all(&Sources {
-        user: file("user.toml", "[policy]\nmax_records_per_run = 500\nnope = 1\n"),
+        user: file(
+            "user.toml",
+            "[policy]\nmax_records_per_run = 500\nnope = 1\n",
+        ),
         ..Sources::none()
     });
     assert_eq!(problems.len(), 2);
@@ -235,7 +300,11 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
     // The flags of `serve` may set an installation-only key; other flags not.
     let flags = Sources::none().with_flag("server.listen", "127.0.0.1:0");
     assert!(Settings::load(&flags).is_err());
-    let serve = Settings::load(&Sources { serve: true, ..flags }).unwrap();
+    let serve = Settings::load(&Sources {
+        serve: true,
+        ..flags
+    })
+    .unwrap();
     assert_eq!(serve.entry("server.listen").unwrap().layer, Layer::Flag);
 
     // A lock: no higher layer changes the key in either direction.
@@ -273,7 +342,10 @@ fn an_installation_only_setting_and_a_locked_key_are_the_installations_alone() {
 #[test]
 fn a_preset_is_layer_three_tightens_only_and_is_named_as_the_source() {
     let cautious = Settings::load(&Sources {
-        user: file("user.toml", "[profile]\npreset = \"cautious\"\n[sessions]\nkeep_alive_hours = 2\n"),
+        user: file(
+            "user.toml",
+            "[profile]\npreset = \"cautious\"\n[sessions]\nkeep_alive_hours = 2\n",
+        ),
         ..Sources::none()
     })
     .unwrap();
@@ -285,7 +357,12 @@ fn a_preset_is_layer_three_tightens_only_and_is_named_as_the_source() {
     assert_eq!(cautious.text("authoring.scout.run"), Some("on_request"));
     // The user's file still overrides what the preset set.
     assert_eq!(cautious.int("sessions.keep_alive_hours"), Some(2));
-    assert!(cautious.presets().iter().any(|preset| preset.name == "cautious" && preset.chosen));
+    assert!(
+        cautious
+            .presets()
+            .iter()
+            .any(|preset| preset.name == "cautious" && preset.chosen)
+    );
 
     let ci = Settings::load(&Sources {
         environment: BTreeMap::from([("A2M_PROFILE__PRESET".to_owned(), "ci".to_owned())]),
@@ -297,7 +374,10 @@ fn a_preset_is_layer_three_tightens_only_and_is_named_as_the_source() {
 
     // A site's own preset: listed, and refused when it loosens.
     let site = |text: &str| Sources {
-        presets: vec![SourceFile::new(PathBuf::from("presets").join("night.toml"), text)],
+        presets: vec![SourceFile::new(
+            PathBuf::from("presets").join("night.toml"),
+            text,
+        )],
         user: file("user.toml", "[profile]\npreset = \"night\"\n"),
         ..Sources::none()
     };
@@ -320,7 +400,10 @@ fn a_preset_is_layer_three_tightens_only_and_is_named_as_the_source() {
     })
     .unwrap();
     let scout = team.entry("authoring.scout.run").unwrap();
-    assert_eq!((scout.value.as_text(), scout.layer), (Some("on_request"), Layer::Profile));
+    assert_eq!(
+        (scout.value.as_text(), scout.layer),
+        (Some("on_request"), Layer::Profile)
+    );
 }
 
 const PACK: &str = r#"
@@ -362,8 +445,16 @@ fn a_packs_group_is_checked_by_the_schema_its_manifest_declares() {
     };
     let settings = Settings::load(&with_pack("[packs.example_pack]\npage_budget = 8\n")).unwrap();
     assert_eq!(settings.int("packs.example_pack.page_budget"), Some(8));
-    assert_eq!(settings.entry("packs.example_pack.attach").unwrap().layer, Layer::Default);
-    assert!(settings.entry("packs.example_pack.attach").unwrap().protected);
+    assert_eq!(
+        settings.entry("packs.example_pack.attach").unwrap().layer,
+        Layer::Default
+    );
+    assert!(
+        settings
+            .entry("packs.example_pack.attach")
+            .unwrap()
+            .protected
+    );
     // What the registry is built from: the group as it was written.
     let provider = settings.provider_settings();
     let group = &provider.packs[&a2m_provider::ProviderName::new("example_pack").unwrap()];

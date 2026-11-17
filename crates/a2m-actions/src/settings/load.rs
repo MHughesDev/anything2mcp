@@ -274,7 +274,7 @@ enum Written {
     Text(String),
     /// A value of a type no setting takes, such as a number with a
     /// fraction.
-    Unusable(&'static str),
+    Unusable,
 }
 
 /// What the schema, or a pack's manifest, says about one key.
@@ -371,7 +371,7 @@ impl Settings {
         let (settings, problems) = Self::load_all(sources);
         match problems.split_first() {
             None => Ok(settings),
-            Some((first, rest)) if rest.is_empty() => Err(first.clone()),
+            Some((first, [])) => Err(first.clone()),
             Some((first, rest)) => Err(Failure::new(
                 first.class(),
                 first.code().clone(),
@@ -379,7 +379,11 @@ impl Settings {
                     "{} ({} more {} with the settings.)",
                     first.message(),
                     rest.len(),
-                    if rest.len() == 1 { "problem" } else { "problems" }
+                    if rest.len() == 1 {
+                        "problem"
+                    } else {
+                        "problems"
+                    }
                 ),
                 first.next_step().to_owned(),
             )),
@@ -450,7 +454,9 @@ impl Settings {
 
     /// Every effective setting, in order of key.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &Entry)> {
-        self.entries.iter().map(|(key, entry)| (key.as_str(), entry))
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.as_str(), entry))
     }
 
     /// The keys the installation file locks, as it wrote them.
@@ -707,10 +713,14 @@ impl Loader {
         // Layer 2: the profile. Only the installation file and the flags of
         // `serve` may name it.
         let named = |layer: &[Raw], key: &str| {
-            layer.iter().rev().find(|raw| raw.key == key).and_then(|raw| match &raw.value {
-                Written::Typed(Value::Text(text)) | Written::Text(text) => Some(text.clone()),
-                _ => None,
-            })
+            layer
+                .iter()
+                .rev()
+                .find(|raw| raw.key == key)
+                .and_then(|raw| match &raw.value {
+                    Written::Typed(Value::Text(text)) | Written::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
         };
         let profile = sources
             .serve
@@ -816,7 +826,11 @@ impl Loader {
             }
         }
         if !found {
-            let known: Vec<String> = self.presets.iter().map(|preset| preset.name.clone()).collect();
+            let known: Vec<String> = self
+                .presets
+                .iter()
+                .map(|preset| preset.name.clone())
+                .collect();
             self.problems.push(invalid(
                 "`profile.preset`",
                 format!("there is no preset named `{}`", codes::shown(chosen)),
@@ -867,13 +881,15 @@ impl Loader {
                             self.problems.push(Failure::new(
                                 a2m_core::FailureClass::Policy,
                                 codes::SETTING_PROTECTED,
-                                format!("{origin}: only the installation's settings file may lock keys."),
+                                format!(
+                                    "{origin}: only the installation's settings file may lock keys."
+                                ),
                                 "Remove `[locks]` from this file.",
                             ));
-                        } else if let Written::Typed(Value::List(items)) = written(value.get_ref()) {
-                            self.locks.extend(
-                                items.iter().filter_map(Value::as_text).map(str::to_owned),
-                            );
+                        } else if let Written::Typed(Value::List(items)) = written(value.get_ref())
+                        {
+                            self.locks
+                                .extend(items.iter().filter_map(Value::as_text).map(str::to_owned));
                         } else {
                             self.problems.push(invalid(
                                 &origin,
@@ -914,9 +930,11 @@ impl Loader {
         let decl = manifest.settings.iter().find(|decl| decl.key == setting)?;
         Some(Rule {
             scope: pack_scope(decl.scope),
-            protected: decl
-                .protected
-                .then(|| decl.safer.as_deref().map_or(Safer::Unknown, Safer::from_word)),
+            protected: decl.protected.then(|| {
+                decl.safer
+                    .as_deref()
+                    .map_or(Safer::Unknown, Safer::from_word)
+            }),
             effective: Effective::NextStart,
             doc: decl.doc.clone(),
             kind: RuleKind::Pack {
@@ -949,7 +967,10 @@ impl Loader {
                 if near.is_empty() {
                     "Remove the key, or call `config.show` to list every setting.".to_owned()
                 } else {
-                    format!("Did you mean one of: {}? An unknown key is never ignored.", near.join(", "))
+                    format!(
+                        "Did you mean one of: {}? An unknown key is never ignored.",
+                        near.join(", ")
+                    )
                 },
             ));
             return;
@@ -957,7 +978,7 @@ impl Loader {
         let value = match raw.value {
             Written::Typed(value) => Some(value),
             Written::Text(text) => rule.read(&text),
-            Written::Unusable(_) => None,
+            Written::Unusable => None,
         };
         let value = match value {
             Some(value) if rule.misfit(&value).is_none() => value,
@@ -1115,10 +1136,9 @@ fn written(value: &DeValue<'_>) -> Written {
         DeValue::Boolean(flag) => Written::Typed(Value::Bool(*flag)),
         DeValue::Integer(number) => {
             let digits: String = number.as_str().chars().filter(|c| *c != '_').collect();
-            i64::from_str_radix(&digits, number.radix())
-                .map_or(Written::Unusable("a number out of range"), |number| {
-                    Written::Typed(Value::Int(number))
-                })
+            i64::from_str_radix(&digits, number.radix()).map_or(Written::Unusable, |number| {
+                Written::Typed(Value::Int(number))
+            })
         }
         DeValue::Array(items) => {
             let mut texts = Vec::new();
@@ -1127,16 +1147,16 @@ fn written(value: &DeValue<'_>) -> Written {
                     DeValue::String(text) => texts.push(Value::Text(text.to_string())),
                     DeValue::Integer(number) => match number.as_str().parse::<i64>() {
                         Ok(number) => texts.push(Value::Int(number)),
-                        Err(_) => return Written::Unusable("a list"),
+                        Err(_) => return Written::Unusable,
                     },
-                    _ => return Written::Unusable("a list"),
+                    _ => return Written::Unusable,
                 }
             }
             Written::Typed(Value::List(texts))
         }
-        DeValue::Float(_) => Written::Unusable("a number with a fraction"),
-        DeValue::Datetime(_) => Written::Unusable("a date"),
-        DeValue::Table(_) => Written::Unusable("a table"),
+        DeValue::Float(_) => Written::Unusable,
+        DeValue::Datetime(_) => Written::Unusable,
+        DeValue::Table(_) => Written::Unusable,
     }
 }
 

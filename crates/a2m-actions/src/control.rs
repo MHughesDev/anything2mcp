@@ -253,7 +253,11 @@ impl Control for InProcessControl {
         })
     }
 
-    fn rate<'a>(&'a self, surface: &'a SurfaceName, want: u32) -> BoxFuture<'a, Result<u32, Failure>> {
+    fn rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<u32, Failure>> {
         Box::pin(async move {
             let sched = self.kernel.sched()?;
             let key = BudgetKey::surface(
@@ -386,7 +390,9 @@ impl Control for InProcessControl {
                 // release between the refusal and the wait is not missed.
                 let ticket = sched.lock_ticket(&key);
                 match store
-                    .write(Durability::Synced, move |tx| tx.ledger().take_lock(&fence, record))
+                    .write(Durability::Synced, move |tx| {
+                        tx.ledger().take_lock(&fence, record)
+                    })
                     .await
                 {
                     Ok(held) => return Ok(held),
@@ -433,7 +439,9 @@ impl Control for InProcessControl {
         Box::pin(async move {
             self.kernel
                 .store()?
-                .write(Durability::Synced, move |tx| tx.ledger().mark_acted(token, acted))
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().mark_acted(token, acted)
+                })
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
@@ -459,7 +467,8 @@ impl Control for InProcessControl {
                 .kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
-                    tx.ledger().settle(&fence, record, Reconciled::Landed(read_back))
+                    tx.ledger()
+                        .settle(&fence, record, Reconciled::Landed(read_back))
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))?;
@@ -509,7 +518,9 @@ impl Control for InProcessControl {
             let settled = self
                 .kernel
                 .store()?
-                .write(Durability::Synced, move |tx| tx.ledger().settle(&fence, record, seen))
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().settle(&fence, record, seen)
+                })
                 .await
                 .map_err(|failure| self.redacted(failure))?;
             if settled != Settled::Planned {
@@ -527,10 +538,15 @@ impl Control for InProcessControl {
             let sent = match event {
                 EngineEvent::Moved(to) => {
                     store
-                        .write(Durability::Synced, move |tx| tx.ledger().set_state(&fence, to, None))
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger().set_state(&fence, to, None)
+                        })
                         .await
                 }
-                EngineEvent::StepStarted { step_seq, operation } => {
+                EngineEvent::StepStarted {
+                    step_seq,
+                    operation,
+                } => {
                     let payload = json!({"step": step_seq, "operation": operation.as_str()});
                     store
                         .write(Durability::Relaxed, move |tx| {
@@ -584,7 +600,12 @@ impl Control for InProcessControl {
                         .await
                 }
                 EngineEvent::Result(values) => self.store_result(&values).await,
-                EngineEvent::BindingHealth { operation, mode, surface, failure } => {
+                EngineEvent::BindingHealth {
+                    operation,
+                    mode,
+                    surface,
+                    failure,
+                } => {
                     // The health of a binding is the engine's own table,
                     // which is not built; the sign is kept as a run event.
                     let payload = json!({
@@ -634,7 +655,9 @@ impl Control for InProcessControl {
                         })
                         .await?;
                     store
-                        .write(Durability::Relaxed, move |tx| tx.ledger().store_trace(run, blob))
+                        .write(Durability::Relaxed, move |tx| {
+                            tx.ledger().store_trace(run, blob)
+                        })
                         .await
                 }
             };
@@ -676,7 +699,9 @@ impl InProcessControl {
         let fence = self.fence;
         self.kernel
             .store()?
-            .write(Durability::Synced, move |tx| tx.ledger().store_result(&fence, blob))
+            .write(Durability::Synced, move |tx| {
+                tx.ledger().store_result(&fence, blob)
+            })
             .await
     }
 

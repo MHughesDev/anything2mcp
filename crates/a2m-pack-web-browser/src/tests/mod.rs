@@ -90,6 +90,7 @@ struct Stand {
     folder: Folder,
     supervisor: Supervisor,
     browsers: Browsers,
+    context: PackContext,
 }
 
 impl Stand {
@@ -147,6 +148,7 @@ impl Stand {
         let context = pack.context.lock().unwrap().clone().unwrap();
         Self {
             browsers: Browsers::new(&context, settings).unwrap(),
+            context,
             supervisor,
             folder,
         }

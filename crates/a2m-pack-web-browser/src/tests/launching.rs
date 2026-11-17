@@ -179,3 +179,21 @@ async fn two_identities_never_share_a_process_or_a_data_directory() {
     assert_eq!(first.health(), BrowserHealth::Exited);
     stand.end().await;
 }
+
+#[test]
+fn a_shared_cell_gives_every_caller_the_first_caller_s_browsers() {
+    let stand = Stand::new("shared", BrowserSettings::default(), &[]);
+    let cell = crate::SharedBrowsers::default();
+    assert!(cell.get().is_none());
+    assert!(cell.observer().is_none());
+    let other = cell.clone();
+    let first = cell
+        .get_or_create(&stand.context, BrowserSettings::default())
+        .unwrap();
+    let second = other
+        .get_or_create(&stand.context, BrowserSettings::default())
+        .unwrap();
+    assert!(Arc::ptr_eq(&first.shared, &second.shared));
+    assert!(Arc::ptr_eq(&first.shared, &cell.get().unwrap().shared));
+    assert!(other.observer().is_some());
+}

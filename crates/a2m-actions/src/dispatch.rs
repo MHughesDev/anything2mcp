@@ -52,15 +52,33 @@ impl FrontDoor {
     }
 }
 
-/// A caller whose credential [`Kernel::verify_caller`] checked.
+/// A caller whose credential [`Kernel::verify_caller`] checked. Only the
+/// kernel makes one: a front door cannot name a principal itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
+    pub(crate) principal: PrincipalRef,
+    pub(crate) workspace: a2m_core::WorkspaceId,
+    pub(crate) acting_for: Option<ActingFor>,
+}
+
+impl Principal {
     /// Who it is, for policy.
-    pub principal: PrincipalRef,
+    #[must_use]
+    pub const fn principal(&self) -> &PrincipalRef {
+        &self.principal
+    }
+
     /// The workspace it belongs to.
-    pub workspace: a2m_core::WorkspaceId,
+    #[must_use]
+    pub const fn workspace(&self) -> a2m_core::WorkspaceId {
+        self.workspace
+    }
+
     /// For whom it acts, where the credential proves it.
-    pub acting_for: Option<ActingFor>,
+    #[must_use]
+    pub const fn acting_for(&self) -> Option<&ActingFor> {
+        self.acting_for.as_ref()
+    }
 }
 
 /// Who is calling, as the front door states it after the check.
@@ -445,7 +463,8 @@ impl Kernel {
                         when: next.when,
                     }),
                     exit,
-                    decision: Some(decision),
+                    // A stopped engine has no store to record a decision in.
+                    decision: (decision != DecisionId::from_bytes([0; 16])).then_some(decision),
                 }
             }
             Err(refused) => {
@@ -471,7 +490,7 @@ impl Kernel {
         }
     }
 
-    async fn dispatch_inner(&self, request: Request) -> Result<(Output, DecisionId), Refused> {
+    async fn dispatch_inner(&self, request: Request) -> Result<(Output, DecisionId), Box<Refused>> {
         // 1. Find.
         let Some(def) = self.actions().find(&request.action).cloned() else {
             let near = self.actions().nearest(&request.action);
@@ -482,7 +501,10 @@ impl Kernel {
             };
             return Err(Refused::malformed(codes::input(
                 codes::SCHEMA_INVALID,
-                format!("There is no action named `{}`.", codes::shown(&request.action)),
+                format!(
+                    "There is no action named `{}`.",
+                    codes::shown(&request.action)
+                ),
                 fix,
             )));
         };
@@ -528,26 +550,18 @@ impl Kernel {
                 .decide_action(&def, &request.caller, effect_class, hazard)
                 .await;
             if let Some(refusal) = decision.refusal {
-                return Err(Refused {
-                    failure: refusal,
-                    malformed: false,
-                    effect: effect_class,
-                    next: None,
-                    decision: Some(decision.id),
-                });
+                return Err(Refused::after(refusal, effect_class, decision.id));
             }
             if !decision.allowed {
-                return Err(Refused {
-                    failure: codes::policy(
+                return Err(Refused::after(
+                    codes::policy(
                         a2m_policy::NOT_GRANTED,
                         "Policy did not allow this action.",
                         "Ask an administrator for the role the action needs.",
                     ),
-                    malformed: false,
-                    effect: effect_class,
-                    next: None,
-                    decision: Some(decision.id),
-                });
+                    effect_class,
+                    decision.id,
+                ));
             }
             decision.id
         };
@@ -626,8 +640,8 @@ impl Kernel {
                     .provider_roots(&provider)
                     .cloned()
                     .unwrap_or_else(a2m_provider::Roots::none);
-                let input: Values = serde_json::from_value(Json::Object(call.input))
-                    .map_err(|_| {
+                let input: Values =
+                    serde_json::from_value(Json::Object(call.input)).map_err(|_| {
                         codes::input(
                             codes::SCHEMA_INVALID,
                             "The input holds a value the action cannot take.",
@@ -775,37 +789,37 @@ struct Refused {
 }
 
 impl Refused {
-    const fn new(failure: Failure, effect: EffectClass) -> Self {
-        Self {
+    fn new(failure: Failure, effect: EffectClass) -> Box<Self> {
+        Box::new(Self {
             failure,
             malformed: false,
             effect,
             next: None,
             decision: None,
-        }
+        })
     }
 
-    const fn malformed(failure: Failure) -> Self {
-        Self {
+    fn malformed(failure: Failure) -> Box<Self> {
+        Box::new(Self {
             failure,
             malformed: true,
             effect: EffectClass::Read,
             next: None,
             decision: None,
-        }
+        })
     }
 
-    const fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Self {
-        Self {
+    fn after(failure: Failure, effect: EffectClass, decision: DecisionId) -> Box<Self> {
+        Box::new(Self {
             failure,
             malformed: false,
             effect,
             next: None,
             decision: Some(decision),
-        }
+        })
     }
 
-    fn then(mut self, next: Next) -> Self {
+    fn then(mut self: Box<Self>, next: Next) -> Box<Self> {
         self.next = Some(next);
         self
     }
@@ -831,7 +845,6 @@ fn not_built(def: &ActionDef) -> Failure {
 fn person_is_needed(failure: &Failure) -> bool {
     failure.class() == FailureClass::SessionExpired
         || failure.code() == &codes::PERSON_REQUIRED
-        || failure.code() == &codes::PERSON_NEEDED
         || failure.code() == &a2m_policy::PRESENCE_REQUIRED
         || failure.code() == &a2m_policy::APPROVAL_MISSING
 }
@@ -864,7 +877,10 @@ pub(crate) fn validate(def: &ActionDef, input: Json) -> Result<Map<String, Json>
                     codes::shown(name)
                 ),
                 if near.is_empty() {
-                    format!("Its fields are: {}.", known().collect::<Vec<_>>().join(", "))
+                    format!(
+                        "Its fields are: {}.",
+                        known().collect::<Vec<_>>().join(", ")
+                    )
                 } else {
                     format!("Use one of: {}.", near.join(", "))
                 },
@@ -943,7 +959,9 @@ fn invalid(message: String, next: String) -> Failure {
 pub(crate) fn redact_json(redact: &dyn Redact, value: &Json) -> Json {
     match value {
         Json::String(text) => Json::String(redact.redact(text)),
-        Json::Array(items) => Json::Array(items.iter().map(|item| redact_json(redact, item)).collect()),
+        Json::Array(items) => {
+            Json::Array(items.iter().map(|item| redact_json(redact, item)).collect())
+        }
         Json::Object(map) => Json::Object(
             map.iter()
                 .map(|(name, value)| (redact.redact(name), redact_json(redact, value)))

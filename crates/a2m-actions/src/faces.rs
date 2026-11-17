@@ -207,7 +207,8 @@ impl ActionRegistry {
     #[must_use]
     pub fn by_tool_name(&self, name: &str) -> Option<&ActionDef> {
         name.strip_prefix(TOOL_PREFIX)?;
-        self.iter().find(|def| def.faces.mcp && tool_name(def) == name)
+        self.iter()
+            .find(|def| def.faces.mcp && tool_name(def) == name)
     }
 }
 
@@ -380,23 +381,100 @@ const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutS
 
 /// Every shortcut, in the order of the action catalog.
 pub const SHORTCUTS: &[Shortcut] = &[
-    Shortcut { word: "init", does: "Create a project and the guidance file; choose a profile.", steps: &[] },
-    Shortcut { word: "add", does: "Register a target, probe it, detect its sign-in, and ask for a sign-in.", steps: &[step("target.add", Some("name")), step("target.probe", Some("target")), step("auth.detect", Some("target")), step("session.login", Some("target"))] },
-    Shortcut { word: "learn", does: "Record a session and infer endpoints from it.", steps: &[step("capture.start", Some("target")), step("capture.stop", Some("target")), step("endpoints.infer", Some("target"))] },
-    Shortcut { word: "lint", does: "Lint and compile a target's drafts.", steps: &[step("draft.lint", Some("target"))] },
-    Shortcut { word: "try", does: "Run a draft binding in the sandbox.", steps: &[step("draft.try", Some("target"))] },
-    Shortcut { word: "test", does: "Run the publish gates.", steps: &[step("test.run", Some("target"))] },
-    Shortcut { word: "publish", does: "Submit a version for review, then wait for a person.", steps: &[step("publish.request", Some("target"))] },
-    Shortcut { word: "status", does: "The target's build state and the next action.", steps: &[step("target.status", Some("target"))] },
-    Shortcut { word: "call", does: "Call an operation.", steps: &[step("tool.call", Some("tool"))] },
-    Shortcut { word: "run", does: "Run a pipeline.", steps: &[step("tool.call", Some("tool"))] },
-    Shortcut { word: "diff", does: "Compare two versions.", steps: &[step("version.diff", Some("target"))] },
-    Shortcut { word: "bundle", does: "Pack a version into a signed file.", steps: &[step("version.bundle", Some("target"))] },
-    Shortcut { word: "rollback", does: "Make an earlier version current.", steps: &[step("version.rollback", Some("target"))] },
-    Shortcut { word: "migrate", does: "Recompile stored sources for a newer engine.", steps: &[step("version.migrate", Some("target"))] },
-    Shortcut { word: "connect", does: "Write the configuration for an MCP client.", steps: &[step("client.connect", Some("client"))] },
-    Shortcut { word: "doctor", does: "Check this machine and print fixes.", steps: &[step("doctor.run", None)] },
-    Shortcut { word: "docs", does: "A built-in reference page.", steps: &[step("docs.get", Some("topic"))] },
+    Shortcut {
+        word: "init",
+        does: "Create a project and the guidance file; choose a profile.",
+        steps: &[],
+    },
+    Shortcut {
+        word: "add",
+        does: "Register a target, probe it, detect its sign-in, and ask for a sign-in.",
+        steps: &[
+            step("target.add", Some("name")),
+            step("target.probe", Some("target")),
+            step("auth.detect", Some("target")),
+            step("session.login", Some("target")),
+        ],
+    },
+    Shortcut {
+        word: "learn",
+        does: "Record a session and infer endpoints from it.",
+        steps: &[
+            step("capture.start", Some("target")),
+            step("capture.stop", Some("target")),
+            step("endpoints.infer", Some("target")),
+        ],
+    },
+    Shortcut {
+        word: "lint",
+        does: "Lint and compile a target's drafts.",
+        steps: &[step("draft.lint", Some("target"))],
+    },
+    Shortcut {
+        word: "try",
+        does: "Run a draft binding in the sandbox.",
+        steps: &[step("draft.try", Some("target"))],
+    },
+    Shortcut {
+        word: "test",
+        does: "Run the publish gates.",
+        steps: &[step("test.run", Some("target"))],
+    },
+    Shortcut {
+        word: "publish",
+        does: "Submit a version for review, then wait for a person.",
+        steps: &[step("publish.request", Some("target"))],
+    },
+    Shortcut {
+        word: "status",
+        does: "The target's build state and the next action.",
+        steps: &[step("target.status", Some("target"))],
+    },
+    Shortcut {
+        word: "call",
+        does: "Call an operation.",
+        steps: &[step("tool.call", Some("tool"))],
+    },
+    Shortcut {
+        word: "run",
+        does: "Run a pipeline.",
+        steps: &[step("tool.call", Some("tool"))],
+    },
+    Shortcut {
+        word: "diff",
+        does: "Compare two versions.",
+        steps: &[step("version.diff", Some("target"))],
+    },
+    Shortcut {
+        word: "bundle",
+        does: "Pack a version into a signed file.",
+        steps: &[step("version.bundle", Some("target"))],
+    },
+    Shortcut {
+        word: "rollback",
+        does: "Make an earlier version current.",
+        steps: &[step("version.rollback", Some("target"))],
+    },
+    Shortcut {
+        word: "migrate",
+        does: "Recompile stored sources for a newer engine.",
+        steps: &[step("version.migrate", Some("target"))],
+    },
+    Shortcut {
+        word: "connect",
+        does: "Write the configuration for an MCP client.",
+        steps: &[step("client.connect", Some("client"))],
+    },
+    Shortcut {
+        word: "doctor",
+        does: "Check this machine and print fixes.",
+        steps: &[step("doctor.run", None)],
+    },
+    Shortcut {
+        word: "docs",
+        does: "A built-in reference page.",
+        steps: &[step("docs.get", Some("topic"))],
+    },
 ];
 
 /// The process commands: they start a long-lived role and are not actions.

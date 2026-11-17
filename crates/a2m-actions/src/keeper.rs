@@ -5,7 +5,7 @@
 //! [`PersonBridge`] to the role's person surface, and its probe goes
 //! through [`ProbeBridge`] to the engine.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use a2m_auth::{AskPerson, BoxFuture, PersonAnswer, PersonAsk, ProbeOutcome, RunProbe, SessionRef};
 
@@ -39,31 +39,18 @@ impl AskPerson for PersonBridge {
     }
 }
 
-/// What runs a session's probe. The kernel sets it once the engine is
-/// joined; until then nothing is known about a session, and the keeper
-/// treats that as it treats any probe that could not be made.
-pub(crate) type Prober =
-    Arc<dyn for<'a> Fn(&'a SessionRef) -> BoxFuture<'a, ProbeOutcome> + Send + Sync>;
-
 /// [`RunProbe`] for the keeper of one process.
+///
+/// Running a target's declared probe, an operation through the engine or
+/// an entry handed to the surface's pack (decision 0121), is not built: the
+/// answer is that nothing is known, which the keeper treats as it treats
+/// any probe that could not be made. A session is then checked by the
+/// signs of expiry its driver reports.
 #[derive(Default)]
-pub(crate) struct ProbeBridge {
-    prober: OnceLock<Prober>,
-}
-
-impl ProbeBridge {
-    /// Joins the probe to what runs it. Done once.
-    #[allow(dead_code, reason = "joined when the engine runs a declared probe operation")]
-    pub(crate) fn join(&self, prober: Prober) {
-        let _ = self.prober.set(prober);
-    }
-}
+pub(crate) struct ProbeBridge;
 
 impl RunProbe for ProbeBridge {
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        match self.prober.get() {
-            Some(prober) => prober(session),
-            None => Box::pin(async { ProbeOutcome::Unknown }),
-        }
+    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+        Box::pin(async { ProbeOutcome::Unknown })
     }
 }

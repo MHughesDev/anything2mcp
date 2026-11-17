@@ -6,7 +6,6 @@ version = 4
 name = "a2m-actions"
 version = "0.0.1"
 dependencies = [
- "a2m-actions",
  "a2m-auth",
  "a2m-core",
  "a2m-engine",
@@ -278,10 +277,36 @@ dependencies = [
 [[package]]
 name = "a2m-pack-web-probe"
 version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "a2m-pack-web-browser",
+ "a2m-provider",
+ "a2m-telemetry",
+ "axum",
+ "example-app",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-pack-web-ui"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-expr",
+ "a2m-files",
+ "a2m-ledger",
+ "a2m-pack-web-browser",
+ "a2m-provider",
+ "a2m-telemetry",
+ "a2m-vault",
+ "example-app",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "a2m-policy"

@@ -81,8 +81,14 @@ handler!(
         );
         if let Some(address) = call.text("address") {
             // Kept as a note for a person to review; never as a surface.
-            let shown: String = address.chars().filter(|c| !c.is_control()).take(200).collect();
-            text.push_str(&format!("# address given when the target was added: {shown}\n"));
+            let shown: String = address
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect();
+            text.push_str(&format!(
+                "# address given when the target was added: {shown}\n"
+            ));
         }
         text.push_str("surfaces: {}\n");
         file.write(text.as_bytes())?;
@@ -224,13 +230,20 @@ handler!(
         if earlier.iter().any(|row| row.version == version) {
             return Err(codes::input(
                 codes::SCHEMA_INVALID,
-                format!("The target `{target}` already has a version {version}. A published version is never changed."),
+                format!(
+                    "The target `{target}` already has a version {version}. A published version is never changed."
+                ),
                 "Publish under the next version.",
             ));
         }
         let compiled = compile_target(kernel, &folder, CompileMode::Publish, version)
             .map_err(Failure::from)?;
-        let tools: Vec<String> = compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect();
+        let tools: Vec<String> = compiled
+            .plan
+            .tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
         let hash = kernel
             .store_version(
                 compiled.encoded,

@@ -35,8 +35,6 @@ pub const CALLER_NOT_VERIFIED: FailureCode = FailureCode::fixed("caller_not_veri
 /// The health state forbids the action. Class `busy`. The same code the
 /// scheduler answers with.
 pub const ENGINE_DEGRADED: FailureCode = a2m_sched::codes::ENGINE_DEGRADED;
-/// The run rests and a person must act before it goes on. Class `policy`.
-pub const PERSON_NEEDED: FailureCode = FailureCode::fixed("person_needed");
 /// The action is carried out by the client end, which did not do so. Class
 /// `input`.
 pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
@@ -71,11 +69,7 @@ pub(crate) fn busy(
 /// A caller's text, cut and cleaned, for a message. Never a secret: the
 /// dispatcher passes every message through the redactor as well.
 pub(crate) fn shown(text: &str) -> String {
-    let clean: String = text
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(80)
-        .collect();
+    let clean: String = text.chars().filter(|c| !c.is_control()).take(80).collect();
     clean
 }
 
@@ -83,7 +77,7 @@ pub(crate) fn shown(text: &str) -> String {
 pub(crate) fn nearest<'a>(wrong: &str, known: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
     let mut scored: Vec<(usize, &str)> = known
         .map(|name| (distance(wrong, name), name))
-        .filter(|(score, name)| *score <= name.len().max(wrong.len()) / 2)
+        .filter(|(score, name)| *score <= (name.len().max(wrong.len()) / 3).max(2))
         .collect();
     scored.sort();
     scored.into_iter().take(3).map(|(_, name)| name).collect()

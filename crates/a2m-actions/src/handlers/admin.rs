@@ -16,13 +16,16 @@ handler!(
     /// rules that made it.
     policy_explain,
     |kernel, call| {
-        let id = call.required("decision")?.parse::<DecisionId>().map_err(|_| {
-            codes::input(
-                codes::SCHEMA_INVALID,
-                "That is not a decision's identifier.",
-                "Pass the `decision` a response carried.",
-            )
-        })?;
+        let id = call
+            .required("decision")?
+            .parse::<DecisionId>()
+            .map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    "That is not a decision's identifier.",
+                    "Pass the `decision` a response carried.",
+                )
+            })?;
         let policy = kernel.policy().cloned().ok_or_else(|| {
             codes::busy(
                 codes::ENGINE_DEGRADED,
@@ -92,7 +95,9 @@ handler!(
             })
             .collect();
         let complete = chain == "intact" && offset + entries.len() as u64 >= total;
-        Ok(Output::ok(json!({"entries": entries, "chain": chain, "complete": complete})))
+        Ok(Output::ok(
+            json!({"entries": entries, "chain": chain, "complete": complete}),
+        ))
     }
 );
 
@@ -136,7 +141,9 @@ handler!(
                 "stored",
             )
             .await;
-        Ok(Output::ok(json!({"name": reference.as_str(), "stored": true})))
+        Ok(Output::ok(
+            json!({"name": reference.as_str(), "stored": true}),
+        ))
     }
 );
 
@@ -150,7 +157,10 @@ handler!(
         let on = call.flag("on").unwrap_or(true);
         let workspace = call.caller.principal.workspace;
         let (scope, hold) = match call.required("scope")? {
-            "workspace" => (KillScope::Workspace(workspace), HoldScope::Workspace(workspace)),
+            "workspace" => (
+                KillScope::Workspace(workspace),
+                HoldScope::Workspace(workspace),
+            ),
             "target" => {
                 let target = TargetName::new(call.text("target").ok_or_else(|| {
                     codes::input(
@@ -159,14 +169,21 @@ handler!(
                         "Give `target`.",
                     )
                 })?)?;
-                (KillScope::Target(target.clone()), HoldScope::Target(workspace, target))
+                (
+                    KillScope::Target(target.clone()),
+                    HoldScope::Target(workspace, target),
+                )
             }
             _ => (KillScope::Everything, HoldScope::Everything),
         };
         let presence = if on {
             None
         } else {
-            let def = kernel.actions().find("killswitch.set").cloned().ok_or_else(not_registered)?;
+            let def = kernel
+                .actions()
+                .find("killswitch.set")
+                .cloned()
+                .ok_or_else(not_registered)?;
             Some(
                 kernel
                     .presence(&call.caller, &def, a2m_core::EffectClass::Write)
@@ -190,7 +207,9 @@ handler!(
         };
         let epoch = kernel
             .store()?
-            .write(Durability::Synced, move |tx| policy.set_kill_switch(tx, &switch))
+            .write(Durability::Synced, move |tx| {
+                policy.set_kill_switch(tx, &switch)
+            })
             .await?;
         let sched = kernel.sched()?;
         if on {
@@ -200,13 +219,20 @@ handler!(
         }
         let scope = call.required("scope")?;
         kernel
-            .audit(&by.to_string(), "killswitch.set", scope, if on { "on" } else { "released" })
+            .audit(
+                &by.to_string(),
+                "killswitch.set",
+                scope,
+                if on { "on" } else { "released" },
+            )
             .await;
-        Ok(Output::ok(json!({"scope": scope, "on": on, "epoch": epoch})).then(Next::new(
-            "engine.status",
-            json!({}),
-            "to see the engine's state",
-        )))
+        Ok(
+            Output::ok(json!({"scope": scope, "on": on, "epoch": epoch})).then(Next::new(
+                "engine.status",
+                json!({}),
+                "to see the engine's state",
+            )),
+        )
     }
 );
 
@@ -231,7 +257,10 @@ handler!(
             .await?;
         let shown: Vec<Json> = sessions
             .iter()
-            .filter(|session| call.text("target").is_none_or(|target| target == session.target.as_str()))
+            .filter(|session| {
+                call.text("target")
+                    .is_none_or(|target| target == session.target.as_str())
+            })
             .map(|session| {
                 json!({
                     "session": session.session.to_string(),

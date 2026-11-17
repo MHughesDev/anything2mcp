@@ -102,7 +102,7 @@ The build toolset lists at most 15 tools:
 - `a2m_action_search`, `a2m_action_describe`, and `a2m_action_run`, which reach every other action in the registry without listing it;
 - `a2m_draft_read` and `a2m_draft_write`, which stand in for a file system. A draft is validated and linted before it is written.
 
-The registry refuses to build when a built-in toolset lists more actions than its cap. Large results come back as resource links, the MCP counterpart of the files above.
+A built-in toolset never lists more tools than its cap: an action marked for it beyond the cap is reached through `a2m_action_run`. Large results come back as resource links, the MCP counterpart of the files above.
 
 An agent with no shell also has no guidance file and no `docs` command, so the same material is offered through the protocol where the client supports it:
 
@@ -263,7 +263,7 @@ Conformance is tested against the protocol with at least two unrelated clients, 
 
 ## Open points
 
-- **The build toolset's cap against the catalog.** The cap is 15 tools. The catalog marks 22 actions `build`, the three `action.*` tools are marked for both toolsets, and the build toolset also lists the `use` toolset's 8. Either the cap rises, by decision record, or most of the marked actions move behind `a2m_action_run`. The registry's own check would refuse to build the catalog as it stands.
+- **The build toolset's cap against the catalog.** Settled by [decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md): the cap limits what is listed, not what may be marked. A toolset lists the three `action.*` tools and then its marked actions in catalog order up to its cap; the rest are reached through `a2m_action_run`. Which of the 22 actions marked `build` deserve the twelve places is still to be chosen by use, and the catalog's order is what decides today.
 - **Found tools on a revision with no per-connection lists.** The stateless 2026-07-28 revision of MCP has no per-connection tool list, so a tool found by search cannot be added to one client's list. Until a client can be told of a changed list without a session, the generic call is the route ([section 222](222-front-doors-and-the-local-engine.md)). Which clients support notice of a changed tool list well enough to rely on is also open.
 - **Actions the catalog still lacks.** Starting a project (the `init` shortcut has no action beneath it); exporting a toolset's description as an OpenAPI document; managing webhook destinations; and listing the open subsystems the supervisor holds. Each needs a row in the catalog.
 - The size budget for a tool list, and for one tool's compact schema; and how compact schemas are derived from full ones mechanically, so that "exact or wider" is proven, not reviewed.
@@ -271,4 +271,4 @@ Conformance is tested against the protocol with at least two unrelated clients, 
 - Whether the `engine.*` actions keep an MCP tool and a REST route at all, since they act on a process a remote caller cannot see.
 - How a shortcut threads one action's output into the next without the client holding logic. Declared field mappings in the shortcut's data is the proposal.
 - Where large results go when the caller is a remote program: a blob reference and a fetch route, most likely.
-- The JSON Schema validator crate, and whether schemas are written by hand or derived from Rust types.
+- How an operation's own input, which a plan carries as a JSON Schema document, is checked at the dispatcher. An action's input is checked by the schema type of `a2m-files`; a tool's input is checked by the engine against the plan's inputs.

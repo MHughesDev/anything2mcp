@@ -29,7 +29,6 @@ toml.workspace = true
 testing = []
 
 [dev-dependencies]
-a2m-actions = { path = ".", features = ["testing"] }
 a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
 example-app = { path = "../../targets/example-app" }

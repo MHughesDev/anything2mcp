@@ -321,7 +321,7 @@ Each operating system's own conventions are followed. `A2M_HOME` overrides all o
 | Local channel and lock file | A named pipe carrying the user's identifier | A per-user runtime directory | The user's runtime directory |
 | Pinned browsers and caches | Local application data | Caches | The user's cache directory |
 
-Inside the data directory: `store/` for the database, `blobs/` for evidence, `profiles/<identity>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
+Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<identity>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
 
 ## REST endpoints
 

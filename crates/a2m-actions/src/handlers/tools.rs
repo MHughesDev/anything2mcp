@@ -35,7 +35,10 @@ handler!(
         let (plans, unreadable) = kernel.current_plans().await?;
         let mut tools = Vec::new();
         for (target, _, plan) in &plans {
-            if call.text("target").is_some_and(|wanted| wanted != target.as_str()) {
+            if call
+                .text("target")
+                .is_some_and(|wanted| wanted != target.as_str())
+            {
                 continue;
             }
             for tool in &plan.tools {
@@ -45,7 +48,8 @@ handler!(
                 {
                     continue;
                 }
-                let hay = format!("{} {} {}", tool.name, tool.title, tool.description).to_lowercase();
+                let hay =
+                    format!("{} {} {}", tool.name, tool.title, tool.description).to_lowercase();
                 if !query.split_whitespace().all(|word| hay.contains(word)) {
                     continue;
                 }
@@ -131,7 +135,9 @@ fn sched_health(kernel: &Kernel) -> SchedHealth {
         health
             .reasons
             .first()
-            .map_or(codes::ENGINE_DEGRADED, |reason| reason.failure.code().clone())
+            .map_or(codes::ENGINE_DEGRADED, |reason| {
+                reason.failure.code().clone()
+            })
     };
     match health.state {
         HealthState::Ok => SchedHealth::Ready,
@@ -149,7 +155,10 @@ fn requirements(run: &RunRow, kind: JobKind) -> JobRequirements {
         os: None,
         acts_as: Some(run.principal),
         session: None,
-        session_limits: SessionLimits { reads: 4, writes: 1 },
+        session_limits: SessionLimits {
+            reads: 4,
+            writes: 1,
+        },
         exclusive: Vec::new(),
         max_step: Duration::from_secs(30),
         writes: run.effect != EffectClass::Read,
@@ -191,7 +200,10 @@ handler!(
         if found.plan.environment_named(&environment).is_none() {
             return Err(codes::input(
                 codes::NOT_FOUND,
-                format!("The target `{}` has no environment named `{environment}`.", found.target),
+                format!(
+                    "The target `{}` has no environment named `{environment}`.",
+                    found.target
+                ),
                 "Leave `environment` out to use the target's default.",
             ));
         }
@@ -230,7 +242,9 @@ handler!(
         let facts = CallerFacts::of(&call.caller, call.decision);
         let kept = run.clone();
         store
-            .write(Durability::Synced, move |tx| keep_run_call(tx, &kept, stored, &facts))
+            .write(Durability::Synced, move |tx| {
+                keep_run_call(tx, &kept, stored, &facts)
+            })
             .await?;
         let admitted = kernel
             .sched()?
@@ -243,7 +257,10 @@ handler!(
                     os: None,
                     acts_as: Some(run.principal),
                     session: None,
-                    session_limits: SessionLimits { reads: 4, writes: 1 },
+                    session_limits: SessionLimits {
+                        reads: 4,
+                        writes: 1,
+                    },
                     exclusive: Vec::new(),
                     max_step: Duration::from_secs(30),
                     writes: effect != EffectClass::Read,
@@ -281,10 +298,7 @@ fn run_id(call: &Call) -> Result<RunId, Failure> {
 impl Kernel {
     /// The run, when it belongs to the caller's workspace.
     async fn run_row(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
-        let row = self
-            .store()?
-            .read(move |tx| tx.ledger().run(run))
-            .await?;
+        let row = self.store()?.read(move |tx| tx.ledger().run(run)).await?;
         if row.workspace == call.caller.principal.workspace {
             Ok(row)
         } else {
@@ -299,7 +313,11 @@ impl Kernel {
     /// Waits until the run rests, stops, or ends, or until `wait` has
     /// passed, and gives the run as it then stands. It waits on the runner's
     /// own notice that a run changed, never on a timer alone.
-    pub(crate) async fn wait_for_rest(&self, run: RunId, wait: Duration) -> Result<RunRow, Failure> {
+    pub(crate) async fn wait_for_rest(
+        &self,
+        run: RunId,
+        wait: Duration,
+    ) -> Result<RunRow, Failure> {
         let store = self.store()?;
         let mut changed = self.run_watch();
         let give_up = tokio::time::sleep(wait);
@@ -510,7 +528,10 @@ handler!(
         let row = kernel.run_row(&call, run).await?;
         if !matches!(
             row.state,
-            RunState::NeedsApproval | RunState::NeedsLogin | RunState::NeedsInput | RunState::Stopped
+            RunState::NeedsApproval
+                | RunState::NeedsLogin
+                | RunState::NeedsInput
+                | RunState::Stopped
         ) {
             return run_output(kernel, &call, row).await;
         }
@@ -520,7 +541,9 @@ handler!(
         let for_run = row.clone();
         kernel
             .store()?
-            .write(Durability::Synced, move |tx| crate::runner::rekeep_caller(tx, &for_run, &facts))
+            .write(Durability::Synced, move |tx| {
+                crate::runner::rekeep_caller(tx, &for_run, &facts)
+            })
             .await?;
         let queued = kernel
             .sched()?
@@ -599,11 +622,13 @@ handler!(
             CancelOutcome::Requested => "A runner holds the run. It finishes the commit point in hand and then cancels the run.".to_owned(),
             CancelOutcome::AlreadyFinal(state) => format!("The run had already ended as `{state}`."),
         };
-        Ok(Output::ok(json!({"run_id": run.to_string(), "summary": said})).then(Next::new(
-            "run.get",
-            json!({"run_id": run.to_string()}),
-            "to see what was completed before it stopped",
-        )))
+        Ok(
+            Output::ok(json!({"run_id": run.to_string(), "summary": said})).then(Next::new(
+                "run.get",
+                json!({"run_id": run.to_string()}),
+                "to see what was completed before it stopped",
+            )),
+        )
     }
 );
 

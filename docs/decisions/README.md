@@ -117,3 +117,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0099 | [The command pack as building it settled it, and what the kernel could not give it](0099-the-command-pack-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0110 | [The browser engine's interface as building it settled it](0110-the-browser-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0111 | [An observing tab's lock as built, and what the browser was measured to do](0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md) | Accepted (design decision) |
+| 0094 | [The action layer's interface, as building it settled it](0094-the-action-layers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0095 | [The settings loader and the in-process runner, as built](0095-the-settings-loader-and-the-in-process-runner-as-built.md) | Accepted (design decision) |

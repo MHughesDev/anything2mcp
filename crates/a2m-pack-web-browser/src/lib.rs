@@ -37,7 +37,7 @@ pub use a2m_provider::Deadline;
 
 pub use browsers::{
     Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, Observer,
-    OpenBrowser, PROFILE_ROOT, ProfileKey, Visibility,
+    OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};

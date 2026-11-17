@@ -496,7 +496,13 @@ pub(crate) fn act(
 }
 
 impl Def {
-    fn push(mut self, name: &'static str, ty: FieldType, required: bool, help: &'static str) -> Self {
+    fn push(
+        mut self,
+        name: &'static str,
+        ty: FieldType,
+        required: bool,
+        help: &'static str,
+    ) -> Self {
         let mut fields = std::mem::take(&mut self.0.input.fields);
         fields.push(Field {
             name: name.to_owned(),

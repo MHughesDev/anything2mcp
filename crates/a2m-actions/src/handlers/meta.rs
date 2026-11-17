@@ -135,8 +135,7 @@ handler!(
         match (response.error, response.result) {
             (Some(error), None) => Err(Failure::new(
                 error.class,
-                FailureCode::new(&error.code)
-                    .unwrap_or(FailureCode::SCHEMA_INVALID),
+                FailureCode::new(&error.code).unwrap_or(FailureCode::SCHEMA_INVALID),
                 error.message,
                 error.fix,
             )),
@@ -214,13 +213,18 @@ handler!(
             })));
         };
         if let Some((name, text)) = TOPICS.iter().find(|(name, _)| *name == topic) {
-            return Ok(Output::ok(json!({"topic": name, "text": text, "topics": topics})));
+            return Ok(Output::ok(
+                json!({"topic": name, "text": text, "topics": topics}),
+            ));
         }
         let Some(def) = kernel.actions().find(topic) else {
             let near = codes::nearest(topic, topics.iter().map(String::as_str));
             return Err(codes::input(
                 codes::NOT_FOUND,
-                format!("There is no reference page named `{}`.", codes::shown(topic)),
+                format!(
+                    "There is no reference page named `{}`.",
+                    codes::shown(topic)
+                ),
                 if near.is_empty() {
                     "Call `docs.get` with no topic to list the pages.".to_owned()
                 } else {
@@ -229,7 +233,10 @@ handler!(
             ));
         };
         let command = faces::command_faces_of(def);
-        let mut text = format!("{}\n\n{}\n\nCommand: {}\n", def.name, def.summary, command.usage);
+        let mut text = format!(
+            "{}\n\n{}\n\nCommand: {}\n",
+            def.name, def.summary, command.usage
+        );
         text.push_str(&format!("MCP tool: {}\n", faces::tool_name(def)));
         text.push_str(&format!(
             "Who: {}. Effect: {}. {}\n",
@@ -259,6 +266,8 @@ handler!(
         for example in &def.examples {
             text.push_str(&format!("\nExample input: {example}\n"));
         }
-        Ok(Output::ok(json!({"topic": def.name.as_str(), "text": text, "topics": topics})))
+        Ok(Output::ok(
+            json!({"topic": def.name.as_str(), "text": text, "topics": topics}),
+        ))
     }
 );

@@ -59,7 +59,9 @@ impl Env {
         Self {
             os: OsFamily::current(),
             vars: std::env::vars_os()
-                .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+                .filter_map(|(name, value)| {
+                    Some((name.into_string().ok()?, value.into_string().ok()?))
+                })
                 .collect(),
         }
     }
@@ -156,7 +158,11 @@ impl Paths {
     /// or the environment does not say where the user's own directories
     /// are.
     pub fn resolve(env: &Env) -> Result<Self, Failure> {
-        if let Some(home) = env.vars.get(HOME_VARIABLE).filter(|value| !value.is_empty()) {
+        if let Some(home) = env
+            .vars
+            .get(HOME_VARIABLE)
+            .filter(|value| !value.is_empty())
+        {
             let home = PathBuf::from(home);
             if !home.is_absolute() {
                 return Err(codes::input(
@@ -176,7 +182,9 @@ impl Paths {
         };
         match env.os {
             OsFamily::Windows => {
-                let roaming = env.dir("APPDATA").ok_or_else(|| missing("application data"))?;
+                let roaming = env
+                    .dir("APPDATA")
+                    .ok_or_else(|| missing("application data"))?;
                 let local = env
                     .dir("LOCALAPPDATA")
                     .ok_or_else(|| missing("local application data"))?;
@@ -192,7 +200,10 @@ impl Paths {
             }
             OsFamily::MacOs => {
                 let home = env.dir("HOME").ok_or_else(|| missing("home"))?;
-                let support = home.join("Library").join("Application Support").join(APP_FOLDER);
+                let support = home
+                    .join("Library")
+                    .join("Application Support")
+                    .join(APP_FOLDER);
                 let runtime = env
                     .dir("TMPDIR")
                     .map_or_else(|| support.join("run"), |tmp| tmp.join(APP_FOLDER));
@@ -209,11 +220,14 @@ impl Paths {
                 let pick = |variable: &str, below_home: &[&str]| {
                     env.dir(variable).or_else(|| {
                         home.as_ref().map(|home| {
-                            below_home.iter().fold(home.clone(), |path, part| path.join(part))
+                            below_home
+                                .iter()
+                                .fold(home.clone(), |path, part| path.join(part))
                         })
                     })
                 };
-                let config = pick("XDG_CONFIG_HOME", &[".config"]).ok_or_else(|| missing("configuration"))?;
+                let config = pick("XDG_CONFIG_HOME", &[".config"])
+                    .ok_or_else(|| missing("configuration"))?;
                 let data = pick("XDG_DATA_HOME", &[".local", "share"])
                     .ok_or_else(|| missing("data"))?
                     .join(APP_FOLDER);
@@ -241,7 +255,9 @@ mod tests {
 
     fn absolute(parts: &[&str]) -> PathBuf {
         let root = if cfg!(windows) { "C:\\" } else { "/" };
-        parts.iter().fold(PathBuf::from(root), |path, part| path.join(part))
+        parts
+            .iter()
+            .fold(PathBuf::from(root), |path, part| path.join(part))
     }
 
     #[test]
@@ -272,8 +288,14 @@ mod tests {
             home.join(".local").join("share").join("anything2mcp")
         );
         let mac = Paths::resolve(&Env::with(OsFamily::MacOs, &[("HOME", home_text)])).unwrap();
-        assert!(mac.config.ends_with(Path::new("Application Support").join("anything2mcp")));
-        assert!(mac.cache.ends_with(Path::new("Caches").join("anything2mcp")));
+        assert!(
+            mac.config
+                .ends_with(Path::new("Application Support").join("anything2mcp"))
+        );
+        assert!(
+            mac.cache
+                .ends_with(Path::new("Caches").join("anything2mcp"))
+        );
         let roaming = absolute(&["Users", "pat", "Roaming"]);
         let local = absolute(&["Users", "pat", "Local"]);
         let windows = Paths::resolve(&Env::with(

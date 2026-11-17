@@ -204,7 +204,11 @@ impl std::fmt::Debug for ApprovalDesk {
 }
 
 impl ApprovalDesk {
-    pub(crate) const fn new(surface: ApprovalSurface, store: Store, workspace: WorkspaceId) -> Self {
+    pub(crate) const fn new(
+        surface: ApprovalSurface,
+        store: Store,
+        workspace: WorkspaceId,
+    ) -> Self {
         Self {
             surface,
             store,

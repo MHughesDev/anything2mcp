@@ -9,18 +9,13 @@ use a2m_core::EffectClass;
 use a2m_files::JsonSchema;
 use a2m_policy::Role;
 
-use crate::def::{
-    ActionDef, Effect, FieldType, HealthNeed, Listed, PersonNeed, Shape, Who, act,
-};
+use crate::def::{ActionDef, Effect, FieldType, HealthNeed, Listed, PersonNeed, Shape, Who, act};
 
 const TEXT: FieldType = FieldType::Text;
 const BOOL: FieldType = FieldType::Bool;
 const LIST: FieldType = FieldType::TextList;
 const MAP: FieldType = FieldType::Map;
-const COUNT: FieldType = FieldType::Int {
-    min: 1,
-    max: 1_000,
-};
+const COUNT: FieldType = FieldType::Int { min: 1, max: 1_000 };
 const OFFSET: FieldType = FieldType::Int {
     min: 0,
     max: 1_000_000,
