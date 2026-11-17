@@ -421,7 +421,9 @@ impl Kernel {
     /// Carries out one request. Never fails: a refusal is a response.
     pub async fn dispatch(&self, request: Request) -> Response {
         let redact = self.redact();
-        let asked = codes::shown(&request.action);
+        // The name is echoed as it was asked for, and so passes the
+        // redactor like everything else that leaves.
+        let asked = redact.redact(&codes::shown(&request.action));
         match self.dispatch_inner(request).await {
             Ok((output, decision)) => {
                 let exit = output.exit;

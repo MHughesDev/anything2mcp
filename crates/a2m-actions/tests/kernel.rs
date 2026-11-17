@@ -111,14 +111,19 @@ impl KeyStore for NoKeyStore {
         MemoryKeyStore::new().describe()
     }
 
-    fn load_root(&self) -> VaultFuture<'_, Result<Option<a2m_vault::KeyMaterial>, Failure>> {
+    fn wrap<'a>(
+        &'a self,
+        _key: &'a a2m_vault::KeyMaterial,
+        _bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::Wrapped, Failure>> {
         Box::pin(async { Err(unreachable_store()) })
     }
 
-    fn store_root(
-        &self,
-        _root: &a2m_vault::KeyMaterial,
-    ) -> VaultFuture<'_, Result<(), Failure>> {
+    fn unwrap<'a>(
+        &'a self,
+        _wrapped: &'a a2m_vault::Wrapped,
+        _bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::KeyMaterial, Failure>> {
         Box::pin(async { Err(unreachable_store()) })
     }
 
@@ -186,7 +191,12 @@ async fn world(options: Options) -> World {
         Roots::none(),
     );
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
-    builder.add_pack(&AppPack::default());
+    builder.add_pack(&AppPack {
+        hooks: Arc::new(engine::Hooks::default()),
+        discoverer: Arc::new(engine::WritingDiscoverer {
+            results: Mutex::new(Vec::new()),
+        }),
+    });
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     let surface = Arc::new(Surface {
@@ -385,7 +395,8 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
         .await
         .unwrap();
 
-    let done = world.call("run.resume", json!({"run_id": run})).await;
+    let done = world.call("run.resume", json!({"run_id": run, "wait_seconds": 5})).await;
+    eprintln!("{}", serde_json::to_string_pretty(&world.ok("trace.show", json!({"run_id": run})).await).unwrap());
     assert!(done.ok, "{:?} {:?}", done.error, done.result);
     assert_eq!(done.result.as_ref().unwrap()["status"], "completed");
 

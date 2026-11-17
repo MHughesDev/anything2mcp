@@ -1,6 +1,7 @@
 //! The handlers of the actions that are built. An action with no handler
 //! here answers `input`/`action_not_built`.
 
+mod admin;
 mod build;
 mod machine;
 mod meta;
@@ -48,6 +49,11 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "target.list" => build::target_list,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,
+        "policy.explain" => admin::policy_explain,
+        "audit.query" => admin::audit_query,
+        "secret.set" => admin::secret_set,
+        "killswitch.set" => admin::killswitch_set,
+        "session.status" => admin::session_status,
         _ => return None,
     })
 }
