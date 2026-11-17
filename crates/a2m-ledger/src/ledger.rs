@@ -338,6 +338,16 @@ impl RecordRow {
         }
     }
 
+    /// Whether the record's write landed or may have landed: it is
+    /// verified, or `acted` (ended on an acknowledgement or not), or in
+    /// doubt. What a record recorded before its save is held by it only
+    /// then (decision 0196): a record planned again, never sent, found
+    /// unchanged, or failed and settled as not written holds nothing.
+    #[must_use]
+    pub fn may_have_landed(&self) -> bool {
+        matches!(self.state, RecordState::Verified | RecordState::Acted) || self.in_doubt()
+    }
+
     /// Whether the record ended on the system's acknowledgement: accepted
     /// by the system and not read back. Such a record is settled; it is
     /// never verified, and a result that counts it says it was not read
@@ -1147,6 +1157,7 @@ impl Ledger<'_, '_> {
     /// record, and event, every attempt's alike. What answers a driver's
     /// question whether another record holds a value (decision 0196): the
     /// caller opens each blob and compares, and never hands a value out.
+    /// Only records that [`RecordRow::may_have_landed`] are given.
     ///
     /// # Errors
     ///
@@ -1169,18 +1180,20 @@ impl Ledger<'_, '_> {
              ORDER BY e.run_id, rr.step_seq, rr.record_seq, e.seq",
             &[workspace.to_string().into(), operation.as_str().into()],
         )?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    RecordRef {
-                        run: parse(row.text(0)?)?,
-                        step_seq: small(row.int(1)?)?,
-                        record_seq: small(row.int(2)?)?,
-                    },
-                    parse(row.text(3)?)?,
-                ))
-            })
-            .collect()
+        let mut found = Vec::new();
+        for row in &rows {
+            let record = RecordRef {
+                run: parse(row.text(0)?)?,
+                step_seq: small(row.int(1)?)?,
+                record_seq: small(row.int(2)?)?,
+            };
+            // Only a record whose write landed or may have landed holds
+            // what it recorded: one settled as not written holds nothing.
+            if self.record(record)?.may_have_landed() {
+                found.push((record, parse(row.text(3)?)?));
+            }
+        }
+        Ok(found)
     }
 
     /// Every record of the run, in step and record order.

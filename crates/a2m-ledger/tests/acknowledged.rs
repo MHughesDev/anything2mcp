@@ -397,3 +397,31 @@ async fn a_stored_failure_keeps_what_the_system_said_apart() {
         .unwrap();
     assert!(none.is_none());
 }
+
+/// What a record recorded before its save is held by it only while its
+/// write landed or may have landed (decision 0196): not while it is
+/// planned, and not once it failed unsent and settled.
+#[tokio::test]
+async fn a_record_holds_what_it_recorded_only_while_its_write_may_have_landed() {
+    let store = memory().await;
+    let fence = running(&store, 1, &["a", "b", "c"]).await;
+    lock(&store, fence, 0).await.unwrap();
+    let _token = intent(&store, fence, 0, "a").await.unwrap();
+    lock(&store, fence, 2).await.unwrap();
+    let _other = intent(&store, fence, 2, "c").await.unwrap();
+    let refused = stopped_by(FailureClass::Input, "input_invalid");
+    store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger()
+                .mark_failed(&fence, record(&fence, 2), &refused, None)
+        })
+        .await
+        .unwrap();
+    let rows = store
+        .read(move |tx| tx.ledger().records(fence.run))
+        .await
+        .unwrap();
+    let landed: Vec<bool> = rows.iter().map(a2m_ledger::RecordRow::may_have_landed).collect();
+    // In doubt with its intent; planned; failed with nothing sent, settled.
+    assert_eq!(landed, [true, false, false], "{rows:?}");
+}
