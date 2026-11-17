@@ -10,7 +10,7 @@ The Cargo workspace is most of the product and not all of it. This page covers e
 | `web/console/` | The admin console, the approval page, the sign-in page | TypeScript | Not started; milestone 9 |
 | `profiles/` | Platform profiles and detection rules | Data files | Not started; milestone 10 |
 | `plugins/` | The plug-in protocol's examples, and a sample plug-in in another language | Any | Not started; with package F3 |
-| `bench/` | The benchmark harness and the budgets | Rust | Not started; package 0.7 |
+| `bench/` | The benchmark harness and the budgets | Rust | The harness and one sample scenario exist; package 0.7 |
 | `spikes/` | Throwaway experiments | Any | Empty; never part of the product |
 | `xtask/` | Build, release, and code-generation tasks | Rust | Not started; with package 1.5 |
 | `tools/` | The documentation audit and its self-test | Python | Exists |
@@ -31,7 +31,7 @@ A test stand imitates the part of one kind of system that makes the kind hard, a
 
 Rules for every stand:
 
-- It is a workspace member under `targets/`, and a product crate may depend on it only in its tests. The audit enforces this for `example-app` today and for each new stand as it is added.
+- It is a workspace member under `targets/`, and a product crate may depend on it only in its tests. The benchmark harness in `bench/` is not a product crate and uses the stands directly. The audit enforces this for `example-app` today and for each new stand as it is added.
 - It starts with one call from a test, on a port or path it chooses, and stops when the test ends.
 - Every fault it can show is a setting, so a failure is reproduced on demand and never waited for.
 - It is as real as is cheap. A stand does not reimplement a product; it shows the hard part.
