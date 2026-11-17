@@ -2,40 +2,40 @@
   "candidate": "a: own client",
   "transport": "pipe, MappedFds",
   "browser_version": "Chrome/153.0.8010.12",
-  "cold_start_to_first_read_ms": 560.945,
-  "launch_to_connected_ms": 267.811,
+  "cold_start_to_first_read_ms": 359.178,
+  "launch_to_connected_ms": 185.735,
   "wait_kind": "protocol event, then an in-page observer in an isolated world",
   "field_value": "Left rail",
   "warm_reads": {
     "count": 200,
-    "median_ms": 0.146,
-    "p95_ms": 2.07,
-    "max_ms": 5.385
+    "median_ms": 0.207,
+    "p95_ms": 2.403,
+    "max_ms": 7.836
   },
   "snapshot_kind": "accessibility tree",
   "snapshot_nodes": 61,
-  "snapshot_ms": 3.042,
+  "snapshot_ms": 2.49,
   "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
   "writes_stored_after_blocked_save": 0,
   "clean_close": {
     "checked": true,
     "remaining": 0,
-    "after_ms": 11.59
+    "after_ms": 0.498
   },
   "kill_mid_call": {
     "outcome": "Err(Disconnected { sent: true })",
-    "after_kill_ms": 24.3,
+    "after_kill_ms": 11.423,
     "leftover": {
       "checked": true,
       "remaining": 0,
-      "after_ms": 11.47
+      "after_ms": 11.234
     }
   },
   "notes": [
-    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.654 ms, p95 19.936 ms",
-    "locate by label with an in-page helper and read, one round trip: median 0.224 ms, p95 0.312 ms",
-    "a late element, 20 times: an in-page observer notices it 0.1 ms after it appears (median; max 0.1), a 50 ms poll 35.4 ms (median; max 39)",
-    "a second tab on the warm browser: ready in 27.177 ms; opened, navigated, waited, and read in 75.769 ms",
+    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.659 ms, p95 17.071 ms",
+    "locate by label with an in-page helper and read, one round trip: median 0.189 ms, p95 0.328 ms",
+    "a late element, 20 times: an in-page observer notices it 0 ms after it appears (median; max 0.1), a 50 ms poll 35.8 ms (median; max 38.4)",
+    "a second tab on the warm browser: ready in 25.931 ms; opened, navigated, waited, and read in 54.615 ms",
     "exit after Browser.close: Ok(Ok(ExitStatus(unix_wait_status(0))))",
     "a call after the kill: Err(Disconnected { sent: false })"
   ]

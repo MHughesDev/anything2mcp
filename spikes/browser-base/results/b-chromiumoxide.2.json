@@ -2,33 +2,33 @@
   "candidate": "b: chromiumoxide 0.9.1",
   "transport": "WebSocket on a loopback port",
   "browser_version": "Chrome/153.0.8010.12",
-  "cold_start_to_first_read_ms": 472.738,
-  "launch_to_connected_ms": 265.661,
+  "cold_start_to_first_read_ms": 363.835,
+  "launch_to_connected_ms": 198.49,
   "wait_kind": "the crate's navigation wait, then our own in-page observer; the crate has no wait for an element",
   "field_value": "Left rail",
   "warm_reads": {
     "count": 200,
-    "median_ms": 0.184,
-    "p95_ms": 1.016,
-    "max_ms": 4.211
+    "median_ms": 0.211,
+    "p95_ms": 1.756,
+    "max_ms": 4.227
   },
   "snapshot_kind": "accessibility tree, through the crate's raw command",
   "snapshot_nodes": 60,
-  "snapshot_ms": 3.233,
+  "snapshot_ms": 3.219,
   "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
   "writes_stored_after_blocked_save": 0,
   "clean_close": {
     "checked": true,
     "remaining": 0,
-    "after_ms": 0.56
+    "after_ms": 1.249
   },
   "kill_mid_call": {
     "outcome": "Err(ChannelSendError(Canceled(Canceled)))",
-    "after_kill_ms": 7.106,
+    "after_kill_ms": 6.705,
     "leftover": {
       "checked": true,
       "remaining": 0,
-      "after_ms": 0.569
+      "after_ms": 0.423
     }
   },
   "notes": [

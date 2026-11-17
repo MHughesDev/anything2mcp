@@ -1,0 +1,42 @@
+{
+  "candidate": "a: own client",
+  "transport": "pipe, MappedFds",
+  "browser_version": "Chrome/153.0.8010.12",
+  "cold_start_to_first_read_ms": 345.052,
+  "launch_to_connected_ms": 198.104,
+  "wait_kind": "protocol event, then an in-page observer in an isolated world",
+  "field_value": "Left rail",
+  "warm_reads": {
+    "count": 200,
+    "median_ms": 0.14,
+    "p95_ms": 0.523,
+    "max_ms": 4.567
+  },
+  "snapshot_kind": "accessibility tree",
+  "snapshot_nodes": 61,
+  "snapshot_ms": 2.522,
+  "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
+  "writes_stored_after_blocked_save": 0,
+  "clean_close": {
+    "checked": true,
+    "remaining": 0,
+    "after_ms": 0.448
+  },
+  "kill_mid_call": {
+    "outcome": "Err(Disconnected { sent: true })",
+    "after_kill_ms": 19.83,
+    "leftover": {
+      "checked": true,
+      "remaining": 0,
+      "after_ms": 0.704
+    }
+  },
+  "notes": [
+    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.665 ms, p95 17.245 ms",
+    "locate by label with an in-page helper and read, one round trip: median 0.183 ms, p95 0.271 ms",
+    "a late element, 20 times: an in-page observer notices it 0 ms after it appears (median; max 0.1), a 50 ms poll 36 ms (median; max 37.4)",
+    "a second tab on the warm browser: ready in 28.139 ms; opened, navigated, waited, and read in 72.261 ms",
+    "exit after Browser.close: Ok(Ok(ExitStatus(unix_wait_status(0))))",
+    "a call after the kill: Err(Disconnected { sent: false })"
+  ]
+}

@@ -257,7 +257,7 @@ fn lex(source: &str) -> Result<Vec<(Tok, Span)>, ExprError> {
         }
         let rest = &source[at..];
         if let Some(symbol) = SYMBOLS.iter().find(|symbol| rest.starts_with(**symbol)) {
-            tokens.push((Tok::Sym(*symbol), span(at, at + symbol.len())));
+            tokens.push((Tok::Sym(symbol), span(at, at + symbol.len())));
             at += symbol.len();
             continue;
         }
@@ -322,11 +322,10 @@ fn lex_number(source: &str, start: usize) -> Result<(Tok, usize), ExprError> {
         .with_fix(format!("Write {digits}.")));
     }
     if next.is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_') {
-        return Err(ExprError::invalid(
-            "a number is followed by a letter",
-            span(start, at + 1),
-        )
-        .with_fix("Write whole numbers in decimal digits only."));
+        return Err(
+            ExprError::invalid("a number is followed by a letter", span(start, at + 1))
+                .with_fix("Write whole numbers in decimal digits only."),
+        );
     }
     let value: u64 = digits.parse().map_err(|_| {
         ExprError::invalid("this whole number is too large", span(start, at))
@@ -417,11 +416,10 @@ struct Parser {
 /// Parses `source` into a tree.
 pub(crate) fn parse(source: &str) -> Result<Node, ExprError> {
     if source.len() > MAX_SOURCE_BYTES {
-        return Err(ExprError::invalid(
-            "the expression is longer than 16 KiB",
-            Span::new(0, 0),
-        )
-        .with_fix("Split the work into steps, or move it into a field type."));
+        return Err(
+            ExprError::invalid("the expression is longer than 16 KiB", Span::new(0, 0))
+                .with_fix("Split the work into steps, or move it into a field type."),
+        );
     }
     let tokens = lex(source)?;
     let end = span(source.len(), source.len());
@@ -674,10 +672,7 @@ impl Parser {
                 node(Kind::List(items), start.to(self.last()))
             }
             Tok::Sym("{") => self.record(start),
-            Tok::Sym(".") => Err(ExprError::invalid(
-                "a name cannot start with `.`",
-                start,
-            )),
+            Tok::Sym(".") => Err(ExprError::invalid("a name cannot start with `.`", start)),
             Tok::Sym(_) => Err(ExprError::invalid("a value should be here", start)),
         }
     }
@@ -688,10 +683,7 @@ impl Parser {
             "false" => Kind::Bool(false),
             "null" => Kind::Null,
             "in" => {
-                return Err(ExprError::invalid(
-                    "`in` needs a value before it",
-                    start,
-                ));
+                return Err(ExprError::invalid("`in` needs a value before it", start));
             }
             _ if self.peek_sym("(") => {
                 let (mut args, close) = self.args()?;
@@ -703,10 +695,8 @@ impl Parser {
                             kind: Kind::Field(record, name),
                             ..
                         }) => node(Kind::Has(record, name), span),
-                        _ => Err(
-                            ExprError::invalid("`has` takes one field access", span)
-                                .with_fix("Write has(record.field)."),
-                        ),
+                        _ => Err(ExprError::invalid("`has` takes one field access", span)
+                            .with_fix("Write has(record.field).")),
                     };
                 }
                 return node(Kind::Call(word, args), span);
@@ -770,7 +760,10 @@ fn method(
                 ..
             }),
             Some(body),
-        ) => node(Kind::Macro(kind, Box::new(receiver), variable, Box::new(body)), span),
+        ) => node(
+            Kind::Macro(kind, Box::new(receiver), variable, Box::new(body)),
+            span,
+        ),
         _ => Err(ExprError::invalid(
             format!("`{name}` takes a name for each item and one expression"),
             name_span,
@@ -986,7 +979,10 @@ mod tests {
             assert_eq!(once, expected, "{source}");
             assert_eq!(canon(&once), once, "printing {source} twice");
             // Reading the canonical text gives the same tree, places aside.
-            assert_eq!(print(&parse(&once).unwrap()), print(&parse(source).unwrap()));
+            assert_eq!(
+                print(&parse(&once).unwrap()),
+                print(&parse(source).unwrap())
+            );
         }
     }
 
@@ -1003,14 +999,8 @@ mod tests {
             assert_eq!(error.at, Span::new(start, end), "{source}");
             assert!(error.fix.unwrap().contains("decimal(\""), "{source}");
         }
-        assert_eq!(
-            parse("7u").unwrap_err().code,
-            EXPRESSION_TYPE_ERROR
-        );
-        assert_eq!(
-            parse("b'ab'").unwrap_err().code,
-            EXPRESSION_TYPE_ERROR
-        );
+        assert_eq!(parse("7u").unwrap_err().code, EXPRESSION_TYPE_ERROR);
+        assert_eq!(parse("b'ab'").unwrap_err().code, EXPRESSION_TYPE_ERROR);
     }
 
     #[test]
@@ -1041,6 +1031,12 @@ mod tests {
         assert_eq!(parse(&deep).unwrap_err().code, EXPRESSION_INVALID);
         let minus = format!("{}x", "-".repeat(200));
         assert_eq!(parse(&minus).unwrap_err().code, EXPRESSION_INVALID);
+        // A long chain of operators is a tall tree, though nothing nests in the text.
+        let chain = format!("1{}", " + 1".repeat(200));
+        assert_eq!(parse(&chain).unwrap_err().code, EXPRESSION_INVALID);
+        let fields = format!("a{}", ".b".repeat(200));
+        assert_eq!(parse(&fields).unwrap_err().code, EXPRESSION_INVALID);
+        assert!(parse(&format!("1{}", " + 1".repeat(60))).is_ok());
         let long = format!("\"{}\"", "a".repeat(MAX_SOURCE_BYTES));
         assert_eq!(parse(&long).unwrap_err().code, EXPRESSION_INVALID);
     }

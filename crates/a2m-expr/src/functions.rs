@@ -24,7 +24,8 @@ pub(crate) const WHITESPACE_RULES: [&str; 3] = ["collapse", "trim", "exact"];
 
 const ABSENT: Fault = Fault::absent("a value the function needs is absent");
 const WRONG_KIND: Fault = Fault::unparsable("a value is not of the kind the function reads");
-const BAD_RULE: Fault = Fault::unloadable("a rule compiled into a call is not one this engine knows");
+const BAD_RULE: Fault =
+    Fault::unloadable("a rule compiled into a call is not one this engine knows");
 
 fn want_text(value: &Value) -> Result<&str, Fault> {
     match value {
@@ -112,7 +113,9 @@ fn bool_from_display(given: &str, true_text: &str, false_text: &str) -> Result<b
     } else if given == form(false_text) {
         Ok(false)
     } else {
-        Err(Fault::unparsable("the text is neither of the field's two labels"))
+        Err(Fault::unparsable(
+            "the text is neither of the field's two labels",
+        ))
     }
 }
 
@@ -197,7 +200,10 @@ pub(crate) fn call(id: FnId, args: &[&Value]) -> Result<Value, Fault> {
             let number = numbers::decimal_from_display(want_text(first)?, mark(args, 3)?)?;
             Value::Decimal(number.round(places(arg(1)?)?, rounding(arg(2)?)?))
         }
-        FnId::ParseInt => Value::Int(numbers::int_from_display(want_text(first)?, mark(args, 1)?)?),
+        FnId::ParseInt => Value::Int(numbers::int_from_display(
+            want_text(first)?,
+            mark(args, 1)?,
+        )?),
         FnId::ParseMoney => {
             let currency = rule_text(arg(1)?)?;
             let number = numbers::money_from_display(want_text(first)?, currency, mark(args, 4)?)?;
@@ -219,7 +225,9 @@ pub(crate) fn call(id: FnId, args: &[&Value]) -> Result<Value, Fault> {
             want_decimal(first)?
                 .checked_div(divisor, places(arg(2)?)?, rounding(arg(3)?)?)
                 .map(Value::Decimal)
-                .ok_or(Fault::range("the quotient has more digits than a decimal holds"))?
+                .ok_or(Fault::range(
+                    "the quotient has more digits than a decimal holds",
+                ))?
         }
         FnId::ToInches => Value::Decimal(measure::inches_from_feet_inches(want_text(first)?)?),
         FnId::ToFeetInches => Value::Text(measure::feet_inches_from_inches(
@@ -285,9 +293,9 @@ pub(crate) fn call(id: FnId, args: &[&Value]) -> Result<Value, Fault> {
         FnId::CodeFor | FnId::AsChoice => Value::Text(code_for(want_text(first)?, arg(1)?)?),
         FnId::LabelFor => {
             let codes = arg(1)?.as_record().ok_or(BAD_RULE)?;
-            let label = codes
-                .get(want_text(first)?)
-                .ok_or(Fault::unparsable("the code is not one of the field's choices"))?;
+            let label = codes.get(want_text(first)?).ok_or(Fault::unparsable(
+                "the code is not one of the field's choices",
+            ))?;
             Value::Text(rule_text(label)?.to_owned())
         }
         FnId::AsText => {
@@ -403,7 +411,9 @@ pub(crate) fn check_rule_text(param: crate::library::Param, literal: &str) -> Re
             .map(|_| ())
             .ok_or_else(|| "a decimal mark is \".\" or \",\"".to_owned()),
         P::Unit if measure::convertible(literal, literal) => Ok(()),
-        P::DisplayUnit if literal == FEET_INCHES || measure::convertible(literal, literal) => Ok(()),
+        P::DisplayUnit if literal == FEET_INCHES || measure::convertible(literal, literal) => {
+            Ok(())
+        }
         P::Unit | P::DisplayUnit => Err(format!(
             "a unit is one of: {}",
             listed(&measure::unit_names())

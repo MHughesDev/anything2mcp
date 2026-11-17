@@ -198,7 +198,9 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
 /// cargo feature replaces this with a test against a listening socket.
 #[test]
 fn the_crate_depends_on_nothing_that_could_send_anything() {
-    let manifest = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
+    let manifest =
+        fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+            .unwrap();
     let dependencies: Vec<&str> = manifest
         .lines()
         .skip_while(|line| line.trim() != "[dependencies]")

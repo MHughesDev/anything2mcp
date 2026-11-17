@@ -235,7 +235,8 @@ pub(crate) fn check_tree(
 /// Whether a value of type `found` may stand where `wanted` is required.
 pub(crate) fn assignable(found: &ValueType, wanted: &ValueType) -> bool {
     match (found, wanted) {
-        (ValueType::Null, _) | (ValueType::Text | ValueType::Choice, ValueType::Text | ValueType::Choice) => true,
+        (ValueType::Null, _)
+        | (ValueType::Text | ValueType::Choice, ValueType::Text | ValueType::Choice) => true,
         (ValueType::List(found), ValueType::List(wanted)) => assignable(found, wanted),
         (ValueType::Record(found), ValueType::Record(wanted)) => {
             found.iter().all(|field| {
@@ -534,11 +535,17 @@ impl Checker<'_> {
         if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
             return Ok(Known(ValueType::Bool));
         }
+        let null = Known(ValueType::Null);
+        if left_type == null || right_type == null {
+            return Err(ExprError::type_error(
+                format!("`{symbol}` needs two values, and `null` is the absence of one"),
+                at,
+            )
+            .with_fix("Compare with == or !=, or give a default with coalesce."));
+        }
         let Known(shared) = &common else {
             return Ok(match op {
-                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                    Known(ValueType::Bool)
-                }
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Known(ValueType::Bool),
                 _ => Dyn,
             });
         };
@@ -613,10 +620,8 @@ impl Checker<'_> {
                 at,
             )),
             _ => {
-                let error = ExprError::invalid(
-                    format!("there is no member function named `{name}`"),
-                    at,
-                );
+                let error =
+                    ExprError::invalid(format!("there is no member function named `{name}`"), at);
                 Err(if library().get(name).is_some() {
                     error.with_fix(format!(
                         "Host functions are called by name, not on a value: write {name}(value, ...)."
@@ -786,11 +791,13 @@ impl Checker<'_> {
                     ),
                     arg.span,
                 );
-                return Err(if found == Known(ValueType::Int) && *param == Param::Decimal {
-                    error.with_fix("Write decimal(...) around the whole number.")
-                } else {
-                    error
-                });
+                return Err(
+                    if found == Known(ValueType::Int) && *param == Param::Decimal {
+                        error.with_fix("Write decimal(...) around the whole number.")
+                    } else {
+                        error
+                    },
+                );
             }
         }
         // Rules that only make sense together.
@@ -827,7 +834,10 @@ impl Checker<'_> {
 
 fn check_sized(found: &Checked, at: Span) -> Result<(), ExprError> {
     match found {
-        Dyn | Known(ValueType::Text | ValueType::Choice | ValueType::List(_) | ValueType::Record(_)) => Ok(()),
+        Dyn
+        | Known(ValueType::Text | ValueType::Choice | ValueType::List(_) | ValueType::Record(_)) => {
+            Ok(())
+        }
         Known(other) => Err(ExprError::type_error(
             format!(
                 "`size` counts text, a list, or a record; this is a {}",
@@ -866,9 +876,7 @@ fn field_of(record: &Checked, name: &str, at: Span) -> Result<Checked, ExprError
 fn check_rule(param: Param, param_name: &str, function: &str, arg: &Node) -> Result<(), ExprError> {
     let not_literal = || {
         ExprError::invalid(
-            format!(
-                "the {param_name} of `{function}` is a rule, written in the expression itself"
-            ),
+            format!("the {param_name} of `{function}` is a rule, written in the expression itself"),
             arg.span,
         )
         .with_fix("Write the rule as a literal; it comes from the field type, not from a value.")

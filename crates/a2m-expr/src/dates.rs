@@ -123,10 +123,8 @@ impl Format {
         let any_date = year || month > 0 || day > 0;
         let any_time = hour24 + hour12 > 0 || half || minute || second || milli;
         let whole_date = year && month == 1 && day == 1;
-        let whole_time = hour24 + hour12 == 1
-            && (hour12 == 1) == half
-            && minute
-            && (second || !milli);
+        let whole_time =
+            hour24 + hour12 == 1 && (hour12 == 1) == half && minute && (second || !milli);
         let fits = match shape {
             Shape::Date => whole_date && !any_time,
             Shape::Time => whole_time && !any_date,
@@ -283,9 +281,7 @@ fn write(format: &Format, date: Option<Date>, time: Option<i64>) -> String {
     let second = time / 1000 % 60;
     let milli = time % 1000;
     let hour12 = if hour % 12 == 0 { 12 } else { hour % 12 };
-    let (year, month, day) = date.map_or((1, 1, 1), |date| {
-        (date.year(), date.month(), date.day())
-    });
+    let (year, month, day) = date.map_or((1, 1, 1), |date| (date.year(), date.month(), date.day()));
     let mut out = String::new();
     for part in &format.0 {
         match part {
@@ -293,7 +289,11 @@ fn write(format: &Format, date: Option<Date>, time: Option<i64>) -> String {
             Part::Month(true) => out.push_str(&format!("{month:02}")),
             Part::Month(false) => out.push_str(&month.to_string()),
             Part::MonthName => {
-                out.push_str(MONTHS.get(usize::from(month).saturating_sub(1)).unwrap_or(&""));
+                out.push_str(
+                    MONTHS
+                        .get(usize::from(month).saturating_sub(1))
+                        .unwrap_or(&""),
+                );
             }
             Part::Day(true) => out.push_str(&format!("{day:02}")),
             Part::Day(false) => out.push_str(&day.to_string()),
@@ -384,7 +384,11 @@ pub(crate) fn text_from_instant(
         .ok_or(BEYOND)?;
     let days = i32::try_from(local.div_euclid(DAY_MILLIS)).map_err(|_| BEYOND)?;
     let date = Date::from_days(days).map_err(|_| BEYOND)?;
-    Ok(write(format, Some(date), Some(local.rem_euclid(DAY_MILLIS))))
+    Ok(write(
+        format,
+        Some(date),
+        Some(local.rem_euclid(DAY_MILLIS)),
+    ))
 }
 
 /// A workbook's date system: which day its serial numbers count from.
@@ -481,8 +485,16 @@ mod tests {
     fn a_date_is_never_guessed() {
         let format = Format::new("MM/DD/YYYY", Shape::Date).unwrap();
         for text in [
-            "", "2/9/2024", "02/30/2024", "13/01/2024", "02/29/2023", "02-29-2024",
-            "02/29/2024 10:00", "02/29/24", "aa/bb/cccc", "02/29/2024x",
+            "",
+            "2/9/2024",
+            "02/30/2024",
+            "13/01/2024",
+            "02/29/2023",
+            "02-29-2024",
+            "02/29/2024 10:00",
+            "02/29/24",
+            "aa/bb/cccc",
+            "02/29/2024x",
         ] {
             assert_eq!(
                 date_from_text(text, &format).unwrap_err().code,
@@ -521,7 +533,12 @@ mod tests {
         assert_eq!(time_from_text("12:00 AM", &half).unwrap(), 0);
         assert_eq!(time_from_text("12:30 pm", &half).unwrap(), 45_000_000);
         assert_eq!(time_from_text("1:05 PM", &half).unwrap(), 47_100_000);
-        for (format, text) in [(&day, "24:00:00"), (&day, "12:60:00"), (&half, "13:00 PM"), (&half, "0:00 AM")] {
+        for (format, text) in [
+            (&day, "24:00:00"),
+            (&day, "12:60:00"),
+            (&half, "13:00 PM"),
+            (&half, "0:00 AM"),
+        ] {
             assert_eq!(
                 time_from_text(text, format).unwrap_err().code,
                 VALUE_UNPARSABLE,
@@ -540,7 +557,10 @@ mod tests {
         assert_eq!(moment.as_unix_millis(), 1_794_916_800_250);
         // The same wall time further east is an earlier moment.
         let earlier = instant_from_text("2026-11-17T12:00:00.250", &format, east).unwrap();
-        assert_eq!(moment.as_unix_millis() - earlier.as_unix_millis(), 7_200_000);
+        assert_eq!(
+            moment.as_unix_millis() - earlier.as_unix_millis(),
+            7_200_000
+        );
         assert_eq!(
             text_from_instant(moment, &format, east).unwrap(),
             "2026-11-17T14:00:00.250"
@@ -557,7 +577,10 @@ mod tests {
             "1970-01-01T01:00:00.000"
         );
         let half = Format::new("M/D/YYYY h:mm A", Shape::DateTime).unwrap();
-        assert_eq!(text_from_instant(moment, &half, utc).unwrap(), "11/17/2026 12:00 PM");
+        assert_eq!(
+            text_from_instant(moment, &half, utc).unwrap(),
+            "11/17/2026 12:00 PM"
+        );
         assert_eq!(
             text_from_instant(Timestamp::from_unix_millis(i64::MAX), &format, utc)
                 .unwrap_err()
@@ -589,9 +612,20 @@ mod tests {
             ("0", new, date(1904, 1, 1)),
             ("44881", new, date(2026, 11, 17)),
         ] {
-            assert_eq!(date_from_serial(&d(serial), system).unwrap(), want, "{serial}");
+            assert_eq!(
+                date_from_serial(&d(serial), system).unwrap(),
+                want,
+                "{serial}"
+            );
         }
-        for (serial, system) in [("0", old), ("-1", old), ("60", old), ("-1", new), ("99999999", old), ("0.5", old)] {
+        for (serial, system) in [
+            ("0", old),
+            ("-1", old),
+            ("60", old),
+            ("-1", new),
+            ("99999999", old),
+            ("0.5", old),
+        ] {
             assert_eq!(
                 date_from_serial(&d(serial), system).unwrap_err().code,
                 VALUE_OUT_OF_RANGE,

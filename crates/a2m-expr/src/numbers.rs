@@ -95,7 +95,10 @@ fn whole_digits(text: &str, mark: DecimalMark) -> Result<String, Fault> {
 
 /// Splits a sign from displayed text. A minus may be the ASCII one or U+2212.
 fn signed(text: &str) -> (bool, &str) {
-    if let Some(rest) = text.strip_prefix('-').or_else(|| text.strip_prefix('\u{2212}')) {
+    if let Some(rest) = text
+        .strip_prefix('-')
+        .or_else(|| text.strip_prefix('\u{2212}'))
+    {
         (true, rest.trim_start())
     } else if let Some(rest) = text.strip_prefix('+') {
         (false, rest.trim_start())
@@ -125,7 +128,8 @@ pub(crate) fn decimal_from_display(text: &str, mark: DecimalMark) -> Result<Deci
         plain.push('.');
         plain.push_str(fraction);
     }
-    Decimal::parse(&plain).map_err(|_| Fault::range("the number has more digits than a decimal holds"))
+    Decimal::parse(&plain)
+        .map_err(|_| Fault::range("the number has more digits than a decimal holds"))
 }
 
 /// Reads a displayed whole number: an optional sign and digits that may be
@@ -239,15 +243,34 @@ mod tests {
     fn a_number_is_never_guessed() {
         let point = DecimalMark::Point;
         for text in [
-            "", " ", "abc", "1,23", "12,34,567", "1,2345", ",123", "1,,234", "1.", ".5", "1.2.3",
-            "1,234 567", "(12.50)", "12.5-", "1e3", "12 %", "1.5x", "--1", "1,234,56",
+            "",
+            " ",
+            "abc",
+            "1,23",
+            "12,34,567",
+            "1,2345",
+            ",123",
+            "1,,234",
+            "1.",
+            ".5",
+            "1.2.3",
+            "1,234 567",
+            "(12.50)",
+            "12.5-",
+            "1e3",
+            "12 %",
+            "1.5x",
+            "--1",
+            "1,234,56",
         ] {
             let fault = decimal_from_display(text, point).unwrap_err();
             assert_eq!(fault.code, VALUE_UNPARSABLE, "{text}");
         }
         // With a comma as the mark, a point can only group.
         assert_eq!(
-            decimal_from_display("1.5", DecimalMark::Comma).unwrap_err().code,
+            decimal_from_display("1.5", DecimalMark::Comma)
+                .unwrap_err()
+                .code,
             VALUE_UNPARSABLE
         );
         let long = "1".repeat(40);
@@ -262,7 +285,9 @@ mod tests {
         assert_eq!(int_from_display("1,234", DecimalMark::Point).unwrap(), 1234);
         assert_eq!(int_from_display("-12", DecimalMark::Point).unwrap(), -12);
         assert_eq!(
-            int_from_display("1.5", DecimalMark::Point).unwrap_err().code,
+            int_from_display("1.5", DecimalMark::Point)
+                .unwrap_err()
+                .code,
             VALUE_UNPARSABLE
         );
         assert_eq!(
@@ -287,7 +312,11 @@ mod tests {
             ("$-5.00", "USD", point, "-5"),
             ("\u{2212}5.00 USD", "USD", point, "-5"),
         ] {
-            assert_eq!(money_from_display(text, currency, mark).unwrap(), d(want), "{text}");
+            assert_eq!(
+                money_from_display(text, currency, mark).unwrap(),
+                d(want),
+                "{text}"
+            );
         }
         for text in ["EUR 5.00", "-$-5.00", "$", "5.00 dollars", "$$5"] {
             assert_eq!(

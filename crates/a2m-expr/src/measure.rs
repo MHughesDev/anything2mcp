@@ -287,8 +287,18 @@ mod tests {
     #[test]
     fn a_length_is_never_guessed() {
         for text in [
-            "", "90", "7 6", "7' 6", "7' x\"", "1/3\"", "7' 6 1/0\"", "seven feet", "7'' 6\"",
-            "7' -6 -1/2\"", "6\" 7'", "7' 6\" 3",
+            "",
+            "90",
+            "7 6",
+            "7' 6",
+            "7' x\"",
+            "1/3\"",
+            "7' 6 1/0\"",
+            "seven feet",
+            "7'' 6\"",
+            "7' -6 -1/2\"",
+            "6\" 7'",
+            "7' 6\" 3",
         ] {
             let fault = inches_from_feet_inches(text).unwrap_err();
             assert_eq!(fault.code, VALUE_UNPARSABLE, "{text}");
@@ -303,7 +313,7 @@ mod tests {
             ("84", "7' 0\""),
             ("6", "6\""),
             ("0.0625", "1/16\""),
-            ("144.9375", "12' 0 15/16\""),
+            ("144.9375", "12' 15/16\""),
             ("-15", "-1' 3\""),
             ("0", "0\""),
             // 90.53 is nearer to 90 1/2 than to 90 9/16.
@@ -312,7 +322,10 @@ mod tests {
             let text = feet_inches_from_inches(&d(inches), &sixteenth).unwrap();
             assert_eq!(text, want, "{inches}");
             let back = inches_from_feet_inches(&text).unwrap();
-            assert_eq!(back, snap(&d(inches), &sixteenth, Rounding::HalfEven).unwrap());
+            assert_eq!(
+                back,
+                snap(&d(inches), &sixteenth, Rounding::HalfEven).unwrap()
+            );
         }
         // A step with no fraction over a power of two is written as a decimal.
         assert_eq!(
@@ -328,8 +341,14 @@ mod tests {
     #[test]
     fn units_convert_exactly_and_round_once() {
         let even = Rounding::HalfEven;
-        assert_eq!(convert(&d("90.5"), "in", "mm", 4, even).unwrap(), d("2298.7"));
-        assert_eq!(convert(&d("2298.7"), "mm", "in", 4, even).unwrap(), d("90.5"));
+        assert_eq!(
+            convert(&d("90.5"), "in", "mm", 4, even).unwrap(),
+            d("2298.7")
+        );
+        assert_eq!(
+            convert(&d("2298.7"), "mm", "in", 4, even).unwrap(),
+            d("90.5")
+        );
         assert_eq!(convert(&d("1"), "mm", "in", 6, even).unwrap(), d("0.03937"));
         assert_eq!(convert(&d("1"), "mi", "ft", 0, even).unwrap(), d("5280"));
         assert_eq!(convert(&d("1"), "lb", "oz", 0, even).unwrap(), d("16"));

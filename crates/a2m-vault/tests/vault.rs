@@ -605,3 +605,32 @@ async fn a_sealed_item_reads_back_from_text_and_from_bytes() {
     assert_eq!(unknown.code(), &codes::SEALED_FORMAT_UNSUPPORTED);
     assert_eq!(unknown.class(), FailureClass::Input);
 }
+
+#[tokio::test]
+async fn the_vault_and_its_futures_cross_threads() {
+    fn crosses_threads<T: Send>(value: T) -> T {
+        value
+    }
+    fn shared<T: Send + Sync>() {}
+    shared::<Vault>();
+    shared::<a2m_vault::Redactor>();
+    shared::<a2m_vault::VaultDigest>();
+    shared::<Sealed>();
+
+    let (store, records) = durable();
+    let vault = Arc::new(vault(&store, &records));
+    let sealing = Arc::clone(&vault);
+    let sealed = tokio::spawn(crosses_threads(async move {
+        sealing.seal(&context(), PLAIN).await
+    }))
+    .await
+    .unwrap_or_else(|error| panic!("{error}"))
+    .unwrap();
+    let opened = crosses_threads(vault.open(&context(), &sealed))
+        .await
+        .unwrap();
+    assert_eq!(opened.expose(), PLAIN);
+    drop(crosses_threads(vault.open_secret(&context(), &sealed)));
+    drop(crosses_threads(vault.keyed_digest()));
+    drop(crosses_threads(vault.health()));
+}

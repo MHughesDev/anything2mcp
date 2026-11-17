@@ -88,8 +88,8 @@ impl Program {
                 "it was checked against a host-function library this engine does not carry",
             ));
         };
-        let tree = syntax::parse(&expr.source)
-            .map_err(|_| unloadable("its text is not an expression"))?;
+        let tree =
+            syntax::parse(&expr.source).map_err(|_| unloadable("its text is not an expression"))?;
         if syntax::print(&tree) != expr.source {
             return Err(unloadable("its text is not in the canonical spelling"));
         }
@@ -342,9 +342,9 @@ fn eval<'e>(node: &'e Node, env: &Env<'e>) -> Result<Cow<'e, Value>, Stop> {
         Kind::Has(record, name) => {
             let record = eval(record, env)?;
             match &*record {
-                Value::Record(fields) => {
-                    owned(Value::Bool(fields.get(name).is_some_and(|value| !value.is_null())))
-                }
+                Value::Record(fields) => owned(Value::Bool(
+                    fields.get(name).is_some_and(|value| !value.is_null()),
+                )),
                 Value::Null => owned(Value::Bool(false)),
                 _ => stop(WRONG_KIND, "has"),
             }
