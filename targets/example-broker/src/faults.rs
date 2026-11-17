@@ -24,6 +24,9 @@ pub enum FaultKind {
         /// Milliseconds to wait.
         ms: u64,
     },
+    /// Do not carry the request out, and answer with a line the protocol does not have:
+    /// an object with the request's id and no `ok` field.
+    UnexpectedReply,
     /// Hand a message over a second time, on the next fetch, looking like the first time.
     DuplicateDelivery,
     /// A consumer of the stand's own, named `silent`, takes messages from a queue as they
@@ -44,10 +47,11 @@ impl FaultKind {
     #[must_use]
     pub fn applies_to(&self, op: Op) -> bool {
         match self {
-            Self::StoreThenDrop | Self::StoreThenSilent | Self::DropBeforeStore | Self::Refuse { .. } => {
-                op == Op::Publish
-            }
-            Self::Delay { .. } => true,
+            Self::StoreThenDrop
+            | Self::StoreThenSilent
+            | Self::DropBeforeStore
+            | Self::Refuse { .. } => op == Op::Publish,
+            Self::Delay { .. } | Self::UnexpectedReply => true,
             Self::DuplicateDelivery => op == Op::Fetch,
             Self::SilentConsumer => false,
             Self::RenameField { .. } => matches!(op, Op::Latest | Op::Browse | Op::Fetch),

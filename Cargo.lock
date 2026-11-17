@@ -127,11 +127,9 @@ dependencies = [
  "argon2",
  "chacha20poly1305",
  "getrandom",
- "hmac",
  "keyring-core",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
  "windows-native-keyring-store",
  "zbus-secret-service-keyring-store",
@@ -745,6 +743,13 @@ dependencies = [
 [[package]]
 name = "example-mcp"
 version = "0.0.1"
+dependencies = [
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "fallible-iterator"

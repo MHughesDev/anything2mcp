@@ -17,8 +17,8 @@ use crate::Shared;
 use crate::client::{Client, ClientError};
 use crate::faults::Fault;
 use crate::model::{
-    Acknowledgement, AppliedFault, ChannelContents, ChannelSpec, Delivery, Held, Message,
-    Received, RequestRecord, Truth,
+    Acknowledgement, AppliedFault, ChannelContents, ChannelSpec, Delivery, Held, Message, Received,
+    RequestRecord, Truth,
 };
 
 /// Why the harness could not do what a test asked.
@@ -196,7 +196,8 @@ impl TestBroker {
     /// messages from now on, and one connection at a time may hold it.
     /// Returns false if the channel is missing or is a queue.
     pub fn declare_subscription(&self, channel: &str, name: &str) -> bool {
-        self.shared.change(|s| s.declare_subscription(channel, name))
+        self.shared
+            .change(|s| s.declare_subscription(channel, name))
     }
 
     /// Sets, or with `None` removes, the header whose repeated value the channel refuses.

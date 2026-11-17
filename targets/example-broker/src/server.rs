@@ -119,10 +119,9 @@ fn optional_text<'a>(request: &'a Value, name: &str) -> Result<Option<&'a str>, 
 fn optional_number(request: &Value, name: &str) -> Result<Option<u64>, Refusal> {
     match request.get(name) {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| bad_request(format!("The field {name} is a whole number, zero or more."))),
+        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+            bad_request(format!("The field {name} is a whole number, zero or more."))
+        }),
     }
 }
 
@@ -177,7 +176,10 @@ async fn request(
     line: &str,
 ) -> Step {
     if line.len() > MAX_LINE_BYTES {
-        return answer(&Value::Null, Err(bad_request("The request line is too long.")));
+        return answer(
+            &Value::Null,
+            Err(bad_request("The request line is too long.")),
+        );
     }
     let request = match serde_json::from_str::<Value>(line) {
         Ok(request @ Value::Object(_)) => request,
@@ -187,7 +189,11 @@ async fn request(
         }
     };
     let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let Some(op) = request.get("op").and_then(Value::as_str).and_then(Op::parse) else {
+    let Some(op) = request
+        .get("op")
+        .and_then(Value::as_str)
+        .and_then(Op::parse)
+    else {
         let refusal = Refusal::new("unknown_op", "The broker has no such request.");
         return answer(&id, Err(refusal));
     };
@@ -212,6 +218,13 @@ async fn request(
     if let Some(FaultKind::Delay { ms }) = delayed {
         // The fault is the wait: a slow broker, on demand.
         tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
+    let unexpected = |k: &FaultKind| matches!(k, FaultKind::UnexpectedReply);
+    if shared
+        .change(|s| s.take_fault(Some(connection), Some(op), channel.as_deref(), unexpected))
+        .is_some()
+    {
+        return Step::Reply(json!({"re": id, "surprise": true}));
     }
     let result = match op {
         Op::Publish => {
@@ -310,7 +323,9 @@ async fn fetch(
             Err(refusal) => return Some(Err(refusal)),
             Ok(fetched) if !fetched.messages.is_empty() => {
                 shared.touch();
-                return Some(Ok(json!({"messages": fetched.messages, "next": fetched.next})));
+                return Some(Ok(
+                    json!({"messages": fetched.messages, "next": fetched.next}),
+                ));
             }
             Ok(fetched) => {
                 let waited = tokio::select! {

@@ -61,11 +61,17 @@ async fn a_publish_is_reported_exactly_once_by_the_control_interface() -> Outcom
     let received = broker.received();
     assert_eq!(received.len(), 1);
     let one = &received[0];
-    assert_eq!((one.client.as_str(), one.channel.as_str()), ("outside", STATUS));
+    assert_eq!(
+        (one.client.as_str(), one.channel.as_str()),
+        ("outside", STATUS)
+    );
     assert_eq!(one.key.as_deref(), Some("A-100"));
     assert_eq!(one.headers["correlation_id"], "r-1");
     assert_eq!(one.body, message.body);
-    assert_eq!(one.body_digest, body_digest(&json!({"status": "shipped", "order_id": "A-100"})));
+    assert_eq!(
+        one.body_digest,
+        body_digest(&json!({"status": "shipped", "order_id": "A-100"}))
+    );
     let stored = PublishOutcome::Stored {
         id: "m-1".to_owned(),
         position: None,
@@ -100,14 +106,22 @@ async fn a_look_takes_nothing() -> Outcome {
     ];
     assert_eq!(shapes, expected);
     let events = scout.describe(EVENTS).await?;
-    assert_eq!((events.held, events.start, events.end), (3, Some(0), Some(3)));
+    assert_eq!(
+        (events.held, events.start, events.end),
+        (3, Some(0), Some(3))
+    );
     assert_eq!(events.spec.key_field.as_deref(), Some("order_id"));
     assert!(events.spec.schema.is_some());
     assert_eq!(events.subscriptions, [SEED_SUBSCRIPTION]);
 
     let queue = scout.browse(WORK, 10, None).await?;
     assert_eq!(queue.messages.len(), 2);
-    assert!(queue.messages.iter().all(|m| m.state == Some(HeldState::Ready)));
+    assert!(
+        queue
+            .messages
+            .iter()
+            .all(|m| m.state == Some(HeldState::Ready))
+    );
     let first = scout.browse(WORK, 1, None).await?;
     assert_eq!((first.messages.len(), first.more, first.held), (1, true, 2));
     let log = scout.browse(EVENTS, 10, None).await?;
@@ -118,12 +132,20 @@ async fn a_look_takes_nothing() -> Outcome {
     assert_eq!(latest.body["status"], "submitted");
     assert_eq!(scout.latest(STATUS, "A-999").await?, None);
     // A topic keeps nothing, so there is nothing to look at, and the broker says so.
-    assert_eq!(refused(scout.browse(NOTICES, 10, None).await), "not_supported");
+    assert_eq!(
+        refused(scout.browse(NOTICES, 10, None).await),
+        "not_supported"
+    );
 
     let truth = broker.truth();
     assert!(truth.deliveries.is_empty());
     assert_eq!(truth.channels, before);
-    assert!(truth.requests.iter().any(|r| r.op == Op::Browse && r.client == "scout"));
+    assert!(
+        truth
+            .requests
+            .iter()
+            .any(|r| r.op == Op::Browse && r.client == "scout")
+    );
     Ok(())
 }
 
@@ -153,7 +175,10 @@ async fn a_queue_delivers_to_one_consumer_and_redelivers_what_is_not_acknowledge
     // The first consumer goes away without acknowledging: the broker takes the message back.
     drop(first);
     let ready = |t: &example_broker::model::Truth| {
-        t.channels[WORK].queue.first().is_some_and(|h| h.state == HeldState::Ready)
+        t.channels[WORK]
+            .queue
+            .first()
+            .is_some_and(|h| h.state == HeldState::Ready)
     };
     broker.wait_for(LIMIT, ready).await?;
     let again = second.fetch(&second_sub, 10, NOW).await?;
@@ -172,11 +197,25 @@ async fn a_queue_delivers_to_one_consumer_and_redelivers_what_is_not_acknowledge
         .collect();
     let expected = [
         ("first", 1, DeliveryCause::First, DeliveryOutcome::Returned),
-        ("second", 2, DeliveryCause::Redelivery, DeliveryOutcome::Released),
-        ("second", 3, DeliveryCause::Redelivery, DeliveryOutcome::Acknowledged),
+        (
+            "second",
+            2,
+            DeliveryCause::Redelivery,
+            DeliveryOutcome::Released,
+        ),
+        (
+            "second",
+            3,
+            DeliveryCause::Redelivery,
+            DeliveryOutcome::Acknowledged,
+        ),
     ];
     assert_eq!(history, expected);
-    let acknowledged: Vec<_> = truth.acknowledgements.iter().map(|a| a.message.as_str()).collect();
+    let acknowledged: Vec<_> = truth
+        .acknowledgements
+        .iter()
+        .map(|a| a.message.as_str())
+        .collect();
     assert_eq!(acknowledged, ["s-7", "s-6"]);
     Ok(())
 }
@@ -191,7 +230,9 @@ async fn a_topic_gives_every_subscription_a_copy_and_keeps_nothing() -> Outcome 
     let one_sub = one.subscribe(NOTICES).await?.subscription;
     let two_sub = two.subscribe(NOTICES).await?.subscription;
 
-    outside.publish(&Publish::new(NOTICES, json!("stock count tonight"))).await?;
+    outside
+        .publish(&Publish::new(NOTICES, json!("stock count tonight")))
+        .await?;
     assert_eq!(ids(&one.fetch(&one_sub, 10, NOW).await?), ["m-1"]);
     assert_eq!(ids(&two.fetch(&two_sub, 10, NOW).await?), ["m-1"]);
     assert!(one.fetch(&one_sub, 10, NOW).await?.is_empty());
@@ -208,14 +249,25 @@ async fn a_topic_gives_every_subscription_a_copy_and_keeps_nothing() -> Outcome 
     assert_eq!(mine.name, SEED_SUBSCRIPTION);
     let taken = one.subscribe_with(NOTICES, named, None, None).await;
     assert_eq!(refused(taken), "subscription_in_use");
-    let missing = one.subscribe_with(NOTICES, Some("example.nobody"), None, None).await;
+    let missing = one
+        .subscribe_with(NOTICES, Some("example.nobody"), None, None)
+        .await;
     assert_eq!(refused(missing), "subscription_missing");
     assert_eq!(ids(&two.fetch(&mine.subscription, 10, NOW).await?), ["m-1"]);
 
-    let to: Vec<_> = broker.deliveries().into_iter().map(|d| d.subscription).collect();
+    let to: Vec<_> = broker
+        .deliveries()
+        .into_iter()
+        .map(|d| d.subscription)
+        .collect();
     assert_eq!(to.len(), 3);
     assert_eq!(to[2], SEED_SUBSCRIPTION);
-    assert!(broker.deliveries().iter().all(|d| d.outcome == DeliveryOutcome::NotRequired));
+    assert!(
+        broker
+            .deliveries()
+            .iter()
+            .all(|d| d.outcome == DeliveryOutcome::NotRequired)
+    );
     Ok(())
 }
 
@@ -225,18 +277,32 @@ async fn a_retained_channel_keeps_the_last_retained_value_per_key() -> Outcome {
     let broker = TestBroker::start().await?;
     let mut outside = broker.client("outside").await?;
     let mut reader = broker.client("reader").await?;
-    let live = reader.subscribe_with(STATUS, None, None, Some(false)).await?.subscription;
+    let live = reader
+        .subscribe_with(STATUS, None, None, Some(false))
+        .await?
+        .subscription;
     assert!(reader.fetch(&live, 10, NOW).await?.is_empty());
 
     outside.publish(&status("A-100", "shipped")).await?;
-    outside.publish(&status("A-100", "draft").retain(false)).await?;
-    assert_eq!(refused(outside.publish(&Publish::new(STATUS, json!({}))).await), "key_required");
+    outside
+        .publish(&status("A-100", "draft").retain(false))
+        .await?;
+    assert_eq!(
+        refused(outside.publish(&Publish::new(STATUS, json!({}))).await),
+        "key_required"
+    );
 
     // Both went to the live subscription; only the retained one is the channel's value.
     assert_eq!(ids(&reader.fetch(&live, 10, NOW).await?), ["m-1", "m-2"]);
     let latest = reader.latest(STATUS, "A-100").await?.ok_or("no value")?;
-    assert_eq!((latest.id.as_str(), &latest.body["status"]), ("m-1", &json!("shipped")));
-    assert_eq!(broker.retained(STATUS, "A-100").map(|m| m.id), Some("m-1".to_owned()));
+    assert_eq!(
+        (latest.id.as_str(), &latest.body["status"]),
+        ("m-1", &json!("shipped"))
+    );
+    assert_eq!(
+        broker.retained(STATUS, "A-100").map(|m| m.id),
+        Some("m-1".to_owned())
+    );
 
     // A subscription opened now is handed the retained values first, marked as such.
     let late = reader.subscribe(STATUS).await?.subscription;
@@ -258,7 +324,12 @@ async fn a_bounded_read_ends_with_nothing_or_as_soon_as_a_message_arrives() -> O
     let sub = reader.subscribe(NOTICES).await?.subscription;
 
     // Nothing arriving is an answer, not a failure.
-    assert!(reader.fetch(&sub, 5, Duration::from_millis(50)).await?.is_empty());
+    assert!(
+        reader
+            .fetch(&sub, 5, Duration::from_millis(50))
+            .await?
+            .is_empty()
+    );
     let too_long = reader.fetch(&sub, 5, Duration::from_secs(61)).await;
     assert_eq!(refused(too_long), "wait_too_long");
     let unbounded = reader.request("fetch", json!({"subscription": sub})).await;
@@ -266,13 +337,18 @@ async fn a_bounded_read_ends_with_nothing_or_as_soon_as_a_message_arrives() -> O
 
     // A read that would wait a minute returns when a message arrives.
     reader
-        .send("fetch", json!({"subscription": sub, "max": 5, "wait_ms": 60_000}))
+        .send(
+            "fetch",
+            json!({"subscription": sub, "max": 5, "wait_ms": 60_000}),
+        )
         .await?;
     let waiting = |t: &example_broker::model::Truth| {
         t.requests.iter().filter(|r| r.op == Op::Fetch).count() == 4
     };
     broker.wait_for(LIMIT, waiting).await?;
-    outside.publish(&Publish::new(NOTICES, json!("doors open"))).await?;
+    outside
+        .publish(&Publish::new(NOTICES, json!("doors open")))
+        .await?;
     let reply = tokio::time::timeout(LIMIT, reader.receive()).await??;
     assert_eq!(reply["messages"][0]["message"]["body"], "doors open");
     assert_eq!(reply["messages"].as_array().map(Vec::len), Some(1));
@@ -294,27 +370,52 @@ async fn a_log_keeps_order_and_positions() -> Outcome {
     }
 
     let position = |d: &Delivered| d.message.position;
-    let from_one = reader.subscribe_with(EVENTS, None, Some(1), None).await?.subscription;
-    let head: Vec<_> = reader.fetch(&from_one, 2, NOW).await?.iter().map(position).collect();
+    let from_one = reader
+        .subscribe_with(EVENTS, None, Some(1), None)
+        .await?
+        .subscription;
+    let head: Vec<_> = reader
+        .fetch(&from_one, 2, NOW)
+        .await?
+        .iter()
+        .map(position)
+        .collect();
     assert_eq!(head, [Some(1), Some(2)]);
-    let rest: Vec<_> = reader.fetch(&from_one, 10, NOW).await?.iter().map(position).collect();
+    let rest: Vec<_> = reader
+        .fetch(&from_one, 10, NOW)
+        .await?
+        .iter()
+        .map(position)
+        .collect();
     assert_eq!(rest, [Some(3), Some(4), Some(5)]);
     assert!(reader.fetch(&from_one, 10, NOW).await?.is_empty());
     // A subscription opened at the end sees only what came after it.
-    assert_eq!(ids(&reader.fetch(&tail.subscription, 10, NOW).await?), ["m-1", "m-2", "m-3"]);
+    assert_eq!(
+        ids(&reader.fetch(&tail.subscription, 10, NOW).await?),
+        ["m-1", "m-2", "m-3"]
+    );
 
     let page = reader.browse(EVENTS, 10, Some(4)).await?;
     let seen: Vec<_> = page.messages.iter().map(|m| m.message.position).collect();
-    assert_eq!((seen, page.start, page.end), (vec![Some(4), Some(5)], Some(0), Some(6)));
+    assert_eq!(
+        (seen, page.start, page.end),
+        (vec![Some(4), Some(5)], Some(0), Some(6))
+    );
     assert_eq!(broker.log(EVENTS).len(), 6);
 
     // Retention runs out: the positions carry on, and an old position is refused.
     assert_eq!(broker.expire_retention(EVENTS), 6);
     let described = reader.describe(EVENTS).await?;
-    assert_eq!((described.held, described.start, described.end), (0, Some(6), Some(6)));
+    assert_eq!(
+        (described.held, described.start, described.end),
+        (0, Some(6), Some(6))
+    );
     let old = reader.subscribe_with(EVENTS, None, Some(2), None).await;
     assert_eq!(refused(old), "position_out_of_range");
-    assert_eq!(refused(reader.browse(EVENTS, 10, Some(7)).await), "position_out_of_range");
+    assert_eq!(
+        refused(reader.browse(EVENTS, 10, Some(7)).await),
+        "position_out_of_range"
+    );
     let next = Publish::new(EVENTS, json!({"order_id": "A-100", "event": "shipped"}));
     assert_eq!(outside.publish(&next).await?.position, Some(6));
     Ok(())
@@ -327,15 +428,24 @@ async fn a_repeated_token_is_refused_and_one_message_is_stored() -> Outcome {
     let mut outside = broker.client("outside").await?;
 
     assert_eq!(outside.publish(&work("A-102", "t-1")).await?.id, "m-1");
-    let Err(ClientError::Refused { code, reply, .. }) = outside.publish(&work("A-102", "t-1")).await
+    let Err(ClientError::Refused { code, reply, .. }) =
+        outside.publish(&work("A-102", "t-1")).await
     else {
         return Err("the repeat was accepted".into());
     };
-    assert_eq!((code.as_str(), &reply["id"]), ("duplicate_token", &json!("m-1")));
+    assert_eq!(
+        (code.as_str(), &reply["id"]),
+        ("duplicate_token", &json!("m-1"))
+    );
     assert_eq!(broker.queue(WORK).len(), 3);
     let outcomes: Vec<_> = broker.received().into_iter().map(|r| r.outcome).collect();
     assert!(matches!(outcomes[0], PublishOutcome::Stored { .. }));
-    assert_eq!(outcomes[1], PublishOutcome::Duplicate { of: "m-1".to_owned() });
+    assert_eq!(
+        outcomes[1],
+        PublishOutcome::Duplicate {
+            of: "m-1".to_owned()
+        }
+    );
 
     // The same broker, told to accept a repeat: now there are two.
     assert!(broker.set_dedupe_header(WORK, None));
@@ -360,14 +470,18 @@ async fn a_confirmation_can_be_lost_after_the_message_was_stored() -> Outcome {
     assert_eq!(broker.queue(WORK).len(), 3);
     // A resumed publish with the same token delivers one message.
     let mut resumed = broker.client("sender").await?;
-    assert_eq!(refused(resumed.publish(&work("A-102", "t-9")).await), "duplicate_token");
+    assert_eq!(
+        refused(resumed.publish(&work("A-102", "t-9")).await),
+        "duplicate_token"
+    );
     assert_eq!(broker.queue(WORK).len(), 3);
 
     // Stored, and no confirmation on a connection that stays open: the next answer
     // on that connection is to the next request.
     broker.set_fault(Fault::once(FaultKind::StoreThenSilent));
-    let silent = Publish::new(NOTICES, json!("no answer")).key("n-1");
-    resumed.send("publish", json!({"channel": NOTICES, "body": silent.body})).await?;
+    resumed
+        .send("publish", json!({"channel": NOTICES, "body": "no answer"}))
+        .await?;
     resumed.channels().await?;
     let last = broker.received().pop().ok_or("nothing received")?;
     assert!(matches!(last.outcome, PublishOutcome::Stored { .. }));
@@ -376,13 +490,23 @@ async fn a_confirmation_can_be_lost_after_the_message_was_stored() -> Outcome {
     // Dropped before anything was stored: the same sight from outside, another truth.
     broker.set_fault(Fault::once(FaultKind::DropBeforeStore));
     let dropped = resumed.publish(&status("A-100", "shipped")).await;
-    assert!(matches!(dropped, Err(ClientError::Closed)), "got {dropped:?}");
+    assert!(
+        matches!(dropped, Err(ClientError::Closed)),
+        "got {dropped:?}"
+    );
     let last = broker.received().pop().ok_or("nothing received")?;
     assert_eq!(last.outcome, PublishOutcome::Dropped);
-    assert_eq!(broker.retained(STATUS, "A-100").map(|m| m.id), Some("s-1".to_owned()));
+    assert_eq!(
+        broker.retained(STATUS, "A-100").map(|m| m.id),
+        Some("s-1".to_owned())
+    );
 
     assert!(broker.faults().is_empty());
-    let applied: Vec<_> = broker.applied_faults().into_iter().map(|a| a.kind).collect();
+    let applied: Vec<_> = broker
+        .applied_faults()
+        .into_iter()
+        .map(|a| a.kind)
+        .collect();
     let expected = [
         FaultKind::StoreThenDrop,
         FaultKind::StoreThenSilent,
@@ -399,19 +523,28 @@ async fn a_publish_can_be_refused_and_the_broker_can_be_slow() -> Outcome {
     let mut outside = broker.client("outside").await?;
 
     let reason = "The channel is closed for stock count.";
-    broker.set_fault(Fault::once(FaultKind::Refuse { reason: reason.to_owned() }));
-    let Err(ClientError::Refused { code, message, .. }) = outside.publish(&work("A-102", "t-1")).await
+    broker.set_fault(Fault::once(FaultKind::Refuse {
+        reason: reason.to_owned(),
+    }));
+    let Err(ClientError::Refused { code, message, .. }) =
+        outside.publish(&work("A-102", "t-1")).await
     else {
         return Err("the publish was accepted".into());
     };
     assert_eq!((code.as_str(), message.as_str()), ("refused", reason));
     assert_eq!(broker.queue(WORK).len(), 2);
-    let refusal = PublishOutcome::Refused { code: "refused".to_owned() };
+    let refusal = PublishOutcome::Refused {
+        code: "refused".to_owned(),
+    };
     assert_eq!(broker.received()[0].outcome, refusal);
 
     broker.set_fault(Fault::once(FaultKind::Delay { ms: 300 }).on_op(Op::Publish));
     outside.channels().await?;
-    assert_eq!(broker.faults().len(), 1, "a delay on publish applied to another request");
+    assert_eq!(
+        broker.faults().len(),
+        1,
+        "a delay on publish applied to another request"
+    );
     let started = Instant::now();
     outside.publish(&work("A-102", "t-1")).await?;
     assert!(started.elapsed() >= Duration::from_millis(300));
@@ -445,15 +578,23 @@ async fn a_message_can_be_delivered_twice() -> Outcome {
     assert_eq!(ids(&consumer.fetch(&queue, 1, NOW).await?), ["s-7"]);
 
     let topic = consumer.subscribe(NOTICES).await?.subscription;
-    consumer.publish(&Publish::new(NOTICES, json!("once"))).await?;
+    consumer
+        .publish(&Publish::new(NOTICES, json!("once")))
+        .await?;
     assert_eq!(ids(&consumer.fetch(&topic, 10, NOW).await?), ["m-1"]);
     assert_eq!(ids(&consumer.fetch(&topic, 10, NOW).await?), ["m-1"]);
     assert!(consumer.fetch(&topic, 10, NOW).await?.is_empty());
 
     let truth = broker.truth();
     let causes = |id: &str| -> Vec<_> { truth.deliveries_of(id).iter().map(|d| d.cause).collect() };
-    assert_eq!(causes("s-6"), [DeliveryCause::First, DeliveryCause::Duplicate]);
-    assert_eq!(causes("m-1"), [DeliveryCause::First, DeliveryCause::Duplicate]);
+    assert_eq!(
+        causes("s-6"),
+        [DeliveryCause::First, DeliveryCause::Duplicate]
+    );
+    assert_eq!(
+        causes("m-1"),
+        [DeliveryCause::First, DeliveryCause::Duplicate]
+    );
     assert_eq!(truth.acknowledgements.len(), 2);
     Ok(())
 }
@@ -488,7 +629,12 @@ async fn a_consumer_that_never_acknowledges_holds_messages_until_they_are_taken_
     assert_eq!(refused(late), "unknown_delivery");
     let third = consumer.fetch(&sub, 10, NOW).await?;
     assert_eq!((ids(&third), third[0].attempt), (vec!["s-6"], 3));
-    let outcomes: Vec<_> = broker.truth().deliveries_of("s-6").iter().map(|d| d.outcome).collect();
+    let outcomes: Vec<_> = broker
+        .truth()
+        .deliveries_of("s-6")
+        .iter()
+        .map(|d| d.outcome)
+        .collect();
     let expected = [
         DeliveryOutcome::Returned,
         DeliveryOutcome::Returned,
@@ -512,7 +658,12 @@ async fn a_changed_message_or_channel_is_seen_by_a_reader() -> Outcome {
     let seen = reader.latest(STATUS, "A-100").await?.ok_or("no value")?;
     assert_eq!(seen.body, json!({"order_id": "A-100", "state": "draft"}));
     let browsed = reader.browse(STATUS, 10, None).await?;
-    assert!(browsed.messages.iter().all(|m| m.message.body.get("status").is_none()));
+    assert!(
+        browsed
+            .messages
+            .iter()
+            .all(|m| m.message.body.get("status").is_none())
+    );
     // What is stored did not change; only what a reader is shown.
     let stored = broker.retained(STATUS, "A-100").ok_or("nothing retained")?;
     assert_eq!(stored.body["status"], "draft");
@@ -524,15 +675,29 @@ async fn a_changed_message_or_channel_is_seen_by_a_reader() -> Outcome {
     let described = reader.describe(STATUS).await?;
     assert_eq!(described.spec.shape, Shape::Log);
     assert_eq!(described.spec.key_field.as_deref(), Some("customer_id"));
-    assert_eq!(refused(reader.latest(STATUS, "A-100").await), "not_supported");
+    assert_eq!(
+        refused(reader.latest(STATUS, "A-100").await),
+        "not_supported"
+    );
 
     assert!(broker.remove_channel(EVENTS));
     assert_eq!(refused(reader.describe(EVENTS).await), "channel_missing");
     let gone = reader.publish(&Publish::new(EVENTS, json!({}))).await;
     assert_eq!(refused(gone), "channel_missing");
-    let refusal = PublishOutcome::Refused { code: "channel_missing".to_owned() };
+    let refusal = PublishOutcome::Refused {
+        code: "channel_missing".to_owned(),
+    };
     assert_eq!(broker.received()[0].outcome, refusal);
-    assert_eq!(refused(reader.request("explode", json!({})).await), "unknown_op");
+    assert_eq!(
+        refused(reader.request("explode", json!({})).await),
+        "unknown_op"
+    );
+
+    // The broker answers in a way the protocol does not have, and does not do the work.
+    broker.set_fault(Fault::once(FaultKind::UnexpectedReply).on_op(Op::Publish));
+    let odd = reader.publish(&status("A-100", "shipped")).await;
+    assert!(matches!(odd, Err(ClientError::Protocol(_))), "got {odd:?}");
+    assert_eq!(broker.received().len(), 1);
     Ok(())
 }
 
@@ -542,7 +707,8 @@ async fn credentials_can_be_required_and_can_stop_working() -> Outcome {
     let broker = TestBroker::start().await?;
     broker.set_required_token(Some("example-token"));
     assert_eq!(refused(broker.client("visitor").await), "not_authorized");
-    let mut member = Client::connect_with(broker.address(), "member", Some("example-token")).await?;
+    let mut member =
+        Client::connect_with(broker.address(), "member", Some("example-token")).await?;
     member.channels().await?;
 
     broker.set_required_token(Some("example-token-2"));
@@ -568,7 +734,10 @@ async fn connections_can_be_dropped_and_a_reset_restores_the_seed_data() -> Outc
     assert!(matches!(lost, Err(ClientError::Closed)), "got {lost:?}");
     // What the broker held stays, and the unacknowledged message is ready again.
     let queue = &truth.channels[WORK].queue;
-    assert_eq!((queue.len(), queue[0].state, queue[0].attempts), (2, HeldState::Ready, 1));
+    assert_eq!(
+        (queue.len(), queue[0].state, queue[0].attempts),
+        (2, HeldState::Ready, 1)
+    );
 
     let mut outside = broker.client("outside").await?;
     outside.publish(&status("A-102", "draft")).await?;

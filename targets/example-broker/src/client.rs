@@ -54,7 +54,9 @@ impl fmt::Display for ClientError {
         match self {
             Self::Io(e) => write!(f, "the connection to the broker failed: {e}"),
             Self::Closed => write!(f, "the broker closed the connection before answering"),
-            Self::Refused { code, message, .. } => write!(f, "the broker refused: {code}: {message}"),
+            Self::Refused { code, message, .. } => {
+                write!(f, "the broker refused: {code}: {message}")
+            }
             Self::Protocol(what) => write!(f, "the broker's answer was not understood: {what}"),
         }
     }
@@ -362,7 +364,9 @@ impl Client {
     ///
     /// As for [`Client::request`].
     pub async fn describe(&mut self, channel: &str) -> Result<ChannelInfo, ClientError> {
-        let reply = self.request("describe", json!({"channel": channel})).await?;
+        let reply = self
+            .request("describe", json!({"channel": channel}))
+            .await?;
         Ok(typed::<OneChannel>(reply)?.channel)
     }
 
@@ -380,7 +384,11 @@ impl Client {
     /// # Errors
     ///
     /// As for [`Client::request`].
-    pub async fn latest(&mut self, channel: &str, key: &str) -> Result<Option<Message>, ClientError> {
+    pub async fn latest(
+        &mut self,
+        channel: &str,
+        key: &str,
+    ) -> Result<Option<Message>, ClientError> {
         let fields = json!({"channel": channel, "key": key});
         Ok(typed::<Latest>(self.request("latest", fields).await?)?.message)
     }
@@ -406,7 +414,10 @@ impl Client {
     ///
     /// As for [`Client::request`].
     pub async fn subscribe(&mut self, channel: &str) -> Result<Subscribed, ClientError> {
-        typed(self.request("subscribe", json!({"channel": channel})).await?)
+        typed(
+            self.request("subscribe", json!({"channel": channel}))
+                .await?,
+        )
     }
 
     /// Opens a subscription with every option: a declared name, a log position to start

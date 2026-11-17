@@ -19,11 +19,10 @@ mod state;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-pub use crate::state::{SEED_DEDUPE_HEADER, SEED_SUBSCRIPTION, SILENT_CONSUMER};
 use crate::state::State;
+pub use crate::state::{SEED_DEDUPE_HEADER, SEED_SUBSCRIPTION, SILENT_CONSUMER};
 
 /// The name and version of the wire protocol, as the broker gives it in answer to `hello`.
 pub const PROTOCOL: &str = "example-broker/1";
@@ -69,11 +68,4 @@ impl Shared {
         self.touch();
         result
     }
-}
-
-/// Serves a new broker with the seed data on the given listener until the task is stopped.
-///
-/// A test wants [`harness::TestBroker::start`] instead, which also gives the control interface.
-pub async fn serve(listener: TcpListener) {
-    server::serve(listener, Shared::new()).await;
 }

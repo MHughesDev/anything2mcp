@@ -42,10 +42,7 @@ impl Refusal {
 }
 
 fn channel_missing(address: &str) -> Refusal {
-    Refusal::new(
-        "channel_missing",
-        format!("There is no channel {address}."),
-    )
+    Refusal::new("channel_missing", format!("There is no channel {address}."))
 }
 
 fn not_supported(what: &str) -> Refusal {
@@ -576,7 +573,10 @@ impl State {
     ) -> (PublishOutcome, PublishEnd) {
         fn refuse(refusal: Refusal) -> (PublishOutcome, PublishEnd) {
             let code = refusal.code.to_owned();
-            (PublishOutcome::Refused { code }, PublishEnd::Refuse(refusal))
+            (
+                PublishOutcome::Refused { code },
+                PublishEnd::Refuse(refusal),
+            )
         }
         let address = request.channel.as_str();
         let Some(spec) = self.channels.get(address).map(|c| c.spec.clone()) else {
@@ -591,7 +591,12 @@ impl State {
                     | FaultKind::Refuse { .. }
             )
         };
-        let fault = self.take_fault(Some(connection), Some(Op::Publish), Some(address), on_publish);
+        let fault = self.take_fault(
+            Some(connection),
+            Some(Op::Publish),
+            Some(address),
+            on_publish,
+        );
         match &fault {
             Some(FaultKind::DropBeforeStore) => {
                 return (PublishOutcome::Dropped, PublishEnd::Drop);
@@ -1014,7 +1019,12 @@ impl State {
             })
     }
 
-    pub(crate) fn ack(&mut self, connection: u64, handle: &str, tag: &str) -> Result<Value, Refusal> {
+    pub(crate) fn ack(
+        &mut self,
+        connection: u64,
+        handle: &str,
+        tag: &str,
+    ) -> Result<Value, Refusal> {
         let handle = self.handle(connection, handle)?;
         let number = self.held_delivery(&handle, tag)?;
         let held = self
@@ -1257,9 +1267,10 @@ fn seed_channels() -> BTreeMap<String, Channel> {
     );
     for (key, value) in [("A-100", "draft"), ("A-101", "submitted")] {
         let body = json!({"order_id": key, "status": value});
-        status
-            .retained
-            .insert(key.to_owned(), seed("example.orders.status", key, body, None));
+        status.retained.insert(
+            key.to_owned(),
+            seed("example.orders.status", key, body, None),
+        );
     }
 
     let mut events = Channel::new(
@@ -1267,7 +1278,11 @@ fn seed_channels() -> BTreeMap<String, Channel> {
             .key_field("order_id")
             .schema(order("event", &["created", "submitted", "shipped"])),
     );
-    for (key, event) in [("A-100", "created"), ("A-101", "created"), ("A-101", "submitted")] {
+    for (key, event) in [
+        ("A-100", "created"),
+        ("A-101", "created"),
+        ("A-101", "submitted"),
+    ] {
         let body = json!({"order_id": key, "event": event});
         let position = events.next_position;
         events
