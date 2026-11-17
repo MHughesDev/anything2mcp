@@ -196,6 +196,10 @@ fn diff() -> Digest {
 /// Opens a write run by `caller` and brings it to `needs_approval` with a
 /// stored diff hash, as the engine does after its preview.
 async fn waiting_run(store: &Store, caller: u8, input: &str) -> Fence {
+    waiting_run_of(store, caller, input, EffectClass::Write).await
+}
+
+async fn waiting_run_of(store: &Store, caller: u8, input: &str, effect: EffectClass) -> Fence {
     let new = NewRun {
         workspace: workspace(),
         principal: person(caller),
@@ -206,7 +210,7 @@ async fn waiting_run(store: &Store, caller: u8, input: &str) -> Fence {
         target_version: Digest::of(b"plan"),
         environment: environment(),
         identity: None,
-        effect: EffectClass::Write,
+        effect,
         input_hash: Digest::of(input.as_bytes()),
         input: None,
         retention: RetentionClass::Long,
@@ -1096,4 +1100,253 @@ fn the_approval_handle_cannot_be_copied() {
     impl<T> NotClone<()> for T {}
     impl<T: Clone> NotClone<u8> for T {}
     <ApprovalSurface as NotClone<_>>::holds();
+}
+
+// ---- decision 0145: what the audit asked of the policy engine ----
+
+#[tokio::test]
+async fn the_policy_engine_opens_once_per_store() {
+    let stand = local("once").await;
+    // A second opening would hand out a second approval handle and could
+    // put another built-in set in force: it is refused.
+    let again = Policy::open(&stand.store, BuiltIn::local(person(5), workspace())).await;
+    let Err(refused) = again else {
+        panic!("a second policy engine opened on one store")
+    };
+    assert_eq!(refused.code().as_str(), "table_not_owned");
+    // The first one still decides.
+    let decision = stand
+        .policy
+        .decide_alone(ask(1, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    assert_eq!(decision.answer, Answer::Allow);
+}
+
+#[tokio::test]
+async fn consume_refuses_under_a_kill_switch_whatever_was_decided_before() {
+    let stand = local("consume-switch").await;
+    let fence = waiting_run(&stand.store, 1, "a").await;
+    stand
+        .surface
+        .approve(approved(fence.run, PrincipalRef::person(person(1)), diff()))
+        .await
+        .unwrap();
+    let policy = stand.policy.clone();
+    stand
+        .store
+        .write(Durability::Synced, move |tx| {
+            policy.set_kill_switch(
+                tx,
+                &KillSwitch {
+                    scope: KillScope::Target(TargetName::new("example").unwrap()),
+                    on: true,
+                    by: person(1),
+                    presence: None,
+                },
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(code(begin(&stand, fence, diff()).await), KILL_SWITCH_ON);
+    assert_eq!(
+        run_state(&stand.store, fence.run).await,
+        RunState::NeedsApproval
+    );
+}
+
+#[tokio::test]
+async fn an_approval_is_refused_for_another_tool_version_or_a_proof_not_of_now() {
+    let stand = local("approval-checks").await;
+    let fence = waiting_run(&stand.store, 1, "a").await;
+    let by = || PrincipalRef::person(person(1));
+    let other_version = stand
+        .surface
+        .approve(Approved {
+            tool_version: Digest::of(b"another plan"),
+            ..approved(fence.run, by(), diff())
+        })
+        .await;
+    assert_eq!(code(other_version), APPROVAL_STALE);
+    let old_proof = stand
+        .surface
+        .approve(Approved {
+            proved_at: Timestamp::from_unix_millis(START - 121_000),
+            ..approved(fence.run, by(), diff())
+        })
+        .await;
+    assert_eq!(code(old_proof), APPROVAL_REFUSED);
+    let ahead = stand
+        .surface
+        .approve(Approved {
+            proved_at: Timestamp::from_unix_millis(START + 121_000),
+            ..approved(fence.run, by(), diff())
+        })
+        .await;
+    assert_eq!(code(ahead), APPROVAL_REFUSED);
+    // Off the engine's own prompt, a check that proves nothing is refused;
+    // each of the operating systems' prompts proves presence.
+    let unproved = stand
+        .surface
+        .approve(Approved {
+            channel: Channel::ApprovalPage,
+            presence: PresenceCheck::NotAvailable,
+            ..approved(fence.run, by(), diff())
+        })
+        .await;
+    assert_eq!(code(unproved), APPROVAL_REFUSED);
+    for check in [
+        PresenceCheck::Polkit,
+        PresenceCheck::LocalAuthentication,
+        PresenceCheck::WindowsHello,
+    ] {
+        assert!(check.proves_presence(), "{check}");
+    }
+    stand
+        .surface
+        .approve(Approved {
+            presence: PresenceCheck::Polkit,
+            ..approved(fence.run, by(), diff())
+        })
+        .await
+        .unwrap();
+    begin(&stand, fence, diff()).await.unwrap();
+    let raw = stand.folder.raw();
+    let stored: String = raw
+        .query_row("SELECT presence_check FROM approvals", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(stored, "polkit");
+}
+
+#[tokio::test]
+async fn an_irreversible_run_needs_two_people_where_the_setting_asks() {
+    let mut settings = BuiltIn::server().layers().settings.clone();
+    settings.two_person_irreversible = true;
+    let stand = stand("two", BuiltIn::server().with_settings(settings)).await;
+    // The set published later does not ask for two people, and an
+    // administrator who signed in publishes it; the installation's setting
+    // still holds under it.
+    publish(
+        &stand,
+        server_layers(),
+        PublishProof {
+            presence: Some(PresenceCheck::SignedIn),
+        },
+    )
+    .await
+    .unwrap();
+    let fence = waiting_run_of(&stand.store, 3, "a", EffectClass::Irreversible).await;
+    stand
+        .surface
+        .approve(approved(fence.run, PrincipalRef::person(person(1)), diff()))
+        .await
+        .unwrap();
+    assert_eq!(code(begin(&stand, fence, diff()).await), APPROVAL_MISSING);
+    let twice = stand
+        .surface
+        .approve(approved(fence.run, PrincipalRef::person(person(1)), diff()))
+        .await;
+    assert_eq!(code(twice), APPROVAL_REFUSED);
+    stand
+        .surface
+        .approve(approved(fence.run, PrincipalRef::person(person(2)), diff()))
+        .await
+        .unwrap();
+    begin(&stand, fence, diff()).await.unwrap();
+    assert_eq!(run_state(&stand.store, fence.run).await, RunState::Running);
+    let raw = stand.folder.raw();
+    assert_eq!(
+        count(
+            &raw,
+            "SELECT COUNT(*) FROM approvals WHERE used_at IS NOT NULL"
+        ),
+        2
+    );
+
+    // Without the setting, one approval clears a run of the same kind.
+    let plain = stand_named_two_off().await;
+    let fence = waiting_run_of(&plain.store, 3, "b", EffectClass::Irreversible).await;
+    plain
+        .surface
+        .approve(approved(fence.run, PrincipalRef::person(person(1)), diff()))
+        .await
+        .unwrap();
+    begin(&plain, fence, diff()).await.unwrap();
+}
+
+async fn stand_named_two_off() -> Stand {
+    let stand = stand("two-off", BuiltIn::server()).await;
+    publish(&stand, server_layers(), PublishProof::default())
+        .await
+        .unwrap();
+    stand
+}
+
+#[tokio::test]
+async fn the_installations_settings_stay_in_force_under_a_published_set() {
+    let mut settings = BuiltIn::local(person(1), workspace())
+        .layers()
+        .settings
+        .clone();
+    settings.max_records_per_run = 10;
+    let stand = stand(
+        "floor",
+        BuiltIn::local(person(1), workspace()).with_settings(settings),
+    )
+    .await;
+    let check = |records| LimitCheck {
+        principal: PrincipalRef::person(person(1)),
+        workspace: workspace(),
+        records: Some(records),
+        count_call: false,
+    };
+    let limits = |records| {
+        let policy = stand.policy.clone();
+        let store = stand.store.clone();
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    policy.check_limits(tx, &check(records))
+                })
+                .await
+        }
+    };
+    assert_eq!(code(limits(11).await), LIMIT_EXCEEDED);
+    // A set published with a looser limit, by a person present, does not
+    // lift the installation's.
+    let mut layers = BuiltIn::local(person(1), workspace()).layers().clone();
+    layers.settings.max_records_per_run = 40;
+    publish(
+        &stand,
+        layers,
+        PublishProof {
+            presence: Some(PresenceCheck::OsPrompt),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(code(limits(11).await), LIMIT_EXCEEDED);
+    limits(10).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_decision_is_explained_only_in_its_own_workspace() {
+    let stand = local("explain-ws").await;
+    let decided = stand
+        .policy
+        .decide_alone(ask(1, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    let policy = stand.policy.clone();
+    let id = decided.id;
+    let other = stand
+        .store
+        .read(move |tx| policy.explain(tx, id, WorkspaceId::from_bytes([8; 16])))
+        .await
+        .unwrap_err();
+    assert_eq!(other.code(), &a2m_policy::DECISION_NOT_FOUND);
+    let policy = stand.policy.clone();
+    stand
+        .store
+        .read(move |tx| policy.explain(tx, id, workspace()))
+        .await
+        .unwrap();
 }

@@ -35,6 +35,7 @@ mod store;
 mod tables;
 #[cfg(test)]
 mod tests;
+pub mod tls;
 mod work;
 
 pub use credentials::{Credentials, StoredCredentials};
@@ -66,6 +67,10 @@ pub mod codes {
     };
     pub use crate::keeper::SESSION_MOVE_ILLEGAL;
     pub use crate::provider::AUTH_PROVIDER_DUPLICATE;
+    pub use crate::tls::{
+        CERTIFICATE_EXPIRED, CERTIFICATE_NAME_MISMATCH, CERTIFICATE_NOT_VERIFIED,
+        CERTIFICATE_UNTRUSTED, TLS_HANDSHAKE_FAILED, TLS_SETUP_FAILED, TRUST_ROOTS_UNREADABLE,
+    };
 }
 
 /// The boxed future the traits of this crate return, so that each can be

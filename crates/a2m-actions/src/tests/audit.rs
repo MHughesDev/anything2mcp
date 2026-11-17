@@ -491,36 +491,12 @@ async fn an_act_that_is_a_persons_when_it_loosens_is_asked_for_by_the_dispatcher
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_shown_as_in_force()
 {
-    for (text, key) in [
-        (
-            "[policy]\nmax_records_per_run = 5\n",
-            "policy.max_records_per_run",
-        ),
-        (
-            "[policy]\nagent_effect_ceiling = \"read\"\n",
-            "policy.agent_effect_ceiling",
-        ),
-        (
-            "[policy]\nwrites_outside_tests = false\n",
-            "policy.writes_outside_tests",
-        ),
-        (
-            "[policy]\napproval_window_minutes = 1\n",
-            "policy.approval_window_minutes",
-        ),
-        (
-            "[policy]\ntwo_person_irreversible = true\n",
-            "policy.two_person_irreversible",
-        ),
-        (
-            "[profile]\npreset = \"cautious\"\n",
-            "policy.max_records_per_run",
-        ),
-        (
-            "[profile]\npreset = \"ci\"\n",
-            "policy.writes_outside_tests",
-        ),
-    ] {
+    // Every policy setting is carried into the policy engine (decision
+    // 0145); what remains is an approver the policy engine has not.
+    for (text, key) in [(
+        "[policy]\napprove_writes = \"named_approver\"\n",
+        "policy.approve_writes",
+    )] {
         let world = world(Options::with_user_settings(text)).await;
         let health = world.kernel.health();
         assert_eq!(health.state, HealthState::Stopped, "{key}");
@@ -572,6 +548,27 @@ async fn a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_limits_the_settings_show_are_the_limits_the_policy_engine_keeps() {
+    // A tighter record limit from the settings, and the presets that set
+    // policy settings, run, and the limit is kept (decision 0145).
+    for text in [
+        "[policy]\nmax_records_per_run = 5\n",
+        "[profile]\npreset = \"cautious\"\n",
+        "[profile]\npreset = \"ci\"\n",
+    ] {
+        let world = world(Options::with_user_settings(text)).await;
+        assert_ne!(world.kernel.health().state, HealthState::Stopped, "{text}");
+        let limit = u32::try_from(
+            world
+                .kernel
+                .settings()
+                .int("policy.max_records_per_run")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(world.within_limits(limit).await.is_ok(), "{text}");
+        assert!(world.within_limits(limit + 1).await.is_err(), "{text}");
+        world.kernel.close(CloseReason::Asked).await;
+    }
     let world = World::ready().await;
     let settings = world.kernel.settings().clone();
     let limit = u32::try_from(settings.int("policy.max_records_per_run").unwrap()).unwrap();

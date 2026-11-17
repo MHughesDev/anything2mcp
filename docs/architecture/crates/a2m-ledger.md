@@ -53,7 +53,7 @@ Table owners. The ledger's and the policy engine's tables exist; the others are 
 
 A test reads every migration and fails if a table has no owner or two, or if the store holds a table no migration declares. The one declared exception to "a crate's SQL names only its own tables" is the ledger's check for rule 3, which reads `approvals` and `decisions` (below); the authorizer allows the ledger those two reads and nothing else outside its own tables.
 
-A crate passes its own name to `tx.tables` and no other. The store cannot tell which crate is calling, so that one line is held by a check over the source, which the documentation audit still owes: `Owner::Policy` appears only in `a2m-policy`, and so on. The ledger's own tables carry the nine rules and are not reachable through `tx.tables` at all, only through the ledger's calls.
+A crate passes its own name to `tx.tables` and no other. The store cannot tell which crate is calling, so for most owners that one line is held by a check over the source, which the documentation audit still owes. The policy engine's tables are what rule 3 trusts, so they are held by a capability instead (decision 0145): `Store::policy_key` hands out a `PolicyKey` once for the life of the store, `Policy::open` takes it, and `Tx::policy_tables(&key)` is the only way to those tables; `tx.tables(Owner::Policy)` refuses every statement, and a key of one store opens no other. What remains: a crate that depends on the ledger and is handed the key could still forge, and so could a program that opens the database file itself; the kernel hands the key to the policy engine alone, and a test holds that no other crate's source names it. Tests stand in for the policy engine through the `testing` feature, which a crate turns on only as a feature of its dev-dependency: `testing::approve` and `testing::pre_approve` write a whole approval or decision, and `Tx::policy_tables_for_tests` reaches the tables. The ledger's own tests take the key from each store they open, as the policy engine does. The ledger's own tables carry the nine rules and are not reachable through `tx.tables` at all, only through the ledger's calls.
 
 ## Interface
 
@@ -102,13 +102,15 @@ impl Tx<'_> {
     pub fn now(&self) -> Timestamp;                    // the store's clock, read once when the transaction began
     pub fn random(&mut self) -> Result<[u8; 10], Failure>;   // for a new identifier: XId::from_parts(tx.now(), tx.random()?)
     pub fn writes(&self) -> bool;
-    pub fn tables(&mut self, owner: Owner) -> Tables<'_, '_>;
+    pub fn tables(&mut self, owner: Owner) -> Tables<'_, '_>;     // Owner::Policy: every statement refused
+    pub fn policy_tables(&mut self, key: &PolicyKey) -> Result<Tables<'_, '_>, Failure>;
     pub fn ledger(&mut self) -> Ledger<'_, '_>;
     pub fn findings(&mut self) -> Findings<'_, '_>;
     pub fn versions(&mut self) -> Versions<'_, '_>;
     pub fn audit(&mut self) -> Audit<'_, '_>;
 }
 pub enum Owner { Ledger, Policy, Auth, Sched, Engine, Actions }
+pub struct PolicyKey { /* this store's number; not Clone */ }   // Store::policy_key(&self) -> Result<PolicyKey, Failure>, once
 impl Tables<'_, '_> {
     // Fixed statements with numbered parameters (?1, ?2); values are bound, never written into the text.
     pub fn execute(&mut self, sql: &'static str, params: &[SqlValue]) -> Result<u64, Failure>;
@@ -164,7 +166,14 @@ impl Ledger<'_, '_> {
 pub struct RecordRef { pub run: RunId, pub step_seq: u32, pub record_seq: u32 }
 pub enum WriteClearance { Approval(ApprovalId), PreApproved(DecisionId) }
 pub struct ReadBack { pub digest: Digest, pub after: Option<BlobRef>, pub evidence: BlobRef }
-pub enum Reconciled { Landed(ReadBack), NotLanded, Neither { evidence: BlobRef } }
+pub enum Reconciled {
+    Landed { read: ReadBack, acted: Acted },  // the outputs and assigned key the read found, kept with the record
+    NotLanded { evidence: BlobRef },          // a record goes back to `planned` only on a read that was made
+    Neither { evidence: BlobRef },
+    NeverSent,                                // a `failed` record with no intent since it was planned, checked from its row
+}
+// RecordRow also carries `mode` (the binding its intent was stored for), `acted_at`, `reconciled_at`,
+// and `in_doubt()`, rule 5's question for one row.
 pub enum Settled { Verified, Planned, Stale }
 pub fn replay(events: &[RunEvent]) -> Result<Replayed, Failure>;   // the state the events alone give
 
@@ -211,9 +220,9 @@ Contracts that the signatures do not show:
 
 - **A transaction lives inside one closure.** The closure is `Send + 'static`, so it owns what it uses; it returns a value, which reaches the caller only if the commit succeeded. Code that needs to wait, such as sealing a blob, does so before or after the closure, never inside.
 - **The intent token is the write gate.** The engine receives it through `Control`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so a driver cannot be called for a write without it. A token is made only by `Store::store_intents`, and only after the transaction that stored the intent has committed with a sync to disk. `mark_acted` consumes it, and refuses a record whose row is not in `intent` under the token's lease and intent event. A caller may read the token's fields and pass it by reference.
-- **Rule 5 is enforced by the data.** `store_intents` refuses, and so does entering `running`, while any record of the run is in doubt with an intent from a lease below the current one. In doubt means `intent`, `acted`, or `failed` after an intent with a class other than `policy`, `stale`, or `input`. There is no flag to forget to set.
-- **Rule 3 reads two policy tables.** `begin_writes` checks, in SQL and in the same transaction, that the approval row names this run, carries the run's diff hash, is not revoked, is marked used, and was changed by this very transaction, which the store knows from the database's update hook; or that the decision row is a `write_without_person` that allowed this run with this diff hash. The ledger never marks an approval used. A write run with records to write cannot enter `running` any other way, and no intent is stored for a run that was never cleared.
-- **The rules are held twice.** Each call checks the rule and answers with a failure that says what was refused. The triggers of the migrations refuse the same things whoever sends the statement: a record acted without an intent, verified without a matching read-back and evidence, an intent under another lease, a change to a final run, an event out of order or from another lease, a second lock on a record, an update or delete of history.
+- **Rule 5 is enforced by the data.** `store_intents` refuses, and so does entering `running`, while any record of the run is in doubt with an intent from a lease below the current one. In doubt means `intent`, `acted`, or `failed` and not read back since, either after its write was sent (`acted_at` is set), whatever class it failed with, or after an intent with a class other than `policy`, `stale`, or `input`. `mark_failed` keeps the lock of a record that reached `acted`, quarantined, whatever the class: the class is the caller's word, and only a read settles a sent write (decision 0147). There is no flag to forget to set.
+- **Rule 3 reads two policy tables.** `begin_writes` reads the approval it is given and refuses unless it names this run and its workspace, carries the run's diff hash and tool version, names a principal, is unexpired by the store's clock, is not revoked, proves presence wherever its channel is not the engine's own prompt, is marked used, and was changed by this very transaction, which the store knows from the database's update hook. For a pre-approval it refuses unless the decision row is an allowed `write_without_person` of this run and workspace, with this diff hash, made under a policy version, and recorded in this very transaction, so no kill switch or newer set came between the decision and the writes. Each refusal is a test (decision 0145). The ledger never marks an approval used. A write run with records to write cannot enter `running` any other way, and no intent is stored for a run that was never cleared.
+- **The rules are held twice.** Each call checks the rule and answers with a failure that says what was refused. The triggers of the migrations refuse the same things whoever sends the statement: a record acted without an intent, verified without a matching read-back and evidence, an intent under another lease, a change to a final run, an event out of order or from another lease, a second lock on a record, an update or delete of history; and, from migration 0012, a write run entering `running` uncleared or with a clearance that is not its own, an intent for a run not cleared, an intent while a record of an earlier lease is in doubt, an intent without the record's lock under its lease, and a return to `planned` without a read. Two things no trigger holds, and the code alone does: whether an approval has expired, which needs the store's clock, and whether it was marked used in this very transaction, which only the connection knows. Migration 0002's opening sentence, that its triggers hold all nine rules, was not true of rules 3 and 5; migrations are not edited once applied, so 0012 says so.
 - **Events and state together.** Every mutating call appends a `run_events` row with no gap in `seq` and updates the current row in the same transaction. `replay` rebuilds the state from the events, and a test compares.
 - **Locks follow the record.** A lock is released in the transaction that marks its record `verified`, or `failed` with nothing in doubt. It is quarantined when a record fails after an intent with the outcome in doubt, when the run stops or needs a sign-in, and when a new lease is granted, for every record then in doubt; the run's other locks are released at the same moments. A quarantined lock is taken back only by its own run, under a new lease, on the way to `settle`.
 - **Append-only by trigger.** Triggers refuse an update or delete on `run_events` and `audit`, except deletes of a run whose retention state is `purging`, which only the retention job will set.
@@ -228,7 +237,8 @@ Contracts that the signatures do not show:
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-policy`, `a2m-auth`, `a2m-sched` | `Store::write`, `Store::read`, `Tx`, and their own tables through `Tx::tables` |
+| `a2m-policy` | `Store::write`, `Store::read`, `Tx`, `Store::policy_key` once, and its own tables through `Tx::policy_tables` |
+| `a2m-auth`, `a2m-sched` | `Store::write`, `Store::read`, `Tx`, and their own tables through `Tx::tables` |
 | `a2m-actions` | `Store::open`, `key_records`, `attach`; versions, audit, findings and questions, retention. As the in-process `Control`: the run-path calls (opening a run, intents, acted, verified, reconcile, locks, events, evidence) on the engine's behalf |
 | `a2m-runner`, control-plane side of the runner link | The same run-path calls, answering a runner's `need` and `event` messages |
 | `a2m-runner`, runner side | A token rebuilt from the control plane's acknowledgement. Not built: until the runner link exists the ledger offers no way to make a token but storing an intent |
@@ -288,7 +298,8 @@ The codes are constants in the crate's `codes` module.
 4. Done: assigned keys and stored outputs on record rows. Not built: values known before the commit point, recorded before `acted`.
 5. Done: findings and the unknowns ledger. Findings in an older format are kept and are not listed; marking them as old in a listing is not built.
 6. Done: the audit chain, and published versions with their plans. Not built: the outbox, callers' idempotency keys, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
-7. Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
+7. Done (the safety audit, decision 0145): the policy engine's key; `begin_writes` reading the whole clearance; the triggers of migration 0012; a sent write in doubt whatever its class; the intent's mode, a landed record's outputs, and the evidence of a `not landed` read kept with the record; the `testing` feature.
+8. Postgres, with the queue patterns of section 208. Phase 6. Everything that names the database crate is in `src/sqlite.rs`. The migrations are in SQLite's dialect and need a second set. The statements elsewhere use numbered parameters and `ON CONFLICT`, which both databases have; the one exception is the row number read for rule 3.
 
 ## Open points
 

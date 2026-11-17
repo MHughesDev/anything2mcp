@@ -10,8 +10,8 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use a2m_core::{
     ApprovalId, DecisionId, Digest, EffectClass, Environment, Failure, OperationName, PrincipalId,

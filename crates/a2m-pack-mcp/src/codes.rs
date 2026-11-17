@@ -52,6 +52,13 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "not_built"),
     (FailureClass::Input, "payload_unreadable"),
+    // The TLS failures of `a2m_auth::tls`, passed on as they are.
+    (FailureClass::Input, "tls_setup_failed"),
+    (FailureClass::UnknownVariant, "certificate_untrusted"),
+    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
+    (FailureClass::UnknownVariant, "certificate_expired"),
+    (FailureClass::UnknownVariant, "certificate_not_verified"),
+    (FailureClass::UnknownVariant, "tls_handshake_failed"),
 ];
 
 const RE_PIN: &str = "Run discovery on the surface, review what changed, and pin the tool's new digest in the mapping.";
@@ -158,6 +165,7 @@ pub(crate) fn arguments_invalid(tool: &str, why: &str) -> Failure {
     )
 }
 
+#[cfg(not(feature = "tls"))]
 pub(crate) fn tls_not_enabled() -> Failure {
     Failure::new(
         FailureClass::Input,

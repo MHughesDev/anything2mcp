@@ -33,9 +33,12 @@ handler!(
                 "Call `doctor.run` for the fix.",
             )
         })?;
+        // A decision of another workspace is not told apart from one that
+        // does not exist.
+        let workspace = call.caller.principal.workspace;
         let explained = kernel
             .store()?
-            .read(move |tx| policy.explain(tx, id))
+            .read(move |tx| policy.explain(tx, id, workspace))
             .await?;
         let mut out = json!({
             "decision": explained.id.to_string(),

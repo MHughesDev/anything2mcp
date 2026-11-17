@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    Digest, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex, SurfaceName,
-    ToolRuns, Values,
+    Digest, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex, SurfaceName, ToolRuns,
+    Values,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
@@ -384,6 +384,16 @@ impl Control for InProcessControl {
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
             let known = hazard.is_some();
+            // The test records the run's environment declares, when it is a
+            // test environment: the policy engine is told whether every
+            // record of the run is one of them (decision 0145).
+            let test_keys: Option<Vec<a2m_core::RecordKey>> = self
+                .plan
+                .environments
+                .iter()
+                .find(|environment| environment.name == self.run.environment)
+                .filter(|environment| environment.kind == a2m_core::EnvironmentKind::Test)
+                .map(|environment| environment.test_records.clone());
             let mut request = a2m_policy::Request {
                 principal: self.caller.principal.clone(),
                 question: Question::WriteWithoutPerson,
@@ -408,10 +418,13 @@ impl Control for InProcessControl {
                     // How many records the run would write, as the ledger
                     // holds them: a pre-approval rule covers a run only up
                     // to its own record count.
+                    let records = tx.ledger().records(run)?;
                     if known {
-                        let records = tx.ledger().records(run)?.len();
-                        request.context.records = u32::try_from(records).ok();
+                        request.context.records = u32::try_from(records.len()).ok();
                     }
+                    request.context.test_records = test_keys.as_ref().is_some_and(|keys| {
+                        !records.is_empty() && records.iter().all(|row| keys.contains(&row.key))
+                    });
                     let decision = policy.decide(tx, &request);
                     // A pre-approval begins a write only where the
                     // installation lets one: with `policy.pre_approval` off
@@ -445,7 +458,9 @@ impl Control for InProcessControl {
                                     "needs": "approval",
                                     "decision": decision.id.to_string(),
                                     "diff": diff.to_string(),
-                                    "pre_approval": if pre_approved.is_some() {
+                                    // The policy engine keeps the setting
+                                    // too, so with it off no rule applies.
+                                    "pre_approval": if pre_approved.is_some() || !pre_approval {
                                         "off by the setting `policy.pre_approval`"
                                     } else {
                                         "none applies"

@@ -55,16 +55,6 @@ fn caller_is_an_agent(request: &Request) -> bool {
     request.principal.kind == PrincipalKind::Agent || request.context.caller_is_agent
 }
 
-/// Whether the request is about a write: a tool above `read`, the question
-/// whether it may proceed without a person, or a person's approval of it.
-fn about_a_write(request: &Request) -> bool {
-    request.context.effect != EffectClass::Read
-        && matches!(
-            request.question,
-            Question::UseTool | Question::WriteWithoutPerson | Question::Approve
-        )
-}
-
 /// Whether the principal is `person`, or was proved to act for them.
 fn is_or_acts_for(request: &Request, person: &PrincipalId) -> bool {
     let acts_for = request
@@ -141,11 +131,11 @@ pub(crate) const GUARDRAILS: &[Guardrail] = &[
     },
     Guardrail {
         id: "limit.writes_only_to_test_records",
-        says: "With the setting `writes_outside_tests` off, a write proceeds, and is approved, only when every record it writes is a declared test record of a test environment.",
+        says: "With the setting `writes_outside_tests` off, a write proceeds only when every record it writes is a declared test record of a test environment. The question is asked of every write before it begins, with or without a person's approval.",
         applies: |settings, request| {
             !settings.writes_outside_tests
-                && request.question != Question::UseTool
-                && about_a_write(request)
+                && request.question == Question::WriteWithoutPerson
+                && request.context.effect != EffectClass::Read
                 && !request.context.test_records
         },
         refusal: || Some(failure::not_granted()),
@@ -481,12 +471,18 @@ pub(crate) fn local_tests(user: PrincipalId, workspace: WorkspaceId) -> Vec<Poli
         expect,
     };
     vec![
+        // Asked as the user, not as their agent: a ceiling for agents in
+        // the installation's settings does not change this row.
         test(
             "the user may call a tool that writes",
             PrincipalRef::person(user),
             Question::UseTool,
             tool.clone(),
-            context(EffectClass::Write),
+            Context {
+                caller_is_agent: false,
+                acting_for: None,
+                ..context(EffectClass::Write)
+            },
             Answer::Allow,
         ),
         test(
@@ -1171,14 +1167,20 @@ mod tests {
             tool("example_order_update"),
             agent(),
         );
-        assert_eq!(evaluate(&loosest().compiled, &use_write).answer, Answer::Allow);
+        assert_eq!(
+            evaluate(&loosest().compiled, &use_write).answer,
+            Answer::Allow
+        );
         let ceiling = with(|settings| settings.agent_effect_ceiling = EffectClass::Read);
         let refused = evaluate(&ceiling.compiled, &use_write);
         assert_eq!(refused.rules, ["limit.agent_effect_ceiling"]);
         assert_eq!(refused.refusal.unwrap().code(), &EFFECT_TOO_HIGH);
         let mut by_a_person = use_write.clone();
         by_a_person.context.caller_is_agent = false;
-        assert_eq!(evaluate(&ceiling.compiled, &by_a_person).answer, Answer::Allow);
+        assert_eq!(
+            evaluate(&ceiling.compiled, &by_a_person).answer,
+            Answer::Allow
+        );
 
         // Writes only to test records: a write that may proceed without a
         // person is refused unless every record is a declared test record.
@@ -1188,14 +1190,20 @@ mod tests {
             tool("example_order_update"),
             context(EffectClass::Write),
         );
-        assert_eq!(evaluate(&loosest().compiled, &unattended).answer, Answer::Allow);
+        assert_eq!(
+            evaluate(&loosest().compiled, &unattended).answer,
+            Answer::Allow
+        );
         let tests_only = with(|settings| settings.writes_outside_tests = false);
         let refused = evaluate(&tests_only.compiled, &unattended);
         assert_eq!(refused.rules, ["limit.writes_only_to_test_records"]);
         assert_eq!(refused.refusal.unwrap().code(), &NOT_GRANTED);
         let mut on_test_records = unattended.clone();
         on_test_records.context.test_records = true;
-        assert_eq!(evaluate(&tests_only.compiled, &on_test_records).answer, Answer::Allow);
+        assert_eq!(
+            evaluate(&tests_only.compiled, &on_test_records).answer,
+            Answer::Allow
+        );
 
         // Pre-approval off: no rule lets the write proceed, and the run
         // waits for a person; it is not refused.

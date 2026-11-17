@@ -61,7 +61,8 @@ Indexes: unique on `dedupe_key` where the state is not final; on `(workspace_id,
 | `attempts` | int | Write attempts |
 | `failure_class`, `failure_code` | enum, text | When failed |
 | `evidence_ref` | ref | Trace fragment for this record |
-| `intent_at`, `acted_at`, `verified_at` | ts | Timings |
+| `intent_at`, `acted_at`, `verified_at` | ts | Timings. `acted_at` set means the write was sent in the current attempt: the record stays in doubt, whatever it failed with, until it is read back |
+| `reconciled_at` | ts | When reconcile last read it back. A record that may have been written returns to `planned` only with it set; a new intent clears it |
 
 Indexes: on `(run_id, state)`; on `record_key_hash`.
 
@@ -88,7 +89,7 @@ Append-only. An insert carrying an `epoch` other than the run's current `lease_e
 | `pattern`, `caller`, `window_start`, `window_end` | text, id, ts, ts | For standing scope |
 | `diff_hash`, `tool_version_hash` | text, text | What was approved |
 | `approver_id` | id | The person |
-| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed |
+| `channel`, `presence_check` | enum, enum | How the approval arrived and which user-presence check was passed: `os_prompt`, `polkit`, `local_authentication`, `windows_hello`, or `signed_in`, each of which proves presence, or `not_available`, accepted only on the engine's own prompt (`local_prompt`) |
 | `granted_at`, `expires_at`, `used_at`, `revoked_at` | ts | A run-scope approval is used once |
 
 ## decisions

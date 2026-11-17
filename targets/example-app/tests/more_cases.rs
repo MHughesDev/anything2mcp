@@ -22,7 +22,9 @@ const UPDATE: &str =
     r#"{"description": "Left rail", "quantity": 3, "length_in": "150.5", "version": 1}"#;
 
 fn no_redirects() -> Result<Client, reqwest::Error> {
-    Client::builder().redirect(redirect::Policy::none()).build()
+    example_app::harness::client_builder()
+        .redirect(redirect::Policy::none())
+        .build()
 }
 
 fn location(response: &reqwest::Response) -> String {

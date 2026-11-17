@@ -14,8 +14,8 @@ use std::sync::Arc;
 use a2m_core::{FailureClass, PackPayload, Plan, Step, Value, Values};
 use a2m_pack_mcp::{UpstreamMcp, codes};
 use a2m_provider::{
-    Authority, Destinations, DriverHandle, DriverHealth, Observed, Posture, Prepared, Registry,
-    Sent, StepFailure, StepOutcome, SurfaceRef,
+    Authority, Destinations, DriverHandle, Observed, Posture, Prepared, Registry, Sent,
+    StepFailure, StepOutcome, SurfaceRef,
 };
 use common::{
     Folder, Sessions, compiled_fixture, fence_of, input, key, prepare, prepare_reaching, record,
@@ -654,6 +654,7 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     done(scene.get("A-100").await);
 }
 
+#[cfg(not(feature = "tls"))]
 #[tokio::test]
 async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let scene = scene().await;
@@ -684,9 +685,12 @@ async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let handle = scene.registry.driver(&mode).unwrap();
     assert_eq!(
         handle.health(&secure),
-        DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
+        a2m_provider::DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
     );
-    assert_eq!(handle.health(&scene.surface), DriverHealth::Ready);
+    assert_eq!(
+        handle.health(&scene.surface),
+        a2m_provider::DriverHealth::Ready
+    );
     assert_eq!(
         scene.stand.control().request_count("initialize").unwrap(),
         0
@@ -804,7 +808,10 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
 
     // The system's answer holds a secret: the stand is told, by a plain
     // client that is not the code under test, to store one in a note.
-    let plain = reqwest::Client::builder().no_proxy().build().unwrap();
+    let plain = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let planted = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "orders_update", "arguments": {

@@ -110,7 +110,7 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 - **A write that was sent is settled only by the application's verdict.** An answer that is not one, a redirect to another origin or an answer too large to read, leaves the write in doubt as `possible_commit`, and the read-back or reconcile decides. The driver never reports such a write in a class the ledger takes as settled ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
 - **A 404 on a declared lookup is an answer, not a failure:** the record is absent.
 - **A redirect is never followed.** One to the target's identity host is a sign of expiry; one to any other origin stops a read as `policy`, `surface_not_declared`, and leaves a write in doubt; one within the surface is a status like any other, accepted only when the endpoint declares it. Where a redirect leads is read as a browser reads it, against the address of the request, with a scheme or without one.
-- **TLS is not in the first build.** A surface reached over HTTPS is refused with `input`, `tls_not_enabled`.
+- **HTTPS is behind the build feature `tls`** ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). With it, an `https` surface is reached through a client the session keeper's crate makes, which checks a certificate against the roots in `network.trust_roots`, then the operating system's, and speaks TLS 1.2 or 1.3. A certificate that does not lead to a trusted authority, is for another name, or has expired, and a handshake that fails, each stop as `unknown_variant` with their own code, before anything is sent. A client for an `https` surface sends nothing that is not `https`. Without the feature, an `https` surface is refused with `input`, `tls_not_enabled`.
 - **Edge answers are recognized by status and header,** never retried, and stop as `edge_blocked`.
 - Overhead stays under 5 ms beyond the system's own time, a budget until measured ([section 225](../2-kernel/225-performance.md)).
 
@@ -190,6 +190,7 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
 | `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or, for a read, a redirect to another origin |
 | `unknown_variant` | `response_too_large` | An answer to a read over the limit on its size |
+| `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https` surface whose certificate or handshake fails; nothing was sent. The session keeper's codes, passed on |
 | `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read; a description past the bounds of the import |
 
 ## The test stand

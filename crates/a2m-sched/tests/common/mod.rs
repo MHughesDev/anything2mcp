@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, Mode, OperationName, PrincipalId,
-    RecordKey, RunId, RunState, RunnerId, TargetName, Timestamp, Value, WorkspaceId,
+    Digest, EffectClass, Environment, Failure, Mode, OperationName, PrincipalId, RecordKey, RunId,
+    RunState, RunnerId, TargetName, Timestamp, Value, WorkspaceId,
 };
 use a2m_ledger::{
     DATABASE_FILE_NAME, Durability, Fence, NewRun, PlannedRecord, RecordIntent, RecordRef,

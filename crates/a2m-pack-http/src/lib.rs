@@ -14,9 +14,14 @@
 //! Not built yet, and so not declared in the pack's manifest: the `api`
 //! mode, the `token` step and the anti-forgery bootstrap, the edge's
 //! answers, uploads and downloads, pagers, identity by a stamp or a search,
-//! the digest and integrated Windows exchanges, GraphQL and OData. TLS is
-//! not in this build: a surface reached over HTTPS is refused with the
-//! failure `input`/`tls_not_enabled`.
+//! the digest and integrated Windows exchanges, a client certificate,
+//! GraphQL and OData.
+//!
+//! HTTPS is behind the feature `tls`. With it on, an `https` surface is
+//! reached through a client made by `a2m_auth::tls`, and a certificate or a
+//! handshake that fails is a named failure of `unknown_variant` with nothing
+//! sent. With it off, an `https` surface is refused with the failure
+//! `input`/`tls_not_enabled`.
 //!
 //! A pack crate sees the kernel up to the provider contract; the layering
 //! table in `docs/reference/technical-reference.md` is the rule, and this

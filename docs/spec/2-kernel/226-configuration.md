@@ -85,7 +85,7 @@ A setting is how this installation behaves. A target file is what a system is: i
 
 A protected setting is one whose looser value only a person can choose, through a channel an agent cannot reach. On one machine that channel is `config.set` or `provider.enable` with the operating system's user-presence prompt, the same one an approval uses ([section 503](../5-security/503-approval-and-sign-in-surfaces.md)). The loosened value is kept in the store as a record bound to the presence check, and takes the place of the user layer for that key. A file, a variable, or a flag that loosens it is refused. On a server the channel is the installation file, which only the operator's account can write, and the console after an administrator signs in. Tightening a protected setting is never protected.
 
-A protected setting is never reported as in force when it is not. A policy setting is in force only as far as the policy engine decides by it; one set to a value the policy engine cannot yet work by stops the kernel with the setting's name, and `config.show` marks it `in_force: false` ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). Today that holds for every value but the default of `policy.approve_writes`, `policy.max_records_per_run`, `policy.approval_window_minutes`, `policy.agent_effect_ceiling`, `policy.writes_outside_tests`, and `policy.two_person_irreversible`, and so for the presets `cautious` and `ci`, which set some of them.
+A protected setting is never reported as in force when it is not. A policy setting is in force only as far as the policy engine decides by it; one set to a value the policy engine cannot yet work by stops the kernel with the setting's name, and `config.show` marks it `in_force: false` ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). The kernel carries every policy setting into the policy engine, which keeps it in force under any set published later ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)); today the one value it cannot work by is a named approver on one machine.
 
 | Protected setting | Loosening means | Reference |
 | --- | --- | --- |
@@ -153,7 +153,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `policy.approve_writes` | `person_each_run`; on a server also `caller_confirms`, `named_approver` | `person_each_run` | I, U | yes |
 | `policy.two_person_irreversible` | Boolean | Off | U | no (raising is tightening) |
 | `policy.max_records_per_run` | Count | 50 | U | yes |
-| `policy.approval_window_minutes` | Minutes | 15 | U | yes |
+| `policy.approval_window_minutes` | Minutes, at most 1,440 | 15 | U | yes |
 | `policy.preview_freshness_seconds` | Seconds | 60 | U | yes |
 | `policy.agent_effect_ceiling` | `read`, `write`, `irreversible`: the highest effect class a grant gives an agent | `irreversible` | U | yes |
 | `policy.pre_approval` | Boolean: whether a pre-approval rule may let a write proceed without a person each run | On | U | yes |
@@ -240,7 +240,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 | `network.egress` | `declared_surfaces`; the identity provider and a configured control plane are always added | `declared_surfaces` | I | no |
 | `network.allowed_hosts` | Further hosts, such as a monitoring endpoint | None | I | yes |
 | `network.proxy` | An outbound proxy | None | I | yes |
-| `network.trust_roots` | Further certificate authorities | The operating system's | I | yes |
+| `network.trust_roots` | Further certificate authorities: PEM files, each inside a root of `files.allowed_roots`, read when the engine starts. Checked before the operating system's roots ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)) | None: the operating system's roots, or the bundled ones on a machine with none | I | yes |
 | `network.private_addresses` | Refused unless declared, on a server | Refused | I | no |
 
 **Providers, packs, and plug-ins.**

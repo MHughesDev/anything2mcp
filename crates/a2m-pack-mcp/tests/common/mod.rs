@@ -102,7 +102,10 @@ pub fn fixture_root() -> PathBuf {
 /// wire with a plain HTTP client, so that it does not pass through the code
 /// under test.
 pub async fn listed_pins(url: &str) -> Vec<(String, String)> {
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let mut pins = Vec::new();
     let mut cursor: Option<String> = None;
     loop {

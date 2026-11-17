@@ -11,7 +11,7 @@ The pack is one crate, `a2m-pack-mcp`. It has no base crate and depends on no ot
 | Reaches | How |
 | --- | --- |
 | A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. Not built on Windows |
-| A remote MCP server | Over HTTP, at the address its `mcp` surface declares, with the protocol's own authorization. As built: plain HTTP with a bearer token; HTTPS and the protocol's authorization flow are not built |
+| A remote MCP server | Over HTTP, at the address its `mcp` surface declares, with the protocol's own authorization. As built: HTTP with a bearer token, and HTTPS in a build with the feature `tls` ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)); the protocol's authorization flow is not built |
 | A server used only to help discovery | A mapping with `purpose: discovery`, whose tools can never be bound to an operation |
 
 | Refused | Why |
@@ -172,7 +172,8 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before a call was sent, or on a read |
 | `policy` | `not_granted` | A call to a tool that is not mapped, if one were ever attempted; the compiler refuses it first. Also an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool that runs free text or whose one string no reviewer has cleared, and an address that is not among the run's destinations |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema; nothing is sent |
-| `input` | `tls_not_enabled`, `not_built`, `payload_unreadable` | An `https://` surface; a part of this design that is not built; a plan compiled by another build of the pack |
+| `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https://` surface whose certificate or handshake fails; nothing was sent. The session keeper's codes, passed on |
+| `input` | `tls_not_enabled`, `not_built`, `payload_unreadable` | An `https://` surface in a build without the feature `tls`; a part of this design that is not built; a plan compiled by another build of the pack |
 
 ## The test stand
 

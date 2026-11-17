@@ -420,10 +420,9 @@ pub const SCHEMA: &[SettingDef] = &[
     protected(
         def(
             "policy.approval_window_minutes",
-            Kind::Int {
-                min: 1,
-                max: 10_080,
-            },
+            // One day: the policy engine's own ceiling, so that no value the
+            // schema takes is one the policy engine refuses (decision 0145).
+            Kind::Int { min: 1, max: 1_440 },
             N(15),
             U,
             AtOnce,

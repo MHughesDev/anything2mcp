@@ -192,6 +192,8 @@ A `request` step has the target's time limit for a request, 30 seconds unless th
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | A read that timed out or lost its connection; a connection that could not be made, for a read or a write; an answer declared under `unavailable` | Unknown, not sent, answered |
 | `policy` | `surface_not_declared` | A surface address the run may not reach, refused when the driver prepares; an address built that is not the surface's origin and exactly the path built; for a read, a redirect to another origin | Not sent, answered |
 | `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator or a control character; a step the driver cannot carry out as written, a header the connection sets included; an HTTPS surface; a session whose scheme needs an exchange that is not built; a description that is not OpenAPI 3.0 or 3.1; a description past the bounds of the import | Not sent |
+| `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https` surface whose certificate does not lead to a trusted authority, is for another name, or has expired, or is refused otherwise, or whose handshake fails. The session keeper's codes, given by `tls::refusal` of `a2m-auth`, declared in this pack's manifest | Not sent |
+| `input` | `tls_setup_failed` | No TLS configuration could be made on this machine | Not sent |
 
 The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and `forbidden_by_edge` are not declared, and such an answer stops as `unexpected_status`.
 
@@ -212,19 +214,21 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 | A registered secret in a description reaches no finding, whether the description was fetched or given as a file | `a_description_given_as_a_file_passes_the_redactor_before_anything_is_made_of_it` |
 | A held answer prints no header and no body | `a_held_answer_prints_no_header_and_no_body` |
 | The same target compiles to the same bytes | `the_fixture_targets_compile_twice_to_the_same_bytes` |
+| Over HTTPS, with the feature `tls`, a read and a verified write work against a named root; an untrusted authority, a wrong name, and an expired certificate are each named and nothing is sent; a write lost after it was sent is in doubt; a redirect off TLS is not followed | `tests/tls.rs`: `a_read_and_a_verified_write_over_https_trust_the_named_authority`, `each_certificate_made_wrong_is_named_and_nothing_is_sent`, `a_write_lost_after_it_was_sent_over_https_is_in_doubt`, `a_redirect_from_https_to_plain_http_is_not_followed` |
 | Overhead stays under 5 ms beyond the application's time | Not measured yet |
 
 ## Build order
 
 1. Done: the `endpoints/` schema and its compilation; the `http` driver's reads against case 1; writes with read-back and the version precondition, cases 2 to 4; the lost answer, case 17.
-2. Done: credentials through the lease for `api_key`, `bearer_static`, and `http_basic`; sign-in signals; limits on size and time; redirects refused; HTTPS refused by name.
+2. Done: credentials through the lease for `api_key`, `bearer_static`, and `http_basic`; sign-in signals; limits on size and time; redirects refused; HTTPS refused by name in a build without the feature `tls`.
 3. Done: the OpenAPI import, `http_description`; `http_surface`; the drafting rule for endpoint entries.
 4. Not built: the anti-forgery bootstrap and the `token` step, case 5; the edge's answers, case 23; cases 16 and 18 to 22 and 24, which the test application does not serve yet.
 5. Not built: the `api` mode; the read operation drafted for each safe method; GraphQL and OData; the drafting rule for endpoints seen in capture, package E4.
-6. Not built: uploads and downloads, pagers, long-running jobs, identity by a stamp or a search, the digest and integrated Windows exchanges, a client certificate, TLS.
+6. Not built: uploads and downloads, pagers, long-running jobs, identity by a stamp or a search, the digest and integrated Windows exchanges, a client certificate.
 7. Done: the eight findings of the safety review, and three more found on the way ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): a write that was sent is never settled by an answer that is not the application's verdict; the version precondition; the bounds on reading a description; the address checked where it is sent.
 
 8. Done: the declarations the compiler holds a lowering to ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)): which step kinds save, the least effect of a binding, and which endpoint entries describe a write. The driver has no read-only guard of its own to lift in a sandbox: it refuses a write endpoint from any step not marked `commits`, in every posture.
+9. Done, behind the feature `tls`: `https` surfaces, through the module `tls` of `a2m-auth`, with the test application served over TLS for the tests ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). A client for an `https` origin is made with `https_only`. Discovery takes an `https` surface in such a build.
 
 ## Open points
 
@@ -237,6 +241,6 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 - A record that was absent is created with no precondition. `If-None-Match: *`, or the system's own form of "only if it does not exist", is not designed.
 - A sign that the session ended, on a write that was sent, is left as `session_expired`, so that the keeper is told. That is safe only while the ledger does not take `session_expired` as settled; a test in the ledger should hold that.
 - gRPC reflection, which spec section 201 lists under `api`. Not in the first release; it needs its own stand.
-- The TLS stack, verified on three operating systems with a licence on the list in `deny.toml`.
+- Settled in part: the TLS stack is rustls with ring, the platform's verifier, and bundled roots as the fallback, every licence on the list ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). Run on Linux; the job with the feature on must still pass on Windows and macOS.
 - Whether the `api` mode needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`. The import built here drafts ordinary endpoint entries, which is evidence for the second.
 - The overhead of decoding the plan's endpoints at every `prepare`, to be measured against the 5 ms budget.

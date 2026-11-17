@@ -75,12 +75,13 @@ impl FarEnd {
                 pass_environment: fields.pass_environment.clone(),
             });
         }
+        #[cfg(not(feature = "tls"))]
         if address.starts_with("https://") {
             return Err(unsent(codes::tls_not_enabled()));
         }
-        if !address.starts_with("http://") {
+        if !address.starts_with("http://") && !address.starts_with("https://") {
             return Err(unsent(codes::plan_unreadable(
-                "a surface of the kind `mcp` has an `http://` address, or the address `stdio` with a program",
+                "a surface of the kind `mcp` has an `http://` or `https://` address, or the address `stdio` with a program",
             )));
         }
         if !cx.destinations.contains(address) {
@@ -847,7 +848,7 @@ impl Driver for McpDriver {
     }
 
     fn health(&self, surface: &SurfaceRef) -> DriverHealth {
-        if surface.surface.address.starts_with("https://") {
+        if !a2m_auth::tls::enabled() && surface.surface.address.starts_with("https://") {
             DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
         } else {
             DriverHealth::Ready

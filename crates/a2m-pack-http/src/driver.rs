@@ -41,7 +41,7 @@ const MOST_PROBE_TEXT: usize = 4_000_000;
 /// Every request of the pass goes here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Origin {
-    /// `http://host` or `http://host:port`, as the URL type writes it.
+    /// `http://host` or `https://host:port`, as the URL type writes it.
     pub text: String,
     /// The path the surface's address ends in, without a trailing slash.
     pub prefix: String,
@@ -55,12 +55,15 @@ impl Origin {
                 FailureClass::Input,
                 codes::STEP_NOT_USABLE,
                 format!("The surface's address cannot be used by the HTTP pack: {why}."),
-                "Write the surface's `base` as `http://host`, with a port and a path if it has them.",
+                "Write the surface's `base` as `http://host` or `https://host`, with a port and a path if it has them.",
             )
         };
         let url = reqwest::Url::parse(address).map_err(|_| unusable("it is not an address"))?;
         match url.scheme() {
             "http" => {}
+            #[cfg(feature = "tls")]
+            "https" => {}
+            #[cfg(not(feature = "tls"))]
             "https" => return Err(codes::tls_not_enabled()),
             _ => return Err(unusable("it is not an HTTP address")),
         }
@@ -119,7 +122,19 @@ impl CredentialSink for Held {
     }
 
     fn tls_identity(&mut self, _certificate: &[u8], _key: &Secret) {
-        self.cannot = Some(codes::tls_not_enabled());
+        #[cfg(not(feature = "tls"))]
+        {
+            self.cannot = Some(codes::tls_not_enabled());
+        }
+        #[cfg(feature = "tls")]
+        {
+            self.cannot = Some(codes::failure(
+                FailureClass::Input,
+                codes::AUTH_SCHEME_NOT_BUILT,
+                "The session signs in with a client certificate, which this version of the HTTP pack does not present.",
+                "Use a provider that places a header or a cookie, such as `api_key`, `bearer_static`, or `http_basic`.",
+            ));
+        }
     }
 
     fn challenge_credential(&mut self, scheme: ChallengeScheme, _user: &str, _secret: &Secret) {
@@ -261,8 +276,9 @@ impl HttpDriver {
         }
     }
 
-    /// The warm client of a session and an origin, or a new one.
-    fn client(&self, key: &str) -> Result<reqwest::Client, Failure> {
+    /// The warm client of a session and an origin, or a new one. A client
+    /// for an `https` origin sends nothing that is not `https`.
+    fn client(&self, key: &str, https: bool) -> Result<reqwest::Client, Failure> {
         let mut clients = self
             .clients
             .lock()
@@ -271,8 +287,11 @@ impl HttpDriver {
             return Ok(client.clone());
         }
         // No redirect is followed, and no proxy is used: either would send
-        // the request somewhere the plan does not name.
-        let client = reqwest::Client::builder()
+        // the request somewhere the plan does not name. The client trusts
+        // what the engine trusts, and states its own TLS provider.
+        let trust = a2m_auth::tls::installed()?;
+        let client = a2m_auth::tls::client_builder(&trust)
+            .https_only(https)
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .referer(false)
@@ -397,7 +416,9 @@ impl HttpDriver {
         }
 
         Ok(Session {
-            client: self.client(&client_key).map_err(unsent)?,
+            client: self
+                .client(&client_key, origin.text.starts_with("https://"))
+                .map_err(unsent)?,
             client_key,
             origin,
             surface: surface.name.as_str().to_owned(),
@@ -634,6 +655,12 @@ impl Session {
         let mut response = match sent {
             Err(_) => return Err(NotReceived::Lost(Lost::TimedOut)),
             Ok(Err(error)) if error.is_connect() => {
+                // A certificate or a handshake that failed: named, and
+                // nothing was sent.
+                let what = format!("the surface `{}`", self.surface);
+                if let Some(failure) = a2m_auth::tls::refusal(&error, &what) {
+                    return Err(NotReceived::Refused(failure));
+                }
                 return Err(NotReceived::Lost(Lost::BeforeSending));
             }
             Ok(Err(_)) => return Err(NotReceived::Lost(Lost::AfterSending)),
@@ -1355,7 +1382,7 @@ mod tests {
     use crate::template::{Built, Method, Take};
 
     #[test]
-    fn an_address_is_taken_apart_once_and_https_is_refused_by_name() {
+    fn an_address_is_taken_apart_once_and_https_is_refused_without_tls() {
         let origin = Origin::of("http://127.0.0.1:4010").unwrap();
         assert_eq!(
             (origin.text.as_str(), origin.prefix.as_str()),
@@ -1366,9 +1393,15 @@ mod tests {
             (origin.text.as_str(), origin.prefix.as_str()),
             ("http://app.example.test", "/v2")
         );
+        #[cfg(not(feature = "tls"))]
         assert_eq!(
             Origin::of("https://app.example.test").unwrap_err().code(),
             &codes::TLS_NOT_ENABLED
+        );
+        #[cfg(feature = "tls")]
+        assert_eq!(
+            Origin::of("https://app.example.test:8443/v2").unwrap().text,
+            "https://app.example.test:8443"
         );
         for bad in [
             "app.example.test",
@@ -1386,7 +1419,9 @@ mod tests {
     fn session(address: &str) -> Session {
         let origin = Origin::of(address).unwrap();
         Session {
-            client: reqwest::Client::new(),
+            client: a2m_auth::tls::client_builder(&a2m_auth::tls::installed().unwrap())
+                .build()
+                .unwrap(),
             client_key: format!("- {}", origin.text),
             origin,
             surface: "api".to_owned(),

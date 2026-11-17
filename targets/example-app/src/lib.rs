@@ -22,6 +22,8 @@ mod leaving;
 mod openapi;
 mod pages;
 pub mod store;
+#[cfg(feature = "tls")]
+pub mod tls;
 mod traps;
 
 use std::collections::BTreeMap;

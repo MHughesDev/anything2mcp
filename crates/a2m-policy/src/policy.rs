@@ -13,7 +13,9 @@ use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
 use crate::model::{PrincipalRef, Question, Request, RuleId, word};
 use crate::rules::{self, Answer, Verdict};
-use crate::set::{self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, Settings, TestReport};
+use crate::set::{
+    self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, Settings, TestReport,
+};
 use crate::store;
 
 /// The policy engine. Cheap to clone; every clone is the same engine.
@@ -352,7 +354,8 @@ impl Policy {
             .flatten()
             .and_then(|row| {
                 let digest: Digest = row.version.parse().ok()?;
-                let mut set = set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()?;
+                let mut set =
+                    set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()?;
                 // The installation's settings stay in force under a set
                 // published later: on each setting, the tighter one holds.
                 set.layers.settings = set.layers.settings.tighter(&self.inner.floor);

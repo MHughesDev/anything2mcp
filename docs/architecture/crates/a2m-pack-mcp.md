@@ -197,9 +197,11 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | --- | --- | --- | --- |
 | `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool whose entry says `free_text: true`, a one-string tool whose entry does not say `free_text: false`; an address that is not among the run's destinations, or a local program the plan does not declare for the surface, at every `prepare` | Not sent |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema, or a value with no form a tool takes | Not sent |
-| `input` | `tls_not_enabled` | An `https://` surface | Not sent |
+| `input` | `tls_not_enabled` | An `https://` surface in a build without the feature `tls` | Not sent |
+| `input` | `tls_setup_failed` | No TLS configuration could be made on this machine | Not sent |
+| `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | An `https://` surface whose certificate or handshake fails. The session keeper's codes, given by `tls::refusal` of `a2m-auth` | Not sent |
 | `input` | `not_built` | A local program on Windows, a credential for a local program, a credential that is not a request header, the protocol's authorization flow | Not sent |
-| `input` | `payload_unreadable` | The plan's section or a step's payload does not decode; an address that is neither `http://` nor `stdio` with a program | Not sent |
+| `input` | `payload_unreadable` | The plan's section or a step's payload does not decode; an address that is neither `http://`, `https://`, nor `stdio` with a program | Not sent |
 | `drift` | `upstream_tool_changed` | A pin does not match, or the tool is gone; a server that answers a call with "invalid parameters" | Not sent; answered |
 | `drift` | `response_schema_mismatch` | A structured result that does not fit the pinned output schema, or that lacks what the entry names: a `records` member that is a list of records, a `key` member that is text or a whole number | Answered; unknown after a write |
 | `rejected` | `app_validation_error` | The tool's own error result | Answered |
@@ -229,7 +231,8 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 | A write is sent once, only with the ledger's token, and read back from the stand | `a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stand`, in `tests/driver.rs` |
 | A write lost in flight is `possible_commit`, and the lookup finds the one write by its stamp | `a_write_lost_in_flight_is_possible_commit_and_the_lookup_finds_the_one_write`, in `tests/driver.rs` |
 | What the server gets wrong is a named stop, no failure quotes the server, and text aimed at an agent is not among the values | `what_the_server_gets_wrong_is_a_named_stop`, in `tests/driver.rs` |
-| An HTTPS surface is refused | `an_https_upstream_is_refused_because_tls_is_not_built`, in `tests/driver.rs` |
+| Without the feature `tls`, an HTTPS surface is refused | `an_https_upstream_is_refused_because_tls_is_not_built`, in `tests/driver.rs` |
+| With the feature `tls`, a read and a verified write work over HTTPS against a named root; an untrusted authority, a wrong name, and an expired certificate are each named and nothing reaches the server; a write lost after it was sent is in doubt | `tests/tls.rs`, through the test application's TLS front before the stand |
 | The revision with no handshake is spoken when the surface states it | `the_revision_with_no_handshake_is_spoken_when_the_surface_states_it`, in `tests/driver.rs` |
 | Two identities never share a connection, and no secret reaches a caller | `each_identity_has_its_own_connection_and_no_secret_reaches_a_caller`, in `tests/driver.rs` |
 | A local program is started by the supervisor from the plan, read, and written; one that exits after a commit is `possible_commit`; one whose digest is not the pinned one is not started | `a_local_server_program_is_started_by_the_supervisor_and_read_and_written`, `a_program_that_exits_after_a_commit_is_possible_commit`, `a_program_whose_digest_is_not_the_pinned_one_is_not_started`, in `tests/stdio.rs`, on Unix only |
@@ -247,7 +250,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 Not built:
 
 - A local server program on Windows. The supervisor's foreign link reaches a Windows child through two handles named in an argument, not its standard streams.
-- HTTPS. `reqwest` is built without a TLS back end, and the driver's health reports an `https://` surface unavailable.
+- HTTPS in the default build. It is behind the feature `tls` ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)); without it the driver's health reports an `https://` surface unavailable.
 - The protocol's authorization flow, in which a person opens a link. An auth entry that asks for it is refused.
 - A credential for a local server program, and any credential that is not a request header.
 - Answers sent as an event stream, and a notice that the tool list changed over HTTP: only a local program's notices are read. Over HTTP the list is read again instead, before every write and when it is older than `list_max_age_ms`.

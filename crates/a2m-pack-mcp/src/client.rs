@@ -473,8 +473,12 @@ impl HttpLink {
     ) -> Result<Self, StepFailure> {
         // No redirect is followed and no proxy of the environment is used:
         // nothing but the surface's declared address decides where a
-        // request goes.
-        let client = reqwest::Client::builder()
+        // request goes. The client trusts what the engine trusts, states its
+        // own TLS provider, and for an `https` address sends nothing that is
+        // not `https`.
+        let trust = a2m_auth::tls::installed().map_err(StepFailure::not_sent)?;
+        let client = a2m_auth::tls::client_builder(&trust)
+            .https_only(url.starts_with("https://"))
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()
@@ -561,9 +565,13 @@ impl HttpLink {
             Ok(Ok(None)) => Err(StepFailure::unknown(codes::unexpected(
                 "The upstream server's answer is longer than the limit `max_message_bytes`.",
             ))),
-            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(codes::unavailable(
-                "The upstream server could not be reached at its address.",
-            ))),
+            // A certificate or a handshake that failed is named; nothing
+            // was sent either way.
+            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(
+                a2m_auth::tls::refusal(&error, "the upstream server").unwrap_or_else(|| {
+                    codes::unavailable("The upstream server could not be reached at its address.")
+                }),
+            )),
             Ok(Err(_)) => Err(StepFailure::unknown(codes::connection_lost(
                 "after the request was sent and before its answer came",
             ))),

@@ -307,9 +307,10 @@ impl Policy {
         };
         // Where an irreversible run needs two people, it is cleared only by
         // two approvals of two of them, and both are used.
-        let two = self.current(tx).is_some_and(|set| {
-            set.layers.settings.two_person_irreversible
-        }) && row.effect == EffectClass::Irreversible;
+        let two = self
+            .current(tx)
+            .is_some_and(|set| set.layers.settings.two_person_irreversible)
+            && row.effect == EffectClass::Irreversible;
         if two {
             let mut people: Vec<&store::StoredApproval> = Vec::new();
             for approval in approvals.iter().filter(|approval| fits(approval)) {

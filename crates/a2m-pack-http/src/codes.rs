@@ -1,6 +1,7 @@
 //! The failure codes this pack produces. Each belongs to exactly one class,
 //! and each is declared in the pack's manifest. `timeout`,
-//! `connection_lost`, and `no_confirmation` are the provider contract's own.
+//! `connection_lost`, and `no_confirmation` are the provider contract's own;
+//! the TLS failures are the session keeper's, in `a2m_auth::tls`.
 
 use a2m_core::{Failure, FailureClass, FailureCode};
 use a2m_provider::StepFailure;
@@ -55,6 +56,13 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Input, "auth_scheme_not_built"),
     (FailureClass::Input, "description_unreadable"),
     (FailureClass::Input, "description_too_large"),
+    // The TLS failures of `a2m_auth::tls`, passed on as they are.
+    (FailureClass::Input, "tls_setup_failed"),
+    (FailureClass::UnknownVariant, "certificate_untrusted"),
+    (FailureClass::UnknownVariant, "certificate_name_mismatch"),
+    (FailureClass::UnknownVariant, "certificate_expired"),
+    (FailureClass::UnknownVariant, "certificate_not_verified"),
+    (FailureClass::UnknownVariant, "tls_handshake_failed"),
 ];
 
 pub(crate) fn failure(
@@ -79,6 +87,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     ))
 }
 
+#[cfg(not(feature = "tls"))]
 pub(crate) fn tls_not_enabled() -> Failure {
     failure(
         FailureClass::Input,

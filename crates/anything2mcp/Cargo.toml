@@ -10,6 +10,13 @@ publish.workspace = true
 # the one with the product's name.
 default-run = "anything2mcp"
 
+[features]
+# HTTPS for the session keeper, the HTTP pack, and the MCP pack, and the
+# test application's TLS-aware harness for this crate's tests. Off by default
+# until the conditions in decision 0157 are met; the released build turns it
+# on then.
+tls = ["a2m-auth/tls", "a2m-pack-http/tls", "a2m-pack-mcp/tls", "example-app/tls"]
+
 [dependencies]
 a2m-actions = { path = "../a2m-actions" }
 a2m-api = { path = "../a2m-api" }

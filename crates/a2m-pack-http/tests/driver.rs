@@ -15,7 +15,6 @@ use std::time::Duration;
 
 use a2m_core::{Decimal, FailureClass, NoSecrets, RecordKey, Value, Values};
 use a2m_ledger::{Fence, IntentToken, Store};
-use a2m_pack_http::codes;
 use a2m_provider::{Destinations, DriverHealth, Posture, Sent, StepFailure};
 use common::{Folder, Ran, Scene, compile_changed, key, record, registry, running, store, token};
 use example_app::faults::{Fault, FaultKind};
@@ -636,21 +635,24 @@ async fn no_input_changes_where_a_request_goes() {
         (FailureClass::Policy, "surface_not_declared")
     );
 
-    // TLS is not in this build: an HTTPS surface is refused by name.
-    let secure = Scene::new("example", "https://app.example.test");
-    let refused = secure
-        .try_prepare(None, None, Posture::Live)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        class_and_code(&refused),
-        (FailureClass::Input, "tls_not_enabled")
-    );
-    assert_eq!(refused.sent, Sent::NotSent);
-    assert_eq!(
-        secure.handle().health(&secure.surface),
-        DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
-    );
+    // Without TLS in this build, an HTTPS surface is refused by name.
+    #[cfg(not(feature = "tls"))]
+    {
+        let secure = Scene::new("example", "https://app.example.test");
+        let refused = secure
+            .try_prepare(None, None, Posture::Live)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Input, "tls_not_enabled")
+        );
+        assert_eq!(refused.sent, Sent::NotSent);
+        assert_eq!(
+            secure.handle().health(&secure.surface),
+            DriverHealth::Unavailable(a2m_pack_http::codes::TLS_NOT_ENABLED)
+        );
+    }
     assert_eq!(scene.handle().health(&scene.surface), DriverHealth::Ready);
 }
 

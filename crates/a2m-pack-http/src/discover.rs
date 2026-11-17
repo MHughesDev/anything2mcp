@@ -108,7 +108,9 @@ fn produced_by(provider: &ProviderName) -> ProducedBy {
 }
 
 fn suits_http(surface: &SurfaceDescription) -> bool {
-    surface.kind == HTTP_SURFACE && surface.address.starts_with("http://")
+    surface.kind == HTTP_SURFACE
+        && (surface.address.starts_with("http://")
+            || (a2m_auth::tls::enabled() && surface.address.starts_with("https://")))
 }
 
 /// `http_surface`: whether the base address answers, and which sign-in

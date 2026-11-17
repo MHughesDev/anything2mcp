@@ -139,10 +139,10 @@ async fn exchange(
     if let Some(header) = &basic {
         request = request.header("authorization", header.expose());
     }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|_| failure::upstream_unavailable("it did not answer"))?;
+    let mut response = request.send().await.map_err(|error| {
+        crate::tls::refusal(&error, "the identity service")
+            .unwrap_or_else(|| failure::upstream_unavailable("it did not answer"))
+    })?;
     let status = response.status();
     let mut answer = Zeroizing::new(Vec::new());
     while let Some(chunk) = response
@@ -210,15 +210,10 @@ fn client(url: &str) -> Result<reqwest::Client, Failure> {
         return Err(failure::tls_not_enabled());
     }
     #[cfg(feature = "tls")]
-    {
-        let _ = url;
-        // The TLS provider of the process, installed if nobody has: ring.
-        // Certificates are checked by the platform's own verifier.
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            let _ = rustls::crypto::ring::default_provider().install_default();
-        }
-    }
-    reqwest::Client::builder()
+    let _ = url;
+    // What the engine trusts, with its TLS provider stated in the client's
+    // own configuration; nothing is installed for the process.
+    crate::tls::client_builder(&crate::tls::installed()?)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()

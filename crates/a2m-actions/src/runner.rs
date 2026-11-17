@@ -607,7 +607,6 @@ impl Kernel {
             .await;
     }
 
-
     /// Ends a run whose stored call is missing or cannot be read. Nothing
     /// is known of its input or of its caller, so it is not run with an
     /// empty input and a caller made up for it (rule 7: unknown means

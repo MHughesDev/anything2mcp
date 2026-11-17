@@ -598,6 +598,8 @@ impl ApprovalDesk {
             approver,
             channel,
             presence: proof.check(),
+            proved_at: proof.at(),
+            prompt: proof.prompt().map(str::to_owned),
         };
         let approval = self
             .store

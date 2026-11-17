@@ -625,8 +625,15 @@ async fn proof_of_presence_comes_only_from_a_passed_prompt() {
         summary: "Loosen a protected setting.".to_owned(),
     };
     let proof = world.surface.confirm_presence(ask()).await.unwrap();
-    assert_eq!(proof.check(), PresenceCheck::OsPrompt);
+    // The check is the prompt's own word, and the proof names the prompt
+    // (decision 0145).
+    assert_eq!(proof.check(), PresenceCheck::Polkit);
+    assert_eq!(proof.prompt(), Some("polkit"));
     assert_eq!(proof.principal(), person);
+    // What the surface reports to `doctor.run` is the prompt it can raise.
+    let report = a2m_actions::PersonSurface::presence(&world.surface).await;
+    assert_eq!(report.kind, "polkit");
+    assert_eq!(report.reason, "ready");
     // A dialog that proves no person, a prompt that was closed, one that
     // was not passed, and one that could not be raised give none.
     let no_agent = Availability::not_available(

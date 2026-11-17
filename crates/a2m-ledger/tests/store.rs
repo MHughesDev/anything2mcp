@@ -188,10 +188,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     // A read cannot write, and a failure or a panic inside a transaction
     // takes all of it back and leaves the store working.
     let read_only = store
-        .read(move |tx| {
-            policy_tables(tx)
-                .execute("DELETE FROM approvals", &[])
-        })
+        .read(move |tx| policy_tables(tx).execute("DELETE FROM approvals", &[]))
         .await
         .unwrap_err();
     assert_eq!(read_only.code(), &codes::LEDGER_STATE_UNEXPECTED);
@@ -199,8 +196,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .write(
             Durability::Synced,
             move |tx| -> Result<(), a2m_core::Failure> {
-                policy_tables(tx)
-                    .execute("DELETE FROM approvals", &[])?;
+                policy_tables(tx).execute("DELETE FROM approvals", &[])?;
                 panic!("inside a transaction");
             },
         )
@@ -208,10 +204,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .unwrap_err();
     assert_eq!(panicked.code(), &codes::STORE_UNAVAILABLE);
     let still = store
-        .read(move |tx| {
-            policy_tables(tx)
-                .query("SELECT id FROM approvals", &[])
-        })
+        .read(move |tx| policy_tables(tx).query("SELECT id FROM approvals", &[]))
         .await
         .unwrap();
     assert_eq!(still.len(), 1);

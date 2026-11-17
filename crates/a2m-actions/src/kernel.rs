@@ -373,16 +373,17 @@ impl Kernel {
         let mut not_in_force = Vec::new();
         if let (Some(store), Some(found)) = (&prepared.store, installation) {
             // What the policy engine is opened with: the built-in set of
-            // the profile, and nothing else. The protected settings the
-            // policy engine works by are then that set's own, so a
-            // setting that says otherwise says what is not in force, and
-            // the kernel stops with its name (see `bounds`).
+            // the profile, with the installation's policy settings carried
+            // into it. The policy engine keeps them in force under any set
+            // published later; a value it cannot work by says what is not
+            // in force, and the kernel stops with its name (see `bounds`).
             let built_in = if local {
                 BuiltIn::local(found.user, found.workspace)
             } else {
                 BuiltIn::server()
             };
-            not_in_force = crate::bounds::not_in_force(&prepared.settings, &built_in);
+            let (built_in, refused) = crate::bounds::carried(&prepared.settings, built_in);
+            not_in_force = refused;
             for refused in &not_in_force {
                 fixed.push(Impaired {
                     part: Part::Policy,

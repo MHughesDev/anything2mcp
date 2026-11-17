@@ -100,6 +100,31 @@ code = "not_built"
 class = "input"
 code = "payload_unreadable"
 
+# The session keeper's TLS failures, which the driver passes on (decision 0157).
+[[failure_codes]]
+class = "input"
+code = "tls_setup_failed"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_untrusted"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_name_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_expired"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "certificate_not_verified"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "tls_handshake_failed"
+
 [[lint_rules]]
 code = "mcp.tool_unmapped"
 level = "error"

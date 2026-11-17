@@ -148,6 +148,7 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0142 | [The presence prompt's interface and the Linux prompt, as built](0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md) | Accepted (design decision) |
 | 0143 | [The browser engine after its safety audit](0143-the-browser-engine-after-its-safety-audit.md) | Accepted (design decision) |
 | 0144 | [The web drivers and discoverers after their safety audit](0144-the-web-drivers-and-discoverers-after-their-safety-audit.md) | Accepted (design decision) |
+| 0145 | [Only the policy engine clears a write, and the ledger reads the whole clearance](0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md) | Accepted (design decision) |
 | 0146 | [The macOS and Windows presence prompts, as built](0146-the-macos-and-windows-presence-prompts-as-built.md) | Accepted (design decision) |
 | 0147 | [The engine after its safety audit](0147-the-engine-after-its-safety-audit.md) | Accepted (design decision) |
 | 0148 | [The provider contract and the scheduler after their safety audit](0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md) | Accepted (design decision) |
@@ -159,3 +160,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0154 | [The HTTP, command, and MCP packs state what saves, what writes, and which key is sent](0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md) | Accepted (design decision) |
 | 0155 | [Four packs state what saves, what writes, and when their guard lifts](0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md) | Accepted (design decision) |
 | 0156 | [The clients are generated from the served document, and reach Windows by the pipe](0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md) | Accepted (design decision) |
+| 0157 | [TLS is switched on with the provider stated in each client](0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md) | Accepted (design decision) |

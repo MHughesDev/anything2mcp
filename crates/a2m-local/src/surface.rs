@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use a2m_actions::{
     ApprovalAsk, ApprovalDesk, ApprovalPreview, BoxFuture, PersonSurface, PresenceAsk,
-    PresenceProof, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
+    PresenceProof, PresenceReport, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Digest, Failure, PrincipalId, RunId};
@@ -39,7 +39,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::codes;
-use crate::presence::{Availability, PresencePrompt, PromptAnswer, PromptName, PromptText};
+use crate::presence::{
+    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptName, PromptText,
+};
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
@@ -225,11 +227,15 @@ fn short(diff_hash: Digest) -> String {
     diff_hash.to_string().chars().take(SHORT_HASH).collect()
 }
 
-/// The check an approval is recorded with. The policy engine's list of
-/// checks has one word for every prompt an operating system owns; when it
-/// has a word for each, this is the one place that maps them.
-const fn recorded_check(_prompt: PromptName) -> PresenceCheck {
-    PresenceCheck::OsPrompt
+/// The check an approval is recorded with: the policy engine has one word
+/// for each prompt an operating system owns, and this is the one place that
+/// maps them (decision 0145).
+const fn recorded_check(prompt: PromptName) -> PresenceCheck {
+    match prompt {
+        PromptName::Polkit => PresenceCheck::Polkit,
+        PromptName::LocalAuthentication => PresenceCheck::LocalAuthentication,
+        PromptName::WindowsHello => PresenceCheck::WindowsHello,
+    }
 }
 
 /// A page: the status, the fixed headers that keep it to itself, and the
@@ -697,13 +703,15 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             pressed.deadline,
         )
         .await;
-    let (check, how) = match asked {
+    let (check, named, how) = match asked {
         PromptAnswer::Present(prompt) => (
             recorded_check(prompt),
+            Some(prompt.as_str()),
             format!("the presence prompt was passed ({})", prompt.as_str()),
         ),
         PromptAnswer::Confirmed => (
             PresenceCheck::NotAvailable,
+            None,
             "a confirmation dialog was answered, which proves no person".to_owned(),
         ),
         PromptAnswer::Dismissed => {
@@ -728,7 +736,10 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             );
         }
     };
-    let proof = PresenceProof::new(check, pressed.started_by, inner.clock.now());
+    let mut proof = PresenceProof::new(check, pressed.started_by, inner.clock.now());
+    if let Some(name) = named {
+        proof = proof.naming(name);
+    }
     let recorded = desk
         .approve(
             pressed.run,
@@ -901,6 +912,24 @@ impl PersonSurface for LocalSurface {
         let _ = self.inner.desk.set(desk);
     }
 
+    fn presence(&self) -> BoxFuture<'_, PresenceReport> {
+        Box::pin(async move {
+            let found = LocalSurface::presence(self).await;
+            // Only a prompt the operating system owns proves a person; a
+            // dialog alone is reported as no prompt.
+            let kind = match (found.kind, found.prompt) {
+                (PresenceKind::OsPrompt, Some(prompt)) => prompt.as_str(),
+                _ => PresenceReport::NOT_AVAILABLE,
+            };
+            PresenceReport {
+                kind,
+                reason: found.reason.as_str(),
+                message: found.message,
+                fix: found.remedy,
+            }
+        })
+    }
+
     fn ask_approval(&self, ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
         Box::pin(async move {
             let inner = &self.inner;
@@ -1038,7 +1067,8 @@ impl PersonSurface for LocalSurface {
                     recorded_check(prompt),
                     ask.principal,
                     self.inner.clock.now(),
-                )),
+                )
+                .naming(prompt.as_str())),
                 PromptAnswer::Dismissed => refused(
                     "The prompt on this machine was closed, or its time ended.",
                     "Run the command again and answer the prompt yourself.",

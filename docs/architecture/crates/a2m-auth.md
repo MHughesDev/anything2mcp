@@ -9,7 +9,7 @@ The session keeper and the auth providers. The keeper is the only code that sign
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`; `a2m-vault` to seal saved state and for the redactor; `a2m-ledger` for its tables; `a2m-telemetry` for the clock, logs, and metrics. Outside: `reqwest` for identity services' token endpoints; `sha1` and `sha2` for one-time codes and proof keys; `serde`, `serde_json`, `tokio`, `tracing`, `zeroize`; and, behind the feature `tls`, `rustls` with the ring provider ([record 0084](../../decisions/0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md)). The OAuth exchanges and the encodings are this crate's own code |
+| Depends on | `a2m-core`; `a2m-vault` to seal saved state and for the redactor; `a2m-ledger` for its tables; `a2m-telemetry` for the clock, logs, and metrics. Outside: `reqwest` for identity services' token endpoints; `sha1` and `sha2` for one-time codes and proof keys; `serde`, `serde_json`, `tokio`, `tracing`, `zeroize`; and, behind the feature `tls`, `rustls` with the ring provider ([record 0084](../../decisions/0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md)), `rustls-platform-verifier`, and `webpki-roots` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). The OAuth exchanges and the encodings are this crate's own code |
 | Built in | Phase 2: slices 2.3 to 2.6, groups C, D, E, H. Phase 7: moving sessions between runners, the operating system's broker, hosted sign-in |
 | Carries out | Spec sections [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [602](../../spec/6-running-it/602-identity-on-a-shared-server.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (sign-in), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (the key store unreachable); the [auth provider interface](../../reference/technical-reference.md#auth-provider-interface); decisions 0030, 0032, and 0035; [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md), which records what a safety audit changed |
 
@@ -172,6 +172,18 @@ pub trait Credentials: Send + Sync {
     fn open<'a>(&'a self, session: &'a SessionKey, reference: &'a CredentialRef) -> BoxFuture<'a, Result<Secret, Failure>>;
 }
 pub struct StoredCredentials { /* new(SessionStore, Arc<Vault>); put(workspace, identity, reference, &Secret) */ }
+
+/// The module `tls`: the one way an HTTP client of the product is made (record 0157).
+pub mod tls {
+    pub struct Trust { /* system(), with_named_roots(&[&[u8]]) -> Result<Self, Failure>, roots_source(), named_roots() */ }
+    pub enum RootsSource { Platform, Bundled, NotBuilt }
+    pub fn install(trust: Trust) -> Result<(), Failure>;   // once, when the engine starts
+    pub fn installed() -> Result<Trust, Failure>;          // what install set, or the system's roots
+    pub fn client_builder(trust: &Trust) -> reqwest::ClientBuilder;
+    pub fn refusal(error: &reqwest::Error, what: &str) -> Option<Failure>; // a handshake that failed, named
+    pub const fn enabled() -> bool;
+    pub const CODES: &[(FailureClass, &str)];
+}
 ```
 
 Contracts that the signatures do not show:
@@ -263,7 +275,10 @@ Metrics, through the telemetry handle: `a2m.session.renewals`, `a2m.session.forc
 | `input` | `auth_provider_unknown`, `auth_provider_duplicate` | An auth entry names a provider nobody registered; two providers share a name |
 | `input` | `auth_settings_invalid` | An auth entry lacks a setting its provider needs, or holds one it does not know |
 | `input` | `credential_missing` | A credential reference names nothing that is stored |
-| `input` | `tls_not_enabled` | An `https` token endpoint in a build without the feature `tls` |
+| `input` | `tls_not_enabled` | An `https` token endpoint in a build without the feature `tls`; named roots handed to `tls::Trust` in such a build |
+| `input` | `tls_setup_failed` | No TLS configuration could be made, or `tls::install` was called after the trust was set |
+| `input` | `trust_roots_unreadable` | A file of `network.trust_roots` holds no certificate, or one that cannot be read |
+| `unknown_variant` | `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed` | A connection whose certificate does not lead to a trusted authority, is for another name, or has expired; one refused for another reason, or by a system verifier that does not say which; a handshake that failed for a reason that is not the certificate. Nothing was sent. Given by `tls::refusal` to the session keeper and the packs |
 | `transient` | `upstream_unavailable` | The identity service did not answer, or answered that it cannot serve |
 | `unknown_variant` | `unexpected_response` | The identity service answered with something no rule covers |
 | `unknown_variant` | `session_move_illegal` | The keeper was asked for a move that is not in the table; a fault of the keeper |
@@ -301,6 +316,7 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 6. Partly done: the declared clocks, the keep-alive window, the probe at half the idle timeout, and the end of interrupted work, in `tick`. Not built: learned clocks, jitter, sessions that end with the browser, per-session parallelism. Phase 2, group E.
 7. Partly done: saved state sealed in the vault and restored after a restart. Not built: moving a session to another runner, and a home runner other than the local engine. Phases 2 and 7.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: ends remembered by epoch on the home runner, a restore and a lease ordered by the store, and provider failures redacted.
+9. Done, behind the feature `tls`: the module `tls` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). `Trust` (the named roots, checked first by the same rules on every system, then the platform's verifier, or the bundled roots on a machine with none; TLS 1.2 and 1.3), `install` and `installed` (one trust for the process, set when the engine starts), `client_builder` (the one way an HTTP client is made), and `refusal` (the named failure of a request that failed in its handshake). Not built: reading `network.trust_roots` in the product crate, mutual TLS, a server listener.
 
 ## Open points
 
@@ -310,7 +326,7 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 - Settled: the shape of the auth file's provider settings for each neutral provider is the table above (record 0085). `a2m-files` must carry a `settings` map and a `credentials` map of role to reference in an `auth.yaml` entry.
 - A failure to reach the identity service during a silent renewal costs a person's session a new sign-in, because the rung is not tried twice. Whether one later retry is safe is open.
 - `is_signed_in` is part of the contract and the keeper does not call it yet; the stored expiry is what it reads.
-- Switching the feature `tls` on in a build that holds other HTTP clients needs each of them to have a TLS provider (record 0084).
+- Settled: switching the feature `tls` on needs no provider installed for the process. Every HTTP client of this crate and of the HTTP and MCP packs is made by `tls::client_builder`, whose configuration states ring; a source test holds the three crates to it ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). A client made any other way in a build with the feature on still stops the process when it is made: the product crate's own test clients are such a case until they use the function.
 - **A sign-out that does not reach the home runner leaves its credentials there.** The record is ended, so no new lease is given, and a restore that follows is undone; but a lease given before the end still places what the runner holds until a `SignOut` or a `Forget` reaches it. The keeper logs it. Sending the end again until the runner answers belongs with the job that carries the keeper's work to a runner, which `a2m-actions` has not built.
 - **Two pieces of work can hold at one epoch:** a light prompt that is still running when the person starts a sign-in of their own. Both made genuine credentials of the same session. The later one to hold stays in memory; the one whose compare-and-set won is what is saved. If the loser's drop arrives between the winner's hold and its compare-and-set, the winner's credentials are dropped with it, and the next lease restores them from the saved state or, for a session that is not movable, finds it expired.
 - **What the home runner remembers of an end is in memory.** After a restart it holds no credentials either, so nothing is lost by that; a restore after the restart is ordered by the store alone.
