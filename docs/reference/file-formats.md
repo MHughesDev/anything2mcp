@@ -4,6 +4,8 @@ Every field of every target file. [Spec section 7](../spec/07-files-and-formats.
 
 This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
 
+**Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The packs designed and not yet built bring their own, each given field by field in its spec section: `commands/` (command pack), `statements/` (data pack), `documents/` (file pack), `channels/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
+
 Conventions: names are lowercase with underscores. *Required* fields are marked. A field that takes an *expression* takes CEL ([expressions](#expressions)). A field that takes a *condition* takes one of the [conditions](#conditions).
 
 ## `target.yaml`
@@ -27,8 +29,9 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` (required) | `web`, `http`, `mcp`, or `desktop` |
-| `origin`, `base`, `server`, `app` | The address for the kind: a web origin, an API base address, an MCP server address, or a desktop application identifier |
+| `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's |
+| `origin`, `base`, `server`, `app` | The address for the kind: a web origin, an API base address, an MCP server address, or a desktop application identifier. Other kinds have their own, given in their pack's section |
+| `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
 | `rate` | Requests allowed per period |
@@ -80,6 +83,8 @@ Field types say how a value is formatted, normalized, compared, and classified.
 Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`. A `url` input accepts only destinations the operation declares. A `file` input is a blob reference on a server and a path inside an allowed root on one machine ([spec section 51](../spec/51-defending-against-a-manipulated-agent.md)). A target adds its own by extending one of them.
 
 ## `screens/*.yaml`
+
+Brought by the web pack, and by the desktop pack for desktop surfaces.
 
 | Field | Meaning |
 | --- | --- |
@@ -145,6 +150,8 @@ Position alone, and XPath, are not accepted.
 There is no condition that waits for a length of time or for the network to go quiet.
 
 ## `endpoints/*.yaml`
+
+Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 
 | Field | Meaning |
 | --- | --- |

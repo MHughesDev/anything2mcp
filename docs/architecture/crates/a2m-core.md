@@ -244,7 +244,7 @@ It produces no other class. A crate that needs a new code defines it itself, as 
 ## Build order
 
 1. Done: vocabularies, `Mode`, `FailureCode`, `Failure`, `Secret`.
-2. `Digest`, with the SHA-256 crate verified; `Subject`, `UnknownReason`, `FindingKind`, `Finding`, with the identifier rule and the level rule. Package B2.
+2. Done: `Digest`, on the `sha2` crate; `Subject`, `Address`, `UnknownReason`, `Source`, `LimitationCode`, `FindingKind`, `Timestamp`, and `Finding` with its builder, the identifier rule, and the level rules. Package B2.
 3. `Availability`, held to section 56 by the documents test. Package B3, the manifest's first user.
 4. The checked identifiers `TargetName`, `OperationName`, `SurfaceName`, `Environment`, and `SurfaceKind`. Package B4, their first user.
 5. `Plan` and its parts, `Step`, `StepKind`, `Verb`, `PackPayload`, with a provisional encoding. Package 1.1, whose hand-written plan is the first.

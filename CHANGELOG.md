@@ -13,6 +13,7 @@ Nothing usable yet. The project is in its foundation phase.
 - A Cargo workspace of 24 crates: a neutral kernel (`a2m-*`), packs that each know one kind of system (`a2m-pack-*`), and the product crate.
 - The `anything2mcp` command, and `a2m` as a short name for it. Both report the version and nothing else.
 - The kernel's shared vocabulary in `a2m-core`: archetypes, effect classes, hazards, failure classes, evidence levels, and the states of runs, records, sessions, and bindings, with a secret type that cannot be printed or serialized.
+- Findings in `a2m-core`: what discovery returns, with a subject that can be told apart from any other, a level that cannot exceed what its source supports, and an identifier that is a digest of its content.
 - A test application with a web interface, a JSON interface, a control interface, and injectable faults.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
 - A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start.

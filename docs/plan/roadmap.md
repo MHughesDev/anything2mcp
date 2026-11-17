@@ -48,8 +48,8 @@ A package is one branch and one pull request. When it merges, its row changes to
 | A7 | Every spec section marked kernel, pack, or product-wide in the index | Documents | A5 | A reader can tell from the index which side a section is on | done |
 | AR | The architecture: who defines, implements, and joins every interface; one design per crate; the layers redrawn | Documents; the audit | A2 | The audit refuses a crate with no design and a design with no crate | done |
 | B1 | Core vocabularies, `Failure`, `Secret` | `a2m-core` | A2 | Names held to the documents by a test; a secret cannot be printed | done |
-| B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | ready |
-| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | held |
+| B2 | `Finding`, its `Subject`, `Digest`, and the identifier rule | `a2m-core` | B1 | Two findings with the same content have the same identifier; none can be built above `discovered` | done |
+| B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused | ready |
 | B3 | The provider manifest, the registry, and a pack registering nothing but its modes | `a2m-provider` | B1 | A manifest that asks for an undeclared effect is refused with a named failure; a mode registered twice is refused | ready |
 | B4 | Target file schemas and the loader, for the file kinds the kernel owns. This is slice 0.6 | `a2m-files`, `a2m-core` | B1 | The `example` target's files validate; a broken one fails with a file, a line, and a fix | ready |
 | B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | held |
@@ -234,7 +234,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are B2, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2, B2a, and B4 all touch `a2m-core`: run them one after the other.
+Right now, the packages marked `ready` are B2a, B3, B4, 0.4, 0.5, 0.7, D2, G1, H1, J1, K1, and 8.1. B2a and B4 both touch `a2m-core`: run them one after the other.
 
 ## Rules for changing this document
 

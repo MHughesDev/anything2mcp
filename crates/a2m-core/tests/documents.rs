@@ -6,7 +6,7 @@ use std::path::Path;
 
 use a2m_core::{
     Archetype, BindingStatus, Coverage, EffectClass, EvidenceLevel, FailureClass, Hazard,
-    RecordState, RunState, SessionState,
+    LimitationCode, RecordState, RunState, SessionState, Source, Subject,
 };
 
 /// Reads a document from the repository's `docs` folder.
@@ -178,6 +178,38 @@ fn coverage_values_are_the_ones_a_finding_may_carry() {
 }
 
 #[test]
+fn finding_sources_are_the_ones_in_the_discovery_section() {
+    let spec = document("spec/58-discovery-and-findings.md");
+    assert_eq!(column(&spec, "| Source |", 0), Source::NAMES);
+}
+
+#[test]
+fn each_source_supports_the_level_the_discovery_section_gives() {
+    let spec = document("spec/58-discovery-and-findings.md");
+    let in_spec: Vec<String> = table(&spec, "| Source |")
+        .into_iter()
+        .map(|row| row[2].trim_matches('`').to_owned())
+        .collect();
+    let in_code: Vec<&str> = Source::ALL
+        .iter()
+        .map(|source| source.highest_level().as_str())
+        .collect();
+    assert_eq!(in_spec, in_code);
+}
+
+#[test]
+fn limitation_codes_are_the_ones_in_the_discovery_section() {
+    let spec = document("spec/58-discovery-and-findings.md");
+    assert_eq!(column(&spec, "| Code |", 0), LimitationCode::NAMES);
+}
+
+#[test]
+fn kinds_of_subject_are_the_ones_in_the_discovery_section() {
+    let spec = document("spec/58-discovery-and-findings.md");
+    assert_eq!(column(&spec, "| Tag |", 0), Subject::TAGS);
+}
+
+#[test]
 fn every_vocabulary_reads_back_what_it_writes() {
     fn round_trip<T>(all: &[T], names: &[&str])
     where
@@ -206,6 +238,8 @@ fn every_vocabulary_reads_back_what_it_writes() {
     round_trip(EvidenceLevel::ALL, EvidenceLevel::NAMES);
     round_trip(FailureClass::ALL, FailureClass::NAMES);
     round_trip(Hazard::ALL, Hazard::NAMES);
+    round_trip(LimitationCode::ALL, LimitationCode::NAMES);
+    round_trip(Source::ALL, Source::NAMES);
     round_trip(RecordState::ALL, RecordState::NAMES);
     round_trip(RunState::ALL, RunState::NAMES);
     round_trip(SessionState::ALL, SessionState::NAMES);

@@ -45,6 +45,9 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `RunState`, `RecordState` | Twelve and six | [Spec section 42](../spec/42-run-ledger-design.md) |
 | `SessionState` | Eight | [Spec section 44](../spec/44-session-keeper.md) |
 | `BindingStatus` | Four | [File formats](file-formats.md) |
+| `Source` | Five; each has the strongest level a finding from it can have | [Spec section 58](../spec/58-discovery-and-findings.md) |
+| `LimitationCode` | Eight | [Spec section 58](../spec/58-discovery-and-findings.md) |
+| `UnknownReason` | Four | [Spec section 58](../spec/58-discovery-and-findings.md) |
 
 Two words are checked names and not enums, because their values arrive with packs and crates ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)):
 
@@ -53,9 +56,10 @@ Two words are checked names and not enums, because their values arrive with pack
 | `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its archetype |
 | `FailureCode` | The same shape; at most 64 characters | Each crate names the codes it can produce; a code never changes once released |
 
-Two more types complete the crate:
+Three more complete the crate:
 
 - **`Failure`** is a class, a code, a plain sentence, and a next step. The sentence and the next step are shown to callers and must never contain a secret. A name that is not one of a vocabulary's values, or is badly formed, becomes a failure of class `input` with the code `schema_invalid`, and its next step lists the values that would have been accepted.
+- **`Finding`** is what discovery returns. It is made only through its builder, which refuses a level above `discovered`, above what the source supports, or above the weakest finding it was derived from. What is not stated takes the weakest value. Its identifier is a `Digest` of its content, so the same observation has the same identifier everywhere, and a stored finding is checked against its identifier when it is read. Its `Subject` is one of six kinds; an address subject carries no credentials, query, or fragment.
 - **`Secret`** wraps a value that must never be shown. Printing it gives `[redacted]`. It cannot be serialized or copied, and the build fails if it ever can. The value is reached only through a method named `expose`, so that every use can be found.
 
 ## Driver interface

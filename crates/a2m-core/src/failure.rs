@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::digest::InvalidDigest;
 use crate::name::{InvalidName, UnknownName, check_name, is_name};
 use crate::vocabulary::vocabulary;
 
@@ -53,6 +54,9 @@ impl FailureCode {
 
     /// A file, an input, or a name does not have the shape its schema requires.
     pub const SCHEMA_INVALID: Self = Self::fixed("schema_invalid");
+
+    /// A finding claims more than its source, its parents, or its content allow.
+    pub const FINDING_INVALID: Self = Self::fixed("finding_invalid");
 
     /// Makes a code from a name written in the source.
     ///
@@ -187,6 +191,17 @@ impl From<UnknownName> for Failure {
             FailureCode::SCHEMA_INVALID,
             error.to_string(),
             next_step,
+        )
+    }
+}
+
+impl From<InvalidDigest> for Failure {
+    fn from(error: InvalidDigest) -> Self {
+        Self::new(
+            FailureClass::Input,
+            FailureCode::SCHEMA_INVALID,
+            error.to_string(),
+            "Write the digest as 64 lowercase hexadecimal characters.",
         )
     }
 }
