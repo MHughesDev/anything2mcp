@@ -2,6 +2,8 @@
 
 The web pack's discoverers and its describer: the capability probe, sign-in detection, snapshots, traffic capture, endpoint inference with two-tier path templates, and what a site declares for agents. It looks at a web application through an engine-owned browser and returns findings. It cannot write, and the way it is built makes sure of that.
 
+Built so far ([decision 0114](../../decisions/0114-the-web-probe-as-built-three-discoverers-over-an-observing-tab.md)): the probe, snapshots, and capture with endpoint inference, over an observing tab. The parts not built are named under "Build order", and a table or sketch below that describes one says so.
+
 ## Facts
 
 | | |
@@ -9,7 +11,7 @@ The web pack's discoverers and its describer: the capability probe, sign-in dete
 | Side | Pack: web |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5, and `a2m-pack-web-browser` |
-| Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-auth` (`SessionLease`, read-only use), `a2m-telemetry`, `a2m-pack-web-browser` (an `Observer`, never `Browsers`). Outside: `tokio`, `serde_json` |
+| Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-telemetry` (the clock), `a2m-pack-web-browser` (the cell of browsers, of which only the `Observer` is kept). Outside: `serde_json`. Not yet `a2m-auth`: a discovery's scope carries no session |
 | Built in | Package E2, after E1 gives the discoverer extension point and the findings store, and after 2.6 gives sign-in. `auth.detect` arrives earlier, in package 2.6, as the first discoverer |
 | Carries out | Spec sections [301](../../spec/3-packs/301-the-web-pack.md) (the probe), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (auth discovery), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (capture, mining, read-only exploration), [218](../../spec/2-kernel/218-discovery-and-findings.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (scenarios, templating), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (stages 1 and 2 for web surfaces) |
 
@@ -26,24 +28,40 @@ It must never: hold an acting tab; press, type, or submit; send a request other 
 
 ## What it registers
 
+It is a provider of its own, named `web_probe`, because a pack is handed its context only while it registers and the two crates of the web pack may not name each other.
+
 | Registration | Content |
 | --- | --- |
 | Modes, drivers, surface kinds, file kinds, lowerings, lint rules, auth providers | None. The surface kind `web` is registered by `a2m-pack-web-ui` |
-| Finding kinds | `surface`, `sign_in_method`, `screen`, `field`, `action`, `exchange`, `declared_tool`, each a checked name with the schema of its `found`. It produces `endpoint` findings and does not own that kind |
-| Discoverers | `web_probe`, `web_auth`, `web_snapshot`, `web_capture`, `web_endpoints`, `web_declared`, below |
-| Describer | `web_describer` |
+| Finding kinds | Built: `surface`, `sign_in_method`, `screen`, `exchange`, each a checked name. It produces `endpoint` findings and does not own that kind: its manifest reads it. Not built: `declared_tool`. `field` and `action` are not kinds: one `screen` finding holds its fields and actions |
+| Discoverers | Built: `web_probe`, `web_snapshot`, `web_capture`. Not built: `web_auth`, `web_endpoints`, `web_declared` |
+| Describer | `web_describer`, for each discoverer |
 | Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, endpoints by `a2m-pack-http` |
+| Effects | The root `profiles` for writing, the network of the target's surfaces, and a requirement that lists every place of the base's `KNOWN_PLACES`; a test holds the two lists equal |
+| Settings | `max_pages`, the page budget of one discovery, 20 unless set |
 
 | Discoverer | Action that runs it | Reads | Finding kinds | Level |
 | --- | --- | --- | --- | --- |
-| `web_probe` | `target.probe` | A page load: globals, page markers, script names, headers, cookie names, matched against each profile's detection rules | Surface, with platform, framework, confidence, support tier | `discovered` for what answered; the platform is `inferred` with its confidence |
-| `web_auth` | `auth.detect` | Redirects, challenges, a request for a client certificate, the identity provider's discovery document, whether backend calls carry a cookie or a bearer token | Sign-in method, with a recommended mode | `inferred`, with the observations as evidence |
-| `web_snapshot` | `screen.snapshot` | The accessibility tree, through the base's snapshot builder | Screen, field, action | `discovered`; coverage `partial`, limitation `single_variant` |
-| `web_capture` | `capture.start`, `capture.stop`, and scenario runs | Exchanges, by structure | Exchange | `discovered` |
-| `web_endpoints` | `endpoints.infer` | Stored exchange findings, not the page | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
-| `web_declared` | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
+| `web_probe`, built | `target.probe` | One page load: the status, where the tab ended, whether a password input shows, the roles of the snapshot, and whether the document is JSON. The kind of interface is named by `INTERFACE_RULES`, which are data. Platform profiles are not built, so the platform is `unknown_platform` and the tier `unsupported` | Surface; sign-in method when the page asks for one | The surface `discovered`; the sign-in method `inferred` |
+| `web_auth`, not built | `auth.detect` | Redirects, challenges, a request for a client certificate, the identity provider's discovery document, whether backend calls carry a cookie or a bearer token | Sign-in method, with a recommended mode | `inferred`, with the observations as evidence |
+| `web_snapshot`, built | `screen.snapshot` | The accessibility tree, through the base's snapshot builder, of the start page, of each page the focus names, and of the pages plain links lead to, as deep as the bounds allow | Screen, with its elements | `discovered`; coverage `partial`, limitation `single_variant` |
+| `web_capture`, built in part | `capture.start`, `capture.stop`, and scenario runs | The request for each document the tab is sent to, with the shape of a JSON answer; each request a page tried that the tab refused. Not the requests a page's own scripts read with: the base has no stream of exchanges yet | Exchange; endpoint | An answered exchange `discovered`; a refused one `inferred`. Endpoints as below |
+| `web_endpoints`, not built apart | `endpoints.infer` | Stored exchange findings, not the page. Until the sandbox port hands over stored findings, the inference runs inside `web_capture` | Endpoint, with its template, shapes, and dependencies | The endpoint `discovered` if it answered; its template `inferred` |
+| `web_declared`, not built | `discover.run`, the scout | A site's declarations for agents; tools a page registers | Declared tool, declared capability | `inferred`, source `published_description`, marked untrusted |
 
-The `endpoint` finding kind is owned by `a2m-pack-http`, which registers the schema of its `found`. This crate declares that it produces that kind, and the sink validates each one against the registered schema. If the HTTP pack is not enabled, `web_endpoints` is not available and says why. Packs share the shape as data, never code: this crate does not know the endpoint file format.
+The `endpoint` finding kind is owned by `a2m-pack-http`. This crate declares that it reads that kind, and widens what is found: the first seven names are the owner's (`format`, `method`, `path`, `status`, `content_type`, `allow`, `challenges`), and `answered`, `statuses`, `template`, `query`, `response`, and `seen` are added. If the HTTP pack is not enabled the registry says that the kind's owner is missing, and this pack is registered all the same. Packs share the shape as data, never code: this crate does not know the endpoint file format.
+
+### What a finding keeps
+
+A value is replaced by its type everywhere: `empty`, `integer`, `decimal`, `boolean`, `date`, `date_time`, `uuid`, `hex`, or `text`.
+
+| Finding | Kept | Kept as a type only |
+| --- | --- | --- |
+| `screen` | The title; each element's role, depth, states, and heading level; the accessible name of a role in `NAMED_ROLES` (a heading, a control, a column header) and of a link outside a record | Every value of a control; the name of any other role, such as a cell or a line of text; the name of a link inside a row or a list item. A password is `password` |
+| `exchange` | The method, the path, the status, the names of the query's parameters, the names of a JSON answer's fields | The values of the query and of the answer |
+| `endpoint` | The method, the path template, the statuses, the names and types of query parameters and answer fields, how many exchanges it was made from | For each parameter, how many different values were seen, compared by digest; the values are not kept |
+
+Everything found passes the redactor as one text, names included, and so does the path of a finding's subject. Every finding has coverage `partial` and at least one limitation.
 
 ## Discovery cannot write
 
@@ -51,61 +69,74 @@ Rule one of [section 218](../../spec/2-kernel/218-discovery-and-findings.md) is 
 
 | Where | How |
 | --- | --- |
-| The type | This crate is constructed with an `Observer` from the base. An `Observer` opens observing and watching tabs only; neither has an input method, and there is no way to obtain an acting tab from one. A check in CI refuses the names `ActTab` and `Browsers` in this crate's source |
-| The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames, unless a person marked that request safe. WebSockets are refused at creation. Each blocked request becomes a limitation on the finding |
-| Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped. What "looks like an action" means is settled in Phase 4 |
-| The kernel | Discovery runs as a job on a runner, inside the engine's sandbox, with a lease the keeper marked for discovery. A discoverer is given only what `SandboxPort` offers: no driver, no ledger token, no way to reach `Driver::act` |
+| The type | This crate keeps an `Observer` from the base and nothing else of the cell it is given. An `Observer` opens observing tabs only; one has no input method, and there is no way to obtain an acting tab from it. A check in CI is to refuse the names of the acting types in this crate's source; it must match whole words, because the crate names the cell `SharedBrowsers`. The check is not written yet |
+| The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames. This crate marks no request safe. WebSockets are refused at creation. A refused request becomes an `exchange` finding that says the system never answered; anything else refused becomes a limitation on the finding of its page |
+| Navigation | A link is followed only when it is a plain link to the surface's own origin, its name is shared with no other link on the page, and neither its address nor its name holds a word of `ACTION_WORDS` (sign-out, delete, remove, approve, confirm, send, pay, and the like). A link not followed is counted in the report, and a link refused as an action is a limitation on the screen. A focus can name a path of the surface and nothing else. What "looks like an action" means is settled in Phase 4 |
+| The kernel | Discovery runs as a job on a runner, inside the engine's sandbox. A discoverer is given only what `SandboxPort` offers: no driver, no ledger token, no way to reach `Driver::act`. This crate has no driver, so it sends no step through the port at all |
 
-**Capture of a person's use is not exploration.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
+**Capture of a person's use is not exploration, and is not built.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 
 ## Endpoint inference
 
 | Step | Rule | Level |
 | --- | --- | --- |
-| Group | By method, origin, and path template. Requests the browser made for the page's own assets are left out by type | The group `discovered` |
-| Template, tier one | A segment becomes a parameter only when it is an identifier by format: a number, a universally unique identifier, a long hexadecimal string, a date. Every literal seen is kept beside it | `inferred` |
-| Template, tier two | A segment that varied between otherwise identical requests. Only when the caller asks for it | `inferred`, limitation `sampled`, marked as resting on variance alone |
-| Shapes | Names and types from request and response bodies, merged across exchanges; a field seen in some responses and not others is optional with limitation `sampled` | `inferred` |
-| Dependencies | A value in a request that equals a value in an earlier response of the same capture: a token or an identifier the request depends on. Found by comparing digests of values, so no value is stored | `inferred` |
-| Binding to an action | The scenario step during which the request was sent. A request seen in two steps is ambiguous and is not bound | As the scenario |
-| Front-end logic | A request whose body holds a field no input explains, or a header that changes per request with no source found, is marked as possibly computed or signed in the browser. Its endpoint is drafted for `page_http` only | `inferred` |
+| Group, built | By method, origin, and path template. Only documents the tab was sent to and requests the tab refused are seen, so there are no asset requests to leave out yet | The group `discovered` if it answered, `inferred` if every request was refused |
+| Template, tier one, built | A segment becomes a parameter only when it is an identifier by format: a number, a universally unique identifier, a long hexadecimal string, a date. How many different values were seen is kept, by digest; the values are not | The template `inferred`; the endpoint keeps its level |
+| Template, tier two, built | A segment that varied between otherwise identical requests: the same method and origin, one differing segment, and JSON answers whose tops hold the same names. Only when the focus sets `tier_two` | `inferred`, limitation `sampled`, marked as resting on variance alone |
+| Shapes, built for answers | Names and types from JSON answers, merged across exchanges; a field seen in some answers and not others is optional with limitation `sampled`. Request bodies are not seen | `inferred` |
+| Dependencies, not built | A value in a request that equals a value in an earlier response of the same capture: a token or an identifier the request depends on. Found by comparing digests of values, so no value is stored | `inferred` |
+| Binding to an action, not built | The scenario step during which the request was sent. A request seen in two steps is ambiguous and is not bound | As the scenario |
+| Front-end logic, not built | A request whose body holds a field no input explains, or a header that changes per request with no source found, is marked as possibly computed or signed in the browser. Its endpoint is drafted for `page_http` only | `inferred` |
 
 A derived finding is never stronger than its weakest parent: one tier-two segment makes the whole endpoint `inferred`.
 
 ## Interface
 
-A sketch.
+As built.
 
 ```rust
-/// Called once by the product crate, with the pack context and the observer of the one `Browsers`.
-pub fn register(reg: &mut Registration, ctx: &PackContext, observer: Observer) -> Result<(), Failure>;
+/// The pack, over the cell of browsers the product crate made and also gives to the web pack's drivers.
+pub fn pack(shared: SharedBrowsers) -> WebProbePack;
+/// The one call the product crate makes: `add_to(&mut builder, shared.clone())`.
+pub fn add_to(builder: &mut RegistryBuilder, shared: SharedBrowsers);
+impl Pack for WebProbePack { /* registers web_probe, web_snapshot, web_capture, each with the describer */ }
 
-pub struct WebProbe { observer: Observer }
-impl Discoverer for WebProbe {
-    fn name(&self) -> &str;                                       // "web_probe"
-    fn suits(&self, surface: &Surface) -> bool;                   // surfaces of kind web
-    async fn discover(&self, req: &DiscoverRequest, port: &SandboxPort) -> Result<DiscoverReport, Failure>;
-}
-// WebAuth, WebSnapshot, WebCapture, WebEndpoints, WebDeclared: the same trait.
+pub const PACK: &str = "web_probe";            // the provider's name
+pub const SURFACE_KIND: &str = "web";
+pub const WEB_PROBE: &str = "web_probe";       // and WEB_SNAPSHOT, WEB_CAPTURE
 
-pub struct Capture { /* an observing or watching tab, the scenario step in force, counters */ }
-impl Capture {
-    pub fn step(&mut self, name: &str);                           // attributes what follows to this step
-    pub async fn stop(self) -> Result<CaptureSummary, Failure>;   // counts kept, dropped, refused
-}
+/// The names a discovery's focus may hold.
+pub const FOCUS_PATHS: &str = "paths";            // a list of paths of the surface, each starting with one `/`
+pub const FOCUS_READY_TEXT: &str = "ready_text";  // a text that must be visible on a focused page before it is read
+pub const FOCUS_TIER_TWO: &str = "tier_two";      // true lets inference make a parameter by variance
 
-pub struct WebDescriber;
-impl Describer for WebDescriber {
-    /// Snapshots in the text form of the reference; captures as a list of exchanges by step;
-    /// endpoints as method, template, and shapes. Every string from the target is marked untrusted.
-    fn describe(&self, findings: &[Finding], limits: &DescribeLimits) -> Description;
-}
+/// Rules as data.
+pub const INTERFACE_RULES: &[InterfaceRule];   // which kind of interface a start page shows; EMPTY_INTERFACE when none holds
+pub const ACTION_WORDS: &[&str];               // what makes a link look like an action
+pub fn looks_like_an_action(text: &str) -> bool;
+pub const NAMED_ROLES: &[&str];                // roles whose name is structure; also RECORD_ROLES, FIELD_ROLES
+pub const DISCOVERY_ACCOUNT: &str = "discovery";
+
+/// Shapes and inference, pure.
+pub fn type_of_text(text: &str) -> &'static str;
+pub struct Shape;                              // Shape::of(&json), merged, has_optional, cut, to_json
+pub struct Exchange { pub method, pub origin, pub path, pub query, pub status, pub answer: Answer }
+pub enum Answer { Refused, Json(Shape), Document }
+pub struct Endpoint { pub method, pub origin, pub segments: Vec<Segment>, pub statuses, pub query, pub response, pub seen, pub sources }
+pub enum Segment { Literal(String), Parameter { types, tier: Tier, literals } }
+pub fn infer_endpoints(exchanges: &[Exchange], tier_two: bool) -> Vec<Endpoint>;
+
+pub mod codes { /* this crate's failure codes, and ALL with the class of each */ }
 ```
 
-What the kernel gives this crate:
+The three discoverers and the describer are private types reached through the registry. `Capture`, with scenario steps, is not built.
 
-- `DiscoverRequest` carries the surface, the bounds (time, size, depth, request count), the target's rate limit, and a `SessionLease` or none. A surface that needs a sign-in and has no session is reported as `needs_login`, and the scout carries on with the others.
-- `SandboxPort` takes findings, refuses one above `discovered` or one whose `found` does not fit its kind's schema, computes its `id`, and has it stored. It also hands over stored findings, such as exchanges for `web_endpoints`. This crate never stores anything itself.
+What the kernel gives this crate, as built:
+
+- `DiscoveryScope` carries the surface, the bounds (seconds, bytes, depth), a deadline, the redactor, and the focus. It carries no session and no identity, so a discovery looks as nobody, in the engine's own profile `discovery` of the target and environment. A page that asks for a sign-in is a finding of `web_probe`, and stops the other two with `needs_login`.
+- It carries no clock, no fixed page environment, and no rate limit. The time of a finding is taken from telemetry's clock at registration; the page environment is the base's default.
+- `SandboxPort` takes one step for a driver. This crate has no driver and sends none. The port hands over no stored finding, which is why endpoint inference runs inside `web_capture`.
+- The sink refuses a finding of a kind or a level the manifest does not declare. Nothing checks what is found against a schema.
 - Consent is checked by `a2m-actions` before a discoverer is called.
 
 ## Used by, and uses
@@ -117,50 +148,67 @@ What the kernel gives this crate:
 | `a2m-pack-web-ui`, through stored findings only | Snapshot findings, for its drafting rules and screen matching |
 | `a2m-pack-http`, through stored findings only | Endpoint findings, for its drafting rule |
 
-It uses the base's `Observer`, `Look`, `Snapshot`, exchanges, and platform profiles; the redactor on everything it describes.
+It uses the base's `Observer`, `Look`, `Snapshot`, and the list of what an observing tab refused; the redactor on everything it finds. The base's exchanges and platform profiles are not built.
 
 ## State
 
 | State | Where |
 | --- | --- |
-| A capture in progress: its tab, step, counters | Memory, until stopped; a capture that outlives its bound is stopped and reported |
-| Findings and their evidence | The store, through the sink. Bodies only when asked and allowed |
+| One observing tab for each discovery | Memory, until the discovery ends |
+| A browser profile of the engine's own, `discovery` | The base's profile root, for each target and environment |
+| A capture in progress: its tab, step, counters. Not built | Memory, until stopped; a capture that outlives its bound is stopped and reported |
+| Findings | The store, through the sink. No body is kept |
 
 ## Failures
 
 | Class | Code | When |
 | --- | --- | --- |
-| `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The surface stops answering as itself. Discovery of that surface stops and a person is told |
-| `session_expired` | `needs_login` | The surface needs a sign-in. Reported per surface |
-| `policy` | `surface_not_declared` | Asked to look at an origin the target did not declare |
-| `transient` | `timeout`, `connection_lost` | The page did not load, or the browser was lost |
-| `unknown_variant` | `unknown_platform` | No profile matched. Not a stop for discovery: the finding says so, and the surface's tier is `unsupported` until a person names a profile |
+| `edge_blocked` | `forbidden_by_edge`, `rate_limited_by_edge` | A page answered 403 or 429. `web_probe` names the block in its surface finding; the other discoverers stop. `challenge_page` is not built |
+| `session_expired` | `needs_login` | A page asks for a sign-in: it answered 401, the tab ended at another origin, or a password input shows. `web_probe` makes a finding of it; the other discoverers stop, and a page a link led to is counted and passed over |
+| `policy` | `surface_not_declared` | Asked to look at an address that is not of the surface's origin |
+| `input` | `focus_invalid` | The focus `paths` is not a list of paths that each start with one `/` |
+| `transient` | `page_not_loaded`; the base's `timeout` and `connection_lost` | The page did not load, or the browser was lost |
+| `busy` | The base's `browser_unavailable` | No browser is installed |
+| `unknown_variant` | `page_unreadable` | The page could not be read in a way no rule covers |
 
-Hitting a bound is not a failure. It is a limitation on the findings, `truncated` or `time_limit`, and the report names it.
+`unknown_platform` is not a failure in discovery: the surface finding says so, and its tier is `unsupported` until a person names a profile.
+
+Hitting a bound is not a failure. The report names the bound, `pages` or `seconds`, and counts the pages left unread.
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| No write reaches the test application during any discovery | A page that posts on load, from a worker, over a WebSocket, and through a link that looks like an action; the control interface counts no write |
-| Two scouts of the same application in the same state give the same findings | Package E5, by hash |
-| No cookie, token, or password appears in a finding, a capture, or a description | The planted-secret test, run over a capture |
-| An endpoint with a tier-two segment is `inferred` | Unit tests on templating |
-| A capture that hits a bound says what it dropped | A capture with a tiny bound |
-| A platform the profiles do not know is reported unknown, never guessed | A page with markers of no profile |
+| No write reaches the test application during any discovery | A page that writes when it loads, a page whose worker writes, a page that opens a socket to a route that writes, and links that look like an action by address and by name. The test first shows that each route writes when it is reached; then the control interface counts no write and holds what it held |
+| Two discoveries of the same application in the same state give the same findings | Each discoverer run twice: the same identifiers. Package E5 does it by hash for the whole scout |
+| No registered secret appears in a finding or a description | A secret planted in a record, a heading, a link, a control, a cell, a JSON value, a JSON name, and a query |
+| No finding is above `discovered`, and each has a coverage and a limitation | Checked on every finding of the scouting test |
+| An endpoint with a tier-two segment is `inferred`; an endpoint never answered is `inferred` | Unit tests on templating, and the capture of two orders with `tier_two` |
+| A discovery that hits a bound says which, and how many pages it left | A discovery whose time is up |
+| A sign-in wall and a block are named and never read | A page that redirects to a sign-in form; a page that answers 403 |
+| A platform the profiles do not know is reported unknown, never guessed | The probe of the test application: `unknown_platform`, tier `unsupported` |
+| A registry with only this pack builds, and its digest is stable | Two registries |
+
+Run on Linux only. The crate has no code that differs by operating system.
 
 ## Build order
 
-1. Package 2.6: `web_auth`, against case 13's sign-in variants. It needs only page loads and redirects.
-2. Package E2: `web_snapshot` and `web_probe`.
-3. Then `web_capture` with scenario steps, and `web_endpoints` with tier one, against cases 5 and 22.
-4. Then tier two, dependencies, and the front-end logic mark.
-5. `web_declared`, with brief 24.
+1. Not built, package 2.6: `web_auth`, against case 13's sign-in variants. The probe names a sign-in wall; it does not say which method of sign-in to use.
+2. Done, package E2: the manifest and registration; `web_probe`; `web_snapshot` with links followed within the bounds.
+3. Done in part: `web_capture` of documents and refused requests, and endpoint inference with tier one and tier two, inside it. Not built: the requests a page's own scripts read with, which need the base's stream of exchanges; request shapes; scenario steps; cases 5 and 22.
+4. Not built: dependencies between requests and the front-end logic mark.
+5. Not built: the watching tab and the capture of a person's own use, which need a visible window in the base.
+6. Not built: platform profiles and the support tier, which are data of the base.
+7. Not built: `web_declared`, with brief 24.
 
 ## Open points
 
 - How a GET that changes state is recognized ([section 402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md)). A word list is a start, not an answer.
 - Whether the neutral part of the probe belongs in the kernel ([section 202](../../spec/2-kernel/202-kernel-and-packs.md)): naming a surface's kind and its pack before any pack is chosen.
-- How this crate is held to the `endpoint` finding schema's version when `a2m-pack-http` changes it.
+- How this crate is held to the `endpoint` finding schema's version when `a2m-pack-http` changes it. Nothing checks what is found against a schema today; the crate writes `format` 1 and the owner's seven names.
+- A page inside an application that holds a password input is taken for a sign-in wall and is not read.
+- When a page is ready to be read. A page is read when its document is parsed, or when the focus's `ready_text` shows. A page that fills itself by script later is read early, and nothing says so.
+- Whether a discovery should look through a session marked for discovery. The scope carries none.
+- The sandbox port takes steps for a driver. A discoverer that looks through a browser of its own pack has no use for it, and one that needs stored findings cannot get them.
 - The file format of a scenario ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)).
 - Whether capture should also read what in-page code sends over WebSockets and server-sent events, which section 301 observes for confirmation and does not drive.
