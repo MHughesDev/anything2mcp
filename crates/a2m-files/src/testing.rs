@@ -429,6 +429,12 @@ impl Lowering for StandLowering {
             .field("read_back")
             .and_then(|read_back| read_back.get("call"))
             .and_then(|call| self.step("fetch", call, None, true, cx, &mut problems));
+        // A lookup asks only whether the record landed: reached from the
+        // identity inputs alone, like a read-back.
+        let lookup = binding
+            .field("lookup")
+            .and_then(|lookup| lookup.get("call"))
+            .and_then(|call| self.step("fetch", call, None, true, cx, &mut problems));
         let surface = binding
             .field("call")
             .and_then(Located::as_text)
@@ -462,7 +468,7 @@ impl Lowering for StandLowering {
             act: vec![act],
             confirm: Vec::new(),
             read_back: read_back.into_iter().collect(),
-            lookup: Vec::new(),
+            lookup: lookup.into_iter().collect(),
             settle_ms: 0,
             prefer_response: binding
                 .field("read_back")
@@ -595,7 +601,11 @@ pub fn lowering() -> Arc<dyn Lowering> {
                     .required("call", JsonSchema::name())
                     .optional("prefer", JsonSchema::words(&["response"])),
             )
-            .optional("evidence", JsonSchema::words(&["acknowledged"])),
+            .optional("evidence", JsonSchema::words(&["acknowledged"]))
+            .optional(
+                "lookup",
+                JsonSchema::object().required("call", JsonSchema::name()),
+            ),
         verbs: verbs(),
         reads: Vec::new(),
         step_kinds: step_kinds(),

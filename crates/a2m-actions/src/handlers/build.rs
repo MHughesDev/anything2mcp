@@ -190,30 +190,131 @@ pub(crate) async fn chosen_version(
     Ok(version)
 }
 
+/// The surface `target.add` declares from an address: its kind, the key
+/// its pack states the address under, and the address.
+struct AddedSurface {
+    kind: a2m_core::SurfaceKind,
+    key: String,
+    address: String,
+}
+
+/// The surface `target.add` is asked to declare, or none. Given an address
+/// and a kind, the key is the one the kind's pack registered, asked of the
+/// compiler set: this crate holds no pack's knowledge (rule 8). An address
+/// with no kind is never guessed from (rule 7): the refusal names the kinds
+/// the registered packs offer.
+fn added_surface(
+    set: &a2m_files::CompilerSet,
+    address: Option<&str>,
+    kind: Option<&str>,
+) -> Result<Option<AddedSurface>, Failure> {
+    let offered = || {
+        let kinds: Vec<String> = set
+            .surface_kinds()
+            .map(|kind| format!("`{kind}`"))
+            .collect();
+        if kinds.is_empty() {
+            "No enabled pack offers a kind of surface.".to_owned()
+        } else {
+            format!("The enabled packs offer: {}.", kinds.join(", "))
+        }
+    };
+    match (address, kind) {
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(codes::input(
+            codes::SCHEMA_INVALID,
+            format!(
+                "An address was given with no kind of surface, and the kind is never guessed from an address. {}",
+                offered()
+            ),
+            "Call `target.add` again with `kind`, the kind of the system at the address.",
+        )),
+        (None, Some(_)) => Err(codes::input(
+            codes::SCHEMA_INVALID,
+            "A kind of surface was given with no address for it.",
+            "Call `target.add` again with `address`, where the system is reached.",
+        )),
+        (Some(address), Some(kind)) => {
+            let named = a2m_core::SurfaceKind::new(kind)?;
+            let Some(key) = set.address_key(&named) else {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!(
+                        "No enabled pack registered a surface of the kind `{}`. {}",
+                        a2m_core::said_neutral(kind),
+                        offered()
+                    ),
+                    "Name one of those kinds, or enable the pack that knows the system.",
+                ));
+            };
+            Ok(Some(AddedSurface {
+                key: key.to_owned(),
+                kind: named,
+                address: address.to_owned(),
+            }))
+        }
+    }
+}
+
+/// The first target file of `target`: with one surface of the kind given,
+/// at its address, and one test environment, or with no surface yet.
+fn first_target_file(target: &TargetName, surface: Option<&AddedSurface>) -> String {
+    let Some(surface) = surface else {
+        return format!(
+            "# The target `{target}`. Fill in its surfaces, then run `anything2mcp draft lint {target}`.\n\
+             schema_version: 1\ntarget: {target}\ntitle: {target}\nsurfaces: {{}}\n"
+        );
+    };
+    // A JSON string is a YAML double-quoted scalar: the address is written
+    // as data, whatever it holds.
+    let address = Json::String(surface.address.clone()).to_string();
+    let kind = &surface.kind;
+    format!(
+        "# The target `{target}`, with the one surface it was added with. Run `anything2mcp scout run {target}` next.\n\
+         schema_version: 1\ntarget: {target}\ntitle: {target}\n\
+         surfaces:\n  {kind}:\n    kind: {kind}\n    {key}: {address}\n\
+         environments:\n  test:\n    kind: test\ndefault_environment: test\n",
+        key = surface.key,
+    )
+}
+
+/// The compiler's refusal of a first target file, its errors by name.
+fn first_file_refused(problems: &Diagnostics) -> Failure {
+    let named: Vec<String> = problems
+        .iter()
+        .filter(|problem| problem.level == a2m_files::Level::Error)
+        .take(8)
+        .map(|problem| format!("{} ({})", problem.code, problem.message))
+        .collect();
+    codes::input(
+        codes::SCHEMA_INVALID,
+        format!(
+            "The compiler refuses the surface as given, so nothing was written: {}",
+            a2m_core::said_neutral(&named.join("; "))
+        ),
+        "Correct the address or the kind, and call `target.add` again.",
+    )
+}
+
 handler!(
-    /// `target.add`: makes the target's folder and a first file to fill in.
+    /// `target.add`: makes the target's folder and a first file. Given an
+    /// address and a kind, the file declares one surface of that kind and
+    /// one test environment, compiled as a draft before it is written
+    /// (decision 0199); otherwise a file to fill in.
     target_add,
-    |_kernel, call| {
+    |kernel, call| {
         let target = TargetName::new(call.required("name")?)?;
         let project_folder = call.project_folder()?.to_path_buf();
-        let mut text = format!(
-            "# The target `{target}`. Fill in its surfaces, then run `anything2mcp draft lint {target}`.\n\
-             schema_version: 1\ntarget: {target}\ntitle: {target}\n"
-        );
-        if let Some(address) = call.text("address") {
-            // Kept as a note for a person to review; never as a surface.
-            let shown: String = address
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(200)
-                .collect();
-            text.push_str(&format!(
-                "# address given when the target was added: {shown}\n"
-            ));
-        }
-        text.push_str("surfaces: {}\n");
-        let named = target.clone();
-        // Looking at the folder and writing the file wait on the disk.
+        let surface = added_surface(
+            kernel.providers().compiler_set(),
+            call.text("address"),
+            call.text("kind"),
+        )?;
+        let text = first_target_file(&target, surface.as_ref());
+        let declared = surface.is_some();
+        let (kernel, named) = (kernel.clone(), target.clone());
+        // Looking at the folder, compiling, and writing the file wait on
+        // the disk or compute.
         off_thread(move || {
             let folder = target_folder(&project_folder, &named)?;
             let file = folder.join("target.yaml")?;
@@ -224,20 +325,54 @@ handler!(
                     "Choose another name, or work on the target that is there.",
                 ));
             }
+            if declared {
+                // The file is compiled as the draft it will be, with the
+                // packs that are enabled: what the compiler refuses for the
+                // surface is refused here, and nothing is written.
+                let set = kernel.providers().compiler_set();
+                let path = a2m_files::RelPath::new("target.yaml")?;
+                let source = a2m_files::SourceFile::read(path, text.as_bytes(), set)
+                    .map_err(|problem| first_file_refused(&Diagnostics::from(problem)))?;
+                let sources = a2m_files::Sources::from_files(
+                    TargetRoot::new(folder.as_path()),
+                    vec![source],
+                );
+                a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
+                    .map_err(|problems| first_file_refused(&problems))?;
+            }
             folder.create_dir_all()?;
+            if matches!(
+                file.entry_kind()?,
+                a2m_provider::EntryKind::Folder | a2m_provider::EntryKind::Link
+            ) {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    "A folder or a link stands at the target's `target.yaml`, and a file is never written through one.",
+                    "Remove it, or choose another name.",
+                ));
+            }
             file.write(text.as_bytes())
         })
         .await?;
+        let next = if declared {
+            Next::new(
+                "scout.run",
+                json!({"target": target.as_str()}),
+                "to observe the surface and draft its reads",
+            )
+        } else {
+            Next::new(
+                "draft.lint",
+                json!({"target": target.as_str()}),
+                "after declaring the target's surfaces",
+            )
+        };
         Ok(Output::ok(json!({
             "target": target.as_str(),
             "folder": format!("{TARGETS_FOLDER}/{target}"),
             "files": ["target.yaml"],
         }))
-        .then(Next::new(
-            "draft.lint",
-            json!({"target": target.as_str()}),
-            "after declaring the target's surfaces",
-        )))
+        .then(next))
     }
 );
 

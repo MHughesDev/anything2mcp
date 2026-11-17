@@ -517,6 +517,7 @@ export interface SpecImportInput {
 export interface TargetAddInput {
   name: string;
   address?: string;
+  kind?: string;
 }
 
 /**
@@ -1109,8 +1110,9 @@ export declare abstract class Actions {
   specImport(input: SpecImportInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Register a target in the project: makes its folder and a first target file to fill
-   * in. The engine action is `target.add`.
+   * Register a target in the project: makes its folder and a first target file, with
+   * one surface where an address and its kind are given. The engine action is
+   * `target.add`.
    */
   targetAdd(input: TargetAddInput, options?: CallOptions): Promise<Response>;
 

@@ -733,7 +733,12 @@ impl<'a> Compiler<'a> {
             if !self.fits(&spec.fields, &pack_part) || !fine {
                 continue;
             }
-            let Some(address) = pack_part.text(&spec.address_key) else {
+            // An address of nothing but blanks states no address: a
+            // surface that leads nowhere is not guessed at (decision 0199).
+            let Some(address) = pack_part
+                .text(&spec.address_key)
+                .filter(|address| !address.trim().is_empty())
+            else {
                 self.error(
                     codes::MISSING_FIELD,
                     Stage::Validate,
@@ -2588,6 +2593,26 @@ impl<'a> Compiler<'a> {
                 "Leave the read-back as the binding's evidence, or, where the record truly cannot be read again, declare the operation with no `key` or `identity`.".to_owned(),
             );
             fine = false;
+        }
+        // A lookup beside an acknowledgement is asked only whether the
+        // record landed, never for its values (decision 0196): one that
+        // returns the record's values is a read-back by another name, and
+        // the author is told so. A warning, in every mode.
+        if by.evidence == WriteEvidence::Acknowledged
+            && info.strategy != IdentityStrategy::None
+            && lowered.read_back.is_empty()
+            && !lowered.lookup.is_empty()
+        {
+            self.problems.push(
+                Diagnostic::error(
+                    kernel(codes::ACKNOWLEDGED_WITH_LOOKUP),
+                    Stage::Lint,
+                    &binding.at,
+                    format!("This `{mode}` binding ends its keyed record on an acknowledgement and declares a lookup; the engine asks the lookup only whether the record landed."),
+                    "A lookup that returns the record's values is a read-back: name it `read_back:` and make the read-back its evidence.",
+                )
+                .as_warning(),
+            );
         }
         if needs_read_back && (binding.get("read_back").is_none() || lowered.read_back.is_empty()) {
             self.error(

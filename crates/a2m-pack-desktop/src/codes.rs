@@ -77,6 +77,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
 }
 
 /// The pack has no back end for this operating system.
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn system_not_built() -> Failure {
     failure(
         FailureClass::Busy,

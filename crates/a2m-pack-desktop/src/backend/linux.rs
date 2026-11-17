@@ -17,9 +17,12 @@ use a2m_provider::Deadline;
 use futures_core::Stream;
 use zbus::{Connection, MatchRule, MessageStream, OwnedObjectPath, OwnedVariant};
 
-use super::{App, AxError, CALL_LIMIT, Limits, Window};
+use super::{App, AxError, Limits, Window};
 use crate::roles;
 use crate::tree::{El, Node, Tree};
+
+/// The longest one call to the application may take.
+const CALL_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 const REGISTRY: &str = "org.a11y.atspi.Registry";
 const DESKTOP: &str = "/org/a11y/atspi/accessible/root";
@@ -140,7 +143,10 @@ where
         Ok(Err(error)) => return Err(lost(&error)),
         Err(_) => return Err(AxError::Timeout),
     };
-    reply.body().deserialize::<R>().map_err(|error| lost(&error))
+    reply
+        .body()
+        .deserialize::<R>()
+        .map_err(|error| lost(&error))
 }
 
 /// Reads one property of [`READ_PROPERTIES`].
@@ -202,11 +208,28 @@ fn process_program(process: u32, me: u32) -> Option<PathBuf> {
         .flatten()
 }
 
+/// Whether any process of the engine's own user runs `program`. Only the
+/// process table is read.
+fn runs(program: &Path, me: u32) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .and_then(|process| process_program(process, me))
+            .is_some_and(|running| running == program)
+    })
+}
+
 /// The digest of the program a process runs, as the target states one.
 fn running_digest(process: u32) -> Option<String> {
     use sha2::Digest as _;
     use std::io::Read;
-    let mut file = std::fs::File::open(Path::new("/proc").join(process.to_string()).join("exe")).ok()?;
+    let mut file =
+        std::fs::File::open(Path::new("/proc").join(process.to_string()).join("exe")).ok()?;
     let mut hasher = sha2::Sha256::new();
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
@@ -276,8 +299,15 @@ impl Look {
         let me = std::fs::metadata("/proc/self")
             .map_err(|_| AxError::Lost("the process table".to_owned()))?
             .uid();
-        let listed: Vec<Address> =
-            call(&self.a11y, REGISTRY, DESKTOP, ACCESSIBLE, "GetChildren", &()).await?;
+        let listed: Vec<Address> = call(
+            &self.a11y,
+            REGISTRY,
+            DESKTOP,
+            ACCESSIBLE,
+            "GetChildren",
+            &(),
+        )
+        .await?;
         let mut found = Vec::new();
         for (bus, path) in listed {
             if bus.is_empty() {
@@ -311,6 +341,10 @@ impl Look {
             }
         }
         match found.len() {
+            // Not on the bus. Started by this user, with its accessibility
+            // switch off, it publishes nothing; not started, it is not
+            // running. The pack starts nothing either way.
+            0 if !runs(&want, me) => Err(AxError::NotRunning),
             0 => {
                 let enabled = property(
                     &self.session,
@@ -400,9 +434,7 @@ impl Look {
         );
         let (role, own, state, interfaces, relations) =
             (role?, own?, state?, interfaces?, relations?);
-        let bits = state
-            .first()
-            .map_or(0, |low| u64::from(*low))
+        let bits = state.first().map_or(0, |low| u64::from(*low))
             | state.get(1).map_or(0, |high| u64::from(*high) << 32);
         let mut name = own;
         if name.is_empty() {
@@ -475,8 +507,15 @@ impl Look {
                 tree.nodes[parent].children.push(at);
             }
             if !below && tree.cut.is_none() {
-                let more: Vec<Address> =
-                    call(&self.a11y, &el.bus, &el.path, ACCESSIBLE, "GetChildren", &()).await?;
+                let more: Vec<Address> = call(
+                    &self.a11y,
+                    &el.bus,
+                    &el.path,
+                    ACCESSIBLE,
+                    "GetChildren",
+                    &(),
+                )
+                .await?;
                 if !more.is_empty() {
                     tree.cut = Some("depth");
                 }
@@ -580,12 +619,16 @@ mod tests {
         for (_, member) in READ_MEMBERS {
             assert!(!ACTING.contains(member), "{member}");
         }
-        assert!(!READ_MEMBERS.iter().any(|(interface, _)| interface.contains("EditableText")
-            || interface.contains("Action")
-            || interface.contains("Selection")
-            || interface.contains("Component")
-            || interface.contains("DeviceEventController")
-            || interface.contains("Value")));
+        assert!(
+            !READ_MEMBERS
+                .iter()
+                .any(|(interface, _)| interface.contains("EditableText")
+                    || interface.contains("Action")
+                    || interface.contains("Selection")
+                    || interface.contains("Component")
+                    || interface.contains("DeviceEventController")
+                    || interface.contains("Value"))
+        );
     }
 
     #[test]

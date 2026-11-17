@@ -150,11 +150,11 @@ pub struct PersonActAsk {
     /// first.
     pub details: Vec<String>,
     /// For a publish, every surface of the version, with where it leads
-    /// and its notices; empty for every other act. The same facts are
-    /// among `details` as lines, for a page that prints only those.
+    /// and its notices; empty for every other act. They are not repeated
+    /// among `details`: a page prints both (decision 0199).
     pub surfaces: Vec<ActSurface>,
     /// For a publish, every warning the compiler gave for the version;
-    /// empty for every other act. Also among `details` as lines.
+    /// empty for every other act, and not repeated among `details`.
     pub warnings: Vec<ActWarning>,
     /// Through which door and client the act was asked for.
     pub asked_through: String,
@@ -645,9 +645,11 @@ impl Kernel {
             })
             .chain(first_to_act)
             .collect::<Vec<String>>();
+        // Where each surface leads, its notices, and the warnings are
+        // handed apart, in `PersonActAsk::surfaces` and `warnings`, and not
+        // also as lines: a page prints them once (decision 0199).
         let shown = publish_shown(self, &compiled);
         let mut details = details;
-        details.extend(shown_lines(&shown));
         details.extend(gates.lines());
         Ok((input, details, shown))
     }
@@ -939,33 +941,4 @@ fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShow
         })
         .collect();
     PublishShown { surfaces, warnings }
-}
-
-/// The lines of what a publish shows, for a page that prints `details`
-/// alone.
-fn shown_lines(shown: &PublishShown) -> Vec<String> {
-    let mut lines = Vec::new();
-    for surface in &shown.surfaces {
-        let at: Vec<String> = surface
-            .addresses
-            .iter()
-            .map(|(environment, address)| format!("{address} in {environment}"))
-            .collect();
-        lines.push(format!(
-            "Surface {} ({}) leads to {}.",
-            surface.name,
-            surface.kind,
-            at.join("; ")
-        ));
-        for notice in &surface.notices {
-            lines.push(format!(
-                "Notice for surface {} ({}): {}",
-                surface.name, notice.code, notice.words
-            ));
-        }
-    }
-    for warning in &shown.warnings {
-        lines.push(format!("Warning {}: {}", warning.code, warning.message));
-    }
-    lines
 }

@@ -218,7 +218,12 @@ impl Held {
             match tree.holds(&ready, &mut text_of) {
                 Ok(true) => return Ok(Observed::default()),
                 Ok(false) => {}
-                Err(miss) => return Err(missed(miss, &format!("the screen `{}`'s condition", shown(name)))),
+                Err(miss) => {
+                    return Err(missed(
+                        miss,
+                        &format!("the screen `{}`'s condition", shown(name)),
+                    ));
+                }
             }
             if !watch
                 .next(deadline)
@@ -277,7 +282,12 @@ impl Held {
                     if header.is_some() {
                         return Err(mismatch("has more than one row of headings"));
                     }
-                    header = Some(cells.iter().map(|cell| cell.name.clone()).collect::<Vec<_>>());
+                    header = Some(
+                        cells
+                            .iter()
+                            .map(|cell| cell.name.clone())
+                            .collect::<Vec<_>>(),
+                    );
                 } else {
                     body.push(cells);
                 }
@@ -297,7 +307,9 @@ impl Held {
                         .columns
                         .get(&item.from)
                         .and_then(|position| usize::try_from(*position).ok())
-                        .ok_or_else(|| codes::not_usable("it reads a column the table does not have"))?;
+                        .ok_or_else(|| {
+                            codes::not_usable("it reads a column the table does not have")
+                        })?;
                     let shown = self.text(cells[position]).await?;
                     columns
                         .entry(item.output.as_str())

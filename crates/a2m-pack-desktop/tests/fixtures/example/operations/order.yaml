@@ -1,0 +1,67 @@
+operation: example_order_get
+title: Get the order shown
+effect: read
+inputs: {}
+outputs:
+  order_number: {type: untrusted_text}
+  customer: {type: untrusted_text}
+  status: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    screen: order
+description: >
+  Reads the order the window shows.
+---
+operation: example_order_line_list
+title: List the line items of the order shown
+effect: read
+inputs: {}
+outputs:
+  item_code: {type: untrusted_text, list: true}
+  quantity: {type: untrusted_text, list: true}
+bindings:
+  - mode: desktop
+    verb: list
+    screen: order
+description: >
+  Lists the item code and the quantity of every line item of the order the window shows.
+---
+operation: example_order_reference_get
+title: Get the order's reference
+effect: read
+inputs: {}
+outputs:
+  reference: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    screen: order
+description: >
+  Reads a field the window shows twice; the driver stops on it by name.
+---
+operation: example_order_access_get
+title: Get the access code
+effect: read
+inputs: {}
+outputs:
+  access_code: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    screen: order
+description: >
+  Reads a password field; the driver refuses it by name.
+---
+operation: example_order_tracking_get
+title: Get the tracking number once it is shown
+effect: read
+inputs: {}
+outputs:
+  tracking: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    screen: tracking
+description: >
+  Reads the tracking number, waiting for it to appear.

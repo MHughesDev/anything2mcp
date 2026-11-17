@@ -1,0 +1,20 @@
+# The order window: its labelled values and its table of line items. The
+# reference is shown twice and the access code is a password field: both
+# are here so that a test can show the driver stops on each by name.
+screen: order
+surface: desk
+reach: {window: {role: frame, title: "Example order"}}
+ready: {visible: {role: table, name: "Line items"}}
+fields:
+  order_number: {type: untrusted_text, control: text, locate: [{role: entry, name: "Order number"}]}
+  customer: {type: untrusted_text, control: text, locate: [{role: entry, name: "Customer"}]}
+  status: {type: untrusted_text, control: text, locate: [{role: entry, name: "Status"}]}
+  reference: {type: untrusted_text, control: text, locate: [{role: entry, name: "Reference"}]}
+  access_code: {type: untrusted_text, control: text, locate: [{role: password_text, name: "Access code"}]}
+rows:
+  locate:
+    - {role: table, name: "Line items"}
+  header: ["Item code", "Description", "Quantity"]
+  columns:
+    item_code: {header: "Item code", type: untrusted_text}
+    quantity: {header: "Quantity", type: untrusted_text}

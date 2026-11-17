@@ -210,7 +210,11 @@ impl Lowering for DesktopLowering {
                     format!(
                         "The output `{}` matches no {} on the screen `{}`.",
                         output.name,
-                        if listed { "column of its table" } else { "field" },
+                        if listed {
+                            "column of its table"
+                        } else {
+                            "field"
+                        },
                         found.name
                     ),
                     "Add it to the screen, or rename the output.",
@@ -260,7 +264,7 @@ impl Lowering for DesktopLowering {
         Ok(Lowered {
             surface,
             act: vec![
-                step(cx, GOTO, &found, unexpected),
+                step(cx, GOTO, &found, unexpected.clone()),
                 step(cx, WAIT, &found, unexpected),
                 read,
             ],

@@ -27,6 +27,7 @@ a2m-local = { path = "../a2m-local" }
 a2m-mcp = { path = "../a2m-mcp" }
 a2m-pack-command = { path = "../a2m-pack-command" }
 a2m-pack-data = { path = "../a2m-pack-data" }
+a2m-pack-desktop = { path = "../a2m-pack-desktop" }
 a2m-pack-device = { path = "../a2m-pack-device" }
 a2m-pack-file = { path = "../a2m-pack-file" }
 a2m-pack-http = { path = "../a2m-pack-http" }

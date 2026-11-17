@@ -429,6 +429,18 @@ impl CompilerSet {
         self.surface_kinds.keys()
     }
 
+    /// The key under which a surface of `kind` states its address, as its
+    /// pack registered it ([`SurfaceKindSpec::address_key`]). `None` for a
+    /// kind no pack registers. A caller that writes a surface from an
+    /// address asks here and holds no pack's knowledge of its own
+    /// (decision 0199).
+    #[must_use]
+    pub fn address_key(&self, kind: &SurfaceKind) -> Option<&str> {
+        self.surface_kinds
+            .get(kind)
+            .map(|spec| spec.item.address_key.as_str())
+    }
+
     /// The notices a surface of the plan carries for a door to show, in
     /// the order of the closed list, each once: those its kind's pack
     /// registered ([`SurfaceKindSpec::with_notice`]) whose field the

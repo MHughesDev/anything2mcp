@@ -70,6 +70,7 @@ kernel_codes! {
     SCOPE_INVALID = "scope_invalid": "A permission names one exact address or one name, once: no wildcard, no range of addresses, no path, and no user information.",
     SURFACE_OF_ANOTHER_PACK = "surface_of_another_pack": "A lowering names a surface of a kind its own pack registered.",
     // Stage 7: lint.
+    ACKNOWLEDGED_WITH_LOOKUP = "acknowledged_with_lookup": "A keyed binding that ends on an acknowledgement, with no read-back, declares no lookup that stands for a read-back; it is always a warning.",
     FOR_EACH_WITHOUT_CHECKPOINT = "for_each_without_checkpoint": "A `for_each` over a write has a checkpoint.",
     WRITE_PIPELINE_WITHOUT_LIMIT = "write_pipeline_without_limit": "A pipeline that writes declares a record limit.",
     CREDENTIAL_IN_FILE = "credential_in_file": "No file holds a credential; credentials are vault references.",

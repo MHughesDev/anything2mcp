@@ -186,6 +186,39 @@ impl a2m_provider::Driver for Postured {
                 self.more.keys.lock().unwrap().push(asked);
                 Box::pin(async move { seen(a2m_core::Values::new().with("note", "Kept by key")) })
             }
+            // A list read: five codes, one of them the key it was asked
+            // for, twice, and a note that quotes the key.
+            Some("order_lines") => Box::pin(async move {
+                let text = |code: &str| a2m_core::Value::Text(code.to_owned());
+                seen(
+                    a2m_core::Values::new()
+                        .with(
+                            "codes",
+                            a2m_core::Value::List(vec![
+                                text("A-7"),
+                                text("L-81"),
+                                text("L-82"),
+                                text("A-7"),
+                                text("L-83"),
+                            ]),
+                        )
+                        .with("note", "Lines of A-7"),
+                )
+            }),
+            // A read of choices: one, and a list of them.
+            Some("order_state") => Box::pin(async move {
+                let text = |code: &str| a2m_core::Value::Text(code.to_owned());
+                seen(
+                    a2m_core::Values::new().with("status", "draft").with(
+                        "history",
+                        a2m_core::Value::List(vec![
+                            text("draft"),
+                            text("released"),
+                            text("draft"),
+                        ]),
+                    ),
+                )
+            }),
             Some("order_flaky") => {
                 let made = self.more.flaky.fetch_add(1, Ordering::SeqCst) + 1;
                 Box::pin(async move {
@@ -897,16 +930,63 @@ async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
         .await;
     assert_eq!(no_file.error.unwrap().code, "path_not_allowed");
     std::fs::write(project.path().join("anything2mcp.toml"), "").unwrap();
-    let add = |name: &'static str| {
+    let add_with = |input: serde_json::Value| {
         world.kernel.dispatch(
-            Request::new(
-                "target.add",
-                json!({"name": name, "address": "https://app.example.com"}),
-                world.person.clone(),
-            )
-            .in_project(project.path()),
+            Request::new("target.add", input, world.person.clone()).in_project(project.path()),
         )
     };
+    let add = |name: &'static str| add_with(json!({"name": name}));
+    // An address with no kind is never guessed from: the refusal names the
+    // kinds the enabled packs offer, and nothing is written.
+    let guessed = add_with(json!({"name": "example", "address": "https://app.example.com"})).await;
+    let error = guessed.error.unwrap();
+    assert_eq!(error.code, "schema_invalid", "{error:?}");
+    assert!(error.message.contains("offer: `stand`."), "{error:?}");
+    let unknown = add_with(
+        json!({"name": "example", "address": "https://app.example.com", "kind": "nothing_has_it"}),
+    )
+    .await;
+    assert!(
+        unknown.error.unwrap().message.contains("No enabled pack registered a surface of the kind `nothing_has_it`."),
+    );
+    // What the compiler refuses for the surface is refused, by name, and
+    // nothing is written: an address of blanks states none.
+    let refused = add_with(json!({"name": "example", "address": "  ", "kind": "stand"})).await;
+    let error = refused.error.unwrap();
+    assert!(
+        error.message.contains("The compiler refuses the surface")
+            && error.message.contains("kernel.missing_field"),
+        "{error:?}"
+    );
+    assert!(!project.path().join("targets").join("example").join("target.yaml").exists());
+    // With the address and its kind, the target file declares one surface
+    // of the kind, under the key its pack registered, and a test
+    // environment, and it compiles; the next step is the scout.
+    let surfaced = add_with(json!({
+        "name": "surfaced",
+        "address": "https://app.example.com/\"quoted\"\n: not a key",
+        "kind": "stand",
+    }))
+    .await;
+    assert!(surfaced.ok, "{:?}", surfaced.error);
+    assert_eq!(surfaced.next.unwrap().action, "scout.run");
+    let written = std::fs::read_to_string(
+        project.path().join("targets").join("surfaced").join("target.yaml"),
+    )
+    .unwrap();
+    assert!(
+        written.contains("surfaces:\n  stand:\n    kind: stand\n    address: \"https://app.example.com/\\\"quoted\\\"\\n: not a key\"\nenvironments:\n  test:\n    kind: test\ndefault_environment: test\n"),
+        "{written}"
+    );
+    let linted = world
+        .kernel
+        .dispatch(
+            Request::new("draft.lint", json!({"target": "surfaced"}), world.person.clone())
+                .in_project(project.path()),
+        )
+        .await;
+    let linted = linted.result.unwrap();
+    assert_eq!(linted["ok"], true, "{linted}");
     let added = add("example").await;
     assert!(added.ok, "{:?}", added.error);
     let file = project
@@ -1127,12 +1207,10 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
     let ask = world.surface.acts.lock().unwrap()[0].clone();
     let page = ask.details.join("\n");
     assert!(page.contains("Gate schema_and_lint: passed."), "{page}");
-    // Where each surface leads, in each environment, is on the page, as
-    // lines and as fields a page can lay out (audit finding AC-1).
-    assert!(
-        page.contains("Surface desk (stand) leads to https://test.example.com in test;"),
-        "{page}"
-    );
+    // Where each surface leads, in each environment, is handed as fields a
+    // page lays out (audit finding AC-1), and not again as lines, so a page
+    // prints it once (decision 0199).
+    assert!(!page.contains("leads to"), "{page}");
     assert_eq!(ask.surfaces.len(), 1);
     assert_eq!(ask.surfaces[0].name, "desk");
     assert_eq!(ask.surfaces[0].kind, "stand");
@@ -2395,6 +2473,142 @@ async fn a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person() {
         !report
             .to_string()
             .contains("The person who added the target")
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Two reads a test application would answer with business data, beside
+/// the example's: a list read and a read of choices, with their calls.
+const RECORDED_READS: [(&str, &str); 3] = [
+    (
+        "calls/recorded.yaml",
+        "call: order_lines\npath: \"/orders/{order_id}/lines\"\neffect: read\n---\ncall: order_state\npath: \"/orders/{order_id}/state\"\neffect: read\n",
+    ),
+    (
+        "operations/order_lines_get.yaml",
+        "operation: example_order_lines_get\ntitle: Get the lines of an order\neffect: read\nkey: order_id\ninputs:\n  order_id: {type: identifier, description: \"Order number shown in the application\"}\noutputs:\n  codes: {type: identifier, list: true}\n  note: {type: note}\nbindings:\n  - mode: stand\n    status: draft\n    call: order_lines\ndescription: >\n  Reads the item codes of the lines of one order, and its note.\n",
+    ),
+    (
+        "operations/order_state_get.yaml",
+        "operation: example_order_state_get\ntitle: Get the state of an order\neffect: read\nkey: order_id\ninputs:\n  order_id: {type: identifier, description: \"Order number shown in the application\"}\noutputs:\n  status: {type: order_status}\n  history: {type: order_status, list: true}\nbindings:\n  - mode: stand\n    status: draft\n    call: order_state\ndescription: >\n  Reads the status of one order, and the statuses it has had.\n",
+    ),
+];
+
+/// `fixture.record` beyond one pack's read (decision 0199): a list read is
+/// cut to three items, each scrubbed, the same original put in place of by
+/// the same text in the input and every answer; a choice, alone or in a
+/// list, by another declared code; and each recorded test passes offline,
+/// read back from its files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fixture_is_recorded_from_a_list_read_and_a_read_of_choices() {
+    let world = World::open().await;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    for (file, text) in RECORDED_READS {
+        let written = world
+            .call(
+                &agent,
+                "draft.write",
+                json!({"target": "example", "file": file, "content": text}),
+            )
+            .await;
+        assert_eq!(written.result.unwrap()["written"], true, "{file}");
+    }
+    let record = |tool: &'static str| {
+        world.call(
+            &agent,
+            "fixture.record",
+            json!({"target": "example", "tool": tool, "input": {"order_id": "A-7"}}),
+        )
+    };
+
+    // The list read.
+    let recorded = record("example_order_lines_get").await;
+    assert!(recorded.ok, "{:?}", recorded.error);
+    let result = recorded.result.unwrap();
+    assert_eq!(result["test_state"], "passed", "{result}");
+    assert!(
+        result["scrubbed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|rule| rule["rule"] == "list cut to its first items"),
+        "{result}"
+    );
+    let answer: Json = serde_json::from_str(
+        &std::fs::read_to_string(target_dir.join("fixtures/order_lines_get/order_lines.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let codes: Vec<&str> = answer["codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|code| code.as_str().unwrap())
+        .collect();
+    assert_eq!(codes.len(), 3, "{answer}");
+    assert!(codes[0] != codes[1] && codes[1] != codes[2] && codes[0] != codes[2]);
+    // The key in the input and the same original in the list are one text.
+    let test = std::fs::read_to_string(target_dir.join("tests/order_lines_get.yaml")).unwrap();
+    assert!(
+        test.contains(&format!("\"order_id\":\"{}\"", codes[0])),
+        "{test}\n{answer}"
+    );
+    for file in result["files"].as_array().unwrap() {
+        let text = std::fs::read_to_string(target_dir.join(file.as_str().unwrap())).unwrap();
+        for original in ["A-7", "L-81", "L-82", "L-83", "Lines of"] {
+            assert!(!text.contains(original), "{original} in {file}: {text}");
+        }
+    }
+
+    // The read of choices: each code is another the type declares.
+    let recorded = record("example_order_state_get").await;
+    assert!(recorded.ok, "{:?}", recorded.error);
+    assert_eq!(recorded.result.unwrap()["test_state"], "passed");
+    let answer: Json = serde_json::from_str(
+        &std::fs::read_to_string(target_dir.join("fixtures/order_state_get/order_state.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        answer,
+        json!({"status": "released", "history": ["released", "draft", "released"]}),
+        "{answer}"
+    );
+
+    // Both recorded tests pass offline, from their files, with the
+    // example's own.
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await;
+    let tested = tested.result.unwrap();
+    let states: Vec<(String, String)> = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| {
+            (
+                test["test"].as_str().unwrap().to_owned(),
+                test["state"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    for name in ["order_lines_get", "order_state_get"] {
+        assert!(
+            states.contains(&(name.to_owned(), "passed".to_owned())),
+            "{name}: {tested}"
+        );
+    }
+    // Nothing was written to the stand.
+    assert!(
+        world
+            .reached
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|step| !step.contains("send")),
+        "{:?}",
+        world.reached.lock().unwrap()
     );
     world.kernel.close(CloseReason::Asked).await;
 }

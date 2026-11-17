@@ -49,6 +49,7 @@ pub(crate) const ROLES: &[&str] = &[
 ];
 
 /// The word for an element whose role is none of [`ROLES`].
+#[cfg(any(target_os = "linux", test))]
 pub(crate) const OTHER: &str = "other";
 
 /// The roles a window of an application may have.

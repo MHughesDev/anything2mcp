@@ -249,6 +249,20 @@ dependencies = [
 [[package]]
 name = "a2m-pack-desktop"
 version = "0.0.1"
+dependencies = [
+ "a2m-auth",
+ "a2m-core",
+ "a2m-files",
+ "a2m-provider",
+ "a2m-telemetry",
+ "example-desk",
+ "futures-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "zbus",
+]
 
 [[package]]
 name = "a2m-pack-device"
@@ -524,6 +538,7 @@ dependencies = [
  "a2m-mcp",
  "a2m-pack-command",
  "a2m-pack-data",
+ "a2m-pack-desktop",
  "a2m-pack-device",
  "a2m-pack-file",
  "a2m-pack-http",

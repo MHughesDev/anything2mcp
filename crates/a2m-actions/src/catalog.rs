@@ -216,9 +216,10 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .writes()
             .done(),
         // Building a target.
-        act("target.add", "Register a target in the project: makes its folder and a first target file to fill in.", BUILDER, No, "5", Change)
+        act("target.add", "Register a target in the project: makes its folder and a first target file, with one surface where an address and its kind are given.", BUILDER, No, "5", Change)
             .pos("name", TEXT, "The new target's name: lowercase letters, digits, and underscores.")
-            .opt("address", TEXT, "The address of the system, kept in the target file for a person to review.")
+            .opt("address", TEXT, "Where the system is reached, in the form the surface's kind takes. Given with `kind`, the target file declares one surface of that kind at this address, and a test environment.")
+            .opt("kind", TEXT, "The kind of the surface at `address`, as an enabled pack registers it. Never guessed from the address: left out with an address, the refusal lists the kinds offered.")
             .writes()
             .needs(HealthNeed::Reads)
             .output(JsonSchema::object()

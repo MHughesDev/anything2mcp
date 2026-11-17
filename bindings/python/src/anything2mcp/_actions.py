@@ -1213,10 +1213,11 @@ class Actions:
         *,
         name: str,
         address: Optional[str] = None,
+        kind: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Register a target in the project: makes its folder and a first target
-        file to fill in.
+        file, with one surface where an address and its kind are given.
 
         The engine action is ``target.add``.
         """
@@ -1225,6 +1226,7 @@ class Actions:
             {
                 "name": name,
                 "address": address,
+                "kind": kind,
             },
             idempotency_key,
         )

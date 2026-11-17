@@ -15869,6 +15869,9 @@
          "address": {
           "type": "string"
          },
+         "kind": {
+          "type": "string"
+         },
          "name": {
           "type": "string"
          }
@@ -16070,7 +16073,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Register a target in the project: makes its folder and a first target file to fill in.",
+    "summary": "Register a target in the project: makes its folder and a first target file, with one surface where an address and its kind are given.",
     "x-action": "target.add"
    }
   },

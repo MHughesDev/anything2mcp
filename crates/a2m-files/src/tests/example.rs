@@ -270,6 +270,10 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Elsewhere("an_acknowledgement_is_evidence_only_for_an_irreversible_operation"),
         ),
         (
+            "kernel.acknowledged_with_lookup",
+            Case::Elsewhere("an_acknowledgement_is_evidence_only_for_an_irreversible_operation"),
+        ),
+        (
             "kernel.read_kind_not_registered",
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
         ),
@@ -2250,6 +2254,54 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
     assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
     assert!(!binding.read_back.is_empty());
 
+    // Decision 0199: a keyed binding that ends on the acknowledgement with
+    // no read-back and a lookup is warned of, by name, and still compiles:
+    // the engine asks the lookup only whether the record landed.
+    let with_lookup = format!("{acknowledged}    lookup: {{call: line_item_get}}\n");
+    let looked = with(&[
+        (read_back, with_lookup.as_str()),
+        ("effect: write", irreversible),
+    ]);
+    let problems = problems_with(&looked, &set, CompileMode::Publish);
+    let warned = problems
+        .find("kernel.acknowledged_with_lookup")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert_eq!(warned.level, Level::Warning, "{warned}");
+    assert!(
+        warned.message.contains("asks the lookup only whether the record landed")
+            && warned.fix.contains("name it `read_back:`"),
+        "{warned}"
+    );
+    let sources = load_files(&TargetRoot::new("example"), &looked, &set).unwrap();
+    let compiled = compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    assert!(
+        compiled
+            .warnings
+            .find("kernel.acknowledged_with_lookup")
+            .is_some()
+    );
+    let binding = binding_of(&compiled.plan);
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(binding.read_back.is_empty() && !binding.lookup.is_empty());
+    // Not without the lookup, and not with no key.
+    let problems = problems_with(
+        &with(&[(read_back, acknowledged), ("effect: write", irreversible)]),
+        &set,
+        CompileMode::Publish,
+    );
+    assert!(problems.find("kernel.acknowledged_with_lookup").is_none(), "{problems}");
+    let problems = problems_with(
+        &with(&[
+            (read_back, with_lookup.as_str()),
+            ("effect: write", irreversible),
+            ("key: [order_id, item_code]\n", ""),
+        ]),
+        &set,
+        CompileMode::Publish,
+    );
+    assert!(problems.find("kernel.acknowledged_with_lookup").is_none(), "{problems}");
+
     // The response stands where the lowering prefers it.
     let binding = binding_of(&plan_of(&with(&[(
         read_back,
@@ -2378,4 +2430,29 @@ fn a_surface_carries_the_notice_its_kind_registers_while_its_field_says_so() {
             .unwrap();
         assert_eq!(failure.code().as_str(), "registration_conflict", "{key}");
     }
+}
+
+/// The compiler set tells the key under which a surface of a kind states
+/// its address, as its pack registered it, and nothing for a kind no pack
+/// registers (decision 0199).
+#[test]
+fn the_set_tells_the_key_a_kind_states_its_address_under() {
+    let set = crate::testing::stand_set().unwrap();
+    assert_eq!(
+        set.address_key(&crate::testing::surface_kind()),
+        Some("address")
+    );
+    let unknown = a2m_core::SurfaceKind::new("nothing_registers_this").unwrap();
+    assert_eq!(set.address_key(&unknown), None);
+    assert_eq!(CompilerSet::kernel_only().address_key(&unknown), None);
+    // An address of blanks states no address.
+    let problems = problems_of(&Case::Edit(
+        "target.yaml",
+        "    address: \"https://app.example.com\"\n",
+        "    address: \" \"\n",
+    ));
+    let problem = problems
+        .find("kernel.missing_field")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("does not state its address"), "{problem}");
 }

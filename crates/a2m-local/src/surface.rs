@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use a2m_actions::{
     ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, BoxFuture, MAY_NOT_BE_READ_BACK,
-    PersonActAsk, PersonActId, PersonSurface, PresenceAsk, PresenceProof, PresenceReport,
+    NOW_CANNOT_BE_READ, PersonActAsk, PersonActId, PersonSurface, PresenceAsk, PresenceProof, PresenceReport,
     PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
@@ -426,13 +426,13 @@ fn once_of(body: &Bytes) -> Option<&str> {
 
 /// A waiting change as the page shows it: what the desk read back from
 /// the stored diff, and nothing rebuilt.
-struct Change {
+pub(crate) struct Change {
     /// The first reading: the tool, the target, the counts.
-    head: ApprovalPreview,
+    pub(crate) head: ApprovalPreview,
     /// The records, in the order the run would write them.
-    records: Vec<PreviewRecord>,
+    pub(crate) records: Vec<PreviewRecord>,
     /// Whether these are all the records of the change.
-    whole: bool,
+    pub(crate) whole: bool,
 }
 
 /// Reads the change `run` waits with, record by record, and only if it is
@@ -462,18 +462,26 @@ async fn read_change(desk: &ApprovalDesk, run: RunId, diff_hash: Digest) -> Opti
 
 /// The change as markup. Every value in it comes from a system or a
 /// caller, and is placed as text.
-fn change_html(change: &Change) -> String {
+pub(crate) fn change_html(change: &Change) -> String {
     use std::fmt::Write as _;
     let head = &change.head;
     let mut out = String::new();
     let _ = write!(
         out,
-        "<p>Target <code>{}</code>, environment <code>{}</code>. {} to create, {} to change, {} already as intended: {} records in all.</p>",
+        "<p>Target <code>{}</code>, environment <code>{}</code>. {} to create, {} to change, {} already as intended{}: {} records in all.</p>",
         escape(&head.target),
         escape(&head.environment),
         head.create,
         head.update,
         head.unchanged,
+        if head.write == 0 {
+            String::new()
+        } else {
+            format!(
+                ", {} to write, whose current values cannot be read",
+                head.write
+            )
+        },
         head.total,
     );
     if !change.whole {
@@ -493,12 +501,23 @@ fn change_html(change: &Change) -> String {
             escape(record.action),
         );
         out.push_str(&written_by_html(record));
+        out.push_str(&version_shown::notices_html(&record.notices));
         out.push_str("<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>");
         for field in &record.fields {
-            let now = field.current.as_ref().map_or_else(
-                || "<em>does not exist</em>".to_owned(),
-                |current| escape(current),
-            );
+            // What the record holds now: its value; the product's own
+            // words, set apart, where the binding cannot read it, never as
+            // a value and never as "does not exist" (decision 0196).
+            let now = if field.now_cannot_be_read {
+                format!(
+                    "<em class=\"product\">This program's words: {}</em>",
+                    escape(NOW_CANNOT_BE_READ)
+                )
+            } else {
+                field.current.as_ref().map_or_else(
+                    || "<em>does not exist</em>".to_owned(),
+                    |current| escape(current),
+                )
+            };
             let _ = write!(
                 out,
                 "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}{}</td></tr>",
@@ -591,84 +610,77 @@ pub(crate) fn written_by_html(record: &PreviewRecord) -> String {
 }
 
 /// What a page says of a version's surfaces and of a record's surface:
-/// each surface's kind and where it leads, each notice a pack registers
-/// for it in the notice's fixed words, and every lint warning of the
-/// version with its code and words (decisions 0193 and 0194; AC-1 of the
-/// third audit). The action registry fills the fields these read
-/// (`PreviewRecord::notices`, `PersonActAsk::surfaces`, and
-/// `PersonActAsk::warnings`); until it does, the pages have nothing to
-/// hand them, and they are proven against values a test builds.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the action registry's preview fields these print are being added in another crate; the wiring is one line at each page"
-    )
-)]
+/// each surface's kind and where it leads in every environment, each
+/// notice a pack registers for it in the notice's fixed words, and every
+/// lint warning of the version with its code and words (decisions 0193,
+/// 0194, and 0199; AC-1 of the third audit). It prints what the action
+/// registry hands the page (`PreviewRecord::notices`,
+/// `PersonActAsk::surfaces`, and `PersonActAsk::warnings`). Every text may
+/// quote a target file: each is shown with the characters that reorder,
+/// hide, or restyle text written as their escapes, and then escaped for
+/// the page.
 pub(crate) mod version_shown {
     use std::fmt::Write as _;
 
+    use a2m_actions::{ActSurface, ActWarning, PreviewNotice};
+
     use super::escape;
 
-    /// A notice of a surface: its code (`SurfaceNotice::as_str`) and its
-    /// fixed words (`SurfaceNotice::words`).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct NoticeShown<'a> {
-        pub code: &'a str,
-        pub words: &'a str,
-    }
-
-    /// A surface of a version, as the publish page shows it.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) struct SurfaceShown<'a> {
-        pub name: &'a str,
-        pub kind: &'a str,
-        /// Where it leads: its address as the plan holds it.
-        pub address: &'a str,
-        pub notices: Vec<NoticeShown<'a>>,
-    }
-
-    /// A lint warning of the version.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct WarningShown<'a> {
-        pub code: &'a str,
-        pub words: &'a str,
+    /// Text from a target file, as the page places it: every character
+    /// that can reorder or hide what a person reads written as its escape,
+    /// so an address reads as it is, then escaped as markup.
+    fn shown(text: &str) -> String {
+        escape(&a2m_core::said_neutral(text))
     }
 
     /// The notices of a record's surfaces, beside the record, each in its
     /// own strong sentence. Nothing for a record whose surfaces carry none.
-    pub(crate) fn notices_html(notices: &[NoticeShown<'_>]) -> String {
+    pub(crate) fn notices_html(notices: &[PreviewNotice]) -> String {
         let mut out = String::new();
         for notice in notices {
             let _ = write!(
                 out,
                 "<p class=\"notice\"><strong>{}</strong> (<code>{}</code>)</p>",
-                escape(notice.words),
-                escape(notice.code),
+                shown(notice.words),
+                shown(notice.code),
             );
         }
         out
     }
 
     /// The surfaces of a version and its lint warnings, for the page a
-    /// person publishes from. Every surface is listed with its kind and
-    /// address, so a person sees where each leads, not only its name.
-    pub(crate) fn version_html(
-        surfaces: &[SurfaceShown<'_>],
-        warnings: &[WarningShown<'_>],
-    ) -> String {
+    /// person publishes from. Every surface is listed with its kind and its
+    /// address in each environment, named, since a version runs against
+    /// each, so a person sees where each leads, not only its name.
+    pub(crate) fn version_html(surfaces: &[ActSurface], warnings: &[ActWarning]) -> String {
         let mut out = String::new();
         if !surfaces.is_empty() {
             out.push_str("<h2>Where it leads</h2><ul>");
             for surface in surfaces {
                 let _ = write!(
                     out,
-                    "<li><code>{}</code>, a surface of the kind <code>{}</code>, leads to <code>{}</code>.{}</li>",
-                    escape(surface.name),
-                    escape(surface.kind),
-                    escape(surface.address),
-                    notices_html(&surface.notices),
+                    "<li><code>{}</code>, a surface of the kind <code>{}</code>, leads to ",
+                    shown(&surface.name),
+                    shown(&surface.kind),
                 );
+                if surface.addresses.is_empty() {
+                    let _ = write!(out, "<code>{}</code>.", shown(&surface.address));
+                } else {
+                    let at: Vec<String> = surface
+                        .addresses
+                        .iter()
+                        .map(|(environment, address)| {
+                            format!(
+                                "<code>{}</code> in the environment <code>{}</code>",
+                                shown(address),
+                                shown(environment),
+                            )
+                        })
+                        .collect();
+                    let _ = write!(out, "{}.", at.join("; "));
+                }
+                out.push_str(&notices_html(&surface.notices));
+                out.push_str("</li>");
             }
             out.push_str("</ul>");
         }
@@ -678,8 +690,8 @@ pub(crate) mod version_shown {
                 let _ = write!(
                     out,
                     "<li><code>{}</code>: {}</li>",
-                    escape(warning.code),
-                    escape(warning.words),
+                    shown(&warning.code),
+                    shown(&warning.message),
                 );
             }
             out.push_str("</ul>");
@@ -1081,6 +1093,7 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
         }
         details.push_str("</ul>");
     }
+    details.push_str(&version_shown::version_html(&ask.surfaces, &ask.warnings));
     (input, details)
 }
 

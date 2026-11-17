@@ -311,35 +311,42 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     world.kernel.close(CloseReason::Asked).await;
 }
 
-/// The upsert ended on the system's acknowledgement, as
-/// `acknowledged_upsert` makes it, and found by no key. An acknowledgement
-/// stands only where nothing could read the record back by its key
-/// (decision 0193): a keyed binding with no read-back could not be looked
-/// up for its preview either, so the record here is one that cannot be
-/// found again, and its preview is a `create`.
-fn acknowledged_keyless(plan: &mut a2m_core::Plan) {
-    super::world::engine::acknowledged_upsert(plan);
-    for operation in &mut plan.operations {
-        if operation.name.as_str() == ITEM_UPSERT {
-            operation.identity.strategy = a2m_core::IdentityStrategy::None;
-            operation.identity.key.clear();
-        }
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// The upsert ended on the system's acknowledgement, as
+/// `acknowledged_upsert` makes it: keyed, with no read-back step, so its
+/// binding has nothing to read the record with. Its preview is a `write`
+/// (decision 0196): the page counts it apart and shows the program's own
+/// words where the record's current values would stand, never a value and
+/// never "does not exist".
 async fn a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_approved() {
     let prompt = TestPrompt::answering(PromptAnswer::Dismissed);
-    let world = World::ready_with(Arc::clone(&prompt) as _, LONG, acknowledged_keyless).await;
+    let world = World::ready_with(
+        Arc::clone(&prompt) as _,
+        LONG,
+        super::world::engine::acknowledged_upsert,
+    )
+    .await;
     let http = http();
     let rested = rest(&world).await;
     let (text, _) = open(&http, &rested.link).await;
     // Beside the record, after its heading and before its fields, in the
     // words the desk gives.
     let said = format!(
-        "</h3><p><strong>This write is {NOT_READ_BACK}.</strong> Nothing will read it back or compare it after it is sent.</p><p>Written by the binding <code>app_json</code>, and by no other: it is accepted by the system and not read back: nothing compares it after it is sent.</p><table>"
+        ": write</h3><p><strong>This write is {NOT_READ_BACK}.</strong> Nothing will read it back or compare it after it is sent.</p><p>Written by the binding <code>app_json</code>, and by no other: it is accepted by the system and not read back: nothing compares it after it is sent.</p><table>"
     );
     assert!(text.contains(&said), "{text}");
+    // Counted apart from the creates and changes.
+    assert!(
+        text.contains("0 to create, 0 to change, 0 already as intended, 1 to write, whose current values cannot be read: 1 records in all."),
+        "{text}"
+    );
+    // Every field's Now column holds the program's words, set apart.
+    let words = format!(
+        "<td><em class=\"product\">This program's words: {}</em></td>",
+        a2m_actions::NOW_CANNOT_BE_READ
+    );
+    assert_eq!(text.matches(&words).count(), 3, "{text}");
+    assert!(!text.contains("does not exist"), "{text}");
     assert_eq!(prompt.asked(), 0);
     world.kernel.close(CloseReason::Asked).await;
 }
@@ -1062,6 +1069,7 @@ fn a_record_whose_binding_is_chosen_later_shows_every_binding_it_could_take_and_
                 evidence: "response",
             },
         ],
+        notices: Vec::new(),
     };
     let text = crate::surface::written_by_html(&record);
     assert_eq!(
@@ -1077,42 +1085,54 @@ fn a_record_whose_binding_is_chosen_later_shows_every_binding_it_could_take_and_
 }
 
 /// The page a person publishes from names each surface's kind and where it
-/// leads, prints each surface notice in its fixed words, and every lint
-/// warning with its code; a record's notices stand beside it. Every word
-/// is escaped (AC-1, decisions 0193 and 0194). The values are built here,
-/// as the action registry will hand them.
+/// leads in every environment, prints each surface notice in its fixed
+/// words, and every lint warning with its code; a record's notices stand
+/// beside it. Every word is escaped, and a character that reorders text is
+/// shown as its escape (AC-1, decisions 0193, 0194, and 0199). The values
+/// are the action registry's own types.
 #[test]
 fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning() {
-    use crate::surface::version_shown::{
-        NoticeShown, SurfaceShown, WarningShown, notices_html, version_html,
-    };
-    let notice = NoticeShown {
+    use crate::surface::version_shown::{notices_html, version_html};
+    use a2m_actions::{ActSurface, ActWarning, PreviewNotice};
+    let notice = PreviewNotice {
         code: a2m_core::SurfaceNotice::UnencryptedCredentials.as_str(),
         words: a2m_core::SurfaceNotice::UnencryptedCredentials.words(),
     };
     let surfaces = [
-        SurfaceShown {
-            name: "api",
-            kind: "http",
-            address: "http://203.0.113.7/<b>orders</b>",
+        ActSurface {
+            name: "api".to_owned(),
+            kind: "http".to_owned(),
+            address: "http://203.0.113.7/<b>orders</b>".to_owned(),
+            addresses: vec![
+                (
+                    "test".to_owned(),
+                    "http://203.0.113.7/<b>orders</b>".to_owned(),
+                ),
+                (
+                    "live".to_owned(),
+                    "https://orders.example.com/\u{202e}gro".to_owned(),
+                ),
+            ],
             notices: vec![notice],
         },
-        SurfaceShown {
-            name: "files",
-            kind: "file",
-            address: "prices",
+        ActSurface {
+            name: "files".to_owned(),
+            kind: "file".to_owned(),
+            address: "prices".to_owned(),
+            addresses: Vec::new(),
             notices: Vec::new(),
         },
     ];
-    let warnings = [WarningShown {
-        code: "http.unencrypted_credentials",
-        words: "The surface `api` accepts \"credentials\" over <http>.",
+    let warnings = [ActWarning {
+        code: "http.unencrypted_credentials".to_owned(),
+        message: "target.yaml: The surface `api` accepts \"credentials\" over <http>.".to_owned(),
     }];
     let page = version_html(&surfaces, &warnings);
     assert!(
-        page.contains("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code>."),
+        page.contains("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code> in the environment <code>test</code>; <code>https://orders.example.com/\\u{202e}gro</code> in the environment <code>live</code>."),
         "{page}"
     );
+    assert!(!page.contains('\u{202e}'), "{page}");
     assert!(
         page.contains("<code>files</code>, a surface of the kind <code>file</code>, leads to <code>prices</code>.</li>"),
         "{page}"
@@ -1126,7 +1146,7 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
     );
     assert_eq!(page.matches("class=\"notice\"").count(), 1, "{page}");
     assert!(
-        page.contains("<code>http.unencrypted_credentials</code>: The surface `api` accepts &quot;credentials&quot; over &lt;http&gt;."),
+        page.contains("<code>http.unencrypted_credentials</code>: target.yaml: The surface `api` accepts &quot;credentials&quot; over &lt;http&gt;."),
         "{page}"
     );
     assert!(!page.contains("<b>") && !page.contains("<http>"), "{page}");
@@ -1135,4 +1155,68 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
     assert!(notices_html(&[notice]).contains(notice.words));
     // Nothing to show is nothing at all.
     assert_eq!(version_html(&[], &[]), "");
+}
+
+/// A record whose surface carries a notice shows it beside the record,
+/// after the words on how it is written and before its fields, escaped;
+/// a record whose surfaces carry none shows nothing in its place.
+#[test]
+fn a_records_notices_stand_beside_it_before_its_fields() {
+    use a2m_actions::{ApprovalPreview, PreviewBinding, PreviewNotice, PreviewRecord};
+    let notice = PreviewNotice {
+        code: a2m_core::SurfaceNotice::UnencryptedCredentials.as_str(),
+        words: a2m_core::SurfaceNotice::UnencryptedCredentials.words(),
+    };
+    let record = |notices: Vec<PreviewNotice>| PreviewRecord {
+        operation: "example_item_upsert".to_owned(),
+        key: "A-100 / L-1".to_owned(),
+        action: "create",
+        bindings: vec![PreviewBinding {
+            mode: "app_json".to_owned(),
+            evidence: "read_back",
+        }],
+        notices,
+        ..PreviewRecord::default()
+    };
+    let change = crate::surface::Change {
+        head: ApprovalPreview {
+            run: RunId::from_bytes([7; 16]),
+            diff_hash: Digest::of(b"a change"),
+            tool: "example_item_upsert".to_owned(),
+            target: "example".to_owned(),
+            environment: "test".to_owned(),
+            create: 2,
+            update: 0,
+            unchanged: 0,
+            write: 0,
+            total: 2,
+            offset: 0,
+            records: Vec::new(),
+        },
+        records: vec![record(vec![notice]), record(Vec::new())],
+        whole: true,
+    };
+    let page = crate::surface::change_html(&change);
+    assert!(
+        page.contains(&format!(
+            "and by no other: it is read back and compared with what was intended after it is sent.</p><p class=\"notice\"><strong>{}</strong> (<code>unencrypted_credentials</code>)</p><table>",
+            escape_like_page(notice.words)
+        )),
+        "{page}"
+    );
+    assert_eq!(page.matches("class=\"notice\"").count(), 1, "{page}");
+    // No `write` records: no words on them in the counts.
+    assert!(
+        page.contains("2 to create, 0 to change, 0 already as intended: 2 records in all."),
+        "{page}"
+    );
+}
+
+/// The page's escaping of fixed words, for the assertion above.
+fn escape_like_page(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }

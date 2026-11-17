@@ -1,0 +1,7 @@
+# The same window, ready only once its tracking number has appeared.
+screen: tracking
+surface: desk
+reach: {window: {role: frame, title: "Example order"}}
+ready: {text: {locate: {role: entry, name: "Tracking"}, contains: "TRK-"}}
+fields:
+  tracking: {type: untrusted_text, control: text, locate: [{role: entry, name: "Tracking"}]}

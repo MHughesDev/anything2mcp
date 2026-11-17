@@ -253,7 +253,11 @@ fn lock(model: &Shared) -> std::sync::MutexGuard<'_, Model> {
 }
 
 fn asked(model: &Shared, member: &str) {
-    *lock(model).truth.asked.entry(member.to_owned()).or_default() += 1;
+    *lock(model)
+        .truth
+        .asked
+        .entry(member.to_owned())
+        .or_default() += 1;
 }
 
 type Address = (String, OwnedObjectPath);
@@ -335,7 +339,12 @@ impl Accessible {
             .ok()
             .and_then(|at| self.node().children.get(at).copied())
             .map_or_else(
-                || ("".to_owned(), OwnedObjectPath::try_from("/org/a11y/atspi/null").unwrap_or_default()),
+                || {
+                    (
+                        "".to_owned(),
+                        OwnedObjectPath::try_from("/org/a11y/atspi/null").unwrap_or_default(),
+                    )
+                },
                 |child| address(&self.bus, child),
             )
     }
@@ -345,7 +354,12 @@ impl Accessible {
         let model = lock(&self.model);
         model.nodes[self.id]
             .parent
-            .and_then(|parent| model.nodes[parent].children.iter().position(|c| *c == self.id))
+            .and_then(|parent| {
+                model.nodes[parent]
+                    .children
+                    .iter()
+                    .position(|c| *c == self.id)
+            })
             .and_then(|at| i32::try_from(at).ok())
             .unwrap_or(-1)
     }
@@ -357,13 +371,19 @@ impl Accessible {
         if !node.labelled_by.is_empty() {
             set.push((
                 LABELLED_BY,
-                node.labelled_by.iter().map(|id| address(&self.bus, *id)).collect(),
+                node.labelled_by
+                    .iter()
+                    .map(|id| address(&self.bus, *id))
+                    .collect(),
             ));
         }
         if !node.label_for.is_empty() {
             set.push((
                 LABEL_FOR,
-                node.label_for.iter().map(|id| address(&self.bus, *id)).collect(),
+                node.label_for
+                    .iter()
+                    .map(|id| address(&self.bus, *id))
+                    .collect(),
             ));
         }
         set
@@ -524,7 +544,11 @@ impl Action {
 
     fn do_action(&self, _index: i32) -> bool {
         let mut model = lock(&self.model);
-        *model.truth.asked.entry("Action.DoAction".to_owned()).or_default() += 1;
+        *model
+            .truth
+            .asked
+            .entry("Action.DoAction".to_owned())
+            .or_default() += 1;
         model.truth.writes += 1;
         true
     }

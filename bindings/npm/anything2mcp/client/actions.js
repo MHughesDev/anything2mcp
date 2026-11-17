@@ -651,8 +651,9 @@ class Actions {
   }
 
   /**
-   * Register a target in the project: makes its folder and a first target file to fill
-   * in. The engine action is `target.add`.
+   * Register a target in the project: makes its folder and a first target file, with
+   * one surface where an address and its kind are given. The engine action is
+   * `target.add`.
    */
   targetAdd(input, options = {}) {
     return this.call("target.add", input, options);

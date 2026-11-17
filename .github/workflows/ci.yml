@@ -323,3 +323,26 @@ jobs:
       - name: Show the server's log
         if: always()
         run: docker logs nats
+
+  desktop:
+    name: The desktop pack on Linux, against its stand
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # A machine without the programs fails each test instead of skipping it.
+      A2M_REQUIRE_DESKTOP: "1"
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # No display is needed: the stand draws nothing. The test starts a
+      # session bus of its own, which starts the accessibility bus on demand.
+      - name: Install the session bus daemon and the accessibility bus and registry
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dbus-daemon at-spi2-core
+      - name: Test the desktop pack against its stand
+        run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop

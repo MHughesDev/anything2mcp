@@ -1,0 +1,147 @@
+# The manifest of the desktop pack. What is not built is not declared: the
+# write half (set, invoke, a commit point, a read-back), the Windows and
+# macOS back ends, keys and clicks, starting an application, the
+# `desktop_probe` discoverer, the lint rules of the design, and every
+# control but `text`. No platform list: the compiler side works on every
+# system, and the driver stops at prepare with `system_not_built` where it
+# has no back end.
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "desktop"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+# Reads only (decision 0198). `snapshot` is sent by the discoverer only; no
+# lowering gives it. No step saves.
+[[modes]]
+name = "desktop"
+archetype = "interface"
+verbs = ["read", "list"]
+steps = ["goto", "wait", "read", "snapshot"]
+commit_steps = []
+rank = 60
+session_reads = 1
+session_writes = 1
+exclusive = "none"
+
+[[surface_kinds]]
+name = "desktop"
+archetype = "interface"
+session = false
+
+[points]
+driver = ["desktop"]
+discoverer = ["desktop_snapshot"]
+
+[[discoverers]]
+name = "desktop_snapshot"
+archetype = "interface"
+surface_kinds = ["desktop"]
+kinds = ["window"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 1048576, depth = 32 }
+
+[[file_kinds]]
+name = "screen"
+directory = "screens/"
+surface_kinds = ["desktop"]
+
+[[finding_kinds]]
+name = "window"
+surface_kinds = ["desktop"]
+
+# From a window's shape: a screen and a `get` read of the values it labels,
+# and a screen and a `list` read of each table it names. Never an action.
+[[drafting_rules]]
+finding_kind = "window"
+file_kind = "screen"
+
+[[drafting_rules]]
+finding_kind = "window"
+file_kind = "operation"
+
+[[controls]]
+name = "text"
+
+[[failure_codes]]
+class = "drift"
+code = "locator_not_found"
+
+[[failure_codes]]
+class = "drift"
+code = "locator_ambiguous"
+
+[[failure_codes]]
+class = "drift"
+code = "fingerprint_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_page"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "application_ambiguous"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "application_not_proven"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "read_too_large"
+
+[[failure_codes]]
+class = "policy"
+code = "password_read_refused"
+
+[[failure_codes]]
+class = "busy"
+code = "application_not_running"
+
+[[failure_codes]]
+class = "busy"
+code = "accessibility_off"
+
+[[failure_codes]]
+class = "busy"
+code = "system_not_built"
+
+[[failure_codes]]
+class = "input"
+code = "step_not_usable"
+
+# It reads a running application a person started and the target names, on
+# the person's screen. It starts nothing and reaches no network.
+[effects]
+attach = true
+screen = true
+network = "none"
+
+[[settings]]
+key = "max_nodes"
+type = "int"
+default = 2000
+min = 10
+max = 20000
+doc = "The most elements one walk of a window may read. A window that holds more is not read."
+
+[[settings]]
+key = "max_depth"
+type = "int"
+default = 32
+min = 2
+max = 128
+doc = "The deepest element below a window one walk may read."
+
+[[settings]]
+key = "max_read_chars"
+type = "int"
+default = 65536
+min = 64
+max = 1048576
+doc = "The longest text one read of an element may return, in characters."

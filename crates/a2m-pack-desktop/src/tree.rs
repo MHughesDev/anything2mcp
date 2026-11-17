@@ -121,8 +121,8 @@ impl Tree {
     /// The name a snapshot may keep for an element: the window's shape,
     /// never a value it shows.
     pub(crate) fn shape_name(node: &Node) -> Option<&str> {
-        let by_shape = roles::NAMED_BY_SHAPE.contains(&node.role)
-            || (node.role == "label" && node.labels);
+        let by_shape =
+            roles::NAMED_BY_SHAPE.contains(&node.role) || (node.role == "label" && node.labels);
         (by_shape && !node.name.is_empty()).then_some(node.name.as_str())
     }
 }

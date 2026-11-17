@@ -174,7 +174,7 @@ mod os {
                 clippy::useless_conversion,
                 reason = "the width of these fields differs between operating systems"
             )]
-            Ok((u64::from(found.st_dev), u128::from(found.st_ino)))
+            Ok((device(found.st_dev), u128::from(found.st_ino)))
         }
 
         /// Writes the folder's list of names to the disk, so that a name
@@ -191,7 +191,21 @@ mod os {
             clippy::useless_conversion,
             reason = "the width of these fields differs between operating systems"
         )]
-        Ok((u64::from(found.st_dev), u128::from(found.st_ino)))
+        Ok((device(found.st_dev), u128::from(found.st_ino)))
+    }
+
+    /// A device number at one width on every system. It is unsigned and 64
+    /// bits wide on Linux and signed and 32 bits wide on macOS; only
+    /// equality is ever asked of it, so its bits are kept as they are.
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::unnecessary_cast,
+        trivial_numeric_casts,
+        reason = "the type of a device number differs between operating systems"
+    )]
+    fn device(raw: rustix::fs::Dev) -> u64 {
+        raw as u64
     }
 
     impl Folder {

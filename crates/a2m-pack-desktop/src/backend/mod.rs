@@ -13,14 +13,12 @@
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Look, Watch};
+pub(crate) use linux::Look;
 
 #[cfg(not(target_os = "linux"))]
 mod none;
 #[cfg(not(target_os = "linux"))]
-pub(crate) use none::{Look, Watch};
-
-use std::time::Duration;
+pub(crate) use none::Look;
 
 use a2m_core::{Failure, FailureClass};
 
@@ -71,22 +69,30 @@ pub(crate) struct Window {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AxError {
     /// No running application is the program and the name.
+    #[cfg(target_os = "linux")]
     NotRunning,
     /// Several are.
+    #[cfg(target_os = "linux")]
     Ambiguous(usize),
     /// The session's accessibility switch is off.
+    #[cfg(target_os = "linux")]
     AccessibilityOff,
     /// The program's digest is not the one stated.
+    #[cfg(target_os = "linux")]
     NotProven,
     /// A control that holds a secret was asked for its value.
+    #[cfg(target_os = "linux")]
     Secret,
     /// A text longer than the bound.
+    #[cfg(target_os = "linux")]
     TooLarge,
     /// The bus, or the application, went away or answered with an error.
+    #[cfg(target_os = "linux")]
     Lost(String),
     /// The deadline passed.
     Timeout,
     /// This system has no back end.
+    #[cfg(not(target_os = "linux"))]
     NotBuilt,
 }
 
@@ -94,16 +100,21 @@ impl AxError {
     /// The failure the driver reports, with no value of the application in
     /// it.
     pub(crate) fn failure(&self, program: &str) -> Failure {
+        #[cfg(target_os = "linux")]
         let program = codes::shown(program);
+        #[cfg(not(target_os = "linux"))]
+        let _ = program;
         match self {
+            #[cfg(target_os = "linux")]
             Self::NotRunning => codes::failure(
                 FailureClass::Busy,
                 codes::APPLICATION_NOT_RUNNING,
                 format!(
-                    "No running application in this session is the program `{program}` with the name the surface states. The desktop pack starts nothing."
+                    "No application in this session is the program `{program}` with the name the surface states and publishes an accessibility tree. The desktop pack starts nothing."
                 ),
                 "Start the application as you normally do, then run the tool again.",
             ),
+            #[cfg(target_os = "linux")]
             Self::Ambiguous(count) => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_AMBIGUOUS,
@@ -112,12 +123,14 @@ impl AxError {
                 ),
                 "Close the other copies of the application, then run the tool again.",
             ),
+            #[cfg(target_os = "linux")]
             Self::AccessibilityOff => codes::failure(
                 FailureClass::Busy,
                 codes::ACCESSIBILITY_OFF,
                 "The session's accessibility setting is off, and the application publishes no accessibility tree while it is. The pack changes no setting.".to_owned(),
                 "Turn on the accessibility setting of your desktop (the toolkit accessibility switch), restart the application, and run the tool again.",
             ),
+            #[cfg(target_os = "linux")]
             Self::NotProven => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::APPLICATION_NOT_PROVEN,
@@ -126,18 +139,21 @@ impl AxError {
                 ),
                 "Review the program that is installed, then state its digest in the surface, or reinstall the reviewed one.",
             ),
+            #[cfg(target_os = "linux")]
             Self::Secret => codes::failure(
                 FailureClass::Policy,
                 codes::PASSWORD_READ_REFUSED,
                 "The element is a control that holds a secret; its value is never read.".to_owned(),
                 "Read another field. A secret is never an output of a tool.",
             ),
+            #[cfg(target_os = "linux")]
             Self::TooLarge => codes::failure(
                 FailureClass::UnknownVariant,
                 codes::READ_TOO_LARGE,
                 "A value of the window is longer than the desktop pack reads.".to_owned(),
                 "Read a field that holds less.",
             ),
+            #[cfg(target_os = "linux")]
             Self::Lost(_) => codes::failure(
                 FailureClass::Transient,
                 a2m_provider::codes::CONNECTION_LOST,
@@ -150,10 +166,8 @@ impl AxError {
                 "The application did not answer in time.".to_owned(),
                 "Run the tool again.",
             ),
+            #[cfg(not(target_os = "linux"))]
             Self::NotBuilt => codes::system_not_built(),
         }
     }
 }
-
-/// The longest one call to the application may take.
-pub(crate) const CALL_LIMIT: Duration = Duration::from_secs(5);

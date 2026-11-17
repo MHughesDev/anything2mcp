@@ -3,23 +3,23 @@
 //! published read tool that an agent calls, and the result is checked
 //! against what the test application holds.
 //!
-//! `init`, the target added, its surface declared, the scout and its
-//! report, the drafts not wanted removed, the read kept given its offline
-//! test recorded and run, its first binding promoted on that evidence, the publish
-//! asked for and carried out by a person on the engine's page, and the
-//! published tool called. Every command is the real program, a thin client
+//! `init`, the target added with its address and the surface's kind, the
+//! scout and its report, the drafts not wanted removed, the read kept given
+//! its offline test recorded and run, its first binding promoted on that
+//! evidence, the publish asked for and carried out by a person on the
+//! engine's page, and the published tool called. No file is written by
+//! hand. Every command is the real program, a thin client
 //! of one served engine. The engine is the same `LocalEngine` that `serve`
 //! starts, run in this process because the program ships no presence prompt
 //! a test can pass; the person's press goes through its page, as in
 //! `local_engine.rs`.
 //!
-//! The offline test and its fixture are recorded by `fixture.record` from
-//! one real read, every value scrubbed by rule (decision 0196). One hand
-//! step is left, and asserted where it is: the target file's surface and
-//! test environment are written by the developer, because `target.add`
-//! cannot yet ask a pack how a surface of its kind is stated from an
-//! address. The whole flow is timed; the target is a first tool in under
-//! ten minutes. A second test scouts the same application with an
+//! The target file's surface and test environment are written by
+//! `target.add`, which asks the compiler set under which key a surface of
+//! the kind states its address (decision 0199). The offline test and its
+//! fixture are recorded by `fixture.record` from one real read, every value
+//! scrubbed by rule (decision 0196). The whole flow is timed; the target is
+//! a first tool in under ten minutes. A second test scouts the same application with an
 //! engine that runs inside each command.
 
 #![allow(
@@ -51,6 +51,10 @@ const PROVEN: [&str; 5] = [
     "example_orders_totals_get",
     "example_orders_delivery_get",
 ];
+
+/// The kind of the test application's surface, as the developer names it
+/// to `target add`: never guessed from the address.
+const SURFACE_KIND: &str = "http";
 
 /// The read this developer makes usable, tests, and publishes.
 const READ: &str = "example_api_orders_get";
@@ -158,28 +162,43 @@ impl Desk {
         object
     }
 
-    /// Writes one draft file, through the command face, and checks that it
-    /// was taken.
-    async fn write(&self, file: &str, content: &str) {
-        let written = self
+    /// Adds the target `example` with the test application's address and
+    /// the kind of its surface, and checks the file it wrote.
+    async fn add(&self, address: &str) -> Json {
+        let added = self
             .ok(&[
-                "draft",
-                "write",
+                "target",
+                "add",
                 "example",
-                "--file",
-                file,
-                "--content",
-                content,
+                "--address",
+                address,
+                "--kind",
+                SURFACE_KIND,
             ])
             .await;
-        assert_eq!(written["result"]["written"], true, "{file}: {written}");
+        assert_eq!(added["next"]["action"], "scout.run", "{added}");
+        let written = std::fs::read_to_string(
+            self.project
+                .path()
+                .join("targets")
+                .join("example")
+                .join("target.yaml"),
+        )
+        .unwrap();
+        assert!(
+            written.contains(&format!(
+                "surfaces:\n  http:\n    kind: http\n    base: \"{address}\"\nenvironments:\n  test:\n    kind: test\ndefault_environment: test\n"
+            )),
+            "{written}"
+        );
+        added
     }
 
     /// Asks to publish, as the developer's agent does, and carries the
     /// publish out as the person: the page is read, Carry out is pressed
     /// from the page's own origin, and the presence prompt is passed, for
-    /// the `presses`-th time.
-    async fn publish_as_a_person(&self, prompt: &Passed, version: &str, presses: u32) {
+    /// the `presses`-th time. The page says the surface leads to `address`.
+    async fn publish_as_a_person(&self, prompt: &Passed, version: &str, presses: u32, address: &str) {
         let (code, asked) = self
             .run(&["publish", "example", "--version", version])
             .await;
@@ -195,6 +214,16 @@ impl Desk {
         let text = page.text().await.unwrap();
         assert!(
             text.contains("version.publish") && text.contains(READ),
+            "{text}"
+        );
+        // The page says where the version's surface leads, in each
+        // environment, by name, as the plan holds the address (decision
+        // 0199).
+        assert!(
+            text.contains(&format!(
+                "<h2>Where it leads</h2><ul><li><code>http</code>, a surface of the kind <code>http</code>, leads to <code>{}</code> in the environment <code>test</code>;",
+                address.trim_end_matches('/')
+            )),
             "{text}"
         );
         // The page names the binding that acts for the first time in this
@@ -243,14 +272,6 @@ impl Desk {
         }
         scouted
     }
-}
-
-/// The target file a developer writes once `target add` has made it: the
-/// one surface, the test application's address, and a test environment.
-fn target_file(address: &str) -> String {
-    format!(
-        "schema_version: 1\ntarget: example\ntitle: Example order entry\nsurfaces:\n  api:\n    kind: http\n    base: \"{address}\"\nenvironments:\n  test:\n    kind: test\ndefault_environment: test\n"
-    )
 }
 
 /// The names of the scout's tried reads that were proven, or not.
@@ -356,12 +377,11 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         .unwrap();
     let serving = tokio::spawn(local.serve());
 
-    // 2. The target is added, and its surface declared: nothing else.
-    let added = desk
-        .ok(&["target", "add", "example", "--address", &app.url("")])
-        .await;
+    // 2. The target is added with the application's address and the kind
+    // of its surface: the target file declares that one surface, under the
+    // key its pack states, and a test environment. Nothing else.
+    let added = desk.add(&app.url("")).await;
     assert_eq!(added["result"]["folder"], "targets/example", "{added}");
-    desk.write("target.yaml", &target_file(&app.url(""))).await;
 
     // 3. The scout and its report. It observes the surface through the
     // surface's own mode, drafts by the packs' rules, and tries every
@@ -506,7 +526,8 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // person on the engine's page; the page names the binding that acts
     // for the first time; the person presses Carry out and passes the
     // presence prompt.
-    desk.publish_as_a_person(&prompt, "1.0.0", 1).await;
+    desk.publish_as_a_person(&prompt, "1.0.0", 1, &app.url(""))
+        .await;
     // 8. The published tool, called by an agent, reads what the
     // application holds.
     let called = desk.ok(&["call", READ, "--input", ORDER_INPUT]).await;
@@ -545,9 +566,7 @@ async fn a_scout_with_an_engine_inside_each_command_ends_with_its_report() {
     let app = TestApp::start().await.unwrap();
     let desk = Desk::inside();
     desk.ok(&["init"]).await;
-    desk.ok(&["target", "add", "example", "--address", &app.url("")])
-        .await;
-    desk.write("target.yaml", &target_file(&app.url(""))).await;
+    desk.add(&app.url("")).await;
     // No wait between trials: each command makes one trial at least, ends,
     // and the next command, a new engine, continues the same scout.
     let first = desk
