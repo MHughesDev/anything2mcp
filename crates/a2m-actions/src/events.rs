@@ -78,7 +78,58 @@ impl RunEvents {
     }
 }
 
+/// The work this engine has in hand, for whoever decides whether it may
+/// stop for want of use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunsInHand {
+    /// Jobs of the scheduler that are waiting or in a runner's hands: runs
+    /// that are queued or being worked on, reconciles included.
+    pub working: u64,
+    /// Runs that rest until a person approves, signs in, or answers.
+    pub waiting_for_person: u64,
+}
+
+impl RunsInHand {
+    /// Whether anything is in hand.
+    #[must_use]
+    pub const fn any(&self) -> bool {
+        self.working > 0 || self.waiting_for_person > 0
+    }
+}
+
 impl Kernel {
+    /// How much work the engine has in hand: the scheduler's unfinished
+    /// jobs, and the runs of this installation that rest for a person. One
+    /// read of the store, answered from indexes. A run that stopped and
+    /// can be resumed is not in hand: nothing happens to it until someone
+    /// resumes it.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the store is not open; the store's
+    /// failures.
+    pub async fn runs_in_hand(&self) -> Result<RunsInHand, Failure> {
+        let workspace = self.installation()?.workspace;
+        self.store()?
+            .read(move |tx| {
+                let working = Scheduler::unfinished_jobs(tx)?;
+                let mut waiting_for_person = 0_u64;
+                for state in [
+                    RunState::NeedsApproval,
+                    RunState::NeedsLogin,
+                    RunState::NeedsInput,
+                ] {
+                    waiting_for_person = waiting_for_person
+                        .saturating_add(tx.ledger().count_runs(&workspace, state)?);
+                }
+                Ok(RunsInHand {
+                    working,
+                    waiting_for_person,
+                })
+            })
+            .await
+    }
+
     /// The events of `run` with a number above `after`, in order, at most
     /// `limit` and never more than [`EVENTS_PAGE`], redacted like every
     /// result. Only for a run the caller started.

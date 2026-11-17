@@ -188,13 +188,7 @@ async fn given_source(call: &Call, found: &FoundTool) -> Result<Option<GivenSour
             "Give `source_file` or `source_rows`, not both.",
         )),
         (Some(_), Some(path), None) => {
-            let folder = call.project.as_ref().ok_or_else(|| {
-                codes::input(
-                    codes::PATH_NOT_ALLOWED,
-                    "A source file is read from a project folder, and the call names none.",
-                    "Run the command inside the project folder, or pass `--project` with the folder's full path.",
-                )
-            })?;
+            let folder = call.project_folder()?;
             let root = RootName::new("project")?;
             let mut roots = Roots::none();
             roots.add(root.clone(), folder, Access::Read)?;

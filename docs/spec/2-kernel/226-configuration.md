@@ -310,7 +310,8 @@ The settings the built packs declare so far, as their manifests state them. Each
 | `packs.stream.sample_count` | The messages of one channel a discovery looks at, taking none | 5 |
 | `packs.stream.idle_links` | The open connections to one broker kept ready between runs of one session | 2 |
 | `packs.device.reply_within_ms` | How long a reply may take when a map states no pace | 1000 |
-| `packs.device.min_gap_ms` | The least time between two frames when a map states no pace | 50 |
+| `packs.device.min_gap_ms` | The least time between two frames when a map states no pace | 250 |
+| `packs.device.max_frames_per_run` | The most frames one run may send on one link | 100 |
 | `packs.mcp.max_message_bytes` | The bytes of one answer from an upstream server that are read | 4194304 |
 | `packs.mcp.max_tools` | The tools of one upstream server's list that are read | 500 |
 

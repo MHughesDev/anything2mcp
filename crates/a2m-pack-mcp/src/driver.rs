@@ -20,14 +20,72 @@ use serde_json::{Value as Json, json};
 use crate::client::{Client, HttpLink, Limits, Link, Revision, ToolResult};
 use crate::codes::{self, unsent};
 use crate::json::{
-    ToolDefinition, canonical, definition_digest, digest_text, fits, members_from_json,
-    parse_digest, to_json, unchecked_keywords,
+    ToolDefinition, cannot_hold_free_text, canonical, definition_digest, digest_text, fits,
+    from_json, parse_digest, to_json, unchecked_keywords,
 };
 use crate::mapping::{CallPayload, LOCAL_ADDRESS, Mapping, Section, SurfaceFields, ToolEntry};
 use crate::names;
 
+/// What a connection reaches, as the run's own surface states it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum FarEnd {
+    /// A remote server, at the surface's address in the run's environment.
+    Http { address: String },
+    /// A local server program, as the surface declares it.
+    Program {
+        path: String,
+        digest: Option<String>,
+        args: Vec<String>,
+        environment: BTreeMap<String, String>,
+        pass_environment: Vec<String>,
+    },
+}
+
+impl FarEnd {
+    /// The far end the run's surface names, checked against what the run
+    /// may reach. It is worked out at every `prepare`, whether or not a
+    /// connection is open already, so an open connection never stands in
+    /// for a check.
+    fn of(cx: &PrepareContext<'_>, fields: &SurfaceFields) -> Result<Self, StepFailure> {
+        let address = cx.surface.surface.address.as_str();
+        if let Some(program) = fields.program.as_deref() {
+            if address != LOCAL_ADDRESS {
+                return Err(unsent(codes::plan_unreadable(
+                    "a surface with a local server program must have the address `stdio`",
+                )));
+            }
+            return Ok(Self::Program {
+                path: program.to_owned(),
+                digest: fields.digest.clone(),
+                args: fields.args.clone(),
+                environment: fields.environment.clone(),
+                pass_environment: fields.pass_environment.clone(),
+            });
+        }
+        if address.starts_with("https://") {
+            return Err(unsent(codes::tls_not_enabled()));
+        }
+        if !address.starts_with("http://") {
+            return Err(unsent(codes::plan_unreadable(
+                "a surface of the kind `mcp` has an `http://` address, or the address `stdio` with a program",
+            )));
+        }
+        if !cx.destinations.contains(address) {
+            return Err(unsent(codes::not_granted(
+                "The address of the upstream server is not among the addresses this run may reach.",
+            )));
+        }
+        Ok(Self::Http {
+            address: address.to_owned(),
+        })
+    }
+}
+
 /// Which connection: one surface of one target in one environment, for one
-/// session at one epoch of its credentials. Two identities never share one.
+/// session at one epoch of its credentials, to one far end, in one protocol
+/// revision. Two identities never share one, and a plan that names another
+/// address, program, or revision is never served by the connection an
+/// earlier plan opened.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ConnKey {
     target: String,
@@ -36,6 +94,25 @@ struct ConnKey {
     /// The session and the epoch of its credentials; nothing for a surface
     /// with no session.
     session: Option<(String, u64)>,
+    /// The address, or the program with its digest, arguments, and
+    /// environment.
+    far_end: FarEnd,
+    /// The protocol revision the connection speaks.
+    revision: &'static str,
+}
+
+impl ConnKey {
+    /// Whether `other` is a connection of the same surface and session that
+    /// this key replaces: its credentials are of another epoch, or it
+    /// reaches another far end, or it speaks another revision.
+    fn replaces(&self, other: &Self) -> bool {
+        other != self
+            && other.target == self.target
+            && other.environment == self.environment
+            && other.surface == self.surface
+            && other.session.as_ref().map(|(session, _)| session)
+                == self.session.as_ref().map(|(session, _)| session)
+    }
 }
 
 /// One open connection.
@@ -45,6 +122,25 @@ struct Connection {
     program_digest: Option<Digest>,
 }
 
+impl Connection {
+    /// Whether the program that runs is the one `far_end` pins: the digest
+    /// the supervisor measured when it started the program is the digest
+    /// the surface states. True for a remote server, and for a program the
+    /// surface does not pin.
+    fn runs_what(&self, far_end: &FarEnd) -> bool {
+        match (far_end, &self.program_digest) {
+            (
+                FarEnd::Program {
+                    digest: Some(pinned),
+                    ..
+                },
+                Some(running),
+            ) => parse_digest(pinned).as_ref() == Some(running),
+            _ => true,
+        }
+    }
+}
+
 /// The open connections, by surface and identity.
 #[derive(Default)]
 pub(crate) struct Connections {
@@ -52,16 +148,23 @@ pub(crate) struct Connections {
 }
 
 /// The server's tool list as it was last read.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct Listing {
     /// The tools in the order the server lists them.
     order: Vec<String>,
     tools: BTreeMap<String, ToolDefinition>,
+    /// When it was read. It decides only whether the list is read again;
+    /// it is never part of a result.
+    read_at: tokio::time::Instant,
 }
 
 impl Listing {
     fn of(tools: Vec<ToolDefinition>) -> Self {
-        let mut listing = Self::default();
+        let mut listing = Self {
+            order: Vec::new(),
+            tools: BTreeMap::new(),
+            read_at: tokio::time::Instant::now(),
+        };
         for tool in tools {
             if !listing.tools.contains_key(&tool.name) {
                 listing.order.push(tool.name.clone());
@@ -240,8 +343,8 @@ impl McpDriver {
         cx: &PrepareContext<'_>,
         lease: Option<&SessionLease>,
         fields: &SurfaceFields,
+        far_end: &FarEnd,
     ) -> Result<Connection, StepFailure> {
-        let address = cx.surface.surface.address.as_str();
         let mut sink = HeaderSink::default();
         if let Some(lease) = lease {
             lease.apply(&mut sink).map_err(unsent)?;
@@ -251,32 +354,19 @@ impl McpDriver {
                 "use a credential that is not a request header on a connection to an upstream server",
             )));
         }
-        if let Some(program) = fields.program.as_deref() {
-            if address != LOCAL_ADDRESS {
-                return Err(unsent(codes::plan_unreadable(
-                    "a surface with a local server program must have the address `stdio`",
-                )));
+        let address = match far_end {
+            FarEnd::Program { path, .. } => {
+                if !sink.headers.is_empty() {
+                    return Err(unsent(codes::not_built(
+                        "hand a credential to a local server program: the supervisor has no private way to give one to a program on a foreign link",
+                    )));
+                }
+                return self.open_local(cx, fields, path).await;
             }
-            if !sink.headers.is_empty() {
-                return Err(unsent(codes::not_built(
-                    "hand a credential to a local server program: the supervisor has no private way to give one to a program on a foreign link",
-                )));
-            }
-            return self.open_local(cx, fields, program).await;
-        }
-        if address.starts_with("https://") {
-            return Err(unsent(codes::tls_not_enabled()));
-        }
-        if !address.starts_with("http://") {
-            return Err(unsent(codes::plan_unreadable(
-                "a surface of the kind `mcp` has an `http://` address, or the address `stdio` with a program",
-            )));
-        }
-        if !cx.destinations.contains(address) {
-            return Err(unsent(codes::not_granted(
-                "The address of the upstream server is not among the addresses this run may reach.",
-            )));
-        }
+            // `FarEnd::of` checked the address against the run's
+            // destinations.
+            FarEnd::Http { address } => address,
+        };
         let link = HttpLink::new(address, sink.headers, self.limits)?;
         let client = Client::connect(
             Link::Http(link),
@@ -292,8 +382,9 @@ impl McpDriver {
     }
 
     /// The connection for `key`, reused while it lives, opened otherwise.
-    /// Connections of the same session at an older epoch are closed: their
-    /// credentials were replaced.
+    /// A connection of the same surface and session under another key is
+    /// closed, and its program with it: its credentials were replaced, or
+    /// the plan now names another far end or revision.
     async fn connection(
         &self,
         key: &ConnKey,
@@ -302,32 +393,25 @@ impl McpDriver {
         fields: &SurfaceFields,
     ) -> Result<Arc<Connection>, StepFailure> {
         let mut open = self.conns.open.lock().await;
+        let replaced: Vec<ConnKey> = open
+            .keys()
+            .filter(|other| key.replaces(other))
+            .cloned()
+            .collect();
+        for old in replaced {
+            if let Some(conn) = open.remove(&old) {
+                conn.client.close().await;
+            }
+        }
         if let Some(conn) = open.get(key) {
-            if !conn.client.lost() {
+            if !conn.client.lost() && conn.runs_what(&key.far_end) {
                 return Ok(Arc::clone(conn));
             }
             if let Some(dead) = open.remove(key) {
                 dead.client.close().await;
             }
         }
-        let stale: Vec<ConnKey> = open
-            .keys()
-            .filter(|other| {
-                other.target == key.target
-                    && other.environment == key.environment
-                    && other.surface == key.surface
-                    && other.session.as_ref().map(|(session, _)| session)
-                        == key.session.as_ref().map(|(session, _)| session)
-                    && other.session != key.session
-            })
-            .cloned()
-            .collect();
-        for old in stale {
-            if let Some(conn) = open.remove(&old) {
-                conn.client.close().await;
-            }
-        }
-        let conn = Arc::new(self.open(cx, lease, fields).await?);
+        let conn = Arc::new(self.open(cx, lease, fields, &key.far_end).await?);
         open.insert(key.clone(), Arc::clone(&conn));
         Ok(conn)
     }
@@ -428,6 +512,45 @@ fn arguments(entry: &ToolEntry, tool: &str, input: &StepInput<'_>) -> Result<Jso
     Ok(Json::Object(arguments))
 }
 
+/// The members of a structured result that are passed on: the ones the
+/// mapping lists. A member is listed when the entry names it, under `key`,
+/// `records`, or `untrusted_fields`, or when the pinned output schema
+/// declares it as something that cannot hold free text: a number, a truth
+/// value, nothing, or a value from a closed list. Any other member is left
+/// out, so text the server wrote reaches a caller only through a member a
+/// person listed.
+///
+/// `None` when the result does not hold what the mapping names: the member
+/// under `records` is not a list of records, or a member has no exact form.
+fn listed_members(
+    entry: &ToolEntry,
+    schema: Option<&Json>,
+    members: &serde_json::Map<String, Json>,
+) -> Option<Values> {
+    if let Some(list) = entry.records.as_deref() {
+        let records = members.get(list)?.as_array()?;
+        if !records.iter().all(Json::is_object) {
+            return None;
+        }
+    }
+    let properties = schema
+        .and_then(|schema| schema.get("properties"))
+        .and_then(Json::as_object);
+    let mut values = Values::new();
+    for (name, member) in members {
+        let named = entry.key.contains(name)
+            || entry.records.as_deref() == Some(name.as_str())
+            || entry.untrusted_fields.contains(name);
+        let closed = properties
+            .and_then(|properties| properties.get(name))
+            .is_some_and(cannot_hold_free_text);
+        if named || closed {
+            values.insert(name.clone(), from_json(member)?);
+        }
+    }
+    Some(values)
+}
+
 impl McpDriver {
     /// Turns a tool's result into what the step observed.
     fn observe(
@@ -474,25 +597,27 @@ impl McpDriver {
         }
         let mut values = if entry.result == "text" {
             // The tool's own words, under one name. They are untrusted text
-            // and the operation's field type says so.
+            // and the operation's field type says so. Nothing else of the
+            // result is passed on.
             Values::new().with("text", result.texts.join("\n"))
         } else {
-            if let Some(schema) = &definition.output_schema {
-                let fitting = result
-                    .structured
-                    .as_ref()
-                    .is_some_and(|structured| fits(schema, structured).is_ok());
-                if !fitting {
-                    return Err(doubt(codes::schema_mismatch(tool)));
+            let structured = match (&definition.output_schema, &result.structured) {
+                (Some(schema), Some(structured)) if fits(schema, structured).is_ok() => {
+                    Some(structured)
                 }
-            }
-            match &result.structured {
-                None => Values::new(),
-                Some(Json::Object(members)) => {
-                    members_from_json(members).ok_or_else(|| doubt(codes::schema_mismatch(tool)))?
-                }
+                (Some(_), _) => return Err(doubt(codes::schema_mismatch(tool))),
+                // No schema is pinned, so the mapping alone says what the
+                // result holds.
+                (None, structured) => structured.as_ref(),
+            };
+            let none = serde_json::Map::new();
+            let members = match structured {
+                None => &none,
+                Some(Json::Object(members)) => members,
                 Some(_) => return Err(doubt(codes::schema_mismatch(tool))),
-            }
+            };
+            listed_members(entry, definition.output_schema.as_ref(), members)
+                .ok_or_else(|| doubt(codes::schema_mismatch(tool)))?
         };
         // A lookup through a tool that lists records takes the one record
         // in the list.
@@ -509,15 +634,24 @@ impl McpDriver {
                 more => return Err(StepFailure::answered(codes::ambiguous(tool, more.len()))),
             }
         }
+        // The key the mapping says the result holds must be there, each
+        // part text or a whole number.
         let assigned_key = if entry.key.is_empty() {
             None
         } else {
-            entry
+            let key = entry
                 .key
                 .iter()
-                .map(|part| values.get(part).cloned())
+                .map(|part| {
+                    values
+                        .get(part)
+                        .filter(|value| matches!(value, Value::Text(_) | Value::Int(_)))
+                        .cloned()
+                })
                 .collect::<Option<Vec<Value>>>()
                 .and_then(|parts| RecordKey::new(parts).ok())
+                .ok_or_else(|| doubt(codes::schema_mismatch(tool)))?;
+            Some(key)
         };
         Ok(StepOutcome::Done(observed(values, assigned_key)))
     }
@@ -553,10 +687,35 @@ impl McpDriver {
                 "the tool is mapped as a write and the step is not one that commits",
             ));
         }
-        // The server's notice that its list changed: read the list again
-        // before anything is called.
-        if state.conn.client.take_list_changed() {
-            state.listing = Listing::of(state.conn.client.list_tools(deadline).await?);
+        // A tool the mapping says runs free text is never called, whatever
+        // its input looks like.
+        if entry.free_text == Some(true) {
+            return Err(refused(
+                "its mapping entry says, under `free_text`, that the server runs the text it is given",
+            ));
+        }
+        // How fresh the list must be. A write is compared with a list read
+        // for it, on every connection. A read is compared with the list
+        // held: read again on the server's notice where the connection
+        // gives notice, and when it is older than the setting allows where
+        // it gives none.
+        let notice = state.conn.client.take_list_changed();
+        let again = step.commits
+            || if state.conn.client.gives_notice() {
+                notice
+            } else {
+                state.listing.read_at.elapsed() >= self.limits.list_max_age
+            };
+        if again {
+            // Listing is a read. Whatever became of it, the call itself
+            // has not been sent.
+            let listed = state
+                .conn
+                .client
+                .list_tools(deadline)
+                .await
+                .map_err(|failure| unsent(failure.failure))?;
+            state.listing = Listing::of(listed);
         }
         match state.pin(&call.tool) {
             Some(Pin::Matches) => {}
@@ -582,9 +741,9 @@ impl McpDriver {
                 "is no longer on the server's list",
             )));
         };
-        if definition.takes_free_text() && entry.free_text.is_none() {
+        if definition.takes_free_text() && entry.free_text != Some(false) {
             return Err(refused(
-                "its whole input is one string, and its mapping entry does not say under `free_text` that a person reviewed it",
+                "its whole input is one string, and its mapping entry does not say, with `free_text: false`, that a person found the server does not run it",
             ));
         }
         let arguments = arguments(&entry, &call.tool, input)?;
@@ -613,6 +772,9 @@ impl Driver for McpDriver {
                 )));
             }
             let fields = SurfaceFields::of(surface).map_err(unsent)?;
+            // Checked for every run, before any connection is taken: what
+            // the surface names now, and whether this run may reach it.
+            let far_end = FarEnd::of(cx, &fields)?;
             let mapping = Section::of(cx.plan)
                 .map_err(unsent)?
                 .surfaces
@@ -623,6 +785,8 @@ impl Driver for McpDriver {
                 environment: cx.surface.environment.as_str().to_owned(),
                 surface: surface.name.as_str().to_owned(),
                 session: lease.map(|lease| (lease.session().to_string(), lease.epoch())),
+                far_end,
+                revision: Revision::of(fields.revision.as_deref()).as_str(),
             };
             let conn = self.connection(&key, cx, lease, &fields).await?;
             // The list is read at every prepare, so a change the server

@@ -61,9 +61,10 @@ impl ToolDefinition {
             == Some(true)
     }
 
-    /// Whether the tool's whole input is one free-text string: one property,
-    /// of type string, with no closed list of values. Such a tool could run
-    /// its input as a command or a query.
+    /// Whether the tool's whole input is one string that nothing closes:
+    /// one property that may hold a string, with no closed list of values.
+    /// Such a tool could run its input as a command, a query, or a prompt,
+    /// and the schema cannot say whether it does.
     #[must_use]
     pub fn takes_free_text(&self) -> bool {
         let Some(properties) = self
@@ -76,12 +77,34 @@ impl ToolDefinition {
         let mut all = properties.values();
         match (all.next(), all.next()) {
             (Some(only), None) => {
-                only.get("type").and_then(Json::as_str) == Some("string")
-                    && only.get("enum").is_none()
-                    && only.get("const").is_none()
+                let may_be_text = match only.get("type") {
+                    None => true,
+                    Some(Json::String(name)) => name == "string",
+                    Some(Json::Array(names)) => names.iter().any(|name| name == "string"),
+                    Some(_) => false,
+                };
+                may_be_text && only.get("enum").is_none() && only.get("const").is_none()
             }
             _ => false,
         }
+    }
+}
+
+/// Whether a schema, read by the keywords the pack checks, admits no free
+/// text: it gives a closed list of values, or only types that are not
+/// text, a list, or a record. A schema that states no type admits
+/// anything.
+pub(crate) fn cannot_hold_free_text(schema: &Json) -> bool {
+    if schema.get("enum").is_some() || schema.get("const").is_some() {
+        return true;
+    }
+    let plain = |name: &str| matches!(name, "null" | "boolean" | "integer" | "number");
+    match schema.get("type") {
+        Some(Json::String(name)) => plain(name),
+        Some(Json::Array(names)) => {
+            !names.is_empty() && names.iter().all(|name| name.as_str().is_some_and(plain))
+        }
+        _ => false,
     }
 }
 
@@ -463,5 +486,9 @@ mod tests {
                 .takes_free_text()
         );
         assert!(!of(json!({"limit": {"type": "integer"}})).takes_free_text());
+        // A string that may also be nothing, and a property that states no
+        // type, can each hold free text.
+        assert!(of(json!({"query": {"type": ["string", "null"]}})).takes_free_text());
+        assert!(of(json!({"query": {"description": "Anything."}})).takes_free_text());
     }
 }

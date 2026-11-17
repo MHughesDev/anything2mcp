@@ -830,6 +830,17 @@ impl Scheduler {
         tables::unfinished_job(tx, run)
     }
 
+    /// How many jobs are waiting or leased now, read in the caller's own
+    /// transaction: the work the scheduler has in hand. Both counts are
+    /// answered from an index, so this is cheap enough to ask often.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub fn unfinished_jobs(tx: &mut Tx<'_>) -> Result<u64, Failure> {
+        tables::unfinished_jobs(tx)
+    }
+
     /// A job, as the store holds it now.
     ///
     /// # Errors

@@ -175,6 +175,24 @@ pub(crate) fn unfinished_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<JobId
     Ok(live_job(tx, run)?.map(|job| job.id))
 }
 
+/// How many jobs are waiting or leased. Each count has an index of its own.
+pub(crate) fn unfinished_jobs(tx: &mut Tx<'_>) -> Result<u64, Failure> {
+    let mut jobs = 0_u64;
+    for sql in [
+        "SELECT COUNT(*) FROM jobs WHERE state = 'pending'",
+        "SELECT COUNT(*) FROM jobs WHERE state = 'leased'",
+    ] {
+        let found = tx
+            .tables(Owner::Sched)
+            .query_first(sql, &[])?
+            .map(|row| row.int(0))
+            .transpose()?
+            .unwrap_or(0);
+        jobs = jobs.saturating_add(u64::try_from(found).unwrap_or(0));
+    }
+    Ok(jobs)
+}
+
 /// What a runner offers, as the store keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Capabilities {

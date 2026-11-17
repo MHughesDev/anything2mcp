@@ -85,7 +85,7 @@ Steps are the fixed instructions a plan is made of ([steps, snapshots, and diffs
 | Bridge | `attach`: connect to a bridge and check its version. `invoke`: call a declared function. `read`: call a declared read function |
 | Artifact | `open`, `locate` a named place, `set`, `read`, `save` |
 | Stream | `subscribe`, `await` a matching event, `publish`, `acknowledge` |
-| Device | `open` a link, `write_frame`, `read_frame`, `expect` |
+| Device | `open` a link, `build_frame`, `write_frame`, `read_frame`, `expect` |
 
 A step still carries only its kind, what it refers to, a time limit, and the failure class to raise. A step contains no logic.
 

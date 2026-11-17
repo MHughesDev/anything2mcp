@@ -17,7 +17,7 @@
 //       names the package to install and exits 4.
 // In (a) it also checks that only this machine's platform package arrived.
 
-const { execFileSync, spawnSync } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -42,6 +42,20 @@ function binaryArg() {
 function npm(args, cwd) {
   // `shell` only on Windows, where npm is a batch file.
   return execFileSync(NPM, args, { cwd, encoding: "utf8", shell: process.platform === "win32" });
+}
+
+// The registry answers in this process, so anything that talks to it must
+// not block the event loop: these run asynchronously.
+function runAsync(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, shell: process.platform === "win32", windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
 }
 
 function pack(dir, into) {
@@ -131,13 +145,14 @@ async function main() {
         path.join(project, ".npmrc"),
         `registry=${url}\n@anything2mcp:registry=${url}\ncache=${path.join(work, "cache")}\naudit=false\nfund=false\nupdate-notifier=false\n`,
       );
-      npm(["install", `anything2mcp@${launcher.version}`, ...mode.flags], project);
+      const installed = await runAsync(NPM, ["install", `anything2mcp@${launcher.version}`, ...mode.flags], project);
+      check(installed.status === 0, `${mode.label}: npm install failed: ${installed.stderr}`);
       const scoped = path.join(project, "node_modules", "@anything2mcp");
       const present = fs.existsSync(scoped) ? fs.readdirSync(scoped) : [];
       const bin = path.join(project, "node_modules", ".bin");
       for (const name of ["anything2mcp", "a2m"]) {
         const command = path.join(bin, process.platform === "win32" ? `${name}.cmd` : name);
-        const run = spawnSync(command, ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+        const run = await runAsync(command, ["--version"], project);
         if (mode.runs) {
           check(run.status === 0, `${mode.label}: \`${name} --version\` exited ${run.status}: ${run.stderr}`);
           check(run.stdout.trim() === `anything2mcp ${launcher.version}`, `${mode.label}: \`${name}\` printed ${run.stdout}`);

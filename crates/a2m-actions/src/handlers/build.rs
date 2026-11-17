@@ -23,13 +23,7 @@ const TARGETS_FOLDER: &str = "targets";
 /// command was run in is the one root a project's files may be read from
 /// and written to.
 fn project(call: &Call) -> Result<CheckedPath, Failure> {
-    let folder = call.project.as_ref().ok_or_else(|| {
-        codes::input(
-            codes::PATH_NOT_ALLOWED,
-            "This action works on a project folder, and the call names none.",
-            "Run it inside a project folder, or pass `--project` with the folder's full path.",
-        )
-    })?;
+    let folder = call.project_folder()?;
     let name = RootName::new("project")?;
     let mut roots = Roots::none();
     roots.add(name.clone(), folder, Access::Write)?;

@@ -1000,26 +1000,28 @@ async fn a_read_is_compared_with_a_list_no_older_than_the_setting_allows() {
     let (handle, mut prepared) = scene.prepared().await;
     let get = steps(&scene.plan, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
-    let read = |prepared| async {
-        let mut prepared: Prepared = prepared;
-        let outcome = handle
-            .act(
-                &mut prepared,
-                &get,
-                &input(&args, None, None, None),
-                Authority::Read,
-            )
-            .await;
-        (prepared, outcome)
-    };
-    let (prepared, first) = read(prepared).await;
+    let first = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
+        .await;
     done(first);
     control
         .set_drift(Drift::OutputSchemaChanged {
             tool: "orders_get".to_owned(),
         })
         .unwrap();
-    let (prepared, second) = read(prepared).await;
+    let second = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
+        .await;
     assert_eq!(
         failed(second),
         code(

@@ -89,6 +89,9 @@ pub(crate) struct ToolResult {
 pub(crate) struct Limits {
     pub max_message_bytes: usize,
     pub max_tools: usize,
+    /// How old the tool list a read is compared with may be, on a
+    /// connection that gives no notice of a change.
+    pub list_max_age: std::time::Duration,
 }
 
 fn client_info() -> Json {
@@ -672,6 +675,9 @@ pub(crate) struct Client {
     limits: Limits,
     /// What the server said it is, when the revision has a way to ask.
     pub(crate) server: Option<ServerInfo>,
+    /// Whether the server said, in the handshake, that it gives notice
+    /// when its tool list changes.
+    notice_declared: bool,
 }
 
 impl Client {
@@ -689,6 +695,7 @@ impl Client {
             next_id: AtomicU64::new(1),
             limits,
             server: None,
+            notice_declared: false,
         };
         if revision == Revision::Handshake {
             let result = client
@@ -721,6 +728,12 @@ impl Client {
             if let (Some(name), Some(version)) = (info("name"), info("version")) {
                 client.server = Some(ServerInfo { name, version });
             }
+            client.notice_declared = result
+                .get("capabilities")
+                .and_then(|capabilities| capabilities.get("tools"))
+                .and_then(|tools| tools.get("listChanged"))
+                .and_then(Json::as_bool)
+                == Some(true);
             client
                 .notify("notifications/initialized", json!({}), deadline)
                 .await?;
@@ -736,8 +749,20 @@ impl Client {
         }
     }
 
+    /// Whether a change to the server's tool list would be heard on this
+    /// connection: the server said in the handshake that it gives notice,
+    /// and the link is one a notice can arrive on. Over HTTP none can: this
+    /// build opens no stream for the server to send one on. With no
+    /// handshake the server has said nothing.
+    pub(crate) fn gives_notice(&self) -> bool {
+        match &self.link {
+            Link::Stdio(_) => self.notice_declared,
+            Link::Http(_) => false,
+        }
+    }
+
     /// Whether the server gave notice that its tool list changed since the
-    /// last time this was asked.
+    /// last time this was asked. Never over HTTP, where no notice is read.
     pub(crate) fn take_list_changed(&self) -> bool {
         match &self.link {
             Link::Stdio(link) => link.shared.list_changed.swap(false, Ordering::SeqCst),

@@ -815,6 +815,24 @@ impl Ledger<'_, '_> {
         run_row(&row)
     }
 
+    /// How many runs of `workspace` are in `state` now. It reads the index
+    /// on a run's workspace and state, so it is cheap enough to ask often.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the database.
+    pub fn count_runs(&mut self, workspace: &WorkspaceId, state: RunState) -> Result<u64, Failure> {
+        let found = self
+            .tx
+            .row(
+                "SELECT COUNT(*) FROM runs WHERE workspace_id = ?1 AND state = ?2",
+                &[workspace.to_string().into(), state.as_str().into()],
+            )?
+            .ok_or_else(|| failure::corrupt("a count that gave no row"))?
+            .int(0)?;
+        count(found)
+    }
+
     /// The run's events with a number above `after`, in order, at most
     /// `limit` of them.
     ///

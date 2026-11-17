@@ -161,3 +161,11 @@ default = 500
 min = 1
 max = 10000
 doc = "The most tools of one upstream server's list that are read."
+
+[[settings]]
+key = "list_max_age_ms"
+type = "int"
+default = 10000
+min = 0
+max = 600000
+doc = "How old, in milliseconds, the tool list a read is compared with may be on a connection that gives no notice of a change. A write always reads the list again."

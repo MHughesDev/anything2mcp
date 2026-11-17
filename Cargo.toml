@@ -88,6 +88,12 @@ hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"
 # when its caller asked for progress (decisions 0115 and 0130). Already in the
 # tree of axum. The MCP protocol layer itself is our own: no SDK crate.
 futures-core = { version = "0.3.34", default-features = false }
+# The Linux presence prompt of a2m-local, and nothing else (decisions 0133 and
+# 0142): the system bus, and polkit's authority on it. Linux only, so Windows
+# and macOS builds do not carry them. No default features: Tokio is the
+# runtime, and the proxy is the one part of the bus crate that is used.
+zbus = { version = "6.3.0", default-features = false, features = ["tokio", "proxy"] }
+zbus_polkit = { version = "6.0.0", default-features = false, features = ["tokio"] }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.

@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use a2m_actions::{
-    Caller, CloseReason, ExitClass, FrontDoor, McpResultFace, Request, Response, SHORTCUTS,
-    command_faces,
+    Caller, CloseReason, ExitClass, FrontDoor, McpResultFace, ProjectFolder, Request, Response,
+    RunsInHand, SHORTCUTS, command_faces,
 };
 use a2m_core::{FailureClass, RunId, RunState};
 use serde_json::{Value as Json, json};
@@ -708,5 +708,144 @@ async fn lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_i
         world.stored_codes("A-102").await,
         ["N-001", "N-001-A", "N-001-B"]
     );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stated_project_folder_is_checked_before_any_handler_sees_it() {
+    let world = World::ready().await;
+    let home = world.folder.path().to_path_buf();
+    let good = home.join("project");
+    std::fs::create_dir_all(&good).unwrap();
+    let lint = |folder: Option<ProjectFolder>| {
+        world.kernel.dispatch(
+            Request::new(
+                "draft.lint",
+                json!({"target": "example"}),
+                world.caller.clone(),
+            )
+            .in_project_folder(folder.as_ref()),
+        )
+    };
+    let refused = (FailureClass::Input, "path_not_allowed".to_owned());
+
+    // A folder of the user's own is taken: the action looks in it, and
+    // finds no such target there.
+    let looked = lint(Some(ProjectFolder::new(&good))).await;
+    assert!(looked.ok, "{looked:?}");
+    assert_eq!(
+        looked.result.unwrap()["problems"][0]["code"],
+        "kernel.file_missing"
+    );
+    // No folder stated: the action says it needs one.
+    let none = lint(None).await;
+    assert_eq!(error_of(&none), refused);
+    assert!(none.error.unwrap().message.contains("names none"));
+
+    // The engine's own folders, a folder that holds them, a path that is
+    // not a full one, and a folder that is not there are not used, and the
+    // refusal says why.
+    let paths = world.kernel.paths().clone();
+    // This test's store is in memory, so its folders are made here.
+    std::fs::create_dir_all(&paths.config).unwrap();
+    std::fs::create_dir_all(&paths.store).unwrap();
+    for (folder, why) in [
+        (paths.data.clone(), "engine's own"),
+        (paths.store.clone(), "engine's own"),
+        (paths.config.clone(), "engine's own"),
+        (home.clone(), "engine's own"),
+        (std::path::PathBuf::from("project"), "not a full path"),
+        (home.join("nothing-here"), "no such folder"),
+    ] {
+        let response = lint(Some(ProjectFolder::new(&folder))).await;
+        assert_eq!(error_of(&response), refused, "{folder:?}");
+        let message = response.error.unwrap().message;
+        assert!(message.contains(why), "{folder:?}: {message}");
+    }
+    // The same for a source file: the store is not read through a project.
+    let source = world
+        .kernel
+        .dispatch(
+            Request::new(
+                "tool.call",
+                json!({"tool": SHEET_ENTER, "input": {"order_id": "A-102"}, "source_file": "store/x"}),
+                world.caller.clone(),
+            )
+            .in_project_folder(Some(&ProjectFolder::new(&paths.data))),
+        )
+        .await;
+    assert_eq!(error_of(&source), refused);
+
+    // An action that needs no project is served whatever was stated.
+    let status = world
+        .kernel
+        .dispatch(
+            Request::new("engine.status", json!({}), world.caller.clone())
+                .in_project_folder(Some(&ProjectFolder::new(&paths.data))),
+        )
+        .await;
+    assert!(status.ok, "{:?}", status.error);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_kernel_says_how_much_work_it_has_in_hand() {
+    let world = World::ready().await;
+    let nothing = RunsInHand::default();
+    assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
+    assert!(!nothing.any());
+
+    // A run that rests for a person is in hand until the person answers.
+    let (_, id) = world.rest_a_write("L-470").await;
+    let resting = world.kernel.runs_in_hand().await.unwrap();
+    assert_eq!((resting.working, resting.waiting_for_person), (0, 1));
+    assert!(resting.any());
+    world
+        .surface
+        .desk()
+        .decline(id, None, a2m_policy::Channel::LocalPrompt)
+        .await
+        .unwrap();
+    assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
+
+    // A run that waits for a runner is in hand, and so is one a runner
+    // holds; when it has ended, nothing is.
+    world
+        .kernel
+        .start_runner_loop(1)
+        .await
+        .unwrap()
+        .stop()
+        .await;
+    let queued = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "wait_seconds": 0}),
+        )
+        .await;
+    assert_eq!(status(&queued), "queued", "{queued:?}");
+    let (run, _) = run_of(&queued);
+    let waiting = world.kernel.runs_in_hand().await.unwrap();
+    assert_eq!((waiting.working, waiting.waiting_for_person), (1, 0));
+    world.kernel.start_runner_loop(1).await.unwrap();
+    // The run is followed to its end by its events.
+    let principal = world.caller.principal.clone();
+    let id: RunId = run.parse().unwrap();
+    let mut after = 0;
+    loop {
+        let page = world
+            .kernel
+            .next_events(&principal, id, after, 50, Duration::from_secs(60))
+            .await
+            .unwrap();
+        after = page.last;
+        if page.settled() {
+            break;
+        }
+        assert!(!page.events.is_empty(), "the wait ran out");
+    }
+    let done = world.call("run.get", json!({"run_id": run})).await;
+    assert_eq!(status(&done), "completed", "{done:?}");
+    assert_eq!(world.kernel.runs_in_hand().await.unwrap(), nothing);
     world.kernel.close(CloseReason::Asked).await;
 }

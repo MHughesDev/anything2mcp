@@ -112,6 +112,32 @@ impl Caller {
     }
 }
 
+/// The project folder a request works in, as the mount of a front door
+/// states it: the folder a local command was run in.
+///
+/// It is the one home of that fact for every door. Whoever mounts a door on
+/// the local channel puts one on each request, as an extension beside the
+/// caller, from what the client end said. The door reads it and hands it to
+/// [`Request::in_project_folder`]; nothing in a request's path, query,
+/// body, or tool arguments can set it. It is a statement and is not
+/// trusted: the dispatcher checks it before any handler sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFolder(PathBuf);
+
+impl ProjectFolder {
+    /// The folder at `path`.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    /// The folder's path, as it was stated.
+    #[must_use]
+    pub fn as_path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
 /// What a front door hands the dispatcher.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
@@ -123,8 +149,9 @@ pub struct Request {
     pub caller: Caller,
     /// A key that makes a repeated call the same call.
     pub idempotency_key: Option<String>,
-    /// The project folder a local command was run in. Checked against the
-    /// allowed roots before any use.
+    /// The project folder a local command was run in, as it was stated.
+    /// The dispatcher checks it before any handler sees it: see
+    /// [`Request::in_project_folder`].
     pub project: Option<PathBuf>,
 }
 
@@ -145,6 +172,22 @@ impl Request {
     #[must_use]
     pub fn in_project(mut self, project: impl Into<PathBuf>) -> Self {
         self.project = Some(project.into());
+        self
+    }
+
+    /// The same request, run in the project folder its door's mount
+    /// stated, when it stated one. Every door calls this with what it
+    /// found in the request's extensions.
+    ///
+    /// The dispatcher takes the folder only on one machine, and only when
+    /// it is an absolute path to a folder that exists and that neither
+    /// holds nor lies inside one of the engine's own folders. A folder
+    /// that fails is not used, and an action that needs a project answers
+    /// `input`/`path_not_allowed` with the reason; every other action is
+    /// served as if none had been stated.
+    #[must_use]
+    pub fn in_project_folder(mut self, project: Option<&ProjectFolder>) -> Self {
+        self.project = project.map(|folder| folder.0.clone());
         self
     }
 }
@@ -342,13 +385,35 @@ pub struct Call {
     pub decision: DecisionId,
     /// The idempotency key, if the caller sent one.
     pub idempotency_key: Option<String>,
-    /// The project folder, not yet checked.
+    /// The project folder the request stated, after the dispatcher's
+    /// check. `None` when none was stated or the one stated was refused.
+    /// A handler still reaches every file through a checked path under it.
     pub project: Option<PathBuf>,
+    /// Why the stated project folder was refused, when it was.
+    pub project_refused: Option<Failure>,
     /// Proof that a person is present, when the action needed it.
     pub presence: Option<PresenceProof>,
 }
 
 impl Call {
+    /// The project folder of the call.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed`: the reason the stated folder was
+    /// refused, or that the call states none.
+    pub fn project_folder(&self) -> Result<&std::path::Path, Failure> {
+        match (&self.project, &self.project_refused) {
+            (Some(folder), _) => Ok(folder),
+            (None, Some(refused)) => Err(refused.clone()),
+            (None, None) => Err(codes::input(
+                codes::PATH_NOT_ALLOWED,
+                "This action works on a project folder, and the call names none.",
+                "Run it inside a project folder, or pass `--project` with the folder's full path.",
+            )),
+        }
+    }
+
     /// A text field, when it was given.
     #[must_use]
     pub fn text(&self, name: &str) -> Option<&str> {
@@ -587,13 +652,22 @@ impl Kernel {
             None
         };
 
-        // 6. Run.
+        // 6. Run. The project folder a door stated is checked first; one
+        // that fails is not handed on.
+        let (project, project_refused) = match request.project {
+            Some(stated) => match self.checked_project(&stated).await {
+                Ok(()) => (Some(stated), None),
+                Err(refused) => (None, Some(refused)),
+            },
+            None => (None, None),
+        };
         let call = Call {
             input,
             caller: request.caller,
             decision,
             idempotency_key: request.idempotency_key,
-            project: request.project,
+            project,
+            project_refused,
             presence,
         };
         let output = self
@@ -603,6 +677,62 @@ impl Kernel {
 
         // 7. Shape: the cap. Redaction is the caller's last act, above.
         Ok((self.capped(&def, output), decision))
+    }
+
+    /// Checks a project folder a front door stated. It is taken only on one
+    /// machine, where the caller is the user the engine runs as; it must be
+    /// an absolute path to a folder that exists; and it may neither hold
+    /// nor lie inside one of the engine's own folders, so that no action
+    /// can be pointed at the store, the vault's files, or the settings
+    /// through it. Symbolic links are followed before the comparison.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed`, with the reason.
+    async fn checked_project(&self, stated: &std::path::Path) -> Result<(), Failure> {
+        let refuse = |why: &str| {
+            codes::input(
+                codes::PATH_NOT_ALLOWED,
+                format!("The project folder of this call is not used: {why}."),
+                "Run the command inside a project folder of your own, or pass `--project` with its full path.",
+            )
+        };
+        if !self.is_local() {
+            return Err(refuse(
+                "a project folder belongs to one machine, and this engine is a server",
+            ));
+        }
+        if !stated.is_absolute() {
+            return Err(refuse("its path is not a full path"));
+        }
+        let stated = stated.to_path_buf();
+        let paths = self.paths().clone();
+        // Looking at the disk waits: off the async threads.
+        tokio::task::spawn_blocking(move || {
+            let folder = std::fs::canonicalize(&stated)
+                .ok()
+                .filter(|folder| folder.is_dir())
+                .ok_or_else(|| refuse("there is no such folder"))?;
+            for own in [
+                &paths.installation_config,
+                &paths.config,
+                &paths.data,
+                &paths.runtime,
+                &paths.cache,
+            ] {
+                // A folder of the engine that does not exist yet is
+                // compared as it is written.
+                let own = std::fs::canonicalize(own).unwrap_or_else(|_| own.clone());
+                if folder.starts_with(&own) || own.starts_with(&folder) {
+                    return Err(refuse(
+                        "it holds, or lies inside, one of the engine's own folders",
+                    ));
+                }
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_or_else(|_| Err(refuse("it could not be looked at")))
     }
 
     /// Asks the role's person surface for proof that a person is present.

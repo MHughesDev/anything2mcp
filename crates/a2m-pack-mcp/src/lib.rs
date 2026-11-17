@@ -84,6 +84,9 @@ impl Pack for McpPack {
         let limits = client::Limits {
             max_message_bytes: setting(cx, "max_message_bytes", 4 * 1024 * 1024),
             max_tools: setting(cx, "max_tools", 500),
+            list_max_age: std::time::Duration::from_millis(
+                u64::try_from(setting(cx, "list_max_age_ms", 10_000)).unwrap_or(u64::MAX),
+            ),
         };
         to.driver(
             names.mode.clone(),

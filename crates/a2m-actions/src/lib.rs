@@ -43,9 +43,10 @@ pub use def::{
     HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
 };
 pub use dispatch::{
-    Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, Request, Response,
+    Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, ProjectFolder, Request,
+    Response,
 };
-pub use events::{EVENTS_PAGE, RunEventView, RunEvents};
+pub use events::{EVENTS_PAGE, RunEventView, RunEvents, RunsInHand};
 pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
     RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,

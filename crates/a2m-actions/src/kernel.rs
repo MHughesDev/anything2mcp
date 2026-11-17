@@ -677,6 +677,12 @@ impl Kernel {
         }
     }
 
+    /// Whether this engine serves one machine: its only caller is the user
+    /// it runs as.
+    pub(crate) fn is_local(&self) -> bool {
+        self.inner.local
+    }
+
     /// The redactor. Everything that leaves a front door passes it.
     #[must_use]
     pub fn redact(&self) -> Arc<dyn Redact> {

@@ -4,6 +4,7 @@
 // binary is inside it. One table, read by the launcher, the assembly script,
 // and the tests, so the names are written once.
 
+const fs = require("node:fs");
 const path = require("node:path");
 
 // `<process.platform>-<process.arch>[-musl]` to the platform package's name.
@@ -20,14 +21,13 @@ const PLATFORMS = {
   "win32-arm64": { name: "@anything2mcp/win32-arm64", os: "win32", cpu: "arm64", rust: "aarch64-pc-windows-msvc" },
 };
 
-// Whether this Linux uses musl: Node reports the glibc version it runs on,
-// and reports none on musl.
+// Whether this Linux uses musl: a musl system has its loader in /lib,
+// named ld-musl-<cpu>.so.1. One directory read; asking Node for its report,
+// which also says, costs several milliseconds at every start.
 function isMusl() {
   if (process.platform !== "linux") return false;
   try {
-    const report = process.report && process.report.getReport();
-    const header = report && (typeof report === "string" ? JSON.parse(report) : report).header;
-    return !(header && header.glibcVersionRuntime);
+    return fs.readdirSync("/lib").some((name) => name.startsWith("ld-musl-"));
   } catch {
     return false;
   }
