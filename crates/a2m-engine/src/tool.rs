@@ -392,16 +392,43 @@ fn outputs_of(
             out.insert(output.name.clone(), Value::Text(REDACTED.to_owned()));
             continue;
         }
-        let value = loaded
-            .normalize(output.field_type, raw)
-            .map_err(|failure| {
-                unexpected(format!(
-                    "The output `{}` of `{}` cannot be read as its type ({}).",
-                    output.name,
-                    operation.name,
-                    failure.code()
-                ))
-            })?;
+        let value = match (raw, &output.ty) {
+            // A list output is normalized one item at a time, each by the
+            // output's field type; a `null` item, a row with no value,
+            // stays `null`. An item that cannot be read fails the read by
+            // its position, never by its value (decision 0180).
+            (Value::List(items), a2m_core::ValueType::List(_)) => {
+                let mut normalized = Vec::with_capacity(items.len());
+                for (at, item) in items.iter().enumerate() {
+                    if item.is_null() {
+                        normalized.push(Value::Null);
+                        continue;
+                    }
+                    normalized.push(loaded.normalize(output.field_type, item).map_err(
+                        |failure| {
+                            unexpected(format!(
+                                "The item {} of the output `{}` of `{}` cannot be read as its type ({}).",
+                                at + 1,
+                                output.name,
+                                operation.name,
+                                failure.code()
+                            ))
+                        },
+                    )?);
+                }
+                Value::List(normalized)
+            }
+            _ => loaded
+                .normalize(output.field_type, raw)
+                .map_err(|failure| {
+                    unexpected(format!(
+                        "The output `{}` of `{}` cannot be read as its type ({}).",
+                        output.name,
+                        operation.name,
+                        failure.code()
+                    ))
+                })?,
+        };
         if !value.is_null() && !value.has_type(&output.ty) {
             return Err(unexpected(format!(
                 "The output `{}` of `{}` is not a {}.",
