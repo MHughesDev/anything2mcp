@@ -587,11 +587,6 @@ impl Def {
         self
     }
 
-    pub(crate) fn served(mut self, handler: HandlerFn) -> Self {
-        self.0.handler = Handler::Kernel(handler);
-        self
-    }
-
     pub(crate) fn done(self) -> ActionDef {
         self.0
     }

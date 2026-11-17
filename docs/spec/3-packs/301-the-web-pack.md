@@ -290,7 +290,7 @@ In an observing tab:
 | What could change the system | What happens |
 | --- | --- |
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
-| A request from a worker the tab starts | The same interception is attached to every worker before it runs; service workers are bypassed |
+| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child takes its own before it runs or is not let run; service workers are bypassed ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
 | A beacon, a form submission, a download | Failed by the same interception, or refused |
 | Navigation | Only to an address the caller passes, or a plain link as above |
@@ -390,7 +390,7 @@ The pack masks restricted and password values in every snapshot and screenshot i
 | `stale` | `version_conflict` | The version precondition failed |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The edge answered instead of the application. Never retried; a person is told ([section 302](302-the-web-pack-browser-engine.md)) |
 | `session_expired` | `needs_login` | Reported through the lease, after the keeper has the signal |
-| `policy` | `surface_not_declared`, `path_not_allowed` | A navigation or in-page request to an origin the target did not declare; a browser program the scoped supervisor does not allow |
+| `policy` | `surface_not_declared`, `effect_not_declared` | A navigation or in-page request to an origin the target did not declare; a browser program the pack's manifest does not declare, which the scoped supervisor refuses |
 | `busy` | `browser_unavailable` | The browser is not installed |
 | `transient` | `timeout`, `connection_lost` | Before anything was sent |
 

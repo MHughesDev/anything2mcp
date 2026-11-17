@@ -115,3 +115,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0104 | [A wire protocol is one interface inside the stream pack, and the first standard one is still to be chosen](0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) | Accepted (design decision) |
 | 0105 | [The `stream` mode, and the stream pack as building it settled it](0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0099 | [The command pack as building it settled it, and what the kernel could not give it](0099-the-command-pack-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0110 | [The browser engine's interface as building it settled it](0110-the-browser-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0111 | [An observing tab's lock as built, and what the browser was measured to do](0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md) | Accepted (design decision) |

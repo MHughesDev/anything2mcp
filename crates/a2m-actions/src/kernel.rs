@@ -812,10 +812,6 @@ impl Kernel {
         lock(&self.inner.tasks).push(task);
     }
 
-    pub(crate) fn keep_task(&self, task: JoinHandle<()>) {
-        lock(&self.inner.tasks).push(task);
-    }
-
     /// Stops the runner loop and the tending task, stops every subsystem
     /// the supervisor holds, and writes the reason to the audit log.
     /// Sessions' saved state is in the store already: the keeper saves it

@@ -5,7 +5,7 @@
 //! and stored by `version.publish`; the engine receives it through
 //! `Control` and never sees the compiler.
 
-use a2m_core::{Digest, EncodedPlan, Failure, Plan, PrincipalId, TargetName, Version};
+use a2m_core::{Digest, EncodedPlan, Failure, PrincipalId, TargetName, Version};
 use a2m_files::{CompileMode, Compiled, DRAFT_VERSION, Diagnostics, TargetRoot};
 use a2m_ledger::{Durability, PublishedVersion};
 use a2m_provider::{Access, CheckedPath, RootName, Roots};
@@ -181,7 +181,7 @@ impl Kernel {
     ///
     /// The plan's own check and encoding failures; the store's failures.
     #[cfg(any(test, feature = "testing"))]
-    pub async fn publish_plan(&self, plan: &Plan) -> Result<Digest, Failure> {
+    pub async fn publish_plan(&self, plan: &a2m_core::Plan) -> Result<Digest, Failure> {
         plan.check()?;
         let by = self.installation()?.user;
         self.store_version(
