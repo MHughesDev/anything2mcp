@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use a2m_actions::{
     ApprovalAsk, ApprovalDesk, BoxFuture, Caller, CallerCredential, CloseReason, FrontDoor,
-    HealthState, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof,
-    SessionAsk, Settings, SignInAsk, StorePlace, SurfaceLink,
+    HealthState, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof, SessionAsk,
+    Settings, SignInAsk, StorePlace, SurfaceLink,
 };
 use a2m_api::{ApiSettings, OPENAPI_PATH, openapi, router, served_routes};
 use a2m_auth::PersonAnswer;
@@ -186,7 +186,8 @@ impl World {
     async fn read(answer: reqwest::Response) -> (u16, Json) {
         let status = answer.status().as_u16();
         assert_eq!(
-            answer.headers()["content-type"], "application/json",
+            answer.headers()["content-type"],
+            "application/json",
             "every answer is JSON"
         );
         (status, answer.json().await.unwrap())
@@ -278,9 +279,9 @@ async fn a_refusal_carries_its_class_code_message_and_fix_and_nothing_else() {
             &json!({"tool": "example_nothing_get", "input": {}}),
         )
         .await;
-    eprintln!("REFUSAL {status} {body}");
-    assert!((400..500).contains(&status), "{status} {body}");
-    assert_refusal(&body, body["error"]["class"].as_str().unwrap(), body["error"]["code"].as_str().unwrap());
+    assert_eq!(status, 400, "{body}");
+    assert_refusal(&body, "input", "not_found");
+    assert!(body["decision"].is_string(), "the dispatcher answered");
 
     // No caller on the request: 401, and the dispatcher is not reached.
     let (status, body) = world
@@ -343,7 +344,10 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
                 .http
                 .post(&url)
                 .header("content-type", "application/json")
-                .body(format!("{{\"query\": \"{}\"}}", "a".repeat(2 * 1024 * 1024))),
+                .body(format!(
+                    "{{\"query\": \"{}\"}}",
+                    "a".repeat(2 * 1024 * 1024)
+                )),
             413,
             "body_too_large",
         ),
@@ -367,7 +371,9 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
             "idempotency_key_invalid",
         ),
         (
-            world.http.get(format!("{}/api/v1/tools?query=a&query=b", world.base)),
+            world
+                .http
+                .get(format!("{}/api/v1/tools?query=a&query=b", world.base)),
             400,
             "query_invalid",
         ),

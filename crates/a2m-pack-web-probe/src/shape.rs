@@ -123,13 +123,11 @@ impl Shape {
                 shape.types.insert("boolean");
             }
             Json::Number(number) => {
-                shape
-                    .types
-                    .insert(if number.is_i64() || number.is_u64() {
-                        "integer"
-                    } else {
-                        "decimal"
-                    });
+                shape.types.insert(if number.is_i64() || number.is_u64() {
+                    "integer"
+                } else {
+                    "decimal"
+                });
             }
             Json::String(text) => {
                 shape.types.insert(type_of_text(text));
@@ -200,7 +198,10 @@ impl Shape {
         self.fields
             .values()
             .any(|(shape, seen)| *seen < self.objects || shape.has_optional())
-            || self.items.as_ref().is_some_and(|items| items.has_optional())
+            || self
+                .items
+                .as_ref()
+                .is_some_and(|items| items.has_optional())
     }
 
     /// Whether names were left out at the limit.

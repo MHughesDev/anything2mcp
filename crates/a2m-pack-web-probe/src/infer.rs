@@ -62,7 +62,10 @@ impl Exchange {
             ("format", Json::from("1")),
             ("method", Json::from(self.method.as_str())),
             ("path", Json::from(self.path.as_str())),
-            ("query", query_json(self.query.iter().map(|(k, v)| (k, [*v])))),
+            (
+                "query",
+                query_json(self.query.iter().map(|(k, v)| (k, [*v]))),
+            ),
             ("answered", Json::Bool(self.answered())),
             ("status", self.status.map_or(Json::Null, Json::from)),
             (

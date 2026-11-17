@@ -232,7 +232,9 @@ async fn prepare(
             Some(given) if *given != value => {
                 return Err(input_failure(
                     codes::PATH_FIELD_CONFLICT,
-                    format!("The field `{name}` is given in the path and differently in the input."),
+                    format!(
+                        "The field `{name}` is given in the path and differently in the input."
+                    ),
                     "Give the field once, in the path.",
                 ));
             }
@@ -370,9 +372,7 @@ fn query_input(route: &Bound, query: &str) -> Result<Map<String, Json>, Failure>
             _ => Json::String(value),
         };
         if ty == "array" {
-            let entry = input
-                .entry(name)
-                .or_insert_with(|| Json::Array(Vec::new()));
+            let entry = input.entry(name).or_insert_with(|| Json::Array(Vec::new()));
             if let Json::Array(list) = entry {
                 list.push(value);
             }
@@ -562,8 +562,14 @@ mod tests {
 
     #[test]
     fn routes_that_cannot_be_served_together_are_refused_before_the_router_is_built() {
-        assert!(fields_clash("/api/v1/runs/{run_id}", "/api/v1/runs/{id}/events"));
-        assert!(!fields_clash("/api/v1/runs/{run_id}", "/api/v1/runs/{run_id}/cancel"));
+        assert!(fields_clash(
+            "/api/v1/runs/{run_id}",
+            "/api/v1/runs/{id}/events"
+        ));
+        assert!(!fields_clash(
+            "/api/v1/runs/{run_id}",
+            "/api/v1/runs/{run_id}/cancel"
+        ));
         assert!(!fields_clash("/api/v1/tools", "/api/v1/runs/{id}"));
     }
 }

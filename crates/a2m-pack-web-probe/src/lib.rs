@@ -134,7 +134,10 @@ impl Pack for WebProbePack {
             Arc::new(describe::WebDescriber),
         )?;
         to.discoverer(
-            Arc::new(discover::WebCapture(parts, DiscovererName::new(WEB_CAPTURE)?)),
+            Arc::new(discover::WebCapture(
+                parts,
+                DiscovererName::new(WEB_CAPTURE)?,
+            )),
             Arc::new(describe::WebDescriber),
         )?;
         Ok(())

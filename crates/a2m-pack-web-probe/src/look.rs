@@ -477,7 +477,9 @@ fn not_declared(what: &str) -> Failure {
     Failure::new(
         FailureClass::Policy,
         codes::SURFACE_NOT_DECLARED,
-        format!("Discovery was asked to look outside the surface it was given: {what} is not an address of that surface."),
+        format!(
+            "Discovery was asked to look outside the surface it was given: {what} is not an address of that surface."
+        ),
         "Declare the other system as a surface of the target, and run discovery on it.",
     )
 }

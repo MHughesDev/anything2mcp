@@ -144,10 +144,6 @@ impl Locator {
         Query::new(self.by()).within(section.query())
     }
 
-    /// Whether it is a selector.
-    pub(crate) fn is_css(&self) -> bool {
-        matches!(self.by, LocateBy::Css(_))
-    }
 }
 
 /// What must also be true of a matched element.

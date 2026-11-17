@@ -1,0 +1,20 @@
+# 0116. The REST router takes its caller from the mount and chooses its status in one table
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-17
+
+**Changes:** the interface sketch and the build order in the design of [`a2m-api`](../architecture/crates/a2m-api.md).
+
+## Context
+
+The design sketched `router(kernel, cfg, carrier) -> BoxedHttpService` and a status chosen "from the exit class alone". Building the router against `a2m-actions` (records [0094](0094-the-action-layers-interface-as-building-it-settled-it.md) and [0095](0095-the-settings-loader-and-the-in-process-runner-as-built.md)) settled how the caller arrives, what the router returns, and which statuses the door adds.
+
+## Decision
+
+1. **The caller is an extension the mount puts on the request.** `router(kernel, ApiSettings) -> Result<axum::Router, Failure>` holds no credential check. Whoever mounts it verifies the caller with `Kernel::verify_caller` (the local channel: the peer's user; later the server listener: the token) and puts the `Caller` on each request, for example with `axum::Extension(caller)` as a layer. A request without one is refused with 401, `policy` / `caller_missing`, before the dispatcher. The router sets the caller's door to `rest` whatever the mount said. Alternative weighed: the router reads the credential itself and calls the verifier. Rejected for now: on one machine the credential is the channel's peer, which only the channel sees; the server listener will extract the token and call the same verifier, so there is still one checker.
+2. **The router is an `axum::Router`, built fallibly.** It returns the router, not a boxed service, so the product crate can layer and nest it. Two route faces that the router cannot hold together (the same method and path, or a path field named differently at the same place) are refused with `input` / `route_conflict` instead of letting the router builder stop the process.
+3. **`Carrier` is left out until the server's pages exist.** With no approval page and no console built, the local and server routers are the same; a parameter that changed nothing would mislead. It comes back with step 6.
+4. **One status table, `status_of`.** 200 for success, 202 for a run that rests for a person, 401 for `caller_missing` and `caller_not_verified`, 403 for any other `policy`, 400 for `input` and for any malformed request, 409 for `stale`, 503 for `busy`, 500 otherwise. The door's own `input` codes name their HTTP condition: `body_too_large` 413, `content_type_unsupported` 415, `route_not_found` 404, `method_not_allowed` 405, `body_timed_out` 408. A still-running run is 200, not 202: the dispatcher marks only a resting run as needing a person, and the router does not read results.
+5. **Limits.** A body over `max_body_bytes` (1 MiB) or slower than `body_timeout` (30 s) is refused. The dispatch runs on its own task; after `request_timeout` (630 s, longer than the longest `wait_seconds`) the door stops waiting and answers `busy` / `request_timed_out` with `retry_safe` false, and the dispatch is never cut off half way. A non-empty body must be typed `application/json`; a POST with a query is refused; a GET takes its input from the query, typed by the field's schema. A body that is not JSON is reported by line and column, never by its text.
+6. **The OpenAPI document** is built from `rest_routes` and lists the document's own route; `served_routes` is the list the router serves, and the test holds the two equal and calls every operation.

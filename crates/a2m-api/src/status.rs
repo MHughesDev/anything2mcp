@@ -93,3 +93,48 @@ pub(crate) fn json_answer(status: StatusCode, body: String) -> axum::response::R
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     answer
 }
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::FailureCode;
+
+    use super::*;
+
+    fn failed(class: FailureClass, code: FailureCode) -> Response {
+        refused("run.get", &Failure::new(class, code, "m", "f"), true)
+    }
+
+    #[test]
+    fn the_status_follows_the_exit_class_and_the_failure_class() {
+        let ok = Response {
+            error: None,
+            exit: ExitClass::Succeeded,
+            ok: true,
+            ..failed(FailureClass::Input, codes::SCHEMA_INVALID)
+        };
+        assert_eq!(status_of(&ok), StatusCode::OK);
+        let resting = Response {
+            exit: ExitClass::PersonNeeded,
+            ..ok.clone()
+        };
+        assert_eq!(status_of(&resting), StatusCode::ACCEPTED);
+        let code = |name| FailureCode::new(name).unwrap();
+        for (class, name, want) in [
+            (FailureClass::Policy, "caller_missing", 401),
+            (FailureClass::Policy, "caller_not_verified", 401),
+            (FailureClass::Policy, "role_too_low", 403),
+            (FailureClass::Input, "schema_invalid", 400),
+            (FailureClass::Input, "body_too_large", 413),
+            (FailureClass::Stale, "approval_stale", 409),
+            (FailureClass::Busy, "request_timed_out", 503),
+            (FailureClass::Drift, "screen_changed", 500),
+            (FailureClass::PossibleCommit, "write_unconfirmed", 500),
+        ] {
+            assert_eq!(
+                status_of(&failed(class, code(name))).as_u16(),
+                want,
+                "{class} {name}"
+            );
+        }
+    }
+}

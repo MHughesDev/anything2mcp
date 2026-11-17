@@ -494,7 +494,9 @@ struct Site {
 
 impl Site {
     async fn start() -> Self {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let own = Own {
             base: Arc::new(format!("http://{}", listener.local_addr().unwrap())),
             http: reqwest::Client::new(),

@@ -43,16 +43,15 @@ impl Describer for WebDescriber {
                         .and_then(Json::as_array)
                         .map_or(0, Vec::len);
                     line.insert("elements", i64::try_from(elements).unwrap_or(i64::MAX));
-                    untrusted.push(format!(
-                        "screen {} {}",
-                        shown(path),
-                        shown(word("title"))
-                    ));
+                    untrusted.push(format!("screen {} {}", shown(path), shown(word("title"))));
                 }
                 "exchange" | "endpoint" => {
                     line.insert(
                         "answered",
-                        found.get("answered").and_then(Json::as_bool).unwrap_or(false),
+                        found
+                            .get("answered")
+                            .and_then(Json::as_bool)
+                            .unwrap_or(false),
                     );
                     untrusted.push(format!(
                         "{} {} {}",

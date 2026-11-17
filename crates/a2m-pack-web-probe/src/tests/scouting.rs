@@ -66,8 +66,13 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
             "/api/orders/A-101",
             "/api/orders/A-100/items/L-102",
             "/probe/secret.json?token=secret-for-tests-7f3a9c",
-            "/probe/posts",
         ],
+        ..Look::default()
+    };
+    // A page that tries a write when it loads, read once it shows that
+    // what it tried has settled.
+    let posting = Look {
+        paths: vec!["/probe/posts"],
         ready_text: Some("settled"),
         ..Look::default()
     };
@@ -134,8 +139,7 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
     assert_eq!(names_of(&found, "textbox"), ["Key"]);
     assert!(found.to_string().contains("[redacted]"), "{found}");
 
-    // Capture: the document of each page, with the shape of a JSON answer,
-    // and the write a page tried when it loaded.
+    // Capture: the document of each page, with the shape of a JSON answer.
     let capture = must(bench.run("web_capture", &start, &captures).await);
     check(&capture);
     let (orders, found) = capture.one("endpoint", "/api/orders");
@@ -173,14 +177,18 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
         json!({"type": "text", "optional": true})
     );
 
-    // The write the page tried was refused, so the endpoint is seen and
+    // The write a page tried was refused, so the endpoint is seen and
     // never answered: inferred, and it says so.
-    let tried: Vec<_> = capture
+    let posted = must(bench.run("web_capture", &start, &posting).await);
+    check(&posted);
+    let tried: Vec<_> = posted
         .findings
         .iter()
-        .filter(|finding| finding.kind().as_str() == "endpoint" && finding.found().contains("\"PUT\""))
+        .filter(|finding| {
+            finding.kind().as_str() == "endpoint" && finding.found().contains("\"PUT\"")
+        })
         .collect();
-    assert_eq!(tried.len(), 1, "{:#?}", capture.paths());
+    assert_eq!(tried.len(), 1, "{:#?}", posted.paths());
     assert_eq!(tried[0].level(), EvidenceLevel::Inferred);
     assert!(
         tried[0]
@@ -222,6 +230,8 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
     let again = must(bench.run("web_capture", &start, &captures).await);
     assert_eq!(again.ids(), capture.ids());
     assert_eq!(again.report, capture.report);
+    let again = must(bench.run("web_capture", &start, &posting).await);
+    assert_eq!(again.ids(), posted.ids());
 
     // The describer counts what was found and keeps the system's own text
     // apart.
@@ -241,7 +251,12 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
         ))
     );
     assert!(!summary.text.contains("/api/orders"));
-    assert!(summary.untrusted.iter().any(|line| line == "endpoint GET /api/orders"));
+    assert!(
+        summary
+            .untrusted
+            .iter()
+            .any(|line| line == "endpoint GET /api/orders")
+    );
     assert!(!format!("{summary:?}").contains(SECRET));
 
     // The application holds what it held: the test's own write and no
@@ -259,7 +274,16 @@ async fn nothing_a_page_or_a_link_does_during_discovery_reaches_the_application(
     // First, that the test means something: the route a socket's handshake
     // reaches, and the link that acts, each write when they are reached,
     // and the write the pages try is one the application takes.
-    assert_eq!(site.own.http.get(site.url("/probe/ws")).send().await.unwrap().status(), 200);
+    assert_eq!(
+        site.own
+            .http
+            .get(site.url("/probe/ws"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
     assert_eq!(site.writes().await.len(), 1);
     let followed = site
         .own
@@ -308,17 +332,18 @@ async fn nothing_a_page_or_a_link_does_during_discovery_reaches_the_application(
         socket
             .limitations()
             .iter()
-            .any(|one| one.code == LimitationCode::NotExercised && one.sentence.contains("WEBSOCKET")),
+            .any(|one| one.code == LimitationCode::NotExercised
+                && one.sentence.contains("WEBSOCKET")),
         "{:?}",
         socket.limitations()
     );
     // No page was late: each showed that what it tried had settled.
-    assert!(
-        capture
-            .findings
+    assert!(capture.findings.iter().all(|finding| {
+        finding
+            .limitations()
             .iter()
-            .all(|finding| finding.limitations().iter().all(|one| one.code != LimitationCode::TimeLimit))
-    );
+            .all(|one| one.code != LimitationCode::TimeLimit)
+    }));
 
     // Links: the plain one is followed; the one whose address looks like
     // an action and the one whose name does are not, and are counted; the
@@ -388,7 +413,8 @@ async fn a_wall_a_block_and_a_bound_are_named_and_never_passed() {
 
     // A surface that answers 403 is blocked: the probe names the block,
     // and the others stop with it.
-    site.fault(&json!({"status": 403, "path_prefix": "/orders"})).await;
+    site.fault(&json!({"kind": "status", "status": 403, "path_prefix": "/orders"}))
+        .await;
     let orders = site.url("/orders");
     let probe = must(bench.run("web_probe", &orders, &Look::default()).await);
     let (_, found) = probe.one("surface", "/orders");
@@ -407,7 +433,11 @@ async fn a_wall_a_block_and_a_bound_are_named_and_never_passed() {
     site.reset().await;
 
     // A focus can choose a path of the surface and nothing else.
-    for outside in ["//elsewhere.example.com/x", "https://elsewhere.example.com/", "orders"] {
+    for outside in [
+        "//elsewhere.example.com/x",
+        "https://elsewhere.example.com/",
+        "orders",
+    ] {
         let failure = bench
             .run(
                 "web_snapshot",

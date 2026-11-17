@@ -23,6 +23,7 @@ use a2m_provider::{
 };
 use serde_json::Value as Json;
 
+use crate::SURFACE_KIND;
 use crate::infer::{Answer, Exchange, infer_endpoints};
 use crate::look::{
     Arrival, Claim, Core, FOCUS_TIER_TWO, Place, Standing, failure, json_body, link, link_target,
@@ -30,7 +31,6 @@ use crate::look::{
 };
 use crate::screen;
 use crate::shape::{Shape, object};
-use crate::SURFACE_KIND;
 
 /// The methods of a request. Anything else an observing tab reports is a
 /// thing the page made, such as a socket.
@@ -230,7 +230,10 @@ impl WebProbe {
             ("answer", Json::from(answer)),
             ("block", block),
             ("status", arrival.status.map_or(Json::Null, Json::from)),
-            ("redirected", Json::Bool(arrival.asked.plain() != arrival.ended.plain())),
+            (
+                "redirected",
+                Json::Bool(arrival.asked.plain() != arrival.ended.plain()),
+            ),
             ("interface", interface),
             // No platform profile is built, so none can match: the
             // platform is unknown, never guessed, and the tier follows.
@@ -623,7 +626,10 @@ impl WebCapture {
         }
 
         let tier_two = matches!(scope.focus.get(FOCUS_TIER_TWO), Some(Value::Bool(true)));
-        let only: Vec<Exchange> = exchanges.into_iter().map(|(exchange, _)| exchange).collect();
+        let only: Vec<Exchange> = exchanges
+            .into_iter()
+            .map(|(exchange, _)| exchange)
+            .collect();
         for endpoint in infer_endpoints(&only, tier_two) {
             let mut limitations = vec![(
                 LimitationCode::Sampled,
@@ -647,7 +653,8 @@ impl WebCapture {
             if endpoint.response.as_ref().is_some_and(Shape::has_optional) {
                 limitations.push((
                     LimitationCode::Sampled,
-                    "A field was in some answers and not in others; it is marked optional.".to_owned(),
+                    "A field was in some answers and not in others; it is marked optional."
+                        .to_owned(),
                 ));
             }
             if endpoint.response.as_ref().is_some_and(Shape::cut) {

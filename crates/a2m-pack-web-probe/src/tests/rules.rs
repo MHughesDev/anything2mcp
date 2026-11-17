@@ -248,8 +248,14 @@ fn tier_one_takes_identifiers_by_form_and_tier_two_only_when_asked() {
     // The same exchanges give the same endpoints, byte for byte.
     let again = infer_endpoints(&exchanges, true);
     assert_eq!(
-        varied.iter().map(|e| e.found().to_string()).collect::<Vec<_>>(),
-        again.iter().map(|e| e.found().to_string()).collect::<Vec<_>>()
+        varied
+            .iter()
+            .map(|e| e.found().to_string())
+            .collect::<Vec<_>>(),
+        again
+            .iter()
+            .map(|e| e.found().to_string())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -337,7 +343,10 @@ fn a_screen_finding_keeps_structure_and_types_and_no_value() {
         elements[10],
         json!({"depth": 3, "role": "link", "name_type": "text"})
     );
-    assert_eq!(elements[11], json!({"depth": 2, "role": "cell", "name_type": "integer"}));
+    assert_eq!(
+        elements[11],
+        json!({"depth": 2, "role": "cell", "name_type": "integer"})
+    );
     assert_eq!(elements[7]["name"], "Item code");
     // Only a link whose name no other link shares can be followed.
     let (names, shared) = crate::screen::link_names(&snapshot);

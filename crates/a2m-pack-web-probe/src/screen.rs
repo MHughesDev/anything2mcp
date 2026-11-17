@@ -79,8 +79,7 @@ fn element(one: &SnapshotElement, in_record: bool) -> Json {
     let mut out = serde_json::Map::new();
     out.insert("depth".to_owned(), Json::from(one.depth));
     out.insert("role".to_owned(), Json::from(one.role.as_str()));
-    let named =
-        NAMED_ROLES.contains(&one.role.as_str()) || (one.role == "link" && !in_record);
+    let named = NAMED_ROLES.contains(&one.role.as_str()) || (one.role == "link" && !in_record);
     if named {
         out.insert("name".to_owned(), Json::from(one.name.as_str()));
     } else if !one.name.trim().is_empty() {
