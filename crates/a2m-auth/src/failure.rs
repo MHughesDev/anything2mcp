@@ -30,6 +30,9 @@ pub const UPSTREAM_UNAVAILABLE: FailureCode = FailureCode::fixed("upstream_unava
 /// The identity service answered with something that is not a token response.
 pub const UNEXPECTED_RESPONSE: FailureCode = FailureCode::fixed("unexpected_response");
 
+/// This build cannot make HTTPS requests, and an identity service needs one.
+pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
+
 /// The session cannot be used until someone signs in.
 pub(crate) fn needs_login(why: &'static str) -> Failure {
     Failure::new(
@@ -148,5 +151,16 @@ pub(crate) fn unexpected_response(what: &'static str) -> Failure {
         UNEXPECTED_RESPONSE,
         format!("The identity service answered in a way no rule covers: {what}."),
         "Check the provider's settings in `auth.yaml` against the identity service's documentation.",
+    )
+}
+
+/// An `https` endpoint in a build that cannot make HTTPS requests.
+#[cfg(not(feature = "tls"))]
+pub(crate) fn tls_not_enabled() -> Failure {
+    Failure::new(
+        FailureClass::Input,
+        TLS_NOT_ENABLED,
+        "The identity service is reached over HTTPS, and this build of the engine cannot make HTTPS requests.",
+        "Use a build with the `tls` feature of the session keeper switched on.",
     )
 }

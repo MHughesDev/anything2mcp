@@ -10,21 +10,20 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{
-    AccountName, DecisionId, Environment, Failure, Identity, NoSecrets, PrincipalId, Redact,
-    RunId, Secret, TargetName, Timestamp, WorkspaceId,
+    AccountName, DecisionId, Environment, Failure, Identity, NoSecrets, PrincipalId, Redact, RunId,
+    Secret, TargetName, Timestamp, WorkspaceId,
 };
-use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
 use a2m_ledger::{Store, StoreConfig};
+use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
 use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
 use tokio::sync::Semaphore;
 
 use crate::failure;
 use crate::{
-    AskPerson, AuthEntry, AuthProvider, ChallengeScheme, CredentialRef, CredentialSink,
-    ExpirySign, InProcessWork, Keeper, KeeperWorker, LeaseRequest, Material, PersonAnswer,
-    PersonAsk, ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose, RawSign,
-    RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, SignInContext, SignedIn,
-    StoredCredentials, Wait,
+    AskPerson, AuthEntry, AuthProvider, ChallengeScheme, CredentialRef, CredentialSink, ExpirySign,
+    InProcessWork, Keeper, KeeperWorker, LeaseRequest, Material, PersonAnswer, PersonAsk,
+    ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose, RawSign, RunProbe, SessionKey,
+    SessionLease, SessionRef, SessionStore, SignInContext, SignedIn, StoredCredentials, Wait,
 };
 
 /// The start of every test's clock.
@@ -37,7 +36,6 @@ pub(super) const HOUR: Duration = Duration::from_secs(3600);
 pub(super) enum Step {
     Works,
     Refused,
-    WantsPerson,
     WantsSecondFactor,
     Unreachable,
 }
@@ -87,11 +85,7 @@ impl Fake {
     fn made(&self, step: Step, now: Timestamp) -> Result<Material, Failure> {
         match step {
             Step::Works => {
-                let token = format!(
-                    "PLANTED-fake-{}-{}",
-                    self.sign_ins(),
-                    self.refreshes()
-                );
+                let token = format!("PLANTED-fake-{}-{}", self.sign_ins(), self.refreshes());
                 Ok(Material::new(self.name())
                     .with_secret("token", Secret::new(token))
                     .expiring_at(Some(Timestamp::from_unix_millis(
@@ -99,7 +93,6 @@ impl Fake {
                     ))))
             }
             Step::Refused => Err(failure::credential_refused("the test")),
-            Step::WantsPerson => Err(failure::needs_login("the test wants a person")),
             Step::WantsSecondFactor => Err(failure::needs_mfa()),
             Step::Unreachable => Err(failure::upstream_unavailable("the test is down")),
         }
@@ -189,7 +182,10 @@ impl Person {
         }
     }
 
-    pub(super) fn answers(&self, answer: impl Fn(&PersonAsk) -> PersonAnswer + Send + Sync + 'static) {
+    pub(super) fn answers(
+        &self,
+        answer: impl Fn(&PersonAsk) -> PersonAnswer + Send + Sync + 'static,
+    ) {
         *self.answer.lock().unwrap() = Box::new(answer);
     }
 
@@ -458,9 +454,7 @@ impl World {
             Some(folder) => StoreConfig::in_dir(&folder.0),
             None => StoreConfig::in_memory(),
         };
-        let ledger = Store::open(config.with_clock(clock.clone()))
-            .await
-            .unwrap();
+        let ledger = Store::open(config.with_clock(clock.clone())).await.unwrap();
         let vault = Arc::new(Vault::new(keys.clone(), Arc::new(ledger.key_records())));
         ledger.attach(Arc::clone(&vault)).await.unwrap();
         let store = SessionStore::new(ledger);
@@ -536,6 +530,19 @@ impl World {
             .map(|event| event.kind.as_str())
             .collect()
     }
+}
+
+/// Waits until `met` holds. The work it waits for runs on the store's own
+/// thread, so the test gives way until that work is done; a condition that
+/// never comes fails the test instead of hanging it.
+pub(super) async fn until(met: impl Fn() -> bool) {
+    for _ in 0..50_000_000u64 {
+        if met() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("the condition the test waits for never came");
 }
 
 /// Runs `work` on a runtime of its own, for a test that is not async.

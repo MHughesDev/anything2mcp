@@ -6,7 +6,7 @@ use std::sync::Arc;
 use a2m_core::Redact;
 
 use super::support::{
-    STORED_HELD, World, account_key, assert_clean, logged, placed, reference, request,
+    STORED_HELD, World, account_key, assert_clean, block, logged, placed, reference, request,
 };
 use crate::encode::base64;
 use crate::{AuthEntry, ProviderName, ProviderSet, Wait, codes, providers};
@@ -54,13 +54,19 @@ fn cases() -> Vec<Case> {
             provider: "windows_integrated",
             settings: &[("user", "EXAMPLE\\robot"), ("scheme", "ntlm")],
             stored: &[("password", "PLANTED-windows-0005")],
-            places: vec![pair("challenge ntlm EXAMPLE\\robot", "PLANTED-windows-0005")],
+            places: vec![pair(
+                "challenge ntlm EXAMPLE\\robot",
+                "PLANTED-windows-0005",
+            )],
         },
         Case {
             provider: "client_certificate",
             settings: &[],
             stored: &[
-                ("certificate", "-----BEGIN CERTIFICATE-----PLANTED-cert-0006"),
+                (
+                    "certificate",
+                    "-----BEGIN CERTIFICATE-----PLANTED-cert-0006",
+                ),
                 ("key", "PLANTED-private-key-0007"),
             ],
             places: vec![pair(
@@ -97,7 +103,7 @@ fn every_neutral_provider_is_built_and_named_as_the_documents_name_it() {
 
 #[test]
 fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() {
-    let world = World::new(STORED_HELD);
+    let world = block(World::new(STORED_HELD));
     let mut texts = Vec::new();
     let mut planted = vec!["PLANTED".to_owned()];
 
@@ -113,7 +119,12 @@ fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() 
                 .lease(request(&key, &entry, Wait::DEFAULT))
                 .await
                 .unwrap_err();
-            assert_eq!(missing.code(), &codes::CREDENTIAL_MISSING, "{}", case.provider);
+            assert_eq!(
+                missing.code(),
+                &codes::CREDENTIAL_MISSING,
+                "{}",
+                case.provider
+            );
             texts.push(format!("{missing:?} {missing}"));
 
             for (role, value) in case.stored {
@@ -167,7 +178,9 @@ fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() 
 
     let lines = world.telemetry.log_lines();
     assert!(
-        lines.iter().any(|line| line.contains("session state changed")),
+        lines
+            .iter()
+            .any(|line| line.contains("session state changed")),
         "the keeper's log lines reach the test: {lines:?}"
     );
     texts.extend(lines);
@@ -177,7 +190,7 @@ fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() 
 
 #[test]
 fn an_entry_a_provider_cannot_use_is_refused_before_anything_is_opened() {
-    let world = World::new(STORED_HELD);
+    let world = block(World::new(STORED_HELD));
     let set = ProviderSet::neutral();
     let refused = |entry: AuthEntry| {
         let provider = set.get(&entry.provider).unwrap();

@@ -10,7 +10,7 @@ use a2m_vault::{ItemId, OwnerRef, SealContext, SealedKind};
 
 use super::support::{
     HOUR, PERSON_ONLY, PERSON_RENEWING, STORED_HELD, STORED_RENEWING, Step, World, account_key,
-    fake_entry, person_id, person_key, placed, request, settle,
+    fake_entry, person_id, person_key, placed, request, until,
 };
 use crate::{
     AuthEntry, EndedBy, ExpirySign, KeeperJob, KeeperSettings, PersonAnswer, PersonAsk,
@@ -20,16 +20,18 @@ use crate::{
 
 #[tokio::test]
 async fn a_lease_is_refused_for_another_persons_session() {
-    let world = World::new(PERSON_RENEWING);
+    let world = World::new(PERSON_RENEWING).await;
     let key = person_key(1);
     let entry = fake_entry();
-    world.person.answers(|_| PersonAnswer::Done(Returned::new()));
+    world
+        .person
+        .answers(|_| PersonAnswer::Done(Returned::new()));
     world
         .keeper
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::Valid);
 
     // Another person, an agent acting for another person, and a caller that
@@ -60,7 +62,7 @@ async fn a_lease_is_refused_for_another_persons_session() {
 
 #[tokio::test]
 async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     let first = world
@@ -82,7 +84,7 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
             tokio::spawn(async move { keeper.lease(req).await })
         })
         .collect();
-    settle().await;
+    until(|| world.keeper.waiting() == 10).await;
     assert_eq!(world.fake.refreshes(), 1);
     assert_eq!(world.state(&key).await, SessionState::Renewing);
 
@@ -96,7 +98,10 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
     let kinds = world.kinds(&key).await;
     assert_eq!(kinds.iter().filter(|kind| **kind == "renewed").count(), 1);
     assert_eq!(
-        kinds.iter().filter(|kind| **kind == "renewal_started").count(),
+        kinds
+            .iter()
+            .filter(|kind| **kind == "renewal_started")
+            .count(),
         1
     );
     assert_eq!(world.telemetry.metrics().counter(RENEWALS, &[]), 1);
@@ -110,7 +115,7 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn one_renewal_also_under_real_parallelism() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     world
@@ -134,7 +139,7 @@ async fn one_renewal_also_under_real_parallelism() {
 
 #[tokio::test]
 async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_nothing() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     let mut leases = Vec::new();
@@ -170,7 +175,7 @@ async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_noth
     for lease in &leases {
         world.keeper.report(lease, sign).await;
     }
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 1);
     assert_eq!(world.fake.refreshes(), 1);
     assert_eq!(world.state(&key).await, SessionState::Valid);
@@ -179,7 +184,7 @@ async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_noth
     for lease in &leases {
         world.keeper.report(lease, sign).await;
     }
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!((world.probe.calls(), world.fake.refreshes()), (1, 1));
 
     // A sign on the new credentials that the probe does not confirm is one
@@ -191,14 +196,14 @@ async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_noth
         .await
         .unwrap();
     world.keeper.report(&fresh, sign).await;
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!((world.probe.calls(), world.fake.refreshes()), (2, 1));
     assert_eq!(world.state(&key).await, SessionState::Valid);
 }
 
 #[tokio::test]
 async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call() {
-    let world = World::new(PERSON_ONLY);
+    let world = World::new(PERSON_ONLY).await;
     let key = person_key(1);
     let entry = fake_entry();
 
@@ -217,7 +222,7 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
+    world.keeper.idle().await;
     world
         .keeper
         .lease(request(&key, &entry, Wait::NoWait))
@@ -239,39 +244,38 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
     assert_eq!(world.person.notices(), 1);
     assert_eq!((world.fake.sign_ins(), world.fake.refreshes()), (1, 0));
 
-    // An interactive call waits for the person, and stops when its wait is
-    // over. The clock is the test's; the tick is what looks at it.
-    let waiting = {
+    // Interactive calls wait for the person, each up to its own wait. The
+    // clock is the test's; the tick is what looks at it. After 250 seconds
+    // the call that waits 200 has stopped and the call that waits 300 has
+    // not.
+    let wait_for = |seconds: u64| {
         let keeper = world.keeper.clone();
-        let req = request(&key, &entry, Wait::Interactive(Duration::from_secs(300)));
+        let req = request(
+            &key,
+            &entry,
+            Wait::Interactive(Duration::from_secs(seconds)),
+        );
         tokio::spawn(async move { keeper.lease(req).await })
     };
-    settle().await;
-    assert!(!waiting.is_finished());
-    world.clock.advance(Duration::from_secs(299));
-    world.keeper.tick().await;
-    settle().await;
-    assert!(!waiting.is_finished());
-    world.clock.advance(Duration::from_secs(1));
+    let (short, long) = (wait_for(200), wait_for(300));
+    until(|| world.keeper.waiting() == 2).await;
+    world.clock.advance(Duration::from_secs(250));
     world.keeper.tick().await;
     assert_eq!(
-        waiting.await.unwrap().unwrap_err().code(),
+        short.await.unwrap().unwrap_err().code(),
         &codes::NEEDS_LOGIN
     );
 
-    // The person signs in again, and calls run.
+    // The person signs in again: the call still waiting runs, and so does
+    // every call after it.
     world
         .keeper
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
-    let lease = world
-        .keeper
-        .lease(request(&key, &entry, Wait::NoWait))
-        .await
-        .unwrap();
+    let lease = long.await.unwrap().unwrap();
     assert_eq!(lease.epoch(), 2);
+    assert_eq!(world.fake.sign_ins(), 2);
 
     // Ended on purpose: `needs_login`, the old lease places nothing, and
     // nothing is retried.
@@ -293,7 +297,7 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
 
 #[tokio::test]
 async fn a_second_factor_nobody_gives_is_needs_mfa() {
-    let world = World::new(PERSON_RENEWING);
+    let world = World::new(PERSON_RENEWING).await;
     let key = person_key(1);
     let entry = fake_entry();
     world
@@ -301,7 +305,7 @@ async fn a_second_factor_nobody_gives_is_needs_mfa() {
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
+    world.keeper.idle().await;
     world.clock.advance(2 * HOUR);
     *world.fake.on_refresh.lock().unwrap() = Step::WantsSecondFactor;
     let stopped = world
@@ -327,7 +331,7 @@ async fn a_second_factor_nobody_gives_is_needs_mfa() {
 
 #[tokio::test]
 async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
-    let world = World::new(PERSON_RENEWING);
+    let world = World::new(PERSON_RENEWING).await;
     let key = person_key(1);
     let entry = fake_entry();
     world
@@ -335,7 +339,7 @@ async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
+    world.keeper.idle().await;
     world.clock.advance(2 * HOUR);
     *world.fake.on_refresh.lock().unwrap() = Step::Refused;
     for _ in 0..10 {
@@ -355,7 +359,7 @@ async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
 #[tokio::test]
 async fn a_refused_stored_credential_is_not_tried_again() {
     // At sign-in.
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     *world.fake.on_sign_in.lock().unwrap() = Step::Refused;
@@ -373,13 +377,21 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     assert_eq!(world.person.notices(), 1);
 
     // A person looks at it and asks for a sign-in: one more try, no more.
-    world.keeper.sign_in(&key, Arc::clone(&entry), None).await.unwrap();
-    settle().await;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
     assert_eq!(world.fake.sign_ins(), 2);
     assert_eq!(world.state(&key).await, SessionState::Absent);
     *world.fake.on_sign_in.lock().unwrap() = Step::Works;
-    world.keeper.sign_in(&key, Arc::clone(&entry), None).await.unwrap();
-    settle().await;
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), None)
+        .await
+        .unwrap();
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::Valid);
 
     // At renewal: the same credential, refused, is counted once and not
@@ -401,7 +413,7 @@ async fn a_refused_stored_credential_is_not_tried_again() {
 
 #[tokio::test]
 async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
-    let world = World::new(STORED_HELD);
+    let world = World::new(STORED_HELD).await;
     let key = account_key("robot");
     let entry = fake_entry();
     let lease = world
@@ -413,7 +425,7 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
     // confirmed, and the limit is one attempt: it is not offered again.
     *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
     world.keeper.report(&lease, ExpirySign::Refused).await;
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
     assert_eq!(world.fake.sign_ins(), 1);
     let stopped = world
@@ -425,7 +437,7 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
 
     // With a limit of two, and after a check that confirmed the credential,
     // one fresh sign-in is made when the system refuses it later.
-    let world = World::new(STORED_HELD);
+    let world = World::new(STORED_HELD).await;
     let entry = Arc::new(AuthEntry {
         attempt_limit: 2,
         ..AuthEntry::new(ProviderName::new("fake").unwrap())
@@ -437,7 +449,7 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
         .unwrap();
     *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
     world.keeper.report(&lease, ExpirySign::Refused).await;
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::Valid);
     assert_eq!(world.fake.sign_ins(), 2);
     let again = world
@@ -447,14 +459,14 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
         .unwrap();
     assert_eq!(again.epoch(), 2);
     world.keeper.report(&again, ExpirySign::Refused).await;
-    settle().await;
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
     assert_eq!(world.fake.sign_ins(), 2);
 }
 
 #[tokio::test]
 async fn an_identity_service_that_is_down_fails_each_call_once_and_never_loops() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     world
@@ -501,7 +513,7 @@ async fn an_identity_service_that_is_down_fails_each_call_once_and_never_loops()
 
 #[tokio::test]
 async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
-    let world = World::new(PERSON_RENEWING);
+    let world = World::on_disk(PERSON_RENEWING).await;
     let key = person_key(1);
     let entry = fake_entry();
     world
@@ -509,7 +521,7 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
         .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
+    world.keeper.idle().await;
     let before = world
         .keeper
         .lease(request(&key, &entry, Wait::NoWait))
@@ -518,7 +530,7 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
     let token = placed(&before)[0].1.clone();
 
     // A restart: nothing is held in memory, and nobody signs in again.
-    let after = world.restarted();
+    let after = world.restarted().await;
     assert!(!after.worker.holds(before.session(), before.epoch()));
     assert!(!after.is_registered(&token));
     let lease = after
@@ -536,7 +548,11 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
     // opens under no other owner, kind, or item.
     let sealed = after.store.saved(lease.session()).await.unwrap().unwrap();
     let bytes = sealed.to_bytes();
-    assert!(!bytes.windows(token.len()).any(|window| window == token.as_bytes()));
+    assert!(
+        !bytes
+            .windows(token.len())
+            .any(|window| window == token.as_bytes())
+    );
     let own = SealContext {
         workspace: key.workspace,
         owner: OwnerRef::of(&key.identity),
@@ -573,7 +589,7 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
 
     // A session whose state was never saved does not survive: it is
     // expired, and the person signs in again.
-    let unsaved = World::new(PERSON_RENEWING);
+    let unsaved = World::on_disk(PERSON_RENEWING).await;
     let pinned = Arc::new(AuthEntry {
         movable: false,
         ..AuthEntry::new(ProviderName::new("fake").unwrap())
@@ -583,8 +599,8 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
         .sign_in(&key, Arc::clone(&pinned), Some(person_id(1)))
         .await
         .unwrap();
-    settle().await;
-    let again = unsaved.restarted();
+    unsaved.keeper.idle().await;
+    let again = unsaved.restarted().await;
     let gone = again
         .keeper
         .lease(request(&key, &pinned, Wait::NoWait))
@@ -596,7 +612,7 @@ async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
 
 #[tokio::test]
 async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::new(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = Arc::new(AuthEntry {
         idle: Some(Duration::from_secs(1200)),
@@ -664,7 +680,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
 
 #[tokio::test]
 async fn work_that_was_interrupted_is_ended_and_not_left_waiting() {
-    let world = World::new(STORED_RENEWING);
+    let world = World::on_disk(STORED_RENEWING).await;
     let key = account_key("robot");
     let entry = fake_entry();
     world
@@ -679,18 +695,16 @@ async fn work_that_was_interrupted_is_ended_and_not_left_waiting() {
         let req = request(&key, &entry, Wait::DEFAULT);
         tokio::spawn(async move { keeper.lease(req).await })
     };
-    settle().await;
+    until(|| world.fake.refreshes() == 1).await;
     assert_eq!(world.state(&key).await, SessionState::Renewing);
 
     // The process stops in the middle of the renewal. The one that starts
     // next finds the record in `renewing` with nobody working on it.
-    let after = world.restarted();
+    run.abort();
+    let after = world.restarted().await;
     after.keeper.tick().await;
     assert_eq!(after.state(&key).await, SessionState::Renewing);
-    after
-        .clock
-        .advance(KeeperSettings::default().work_limit);
+    after.clock.advance(KeeperSettings::default().work_limit);
     after.keeper.tick().await;
     assert_eq!(after.state(&key).await, SessionState::Expired);
-    run.abort();
 }

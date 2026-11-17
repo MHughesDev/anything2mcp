@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -144,6 +145,8 @@ struct Inner {
     busy: Mutex<BTreeSet<SessionId>>,
     /// Why each session's last sign-in or renewal failed, until one works.
     failures: Mutex<BTreeMap<SessionId, Failure>>,
+    /// How many calls are waiting for a session now.
+    waiting: AtomicUsize,
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -165,6 +168,7 @@ struct Busy {
 impl Drop for Busy {
     fn drop(&mut self) {
         locked(&self.inner.busy).remove(&self.session);
+        self.inner.wake();
     }
 }
 
@@ -245,6 +249,7 @@ impl Keeper {
                 entries: Mutex::new(BTreeMap::new()),
                 busy: Mutex::new(BTreeSet::new()),
                 failures: Mutex::new(BTreeMap::new()),
+                waiting: AtomicUsize::new(0),
             },
         }
     }
@@ -460,6 +465,24 @@ impl Keeper {
                     );
                 }
                 return Ok(());
+            }
+        }
+    }
+
+    /// How many calls are waiting for a session now: for one that is
+    /// signing in, being checked, being renewed, or wanting a person.
+    #[must_use]
+    pub fn waiting(&self) -> usize {
+        self.inner.waiting.load(Ordering::SeqCst)
+    }
+
+    /// Waits until no sign-in, check, or renewal that this keeper started is
+    /// still in flight. For closing down in order, and for tests.
+    pub async fn idle(&self) {
+        let mut changes = self.inner.changed.subscribe();
+        while !locked(&self.inner.busy).is_empty() {
+            if changes.changed().await.is_err() {
+                return;
             }
         }
     }
@@ -1193,7 +1216,7 @@ impl Inner {
                         Wait::NoWait => self.settings.work_limit,
                     };
                     let out_of_time = self.clock.elapsed().saturating_sub(started) >= limit;
-                    if out_of_time || changes.changed().await.is_err() {
+                    if out_of_time || self.changed_or_closed(&mut changes).await {
                         return Err(if row.wants == Some(PersonReason::SecondFactor) {
                             failure::needs_mfa()
                         } else if for_person {
@@ -1238,6 +1261,15 @@ impl Inner {
                 }
             }
         }
+    }
+
+    /// Waits for the next change of any session or the next tick. True when
+    /// the keeper is gone and nothing will change again.
+    async fn changed_or_closed(&self, changes: &mut watch::Receiver<u64>) -> bool {
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        let closed = changes.changed().await.is_err();
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        closed
     }
 
     /// Opens a valid session's saved state on the home runner after a

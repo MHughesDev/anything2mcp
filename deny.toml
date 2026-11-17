@@ -7,12 +7,17 @@ all-features = true
 
 [licenses]
 # Zlib: permissive; added 2026-11-17 for foldhash, which rusqlite's tree brings.
+# ISC and CDLA-Permissive-2.0: permissive; added 2026-11-17 for the TLS tree
+# behind a2m-auth's `tls` feature: ring, rustls-webpki, and untrusted are ISC,
+# and the bundled root certificates are CDLA-Permissive-2.0 (decision 0084).
 allow = [
     "MIT",
     "Apache-2.0",
     "BSD-3-Clause",
     "Unicode-3.0",
     "Zlib",
+    "ISC",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

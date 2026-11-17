@@ -34,6 +34,10 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 # Exact decimals for business values, wrapped by a2m-core and named nowhere
 # else (decision 0068). No features: the wrapper writes its own text form.
 rust_decimal = { version = "1.43.0", default-features = false }
+# TLS for the session keeper's calls to identity services, behind a2m-auth's
+# `tls` feature and nowhere else yet: rustls with the ring provider, which
+# needs only a C compiler on every platform (decision 0084).
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # SHA-1 only for one-time codes, whose standard (RFC 6238) uses it by default;

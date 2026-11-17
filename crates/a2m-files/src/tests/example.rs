@@ -644,6 +644,87 @@ fn without_the_pack_its_surface_kind_file_kind_and_mode_do_not_compile() {
 }
 
 #[test]
+fn a_source_definition_that_the_readers_could_not_load_is_refused_when_it_is_compiled() {
+    const SOURCE: &str = "sources/order_sheet_v2.yaml";
+    // An expression over `row`, whose cells have no type until a file is
+    // read, must end in a type of its own.
+    let problems = problems_of(&Case::Edit(SOURCE, "upper(row.Code)", "row.Code"));
+    let problem = problems.find("kernel.expression_type_error").unwrap();
+    assert_eq!((problem.at.file.as_str(), problem.at.line), (SOURCE, 16));
+    // A digest that is not the digest of its parts, with the right one as the fix.
+    let problems = problems_of(&Case::Edit(SOURCE, "value: \"Length\"", "value: \"Width\""));
+    let problem = problems.find("kernel.unknown_value").unwrap();
+    assert_eq!(problem.at.line, 6);
+    assert!(problem.fix.contains("digest: \""), "{problem}");
+    for (find, replace, code) in [
+        (
+            "column: \"Code\"",
+            "column: \"Item\"",
+            "kernel.unknown_name",
+        ),
+        ("key: [code]", "key: [item]", "kernel.unknown_name"),
+        (
+            "columns: [\"Code\", \"Length\"]",
+            "columns: [\"Code\", \"Code\"]",
+            "kernel.name_defined_twice",
+        ),
+        (
+            "column: \"Length\"}",
+            "column: \"Length\", expression: \"1\"}",
+            "kernel.missing_field",
+        ),
+        (
+            "hidden: reject",
+            "hidden: reject\noptions: {delimiter: \"ab\"}",
+            "kernel.unknown_value",
+        ),
+        (
+            "type: length_ft_in",
+            "type: length_in_ft",
+            "kernel.unknown_field_type",
+        ),
+    ] {
+        let problems = problems_of(&Case::Edit(SOURCE, find, replace));
+        assert!(problems.find(code).is_some(), "{replace}: {problems}");
+    }
+    // A source read from a file knows at least one template version.
+    let text = String::from_utf8(
+        example_files()
+            .into_iter()
+            .find(|(path, _)| path.as_str() == SOURCE)
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    let without: String = text
+        .lines()
+        .filter(|line| {
+            !(1..=9).contains(&text.lines().position(|l| l == *line).unwrap_or(0))
+                || line.starts_with("template")
+                || line.starts_with("reader")
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert!(!without.contains("versions"));
+    let mut files = example_files();
+    files
+        .iter_mut()
+        .find(|(path, _)| path.as_str() == SOURCE)
+        .unwrap()
+        .1 = without.into_bytes();
+    let problems = problems_with(&files, &stand_set().unwrap(), CompileMode::Publish);
+    assert_eq!(
+        problems
+            .find("kernel.missing_field")
+            .unwrap()
+            .at
+            .file
+            .as_str(),
+        SOURCE
+    );
+}
+
+#[test]
 fn commit_points_equal_the_steps_that_commit_in_every_write_binding() {
     let plan = compiled().plan;
     for operation in &plan.operations {

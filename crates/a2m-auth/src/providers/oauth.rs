@@ -130,11 +130,7 @@ async fn exchange(
     }
     let body = form(&pairs);
 
-    let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|_| failure::upstream_unavailable("no client could be made to reach it"))?;
+    let http = client(url)?;
     let mut request = http
         .post(url)
         .header("content-type", "application/x-www-form-urlencoded")
@@ -204,6 +200,29 @@ async fn exchange(
         refresh,
         expires_at,
     })
+}
+
+/// The HTTP client for one exchange. It follows no redirect: a credential
+/// goes to the address the auth file names and nowhere else.
+fn client(url: &str) -> Result<reqwest::Client, Failure> {
+    #[cfg(not(feature = "tls"))]
+    if url.starts_with("https://") {
+        return Err(failure::tls_not_enabled());
+    }
+    #[cfg(feature = "tls")]
+    {
+        let _ = url;
+        // The TLS provider of the process, installed if nobody has: ring.
+        // Certificates are checked by the platform's own verifier.
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
+    }
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|_| failure::upstream_unavailable("no client could be made to reach it"))
 }
 
 /// What a refusal by the token endpoint means, by the standard's own error

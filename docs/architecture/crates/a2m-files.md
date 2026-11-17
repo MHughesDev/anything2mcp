@@ -114,11 +114,30 @@ Lowering comes before analysis so that commit points are counted from the lowere
 | Place | Names |
 | --- | --- |
 | A binding, and its `precondition` | `input`, a record of the operation's inputs; `env`, with `name` and `kind` |
-| A source's `mapping` and `rows` | `source`, a record of the declared columns, each text; `env` |
+| A source's row field `expression`, and its `rows` | `row`, the row's cells by header text, and `source`; both without a type, so the expression must end in a type of its own |
 | A pipeline step's `with`, `when`, `for_each` | `input`; `env`; `steps`, with the result of each earlier step; `source`, with `rows`, when the pipeline has a source; `row`, inside a step with `for_each` |
 | A step's `expect` | The same, and `result`, the step's own result |
 | `success` | `input`, `env`, `steps` with every step, `source`, and `all_records_verified` |
 | A pack's own file | Whatever its `ExprSite` declares |
+
+### Source definitions
+
+```rust
+/// The payload of the plan's `SourcePlan`: what `sources/*.yaml` compiles to, and what `a2m-sources` loads.
+pub struct SourceSpec { pub versions: Vec<TemplateVersion>, pub locate: Locate, pub columns: Vec<String>, pub fields: Vec<RowField>,
+                        pub key: Vec<String>, pub missing: Vec<String>, pub hidden: HiddenRule, pub options: ReaderOptions }
+pub struct TemplateVersion { pub version: String, pub fingerprint: Fingerprint }
+pub struct Fingerprint { pub digest: Digest, pub parts: Vec<FingerprintPart> }     // of_parts(parts), is_sound()
+pub struct FingerprintPart { pub kind: PartKind, pub place: String, pub value: String }
+pub enum PartKind { DateSystem, Sheet, Header, Merged, Table, TableHeader, List, Name, Macros }   // NAMES, as_str(), noun()
+pub struct RowField { pub name: String, pub field_type: FieldTypeIndex, pub required: bool, pub column: Option<String> }
+pub enum Locate { Document, Named(String), Sheet(String) }
+pub enum HiddenRule { Reject, Include }
+pub struct ReaderOptions { pub delimiter: Option<char> }
+pub const OPERATION_READER: &str = "operation";
+```
+
+These are data, with the serde form `a2m-sources` reads ([decision 0087](../../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md)). A row field read from a bare column is data in the spec; only a row field that is an expression is in the plan's `mapping`. A row field's type, for a pipeline's `with`, is its field type's. The fingerprint's encoding is fixed here, so the compiler refuses a digest that is not the digest of its parts.
 
 ### The plan
 
@@ -133,6 +152,7 @@ Lowering comes before analysis so that commit points are counted from the lowere
 | `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's step lists are the lowering's, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one payload for each surface kind that has documents; the kernel wraps it with the owner's name, stores and hashes it, and never decodes it. Sections are in order of file kind, then surface kind |
 | `tools` | 8 | Operations, then pipelines. A decimal travels as text in a tool's schema |
+| `pipelines` | 3 to 7 | A source's bare columns go in its payload, a `SourceSpec`; its expressions in `mapping` |
 | `tests` | 7 | One for each document under `tests/` |
 
 Encoding and hashing are `a2m-core`'s, so the compiler and the engine cannot disagree on either.
@@ -310,7 +330,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 3. Done: the registration traits and `CompilerSet`; stages 1 to 9, proven through the test pack `stand`. Not done: no real pack is registered yet; the web pack's screen kind and the HTTP pack's endpoint kind are their packs' packages. Package 1.3.
 4. Done: field types compiled to normalizers, built in and from `types.yaml`. Package 3.4.
 5. Done: identity strategies for `natural` and `composite`, commit-point counting for writes, and the write lint rules. Not done: the long form of `identity` for `stamped` and `find` has only its strategy and inputs; the stamped field and the lookup are written with the first operation that needs one. Packages 3.3 and 3.8.
-6. Done: pipelines and sources, with rows of text cells. Package 3.9.
+6. Done: pipelines, and sources compiled to `SourceSpec`. The `example` target's source was loaded, and its fixture sheet read, by `a2m-sources`, once and by hand; `a2m-sources` still holds its own copy of the types, to be replaced by these. Package 3.9.
 7. Done: the drafter and its rules for what a draft may hold, proven with the test pack's drafting rule. Not done: no pack's drafting rules exist. Package E4.
 
 Not built, in any step:
@@ -329,5 +349,4 @@ Not built, in any step:
 - Whether a lint rule may be silenced, and where the reason is written.
 - Where drafts are written inside a project, and whether they are kept apart from files a person wrote. Today they are written among them and told apart by their first line.
 - Where the parts of the files that the plan cannot carry go: `auth.yaml`, the target's fixed settings, test records. `a2m-auth` and `a2m-policy` need them.
-- Whether a source's cells may be typed by the reader, not only text.
 - A reader's name is checked for shape only; `a2m-sources` knows which readers exist.

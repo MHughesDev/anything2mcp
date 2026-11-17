@@ -35,10 +35,11 @@ Building `a2m-files` against the finished plan types in `a2m-core` showed where 
 - An operation's `outputs` is a map from a name to a field type, with `list: true` for a list. A reference to a pack's schema, and nested records, are not built.
 - An operation may state `hazard` and `title`. A hazard other than `none` requires the effect `irreversible`; no pack can yet show otherwise.
 - A pipeline has a required `description`, since it is a tool.
-- A source declares `columns`, a map from a column name to the header's own words, and every entry of `mapping` is an expression over `source`, whose fields are the columns, each text. A row field's type is its expression's type, which settles the open point on the type of a bare column.
+- A source is written as [decision 0087](0087-the-source-readers-interface-as-building-it-settled-it.md) settled it: template versions with fingerprints, where the data lies, the columns by header text, and row fields that each name a field type and a column or an expression. **The compiled form, `SourceSpec` and the types it is made of, is defined in `a2m-files`,** beside the file formats, and written into the plan's `SourcePlan` as its payload; `a2m-sources`, a layer above, loads it. The two crates then share one definition and not only a shape. The compiler checks what the readers would refuse at load: a fingerprint's digest, a column that is not listed, a key that is not a row field, a file reader with no version.
+- An expression of a source reads `row` and `source`, declared with no type, and must end in a known type.
 - A success check is an expression; `all_records_verified` is a name it may read.
 - A fixture folder's marker is `fixture.yaml` with `scrubbed: true`.
-- A field type takes `decimal_mark`, `true_text`, and `false_text`. A key that means nothing for its base is refused. The built-in `decimal` has six places; `money` and `choice` cannot be used until a target states a currency or the codes.
+- A field type takes `decimal_mark`, `true_text`, and `false_text`. A date-and-time type's `timezone` is `fixed`, which is the target's `environment.timezone` or UTC, or an offset such as `+02:00` written in its place; the offset travels in the normalizer's text, since the plan's zone rule holds none. A key that means nothing for its base is refused. The built-in `decimal` has six places; `money` and `choice` cannot be used until a target states a currency or the codes.
 - A name that starts with a dot is passed over by the loader.
 
 ## What the plan cannot yet carry
@@ -50,12 +51,12 @@ These are validated and then dropped, because `a2m-core`'s plan has no field for
 - **Surface kinds and controls behind a fifth trait.** They hold no behavior; data is simpler and crosses a process boundary as it is.
 - **`FileKind::compile` returning a whole `PackSection`,** as sketched: the kernel would have to check three fields the pack has no reason to write.
 - **A verb required in every binding.** The specification's own example has a binding with none.
-- **Typed rows from a typed reader,** so that a spreadsheet's number arrives as a number: it needs the reader's contract, which `a2m-sources` owns; text first, and the expression converts.
+- **The source's compiled form defined in `a2m-sources`,** as it was first built: `a2m-files` is a layer below and cannot name it, so the two would agree only by the shape of their JSON.
 - **The test pack in each dependent crate's tests.** Four crates would each write one, and the `example` target could compile with none of them.
 
 ## Revisit if
 
-The first real pack finds a view too narrow, a pack needs a hazard without `irreversible`, or `a2m-sources` gives rows typed cells.
+The first real pack finds a view too narrow, or a pack needs a hazard without `irreversible`.
 
 ## Spec sections
 

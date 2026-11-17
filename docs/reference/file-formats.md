@@ -235,13 +235,19 @@ A step can only stop on failure. There is no continue-on-error.
 
 | Field | Meaning |
 | --- | --- |
-| `template` (required) | Name and version |
-| `reader` (required) | `xlsx`, `csv`, `json`, or `operation` |
-| `fingerprint` (required) | What identifies this template version |
-| `locate` | Named ranges or header text that find the data |
-| `mapping` (required) | Map of row field name to a source column or an expression. Each row the source yields has these fields; a pipeline step passes them to an operation's inputs through `with`, so a source never names an operation |
+| `template` (required) | The template's name |
+| `reader` (required) | `xlsx`, `csv`, `json`, a plug-in's reader, or `operation` for rows that are another operation's result |
+| `versions` (required unless the reader is `operation`) | List of the template versions the definition knows, each with `version` and `fingerprint`. A fingerprint has `parts`, each with `kind`, `place`, and `value`, and may state its `digest`; the compiler works the digest out from the parts and refuses one that differs |
+| `locate` | Where the data lies: `document` (the default), `{named: ...}` for a table, a defined name, or a key, or `{sheet: ...}` |
+| `columns` (required) | The header text of every column the definition reads, each once. A column in the data that is not listed is a problem |
+| `fields` (required) | Map of row field name to its `type`, a field type, and either `column`, the header it is read from, or `expression`; and `required`, true unless given. Each row the source yields has these fields, each of its field type; a pipeline step passes them to an operation's inputs through `with`, so a source never names an operation |
+| `key` | The row fields that together identify a row; two rows with one key are a problem |
 | `rows` | An expression filtering which rows are records |
 | `missing` | Which text values, if any, count as empty |
+| `hidden` | `reject` (the default) or `include`: what is done with a hidden row or column |
+| `options` | The reader's dialect: `delimiter`, one character, a comma unless given |
+
+An `expression` and `rows` read `row`, the record of the row's cells by header text, and `source`. A cell has no type until a file is read, so each must end in a type of its own, as `upper(row.Code)` and `row.Code != ""` do. The compiled form is the `SourceSpec` in `a2m-files`, which `a2m-sources` loads ([decision 0087](../decisions/0087-the-source-readers-interface-as-building-it-settled-it.md)).
 
 ## `tests/*.yaml` and `fixtures/`
 

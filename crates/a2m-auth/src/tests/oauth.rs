@@ -11,8 +11,8 @@ use axum::routing::post;
 use sha2::{Digest, Sha256};
 
 use super::support::{
-    HOUR, STORED_HELD, World, account_key, assert_clean, decode_form, logged, person_id,
-    person_key, placed, reference, request, settle,
+    HOUR, STORED_HELD, World, account_key, assert_clean, block, decode_form, logged, person_id,
+    person_key, placed, reference, request,
 };
 use crate::encode::{base64, base64_url};
 use crate::{
@@ -43,22 +43,26 @@ fn answer(status: StatusCode, body: serde_json::Value) -> (StatusCode, String) {
     (status, body.to_string())
 }
 
-async fn token(
-    service: Shared,
-    headers: HeaderMap,
-    body: String,
-) -> (StatusCode, String) {
+async fn token(service: Shared, headers: HeaderMap, body: String) -> (StatusCode, String) {
     let form = decode_form(&body);
     let mut service = service.lock().unwrap();
     service.requests.push(form.clone());
     if service.down {
         return answer(StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({}));
     }
-    let basic = format!("Basic {}", base64(format!("client-1:{CLIENT_SECRET}").as_bytes()));
+    let basic = format!(
+        "Basic {}",
+        base64(format!("client-1:{CLIENT_SECRET}").as_bytes())
+    );
     let proved = headers
         .get("authorization")
         .is_some_and(|value| value.as_bytes() == basic.as_bytes());
-    let refuse = |error: &str| answer(StatusCode::BAD_REQUEST, serde_json::json!({ "error": error }));
+    let refuse = |error: &str| {
+        answer(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({ "error": error }),
+        )
+    };
     let field = |name: &str| form.get(name).map(String::as_str);
     match field("grant_type") {
         Some("client_credentials") if proved => {}
@@ -133,7 +137,7 @@ fn client_credentials(address: &str) -> Arc<AuthEntry> {
 
 #[test]
 fn client_credentials_are_exchanged_once_renewed_once_and_shown_nowhere() {
-    let world = World::new(STORED_HELD);
+    let world = block(World::new(STORED_HELD));
     let service = Shared::default();
     let key = account_key("robot");
     let mut texts = Vec::new();
@@ -238,7 +242,7 @@ fn client_credentials_are_exchanged_once_renewed_once_and_shown_nowhere() {
 
 #[test]
 fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_token_rotates() {
-    let world = World::new(STORED_HELD);
+    let world = block(World::new(STORED_HELD));
     let service = Shared::default();
     let key = person_key(1);
     let mut texts = Vec::new();
@@ -247,7 +251,10 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
         let address = serve(&service).await;
         let entry = Arc::new(
             AuthEntry::new(ProviderName::new("oauth_authorization_code").unwrap())
-                .setting("authorization_endpoint", "https://id.example.test/authorize")
+                .setting(
+                    "authorization_endpoint",
+                    "https://id.example.test/authorize",
+                )
                 .setting("token_endpoint", &format!("{address}/token"))
                 .setting("client_id", "client-1")
                 .setting("scope", "records.read"),
@@ -307,7 +314,10 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
             // The service was sent the code, the same return address, and a
             // verifier that hashes to the challenge in the link.
             let seen = service.lock().unwrap();
-            assert_eq!(seen.requests[0]["redirect_uri"], "http://127.0.0.1:1/returned");
+            assert_eq!(
+                seen.requests[0]["redirect_uri"],
+                "http://127.0.0.1:1/returned"
+            );
             assert_eq!(seen.requests[0]["client_id"], "client-1");
             let verifier = seen.requests[0]["code_verifier"].clone();
             assert!(!link.contains(&verifier));
@@ -368,7 +378,7 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
             .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
             .await
             .unwrap();
-        settle().await;
+        world.keeper.idle().await;
         assert_eq!(grants(&service).len(), 4);
         assert_eq!(world.state(&key).await, SessionState::Absent);
 

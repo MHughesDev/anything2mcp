@@ -50,7 +50,7 @@ inputs:
   item_code: {type: string, description: "Item code, such as L-101"}
   length:    {type: length_ft_in}
 outputs:
-  line_item: {schema: "#/endpoints/line_item_get/response"}
+  length: {type: length_ft_in}
 bindings:
   - mode: http
     status: shadow
@@ -92,10 +92,11 @@ request_schema: schemas/line_item_put.request.json
 response_schema: schemas/line_item_put.response.json
 ```
 
-**Pipeline** names operations only, never screens, endpoints, or modes. The source file names the reader and maps the sheet's columns to row fields; each step passes values to its operation's inputs with `with`:
+**Pipeline** names operations only, never screens, endpoints, or modes. The source file names the reader, lists the sheet's columns, and gives each row field a field type and the column or expression it comes from; each step passes values to its operation's inputs with `with`:
 
 ```yaml
 pipeline: example_order_sheet_enter
+description: Enters every row of an order sheet as a line item of one draft order.
 effect: write
 inputs:
   order_id: {type: string, description: "Order the sheet belongs to"}
@@ -108,7 +109,7 @@ steps:
      with: {order_id: input.order_id, item_code: row.code, length: row.length},
      checkpoint: per_record}
   - {id: totals, operation: example_order_totals_get, with: {order_id: input.order_id}}
-success: ["all_records_verified"]
+success: [all_records_verified]
 ```
 
 The sheet itself arrives as the pipeline's reserved `source` input, a `file` ([file format reference](../../reference/file-formats.md)).
