@@ -535,6 +535,11 @@ handler!(
         ) {
             return run_output(kernel, &call, row).await;
         }
+        // A job may be working on the run already, such as the reconcile
+        // the scheduler queued after a lost lease. It took its lease number
+        // before this call read the run, so the wait below ends when that
+        // job does, and not only when a later lease has worked.
+        let busy = kernel.in_hand(run);
         // The caller's facts are kept again, so that the guard's question
         // is asked about whoever resumes.
         let facts = CallerFacts::of(&call.caller, call.decision);
@@ -563,18 +568,22 @@ handler!(
             Err(failure) => return Err(failure),
         }
         kernel.run_changed();
-        let row = kernel.wait_for_work(run, row.epoch, wait_of(&call)).await?;
+        let row = kernel
+            .wait_for_work(run, row.epoch, busy, wait_of(&call))
+            .await?;
         run_output(kernel, &call, row).await
     }
 );
 
 impl Kernel {
     /// Waits, after a resume, until a new lease has worked on the run and
-    /// it rests, stops, or ends again.
+    /// it rests, stops, or ends again. `busy` says a job was working on
+    /// the run when the resume came; its end is then the work waited for.
     async fn wait_for_work(
         &self,
         run: RunId,
         before: a2m_core::Epoch,
+        busy: bool,
         wait: Duration,
     ) -> Result<RunRow, Failure> {
         let store = self.store()?;
@@ -584,7 +593,7 @@ impl Kernel {
         loop {
             changed.borrow_and_update();
             let row = store.read(move |tx| tx.ledger().run(run)).await?;
-            let worked = row.epoch != before;
+            let worked = busy || row.epoch != before;
             if worked
                 && !matches!(
                     row.state,

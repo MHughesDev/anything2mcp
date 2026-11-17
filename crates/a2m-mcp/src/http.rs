@@ -18,10 +18,10 @@ use axum::http::header::{ALLOW, AUTHORIZATION, CONTENT_TYPE, HOST};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use serde_json::{Value as Json, json};
 
-use crate::codes;
 use crate::sdk::{Sdk, Verified};
 use crate::settings::{McpSettings, Revision};
 use crate::tools::Core;
+use crate::{clean, codes};
 
 /// An HTTP request, as the endpoint takes it.
 pub type HttpRequest = Request<Body>;
@@ -40,8 +40,9 @@ pub fn mcp_path(toolset: &ToolsetName) -> String {
 }
 
 /// Who the local channel saw connect. Whoever mounts the endpoint puts one
-/// in each request's extensions; the endpoint has the kernel check it and
-/// trusts nothing else about the caller.
+/// in each request's extensions, or a `Caller` the kernel already checked;
+/// the endpoint has the kernel check a peer and trusts nothing else about
+/// the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpPeer {
     /// The operating-system user at the other end of the channel.
@@ -118,8 +119,15 @@ impl McpService {
         })
     }
 
-    /// Answers one HTTP request.
+    /// Answers one HTTP request. Everything in the answer passes the
+    /// redactor on its way out, the protocol's own errors included: they
+    /// can quote what the caller sent.
     pub async fn handle(&self, request: HttpRequest) -> HttpResponse {
+        let answer = self.answer(request).await;
+        clean::outgoing(self.core.kernel.redact(), answer).await
+    }
+
+    async fn answer(&self, request: HttpRequest) -> HttpResponse {
         let (mut parts, body) = request.into_parts();
         let settings = &self.core.settings;
         if !host_allowed(&parts.headers, &settings.allowed_hosts) {
@@ -182,15 +190,30 @@ impl McpService {
         if let Some(refused) = self.revision_rule(&mut parts.headers, &message, method, id) {
             return refused;
         }
+        // The one method that reaches the dispatcher with a caller's
+        // input: its parameters have their shape before anything else
+        // reads them.
+        if method == "tools/call"
+            && !(message.pointer("/params/name").is_some_and(Json::is_string)
+                && message
+                    .pointer("/params/arguments")
+                    .is_none_or(|given| given.is_object() || given.is_null()))
+        {
+            return malformed(
+                codes::INVALID_PARAMS,
+                id,
+                "A tool call names its tool as text and gives its arguments as an object.",
+            );
+        }
         parts.extensions.insert(Verified(caller));
         self.sdk
             .handle(Request::from_parts(parts, Body::from(bytes)))
             .await
     }
 
-    /// The caller of a request: the peer the channel saw, or the bearer
-    /// token of a server's caller. The kernel checks either; this build's
-    /// kernel refuses every token. The token is taken out of the request,
+    /// The caller of a request: one the mount already had checked, the
+    /// peer the channel saw, or the bearer token of a server's caller. The
+    /// kernel checks the last two; this build's kernel refuses every token. The token is taken out of the request,
     /// so nothing after this point can log it.
     async fn caller(
         &self,
@@ -206,6 +229,17 @@ impl McpService {
                     .eq_ignore_ascii_case("bearer")
                     .then(|| Secret::new(token.trim()))
             });
+        if let Some(checked) = parts.extensions.get::<Caller>() {
+            // A caller the mount already had the kernel check, as the REST
+            // router takes it (decision 0116). Only the kernel can make
+            // one. The door, the toolset, and that an agent is calling
+            // are this endpoint's to say.
+            let mut caller = checked.clone();
+            caller.door = FrontDoor::Mcp;
+            caller.is_agent = true;
+            caller.toolset = Some(self.core.toolset.clone());
+            return Ok(caller);
+        }
         let (credential, label, status) = match (parts.extensions.get::<McpPeer>(), token) {
             (Some(peer), _) => (
                 CallerCredential::LocalUser(peer.user.clone()),
@@ -262,6 +296,17 @@ impl McpService {
                 Some(json!({"supported": supported, "requested": requested})),
             )
         };
+        // A client that speaks both revisions falls back to the handshake
+        // when discovery is an unknown method, so this comes first.
+        if method == "server/discover" && !settings.serves(Revision::Stateless) {
+            return Some(rpc_error(
+                StatusCode::OK,
+                id,
+                codes::METHOD_NOT_FOUND,
+                "server/discover",
+                None,
+            ));
+        }
         let served = |text: &str| Revision::parse(text).is_some_and(|r| settings.serves(r));
         let in_header = headers
             .get(VERSION_HEADER)
@@ -284,17 +329,7 @@ impl McpService {
                     .unwrap_or(Revision::Handshake.as_str());
                 Some(unserved(requested))
             }
-            "initialize" => None,
-            // A client that speaks both revisions falls back to the
-            // handshake when discovery is an unknown method.
-            "server/discover" if !settings.serves(Revision::Stateless) => Some(rpc_error(
-                StatusCode::OK,
-                id,
-                codes::METHOD_NOT_FOUND,
-                "server/discover",
-                None,
-            )),
-            "server/discover" => None,
+            "initialize" | "server/discover" => None,
             _ if in_body.is_some() => None,
             // A request that names no revision in its body is of the
             // handshake revision.
@@ -401,7 +436,7 @@ fn malformed(code: i64, id: &Json, message: &str) -> HttpResponse {
     let failure = codes::input(
         codes::SCHEMA_INVALID,
         message,
-        "Send one JSON-RPC 2.0 request or notification as the body.",
+        "Send one JSON-RPC 2.0 request or notification as the body, as the protocol's schema gives it.",
     );
     rpc_error(
         StatusCode::BAD_REQUEST,

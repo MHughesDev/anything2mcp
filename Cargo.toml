@@ -87,6 +87,9 @@ hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"
 # The MCP service's base (decision 0071): the official Rust SDK, with no macro
 # and no default feature; a2m-mcp is its one user and shows none of its types.
 rmcp = { version = "3.10.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+# The stream trait alone, for the body a2m-mcp redacts as it passes (decision
+# 0115). Already in the tree of axum and of the SDK.
+futures-core = { version = "0.3.34", default-features = false }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.

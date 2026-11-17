@@ -9,7 +9,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: `rmcp` 3.10.0, the official Rust SDK, with default features off and the features `server` and `transport-streamable-http-server` ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)); Tokio. No macro of the SDK is used, and no type of it appears in this crate's public interface |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-policy` for the name of a toolset. Outside: `rmcp` 3.10.0, the official Rust SDK, with default features off and the features `server` and `transport-streamable-http-server` ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)); `axum` for the HTTP types and the router; `futures-core` for one stream trait; Tokio. No macro of the SDK is used, and no type of it appears in this crate's public interface ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md)) |
 | Built in | Roadmap package 1.5 (stdio proxy, the `use` toolset, structured results); 5.1 (the `build` toolset, prompts, resources); 6.2 (Streamable HTTP on a server, as an OAuth resource server) |
 | Carries out | Spec sections [221](../../spec/2-kernel/221-the-tool-surface-agents-see.md), [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for MCP, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md) for the MCP face, [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md); the MCP half of [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) |
 
@@ -29,32 +29,55 @@ It must never: hold run state between requests; decide whether a call is allowed
 
 ## Interface
 
+As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md)).
+
 ```rust
-/// One endpoint per toolset. A pure service: the product crate mounts it on the local
-/// channel and, on a server, on the network listener.
-pub struct McpService { /* Kernel, toolset, revisions, limits, profiles */ }
+/// One endpoint per toolset. Cheap to clone; no state between requests.
+pub struct McpService { /* Kernel, toolset, settings, the SDK's service */ }
 impl McpService {
-    pub fn new(kernel: Kernel, toolset: ToolsetName, cfg: McpSettings) -> Result<Self, Failure>;
-    pub fn http(self) -> BoxedHttpService;            // Streamable HTTP, stateless
+    /// Refuses a toolset other than `use` and `build`, and settings with no revision.
+    pub fn new(kernel: Kernel, toolset: ToolsetName, settings: McpSettings) -> Result<Self, Failure>;
+    pub fn toolset(&self) -> &ToolsetName;
+    /// Stateless Streamable HTTP, as a router to nest at `mcp_path(toolset)`.
+    pub fn http(self) -> axum::Router;
+    /// One request, answered without a router.
+    pub async fn handle(&self, request: HttpRequest) -> HttpResponse;
 }
+pub fn mcp_path(toolset: &ToolsetName) -> String;      // "/mcp/<toolset>"
+pub type HttpRequest = axum::http::Request<axum::body::Body>;
+pub type HttpResponse = axum::http::Response<axum::body::Body>;
+
+/// Who the local channel saw connect. The mount puts one in each request's extensions,
+/// or a `Caller` the kernel already checked.
+pub struct McpPeer { pub user: String, pub label: String }
 
 pub struct McpSettings {
     pub revisions: Vec<Revision>,      // mcp.revisions; default 2026-07-28 and 2025-11-25
-    pub listing: Listing,              // Default (pipelines and control tools), Full
-    pub listed_max: u32,               // tools.listed_max; a fixed ceiling above it
-    pub result_cap: ByteSize,          // tools.result_size_cap
-    pub client_profiles: Vec<ClientProfile>,
+    pub listing: Listing,              // tools.full_listing: Default (pipelines), Full
+    pub listed_max: usize,             // tools.listed_limit; a full listing stops at 200
+    pub allowed_hosts: Vec<String>,    // the Host values served; loopback names by default
+    pub max_request_bytes: usize,      // 4 MiB by default
 }
+impl McpSettings {
+    pub fn local() -> Self;
+    pub fn from_settings(settings: &Settings) -> Result<Self, Failure>;
+}
+pub enum Revision { Handshake, Stateless }   // 2025-11-25, 2026-07-28
+pub enum Listing { Default, Full }
 
+/// The way to the engine's endpoint. Any function from a request to a response is one.
+pub trait Upstream: Send + Sync + 'static {
+    fn send(&self, request: HttpRequest) -> BoxFuture<'static, Result<HttpResponse, Failure>>;
+}
 /// The stdio proxy. It reads and writes MCP messages and nothing else; it has no tools of its own.
-pub async fn stdio_proxy(link: Link, toolset: ToolsetName) -> Result<(), Failure>;
-
-/// Data, loaded from a profile file. Matched on what the client says of itself; changes
-/// presentation only, never what is allowed or which tools exist.
-pub struct ClientProfile { pub matches: ClientMatch, pub adjust: Vec<Adjustment> }
+/// It ends well when its input ends.
+pub async fn stdio_proxy<U, R, W>(upstream: U, toolset: &ToolsetName, input: R, output: W)
+    -> Result<(), Failure>;
 ```
 
-The proxy is started by `bridge`, a process command of the product crate, which connects through `a2m-local` and hands the `Link` in. The two role crates do not depend on each other.
+The proxy is started by `bridge`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
+
+**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. For `bridge`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
 
 ## Revisions
 
@@ -71,11 +94,16 @@ One `rmcp` service serves both, with no session for either. Spike 0.5 ran it ove
 2. `server/discover` lists the revisions served and the capabilities.
 3. `initialize` selects the handshake revision: 2025-11-25 if the client asks for it, and 2025-11-25 as the answer if it asks for anything else. The client then decides.
 4. A handshake-era request on HTTP names its revision in the header and is served as it comes.
-5. With `mcp.revisions` set to the handshake revision alone, `server/discover` must be answered as an unknown method, so that a client that speaks both falls back. The SDK answers -32022 there; the two client libraries tolerated it, and the service must answer before the SDK does. With 2026-07-28 alone, `initialize` is refused with -32022 and the list.
+5. With `mcp.revisions` set to the handshake revision alone, `server/discover` is answered as an unknown method, so that a client that speaks both falls back. The SDK answers -32022 there, so this crate answers before the SDK does. With 2026-07-28 alone, `initialize` is refused with -32022 and the list, and a request that names no revision is refused with -32602.
+6. A request of the handshake revision that names no revision, in its body or in a header, is served as 2025-11-25. The stdio proxy therefore remembers nothing of the handshake.
 
 **What a handshake-era caller does not get.** A stateless server does not remember what a client declared in `initialize`. Such a caller gets the fallback every client gets: the link in the result in place of elicitation, the run identifier in place of a task.
 
-**The seam.** The service is built on the SDK's handler and its Streamable HTTP service, with the session manager that never makes a session and JSON answers where no stream is needed. The tool list is built from data with the SDK's plain constructors. Everything this crate promises is in the list of messages below, which is tested with raw messages and so does not depend on the SDK. If the SDK must be left, a layer of our own takes its place behind the same list; the spike's hand-written server passed all of the stdio part in about 400 lines.
+**The seam.** The service is built on the SDK's handler and its Streamable HTTP service, with the session manager that never makes a session and JSON answers where no stream is needed. The tool list is built from data with the SDK's plain constructors. One module names the SDK and nothing else does. Everything this crate promises is in the list of messages below, which is tested with raw messages and so does not depend on the SDK. If the SDK must be left, a layer of our own takes its place behind the same list; the spike's hand-written server passed all of the stdio part in about 400 lines.
+
+**In front of the SDK.** A layer of this crate's own checks, in order: the `Host`, the HTTP method, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
+
+**On the way out.** Every message that leaves is parsed, and every text in it passes the kernel's redactor. The dispatcher has already redacted a result; this pass covers what the protocol layer writes itself, such as an error that quotes a tool's name, and the id and progress token it echoes. A message with nothing to redact leaves byte for byte as it was written.
 
 ## What the server must pass, message by message
 
@@ -83,8 +111,8 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 
 | Message | The server must |
 | --- | --- |
-| A body or line that is not JSON | Answer -32700 with a null id. On stdio this is the proxy's to do |
-| A message that is not a request, or has no method | Answer -32600. A batch is not a request |
+| A body or line that is not JSON | Answer -32700 with a null id, and status 400 on HTTP. On stdio this is the proxy's to do |
+| A message that is not a request, or has no method | Answer -32600. A batch is not a request. Nor is a message whose version is not 2.0 or whose id is neither text nor a whole number |
 | An unknown method | Answer -32601 |
 | An unknown notification | Answer nothing; on HTTP, status 202 |
 | A request id | Come back unchanged, text as text and number as number |
@@ -102,17 +130,23 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | `tools/list` (H and M) | List each tool with its name, description, and input schema of type object; annotations from the effect class; the same tools in the same order every time; no `nextCursor` on a single page; -32602 for a cursor it did not issue |
 | `tools/list` (M) | Also carry `ttlMs` and `cacheScope` |
 | `tools/call` for a known tool (H and M) | Answer `structuredContent` that fits the tool's output schema, and one text item |
-| `tools/call` for an unknown tool | Answer -32602, a protocol error |
+| `tools/call` for an unknown tool | Answer -32602, a protocol error. An action the toolset does not list is an unknown tool |
+| `tools/call` whose name is not text or whose arguments are not an object | Answer -32602, before any dispatch |
 | `tools/call` with input that fails the schema | Answer a result with `isError` true, not a protocol error |
-| `tools/call` that fails | Answer a result with `isError` true and text; structured content only if it fits the output schema |
+| `tools/call` that fails | Answer a result with `isError` true and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content and nothing else |
 | `tools/call` with a `progressToken` | Send `notifications/progress` with that token and a rising count before the result, and say nothing in one that the result does not say |
 | `tools/call` without a `progressToken` | Send no progress |
 | `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
-| `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not covered by the spike. Their lines are added by the packages that build them |
-| A request over HTTP with a foreign `Host` | Be refused before it is read |
+| `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
+| A request over HTTP with a foreign `Host`, or none | Be refused with status 403 before it is read |
+| A request over HTTP that is not a `POST` | Be refused with status 405 |
+| A request over HTTP that names no caller, or one the kernel does not let in | Be refused with status 401 or 403 and error -32001, before the body is read |
+| Any message that leaves | Hold no registered secret, in a result or in a protocol error |
 | End of input on stdio | The proxy exits with status 0 |
 | Standard output on stdio | Carry one JSON message per line and nothing else |
-| Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result |
+| Two unrelated client libraries, each in its default mode | Connect, list the tools, call a read, and read the structured result. Run by the spike against its own server; not yet run against this service |
+
+Every line but the last is a test in this crate, with raw messages over the HTTP service in process, and, for the lines that hold on both transports, through the proxy with in-memory streams as well.
 
 ## Tool lists
 
@@ -121,34 +155,36 @@ A toolset's list is the same for every caller connected to it; rights are checke
 | Toolset | Lists | Reaches without listing |
 | --- | --- | --- |
 | `use` | Actions whose `listed` names `use`; the toolset's pipelines | Every operation, through `a2m_tool_search` and `a2m_tool_call` |
-| `build` | The above, and actions whose `listed` names `build` | Every action, through `a2m_action_search`, `a2m_action_describe`, `a2m_action_run` |
-| A named toolset on a server | Its members' pipelines and the `use` actions | Its operations, through search |
+| `build` | Actions whose `listed` names `build`, as the registry gives them; the pipelines | Every action, through `a2m_action_search`, `a2m_action_describe`, `a2m_action_run` |
+| A named toolset on a server | Its members' pipelines and the `use` actions | Its operations, through search. Not built: the endpoint refuses any toolset but `use` and `build` |
 
 - **Names.** An action `noun.verb` is listed as `a2m_<noun>_<verb>`. A target's tool keeps its published name, `{target}_{module}_{object}_{verb}`; its version appears in results, never in the name.
-- **Descriptions** are the published ones, or the action's summary. The first 240 characters are enough to choose.
-- **Schemas.** The input schema in a list may be the compact form, provided every difference is exact or wider. Output schemas are left out of the list unless the client asks; `tool.describe` returns them.
+- **Descriptions** are the published ones, or the action's summary. The first 240 characters are enough to choose. A published tool with no description is listed with its title.
+- **Where a list comes from.** It is built on each request: the registry's MCP faces, then `tool.search` and one `tool.describe` for each published tool listed, dispatched as the caller. Nothing is kept between requests.
+- **Schemas.** The input schema in a list may be the compact form, provided every difference is exact or wider; today the full schema is listed. Output schemas are left out of the list; `tool.describe` returns them.
 - **Annotations.** `readOnlyHint` for `read`; `destructiveHint` for `irreversible` and for writes without a key; `idempotentHint` from the key.
-- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_max`; past it, pipelines beyond the cap move to search and the list says so in the server instructions. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
+- **Size.** The registry refuses to build when a built-in toolset lists more actions than its cap (spec sections 221 and 220). For target tools the cap is `tools.listed_limit`, which counts the built-in tools too; past it, pipelines beyond the cap move to search. The server instructions do not yet say so. The list's size in bytes is measured and budgeted (spec section 220 leaves the budget open).
 - **Full listing** is a setting for clients with their own tool search. It lists every operation, and changes nothing about how calls are checked.
 
 ## Calls and results
 
-1. `tools/call` arrives with a name and arguments. A name of the form `a2m_<noun>_<verb>` is the action `noun.verb`. Any other name is `tool.call` with the name as its `tool` input; `a2m_tool_call` is the same action called by name.
-2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, the client label, and an idempotency key if the client sent one in the request's metadata.
+1. `tools/call` arrives with a name and arguments. A name of an action the toolset lists is that action. Any other name is `tool.call` with the name as its `tool` input, after `tool.describe` has said that such a tool is published; `a2m_tool_call` is the same action called by name.
+2. The front door builds a `Request`: the caller (on the local channel, the operating-system user; on a server, from the validated token), the toolset, and the client label. An idempotency key from the request's metadata is not built.
 3. `Kernel::dispatch` does the rest. This crate only renders the `Response`:
 
 | Part of the response | MCP result |
 | --- | --- |
-| `result` | `structuredContent`, matching the published output schema |
-| A one-line summary | One text content item |
-| Kept blobs: traces, diffs, snapshots, files | Resource links, never inlined; read through `resources/read` |
-| `next` | A field in the structured content, as spec section 221 shows |
-| `error` | `isError` with the class, code, message, fix, and whether a retry is safe |
+| `result` | `structuredContent`, matching the action's output schema, and one text item holding the same JSON |
+| Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links and `resources/read` are not built |
+| `next` and `warnings` of a success | `_meta`, under `anything2mcp/next` and `anything2mcp/warnings`. The output schemas take no other key, so structured content holds the result alone |
+| `error` | `isError`, and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content |
 | Text from the target | Inside fields marked untrusted, already cut and stripped by the dispatcher |
 
-**Long jobs.** A long-running action returns its `run_id` at once. A client that supports the Tasks extension gets a task whose `tasks/get` is answered by `run.get` and whose cancel is `run.cancel`. Progress is sent only to a caller that asked, as a rising count from the run's events.
+**Long jobs.** A long-running action returns its `run_id` at once. A client that supports the Tasks extension gets a task whose `tasks/get` is answered by `run.get` and whose cancel is `run.cancel`; that is not built. Progress is sent only to a caller that asked. It counts two steps, handed to the dispatcher and answered, until the kernel offers a run's events to follow.
 
-**Elicitation.** When a run rests at `needs_login` or `needs_approval`, the result carries the link from `PersonSurface`; that includes a plain link from `give_link`, which a sign-in provider such as authorization-code sign-in needs the person to open in their own browser. Where the client supports URL-mode elicitation, the same link is also sent as an elicitation. On one machine the link is the loopback page, which can only raise the operating system's prompt; on a server it is the console page behind the identity provider's sign-in. Following the link is never an approval by itself, so giving it to an agent is safe.
+**Cancelling.** A dispatch runs on its own task and is never cut off. When the caller cancels or the stream closes, the endpoint stops waiting and sends nothing more for that request. The run goes on, and is stopped with `a2m_run_cancel`.
+
+**Elicitation.** Only the fallback is built: the link in the result. When a run rests at `needs_login` or `needs_approval`, the result carries the link from `PersonSurface`; that includes a plain link from `give_link`, which a sign-in provider such as authorization-code sign-in needs the person to open in their own browser. Where the client supports URL-mode elicitation, the same link is also sent as an elicitation. On one machine the link is the loopback page, which can only raise the operating system's prompt; on a server it is the console page behind the identity provider's sign-in. Following the link is never an approval by itself, so giving it to an agent is safe.
 
 **Found tools.** Spec section 220 asks that a tool found by search be added to the client's list. The stateless revision has no per-connection list. Until a client can be told of a changed list without a session, the generic `a2m_tool_call` is the route, and every call is checked against the full schema either way.
 
@@ -165,7 +201,7 @@ The kernel never sees a client's name. Conformance is tested against the protoco
 
 ## On a server
 
-The same `McpService` is mounted at `/mcp/<toolset>` on the network listener. The listener authenticates: it is an OAuth 2.1 resource server, publishes protected resource metadata, and rejects a token not issued for it. Token checks use the verifier the kernel holds, so `a2m-api` and this crate check tokens in one place. A caller's token is never forwarded to a target.
+Not built. The same `McpService` is mounted at `/mcp/<toolset>` on the network listener. The listener authenticates: it is an OAuth 2.1 resource server, publishes protected resource metadata, and rejects a token not issued for it. Token checks use the verifier the kernel holds, so `a2m-api` and this crate check tokens in one place. A caller's token is never forwarded to a target. Today the endpoint takes a bearer token out of the request, hands it to that verifier, and answers status 401 when it is refused, which in this build is always.
 
 ## Used by, and uses
 
@@ -173,42 +209,55 @@ The same `McpService` is mounted at `/mcp/<toolset>` on the network listener. Th
 | --- | --- |
 | `anything2mcp` | `McpService` mounted on the local channel and the network listener; `stdio_proxy` for `bridge` |
 
-It calls `a2m-actions` for the registry, `dispatch`, `events`, and the token verifier.
+It calls `a2m-actions` for the registry, `dispatch`, the check of a caller, and the redactor.
 
 ## State
 
-None between requests. Client profiles and settings are read at start.
+None between requests. Settings are read at start.
 
 ## Failures
 
-Every failure is the dispatcher's, rendered. This crate adds one: `input` / `schema_invalid` for a malformed MCP message, before any dispatch.
+Every failure of a call is the dispatcher's, rendered. This crate adds four, none of which reaches the dispatcher:
+
+| Class and code | When |
+| --- | --- |
+| `input` / `schema_invalid` | A malformed MCP message. It is the `data` of the JSON-RPC error |
+| `input` / `mcp_not_served` | An endpoint is asked for a toolset or a revision that is not served |
+| `policy` / `caller_missing` | A request names no caller |
+| `transient` / `stdio_read_failed` | The proxy cannot read its input |
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| Two unrelated clients list the tools and call a read | The Phase 1 exit test |
-| A built-in toolset never lists more than its cap | The registry check; a test with one action too many |
-| A call is validated against the full schema, whatever the list showed | A test with an input valid for the compact schema and not the full one |
-| No secret appears in any MCP message | The planted-secret test, through this face |
-| No client name reaches the kernel | A test that dispatches with two client labels and compares the decisions recorded |
-| The proxy copies messages and adds nothing | A test that compares proxied and direct exchanges byte for byte, apart from transport framing |
+| Two unrelated clients list the tools and call a read | The Phase 1 exit test. Not yet run against this service |
+| A built-in toolset never lists more than its cap | The registry check, in `a2m-actions` |
+| A call is validated against the full schema, whatever the list showed | The checklist: an input with an unknown key, and one of the wrong type, are results with `isError` |
+| No secret appears in any MCP message | The planted-secret test through both transports: results, later reads of the run, and protocol errors that quote the caller's input |
+| No secret of the engine and no caller's token is in the SDK's log | A test in a program of its own, with every event captured at the most verbose level |
+| No client name reaches the kernel | Not proven. The label goes to the dispatcher as the caller's label and nowhere else |
+| The proxy copies messages and adds nothing | A test that compares proxied and direct answers byte for byte |
+| A cancelled request is sent nothing more, and others are still answered | A test that holds a call open, cancels it through the proxy, and waits for the endpoint to see the stream close |
+| The door offers no way to approve | A test over the tools of both toolsets, names an agent might try, and the registry |
+| What is not well formed never reaches the dispatcher | A test that counts what the endpoint handed the dispatcher |
 
 ## Build order
 
-1. From spike 0.5: one `rmcp` service over the local channel, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for one read. Package 1.5.
-2. Structured results, resource links, `next`, annotations; the two revisions.
-3. Elicitation and the link fallback, with the approval surface. Package 3.6.
-4. The `build` toolset, the action search tools, prompts, resources, server instructions. Package 5.1.
-5. Streamable HTTP at `/mcp/<toolset>` on a server, with token checks. Package 6.2.
+1. Done: one `rmcp` service, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for a read. Package 1.5.
+2. Done: structured results, `next`, annotations, the two revisions, progress, and cancelling. Not built: resource links.
+3. Not built: elicitation. The link fallback is in the result. Package 3.6.
+4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions. Not built: prompts, resources, instructions generated from the guidance file. Package 5.1.
+5. Done: stateless Streamable HTTP with the `Host` check, as a router to nest at `/mcp/<toolset>`. Not built: token checks, protected resource metadata, named toolsets. Package 6.2.
+
+Also not built: client profiles, the Tasks extension, an idempotency key from the request's metadata, compact schemas, and a byte budget for a list.
 
 ## Open points
 
-- Where a failed call's class, code, message, and fix go. Structured content must fit the tool's published output schema; one reference client library refuses the whole result otherwise. Either every output schema admits the error shape, or an error carries text alone.
-- What the one text item holds. The specification asks for the JSON as text beside structured content, for clients that read only text; the design sends a one-line summary.
-- How the stdio proxy stays a copier. It has to turn a `notifications/cancelled` line into the closing of that request's HTTP stream, and copy the three request headers of the newer revision out of the body. Both are transport framing; the byte-for-byte test must allow for them and nothing else.
-- Whether the SDK's log events can carry a caller's input or a header. The planted-secret test must capture them at their most verbose.
-- Answering `server/discover` as an unknown method when only the handshake revision is served: the SDK does not, and the step that does it in front of the SDK is not built.
+- Whether a client that does not read `_meta` needs the following call. If so, the output schemas must admit `next`, which is a change in `a2m-actions`.
+- The cost of a list: one dispatch, and one recorded decision, for each published tool listed, and two dispatches for a call by a published tool's own name. A kernel call that returns a toolset's tools with their schemas would remove it.
+- The SDK logs the caller's own message, input included, at the debug and trace levels. The process's log passes the redactor of `a2m-telemetry`; whether the SDK's level should also be capped is open.
+- Progress from a run's events, which the kernel does not offer yet.
+- Whether cancelling a request should also cancel the run it started.
 - The byte budget for a tool list and for one compact schema.
 - How compact schemas are derived from full ones mechanically, so that "exact or wider" is proven, not reviewed.
 - How a client is told of a changed tool list with no session, if at all.

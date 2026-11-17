@@ -1,8 +1,6 @@
 //! The proofs every front door owes, the lines of the checklist that hold
 //! on one transport only, and the two ways the proxy is not a pure copier.
 
-use std::sync::{Arc, Mutex, OnceLock};
-
 use serde_json::{Value as Json, json};
 
 use super::engine::{ITEM_UPSERT, ORDER_GET};
@@ -96,6 +94,26 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
     let reply = stranger.send(ping.as_bytes(), &[]).await;
     assert_eq!(reply.status, 403);
     assert_eq!(reply.only()["error"]["data"]["code"], "caller_not_verified");
+
+    // A caller the mount already had the kernel check is taken as it is,
+    // as an agent at this door.
+    let checked = world
+        .kernel
+        .verify_caller(a2m_actions::CallerCredential::LocalUser(
+            super::world::USER.to_owned(),
+        ))
+        .await
+        .unwrap();
+    let mut request = axum::http::Request::post("/mcp/use")
+        .header("host", "localhost")
+        .body(axum::body::Body::from(ping.clone()))
+        .unwrap();
+    request.extensions_mut().insert(a2m_actions::Caller::new(
+        checked,
+        a2m_actions::FrontDoor::Rest,
+        false,
+    ));
+    assert_eq!(service.handle(request).await.status().as_u16(), 200);
 
     // A body over the limit.
     let small = McpSettings {
@@ -446,8 +464,7 @@ async fn a_write_rests_with_a_link_and_the_next_call_and_the_door_offers_no_way_
 async fn a_refused_call_carries_the_failure_and_nothing_else() {
     let world = World::ready().await;
     let http = Http::new(world.service("use", McpSettings::local()));
-    // A person stops everything; the agent's call is then policy's to
-    // refuse.
+    // A person stops everything; the agent's call is then refused.
     let stopped = world
         .direct("killswitch.set", json!({"scope": "everything", "on": true}))
         .await;
@@ -463,7 +480,8 @@ async fn a_refused_call_carries_the_failure_and_nothing_else() {
         let keys: Vec<&String> = result.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["content", "isError"], "{result}");
         let failure = text_of(reply.only());
-        assert_eq!(failure["class"], "policy", "{failure}");
+        assert_eq!(failure["class"], "busy", "{failure}");
+        assert_eq!(failure["code"], "on_hold", "{failure}");
         let keys: Vec<&String> = failure.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["class", "code", "fix", "message", "retry_safe"]);
         for key in ["code", "message", "fix"] {
@@ -472,51 +490,11 @@ async fn a_refused_call_carries_the_failure_and_nothing_else() {
     }
 }
 
-/// Every event and span the process logs, at the most verbose level, as
-/// text. The SDK logs through the `tracing` crate.
-struct Captured(Arc<Mutex<String>>);
-
-struct Fields<'a>(&'a mut String);
-
-impl tracing::field::Visit for Fields<'_> {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.0.push_str(&format!(" {}={value:?}", field.name()));
-    }
-}
-
-impl tracing::Subscriber for Captured {
-    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-
-    fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        span.record(&mut Fields(&mut self.0.lock().unwrap()));
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
-        values.record(&mut Fields(&mut self.0.lock().unwrap()));
-    }
-
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut text = self.0.lock().unwrap();
-        text.push_str(event.metadata().target());
-        event.record(&mut Fields(&mut text));
-        text.push('\n');
-    }
-
-    fn enter(&self, _span: &tracing::span::Id) {}
-
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-const SECRET: &str = "Example Customer Two";
+pub const SECRET: &str = "Example Customer Two";
 
 /// Plants the secret: the test application is made to answer with a value
 /// the vault has released as a secret, the customer's name of one order.
-async fn plant(world: &World) {
+pub async fn plant(world: &World) {
     let stored = world
         .direct(
             "secret.set",
@@ -588,66 +566,8 @@ async fn a_planted_secret_appears_in_nothing_the_door_sends() {
     }
 }
 
-/// One thread, so that the log captured is this test's alone.
-#[tokio::test]
-async fn the_sdks_log_at_its_most_verbose_holds_no_secret_of_the_engine_and_no_token() {
-    let log = Arc::new(Mutex::new(String::new()));
-    let _guard = tracing::subscriber::set_default(Captured(Arc::clone(&log)));
-    let world = World::ready().await;
-    plant(&world).await;
-    let token = "example-token-for-the-log-test";
-    let marker = "example-marker-sent-by-the-caller";
-    let service = world.service("use", McpSettings::local());
-    let http = Http {
-        service: service.clone(),
-        peer: Some(McpPeer {
-            user: super::world::USER.to_owned(),
-            label: "label-of-the-log-test".to_owned(),
-        }),
-    };
-    let mut stdio = Stdio::start(service);
-    for message in [
-        call(
-            1,
-            "a2m_tool_call",
-            json!({"tool": ORDER_GET, "input": {"order_id": "A-101"}}),
-        ),
-        m(
-            2,
-            "tools/call",
-            json!({"name": ORDER_GET, "arguments": {"order_id": "A-101"}, "_meta": {"progressToken": 1}}),
-        ),
-        call(3, "a2m_tool_search", json!({"query": marker})),
-    ] {
-        // A token beside a peer the channel named is dropped unread.
-        let reply = http
-            .send(
-                message.to_string().as_bytes(),
-                &[("authorization", &format!("Bearer {token}"))],
-            )
-            .await;
-        assert_eq!(reply.status, 200);
-        ask_lines(&mut stdio, &message).await;
-    }
-    let (_, ended) = stdio.close().await;
-    ended.unwrap();
-
-    let logged = log.lock().unwrap().clone();
-    // The capture works: the SDK's own events are in it, results included.
-    assert!(logged.contains("rmcp"), "{logged}");
-    assert!(logged.contains(a2m_core::REDACTED), "{logged}");
-    // What the engine holds as a secret reached the SDK redacted, and the
-    // caller's token never reached it.
-    assert!(!logged.contains(SECRET));
-    assert!(!logged.contains(token));
-    // What the SDK does log is the caller's own message, input included.
-    // The process's log must therefore pass the redactor or stay above the
-    // trace level; this crate cannot make the SDK say less.
-    assert!(logged.contains(marker));
-}
-
 /// Sends one request through the proxy and returns every line answered.
-async fn ask_lines(stdio: &mut Stdio, message: &Json) -> Vec<String> {
+pub async fn ask_lines(stdio: &mut Stdio, message: &Json) -> Vec<String> {
     stdio.write(message.to_string().as_bytes()).await;
     let mut lines = Vec::new();
     loop {

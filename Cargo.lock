@@ -181,6 +181,7 @@ dependencies = [
  "a2m-vault",
  "axum",
  "example-app",
+ "futures-core",
  "reqwest",
  "rmcp",
  "serde_json",

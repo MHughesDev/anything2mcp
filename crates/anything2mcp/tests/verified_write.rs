@@ -13,6 +13,7 @@ use common::{Machine, World};
 use example_app::harness::TestApp;
 use serde_json::Value as Json;
 use std::sync::Arc;
+use std::time::Duration;
 use a2m_telemetry::{Clock, ManualClock, SystemClock};
 
 const PLACEHOLDER: &str = "http://127.0.0.1:4010";
@@ -229,12 +230,33 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
     assert_eq!(left.error()["code"], "runner_lost");
     assert_eq!(left.error()["retry_safe"], false);
 
-    // Resuming reconciles the record before anything is sent, finds the
-    // write, and completes the run without writing again.
-    let done = world.agent(&["run", "resume", &run]).await;
+    // The scheduler queued a reconcile that no runner is given before the
+    // quarantine has passed. Once it has, resuming reconciles the record
+    // before anything is sent, finds the write, and completes the run
+    // without writing again.
+    later.advance(Duration::from_secs(120));
+    world.engine.kernel().tend().await;
+    let t0 = std::time::Instant::now();
+    let mut done = world.agent(&["run", "resume", &run]).await;
+    eprintln!("DEBUG first resume {:?}", t0.elapsed());
+    let tr = world.ok(&["trace", "show", &run]).await;
+    for e in tr["events"].as_array().unwrap() { eprintln!("DEBUG {} {} {} {}", e["seq"], e["lease"], e["kind"], e["detail"]); }
+    if done.result()["status"] == "stopped" {
+        // The reconcile was one job; going on from it is the next.
+        assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+        done = world.agent(&["run", "resume", &run]).await;
+    }
     assert_eq!(done.finished.code, 0, "{:?}", done.finished);
     assert_eq!(done.result()["status"], "completed");
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    let kinds = kinds(&trace);
+    assert_eq!(
+        kinds.iter().filter(|kind| **kind == "intent").count(),
+        1,
+        "{kinds:?}"
+    );
+    assert!(kinds.contains(&"reconcile_read"), "{kinds:?}");
     let stored = app.stored_item("A-102", "L-300").await.unwrap().unwrap();
     assert_eq!(stored.quantity, 3);
     world.close().await;

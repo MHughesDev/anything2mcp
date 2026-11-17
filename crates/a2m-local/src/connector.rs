@@ -9,7 +9,7 @@ use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use serde_json::Value as Json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::channel::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, ClientLabel, HELLO_PATH, LOCAL_API,
@@ -130,12 +130,16 @@ impl Connector {
             .await
             .map_err(|_| codes::lost())?;
         // The connection ends when the link is dropped, and this task with
-        // it.
+        // it. When the connection ends first, the link is told, so that no
+        // request waits on a connection that is gone.
+        let (ended, gone) = watch::channel(false);
         tokio::spawn(async move {
             let _ = connection.await;
+            ended.send_replace(true);
         });
         Ok(Link {
             sender: Mutex::new(sender),
+            gone,
             engine_version: self.version,
         })
     }
@@ -153,6 +157,8 @@ fn not_an_engine() -> Failure {
 #[derive(Debug)]
 pub struct Link {
     sender: Mutex<SendRequest<Body>>,
+    /// Turns true when the connection has ended.
+    gone: watch::Receiver<bool>,
     engine_version: Version,
 }
 
@@ -176,11 +182,18 @@ impl Link {
             .entry(header::HOST)
             .or_insert(HeaderValue::from_static(HOST));
         let mut sender = self.sender.lock().await;
-        sender.ready().await.map_err(|_| codes::lost())?;
-        let response = sender
-            .send_request(request)
-            .await
-            .map_err(|_| codes::lost())?;
+        let mut gone = self.gone.clone();
+        let answered = async {
+            sender.ready().await?;
+            sender.send_request(request).await
+        };
+        // An answer that is there is taken first. Otherwise the end of the
+        // connection ends the wait: nothing can answer after it.
+        let response = tokio::select! {
+            biased;
+            answered = answered => answered.map_err(|_| codes::lost())?,
+            _ = gone.wait_for(|gone| *gone) => return Err(codes::lost()),
+        };
         Ok(response.map(Body::new))
     }
 }

@@ -147,7 +147,12 @@ impl Http {
     /// One message, with the headers the stateless revision asks of a
     /// request that names it.
     pub async fn post(&self, message: &Json) -> Reply {
-        let mut headers: Vec<(&str, &str)> = Vec::new();
+        self.post_with(message, &[]).await
+    }
+
+    /// The same, with more headers.
+    pub async fn post_with(&self, message: &Json, more: &[(&str, &str)]) -> Reply {
+        let mut headers: Vec<(&str, &str)> = more.to_vec();
         if let Some(version) = message["params"]["_meta"][PV].as_str() {
             headers.push(("mcp-protocol-version", version));
             headers.push(("mcp-method", message["method"].as_str().unwrap_or("")));

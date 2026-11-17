@@ -1,0 +1,16 @@
+# Throwaway. Roadmap package 8.1, Linux: AT-SPI over D-Bus with the `atspi`
+# crates and `zbus`, on Tokio. Never promoted into the product.
+[package]
+name = "spike-desktop-linux-atspi"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+atspi = { version = "=0.30.0", default-features = false, features = ["connection", "proxies", "tokio"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+futures-lite = "2"

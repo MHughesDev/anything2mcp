@@ -67,7 +67,7 @@ fn result_meta(
     if context.meta.protocol_version().is_some() {
         meta.insert(SERVER_INFO_KEY.to_owned(), server_info());
     }
-    (!meta.is_empty()).then(|| MetaObject(meta))
+    (!meta.is_empty()).then_some(MetaObject(meta))
 }
 
 fn caller(context: &RequestContext<RoleServer>) -> Result<Caller, ErrorData> {

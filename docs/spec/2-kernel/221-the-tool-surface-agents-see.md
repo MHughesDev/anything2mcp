@@ -46,4 +46,6 @@ Every tool is generated from published files, so names, descriptions, and result
 }
 ```
 
+Over MCP the `next` hint of a success is carried in the result's `_meta`, under `anything2mcp/next`, because structured content must fit the tool's output schema, which takes no other key; a failure carries its next step as `fix` ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md)).
+
 `status` is the run's state from [section 208](208-runs-the-ledger-and-resume.md): `queued`, `validating`, `rejected`, `needs_approval`, `expired`, `running`, `needs_input`, `needs_login`, `stopped`, `completed`, `failed`, or `cancelled`. A call that could not be queued returns `busy` with a retry time and no run. Long jobs return a `run_id` at once; clients that support MCP progress notifications or long-running tasks also receive progress. Traces, screenshots, files, and diffs are MCP resources linked from results, never inlined.

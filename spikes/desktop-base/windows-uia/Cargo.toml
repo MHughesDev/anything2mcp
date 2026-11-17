@@ -1,0 +1,21 @@
+# Throwaway. Roadmap package 8.1, Windows: UI Automation through Microsoft's
+# own `windows` bindings, with no wrapper crate. Type-checked from Linux for
+# x86_64-pc-windows-msvc; never run. Never promoted into the product.
+[package]
+name = "spike-desktop-windows-uia"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+] }
+windows-core = "=0.62.2"

@@ -404,3 +404,25 @@ async fn a_read_goes_through_the_channel_to_the_kernel_and_a_secret_does_not_com
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
     world.kernel.close(CloseReason::Asked).await;
 }
+
+/// An engine that closes a connection at any moment of the client's hello
+/// leaves the client with a failure, never with a wait that does not end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_whose_connection_is_closed_is_told_so_every_time() {
+    let (_folder, paths) = home("drop");
+    let engine = Engine::start(
+        Channel::bind_expecting(&paths, VERSION, OsUser::named("someone-else"))
+            .await
+            .unwrap(),
+        1,
+        IdlePolicy::never(),
+    );
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    for _ in 0..200 {
+        let refused = connector.connect().await.unwrap_err();
+        assert_failure(&refused, FailureClass::Transient, &codes::CONNECTION_LOST);
+    }
+    assert_eq!(engine.control.refused(), 200);
+    assert_eq!(engine.hits.load(Ordering::SeqCst), 0);
+    engine.stop().await;
+}

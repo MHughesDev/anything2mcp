@@ -1,0 +1,42 @@
+--- run 1 (2026-11-17T13:08:03Z)
+connect_ms 9
+app :1.0 pid 7823
+walk nodes 11 found 1 ms 12
+collection role_matches 0 named 0 ms 0
+field role Text id "" path /org/a11y/atspi/accessible/9
+before "Hinge"
+set ok true event_ms 1 (Insert 0 "Hinge, steel")
+after "Hinge, steel"
+password role PasswordText text_len 16 all_masked true
+actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
+invoke confirm_ms 0 via text-changed (Insert 0 "Saved")
+store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
+no_event ends_err true after_ms 5001
+--- run 2 (2026-11-17T13:08:08Z)
+connect_ms 7
+app :1.0 pid 7866
+walk nodes 11 found 1 ms 15
+collection role_matches 0 named 0 ms 0
+field role Text id "" path /org/a11y/atspi/accessible/9
+before "Hinge"
+set ok true event_ms 1 (Insert 0 "Hinge, steel")
+after "Hinge, steel"
+password role PasswordText text_len 16 all_masked true
+actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
+invoke confirm_ms 1 via text-changed (Insert 0 "Saved")
+store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
+no_event ends_err true after_ms 5001
+--- run 3 (2026-11-17T13:08:13Z)
+connect_ms 7
+app :1.0 pid 7910
+walk nodes 11 found 1 ms 17
+collection role_matches 0 named 0 ms 0
+field role Text id "" path /org/a11y/atspi/accessible/9
+before "Hinge"
+set ok true event_ms 0 (Insert 0 "Hinge, steel")
+after "Hinge, steel"
+password role PasswordText text_len 16 all_masked true
+actions [Action { name: "Click", description: "Clicks the button", keybinding: "" }]
+invoke confirm_ms 0 via text-changed (Insert 0 "Saved")
+store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
+no_event ends_err true after_ms 5001

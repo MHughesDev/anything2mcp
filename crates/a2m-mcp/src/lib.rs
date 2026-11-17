@@ -18,6 +18,7 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 7.
 
+mod clean;
 pub mod codes;
 mod http;
 mod proxy;
