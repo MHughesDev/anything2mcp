@@ -18,9 +18,9 @@ use a2m_core::{
 };
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPath, Cleanup, ConnFailure, Deadline, Driver, DriverHealth,
-    EntryKind, EnvAllowlist, Exit, Finished, LaunchSpec, Leftover, Observed, OneShot, Posture, PrepareContext,
-    Prepared, ProgramRef, Ran, RootName, Roots, ScopedSupervisor, StepFailure, StepInput,
-    StepOutcome, SubsystemKind, SurfaceRef, current_platform,
+    EntryKind, EnvAllowlist, Exit, Finished, LaunchSpec, Leftover, Observed, OneShot, Posture,
+    PrepareContext, Prepared, ProgramRef, Ran, RootName, Roots, ScopedSupervisor, StepFailure,
+    StepInput, StepOutcome, SubsystemKind, SurfaceRef, current_platform,
 };
 
 use crate::args::{self, Given};

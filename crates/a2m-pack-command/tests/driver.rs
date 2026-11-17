@@ -1197,6 +1197,101 @@ async fn a_command_that_writes_is_started_only_by_the_step_that_commits() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn in_the_sandbox_the_guard_lifts_only_for_the_step_that_commits() {
+    let scene = Scene::new();
+    let control = scene.stand.control();
+    let binding = scene.binding("example_item_set_quantity");
+    let (fence, token) = writing("SK-1001").await;
+    let record_key = key("SK-1001");
+    let with = With {
+        key: Some(&record_key),
+        record: Some(record(&fence, 0)),
+        token: Some(&token),
+        ..With::default()
+    };
+    let unchanged = |scene: &Scene| {
+        assert!(scene.starts().is_empty());
+        assert_eq!(control.write_count("SK-1001").unwrap(), 0);
+        assert_eq!(
+            control.stored_item("SK-1001").unwrap().unwrap().quantity,
+            120
+        );
+    };
+
+    // The context that writes a declared test record: a step that would
+    // change the item and is not marked `commits` is refused, and the
+    // stand shows nothing started and nothing changed.
+    let mut writing_context = scene
+        .prepare(Posture::Sandbox { test_records: true }, Some(fence))
+        .await
+        .unwrap();
+    let mut unmarked = binding.act[0].clone();
+    unmarked.commits = false;
+    let refused = failed(
+        scene
+            .run(&mut writing_context, &[unmarked], &set("SK-1001", 12), with)
+            .await,
+    );
+    assert_eq!(refused.sent, Sent::NotSent, "{refused}");
+    unchanged(&scene);
+
+    // Any other sandbox context keeps the guard for the step that commits.
+    let mut guarded = scene
+        .prepare(
+            Posture::Sandbox {
+                test_records: false,
+            },
+            Some(fence),
+        )
+        .await
+        .unwrap();
+    let guarded_write = failed(
+        scene
+            .run(&mut guarded, &binding.act, &set("SK-1001", 12), with)
+            .await,
+    );
+    is(
+        &guarded_write,
+        FailureClass::Policy,
+        &codes::READ_ONLY_POSTURE,
+        Sent::NotSent,
+    );
+    unchanged(&scene);
+    scene.handle.release(guarded, false).await;
+
+    // The step that commits, in the context that writes: made once, and
+    // read back.
+    done(
+        scene
+            .run(
+                &mut writing_context,
+                &binding.act,
+                &set("SK-1001", 12),
+                with,
+            )
+            .await,
+    );
+    done(
+        scene
+            .run(&mut writing_context, &binding.confirm, &Values::new(), with)
+            .await,
+    );
+    let read = done(
+        scene
+            .run(
+                &mut writing_context,
+                &binding.read_back,
+                &sku("SK-1001"),
+                with,
+            )
+            .await,
+    );
+    assert_eq!(read.values.get("quantity"), Some(&Value::Int(12)));
+    assert_eq!(control.write_count("SK-1001").unwrap(), 1);
+    assert!(scene.handle.release(writing_context, false).await.complete);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_run_is_given_a_folder_nothing_was_left_in() {
     let scene = Scene::new();
     // What an earlier engine with the same process number left behind

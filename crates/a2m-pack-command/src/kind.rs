@@ -1426,10 +1426,8 @@ mod tests {
             .drafting_rule(crate::codes::PACK, Arc::new(DraftsAWrite))
             .unwrap();
         let set = builder.build();
-        let folder = std::env::temp_dir().join(format!(
-            "a2m-pack-command-draft-{}",
-            std::process::id()
-        ));
+        let folder =
+            std::env::temp_dir().join(format!("a2m-pack-command-draft-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).unwrap();
         let finding = a2m_core::Finding::about(

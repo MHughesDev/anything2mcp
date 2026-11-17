@@ -267,7 +267,10 @@ fn no_crate_but_the_policy_engine_names_the_policy_key() {
             if path.is_dir() {
                 // Only the sources of a crate: not its tests, and not the
                 // two crates that make and take the key.
-                let skipped = matches!(name.as_str(), "tests" | "target" | "a2m-ledger" | "a2m-policy");
+                let skipped = matches!(
+                    name.as_str(),
+                    "tests" | "target" | "a2m-ledger" | "a2m-policy"
+                );
                 if !skipped {
                     stack.push(path);
                 }
@@ -279,7 +282,10 @@ fn no_crate_but_the_policy_engine_names_the_policy_key() {
             }
         }
     }
-    assert!(named.is_empty(), "these name the policy engine's key: {named:?}");
+    assert!(
+        named.is_empty(),
+        "these name the policy engine's key: {named:?}"
+    );
 }
 
 // ---- a restart ----
@@ -440,8 +446,11 @@ async fn the_state_rebuilt_from_events_is_the_current_state() {
             tx.ledger()
                 .set_state(&next, RunState::Stopped, Some(&why))?;
             tx.ledger().take_lock(&next, record(&next, 2))?;
-            tx.ledger()
-                .settle(&next, record(&next, 2), a2m_ledger::Reconciled::NotLanded { evidence: proof })?;
+            tx.ledger().settle(
+                &next,
+                record(&next, 2),
+                a2m_ledger::Reconciled::NotLanded { evidence: proof },
+            )?;
             tx.ledger().late_evidence(next.run, proof)?;
             Ok(next)
         })

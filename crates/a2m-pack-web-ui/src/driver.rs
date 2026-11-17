@@ -43,6 +43,15 @@ use crate::screens::{PACK, SCREEN_KIND, unreserved};
 /// their own; anything the tab refused stops the run.
 const NAVIGATION: &str = "NAVIGATION";
 
+/// The account a run with no session browses as.
+const ANONYMOUS: &str = "anonymous";
+
+/// The profiles that belong to no person: the one of runs with no
+/// session, and the one the web pack's discoverers look through. A lease
+/// whose profile has one of these names is refused, so that a session's
+/// browser is never one these share.
+const RESERVED_PROFILES: &[&str] = &[ANONYMOUS, "discovery"];
+
 /// How long a wait for what the page shows after a click runs before the
 /// driver hears what the tab refused in the meantime. The wait goes on
 /// until the step's own deadline; only the hearing is this often.
@@ -505,6 +514,14 @@ impl Session {
         deadline: Deadline,
     ) -> Result<(Element, usize), StepFailure> {
         for (position, locator) in locators.iter().enumerate() {
+            // The check below looks for the locator inside the section,
+            // which drops a scope of its own. The compiler refuses the
+            // pair; a plan that holds it all the same is not acted on.
+            if fingerprint.is_some() && locator.within.is_some() {
+                return Err(codes::not_usable(
+                    "a locator with a scope of its own also has a fingerprint",
+                ));
+            }
             let element = match self.tab.locate(&locator.query(), deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
@@ -1178,7 +1195,7 @@ impl UiDriver {
         // no sign-in. A browser's session lives in its own profile; a
         // credential handed over to be placed cannot be, yet.
         let account = match lease {
-            None => "anonymous".to_owned(),
+            None => ANONYMOUS.to_owned(),
             Some(lease) => {
                 let mut sink = NoPlace::default();
                 lease.apply(&mut sink).map_err(unsent)?;
@@ -1188,6 +1205,13 @@ impl UiDriver {
                     ));
                 }
                 match lease.profile() {
+                    // The names of the profiles a run with no session and
+                    // a discovery use are never a session's.
+                    Some(profile) if RESERVED_PROFILES.contains(&profile.as_str()) => {
+                        return Err(codes::not_usable(
+                            "the session's profile has the name of a profile a run with no session, or a discovery, uses",
+                        ));
+                    }
                     Some(profile) => profile.as_str().to_owned(),
                     None => {
                         let digest = Digest::of(lease.session().to_string().as_bytes()).to_string();

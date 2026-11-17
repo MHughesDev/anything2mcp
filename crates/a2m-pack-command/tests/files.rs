@@ -78,7 +78,7 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
         &loaded,
         set,
         a2m_files::CompileMode::Draft,
-        a2m_core::Version::new(1, 0, 0),
+        a2m_files::DRAFT_VERSION,
     )
     .unwrap();
     assert_eq!(first.encoded.bytes, third.encoded.bytes);

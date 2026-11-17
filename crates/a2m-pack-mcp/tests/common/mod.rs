@@ -165,7 +165,7 @@ pub fn write_target(to: &Path, edit: &dyn Fn(&str, String) -> String) {
 pub fn compile(registry: &Registry, root: &Path) -> Result<Compiled, Diagnostics> {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 /// The fixture target, compiled as it is in the repository.

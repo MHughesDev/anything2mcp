@@ -2169,8 +2169,11 @@ fn fetch_documents() -> FetchEnable<'static> {
 ///
 /// - Opened from a tab that only observes, or from nothing the engine
 ///   knows: it is closed while it is held, and never runs. It fetches
-///   nothing and gives its opener no window to use. The script that opened
-///   it does not go on; the page still answers.
+///   nothing and gives its opener no window to use. The page's own scripts
+///   are left waiting, and the tab can no longer be sent anywhere: a
+///   `goto` ends at its deadline. The engine's reads of the page still
+///   answer, and the tab has reported `POPUP`. Only a person's gesture
+///   opens a window, and a tab that only observes never gives one.
 /// - Opened from a tab that may act: every request of it is set to be
 ///   ended in the browser, and it is let run, so that the page that opened
 ///   it goes on. The first page it asks for is reported and ended, and
