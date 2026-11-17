@@ -27,16 +27,20 @@ use a2m_actions::Paths;
 use a2m_core::{Failure, Secret};
 
 use crate::codes;
-use crate::connector::{Connector, Link};
+use crate::connector::{Connector, Link, shown};
 use crate::lock::EngineLock;
 use crate::os;
 
 /// The name of the start lock's file in the runtime directory.
 pub const START_LOCK_NAME: &str = "start.lock";
 
-/// The name of the engine's log in the log directory, which an engine
-/// started on demand writes its standard output and error to.
-pub const ENGINE_LOG_NAME: &str = "engine.log";
+/// The name of the file in the log directory that an engine started on
+/// demand writes its standard output and error to. It is not the
+/// engine's own redacted log, `engine.log`, which telemetry writes and
+/// rotates: what a process writes to its standard error is not redacted,
+/// and a file renamed under an open handle would take the output with it
+/// (decision 0181).
+pub const ENGINE_LOG_NAME: &str = "engine-output.log";
 
 /// How the line begins that a client appends to the engine's log when it
 /// has started an engine on demand; the process's number follows.
@@ -133,12 +137,12 @@ fn unreachable(failure: &Failure) -> bool {
     *failure.code() == codes::ENGINE_UNREACHABLE
 }
 
-fn shown(path: &Path) -> String {
-    path.display()
-        .to_string()
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect()
+/// Whether a failure to connect means that no engine answers yet: nothing
+/// listens, or an engine that was starting closed the connection before
+/// it answered its hello. Either way nothing was sent, and the client goes
+/// on looking until its patience ends (decision 0181).
+fn not_answering(failure: &Failure) -> bool {
+    unreachable(failure) || *failure.code() == codes::CONNECTION_LOST
 }
 
 /// The engine did not answer within the deadline.
@@ -165,8 +169,12 @@ fn ended_early(log: &Path) -> Failure {
     )
 }
 
-/// Opens the engine's log for appending, closed to everyone but the user
-/// on macOS and Linux.
+/// Opens the engine's output file for appending, closed to everyone but
+/// the user on macOS and Linux. On those systems a link at its name, a
+/// file that is not this user's, and a file swapped in while it was
+/// opened are refused, and a file others may read is narrowed to the user
+/// (decision 0181). On Windows the file takes the access list of its
+/// folder.
 fn open_log(log: &Path) -> std::io::Result<File> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder)?;
@@ -177,8 +185,36 @@ fn open_log(log: &Path) -> std::io::Result<File> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
+        if std::fs::symlink_metadata(log).is_ok_and(|found| !found.is_file()) {
+            return Err(not_a_plain_file());
+        }
     }
-    options.open(log)
+    let file = options.open(log)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let opened = file.metadata()?;
+        let named = std::fs::symlink_metadata(log)?;
+        let ours = rustix::process::getuid().as_raw();
+        if !named.is_file()
+            || (opened.dev(), opened.ino()) != (named.dev(), named.ino())
+            || opened.uid() != ours
+        {
+            return Err(not_a_plain_file());
+        }
+        if opened.mode() & 0o077 != 0 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn not_a_plain_file() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "the engine's output file is a link, another's, or not a plain file",
+    )
 }
 
 /// Starts the engine detached, with its standard streams set. A failure is
@@ -272,11 +308,16 @@ impl Connector {
     ) -> Result<Started, Failure> {
         let give_up = tokio::time::Instant::now() + patience;
         let late = || tokio::time::Instant::now() >= give_up;
+        // A look at the channel ends at `give_up` too: an engine that has
+        // bound its channel and stalls while it opens is waited for no
+        // longer than one that never binds.
+        let look = || tokio::time::timeout_at(give_up, self.connect());
         let _start_lock = loop {
-            match self.connect().await {
-                Ok(link) => return Ok(Started::Found(link)),
-                Err(failure) if unreachable(&failure) => {}
-                Err(failure) => return Err(failure),
+            match look().await {
+                Err(_) => return Err(too_long(&start.log)),
+                Ok(Ok(link)) => return Ok(Started::Found(link)),
+                Ok(Err(failure)) if not_answering(&failure) => {}
+                Ok(Err(failure)) => return Err(failure),
             }
             if let Some(lock) = take_start_lock(paths).await? {
                 break lock;
@@ -290,8 +331,14 @@ impl Connector {
         // Whether an engine this client started has ended already.
         let mut ours_ended = false;
         loop {
-            match self.connect().await {
-                Ok(link) => {
+            match look().await {
+                Err(_) => {
+                    if let Some(child) = child {
+                        reap(child);
+                    }
+                    return Err(too_long(&start.log));
+                }
+                Ok(Ok(link)) => {
                     return Ok(match child {
                         Some(child) => {
                             reap(child);
@@ -300,8 +347,8 @@ impl Connector {
                         None => Started::Found(link),
                     });
                 }
-                Err(failure) if unreachable(&failure) => {}
-                Err(failure) => {
+                Ok(Err(failure)) if not_answering(&failure) => {}
+                Ok(Err(failure)) => {
                     if let Some(child) = child {
                         reap(child);
                     }

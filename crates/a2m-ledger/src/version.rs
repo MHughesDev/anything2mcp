@@ -24,6 +24,10 @@ pub struct PublishedVersion {
     pub plan: EncodedPlan,
     /// Who published it.
     pub published_by: PrincipalId,
+    /// The evidence of the publish gates it passed, as canonical JSON: what
+    /// each gate found, and which the documents name that did not run
+    /// (spec section 403, decision 0180).
+    pub gate_evidence: Option<String>,
 }
 
 /// A stored version, without its plan's bytes.
@@ -72,8 +76,9 @@ impl Versions<'_, '_> {
         }
         self.tx.exec(
             "INSERT INTO target_versions
-                (workspace_id, target, plan_hash, version, plan, published_by, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                (workspace_id, target, plan_hash, version, plan, published_by, published_at,
+                 gate_evidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (workspace_id, target, plan_hash) DO NOTHING",
             &[
                 version.workspace.to_string().into(),
@@ -83,9 +88,37 @@ impl Versions<'_, '_> {
                 version.plan.bytes.clone().into(),
                 version.published_by.to_string().into(),
                 self.tx.now().into(),
+                version.gate_evidence.clone().into(),
             ],
         )?;
         Ok(())
+    }
+
+    /// The evidence of the publish gates the version with this hash passed,
+    /// as it was stored with it; `None` for a version stored without.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`not_found` when no such version is stored.
+    pub fn gate_evidence(
+        &mut self,
+        workspace: &WorkspaceId,
+        target: &TargetName,
+        hash: &Digest,
+    ) -> Result<Option<String>, Failure> {
+        let row = self
+            .tx
+            .row(
+                "SELECT gate_evidence FROM target_versions
+                 WHERE workspace_id = ?1 AND target = ?2 AND plan_hash = ?3",
+                &[
+                    workspace.to_string().into(),
+                    target.as_str().into(),
+                    hash.to_string().into(),
+                ],
+            )?
+            .ok_or_else(|| failure::not_found("published version"))?;
+        Ok(row.opt_text(0)?.map(str::to_owned))
     }
 
     /// The plan with this hash. The bytes are hashed again before they are

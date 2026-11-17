@@ -813,6 +813,7 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
         version: Version::new(1, number, 0),
         plan: plan(text),
         published_by: principal(1),
+        gate_evidence: (number == 1).then(|| r#"{"gates":[]}"#.to_owned()),
     };
     let (first, second) = (plan("plan one").hash, plan("plan two").hash);
     let (one, two) = (version("plan one", 0), version("plan two", 1));
@@ -825,6 +826,12 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
             versions.make_current(&workspace(), &target(), &first)?;
             versions.make_current(&workspace(), &target(), &second)?;
             assert_eq!(versions.current(&workspace(), &target())?, Some(second));
+            // The evidence of its gates is kept with each version as given.
+            assert_eq!(
+                versions.gate_evidence(&workspace(), &target(), &second)?,
+                Some(r#"{"gates":[]}"#.to_owned())
+            );
+            assert_eq!(versions.gate_evidence(&workspace(), &target(), &first)?, None);
             versions.list(&workspace(), &target())
         })
         .await

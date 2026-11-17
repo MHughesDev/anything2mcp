@@ -230,6 +230,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Edit("types.yaml", "    currency: USD\n", ""),
         ),
         (
+            "kernel.built_in_type_redefined",
+            Case::Edit(
+                "types.yaml",
+                "types:\n",
+                "types:\n  untrusted_text:\n    base: text\n",
+            ),
+        ),
+        (
             "kernel.value_not_of_type",
             Case::Edit(
                 "tests/order_get.yaml",
@@ -732,6 +740,35 @@ fn every_kernel_lint_code_has_a_case_that_fails_with_it_and_the_example_passes()
         drafted.find("stand.path_not_rooted").unwrap().level,
         Level::Warning
     );
+}
+
+#[test]
+fn a_target_cannot_redefine_a_complete_built_in_type_and_may_complete_an_incomplete_one() {
+    let set = stand_set().unwrap();
+    // Without the refusal, this type would take the built-in's place and
+    // drop its untrusted mark from every drafted output that names it.
+    let unmarked = changed(&Case::Edit(
+        "types.yaml",
+        "types:\n",
+        "types:\n  untrusted_text:\n    base: text\n",
+    ));
+    for mode in [CompileMode::Draft, CompileMode::Publish] {
+        let problems = problems_with(&unmarked, &set, mode);
+        let found = problems
+            .find("kernel.built_in_type_redefined")
+            .unwrap_or_else(|| panic!("not refused:\n{problems}"));
+        assert_eq!(found.level, Level::Error);
+        assert_eq!(found.at.file.as_str(), "types.yaml");
+    }
+    // `money` needs a currency: a target's type of that name completes it.
+    let completed = changed(&Case::Edit(
+        "types.yaml",
+        "types:\n",
+        "types:\n  money:\n    base: money\n    currency: USD\n",
+    ));
+    let problems = problems_with(&completed, &set, CompileMode::Publish);
+    assert!(problems.find("kernel.built_in_type_redefined").is_none(), "{problems}");
+    assert!(!problems.has_errors(), "{problems}");
 }
 
 #[test]

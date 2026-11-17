@@ -240,6 +240,7 @@ impl Kernel {
         target: TargetName,
         version: Version,
         by: PrincipalId,
+        gate_evidence: Option<String>,
     ) -> Result<Digest, Failure> {
         let workspace = self.installation()?.workspace;
         let hash = encoded.hash;
@@ -253,6 +254,7 @@ impl Kernel {
                     version,
                     plan: encoded,
                     published_by: by,
+                    gate_evidence,
                 })?;
                 tx.versions().make_current(&workspace, &target, &hash)?;
                 note_published(tx, &workspace, &target)?;
@@ -287,6 +289,7 @@ impl Kernel {
             plan.header.target.clone(),
             plan.header.version,
             by,
+            None,
         )
         .await
     }
@@ -315,6 +318,32 @@ handler!(
                 "Ask for the publish again; the person reads the new plan on a new page.",
             ));
         }
+        // The publish gates (spec section 403): a version is published only
+        // when every gate this build has passes, and its evidence is
+        // stored with it (decision 0180).
+        let world = crate::offline::OfflineWorld {
+            workspace,
+            principal: call.caller.principal.principal.id,
+            vault: kernel.inner.vault.clone(),
+        };
+        let gates = crate::offline::run_gates(
+            kernel,
+            call.project_folder()?.to_path_buf(),
+            &target,
+            &compiled,
+            world,
+        )
+        .await?;
+        if !gates.passed {
+            return Err(gates.refusal(&target));
+        }
+        let evidence = gates.evidence();
+        let stored_evidence = String::from_utf8(
+            a2m_core::CanonicalJson::encode(&evidence)?
+                .as_bytes()
+                .to_vec(),
+        )
+        .ok();
         let tools: Vec<String> = compiled
             .plan
             .tools
@@ -327,6 +356,7 @@ handler!(
                 target.clone(),
                 version,
                 call.caller.principal.principal.id,
+                stored_evidence,
             )
             .await?;
         let mut output = Output::ok(json!({
@@ -335,6 +365,7 @@ handler!(
             "plan_hash": hash.to_string(),
             "tools": tools,
             "current": true,
+            "gates": evidence,
         }));
         for warning in compiled.warnings.iter() {
             output = output.warn(format!("{}: {}", warning.code, warning.message));

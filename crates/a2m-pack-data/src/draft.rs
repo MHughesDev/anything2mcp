@@ -70,7 +70,11 @@ impl Shaped {
         key.sort_unstable();
         Self {
             record,
-            types: table.columns.iter().map(field_type).collect(),
+            types: table
+                .columns
+                .iter()
+                .map(|column| field_type(column, &table.store))
+                .collect(),
             names,
             key: if table.view {
                 Vec::new()
@@ -125,9 +129,17 @@ fn plain_name(text: &str, fallback: &str) -> String {
 
 /// The field type a column's declared type states, when it states one. A
 /// type is never guessed from a column's name, and no unit is ever drafted.
-fn field_type(column: &ColumnFound) -> Option<&'static str> {
+///
+/// A server's `numeric(p,s)` is an exact decimal the store holds at its
+/// scale; it is drafted as `decimal` where the built-in type keeps every
+/// digit of that scale, and is a question otherwise. In the embedded file
+/// a column declared `NUMERIC` may hold a float, so it is a question there.
+fn field_type(column: &ColumnFound, store: &str) -> Option<&'static str> {
     let declared = column.declared_type.to_ascii_uppercase();
-    if declared.contains("INT") {
+    if store == "postgres" && exact_scale(&declared).is_some_and(|scale| scale <= DECIMAL_PLACES)
+    {
+        Some("decimal")
+    } else if declared.contains("INT") {
         Some("integer")
     } else if declared.contains("CHAR") || declared.contains("CLOB") || declared.contains("TEXT") {
         Some("text")
@@ -138,6 +150,17 @@ fn field_type(column: &ColumnFound) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The places the built-in `decimal` keeps.
+const DECIMAL_PLACES: u32 = 6;
+
+/// The scale of a server's `numeric(p,s)`, as the catalog writes it. `None`
+/// for a `numeric` of no stated scale, which holds any number of places.
+fn exact_scale(declared: &str) -> Option<u32> {
+    let inner = declared.strip_prefix("NUMERIC(")?.strip_suffix(')')?;
+    let (_, scale) = inner.split_once(',')?;
+    scale.trim().parse().ok()
 }
 
 fn unreadable() -> Failure {

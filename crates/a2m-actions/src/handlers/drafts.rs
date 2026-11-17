@@ -386,7 +386,7 @@ handler!(
                         {"gate": "schema_and_lint", "state": "failed", "problems": problems_json(&problems)},
                         {"gate": "offline_replay", "state": "not_run", "tests": []},
                     ],
-                    "not_run": NOT_RUN_GATES,
+                    "not_run": crate::offline::gates_not_built(),
                 }))
                 .then(Next::new(
                     "draft.lint",
@@ -395,99 +395,26 @@ handler!(
                 )));
             }
         };
-        let plan = std::sync::Arc::new(compiled.plan);
-        // Every fixture is read once, off the engine's threads.
-        let (named, tests) = (target.clone(), plan.tests.clone());
-        let fixtures = off_thread(move || {
-            // The compiler names a fixture by its folder inside the target's,
-            // `fixtures/<name>`.
-            let folder = target_folder(&project_folder, &named)?;
-            Ok(tests
-                .iter()
-                .map(|test| {
-                    test.fixture.as_deref().map(|fixture| {
-                        folder
-                            .join(fixture)
-                            .map_err(
-                                |failure| json!({"folder": fixture, "problem": failure.message()}),
-                            )
-                            .and_then(|folder| crate::offline::fixture_answers(&folder))
-                    })
-                })
-                .collect::<Vec<_>>())
-        })
-        .await?;
-        let engine = kernel.engine().await?;
-        let workspace = call.caller.principal.workspace;
-        // The engine's future is not `Send`: a driver's prepared state is
-        // held across its waits. So the tests run on a thread of their own,
-        // driven by this same runtime, as the runner loop runs a job.
-        let (runs_plan, hash) = (std::sync::Arc::clone(&plan), compiled.encoded.hash);
-        let runtime = tokio::runtime::Handle::current();
-        let outcomes = tokio::task::spawn_blocking(move || {
-            runtime.block_on(async move {
-                let mut outcomes = Vec::new();
-                for (test, fixture) in runs_plan.tests.iter().zip(fixtures) {
-                    outcomes.push(
-                        crate::offline::run_test(
-                            &engine, &runs_plan, hash, workspace, test, fixture,
-                        )
-                        .await,
-                    );
-                }
-                outcomes
-            })
-        })
-        .await
-        .map_err(|_| {
-            codes::busy(
-                codes::ENGINE_DEGRADED,
-                "The offline tests were interrupted.",
-                "Call `test.run` again.",
-            )
-        })?;
-        let mut results = Vec::new();
-        for (test, outcome) in plan.tests.iter().zip(outcomes) {
-            let tool = plan
-                .tools
-                .get(test.tool.get())
-                .map(|tool| tool.name.to_string())
-                .unwrap_or_default();
-            let mut shown = json!({
-                "test": test.name,
-                "tool": tool,
-                "kind": test.kind.to_string(),
-                "fixture": test.fixture,
-                "state": outcome.state,
-            });
-            if let (Json::Object(shown), Json::Object(detail)) = (&mut shown, outcome.detail) {
-                shown.extend(detail);
-            }
-            results.push(shown);
-        }
-        let all_passed = results.iter().all(|test| test["state"] == "passed");
-        let any_failed = results.iter().any(|test| test["state"] == "failed");
-        let replay_state = if any_failed {
-            "failed"
-        } else if all_passed {
-            "passed"
-        } else {
-            "incomplete"
+        let world = crate::offline::OfflineWorld {
+            workspace: call.caller.principal.workspace,
+            principal: call.caller.principal.principal.id,
+            vault: kernel.inner.vault.clone(),
         };
+        let gates =
+            crate::offline::run_gates(kernel, project_folder, &target, &compiled, world).await?;
+        let all_passed = gates.passed;
         let output = Output::ok(json!({
             "target": target.as_str(),
             // Every gate that ran passed, and every offline test ran and
-            // passed. The gates listed under `not_run` are not built, so
-            // the run is never complete.
+            // passed: what a publish needs. The gates listed under
+            // `not_run` are not built, so the run is never complete.
             "passed": all_passed,
             "complete": false,
-            "gates": [
-                {"gate": "schema_and_lint", "state": "passed", "problems": problems_json(&compiled.warnings)},
-                {"gate": "offline_replay", "state": replay_state, "tests": results},
-            ],
-            "not_run": NOT_RUN_GATES,
+            "gates": gates.gates,
+            "missing": gates.missing,
+            "not_run": crate::offline::gates_not_built(),
         }))
-        .warn("The schema and lint gate and the offline tests of reads run; the other gates, and the offline tests of writes, are not built, so the result is never complete.");
+        .warn("The schema and lint gate and the offline tests run; the other gates are not built, so the result is never complete.");
         Ok(output.then(if all_passed {
             Next::new(
                 "publish.request",
@@ -503,15 +430,3 @@ handler!(
         }))
     }
 );
-
-/// The publish gates that are not built.
-const NOT_RUN_GATES: [&str; 8] = [
-    "contract",
-    "determinism",
-    "binding_equivalence",
-    "write_round_trip",
-    "idempotency",
-    "resume",
-    "fault_injection",
-    "performance",
-];

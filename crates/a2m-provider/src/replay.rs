@@ -82,6 +82,7 @@ pub fn answer_name(step: &Step) -> &str {
 pub struct Replay {
     answers: Mutex<Vec<(RecordedAnswer, bool)>>,
     asked: Mutex<Vec<String>>,
+    sent: Mutex<Vec<(String, Values)>>,
 }
 
 impl Replay {
@@ -91,7 +92,22 @@ impl Replay {
         Arc::new(Self {
             answers: Mutex::new(answers.into_iter().map(|answer| (answer, false)).collect()),
             asked: Mutex::new(Vec::new()),
+            sent: Mutex::new(Vec::new()),
         })
+    }
+
+    /// What the engine sent to each committing step it asked the replay to
+    /// answer, in order: the step's name, as [`answer_name`] gives it, and
+    /// its arguments as the engine evaluated them. What an offline test of
+    /// a write compares with the request its fixture recorded (decision
+    /// 0180). A committing step is recorded whether or not an answer was
+    /// left for it.
+    #[must_use]
+    pub fn sent(&self) -> Vec<(String, Values)> {
+        self.sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The names of the steps it was asked to answer, in order: for a test
@@ -122,6 +138,12 @@ impl Replay {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(name.to_owned());
+        if step.commits {
+            self.sent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((name.to_owned(), args.clone()));
+        }
         let mut answers = self.answers.lock().unwrap_or_else(PoisonError::into_inner);
         let found = answers.iter_mut().find(|(answer, used)| {
             !*used

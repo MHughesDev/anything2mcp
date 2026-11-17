@@ -4,7 +4,7 @@
 use a2m_core::{FileKindName, LintCode, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
-    KindContext, Located, Stage,
+    KindContext, Located, Stage, UNTRUSTED_TEXT,
 };
 
 use crate::model::{
@@ -268,13 +268,8 @@ fn record_of(
             "Declare one field, and remove `key`.",
         ));
     }
-    if columns && key.is_empty() {
-        problems.push(invalid(
-            record,
-            "The rows of a table, a sheet, or delimited text are told apart by a key.",
-            "Add `key:` with the fields that identify one row.",
-        ));
-    }
+    // Rows with no key can be listed, and nothing else: the lowering
+    // refuses a read by key and every write over them.
     for name in &key {
         let known = fields.iter().find(|field| &field.name == name);
         if known.is_none_or(|field| field.writable || field.formula) {
@@ -282,6 +277,29 @@ fn record_of(
                 record,
                 format!("The key field `{name}` is a declared field that is neither writable nor a formula."),
                 "Name declared fields under `key`, and do not mark them `writable`.",
+            ));
+        }
+    }
+    // `untrusted_text` is what a drafted field holds until someone states
+    // its type. A key and a written value are of a type someone stated.
+    for entry in record
+        .get("fields")
+        .map(Located::entries)
+        .unwrap_or_default()
+    {
+        if entry.value.text("type") != Some(UNTRUSTED_TEXT) {
+            continue;
+        }
+        let name = &entry.key.value;
+        let writable = entry.value.get("writable").and_then(Located::as_bool) == Some(true);
+        if key.contains(name) || writable {
+            problems.push(invalid(
+                &entry.value,
+                format!(
+                    "The field `{name}` is of the type `{UNTRUSTED_TEXT}`, which a drafted field holds until someone states its type; a {} is of a type someone stated.",
+                    if writable { "written field" } else { "key field" }
+                ),
+                "State the field's type: a number, a date, a decimal, an identifier, or a text type of the target's.",
             ));
         }
     }

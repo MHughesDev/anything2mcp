@@ -73,6 +73,9 @@ impl Drop for Folder {
 struct TestPack {
     manifest: &'static str,
     browsers: SharedBrowsers,
+    /// Drafting rules a test adds to the pack's own, each declared in the
+    /// manifest.
+    rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
 }
 
 impl Pack for TestPack {
@@ -82,18 +85,26 @@ impl Pack for TestPack {
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         self.browsers.get_or_create(cx, test_support::settings())?;
-        a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)
+        a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)?;
+        if self.rules.is_empty() {
+            return Ok(());
+        }
+        let mut more = a2m_provider::CompilerRegistrations::new();
+        for rule in &self.rules {
+            more = more.drafting_rule(Arc::clone(rule));
+        }
+        to.compiler(more)
     }
 }
 
 /// The pack's own manifest, with its requirement replaced by the test
-/// environment's.
-fn test_manifest() -> &'static str {
+/// environment's, and `more` added before it.
+fn test_manifest(more: &str) -> &'static str {
     let own = a2m_pack_web_ui::pack(SharedBrowsers::default()).manifest();
     let (before, _) = own
         .split_once("\n[[requirements]]")
         .expect("the manifest ends with its requirement");
-    Box::leak(format!("{before}{}", test_support::requirement()).into_boxed_str())
+    Box::leak(format!("{before}{more}{}", test_support::requirement()).into_boxed_str())
 }
 
 /// A registry that holds only the web pack's drivers, and what a test
@@ -107,6 +118,16 @@ pub struct Stand {
 
 impl Stand {
     pub fn new(name: &str, redact: Arc<dyn Redact>) -> Self {
+        Self::with_rules(name, redact, Vec::new())
+    }
+
+    /// The same, with drafting rules of a test's own added to the pack's,
+    /// each from a finding kind of its own to a file kind of the pack's.
+    pub fn with_rules(
+        name: &str,
+        redact: Arc<dyn Redact>,
+        rules: Vec<Arc<dyn a2m_files::DraftingRule>>,
+    ) -> Self {
         let folder = Folder::new(name);
         let profiles = folder.path().join("profiles");
         let logs = folder.path().join("logs");
@@ -129,9 +150,20 @@ impl Stand {
         };
         let browsers = SharedBrowsers::default();
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+        let declared: String = rules
+            .iter()
+            .map(|rule| {
+                format!(
+                    "\n[[drafting_rules]]\nfinding_kind = \"{}\"\nfile_kind = \"{}\"\n",
+                    rule.finding_kind().as_str(),
+                    rule.file_kind()
+                )
+            })
+            .collect();
         builder.add_pack(&TestPack {
-            manifest: test_manifest(),
+            manifest: test_manifest(&declared),
             browsers: browsers.clone(),
+            rules,
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");

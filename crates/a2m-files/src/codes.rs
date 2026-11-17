@@ -46,6 +46,7 @@ kernel_codes! {
     NAME_DEFINED_TWICE = "name_defined_twice": "A name is defined once.",
     UNKNOWN_FIELD_TYPE = "unknown_field_type": "A field type is built in or defined in `types.yaml`.",
     FIELD_TYPE_INCOMPLETE = "field_type_incomplete": "A field type states everything its base needs to normalize a value.",
+    BUILT_IN_TYPE_REDEFINED = "built_in_type_redefined": "A target defines no field type of a complete built-in type's name.",
     VALUE_NOT_OF_TYPE = "value_not_of_type": "A default or a test input is a value of its input's type.",
     // Stage 4: type-check.
     EXPRESSION_INVALID = "expression_invalid": "An expression parses and reads only names its place declares.",

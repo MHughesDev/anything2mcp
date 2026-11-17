@@ -4,8 +4,8 @@
 //! 308). The pack registers one mode, `file`, of the artifact archetype;
 //! the surface kind `file`, a folder inside a named root; the file kind
 //! `documents/`, which names one file and its record kinds; a driver; a
-//! discoverer of file layouts; and the rule that drafts a document from
-//! one.
+//! discoverer of file layouts; and the rules that draft a document and the
+//! reads over it from one.
 //!
 //! A file is read once, parsed through `a2m-sources` with the position of
 //! every value, and written only by patching the bytes of the places
@@ -22,6 +22,7 @@
 
 pub mod codes;
 mod discover;
+mod draft;
 mod driver;
 mod edit;
 mod kind;
@@ -91,7 +92,8 @@ impl Pack for FilePack {
             ))
             .file_kind(Arc::new(kind::DocumentKind::new()))
             .lowering(Arc::new(lower::FileLowering::new(mode)))
-            .drafting_rule(Arc::new(discover::DocumentFromLayout::new()?));
+            .drafting_rule(Arc::new(draft::DocumentFromLayout::new()?))
+            .drafting_rule(Arc::new(draft::ReadsFromLayout::new()?));
         for rule in lower::lint_rules() {
             compiler = compiler.lint_rule(Arc::new(rule));
         }

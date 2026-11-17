@@ -416,6 +416,51 @@ pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
         .collect()
 }
 
+/// What a read returns through the engine: each output the operation
+/// declares, taken by its name from what the last step observed and
+/// normalized by its field type, as the engine's own shaping does. A value
+/// the step gave that no output declares is not returned; an output the
+/// step gave no value for stops the test, as it stops a read in the engine.
+pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    let mut out = Values::new();
+    for output in &operation.outputs {
+        let raw = observed
+            .get(&output.name)
+            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        let value = match output
+            .field_type
+            .and_then(|index| plan.field_types[index.get()].normalizer)
+        {
+            Some(index) => {
+                let normalizer =
+                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
+                // A list output is normalized value by value. The engine's
+                // own shaping hands the normalizer the whole list, which
+                // it refuses (`value_unparsable`): reported to the engine.
+                match raw {
+                    Value::List(items) => Value::List(items.iter().map(one).collect()),
+                    other => one(other),
+                }
+            }
+            None => raw.clone(),
+        };
+        assert!(
+            value.is_null() || value.has_type(&output.ty),
+            "the output `{}` is not a {}: {value:?}",
+            output.name,
+            output.ty.name()
+        );
+        out.insert(output.name.clone(), value);
+    }
+    out
+}
+
 /// What a committing step carries: the commit point, its key, and the
 /// ledger's token for it.
 pub(crate) struct Write {

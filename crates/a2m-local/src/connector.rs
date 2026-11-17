@@ -2,8 +2,11 @@
 //! and the SDK bridge use. It holds no engine logic: it finds the engine,
 //! checks that it belongs to this user, says hello, and carries requests.
 
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use a2m_actions::Paths;
-use a2m_core::{Failure, Version};
+use a2m_core::{Failure, FailureClass, Version};
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use hyper::client::conn::http1::SendRequest;
@@ -23,6 +26,11 @@ const HELLO_LIMIT: usize = 4 * 1024;
 /// The host a request names. The channel is not a network address; the
 /// header is there because HTTP/1.1 asks for one.
 const HOST: &str = "localhost";
+/// How long a client waits for an engine to answer its hello. An engine
+/// binds its channel before it opens its store and answers a hello only
+/// once the store is open, so this is how long an engine may take to open
+/// before a client stops waiting for it (decision 0181).
+pub const HELLO_PATIENCE: Duration = Duration::from_secs(30);
 
 /// Finds the engine of one user and one set of paths.
 #[derive(Debug, Clone)]
@@ -31,6 +39,43 @@ pub struct Connector {
     expected: OsUser,
     version: Version,
     label: ClientLabel,
+    /// The engine's log, which a failure to answer points at.
+    log: PathBuf,
+    hello_patience: Duration,
+}
+
+pub(crate) fn shown(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
+/// An engine holds the channel and did not answer the hello in time.
+fn hello_unanswered(log: &Path) -> Failure {
+    codes::busy(
+        codes::ENGINE_UNREACHABLE,
+        "An engine holds the local channel and did not answer in time: it may still be opening its store, or it is stuck while starting.",
+        format!(
+            "Read the engine's log, `{}`. If the engine is stuck, stop its process and run the command again.",
+            shown(log)
+        ),
+    )
+}
+
+/// The engine closed the connection before it answered the hello: nothing
+/// was sent, and the engine most likely stopped while it was starting.
+fn hello_lost(log: &Path) -> Failure {
+    Failure::new(
+        FailureClass::Transient,
+        codes::CONNECTION_LOST,
+        "The engine closed the connection before it answered, so nothing was sent: it stopped while starting, or it is closing.",
+        format!(
+            "Read the engine's log, `{}`, for why it stopped, then run the command again.",
+            shown(log)
+        ),
+    )
 }
 
 impl Connector {
@@ -48,7 +93,17 @@ impl Connector {
             expected: user,
             version,
             label,
+            log: crate::Launch::log_of(paths),
+            hello_patience: HELLO_PATIENCE,
         })
+    }
+
+    /// As [`Connector::new`], waiting `patience` for a hello's answer. A
+    /// test waits less.
+    #[cfg(test)]
+    pub(crate) const fn hello_patience(mut self, patience: Duration) -> Self {
+        self.hello_patience = patience;
+        self
     }
 
     /// As [`Connector::new`], expecting the engine to belong to `user`. A
@@ -69,9 +124,19 @@ impl Connector {
     /// `policy`/`peer_not_allowed` when what answers is not this user's;
     /// `input`/`local_api_mismatch` when the engine speaks another version
     /// of the local API; `transient`/`connection_lost` when the engine
-    /// went away; `busy`/`channel_unavailable` for anything else the
-    /// operating system refused.
+    /// went away, which for a hello means it stopped while starting;
+    /// `busy`/`engine_unreachable`, pointing at the engine's log, when an
+    /// engine holds the channel and does not answer the hello within
+    /// [`HELLO_PATIENCE`]; `busy`/`channel_unavailable` for anything else
+    /// the operating system refused.
     pub async fn connect(&self) -> Result<Link, Failure> {
+        match tokio::time::timeout(self.hello_patience, self.say_hello()).await {
+            Ok(said) => said,
+            Err(_) => Err(hello_unanswered(&self.log)),
+        }
+    }
+
+    async fn say_hello(&self) -> Result<Link, Failure> {
         let link = self.open().await?;
         let hello = Request::builder()
             .method(Method::GET)
@@ -83,11 +148,11 @@ impl Connector {
             .map_err(|_| codes::lost())?;
         // A hello does nothing in the engine, so a hello whose answer was
         // lost is only a connection that ended.
-        let answer = link.send(hello).await.map_err(|_| codes::lost())?;
+        let answer = link.send(hello).await.map_err(|_| hello_lost(&self.log))?;
         let status = answer.status();
         let body = axum::body::to_bytes(answer.into_body(), HELLO_LIMIT)
             .await
-            .map_err(|_| codes::lost())?;
+            .map_err(|_| hello_lost(&self.log))?;
         let said: Json = serde_json::from_slice(&body).map_err(|_| not_an_engine())?;
         if status != StatusCode::OK {
             return Err(if said["code"] == codes::LOCAL_API_MISMATCH.to_string() {

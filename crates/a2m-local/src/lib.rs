@@ -32,8 +32,8 @@ pub use channel::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, Channel, ChannelControl, ClientLabel, HELLO_PATH,
     IdleHolds, IdlePolicy, LOCAL_API, LOCAL_API_HEADER, OsUser, Peer, StopReason,
 };
-pub use connector::{Connector, Link};
-pub use lock::{ENGINE_LOCK_NAME, EngineLock};
+pub use connector::{Connector, HELLO_PATIENCE, Link};
+pub use lock::{ENGINE_LOCK_NAME, EngineLock, LockPlace};
 pub use os::{Kept, kept_by};
 pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,

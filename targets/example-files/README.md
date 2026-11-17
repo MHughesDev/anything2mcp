@@ -39,6 +39,7 @@ Every file is written from code, byte by byte, at start and at reset. `seed::fil
 | `NON_ASCII_NAME_CSV` | `prices/价格表-ß.csv` | Delimited, semicolon | A name and a content that are not ASCII. The name has one normal form, so no file system rewrites it |
 | `STOCK_DUPLICATE_KEY_CSV` | `prices/stock-duplicate-key.csv` | Delimited, comma | Two rows share the key `EX-1002` |
 | `BROKEN_CSV` | `prices/broken.csv` | Not valid | A quote is opened and never closed |
+| `ADJUSTMENTS_CSV` | `prices/adjustments.csv` | Delimited, comma | LF. Fields that begin with `=`, `+`, `-`, and `@`, which a spreadsheet program would run as formulas, one with a space before its sign, and one quoted |
 | `NOT_UTF8_CSV` | `prices/not-utf8.csv` | Not valid | One byte of a single-byte encoding |
 | `PRICE_LIST_WORKBOOK` | `prices/price-list.xlsx` | Workbook | Sheets `Prices` and `Notes`; the table `price_table` in `A1:E4`; the name `standard_discount` for `Notes!B1`; a column of formulas over the price and stock columns, each with its last result; a shared table of strings; a hidden column; a merged range; a date kept as the serial `46343`; a number spelled `0040` |
 | `PRICE_LIST_MACRO_WORKBOOK` | `prices/price-list-macro.xlsm` | Workbook | The same, with a macro part of opaque bytes |

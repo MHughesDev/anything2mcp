@@ -526,3 +526,52 @@ async fn an_address_that_looks_like_an_action_is_never_visited_whatever_names_it
     assert_eq!(found["method"], "redirect");
     bench.end().await;
 }
+
+/// Where the screen finding of the page that shows one order is kept as
+/// data, for the web pack's drafting rules to be proven against: the
+/// two crates of the pack share findings as data and never name each
+/// other. This test holds that the file is what discovery gives.
+fn shared_order_screen() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("a2m-pack-web-ui")
+        .join("tests")
+        .join("fixtures")
+        .join("findings")
+        .join("order_screen.json")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_shows_an_order_gives_the_screen_the_web_pack_drafts_from_the_same_twice() {
+    let site = Site::start().await;
+    let bench = Bench::new("order-screen", no_secrets());
+    let start = site.url("/");
+    let look = Look {
+        paths: vec!["/orders/A-100"],
+        depth: Some(0),
+        ..Look::default()
+    };
+    let first = must(bench.run("web_snapshot", &start, &look).await);
+    check(&first);
+    let again = must(bench.run("web_snapshot", &start, &look).await);
+    assert_eq!(again.ids(), first.ids());
+    let (finding, found) = first.one("screen", "/orders/A-100");
+    assert_eq!(finding.level(), EvidenceLevel::Discovered);
+    assert_eq!(names_of(&found, "table"), ["Line items"]);
+    assert_eq!(
+        names_of(&found, "columnheader"),
+        ["Item code", "Description", "Quantity", "Length (in)"]
+    );
+    let text = std::fs::read_to_string(shared_order_screen()).unwrap_or_default();
+    let shared: Json = serde_json::from_str(&text).unwrap_or(Json::Null);
+    let wanted = json!({"kind": "screen", "path": "/orders/A-100", "found": finding.found()});
+    assert_eq!(
+        shared,
+        wanted,
+        "write this into {}:\n{}",
+        shared_order_screen().display(),
+        serde_json::to_string_pretty(&wanted).unwrap()
+    );
+    assert!(site.writes().await.is_empty());
+    bench.end().await;
+}

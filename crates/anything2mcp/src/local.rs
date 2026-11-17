@@ -26,8 +26,8 @@ use a2m_actions::{
 use a2m_api::{ApiSettings, EXIT_CLASS_HEADER};
 use a2m_core::{Failure, FailureClass, Version};
 use a2m_local::{
-    Channel, ChannelControl, ClientLabel, IdleHolds, IdlePolicy, LocalSurface, OsUser, Peer,
-    PresencePrompt, StopReason, SurfaceParts,
+    Channel, ChannelControl, ClientLabel, IdleHolds, IdlePolicy, LocalSurface, LockPlace, OsUser,
+    Peer, PresencePrompt, StopReason, SurfaceParts,
 };
 use a2m_mcp::{McpService, McpSettings, mcp_path};
 use a2m_policy::ToolsetName;
@@ -64,11 +64,30 @@ pub(crate) fn program_version() -> Result<Version, Failure> {
 struct Holds {
     surface: LocalSurface,
     kernel: Kernel,
+    place: LockPlace,
+    control: ChannelControl,
+}
+
+/// Whether the engine's data directory is still the one it opened. When it
+/// is not, the engine stops: it serves nothing more, and its kernel, whose
+/// store is no longer where any later engine would look, closes. Asked on
+/// every request, and when an idle engine looks at its holds, so that an
+/// engine whose socket went with its data directory, and so gets no
+/// request, still notices at its idle time (decision 0181).
+fn in_place(place: &LockPlace, control: &ChannelControl) -> bool {
+    let holds = place.holds();
+    if !holds {
+        control.stop(StopReason::DataGone);
+    }
+    holds
 }
 
 impl IdleHolds for Holds {
     fn busy(&self) -> BoxFuture<'_, bool> {
         Box::pin(async move {
+            if !in_place(&self.place, &self.control) {
+                return false;
+            }
             if self.surface.waiting() > 0 {
                 return true;
             }
@@ -92,6 +111,7 @@ fn minutes(settings: &Settings, key: &str) -> Option<Duration> {
 struct Door {
     kernel: Kernel,
     control: ChannelControl,
+    place: LockPlace,
 }
 
 /// A response as the REST interface renders one: the status from its one
@@ -172,6 +192,11 @@ fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 /// with a caller the kernel verified, made from the peer the channel saw
 /// connect; nothing a request says names its caller.
 async fn admit(State(door): State<Door>, mut request: HttpRequest, next: Next) -> HttpResponse {
+    // An engine whose data directory is gone fails closed: it takes no
+    // request, says why, and stops (spec section 224).
+    if !in_place(&door.place, &door.control) {
+        return render(&refused("", &a2m_local::codes::data_directory_gone()));
+    }
     let Some(peer) = request.extensions().get::<Peer>().cloned() else {
         return render(&refused(
             "",
@@ -246,7 +271,7 @@ async fn stop_engine(door: &Door, mut caller: Caller, request: HttpRequest) -> H
 
 /// The one router of the local engine: the REST router and the MCP
 /// endpoint of each built-in toolset, behind [`admit`].
-fn service(kernel: &Kernel, control: ChannelControl) -> Result<Router, Failure> {
+fn service(kernel: &Kernel, control: ChannelControl, place: LockPlace) -> Result<Router, Failure> {
     let mut router = a2m_api::router(kernel.clone(), ApiSettings::default())?;
     let settings = McpSettings::from_settings(kernel.settings())?;
     for toolset in [BuiltInToolset::Use, BuiltInToolset::Build] {
@@ -258,6 +283,7 @@ fn service(kernel: &Kernel, control: ChannelControl) -> Result<Router, Failure> 
         Door {
             kernel: kernel.clone(),
             control,
+            place,
         },
         admit,
     )))
@@ -320,11 +346,13 @@ impl LocalEngine {
                 Arc::new(Holds {
                     surface: surface.clone(),
                     kernel: engine.kernel().clone(),
+                    place: channel.lock_place(),
+                    control: channel.control(),
                 }),
             ),
             None => IdlePolicy::never(),
         };
-        let service = match service(engine.kernel(), channel.control()) {
+        let service = match service(engine.kernel(), channel.control(), channel.lock_place()) {
             Ok(service) => service,
             Err(failure) => {
                 engine.close().await;
@@ -386,7 +414,7 @@ impl LocalEngine {
         let why = match stopped {
             StopReason::Idle => CloseReason::Idle,
             StopReason::Restart => CloseReason::Restart,
-            StopReason::Asked | StopReason::Failed => CloseReason::Asked,
+            StopReason::Asked | StopReason::Failed | StopReason::DataGone => CloseReason::Asked,
         };
         self.engine.close_because(why).await;
         drop(lock);

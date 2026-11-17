@@ -168,6 +168,50 @@ fn settled(mut response: Json) -> Json {
     response
 }
 
+/// An engine whose data directory is removed while it runs fails closed
+/// (spec section 224): the next request is refused by name and nothing of
+/// it is done, and the engine stops and lets go of its lock, so that the
+/// next client starts a new one (decision 0181). On Windows a folder that
+/// holds an open file can seldom be removed, and the test is not run.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_engine_whose_data_directory_is_removed_refuses_the_next_request_by_name_and_stops() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+    let without_key = |args: &[&str]| {
+        let mut command = machine.program(args);
+        command.env_remove(PASSPHRASE_VARIABLE);
+        command
+    };
+    let read = ["tool", "call", ORDER_GET, "--input", READ_INPUT];
+    let first = output(without_key(&read)).await;
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+
+    let paths = Paths::under(machine.home.path());
+    std::fs::remove_dir_all(&paths.data).unwrap();
+    let refused = output(without_key(&read)).await;
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let response = object(&refused);
+    assert_eq!(
+        response["error"]["code"], "data_directory_gone",
+        "{response}"
+    );
+    assert_eq!(response["error"]["class"], "busy", "{response}");
+    assert!(
+        response.get("result").is_none_or(Json::is_null),
+        "{response}"
+    );
+
+    // The engine's process ends by itself, by name, and the lock is free.
+    let (code, printed) = served.ended();
+    assert_eq!(code, Some(1), "{printed}");
+    let last: Json = serde_json::from_str(printed.trim()).unwrap();
+    assert_eq!(last["action"], "serve", "{last}");
+    assert_eq!(last["error"]["code"], "data_directory_gone", "{last}");
+    assert!(!EngineLock::held(&paths).unwrap());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_leaves_nothing() {
     let app = TestApp::start().await.unwrap();

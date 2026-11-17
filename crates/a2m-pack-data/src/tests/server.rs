@@ -943,15 +943,119 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
             .clone()
     };
     let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
-        .draft(&[of("order_lines")])
+        .draft(&[of("orders")])
         .unwrap();
     // The statements file only: a column of a type the pack does not read
-    // leaves a question in the record, and no read is drafted over it.
+    // (a float, a moment with its zone) leaves a question in the record,
+    // and no read is drafted over it.
     assert_eq!(report.written.len(), 1, "{report:?}");
-    let drafted =
-        std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
+    let drafted = std::fs::read_to_string(root.join("statements").join("orders.yaml")).unwrap();
     assert!(drafted.contains("form: \"table\""), "{drafted}");
     // The one statement text is the list's, of the catalog's own names.
     assert_eq!(drafted.matches("SELECT").count(), 1, "{drafted}");
     assert!(!drafted.contains("write"), "{drafted}");
+}
+
+#[tokio::test]
+async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_plans_outputs() {
+    let Some(mut scene) = ServerScene::new().await else {
+        return;
+    };
+    let description = SurfaceDescription {
+        kind: DATABASE_SERVER,
+        archetype: Archetype::Request,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let handle = scene.handle();
+    let prepared = scene
+        .try_prepare(&handle, Posture::Discovery, fence())
+        .await
+        .unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(30)),
+        paths: &CheckedPaths::none(),
+        redact: &NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    let lines = kept
+        .0
+        .into_iter()
+        .find(|finding| {
+            serde_json::from_str::<TableFound>(finding.found())
+                .unwrap()
+                .table
+                == "order_lines"
+        })
+        .unwrap();
+    // What the server stores, as its own client reads it.
+    let stored = scene
+        .server
+        .query(
+            "SELECT order_id, item_code, quantity::text, unit_price::text, length_in::text \
+             FROM order_lines ORDER BY order_id, item_code",
+        )
+        .unwrap();
+    let count = u32::try_from(stored.len()).unwrap();
+    assert!(count > 1);
+    for (max_rows, more) in [(count, false), (count - 1, true)] {
+        let folder = Folder::new("server-list");
+        let root = folder.path().join("example");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::copy(fixtures().join("target.yaml"), root.join("target.yaml")).unwrap();
+        let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+            .draft(std::slice::from_ref(&lines))
+            .unwrap();
+        // A `numeric` of a stated scale is an exact decimal: the record
+        // compiles, and both reads are drafted.
+        assert!(report.open_questions.is_empty(), "{report:?}");
+        assert_eq!(report.written.len(), 3, "{report:?}");
+        let statements = root.join("statements").join("order_lines.yaml");
+        let text = std::fs::read_to_string(&statements).unwrap();
+        std::fs::write(
+            &statements,
+            text.replace("max_rows: 1000", &format!("max_rows: {max_rows}")),
+        )
+        .unwrap();
+        scene.plan = compile_folder(&scene.registry, &root).unwrap().plan;
+        let steps = scene.binding("example_order_lines_list").act.clone();
+        let mut run = scene.prepare().await;
+        let observed = values(run.steps(&steps, &Values::new(), None).await.unwrap());
+        run.release().await;
+        let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
+        assert_eq!(result.get("more"), Some(&Value::Bool(more)));
+        let read = &stored[..usize::try_from(max_rows).unwrap()];
+        let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().clone();
+        let text_of = |at: usize| -> Vec<Value> {
+            read.iter()
+                .map(|row| Value::from(row[at].as_deref().unwrap()))
+                .collect()
+        };
+        assert_eq!(column("order_id"), text_of(0));
+        assert_eq!(column("item_code"), text_of(1));
+        let quantities: Vec<Value> = read
+            .iter()
+            .map(|row| Value::Int(row[2].as_deref().unwrap().parse().unwrap()))
+            .collect();
+        assert_eq!(column("quantity"), quantities);
+        // Each price is the server's exact digits: the driver gives them as
+        // text, and the field type reads them as a decimal, never a float.
+        let raw = observed.get("unit_price").and_then(Value::as_list).unwrap();
+        assert_eq!(raw, text_of(3).as_slice());
+        let prices: Vec<Value> = read
+            .iter()
+            .map(|row| decimal(row[3].as_deref().unwrap()))
+            .collect();
+        assert_eq!(column("unit_price"), prices);
+    }
+    assert!(scene.server.writes().unwrap().is_empty());
 }

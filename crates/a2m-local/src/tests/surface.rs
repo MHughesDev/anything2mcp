@@ -971,3 +971,51 @@ async fn a_persons_act_nobody_carries_out_ends_with_its_window_and_nothing_is_do
     assert!(!held.ok);
     world.kernel.close(CloseReason::Asked).await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_persons_act_whose_input_the_page_cannot_show_whole_is_not_carried_out_from_it() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    assert!(
+        world
+            .call(RELEASE, json!({"scope": "everything", "on": true}))
+            .await
+            .ok
+    );
+    // A value longer than the page shows: what would be carried out is not
+    // what the person could read.
+    let long = format!("T-{}-end", "x".repeat(600));
+    let asked = world
+        .call(
+            RELEASE,
+            json!({"scope": "everything", "on": false, "target": long}),
+        )
+        .await;
+    let asked = asked_of(&asked);
+    let (text, once) = open(&http, &asked.link).await;
+    assert!(
+        text.contains("so this act cannot be carried out here."),
+        "{text}"
+    );
+    assert!(!text.contains("-end"), "{text}");
+    // A press raises no prompt and carries nothing out; the act still
+    // waits, and a decline works.
+    let (status, said) = press_act(&http, &asked, "confirm", &once).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{said}");
+    assert!(said.contains("not shown whole"), "{said}");
+    assert_eq!(prompt.asked(), 0);
+    let (_, once) = open(&http, &asked.link).await;
+    let (status, said) = press_act(&http, &asked, "decline", &once).await;
+    assert_eq!(status, StatusCode::OK, "{said}");
+    assert_eq!(prompt.asked(), 0);
+    // Everything is still stopped: the release was not carried out.
+    let read = world
+        .call(
+            "tool.call",
+            json!({"tool": super::world::engine::ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(!read.ok, "{read:?}");
+    world.kernel.close(CloseReason::Asked).await;
+}

@@ -20,7 +20,8 @@ use a2m_files::{
 use crate::codes;
 use crate::kind::document_name;
 use crate::model::{
-    Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, READ, RecordSpec,
+    Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, PlaceSpec, READ,
+    RecordSpec,
     SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST, VERB_READ,
     VERB_UPDATE, field_arg, key_arg,
 };
@@ -433,6 +434,17 @@ impl Lowering for FileLowering {
                 return Ok(lowered);
             }
             unexpected("limit", &mut problems);
+            let rows = matches!(
+                record.place,
+                PlaceSpec::Rows | PlaceSpec::Table { .. } | PlaceSpec::Sheet { .. }
+            );
+            if record.key.is_empty() && rows {
+                problems.push(problem(
+                    binding.doc,
+                    format!("The record kind `{record_name}` states no key, so no one of its rows can be found: it can be listed, and not read by key or written. Which fields identify a row is still an open question of its draft."),
+                    "State `key:` in the record kind with the fields that identify one row, each of a type someone stated, and answer the questions of the drafted read by key.",
+                ));
+            }
             let key = bound.key(&mut problems);
             if *verb == VERB_READ {
                 unexpected("fields", &mut problems);
@@ -466,7 +478,7 @@ impl Lowering for FileLowering {
                     "Add `fields:` with each field to set and the input that holds its value.",
                 ));
             }
-            if change != Change::Update && record.key.is_empty() {
+            if change != Change::Update && record.key.is_empty() && !rows {
                 problems.push(problem(
                     binding.doc,
                     format!("The record kind `{record_name}` is one place with no key, so nothing can be added to it or removed from it."),

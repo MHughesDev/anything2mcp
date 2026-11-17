@@ -250,6 +250,10 @@ pub enum StopReason {
     Restart,
     /// The listener failed.
     Failed,
+    /// The data directory is no longer the one the engine opened: its
+    /// engine lock is gone or is another file. The engine refuses work and
+    /// stops, so that no second engine opens a new store beside it.
+    DataGone,
 }
 
 /// A handle on a serving channel: stops it, and tells how many connections
@@ -365,6 +369,13 @@ impl Channel {
                 refused: Arc::new(AtomicU64::new(0)),
             },
         })
+    }
+
+    /// Where the engine lock of the data directory was taken, which the
+    /// engine asks before each use of its data directory it can see.
+    #[must_use]
+    pub fn lock_place(&self) -> crate::LockPlace {
+        self.lock.place()
     }
 
     /// The handle that stops this channel once it serves.

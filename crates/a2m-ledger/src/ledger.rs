@@ -218,6 +218,11 @@ pub enum WriteClearance {
     Approval(ApprovalId),
     /// A recorded decision that this run may write without a person.
     PreApproved(DecisionId),
+    /// The clearance of an offline test's own run, whose every step is
+    /// answered by a replay of its fixture: taken only by a store made by
+    /// [`StoreConfig::throwaway`](crate::StoreConfig::throwaway), and refused
+    /// by every other (decision 0180).
+    OfflineTest,
 }
 
 /// One commit point of a run: its step and its place within the step.
@@ -1564,6 +1569,7 @@ impl Ledger<'_, '_> {
             .diff_hash
             .ok_or_else(|| failure::approval_missing("the run has no diff to approve"))?
             .to_string();
+        let mut offline = None;
         let payload = match clearance {
             WriteClearance::Approval(approval) => {
                 self.check_approval(&run, approval, &diff_hash)?;
@@ -1572,6 +1578,39 @@ impl Ledger<'_, '_> {
             WriteClearance::PreApproved(decision) => {
                 self.check_pre_approval(&run, decision, &diff_hash)?;
                 json!({ "decision": decision.to_string() })
+            }
+            WriteClearance::OfflineTest => {
+                if !self.tx.shared.throwaway {
+                    return Err(failure::approval_missing(
+                        "an offline test's clearance is taken only by the store that test opened for itself",
+                    ));
+                }
+                // The test's one rule, recorded as a decision of this store
+                // alone, so that rule 3's triggers hold here as anywhere: an
+                // allowed decision to write without a person, for this
+                // run's diff, under the offline test's rule.
+                let decision = DecisionId::from_parts(self.tx.now(), self.tx.random()?)?;
+                // The store took its own policy key when it was opened, so
+                // no policy engine can be opened over it.
+                let key = crate::tx::PolicyKey::new(self.tx.shared.id);
+                let now = self.tx.now();
+                self.tx.policy_tables(&key)?.execute(
+                    "INSERT INTO decisions
+                        (id, workspace_id, run_id, principal_id, question, allowed, diff_hash,
+                         reasons, policy_version, decided_at)
+                     VALUES (?1, ?2, ?3, ?4, 'write_without_person', 1, ?5,
+                             '[\"offline_test\"]', 'offline_test', ?6)",
+                    &[
+                        decision.to_string().into(),
+                        run.workspace.to_string().into(),
+                        run.id.to_string().into(),
+                        run.principal.to_string().into(),
+                        diff_hash.clone().into(),
+                        now.into(),
+                    ],
+                )?;
+                offline = Some(decision);
+                json!({ "offline_test": true, "decision": decision.to_string() })
             }
         };
         self.event(
@@ -1591,6 +1630,7 @@ impl Ledger<'_, '_> {
         let (approval, decision) = match clearance {
             WriteClearance::Approval(approval) => (Some(approval.to_string()), None),
             WriteClearance::PreApproved(decision) => (None, Some(decision.to_string())),
+            WriteClearance::OfflineTest => (None, offline.map(|decision| decision.to_string())),
         };
         self.tx.exec(
             "UPDATE runs

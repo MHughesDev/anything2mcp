@@ -24,8 +24,12 @@
 //! `sso_saml` auth providers and the sign-in window; signs of expiry;
 //! frames; platform profiles; the controls beyond text, select, and check
 //! box; the verbs `open`, `search`, `delete`, `upload`, and `download`;
-//! identity by a stamp or a search; screen matching and the drafting
-//! rules.
+//! identity by a stamp or a search; screen matching, and drafting a field,
+//! a key, or a type from a snapshot.
+//!
+//! Its drafting rules turn a snapshot the web pack's discoverers took into
+//! a screen that reads one of the page's tables by its headings, and a
+//! `list` read over it (decision 0183).
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in
@@ -33,6 +37,7 @@
 //! design is `docs/architecture/crates/a2m-pack-web-ui.md`.
 
 pub mod codes;
+mod draft;
 mod driver;
 mod lower;
 mod model;
@@ -40,7 +45,7 @@ mod screens;
 
 use std::sync::Arc;
 
-use a2m_core::{ControlName, Failure, Mode, Value};
+use a2m_core::{ControlName, Failure, FindingKind, Mode, Value};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_pack_web_browser::BrowserSettings;
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
@@ -127,7 +132,13 @@ impl Pack for WebUiPack {
             .lowering(Arc::new(lower::UiLowering::new(mode)))
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::CssUsed))
-            .lint_rule(Arc::new(screens::NoFingerprint));
+            .lint_rule(Arc::new(screens::NoFingerprint))
+            .drafting_rule(Arc::new(draft::TableScreenRule {
+                kind: FindingKind::new(draft::SCREEN_FINDING)?,
+            }))
+            .drafting_rule(Arc::new(draft::TableReadRule {
+                kind: FindingKind::new(draft::SCREEN_FINDING)?,
+            }));
         for control in CONTROLS {
             compiler = compiler.control(ControlName::new(control)?);
         }

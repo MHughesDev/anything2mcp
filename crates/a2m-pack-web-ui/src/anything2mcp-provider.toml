@@ -1,7 +1,6 @@
 # The manifest of the web pack's drivers. What is not built is not declared:
 # the `page_http` and `site_tools` modes, the auth providers, the screen
-# matcher, the drafting rules, platform profiles, and every control beyond
-# the ones listed here.
+# matcher, platform profiles, and every control beyond the ones listed here.
 manifest_format = 1
 contract = 1
 
@@ -36,6 +35,20 @@ driver = ["ui"]
 name = "screen"
 directory = "screens/"
 surface_kinds = ["web"]
+
+# The `screen` finding belongs to the web pack's discoverers, a provider of
+# their own; this pack drafts from it as data and does not own its form. It
+# is not declared under `reads`, so that a registry with only this pack has
+# no missing owner: with no discoverer, the rules are never called.
+# From a snapshot: a screen that reads each table the page names by its
+# headings, and a `list` read over it. Never a field or an action.
+[[drafting_rules]]
+finding_kind = "screen"
+file_kind = "screen"
+
+[[drafting_rules]]
+finding_kind = "screen"
+file_kind = "operation"
 
 [[controls]]
 name = "text"

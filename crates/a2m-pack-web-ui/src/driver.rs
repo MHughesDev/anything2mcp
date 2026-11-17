@@ -1,5 +1,8 @@
-//! The driver of the `ui` mode: one acting tab for each run, and one step
-//! at a time on it, as the plan wrote it.
+//! The driver of the `ui` mode: one tab for each run, and one step at a
+//! time on it, as the plan wrote it. A run that may act has an acting tab;
+//! a run that may only look, in discovery or in the sandbox with no test
+//! record to write, has an observing tab, in which the browser fails every
+//! request of the page that could change the system (decision 0183).
 //!
 //! What the driver never does: retry a step, pick the first of several
 //! matches, read a password, send the tab outside the surface, sign in, or
@@ -20,9 +23,9 @@ use a2m_core::{
     AccountName, Digest, Failure, FailureClass, FailureCode, Identity, Secret, Step, Value,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Look, Origins,
-    PageEnvironment, Primitive, ProfileKey, RawValue, ReadWhat, Reason, RequestShape,
-    SnapshotLimits, Visibility,
+    ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Loaded, Look,
+    ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue, ReadWhat, Reason,
+    RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -83,9 +86,92 @@ impl UiDriver {
     }
 }
 
+/// The tab of one run: one that may act, or one that can only look.
+enum Tab {
+    Act(ActTab),
+    Observe(ObserveTab),
+}
+
+impl Tab {
+    async fn goto(&self, address: &Address, deadline: Deadline) -> Result<Loaded, BrowserError> {
+        match self {
+            Self::Act(tab) => tab.goto(address, deadline).await,
+            Self::Observe(tab) => tab.goto(address, deadline).await,
+        }
+    }
+
+    async fn locate(&self, query: &Query, deadline: Deadline) -> Result<Element, BrowserError> {
+        match self {
+            Self::Act(tab) => tab.locate(query, deadline).await,
+            Self::Observe(tab) => tab.locate(query, deadline).await,
+        }
+    }
+
+    async fn read(
+        &self,
+        element: &Element,
+        what: &ReadWhat,
+        deadline: Deadline,
+    ) -> Result<RawValue, BrowserError> {
+        match self {
+            Self::Act(tab) => tab.read(element, what, deadline).await,
+            Self::Observe(tab) => tab.read(element, what, deadline).await,
+        }
+    }
+
+    async fn wait(&self, until: &Primitive, deadline: Deadline) -> Result<(), BrowserError> {
+        match self {
+            Self::Act(tab) => tab.wait(until, deadline).await,
+            Self::Observe(tab) => tab.wait(until, deadline).await,
+        }
+    }
+
+    async fn snapshot(
+        &self,
+        limits: &SnapshotLimits,
+        deadline: Deadline,
+    ) -> Result<Snapshot, BrowserError> {
+        match self {
+            Self::Act(tab) => tab.snapshot(limits, deadline).await,
+            Self::Observe(tab) => tab.snapshot(limits, deadline).await,
+        }
+    }
+
+    fn blocked(&self) -> Vec<RequestShape> {
+        match self {
+            Self::Act(tab) => tab.blocked(),
+            Self::Observe(tab) => tab.blocked(),
+        }
+    }
+
+    /// One input to one element. An observing tab has no way to give one:
+    /// the posture's guard refuses the step before it gets here, and this
+    /// refuses it again.
+    async fn input(
+        &self,
+        element: &Element,
+        how: &Input,
+        deadline: Deadline,
+        what: &str,
+    ) -> Result<(), StepFailure> {
+        match self {
+            Self::Act(tab) => tab
+                .input(element, how, deadline)
+                .await
+                .map_err(|error| browser_failure(&error, what)),
+            Self::Observe(_) => Err(StepFailure::not_sent(fail(
+                FailureClass::Policy,
+                a2m_provider::codes::READ_ONLY_POSTURE,
+                "This run may only look at the page, and its tab cannot act.".to_owned(),
+                "Run the operation where it may act.",
+            ))),
+        }
+    }
+}
+
 /// What one run holds: its tab, and the screens of its plan.
 struct Session {
-    tab: ActTab,
+    tab: Tab,
     /// `scheme://host`, with a port when the surface has one.
     origin: String,
     sections: BTreeMap<usize, ScreenSection>,
@@ -456,7 +542,7 @@ impl Session {
                 FailureClass::UnknownVariant,
                 codes::UNEXPECTED_PAGE,
                 format!(
-                    "The page tried something no screen declares, at {what}: a new window or a download (`{}`) for `{place}`. The browser refused it.",
+                    "The page tried something no screen declares, at {what}: a new window, a download, or, in a tab that may only look, a request that could change the system (`{}`) for `{place}`. The browser refused it.",
                     shown(&first.method)
                 ),
                 "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
@@ -874,22 +960,19 @@ impl Session {
         let (element, locator) = self
             .find(&what, &field.locate, field.fingerprint.as_ref(), deadline)
             .await?;
-        let acted = |error: BrowserError| browser_failure(&error, &what);
         let strategy = match rule {
             Rule::Check => {
                 let on = value.and_then(Value::as_bool).ok_or_else(wrong_value)?;
                 self.tab
-                    .input(&element, &Input::Check(on), deadline)
-                    .await
-                    .map_err(acted)?;
+                    .input(&element, &Input::Check(on), deadline, &what)
+                    .await?;
                 "check"
             }
             Rule::Select => {
                 let code = widget_text(value).ok_or_else(wrong_value)?;
                 self.tab
-                    .input(&element, &Input::SelectByValue(code), deadline)
-                    .await
-                    .map_err(acted)?;
+                    .input(&element, &Input::SelectByValue(code), deadline, &what)
+                    .await?;
                 "select"
             }
             Rule::Text => {
@@ -930,10 +1013,7 @@ impl Session {
             ("native_set", Input::NativeSet(text.to_owned())),
         ];
         for (name, way) in ways {
-            self.tab
-                .input(element, &way, deadline)
-                .await
-                .map_err(|error| browser_failure(&error, what))?;
+            self.tab.input(element, &way, deadline, what).await?;
             match self.tab.read(element, &ReadWhat::Value, deadline).await {
                 Ok(RawValue::Text(held)) if held == text => return Ok(name),
                 Ok(_) => {}
@@ -1030,9 +1110,8 @@ impl Session {
             )));
         }
         self.tab
-            .input(&element, &Input::Click, deadline)
-            .await
-            .map_err(|error| browser_failure(&error, &what))?;
+            .input(&element, &Input::Click, deadline, &what)
+            .await?;
 
         // From here the click has reached the page. What the application
         // made of it is known only when the page shows the action's
@@ -1333,20 +1412,41 @@ impl UiDriver {
                 codes::not_usable("the session's profile has no name an account may have")
             })?),
         };
-        let browser = self
-            .browsers
-            .open(&profile, Visibility::Background)
-            .await
-            .map_err(|error| browser_failure(&error, "the start of the browser"))?;
         // The tab may be on the surface's own origin and on no other. The
         // surface's address is one of the run's destinations, checked
         // above; another destination is another surface, whose screens
         // this run does not hold, and a page of it is not acted on.
         let own = Address::new(&surface.address).map_err(unsent)?;
-        let tab = browser
-            .acting_tab(&environment, &Origins::of([&own]))
-            .await
-            .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
+        let origins = Origins::of([&own]);
+        // A run that may only look has a tab that cannot act: the browser
+        // fails every request of its page whose method could change the
+        // system, and none is marked safe.
+        let may_only_look = matches!(
+            cx.posture,
+            Posture::Discovery
+                | Posture::Sandbox {
+                    test_records: false
+                }
+        );
+        let tab = if may_only_look {
+            self.browsers
+                .observer()
+                .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
+                .await
+                .map(Tab::Observe)
+                .map_err(|error| browser_failure(&error, "the opening of a tab"))?
+        } else {
+            let browser = self
+                .browsers
+                .open(&profile, Visibility::Background)
+                .await
+                .map_err(|error| browser_failure(&error, "the start of the browser"))?;
+            browser
+                .acting_tab(&environment, &origins)
+                .await
+                .map(Tab::Act)
+                .map_err(|error| browser_failure(&error, "the opening of a tab"))?
+        };
         Ok(Session {
             tab,
             origin,

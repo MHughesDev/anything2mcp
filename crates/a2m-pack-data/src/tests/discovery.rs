@@ -282,6 +282,103 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
     assert_eq!(scene.db.data_version().unwrap(), before);
 }
 
+/// The reads drafted from the stand's catalog, without the two drafts that
+/// hold a question, each list's `max_rows` set to the number given, and
+/// compiled.
+async fn drafted_plan(scene: &Scene, max_rows: u32) -> (Folder, a2m_core::Plan) {
+    let (findings, _) = discover(scene).await;
+    let folder = Folder::new("drafted-list");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(root.join(question.file.as_str()));
+    }
+    let statements = root.join("statements").join("order_lines.yaml");
+    let text = std::fs::read_to_string(&statements).unwrap();
+    assert!(text.contains("max_rows: 1000"), "{text}");
+    std::fs::write(
+        &statements,
+        text.replace("max_rows: 1000", &format!("max_rows: {max_rows}")),
+    )
+    .unwrap();
+    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
+    (folder, plan)
+}
+
+/// The stand's value as the engine's.
+fn stored(value: Option<&example_db::rows::Value>) -> a2m_core::Value {
+    match value {
+        Some(example_db::rows::Value::Text(text)) => a2m_core::Value::from(text.as_str()),
+        Some(example_db::rows::Value::Integer(number)) => a2m_core::Value::Int(*number),
+        Some(example_db::rows::Value::Null) | None => a2m_core::Value::Null,
+        Some(other) => panic!("the seed holds {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_plans_outputs() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let before = scene.db.data_version().unwrap();
+    let rows = scene.db.stored_rows(Table::OrderLines).unwrap();
+    let count = u32::try_from(rows.len()).unwrap();
+    assert!(count > 1);
+    // At the limit nothing is left; one below it, one row is.
+    for (max_rows, more) in [(count, false), (count - 1, true)] {
+        let (_folder, plan) = drafted_plan(&scene, max_rows).await;
+        scene.plan = plan;
+        let operation = scene
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_lines_list")
+            .unwrap();
+        let steps = operation.bindings[0].act.clone();
+        let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+        let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
+        run.release().await;
+        let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
+        // Every column of the record, and `more`: nothing else.
+        assert_eq!(
+            result.iter().count(),
+            scene.db.columns(Table::OrderLines).unwrap().len() + 1
+        );
+        assert_eq!(result.get("more"), Some(&a2m_core::Value::Bool(more)));
+        let read = rows.iter().take(usize::try_from(max_rows).unwrap());
+        for column in ["order_id", "item_code", "quantity", "unit_price", "length_in"] {
+            let list = result.get(column).and_then(a2m_core::Value::as_list).unwrap();
+            let expected: Vec<a2m_core::Value> =
+                read.clone().map(|row| stored(row.get(column))).collect();
+            assert_eq!(list, expected.as_slice(), "{column}");
+        }
+        // An exact decimal the store holds as text is that text.
+        assert!(
+            result
+                .get("unit_price")
+                .and_then(a2m_core::Value::as_list)
+                .unwrap()
+                .iter()
+                .all(|price| price.as_text().is_some_and(|text| text.contains('.')))
+        );
+        // Free text the store holds is marked untrusted.
+        let description = operation
+            .outputs
+            .iter()
+            .find(|output| output.name == "description")
+            .unwrap();
+        assert!(scene.plan.field_types[description.field_type.unwrap().get()].untrusted);
+    }
+    assert_eq!(scene.db.data_version().unwrap(), before);
+}
+
 #[tokio::test]
 async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_question() {
     let scene = Scene::new();

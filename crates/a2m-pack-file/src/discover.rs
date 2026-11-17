@@ -1,5 +1,5 @@
-//! Discovery: what a file says about its own layout, as findings, and the
-//! rule that drafts a `documents/` file from one.
+//! Discovery: what a file says about its own layout, as findings. The
+//! rules that draft from one are in `draft.rs`.
 //!
 //! The discoverer reads the files it is handed and nothing else. It holds
 //! no step that writes and is given no way to make one. A finding stores a
@@ -10,10 +10,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, FileKindName, Finding,
+    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, Finding,
     FindingKind, LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
 };
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
@@ -24,7 +23,7 @@ use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::driver::FileLimits;
-use crate::model::{DOCUMENT_KIND, DocumentSpec, Format, Layout, PACK, SURFACE_KIND};
+use crate::model::{DocumentSpec, Format, Layout, PACK, SURFACE_KIND};
 use crate::open::{self, Content, OpenFile};
 
 /// The name of the discoverer, and of the kind of finding it makes about a
@@ -199,7 +198,7 @@ fn key_candidates(open: &OpenFile) -> Vec<String> {
         .collect()
 }
 
-fn invalid(what: &str) -> Failure {
+pub(crate) fn invalid(what: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
         FailureCode::FINDING_INVALID,
@@ -430,179 +429,5 @@ impl Describer for LayoutDescriber {
                     .collect(),
             },
         }
-    }
-}
-
-/// A name made from a file's own words: lowercase letters, digits, and
-/// underscores, starting with a letter.
-fn name_from(text: &str, taken: &mut BTreeSet<String>) -> String {
-    let mut name = String::new();
-    for character in text.chars() {
-        if character.is_ascii_alphanumeric() {
-            name.push(character.to_ascii_lowercase());
-        } else if !name.ends_with('_') && !name.is_empty() {
-            name.push('_');
-        }
-    }
-    let mut name = name.trim_end_matches('_').to_owned();
-    if !name.starts_with(|first: char| first.is_ascii_lowercase()) {
-        name = format!("f_{name}");
-    }
-    name.truncate(28);
-    let mut unique = name.clone();
-    let mut number = 2;
-    while !taken.insert(unique.clone()) {
-        unique = format!("{name}_{number}");
-        number += 1;
-    }
-    unique
-}
-
-/// From a `file_layout` finding to a `documents/` file.
-pub struct DocumentFromLayout {
-    finding_kind: FindingKind,
-}
-
-impl DocumentFromLayout {
-    /// The rule.
-    ///
-    /// # Errors
-    ///
-    /// Never for the name this crate fixes; a failure of the name check.
-    pub fn new() -> Result<Self, Failure> {
-        Ok(Self {
-            finding_kind: FindingKind::new(FILE_LAYOUT)
-                .map_err(|_| invalid("its kind is not a name"))?,
-        })
-    }
-}
-
-impl DraftingRule for DocumentFromLayout {
-    fn finding_kind(&self) -> FindingKind {
-        self.finding_kind.clone()
-    }
-
-    fn file_kind(&self) -> FileKindName {
-        DOCUMENT_KIND
-    }
-
-    /// Drafts the document with its fingerprint and a record kind for each
-    /// table the file states. The file states no key and no type of a
-    /// column, so each is an open question and never a guess. Nothing is
-    /// drafted for a write.
-    ///
-    /// An open question is the pack's own words and holds no text from the
-    /// file: a header or a file name written as an instruction would reach
-    /// the developer's agent as part of a question. It names a record kind
-    /// and a field by their place in the draft, where the file's own text
-    /// stands as data.
-    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let found: LayoutFound = serde_json::from_str(finding.found())
-            .map_err(|_| invalid("a `file_layout` finding does not hold a layout"))?;
-        let texts = |items: &[String]| {
-            DraftValue::List(items.iter().map(|item| DraftValue::text(item)).collect())
-        };
-        let mut kinds = 0_usize;
-        let mut record = |place: (&str, DraftValue), headers: &[String], json: bool| {
-            kinds += 1;
-            let kind = kinds;
-            let mut taken = BTreeSet::new();
-            let fields = headers
-                .iter()
-                .filter(|header| !header.is_empty())
-                .zip(1_usize..)
-                .map(|(header, number)| {
-                    let place = if json {
-                        ("path", texts(std::slice::from_ref(header)))
-                    } else {
-                        ("header", DraftValue::text(header))
-                    };
-                    let question = cx.open_question(&format!(
-                        "Which field type do the values of field {number} of record kind {kind} of this draft have?"
-                    ));
-                    (
-                        name_from(header, &mut taken),
-                        DraftValue::map(vec![place, ("type", question)]),
-                    )
-                })
-                .collect();
-            DraftValue::map(vec![
-                place,
-                (
-                    "key",
-                    cx.open_question(&format!(
-                        "Which fields identify one record of record kind {kind} of this draft?"
-                    )),
-                ),
-                ("fields", DraftValue::Map(fields)),
-            ])
-        };
-        let mut taken = BTreeSet::new();
-        let mut records = Vec::new();
-        let mut fingerprint = Vec::new();
-        match found.format {
-            Format::Delimited => {
-                fingerprint.push(("headers", texts(&found.headers)));
-                records.push((
-                    "rows".to_owned(),
-                    record(("rows", DraftValue::text("all")), &found.headers, false),
-                ));
-            }
-            Format::Json => {
-                fingerprint.push(("keys", texts(&found.headers)));
-                for table in &found.tables {
-                    let place = ("path", texts(std::slice::from_ref(&table.name)));
-                    records.push((
-                        name_from(&table.name, &mut taken),
-                        record(place, &table.headers, true),
-                    ));
-                }
-            }
-            Format::Workbook => {
-                fingerprint.push(("sheets", texts(&found.sheets)));
-                let tables: Vec<String> = found.tables.iter().map(|t| t.name.clone()).collect();
-                fingerprint.push(("tables", texts(&tables)));
-                fingerprint.push(("names", texts(&found.names)));
-                for table in &found.tables {
-                    let place = (
-                        "table",
-                        DraftValue::map(vec![
-                            (
-                                "sheet",
-                                DraftValue::text(table.sheet.as_deref().unwrap_or_default()),
-                            ),
-                            ("name", DraftValue::text(&table.name)),
-                        ]),
-                    );
-                    records.push((
-                        name_from(&table.name, &mut taken),
-                        record(place, &table.headers, false),
-                    ));
-                }
-            }
-        }
-        let mut body = vec![
-            ("file", DraftValue::text(&found.file)),
-            ("format", DraftValue::text(found.format.as_str())),
-        ];
-        if let Some(delimiter) = &found.delimiter {
-            body.push((
-                "dialect",
-                DraftValue::map(vec![("delimiter", DraftValue::text(delimiter))]),
-            ));
-        }
-        body.push(("fingerprint", DraftValue::map(fingerprint)));
-        body.push(("records", DraftValue::Map(records)));
-        let stem = found
-            .file
-            .rsplit_once('.')
-            .map_or(found.file.as_str(), |(stem, _)| stem);
-        Ok(vec![DraftDoc {
-            path: RelPath::new(&format!(
-                "documents/{}.yaml",
-                name_from(stem, &mut BTreeSet::new())
-            ))?,
-            body: DraftValue::map(body),
-        }])
     }
 }

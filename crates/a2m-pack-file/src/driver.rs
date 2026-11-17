@@ -567,12 +567,31 @@ fn read_list(
     }
     let limit = limit as usize;
     let rows = (0..found.table.rows.len().min(limit))
-        .map(|row| values_of(loaded, record, &found.table, row, &current.open).map(Value::Record))
-        .collect::<Result<Vec<Value>, StepFailure>>()?;
+        .map(|row| values_of(loaded, record, &found.table, row, &current.open))
+        .collect::<Result<Vec<Values>, StepFailure>>()?;
+    // Each field also as one list of its values in the file's order: what
+    // an operation's list outputs are read from, since an output is one
+    // value or a list of values and never a record. A field named `rows`
+    // or `truncated` is the field's list.
+    let lists: Vec<(String, Value)> = record
+        .fields
+        .iter()
+        .map(|field| {
+            let list = rows
+                .iter()
+                .map(|row| row.get(&field.name).cloned().unwrap_or(Value::Null))
+                .collect();
+            (field.name.clone(), Value::List(list))
+        })
+        .collect();
+    let mut values = Values::new()
+        .with(ROWS, Value::List(rows.into_iter().map(Value::Record).collect()))
+        .with(TRUNCATED, found.table.rows.len() > limit);
+    for (name, list) in lists {
+        values.insert(name, list);
+    }
     Ok(Observed {
-        values: Values::new()
-            .with(ROWS, Value::List(rows))
-            .with(TRUNCATED, found.table.rows.len() > limit),
+        values,
         ..Observed::default()
     })
 }

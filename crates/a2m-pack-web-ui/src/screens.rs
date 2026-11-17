@@ -161,7 +161,7 @@ pub(crate) fn unreserved(c: char) -> bool {
 }
 
 /// A name a placeholder may have: an input's name.
-fn is_name(text: &str) -> bool {
+pub(crate) fn is_name(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')

@@ -61,6 +61,11 @@ pub const IDEMPOTENCY_KEY_REUSED: FailureCode = FailureCode::fixed("idempotency_
 /// they compile to another plan. Class `stale`.
 pub const DRAFTS_CHANGED: FailureCode = FailureCode::fixed("drafts_changed");
 
+/// A publish whose offline tests did not all run and pass: a version is
+/// published only when they do (spec section 403, decision 0180). Class
+/// `input`: the target's files are what a caller corrects.
+pub const PUBLISH_GATES_NOT_PASSED: FailureCode = FailureCode::fixed("publish_gates_not_passed");
+
 /// The setting `authoring.scout.run` is `off`, and `scout.run` was called.
 /// Class `policy`.
 pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");

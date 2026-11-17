@@ -443,3 +443,163 @@ async fn a_client_whose_connection_is_closed_is_told_so_every_time() {
     assert_eq!(engine.hits.load(Ordering::SeqCst), 0);
     engine.stop().await;
 }
+
+#[test]
+fn the_engine_lock_says_whether_it_is_still_the_file_at_its_place() {
+    let (_folder, paths) = home("p");
+    let lock = EngineLock::take(&paths).unwrap();
+    let place = lock.place();
+    assert!(place.holds());
+    // The data directory is removed while the lock is held. On Windows a
+    // folder that holds an open file can seldom be removed, so this part
+    // is for the systems that allow it.
+    #[cfg(unix)]
+    {
+        std::fs::remove_dir_all(&paths.data).unwrap();
+        assert!(!place.holds());
+        // Made again, with a lock file at the same name: it is another
+        // file, and not the lock this engine holds.
+        std::fs::create_dir_all(&paths.data).unwrap();
+        std::fs::write(paths.data.join(crate::ENGINE_LOCK_NAME), b"").unwrap();
+        assert!(!place.holds());
+    }
+    drop(lock);
+}
+
+/// A start that would start the test program itself, which ends at once
+/// having run no test: an engine that ends before it answers.
+fn ends_at_once(paths: &Paths) -> crate::Launch {
+    crate::Launch {
+        program: std::env::current_exe().unwrap(),
+        args: vec!["--exact".to_owned(), "no_test_has_this_name".to_owned()],
+        cwd: std::env::temp_dir(),
+        environment: std::collections::BTreeMap::new(),
+        log: crate::Launch::log_of(paths),
+        input: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patience() {
+    let (_folder, paths) = home("s");
+    // Bound and never served: the engine of a store that takes for ever to
+    // open. A connection is taken into the backlog, and no hello is
+    // answered.
+    let stalled = Channel::bind(&paths, VERSION).await.unwrap();
+    let log = crate::Launch::log_of(&paths).display().to_string();
+
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine)
+        .unwrap()
+        .hello_patience(Duration::from_secs(1));
+    let failure = within("a hello to a stalled engine", connector.connect())
+        .await
+        .unwrap_err();
+    assert_eq!(failure.code(), &codes::ENGINE_UNREACHABLE, "{failure:?}");
+    assert!(failure.next_step().contains(&log), "{failure:?}");
+
+    // A client that would start an engine waits no longer than its
+    // patience either, and starts none while one holds the channel.
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let failure = within(
+        "a start on demand beside a stalled engine",
+        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(2)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code(), &codes::ENGINE_UNREACHABLE, "{failure:?}");
+    assert!(failure.next_step().contains(&log), "{failure:?}");
+    drop(stalled);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_log() {
+    let (_folder, paths) = home("f");
+    let stalled = Channel::bind(&paths, VERSION).await.unwrap();
+    let log = crate::Launch::log_of(&paths).display().to_string();
+
+    // A plain connect whose hello the engine never answers, because it
+    // stops while starting: nothing was sent, and the log is named.
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let asked = tokio::spawn(async move { connector.connect().await });
+    // The engine fails after its bind (an unreadable trust root, say)
+    // while the hello waits: half a second leaves the client in its hello
+    // whatever the machine, and an earlier stop is answered the same way.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    drop(stalled);
+    let failure = within("the hello", asked).await.unwrap().unwrap_err();
+    assert!(
+        failure.code() == &codes::CONNECTION_LOST || failure.code() == &codes::ENGINE_UNREACHABLE,
+        "{failure:?}"
+    );
+    assert_ne!(failure.class(), FailureClass::PossibleCommit);
+    if failure.code() == &codes::CONNECTION_LOST {
+        assert!(
+            failure.message().contains("stopped while starting"),
+            "{failure:?}"
+        );
+        assert!(failure.next_step().contains(&log), "{failure:?}");
+    }
+
+    // A client that starts engines on demand is not told to run the
+    // command again: it looks on, and the engine it starts ends too, so it
+    // is told that the engine ended before it answered, with the log.
+    let stalled = Channel::bind(&paths, VERSION).await.unwrap();
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let start = ends_at_once(&paths);
+    let asked = tokio::spawn({
+        let paths = paths.clone();
+        async move {
+            connector
+                .connect_or_start(&paths, &start, Duration::from_secs(20))
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    drop(stalled);
+    let failure = within("the start", asked).await.unwrap().unwrap_err();
+    assert_eq!(failure.code(), &codes::ENGINE_UNREACHABLE, "{failure:?}");
+    assert!(
+        failure.message().contains("ended before it answered"),
+        "{failure:?}"
+    );
+    assert!(failure.next_step().contains(&log), "{failure:?}");
+}
+
+/// The output of an engine started on demand is never written through a
+/// link planted at its name, and a file others may read is narrowed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_started_engines_output_is_not_written_through_a_link_and_is_kept_to_the_user() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (folder, paths) = home("o");
+    let log = crate::Launch::log_of(&paths);
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    let elsewhere = folder.path().join("elsewhere.txt");
+    std::fs::write(&elsewhere, b"kept\n").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &log).unwrap();
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let started = within(
+        "a start through a planted link",
+        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(20)),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(started, crate::Started::Refused(_)), "{started:?}");
+    assert_eq!(std::fs::read(&elsewhere).unwrap(), b"kept\n");
+
+    // A plain file of the user's that others may read is used, and closed
+    // to them.
+    std::fs::remove_file(&log).unwrap();
+    std::fs::write(&log, b"").unwrap();
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let failure = within(
+        "a start that ends at once",
+        connector.connect_or_start(&paths, &ends_at_once(&paths), Duration::from_secs(20)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code(), &codes::ENGINE_UNREACHABLE, "{failure:?}");
+    let mode = std::fs::metadata(&log).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+}

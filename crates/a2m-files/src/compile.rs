@@ -1107,6 +1107,8 @@ impl<'a> Compiler<'a> {
         };
         let docs: Vec<&Located<Doc>> = self.sources.docs_of(k::TYPES).collect();
         let mut defined: BTreeMap<String, Place> = BTreeMap::new();
+        let complete_built_ins: Vec<&str> =
+            types::built_ins().into_iter().map(|(name, _)| name).collect();
         for doc in docs {
             if !self.fits(schema, doc) {
                 continue;
@@ -1137,6 +1139,21 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
                 defined.insert(name.to_owned(), entry.key.at.clone());
+                // A complete built-in keeps its rule and its labels: a
+                // target's type of its name would replace them, and could
+                // drop the untrusted mark of `untrusted_text` unseen. Only
+                // a built-in that needs more (`money`, `choice`) is
+                // completed by a target's type of its name.
+                if complete_built_ins.contains(&name) {
+                    self.error(
+                        codes::BUILT_IN_TYPE_REDEFINED,
+                        Stage::Resolve,
+                        &entry.key.at,
+                        format!("The field type `{name}` is built in, and a target cannot define it again."),
+                        format!("Give the target's type a name of its own, such as `{name}_local`, and use that name where the target means it."),
+                    );
+                    continue;
+                }
                 let (rule, labels) = match types::rule_of(name, &entry.value, &fixed_zone) {
                     Ok(pair) => pair,
                     Err(problems) => {
@@ -1147,12 +1164,10 @@ impl<'a> Compiler<'a> {
                 let made = types::plan_of(name, &rule, labels, &mut self.model.exprs.borrow_mut());
                 match made {
                     Ok(plan) => {
+                        // A target's type of an incomplete built-in's name
+                        // completes it; every other name is the target's own.
                         self.model.incomplete_types.remove(name);
-                        // A target's type of a built-in's name takes its place.
-                        match self.model.field_types.iter().position(|known| known.name == name) {
-                            Some(position) => self.model.field_types[position] = plan,
-                            None => self.model.field_types.push(plan),
-                        }
+                        self.model.field_types.push(plan);
                     }
                     Err(why) => self.error(
                         codes::FIELD_TYPE_INCOMPLETE,

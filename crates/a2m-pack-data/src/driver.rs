@@ -980,6 +980,43 @@ impl Session {
         Ok(values)
     }
 
+    /// Each field a many-row statement returned, as one list of its values
+    /// in row order, a missing value as `null`: what an operation's list
+    /// outputs are read from, since an output is one value or a list of
+    /// values and never a record.
+    fn columns_as_lists(
+        statement: &Statement,
+        columns: &[String],
+        records: &[Value],
+    ) -> Vec<(String, Vec<Value>)> {
+        let fields: Vec<&str> = columns
+            .iter()
+            .filter_map(|name| {
+                statement
+                    .columns
+                    .iter()
+                    .find(|column| &column.column == name)
+                    .map(|column| column.field.as_str())
+            })
+            .collect();
+        fields
+            .into_iter()
+            .map(|field| {
+                let list = records
+                    .iter()
+                    .map(|record| {
+                        record
+                            .as_record()
+                            .and_then(|values| values.get(field))
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                (field.to_owned(), list)
+            })
+            .collect()
+    }
+
     /// Holds the record a read by key returned to the key it was asked for.
     /// A statement that finds some other record, by whatever predicate, is
     /// stopped here: its answer is never taken for the record that was
@@ -1055,9 +1092,15 @@ impl Session {
                 .map(|row| Self::record(&statement, &ran.columns, row).map(Value::Record))
                 .collect::<Result<Vec<Value>, Failure>>()
                 .map(|records| {
-                    let values = Values::new()
+                    let lists = Self::columns_as_lists(&statement, &ran.columns, &records);
+                    let mut values = Values::new()
                         .with("rows", Value::List(records))
                         .with("more", ran.more);
+                    // A field named `rows` or `more` is the field's list:
+                    // what a statement's record declares comes first.
+                    for (field, list) in lists {
+                        values.insert(field, Value::List(list));
+                    }
                     StepOutcome::Done(Observed {
                         values: redact.redact_values(&values),
                         ..Observed::default()

@@ -34,6 +34,11 @@ pub const HELLO_INVALID: FailureCode = FailureCode::fixed("hello_invalid");
 /// The client and the engine speak different versions of the local API.
 /// Class `input`.
 pub const LOCAL_API_MISMATCH: FailureCode = FailureCode::fixed("local_api_mismatch");
+/// The data directory is no longer the one the engine opened: its engine
+/// lock is gone, or another file stands in its place. The engine refuses
+/// the request and stops; the next client starts a new engine. Class
+/// `busy`.
+pub const DATA_DIRECTORY_GONE: FailureCode = FailureCode::fixed("data_directory_gone");
 /// The person surface cannot show a page: it holds no approval desk. Class
 /// `busy`.
 pub const SURFACE_UNAVAILABLE: FailureCode = FailureCode::fixed("surface_unavailable");
@@ -95,6 +100,17 @@ pub(crate) fn unavailable(what: &str, error: &std::io::Error) -> Failure {
             error.kind()
         ),
         "Check that the engine's runtime and data directories exist and belong to you, then try again.",
+    )
+}
+
+/// What a request is told by an engine whose data directory is gone. The
+/// request was not handed to the kernel, so nothing of it was done.
+#[must_use]
+pub fn data_directory_gone() -> Failure {
+    busy(
+        DATA_DIRECTORY_GONE,
+        "The engine's data directory was removed or replaced while it ran, so the engine took no request and is stopping. Nothing of this request was done.",
+        "Run the command again: a new engine starts on the data directory as it is now. Runs and published targets that were in the removed directory are not in a new one.",
     )
 }
 

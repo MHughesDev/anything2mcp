@@ -337,7 +337,16 @@ impl<'a> Run<'a> {
                     "Check the binding's status and its provider with `anything2mcp engine status`.",
                 )
             };
-            if !status_qualifies(binding.status, self.posture) {
+            // Against a replay nothing acts, so a binding not yet verified
+            // may be tested there: an offline test is how a draft or a
+            // shadow binding earns its promotion (decision 0180). A retired
+            // one never runs.
+            let qualifies = if self.replay.is_some() {
+                binding.status != BindingStatus::Retired
+            } else {
+                status_qualifies(binding.status, self.posture)
+            };
+            if !qualifies {
                 let why = format!(
                     "The binding of `{}` through the mode `{}` is `{}` and may not act.",
                     operation.name, binding.mode, binding.status

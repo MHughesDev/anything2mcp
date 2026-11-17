@@ -209,6 +209,9 @@ async fn serve(
         StopReason::Idle => "idle",
         StopReason::Asked => "asked",
         StopReason::Restart => "restart",
+        StopReason::DataGone => {
+            return Err(failed(a2m_local::codes::data_directory_gone()));
+        }
         StopReason::Failed => {
             return Err(failed(Failure::new(
                 FailureClass::Busy,

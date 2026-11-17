@@ -509,13 +509,31 @@ impl Kernel {
         .await?;
         let compiled = crate::handlers::build::compile_in(
             self,
-            folder,
+            folder.clone(),
             &target,
             CompileMode::Publish,
             version,
         )
         .await?
         .map_err(Failure::from)?;
+        // The publish gates run now, as they will when the person presses:
+        // a publish they would refuse is not put to a person, and the page
+        // says which gates ran and which are not built (decision 0180).
+        let gates = crate::offline::run_gates(
+            self,
+            folder,
+            &target,
+            &compiled,
+            crate::offline::OfflineWorld {
+                workspace: caller.principal.workspace,
+                principal: caller.principal.principal.id,
+                vault: self.inner.vault.clone(),
+            },
+        )
+        .await?;
+        if !gates.passed {
+            return Err(gates.refusal(&target));
+        }
         input.insert("version".to_owned(), json!(version.to_string()));
         input.insert(
             "plan_hash".to_owned(),
@@ -550,6 +568,7 @@ impl Kernel {
                 }
                 line
             })
+            .chain(gates.lines())
             .collect();
         Ok((input, details))
     }

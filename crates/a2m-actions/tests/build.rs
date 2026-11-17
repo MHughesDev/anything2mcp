@@ -821,6 +821,103 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evidence() {
+    let world = World::open().await;
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    let test_file = target_dir.join("tests").join("order_get.yaml");
+    let kept = std::fs::read_to_string(&test_file).unwrap();
+
+    // A test that fails refuses the publish before any person is asked,
+    // naming the test, and the next step is `test.run`.
+    std::fs::write(&test_file, kept.replace("status: draft", "status: open")).unwrap();
+    let refused = world
+        .call(&agent, "publish.request", json!({"target": "example"}))
+        .await;
+    let error = refused.error.expect("a publish whose test fails is refused");
+    assert_eq!(error.code, "publish_gates_not_passed", "{error:?}");
+    assert!(error.message.contains("order_get (failed)"), "{error:?}");
+    assert!(error.fix.contains("test.run"), "{error:?}");
+    assert!(world.surface.acts.lock().unwrap().is_empty());
+    std::fs::write(&test_file, &kept).unwrap();
+
+    // Passing, the person's page lists each gate that ran with its result,
+    // and says the gates that are not built did not run.
+    let asked = world
+        .call(&agent, "publish.request", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
+    let ask = world.surface.acts.lock().unwrap()[0].clone();
+    let page = ask.details.join("\n");
+    assert!(page.contains("Gate schema_and_lint: passed."), "{page}");
+    assert!(
+        page.contains("Gate offline_replay: passed, 3 of 3 offline tests passed."),
+        "{page}"
+    );
+    assert!(
+        page.contains("Not built, so these gates did not run: contract, determinism,")
+            && page.contains("write_round_trip")
+            && page.contains("human_review."),
+        "{page}"
+    );
+
+    // A fixture changed after the page was shown: the fixtures are among
+    // the files the plan is compiled from, so the press publishes nothing,
+    // refused as drafts that changed.
+    let answer = target_dir
+        .join("fixtures")
+        .join("order_get")
+        .join("order_get.json");
+    let recorded = std::fs::read_to_string(&answer).unwrap();
+    std::fs::write(&answer, recorded.replace("draft", "released")).unwrap();
+    let pressed = world
+        .surface
+        .desk()
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await
+        .unwrap();
+    assert_eq!(
+        pressed.error.as_ref().map(|error| error.code.as_str()),
+        Some("drafts_changed"),
+        "{pressed:?}"
+    );
+    std::fs::write(&answer, &recorded).unwrap();
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    assert_eq!(
+        listed.result.unwrap().to_string().matches("\"version\":\"").count(),
+        0
+    );
+
+    // Asked again and pressed, the version is published with the evidence
+    // of its gates: each that ran, and each that did not.
+    world
+        .call(
+            &agent,
+            "publish.request",
+            json!({"target": "example", "version": "2.0.0"}),
+        )
+        .await;
+    let ask = world.surface.acts.lock().unwrap().last().cloned().unwrap();
+    let done = world
+        .surface
+        .desk()
+        .carry_out(ask.act, proof_for(&world, ask.act))
+        .await
+        .unwrap();
+    assert!(done.ok, "{:?}", done.error);
+    let version = done.result.unwrap();
+    assert_eq!(version["gates"]["passed"], true, "{version}");
+    assert_eq!(version["gates"]["gates"][1]["gate"], "offline_replay");
+    assert_eq!(
+        version["gates"]["not_run"].as_array().unwrap().len(),
+        10,
+        "{version}"
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_its_window() {
     let world = World::open().await;
     *world.surface.pages.lock().unwrap() = true;
@@ -1034,8 +1131,10 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         std::fs::remove_file(target_dir.join("calls").join("linked.yaml")).unwrap();
     }
 
-    // The gates: the lint gate runs, the offline tests wait for a replay,
-    // and the result is never a pass.
+    // The gates: the lint gate runs, and every offline test, of the read
+    // and of the two writes, runs against its fixture and passes. The
+    // other gates are not built, so the result is never complete.
+    let runs_before = world.call(&agent, "run.list", json!({})).await.result.unwrap();
     let tested = world
         .call(&agent, "test.run", json!({"target": "example"}))
         .await;
@@ -1043,7 +1142,8 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     let tested = tested.result.unwrap();
     assert_eq!(
         (tested["passed"].as_bool(), tested["complete"].as_bool()),
-        (Some(false), Some(false))
+        (Some(true), Some(false)),
+        "{tested}"
     );
     assert_eq!(tested["gates"][0]["state"], "passed", "{tested}");
     let offline = tested["gates"][1]["tests"].as_array().unwrap();
@@ -1064,9 +1164,126 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
         "passed",
         "{tested}"
     );
-    assert_eq!(state_of(&tested, "line_item_upsert")["state"], "not_run");
-    assert_eq!(state_of(&tested, "order_sheet_enter")["state"], "not_run");
+    assert_eq!(
+        state_of(&tested, "line_item_upsert")["state"],
+        "passed",
+        "{tested}"
+    );
+    assert_eq!(
+        state_of(&tested, "order_sheet_enter")["state"],
+        "passed",
+        "{tested}"
+    );
+    // Each write was recorded, sent, read back, and verified in the
+    // test's own ledger: the pipeline's two records, the upsert's one.
+    let upsert = state_of(&tested, "line_item_upsert");
+    assert_eq!(upsert["records"]["verified"], 1, "{upsert}");
+    assert_eq!(
+        upsert["steps"],
+        json!(["line_item_get", "line_item_put", "line_item_get"])
+    );
+    assert_eq!(
+        state_of(&tested, "order_sheet_enter")["records"]["verified"],
+        2
+    );
+    // Nothing reached the stand's driver, and the installation's ledger
+    // holds no run of a test.
     assert!(world.reached.lock().unwrap().is_empty());
+    let runs_after = world.call(&agent, "run.list", json!({})).await.result.unwrap();
+    assert_eq!(runs_before["runs"], runs_after["runs"], "{runs_after}");
+
+    let fixtures = world
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("fixtures");
+    let upsert_test = world
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("tests")
+        .join("line_item_upsert.yaml");
+    // A changed expectation of a write fails, and names the field.
+    let kept_test = std::fs::read_to_string(&upsert_test).unwrap();
+    std::fs::write(
+        &upsert_test,
+        kept_test.replace("expect: {length: \"90.5\"}", "expect: {length: \"91\"}"),
+    )
+    .unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "line_item_upsert");
+    assert_eq!(failed["state"], "failed", "{failed}");
+    assert_eq!(failed["differences"][0]["field"], "length", "{failed}");
+    std::fs::write(&upsert_test, &kept_test).unwrap();
+    // A save sent with other values than the fixture recorded fails, and
+    // names the step and the field.
+    let request = fixtures
+        .join("line_item_upsert")
+        .join("line_item_put.request.json");
+    let kept_request = std::fs::read_to_string(&request).unwrap();
+    std::fs::write(&request, kept_request.replace("90.5", "88")).unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "line_item_upsert");
+    assert_eq!(failed["state"], "failed", "{failed}");
+    assert_eq!(
+        failed["request_differences"][0]["step"], "line_item_put",
+        "{failed}"
+    );
+    assert_eq!(failed["request_differences"][0]["field"], "length");
+    std::fs::write(&request, &kept_request).unwrap();
+    // A read-back that differs from what was sent ends as the engine's own
+    // mismatch, and the test that expects success fails.
+    let read_back = fixtures.join("line_item_upsert").join("line_item_get.json");
+    let kept_read_back = std::fs::read_to_string(&read_back).unwrap();
+    // The engine reads once more before it calls it a mismatch, and the
+    // fixture answers both reads with the other length.
+    std::fs::write(
+        &read_back,
+        r#"[null, {"length": "7' 7\""}, {"length": "7' 7\""}]"#,
+    )
+    .unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "line_item_upsert");
+    assert_eq!(failed["state"], "failed", "{failed}");
+    assert_eq!(failed["failure"]["class"], "mismatch", "{failed}");
+    assert_eq!(tested["passed"], false);
+    std::fs::write(&read_back, &kept_read_back).unwrap();
+    // A pipeline's source is read from its fixture folder alone: a name
+    // that leads out of it is refused, and nothing is read.
+    let sheet_test = upsert_test.with_file_name("order_sheet_enter.yaml");
+    let kept_sheet = std::fs::read_to_string(&sheet_test).unwrap();
+    std::fs::write(
+        &sheet_test,
+        kept_sheet.replace("source: \"order_sheet.csv\"", "source: \"../../target.yaml\""),
+    )
+    .unwrap();
+    let tested = world
+        .call(&agent, "test.run", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    let failed = state_of(&tested, "order_sheet_enter");
+    assert_eq!(failed["state"], "failed", "{failed}");
+    assert_eq!(failed["fixture_problem"]["file"], "../../target.yaml", "{failed}");
+    assert_eq!(failed["steps"], Json::Null, "{failed}");
+    std::fs::write(&sheet_test, &kept_sheet).unwrap();
+    assert!(world.reached.lock().unwrap().is_empty());
+    let runs_after = world.call(&agent, "run.list", json!({})).await.result.unwrap();
+    assert_eq!(runs_before["runs"], runs_after["runs"], "{runs_after}");
 
     // A result that differs from the test's fails with the difference.
     let test_file = world

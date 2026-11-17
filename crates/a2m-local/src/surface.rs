@@ -882,11 +882,23 @@ async fn decline(
     }
 }
 
+/// Whether the page shows every value of the act's input whole: none was
+/// cut to the length a page shows.
+fn whole_input(ask: &PersonActAsk) -> bool {
+    ask.input.iter().all(|field| !field.cut)
+}
+
 /// The input of an act as a table, and the lines to read beside it. Every
 /// name and value is placed as text.
 fn act_html(ask: &PersonActAsk) -> (String, String) {
     use std::fmt::Write as _;
-    let mut input = String::from(
+    let mut input = String::new();
+    if !whole_input(ask) {
+        // What is pressed is what was shown (decision 0181): an act whose
+        // input the page cannot show whole is not carried out from it.
+        input.push_str("<p><strong>A value of this input is longer than this page can show, so this act cannot be carried out here.</strong> You can decline it, and ask the program for an act whose input can be read whole.</p>");
+    }
+    input.push_str(
         "<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Value</th></tr></thead><tbody>",
     );
     for field in &ask.input {
@@ -1083,8 +1095,8 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Resp
         );
     };
     // Asked again at the press: only an act that still waits is prompted
-    // for.
-    if desk.person_act(pressed.act).is_err() {
+    // for, and only one whose input the page showed whole.
+    let Ok(ask) = desk.person_act(pressed.act) else {
         return (
             true,
             answer(
@@ -1092,6 +1104,12 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Resp
                 "Nothing was done",
                 "The act this page showed no longer waits. Ask the program that asked for it.",
             ),
+        );
+    };
+    if !whole_input(&ask) {
+        return nothing_done(
+            StatusCode::CONFLICT,
+            "A value of this act's input is longer than its page can show, and an act that was not shown whole is not carried out here. You can decline it from the page.",
         );
     }
     let Ok(_up) = inner.prompting.try_lock() else {
