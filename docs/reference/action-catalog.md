@@ -131,7 +131,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 | Shortcut | Does |
 | --- | --- |
 | `init` | Create a project and the guidance file; choose a profile |
-| `add <address>` | `target.add`, `scout.run`, `scout.report`, `session.login` |
+| `add <address>` | `target.add`, `target.probe`, `auth.detect`, `session.login` |
 | `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |
 | `publish` | `publish.request`, then waits for a person |

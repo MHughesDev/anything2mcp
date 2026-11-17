@@ -15,9 +15,9 @@ use a2m_core::{
     PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex, SignInMode,
     SourcePlan, Stands, Step, StepArg, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
     TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan, ToolRuns,
-    Value, ValueType, Values, Verb, Version, WriteEvidence,
+    Value, ValueType, Values, Verb, Version,
 };
-use a2m_expr::{TypeEnv, names};
+use a2m_expr::TypeEnv;
 
 use crate::codes::{self, kernel};
 use crate::diag::{Diagnostic, Diagnostics, Level, Stage};
@@ -37,8 +37,7 @@ use crate::source::{
 use crate::types::{self, Labels};
 use crate::view::{
     InputInfo, LowerContext, Model, OpInfo, OperationView, ResolvedBinding, ResolvedView,
-    SurfaceInfo, check_expr, check_site, current_type, env_type, expr_text, input_type,
-    record_type, type_env, unknown_env,
+    SurfaceInfo, check_expr, check_site, env_type, expr_text, input_type, type_env, unknown_env,
 };
 
 /// The version of this compiler, which a plan's header names.
@@ -273,33 +272,6 @@ fn json_schema_of(ty: &ValueType, codes: &[a2m_core::CodeLabel]) -> serde_json::
     }
 }
 
-/// The JSON Schema of a value a tool returns. A number, a date, a moment,
-/// or a length of time that holds a registered secret reaches the caller as
-/// the text `[redacted]` (decision 0153), so where one is declared that text
-/// is allowed too, and a caller that checks a result against its schema
-/// never fails a run for it (decision 0161).
-fn output_schema_of(ty: &ValueType, codes: &[a2m_core::CodeLabel]) -> serde_json::Value {
-    use serde_json::json;
-    match ty {
-        ValueType::Int
-        | ValueType::Decimal
-        | ValueType::Instant
-        | ValueType::Date
-        | ValueType::Duration => json!({
-            "anyOf": [json_schema_of(ty, codes), {"const": a2m_core::REDACTED}]
-        }),
-        ValueType::List(item) => json!({"type": "array", "items": output_schema_of(item, &[])}),
-        ValueType::Record(fields) => {
-            let properties: serde_json::Map<String, serde_json::Value> = fields
-                .iter()
-                .map(|field| (field.name.clone(), output_schema_of(&field.ty, &[])))
-                .collect();
-            json!({"type": "object", "properties": properties})
-        }
-        _ => json_schema_of(ty, codes),
-    }
-}
-
 impl<'a> Compiler<'a> {
     fn error(
         &mut self,
@@ -434,19 +406,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn run(&mut self, version: Version) -> Result<Compiled, Diagnostics> {
-        if self.mode == CompileMode::Draft && version != DRAFT_VERSION {
-            // A draft under a release version would have the bytes and the
-            // hash of the plan published as that version (decision 0161).
-            return Err(Diagnostics::from(Diagnostic::error(
-                kernel(codes::DRAFT_UNDER_RELEASE_VERSION),
-                Stage::Emit,
-                &Place::start_of(&RelPath::target_file()),
-                format!(
-                    "A draft was asked for under the version {version}, which a published plan carries."
-                ),
-                "Compile a draft under the draft version, or publish to compile a release.",
-            )));
-        }
         self.target();
         self.field_types();
         self.pack_kinds();
@@ -2134,14 +2093,6 @@ impl<'a> Compiler<'a> {
         let writes = info.effect >= EffectClass::Write;
         let declared_commits = info.commit_points.unwrap_or(u32::from(writes));
         let env = type_env(&[("input", input_type(&info.inputs)), ("env", env_type())]);
-        // A binding's steps may also read what the engine's last read of the
-        // record gave, and the record's key in the system.
-        let steps_env = type_env(&[
-            (names::INPUT, input_type(&info.inputs)),
-            (names::ENV, env_type()),
-            (names::CURRENT, current_type(&info.inputs)),
-            (names::RECORD, record_type()),
-        ]);
         let mut bindings = Vec::new();
         let mut fine = true;
         // Whatever a pack marks, a write saves at least once and a read
@@ -2321,7 +2272,7 @@ impl<'a> Compiler<'a> {
                     pack: &registered.pack,
                     reads: lowering.reads(),
                     operation: info,
-                    env: steps_env.clone(),
+                    env: env.clone(),
                 };
                 lowering.lower(&resolved, &cx)
             };
@@ -2333,13 +2284,11 @@ impl<'a> Compiler<'a> {
                     continue;
                 }
             };
-            let evidence = lowering.evidence(&resolved, &lowered);
             let by = LoweredBy {
                 lowering: lowering.as_ref(),
                 pack: &registered.pack,
                 verb: &verb,
                 least,
-                evidence,
             };
             match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
                 Some(surface) => bindings.push(BindingPlan {
@@ -2352,7 +2301,7 @@ impl<'a> Compiler<'a> {
                     read_back: lowered.read_back,
                     lookup: lowered.lookup,
                     settle_ms: lowered.settle_ms,
-                    evidence,
+                    prefer_response: lowered.prefer_response,
                     precondition,
                 }),
                 None => fine = false,
@@ -2443,14 +2392,7 @@ impl<'a> Compiler<'a> {
             );
             fine = false;
         }
-        // A binding whose only evidence is an acknowledgement cannot be
-        // read back or compared, so it is irreversible by what it does.
-        let least = if writes_by_steps(lowered) && by.evidence == WriteEvidence::Acknowledged {
-            EffectClass::Irreversible
-        } else {
-            by.least
-        };
-        if least > info.effect {
+        if by.least > info.effect {
             let at = info
                 .doc
                 .get("effect")
@@ -2460,8 +2402,8 @@ impl<'a> Compiler<'a> {
                 codes::EFFECT_LOWER_THAN_DERIVED,
                 Stage::Analyze,
                 &at,
-                format!("The operation declares the effect `{}`, and its `{mode}` binding with the verb `{}` is `{least}` by what it does{}.", info.effect, by.verb, if least > by.least { ", because nothing it writes can be read back" } else { "" }),
-                format!("Declare `effect: {least}`, or bind the operation to something that does less."),
+                format!("The operation declares the effect `{}`, and its `{mode}` binding with the verb `{}` is `{}` by what it does.", info.effect, by.verb, by.least),
+                format!("Declare `effect: {}`, or bind the operation to something that does less.", by.least),
             );
             fine = false;
         }
@@ -2555,10 +2497,9 @@ impl<'a> Compiler<'a> {
             );
             fine = false;
         }
-        let needs_read_back = by.evidence != WriteEvidence::Acknowledged
-            && (info.effect == EffectClass::Write
-                || (info.effect == EffectClass::Irreversible
-                    && info.strategy != IdentityStrategy::None));
+        let needs_read_back = info.effect == EffectClass::Write
+            || (info.effect == EffectClass::Irreversible
+                && info.strategy != IdentityStrategy::None);
         if needs_read_back && (binding.get("read_back").is_none() || lowered.read_back.is_empty()) {
             self.error(
                 codes::WRITE_WITHOUT_READ_BACK,
@@ -3406,7 +3347,7 @@ impl<'a> Compiler<'a> {
                 .map(|output| {
                     (
                         output.name.clone(),
-                        self.output_schema_of_type(&output.ty, output.field_type),
+                        self.schema_of_type(&output.ty, output.field_type),
                     )
                 })
                 .collect();
@@ -3534,17 +3475,6 @@ impl<'a> Compiler<'a> {
             .and_then(|index| self.model.field_types.get(index.get()))
             .map_or(&[][..], |known| known.codes.as_slice());
         json_schema_of(ty, codes)
-    }
-
-    fn output_schema_of_type(
-        &self,
-        ty: &ValueType,
-        field_type: Option<FieldTypeIndex>,
-    ) -> serde_json::Value {
-        let codes = field_type
-            .and_then(|index| self.model.field_types.get(index.get()))
-            .map_or(&[][..], |known| known.codes.as_slice());
-        output_schema_of(ty, codes)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3883,11 +3813,6 @@ impl<'a> Compiler<'a> {
 }
 
 /// What a lowering said of itself, for the analysis of one binding.
-/// Whether a lowered binding has a step that saves.
-fn writes_by_steps(lowered: &Lowered) -> bool {
-    lowered.act.iter().any(|step| step.commits)
-}
-
 struct LoweredBy<'a> {
     lowering: &'a dyn Lowering,
     /// The pack that registered it.
@@ -3895,8 +3820,6 @@ struct LoweredBy<'a> {
     verb: &'a Verb,
     /// The least effect the binding can have, by the lowering's word.
     least: EffectClass,
-    /// What the binding offers as evidence that a write landed.
-    evidence: WriteEvidence,
 }
 
 /// What stands in a diagnostic where a value the credential lint knows was

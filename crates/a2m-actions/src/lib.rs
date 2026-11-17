@@ -18,7 +18,6 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 6.
 
-mod acts;
 mod bounds;
 mod catalog;
 pub mod codes;
@@ -29,7 +28,6 @@ mod events;
 mod faces;
 mod handlers;
 mod health;
-pub mod init;
 mod keeper;
 mod kernel;
 mod paths;
@@ -44,7 +42,6 @@ mod tools;
 
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
-pub use acts::{ACTS_KEPT, ACTS_WAITING, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS, ShownField};
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
     HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
@@ -58,13 +55,13 @@ pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
     RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,
     ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
-    said_line, sdk_methods, tool_name,
+    sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
-    ApprovalAsk, ApprovalDesk, ApprovalPreview, NOT_READ_BACK, PRESENCE_WINDOW_MS, PREVIEW_RECORDS,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, PRESENCE_WINDOW_MS, PREVIEW_RECORDS,
     PREVIEW_VALUE_CHARS, PersonSurface, PresenceAsk, PresenceProof, PresenceReport, PreviewField,
     PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
@@ -85,10 +82,8 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod audit;
-    mod authoring;
     mod kernel;
     mod keys;
-    mod pass_two;
     mod runs;
     mod second;
 }

@@ -42,12 +42,6 @@ const CLAIM_WAIT: Duration = Duration::from_secs(30);
 /// budget is set once more the next time its surface is used.
 const BUDGETS_NOTED: usize = 4096;
 
-/// The field of a discovery run's stored call that names its surface.
-pub(crate) const DISCOVERY_SURFACE: &str = "surface";
-/// The field of a discovery run's stored call that holds the focus its
-/// discoverers are given.
-pub(crate) const DISCOVERY_FOCUS: &str = "focus";
-
 /// The verified facts about the caller of a run, kept so that the guard's
 /// question to policy is asked about the caller that started the run. Names
 /// and flags; never a credential.
@@ -59,12 +53,6 @@ pub(crate) struct CallerFacts {
     pub(crate) toolset: Option<ToolsetName>,
     /// The decision that let the call in.
     pub(crate) decision: DecisionId,
-    /// The project folder of the request that started the run, as the
-    /// dispatcher checked it: kept with the run's stored call, so that every
-    /// lease of the run, a resume's too, hands the engine the same folder
-    /// (decision 0176). `None` when the request stated none, or one whose
-    /// path is not text and so cannot be kept.
-    pub(crate) project: Option<std::path::PathBuf>,
 }
 
 impl CallerFacts {
@@ -75,14 +63,7 @@ impl CallerFacts {
             acting_for: caller.principal.acting_for.clone(),
             toolset: caller.toolset.clone(),
             decision,
-            project: None,
         }
-    }
-
-    /// The same facts, with the request's checked project folder.
-    pub(crate) fn with_project(mut self, project: Option<std::path::PathBuf>) -> Self {
-        self.project = project;
-        self
     }
 
     /// The person the run acts for: the caller themself, or the person the
@@ -111,7 +92,6 @@ impl CallerFacts {
             "acting_for": person,
             "toolset": self.toolset.as_ref().map(ToolsetName::as_str),
             "decision": self.decision.to_string(),
-            "project": self.project.as_deref().and_then(std::path::Path::to_str),
         })
     }
 
@@ -142,7 +122,6 @@ impl CallerFacts {
                 .as_str()
                 .and_then(|name| ToolsetName::new(name).ok()),
             decision: json["decision"].as_str()?.parse().ok()?,
-            project: json["project"].as_str().map(std::path::PathBuf::from),
         })
     }
 }
@@ -725,23 +704,6 @@ impl Kernel {
             a2m_sched::JobKind::Canary => JobKind::Canary,
             _ => JobKind::Execute,
         };
-        // A discovery run's stored call names its surface and the focus
-        // handed to its discoverers (`discover.run`): the job names the
-        // surface, and the discoverers are given the focus alone.
-        let (tool, input) = if kind == JobKind::Discover {
-            let mut input = input;
-            let surface = match input.remove(DISCOVERY_SURFACE) {
-                Some(a2m_core::Value::Text(surface)) => a2m_core::SurfaceName::new(&surface)?,
-                _ => return self.end_unreadable(fence).await,
-            };
-            let focus = match input.remove(DISCOVERY_FOCUS) {
-                Some(a2m_core::Value::Record(focus)) => focus,
-                _ => Values::new(),
-            };
-            (ToolRef::Surface(surface), focus)
-        } else {
-            (ToolRef::Tool(row.tool_name.clone()), input)
-        };
         let health = self.health();
         let capture = |key: &str| match self.settings().text(key) {
             Some("full") => CaptureLevel::Full,
@@ -756,7 +718,7 @@ impl Kernel {
             epoch: fence.epoch,
             kind,
             plan: row.target_version,
-            tool,
+            tool: ToolRef::Tool(row.tool_name.clone()),
             environment: Some(row.environment.clone()),
             identity: Some(Identity::Person(row.principal)),
             input,
@@ -864,13 +826,6 @@ impl Kernel {
             }
             // A reconcile or a second look ended: the run's state stays.
             JobOutcome::Settled { .. } => JobEnd::Done,
-            // A discovery that could not be carried out wrote nothing and
-            // is a run of its own: it ends as failed, with the failure,
-            // and is not left running.
-            JobOutcome::Left(failure) if kind == JobKind::Discover => {
-                control.apply(RunState::Failed, Some(failure)).await?;
-                JobEnd::Done
-            }
             JobOutcome::Left(failure) => JobEnd::Stopped {
                 class: failure.class(),
                 code: failure.code().clone(),
@@ -933,7 +888,6 @@ impl Kernel {
                         .copied(),
                 )
                 .await?;
-            let acknowledged = record.acknowledged();
             records.push(RecordSnapshot {
                 record: record.record,
                 key: record.key,
@@ -951,7 +905,6 @@ impl Kernel {
                 // record in doubt is read through the binding that wrote it.
                 mode: record.mode,
                 failure: record.failure,
-                acknowledged,
             });
         }
         Ok(Some(RunSnapshot {

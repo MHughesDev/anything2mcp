@@ -5,7 +5,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -670,6 +670,10 @@ pub(crate) struct Page {
     /// The helper's source, with those origins written in.
     helper: String,
     moves: Mutex<Moves>,
+    /// Whether the tab has been released. Kept apart from its status,
+    /// which the tab's events also end: the release is done once, whatever
+    /// the status says by then.
+    released: AtomicBool,
     browser: Arc<BrowserInner>,
 }
 
@@ -2042,8 +2046,13 @@ impl Page {
     /// Ends the tab: its events stop, and the browser is asked to close
     /// its page. Safe to call more than once.
     fn release(&self) {
+        // Ending the subscription ends the stream of the tab's events, and
+        // the task that hears them then marks the tab gone, on another
+        // thread and at once; so whether the tab is released yet is not
+        // read from its status.
+        self.status.send_replace(Status::Gone);
         self.client.unsubscribe(&self.session);
-        if self.status.send_replace(Status::Gone) == Status::Gone {
+        if self.released.swap(true, Ordering::SeqCst) {
             return;
         }
         self.browser.tabs.fetch_sub(1, Ordering::SeqCst);
@@ -2356,6 +2365,7 @@ pub(crate) async fn open_page(
         origins: origins.clone(),
         helper: helper_for(origins),
         moves: Mutex::new(Moves::default()),
+        released: AtomicBool::new(false),
         browser: Arc::clone(browser),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);

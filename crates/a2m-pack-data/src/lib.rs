@@ -31,8 +31,6 @@ mod lint;
 mod lower;
 mod model;
 mod names;
-#[cfg(feature = "postgres")]
-mod postgres;
 mod shape;
 mod sqlite;
 mod store;
@@ -53,32 +51,6 @@ use crate::driver::Openers;
 /// The key of a `database` surface that holds its address: the path of the
 /// store's file below its root, with forward slashes.
 const ADDRESS_KEY: &str = "file";
-
-/// The key of a `database_server` surface that holds its address: the IP
-/// address the server listens on.
-#[cfg(feature = "postgres")]
-const SERVER_ADDRESS_KEY: &str = "host";
-
-/// The manifest of a build with the server store: the embedded store's, with
-/// the second surface kind, the network the surfaces name, and the codes only
-/// the server store returns. Made from the one file, so that the two cannot
-/// drift apart; a test holds each change to exactly the place it is made.
-#[cfg(feature = "postgres")]
-pub(crate) static SERVER_MANIFEST: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    let base = include_str!("../anything2mcp-provider.toml");
-    let mut manifest = base
-        .replace(
-            "surface_kinds = [\"database\"]",
-            "surface_kinds = [\"database\", \"database_server\"]",
-        )
-        .replace("network = \"none\"", "network = \"surfaces\"")
-        .replace(
-            "sessions = [\"database\"]",
-            "sessions = [\"database\", \"database_server\"]",
-        );
-    manifest.push_str(include_str!("../anything2mcp-provider-server.toml"));
-    manifest
-});
 
 /// The data pack. The product crate hands it to the registry builder:
 /// `builder.add_pack(&a2m_pack_data::pack())`.
@@ -118,14 +90,7 @@ fn setting(cx: &PackContext, key: &str, default: i64) -> i64 {
 
 impl Pack for DataPack {
     fn manifest(&self) -> &'static str {
-        #[cfg(feature = "postgres")]
-        {
-            SERVER_MANIFEST.as_str()
-        }
-        #[cfg(not(feature = "postgres"))]
-        {
-            include_str!("../anything2mcp-provider.toml")
-        }
+        include_str!("../anything2mcp-provider.toml")
     }
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
@@ -142,31 +107,16 @@ impl Pack for DataPack {
                 cx.roots().clone(),
             )),
         )?;
-        let registrations = CompilerRegistrations::new().surface_kind(SurfaceKindSpec::new(
-            names::DATABASE,
-            ADDRESS_KEY,
-            JsonSchema::object()
-                .required(ADDRESS_KEY, JsonSchema::text())
-                .required("store", JsonSchema::words(store::STORES))
-                .optional("root", JsonSchema::name()),
-        ));
-        // A server: its address, its port, its database, and the one schema
-        // statements are read in. The role and its password come from the
-        // session keeper's lease, never from a target file; there is no
-        // switch for the link, which is held to the loopback address.
-        #[cfg(feature = "postgres")]
-        let registrations = registrations.surface_kind(SurfaceKindSpec::new(
-            names::DATABASE_SERVER,
-            SERVER_ADDRESS_KEY,
-            JsonSchema::object()
-                .required(SERVER_ADDRESS_KEY, JsonSchema::text())
-                .required("store", JsonSchema::words(store::SERVER_STORES))
-                .required("port", JsonSchema::int_between(1, 65535))
-                .required("database", JsonSchema::name())
-                .optional("schema", JsonSchema::name()),
-        ));
         to.compiler(
-            registrations
+            CompilerRegistrations::new()
+                .surface_kind(SurfaceKindSpec::new(
+                    names::DATABASE,
+                    ADDRESS_KEY,
+                    JsonSchema::object()
+                        .required(ADDRESS_KEY, JsonSchema::text())
+                        .required("store", JsonSchema::words(store::STORES))
+                        .optional("root", JsonSchema::name()),
+                ))
                 .file_kind(Arc::new(kind::StatementKind::new(max_rows)))
                 .lowering(Arc::new(lower::SqlLowering::new(names.mode.clone())))
                 .lint_rule(Arc::new(lint::HazardNotDeclared))

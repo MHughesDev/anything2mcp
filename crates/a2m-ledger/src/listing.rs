@@ -120,16 +120,17 @@ const SELECT_RUNS: &str =
  LIMIT ?10";
 
 impl Ledger<'_, '_> {
-    /// The keyed digest a key is kept under, made for the purpose of a
-    /// caller's key, which no other digest of the workspace uses (decision
-    /// 0172).
+    /// The keyed digest a key is kept under. The purpose is that of record
+    /// keys; the bytes begin with a zero byte, which no record key's
+    /// canonical form does, so the two uses can never be matched.
     fn key_digest(
         &self,
         workspace: &WorkspaceId,
         principal: &PrincipalId,
         key: &CallerKey,
     ) -> Result<String, Failure> {
-        let mut bytes = b"anything2mcp caller idempotency key 1".to_vec();
+        let mut bytes = vec![0u8];
+        bytes.extend_from_slice(b"anything2mcp caller idempotency key 1");
         bytes.push(0);
         bytes.extend_from_slice(principal.as_bytes());
         bytes.extend_from_slice(key.as_str().as_bytes());
@@ -138,7 +139,7 @@ impl Ledger<'_, '_> {
             .shared
             .attached()?
             .digest
-            .keyed_digest(workspace, DigestPurpose::CallerKey, &bytes)
+            .keyed_digest(workspace, DigestPurpose::RecordKey, &bytes)
             .to_string())
     }
 

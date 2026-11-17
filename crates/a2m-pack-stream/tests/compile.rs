@@ -13,9 +13,7 @@ mod common;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use a2m_core::{
-    Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
-};
+use a2m_core::{Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values};
 use a2m_provider::{Manifest, ProviderName, ProviderSettings};
 use common::{Folder, Planted, compile, edited, plan, registry, registry_with};
 
@@ -114,7 +112,6 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert!(binding.act[0].commits && !binding.act[0].idempotent);
     assert_eq!(kinds(&binding.read_back), ["latest"]);
     assert!(binding.read_back[0].lookup && !binding.read_back[0].commits);
-    assert_eq!(binding.evidence, WriteEvidence::ReadBack);
 
     // A publish to a log is irreversible, and is found again by its stamp.
     let record = operation("example_order_event_record");
@@ -128,30 +125,11 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     );
     assert_eq!(kinds(&record.bindings[0].read_back), ["scan"]);
     assert_eq!(kinds(&record.bindings[0].lookup), ["scan"]);
-    // Where the log ends is read, and recorded, before the publish is sent:
-    // a scan of a resumed run starts there. A keyed publish to a log is
-    // read back by that scan for its token, so its evidence is the read.
-    assert_eq!(kinds(&record.bindings[0].act), ["position", "publish"]);
-    let commits: Vec<bool> = record.bindings[0]
-        .act
-        .iter()
-        .map(|step| step.commits)
-        .collect();
-    assert_eq!(commits, [false, true]);
-    assert_eq!(record.bindings[0].evidence, WriteEvidence::ReadBack);
 
     // A queue keeps nothing to read back; the broker refuses a repeat.
-    // Its evidence is the broker's confirmation alone, and the operation is
-    // irreversible; so is a notice to a topic, which keeps nothing.
     let add = operation("example_order_work_add");
     assert!(add.bindings[0].read_back.is_empty());
     assert!(add.bindings[0].act[0].idempotent);
-    assert_eq!(add.bindings[0].evidence, WriteEvidence::Acknowledged);
-    assert_eq!(add.effect, EffectClass::Irreversible);
-    let notice = operation("example_order_notice_send");
-    assert!(notice.bindings[0].read_back.is_empty());
-    assert_eq!(notice.bindings[0].evidence, WriteEvidence::Acknowledged);
-    assert_eq!(notice.effect, EffectClass::Irreversible);
 
     // A wait is two steps, and its limit is in the plan.
     let wait = operation("example_order_event_await");
@@ -171,12 +149,6 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         .collect();
     assert_eq!(commits, [false, false, true]);
     assert_eq!(take.commit_points, 1);
-    // Its evidence is the acknowledgement. Its one read is a look at the
-    // queue for the message it recorded, which settles a take in doubt.
-    assert_eq!(take.bindings[0].evidence, WriteEvidence::Acknowledged);
-    assert_eq!(take.effect, EffectClass::Irreversible);
-    assert_eq!(kinds(&take.bindings[0].read_back), ["taken"]);
-    assert!(take.bindings[0].read_back[0].lookup && !take.bindings[0].read_back[0].commits);
 
     // Every step names its channel by reference, never by an argument.
     for operation in &plan.operations {
@@ -313,14 +285,6 @@ fn a_publish_must_declare_what_its_channel_makes_of_it() {
             "effect: irreversible\nhazard: sends_outside\nkey: order_id\n",
             "orders.work",
         ),
-        "stream.publish_effect",
-    );
-    // To a queue as an ordinary write: its only evidence is the broker's
-    // confirmation. The pack refuses it before the kernel's own rule, that
-    // an acknowledged write is irreversible, is reached.
-    refused(
-        "operations/extra.yaml",
-        &publish("effect: write\n", "orders.work"),
         "stream.publish_effect",
     );
     // The token's header belongs to the ledger.

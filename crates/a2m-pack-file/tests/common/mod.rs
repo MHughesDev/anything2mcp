@@ -75,16 +75,6 @@ pub fn roots(stand: &FileStand, access: Access) -> Roots {
     roots
 }
 
-/// The run's paths with `folder` as the project folder of the request that
-/// started it, checked as the engine checks it: as a root of its own, for
-/// writing.
-pub fn project_paths(folder: &Path) -> CheckedPaths {
-    let name = RootName::new("project").unwrap();
-    let mut roots = Roots::none();
-    roots.add(name.clone(), folder, Access::Write).unwrap();
-    CheckedPaths::none().with_project(roots.folder(&name, Access::Write).unwrap())
-}
-
 /// Compiles the target folder at `root` with the set given.
 pub fn compile(root: &Path, set: &CompilerSet) -> Result<a2m_files::Compiled, Diagnostics> {
     let sources = a2m_files::load(&TargetRoot::new(root), set)?;
@@ -98,9 +88,6 @@ pub struct Scene {
     pub plan: Plan,
     /// The root the surfaces are in, when it is not the one they state.
     root: Option<&'static str>,
-    /// The run's checked paths: with a project folder, for a scene whose
-    /// surfaces are in the root `project`.
-    pub paths: CheckedPaths,
 }
 
 impl Scene {
@@ -108,28 +95,9 @@ impl Scene {
         Self::with_access(Access::Write)
     }
 
-    /// With `Access::Read`, the surfaces are in the root `project`: their
-    /// files are the stand's, as the project folder of the request that
-    /// started the run, and the pack's own root of that name, the folder the
-    /// engine was started in, is the stand's folder outside its root, where
-    /// no document's file is.
     pub fn with_access(access: Access) -> Self {
         let stand = FileStand::start().unwrap();
-        let (roots, paths) = match access {
-            Access::Write => (roots(&stand, access), CheckedPaths::none()),
-            Access::Read => {
-                let mut started_in = Roots::none();
-                started_in
-                    .add(
-                        RootName::new("project").unwrap(),
-                        stand.outside_folder(),
-                        Access::Read,
-                    )
-                    .unwrap();
-                (started_in, project_paths(stand.root()))
-            }
-        };
-        let registry = registry(roots);
+        let registry = registry(roots(&stand, access));
         let plan = compile(&fixtures(), registry.compiler_set())
             .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
             .plan;
@@ -138,7 +106,6 @@ impl Scene {
             registry,
             plan,
             root: (access == Access::Read).then_some("project"),
-            paths,
         }
     }
 
@@ -183,19 +150,6 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> (DriverHandle, Prepared) {
-        self.prepared_in(surface, fence, posture, &self.paths)
-            .await
-            .unwrap()
-    }
-
-    /// The same, with the run's checked paths given.
-    pub async fn prepared_in(
-        &self,
-        surface: &SurfaceRef,
-        fence: Option<Fence>,
-        posture: Posture,
-        paths: &CheckedPaths,
-    ) -> Result<(DriverHandle, Prepared), StepFailure> {
         let handle = self
             .registry
             .driver(&a2m_core::Mode::new("file").unwrap())
@@ -214,11 +168,11 @@ impl Scene {
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
-            paths,
+            paths: &CheckedPaths::none(),
             supervisor: &supervisor,
         };
-        let prepared = handle.prepare(&cx, None).await?;
-        Ok((handle, prepared))
+        let prepared = handle.prepare(&cx, None).await.unwrap();
+        (handle, prepared)
     }
 
     /// A step's arguments, worked out from the operation's inputs as the
@@ -247,7 +201,13 @@ impl Scene {
         let mut outcomes = Vec::new();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30)));
+            let input = StepInput {
+                args: &args,
+                record: None,
+                key: None,
+                stamp: None,
+                deadline: Deadline::after(Duration::from_secs(30)),
+            };
             let outcome = handle.act(prepared, step, &input, Authority::Read).await?;
             let absent = matches!(outcome, StepOutcome::Absent(_));
             outcomes.push(outcome);
@@ -270,11 +230,13 @@ impl Scene {
         let mut outcomes = Vec::new();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30))).for_record(
-                granted.record,
-                Some(&granted.key),
-                Some(&granted.stamp),
-            );
+            let input = StepInput {
+                args: &args,
+                record: Some(granted.record),
+                key: Some(&granted.key),
+                stamp: Some(&granted.stamp),
+                deadline: Deadline::after(Duration::from_secs(30)),
+            };
             let authority = if step.commits {
                 Authority::Write(&granted.token)
             } else {

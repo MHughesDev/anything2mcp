@@ -1,6 +1,6 @@
 operation: example_stock_remove
 title: Remove an item from the stock
-effect: irreversible
+effect: write
 key: item_code
 commit_points: 1
 inputs:

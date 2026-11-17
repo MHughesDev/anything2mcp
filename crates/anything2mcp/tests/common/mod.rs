@@ -32,9 +32,6 @@ use anything2mcp::cli::{Finished, run_on};
 use anything2mcp::{Engine, EngineOptions};
 use serde_json::Value as Json;
 
-/// The setting `engine.in_process` as a variable of the environment.
-pub const IN_PROCESS_VARIABLE: &str = "A2M_ENGINE__IN_PROCESS";
-
 /// The operating-system user of every test.
 pub const USER: &str = "pat";
 
@@ -263,9 +260,6 @@ impl Machine {
             .current_dir(self.project.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
             .envs(self.environment())
-            // A command runs the engine inside itself, as before start on
-            // demand: a test that wants an engine started removes this.
-            .env(IN_PROCESS_VARIABLE, "true")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

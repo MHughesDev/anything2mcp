@@ -449,6 +449,13 @@ impl Group {
         ok != 0
     }
 
+    /// Ends every process in the job, without waiting for the child.
+    /// Returns false when it could not. The job's answer is final, so
+    /// nothing is waited for, unlike on Linux and macOS, where it may wait.
+    pub(crate) async fn end(&self) -> bool {
+        self.kill()
+    }
+
     /// Whether the child has exited.
     pub(crate) fn exited(&self) -> bool {
         match self.child.try_lock() {

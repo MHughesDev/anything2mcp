@@ -128,11 +128,6 @@ statements:
     params: [{name: shipment_id, type: integer}]
     returns: one_or_none
     time_limit: 2s
-  shipment_read_back:
-    effect: read
-    form: table
-    record: shipment
-    time_limit: 2s
   shipment_insert:
     effect: write
     form: table

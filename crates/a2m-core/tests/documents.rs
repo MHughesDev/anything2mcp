@@ -8,7 +8,7 @@ use a2m_core::{
     Archetype, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
     EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, IdentityStrategy,
     LimitationCode, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
-    SubsystemMove, SubsystemState, TestKind, WriteEvidence,
+    SubsystemMove, SubsystemState, TestKind,
 };
 
 /// Reads a document from the repository's `docs` folder.
@@ -62,12 +62,6 @@ fn code_words(text: &str) -> Vec<String> {
         .step_by(2)
         .map(str::to_owned)
         .collect()
-}
-
-#[test]
-fn write_evidence_is_the_list_in_the_ledger_section() {
-    let spec = document("spec/2-kernel/208-runs-the-ledger-and-resume.md");
-    assert_eq!(column(&spec, "| Evidence |", 0), WriteEvidence::NAMES);
 }
 
 #[test]
@@ -418,7 +412,6 @@ fn every_vocabulary_reads_back_what_it_writes() {
     round_trip(Coverage::ALL, Coverage::NAMES);
     round_trip(EffectClass::ALL, EffectClass::NAMES);
     round_trip(EvidenceLevel::ALL, EvidenceLevel::NAMES);
-    round_trip(WriteEvidence::ALL, WriteEvidence::NAMES);
     round_trip(FailureClass::ALL, FailureClass::NAMES);
     round_trip(Hazard::ALL, Hazard::NAMES);
     round_trip(LimitationCode::ALL, LimitationCode::NAMES);

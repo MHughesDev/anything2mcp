@@ -39,7 +39,7 @@ impl TypeEnv {
     pub fn declare(&mut self, name: &str, ty: ValueType) -> Result<(), ExprError>;
     pub fn declare_unknown(&mut self, name: &str) -> Result<(), ExprError>;   // a draft's name, type not stated yet
 }
-pub mod names { INPUT, RESULT, ROW, SOURCE, STEPS, ENV, CURRENT, RECORD }   // the file formats' names, as constants; CURRENT and RECORD in a binding's steps (decision 0161)
+pub mod names { INPUT, RESULT, ROW, SOURCE, STEPS, ENV }   // the file formats' names, as constants
 
 /// Checks and compiles one expression. `expected` is the type the place requires, when it has one.
 pub fn compile(source: &str, env: &TypeEnv, expected: Option<&ValueType>) -> Result<Compiled, ExprError>;

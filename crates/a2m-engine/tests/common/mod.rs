@@ -30,8 +30,8 @@ use a2m_core::{
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
-    Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, KeptCapture, LeaseClock, Parallelism,
-    Preview, RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
+    Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview,
+    RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
 };
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, Whitespace};
 use a2m_ledger::{
@@ -135,7 +135,7 @@ kind = "pack"
 name = "app_json"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
 rank = 40
 session_reads = 4
 
@@ -143,7 +143,7 @@ session_reads = 4
 name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item"]
 rank = 50
 session_reads = 4
 
@@ -208,14 +208,6 @@ code = "example_gone"
 class = "busy"
 code = "example_busy"
 
-[[failure_codes]]
-class = "transient"
-code = "example_not_covered"
-
-[[failure_codes]]
-class = "unknown_variant"
-code = "example_nothing_recorded"
-
 [effects]
 network = "surfaces"
 sessions = ["json_app"]
@@ -271,21 +263,6 @@ pub struct Hooks {
     pub late_gate: tokio::sync::Notify,
     /// The detached save, to wait for its end.
     pub late: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// A read of an order says how it was done, and captures the answer.
-    pub tells_acting: AtomicBool,
-    /// What the system says with each failure it answers with.
-    pub says: Mutex<Option<String>>,
-    /// The project folder and the destinations each `prepare` was given.
-    pub prepared_with: Mutex<Vec<(Option<PathBuf>, Vec<String>)>>,
-    /// How many orders were read, for what a read measures.
-    pub reads: AtomicU64,
-    /// A step of this kind returns, beside what it observed, a capture
-    /// named `screen`, of `text/plain`, that holds this text.
-    pub captures_with: Mutex<Option<(String, String)>>,
-    /// What every `taken` look answers while it is set, whatever is
-    /// stored: `absent`, or `nothing`, a look that did not cover what it
-    /// looked in.
-    pub taken_answer: Mutex<Option<&'static str>>,
 }
 
 /// What one step was given.
@@ -297,8 +274,6 @@ pub struct Given {
     pub stamp: Option<String>,
     /// The address the driver was prepared for.
     pub address: String,
-    /// What the record's earlier steps recorded, as the handle handed it.
-    pub recorded: Values,
 }
 
 impl Hooks {
@@ -491,8 +466,30 @@ impl AppDriver {
     }
 }
 
-impl AppDriver {
-    fn act_inner<'a>(
+impl Driver for AppDriver {
+    fn prepare<'a>(
+        &'a self,
+        cx: &'a PrepareContext<'a>,
+        _lease: Option<&'a SessionLease>,
+    ) -> BoxFuture<'a, Result<Prepared, StepFailure>> {
+        Box::pin(async move {
+            self.hooks
+                .postures
+                .lock()
+                .unwrap()
+                .push(format!("{:?}", cx.posture));
+            if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            Ok(Prepared::new(AppState {
+                base: cx.surface.surface.address.clone(),
+                http: reqwest::Client::new(),
+                posture: cx.posture,
+            }))
+        })
+    }
+
+    fn act<'a>(
         &'a self,
         prepared: &'a mut Prepared,
         step: &'a Step,
@@ -506,10 +503,7 @@ impl AppDriver {
                 .lock()
                 .unwrap()
                 .push((self.mode.to_string(), step.kind.to_string()));
-            let recorded = prepared.recorded().clone();
-            let recorded_code = recorded.get("item_code").cloned();
             hooks.given.lock().unwrap().push(Given {
-                recorded,
                 kind: step.kind.to_string(),
                 args: input.args.clone(),
                 key: input.key.cloned(),
@@ -570,35 +564,12 @@ impl AppDriver {
                         )));
                     }
                     let lines = body["items"].as_array().map_or(0, Vec::len);
-                    let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
-                    let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
-                        vec![
-                            a2m_provider::Capture::acting(&a2m_telemetry::Acting {
-                                means: vec![
-                                    a2m_telemetry::Detail::new("step", "get_order"),
-                                    a2m_telemetry::Detail::new("path", "/api/orders/{order}"),
-                                ],
-                                measured: vec![a2m_telemetry::Detail::new(
-                                    "read",
-                                    read.to_string(),
-                                )],
-                            }),
-                            a2m_provider::Capture {
-                                name: "response".to_owned(),
-                                media_type: "application/json".to_owned(),
-                                bytes: body.to_string().into_bytes(),
-                            },
-                        ]
-                    } else {
-                        Vec::new()
-                    };
                     Ok(StepOutcome::Done(Observed {
                         values: Values::new()
                             .with("order_id", body["order_id"].as_str().unwrap_or_default())
                             .with("customer", body["customer"].as_str().unwrap_or_default())
                             .with("status", body["status"].as_str().unwrap_or_default())
                             .with("lines", i64::try_from(lines).unwrap_or(0)),
-                        captures,
                         ..Observed::default()
                     }))
                 }
@@ -644,47 +615,6 @@ impl AppDriver {
                             FailureClass::UnknownVariant,
                             "example_unexpected",
                             "The application answered a read in a way no rule covers.",
-                        ))),
-                    }
-                }
-                // A look for a record of no identity, by the code its earlier
-                // step recorded: found, absent, or a look that did not
-                // cover the order.
-                "taken" => {
-                    let order = text(args, "order_id")?;
-                    let code = match &recorded_code {
-                        Some(Value::Text(code)) => code.clone(),
-                        _ => {
-                            return Err(StepFailure::not_sent(failure(
-                                FailureClass::UnknownVariant,
-                                "example_nothing_recorded",
-                                "The look was handed no recorded code.",
-                            )));
-                        }
-                    };
-                    match *hooks.taken_answer.lock().unwrap() {
-                        Some("absent") => return Ok(StepOutcome::Absent(Observed::default())),
-                        Some(_) => {
-                            return Err(StepFailure::answered(failure(
-                                FailureClass::Transient,
-                                "example_not_covered",
-                                "The look did not cover the order.",
-                            )));
-                        }
-                        None => {}
-                    }
-                    let path = format!("/api/orders/{order}/items/{code}");
-                    let (status, body) = self.get(state, &path).await?;
-                    match status {
-                        200 => Ok(StepOutcome::Done(Observed {
-                            values: item_values(&body),
-                            ..Observed::default()
-                        })),
-                        404 => Ok(StepOutcome::Absent(Observed::default())),
-                        _ => Err(StepFailure::answered(failure(
-                            FailureClass::UnknownVariant,
-                            "example_unexpected",
-                            "The application answered a look in a way no rule covers.",
                         ))),
                     }
                 }
@@ -906,64 +836,6 @@ impl AppDriver {
                     code,
                     "The driver did not accept the answer to a step it had sent.",
                 ))),
-                (done, _) => done,
-            }
-        })
-    }
-}
-
-impl Driver for AppDriver {
-    fn prepare<'a>(
-        &'a self,
-        cx: &'a PrepareContext<'a>,
-        _lease: Option<&'a SessionLease>,
-    ) -> BoxFuture<'a, Result<Prepared, StepFailure>> {
-        Box::pin(async move {
-            self.hooks
-                .postures
-                .lock()
-                .unwrap()
-                .push(format!("{:?}", cx.posture));
-            self.hooks.prepared_with.lock().unwrap().push((
-                cx.paths
-                    .project()
-                    .map(|project| project.as_path().to_path_buf()),
-                cx.destinations.iter().map(str::to_owned).collect(),
-            ));
-            if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
-                std::future::pending::<()>().await;
-            }
-            Ok(Prepared::new(AppState {
-                base: cx.surface.surface.address.clone(),
-                http: reqwest::Client::new(),
-                posture: cx.posture,
-            }))
-        })
-    }
-
-    fn act<'a>(
-        &'a self,
-        prepared: &'a mut Prepared,
-        step: &'a Step,
-        input: &'a StepInput<'a>,
-    ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
-        Box::pin(async move {
-            let mut done = self.act_inner(prepared, step, input).await;
-            let planted = self.hooks.captures_with.lock().unwrap().clone();
-            if let (Ok(StepOutcome::Done(observed)), Some((kind, text))) = (&mut done, planted)
-                && kind == step.kind.as_str()
-            {
-                observed.captures.push(a2m_provider::Capture {
-                    name: "screen".to_owned(),
-                    media_type: "text/plain".to_owned(),
-                    bytes: text.into_bytes(),
-                });
-            }
-            // What the system says with a failure it answered with.
-            match (done, self.hooks.says.lock().unwrap().clone()) {
-                (Err(failure), Some(said)) if failure.sent == a2m_provider::Sent::Answered => {
-                    Err(failure.with_said(said))
-                }
                 (done, _) => done,
             }
         })
@@ -1393,7 +1265,7 @@ pub fn plan(address: &str) -> Plan {
         read_back,
         lookup: Vec::new(),
         settle_ms: 0,
-        evidence: a2m_core::WriteEvidence::ReadBack,
+        prefer_response: false,
         precondition: None,
     };
     let order_outputs = || {
@@ -1891,51 +1763,6 @@ pub fn plan(address: &str) -> Plan {
     plan
 }
 
-/// The plan changed so that the create whose code a step hands out before
-/// the save is a record of no identity: it is found again only by the code
-/// its earlier step recorded, through a read-back that looks for it
-/// (`taken`), as a take from a queue is by the message id it recorded. A
-/// write of no identity is irreversible.
-pub fn keyless_slot_add(plan: &mut Plan) {
-    for operation in &mut plan.operations {
-        if operation.name.as_str() == SLOT_ADD {
-            // A record that cannot be found by a key is written only by an
-            // irreversible operation.
-            operation.effect = EffectClass::Irreversible;
-            operation.identity = IdentityPlan {
-                strategy: IdentityStrategy::None,
-                key: Vec::new(),
-            };
-            for binding in &mut operation.bindings {
-                let order_id = binding.read_back[0].args[0].value;
-                binding.read_back = vec![step("taken", &[("order_id", order_id)], false, true)];
-                binding.lookup = Vec::new();
-            }
-        }
-    }
-}
-
-/// The plan changed so that the upsert is irreversible and its only
-/// evidence is the system's acknowledgement (`acknowledged`): nothing is
-/// read back after its save. Every pipeline, which enters line items
-/// through it, becomes irreversible too, and no tool is read only.
-pub fn acknowledged_upsert(plan: &mut Plan) {
-    for operation in &mut plan.operations {
-        if operation.name.as_str() == ITEM_UPSERT {
-            operation.effect = EffectClass::Irreversible;
-            for binding in &mut operation.bindings {
-                binding.evidence = a2m_core::WriteEvidence::Acknowledged;
-            }
-        }
-    }
-    for pipeline in &mut plan.pipelines {
-        pipeline.effect = EffectClass::Irreversible;
-    }
-    for tool in &mut plan.tools {
-        tool.annotations.read_only = false;
-    }
-}
-
 // ---- the control plane: a real store behind `Control` ----
 
 /// What a test can make the control plane do.
@@ -1990,15 +1817,6 @@ pub struct StoreControl {
     pub before_commit: Mutex<Vec<(RecordRef, BlobRef)>>,
     /// Every piece of evidence the engine handed over, as it was given.
     pub evidence_given: Mutex<Vec<Vec<u8>>>,
-    /// Whether the control plane keeps captures, and those it kept.
-    pub keeps_captures: AtomicBool,
-    pub captures: Mutex<Vec<(KeptCapture, BlobRef)>>,
-    /// Whether the control plane ends a record on the system's
-    /// acknowledgement, and the records it ended so.
-    pub keeps_acknowledgements: AtomicBool,
-    pub acknowledged: Mutex<Vec<RecordRef>>,
-    /// The project folder of the request that started the run.
-    pub project: Mutex<Option<PathBuf>>,
 }
 
 /// Starts the clock of the runtime again when a call that hangs is given
@@ -2419,55 +2237,6 @@ impl Control for StoreControl {
                 .await
         })
     }
-
-    fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
-        Box::pin(async move {
-            if !self.keeps_captures.load(Ordering::SeqCst) {
-                return Err(failure(
-                    FailureClass::Busy,
-                    "capture_not_kept",
-                    "No capture is kept.",
-                ));
-            }
-            self.hooks.note(format!("capture:{}", capture.name));
-            let blob = self
-                .store
-                .blobs()
-                .put(NewBlob {
-                    workspace: workspace(),
-                    owner: OwnerRef::service("engine-test")?,
-                    kind: a2m_ledger::BlobKind::Snapshot,
-                    class: RetentionClass::Short,
-                    plain: capture.bytes.clone(),
-                })
-                .await?;
-            self.captures.lock().unwrap().push((capture, blob));
-            Ok(blob)
-        })
-    }
-
-    fn acknowledged<'a>(
-        &'a self,
-        token: &'a ActedToken,
-        _evidence: Option<BlobRef>,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(async move {
-            if !self.keeps_acknowledgements.load(Ordering::SeqCst) {
-                return Err(failure(
-                    FailureClass::Busy,
-                    "acknowledgement_not_kept",
-                    "No acknowledgement is kept.",
-                ));
-            }
-            self.hooks.note("acknowledged");
-            self.acknowledged.lock().unwrap().push(token.record());
-            Ok(())
-        })
-    }
-
-    fn project_folder(&self) -> Option<PathBuf> {
-        self.project.lock().unwrap().clone()
-    }
 }
 
 // ---- the engine's caller ----
@@ -2627,11 +2396,6 @@ impl Scene {
             sent: AtomicBool::new(false),
             before_commit: Mutex::new(Vec::new()),
             evidence_given: Mutex::new(Vec::new()),
-            keeps_captures: AtomicBool::new(false),
-            captures: Mutex::new(Vec::new()),
-            keeps_acknowledgements: AtomicBool::new(false),
-            acknowledged: Mutex::new(Vec::new()),
-            project: Mutex::new(None),
         });
         Self {
             app,
@@ -2780,7 +2544,6 @@ impl Scene {
                     .find(|(held, _)| *held == record.record)
                     .map(|(_, mode)| mode.clone()),
                 failure: record.failure.clone(),
-                acknowledged: record.acknowledged(),
             });
         }
         Some(RunSnapshot {

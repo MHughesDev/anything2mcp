@@ -14,12 +14,7 @@ use crate::codes;
 /// The name a step's expression reads for the record's current values: what
 /// the system held when the engine last read the record, as the driver gave
 /// it, or null when the record does not exist.
-pub const CURRENT: &str = names::CURRENT;
-
-/// The name a step's expression reads for the record's key in the system:
-/// `record.key`, its parts as text, or null while it has none. Never the
-/// engine's own name for the record in the run.
-pub const RECORD: &str = names::RECORD;
+pub const CURRENT: &str = "current";
 
 pub(crate) struct Loaded {
     pub plan: Arc<Plan>,
@@ -78,8 +73,7 @@ impl Loaded {
             .with(names::SOURCE, &scope.source)
             .with(names::STEPS, &scope.steps)
             .with(names::ENV, &scope.env)
-            .with(CURRENT, &scope.current)
-            .with(RECORD, &scope.record);
+            .with(CURRENT, &scope.current);
         program.evaluate(&bindings)
     }
 
@@ -194,7 +188,6 @@ pub(crate) struct Scope {
     pub steps: Value,
     pub env: Value,
     pub current: Value,
-    pub record: Value,
 }
 
 impl Scope {
@@ -207,7 +200,6 @@ impl Scope {
             steps: Value::Record(Values::new()),
             env,
             current: Value::Null,
-            record: Value::Null,
         }
     }
 
@@ -216,35 +208,6 @@ impl Scope {
         scope.input = Value::Record(input.clone());
         scope.result = Value::Record(Values::new());
         scope.current = Value::Null;
-        scope.record = Value::Null;
         scope
-    }
-
-    /// The value of `record` for a record with this key in the system.
-    pub fn record_of(key: Option<&a2m_core::RecordKey>) -> Value {
-        let Some(key) = key else {
-            return Value::Null;
-        };
-        let parts = key
-            .parts()
-            .iter()
-            .map(|part| {
-                Value::Text(match part {
-                    Value::Text(text) => text.clone(),
-                    Value::Int(number) => number.to_string(),
-                    Value::Decimal(number) => number.to_string(),
-                    Value::Date(date) => date.to_string(),
-                    Value::Bool(flag) => flag.to_string(),
-                    Value::Instant(moment) => moment.as_unix_millis().to_string(),
-                    Value::Duration(length) => length.get().to_string(),
-                    other => {
-                        let mut bytes = Vec::new();
-                        other.write_canonical(&mut bytes);
-                        String::from_utf8_lossy(&bytes).into_owned()
-                    }
-                })
-            })
-            .collect();
-        Value::Record(Values::new().with("key", Value::List(parts)))
     }
 }

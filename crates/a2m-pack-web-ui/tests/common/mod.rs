@@ -411,10 +411,12 @@ impl Scene {
         let mut ran = Ran::default();
         for step in steps {
             let args = self.args(step, inputs);
-            let input = StepInput::new(&args, Deadline::after(Duration::from_secs(60)));
-            let input = match write {
-                Some((_, record, key)) => input.for_record(record, Some(key), None),
-                None => input,
+            let input = StepInput {
+                args: &args,
+                record: write.map(|(_, record, _)| record),
+                key: write.map(|(_, _, key)| key),
+                stamp: None,
+                deadline: Deadline::after(Duration::from_secs(60)),
             };
             let authority = match write {
                 Some((token, _, _)) if step.commits => Authority::Write(token),

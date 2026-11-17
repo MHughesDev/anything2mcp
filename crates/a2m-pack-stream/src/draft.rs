@@ -361,9 +361,9 @@ mod tests {
         fn draft(
             &self,
             _finding: &Finding,
-            cx: &DraftContext<'_>,
+            _cx: &DraftContext<'_>,
         ) -> Result<Vec<DraftDoc>, Failure> {
-            let channel = |file: &str, ownership: DraftValue| -> Result<DraftDoc, Failure> {
+            let channel = |file: &str, ownership: &str| -> Result<DraftDoc, Failure> {
                 Ok(DraftDoc {
                     path: RelPath::new(&format!("channels/{file}.yaml"))?,
                     body: DraftValue::map(vec![
@@ -371,26 +371,19 @@ mod tests {
                         ("address", DraftValue::text("orders.work")),
                         ("shape", DraftValue::text("queue")),
                         ("role", DraftValue::text("events")),
-                        ("ownership", ownership),
+                        ("ownership", DraftValue::text(ownership)),
                     ]),
                 })
             };
             Ok(vec![
-                channel("tries_a_take", DraftValue::text("runtime_owned"))?,
-                channel("only_looks", DraftValue::text("shared"))?,
-                // A question about who owns the queue is a question about
-                // whether a take may remove from it: it counts as a write
-                // (decision 0161, point 10).
-                channel(
-                    "asks_who_owns",
-                    cx.open_question("Does the runtime own this queue?"),
-                )?,
+                channel("tries_a_take", "runtime_owned")?,
+                channel("only_looks", "shared")?,
             ])
         }
     }
 
     #[test]
-    fn a_drafting_rule_that_drafts_a_channel_the_runtime_owns_or_may_own_is_refused() {
+    fn a_drafting_rule_that_drafts_a_channel_the_runtime_owns_is_refused() {
         let names = Names::new().unwrap();
         let mut builder = CompilerSet::builder();
         builder
@@ -431,13 +424,9 @@ mod tests {
             .map(|(path, _)| path.as_str())
             .collect();
         let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
-        let exists = root.join("channels").join("tries_a_take.yaml").exists()
-            || root.join("channels").join("asks_who_owns.yaml").exists();
+        let exists = root.join("channels").join("tries_a_take.yaml").exists();
         let _ = std::fs::remove_dir_all(&root);
-        assert_eq!(
-            refused,
-            ["channels/tries_a_take.yaml", "channels/asks_who_owns.yaml"]
-        );
+        assert_eq!(refused, ["channels/tries_a_take.yaml"]);
         assert_eq!(written, ["channels/only_looks.yaml"]);
         assert!(!exists);
     }

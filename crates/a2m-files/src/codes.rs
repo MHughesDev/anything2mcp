@@ -83,7 +83,6 @@ kernel_codes! {
     TOOL_INDISTINGUISHABLE = "tool_indistinguishable": "No two tools have the same description and the same inputs.",
     // Stage 9: emit.
     PLAN_NOT_ENCODABLE = "plan_not_encodable": "The plan holds together and encodes.",
-    DRAFT_UNDER_RELEASE_VERSION = "draft_under_release_version": "A draft is compiled under the draft version, so that it never has a published plan's bytes.",
 }
 
 /// The lint code for one of the constants above, each of which is checked

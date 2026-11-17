@@ -10,66 +10,11 @@
 //! Every method here blocks. The driver calls them on a blocking thread and
 //! never on an async one.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "postgres")]
-use a2m_core::Secret;
-
 use crate::model::{Access, Isolation};
-use crate::shape::Dialect;
-
-/// Where a store is: a file, or a server.
-#[derive(Clone)]
-pub(crate) enum StoreAt {
-    /// The embedded store's file, by an absolute path a checked path gave.
-    File(PathBuf),
-    /// A server store.
-    #[cfg(feature = "postgres")]
-    Server(ServerAt),
-}
-
-impl std::fmt::Debug for StoreAt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::File(path) => f.debug_tuple("File").field(path).finish(),
-            #[cfg(feature = "postgres")]
-            Self::Server(server) => f.debug_tuple("Server").field(server).finish(),
-        }
-    }
-}
-
-/// A server store: where it listens, which database and schema, and the
-/// identity the session keeper's lease gave. The password cannot be printed.
-#[cfg(feature = "postgres")]
-#[derive(Clone)]
-pub(crate) struct ServerAt {
-    /// An IP address on the loopback range, as the surface states it.
-    pub host: std::net::IpAddr,
-    /// The port.
-    pub port: u16,
-    /// The database's name.
-    pub database: String,
-    /// The one schema statements are read in.
-    pub schema: String,
-    /// The role the lease signs in as.
-    pub user: String,
-    /// Its password, from the lease.
-    pub password: Arc<Secret>,
-}
-
-#[cfg(feature = "postgres")]
-impl std::fmt::Debug for ServerAt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServerAt")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("database", &self.database)
-            .field("schema", &self.schema)
-            .finish_non_exhaustive()
-    }
-}
 
 /// A value bound to one parameter of a statement. A decimal, a date, and a
 /// moment are bound as their exact text.
@@ -96,10 +41,6 @@ pub(crate) enum Cell {
     Float,
     /// Bytes. Their content is not kept: no rule reads them.
     Bytes,
-    /// A value of a type the pack has no rule for, such as a moment with no
-    /// zone. Its content is not kept.
-    #[cfg(feature = "postgres")]
-    Unsupported,
 }
 
 /// What the store reports about a statement it prepared and did not run.
@@ -110,9 +51,7 @@ pub(crate) struct Shape {
     /// The names of its result columns, in order.
     pub columns: Vec<String>,
     /// Whether the store says the statement changes nothing it stores.
-    /// `None` when the store cannot say before it runs a statement; the
-    /// read-only transaction then refuses one that writes.
-    pub reads_only: Option<bool>,
+    pub reads_only: bool,
 }
 
 /// What running a statement gave.
@@ -144,21 +83,15 @@ pub(crate) struct RunLimits {
 }
 
 /// What a store's error means, in the pack's own words. The store's own
-/// text is never kept, because it may quote a row; the one thing kept of it
-/// is the name of the constraint it broke, which names schema and no row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// text is never kept: it may quote a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// Another connection held a lock for the whole wait.
     Locked,
     /// The statement was interrupted at its time limit.
     TimedOut,
-    /// A constraint refused the write: which kind, as a word of the pack's,
-    /// and, when the store names it, the constraint's name, with its table
-    /// and column. Never a value.
-    Constraint {
-        kind: &'static str,
-        named: Option<String>,
-    },
+    /// A constraint refused the write; which kind, as a word of the pack's.
+    Constraint(&'static str),
     /// The connection may not write, and the statement tried to.
     ReadOnly,
     /// The store denied the identity a right.
@@ -176,17 +109,12 @@ pub(crate) enum Refusal {
     /// The store did not take the setting that makes the connection safe to
     /// use: read-only for a reader, enforced keys for a writer.
     NotGuarded,
-    /// The identity is a superuser, bypasses row security, may replicate or
-    /// make roles, or owns tables of the schema: the store's own rights are
-    /// then no bar.
-    #[cfg(feature = "postgres")]
-    TooPowerful,
     /// An error with no rule; the store's primary result code.
     Other(i32),
 }
 
 /// How a `commit` failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommitFailed {
     /// The store said it did not commit. Nothing landed.
     NotCommitted(Refusal),
@@ -246,12 +174,6 @@ pub(crate) struct TableInfo {
     pub foreign_keys: Vec<ForeignKey>,
     /// The names of the triggers on it.
     pub triggers: Vec<String>,
-    /// The names of the rules that rewrite a write to it. Empty for a store
-    /// that has none.
-    pub rules: Vec<String>,
-    /// The columns whose value the store computes from the row's others.
-    /// Empty for a store that does not report them.
-    pub generated: Vec<String>,
 }
 
 /// The store's catalog, as far as it was read.
@@ -293,7 +215,7 @@ impl Catalog {
             .tables
             .iter()
             .find(|info| same_name(&info.name, table))
-            .map(|info| info.triggers.len() + info.rules.len() + info.generated.len())
+            .map(|info| info.triggers.len())
             .ok_or(Unseen::NoTable)?;
         let cascades = self
             .tables
@@ -344,25 +266,6 @@ pub(crate) trait Conn: Send {
 
     /// What stops the statement this connection is running.
     fn interrupter(&self) -> Interrupter;
-
-    /// How a write to `table` reaches beyond the rows it names: what fires on
-    /// it (triggers, rules, computed columns) and the keys that cascade from
-    /// it. The embedded store reads its catalog of at most `tables` tables;
-    /// a server store asks about the one table.
-    fn reach(
-        &mut self,
-        table: &str,
-        tables: usize,
-    ) -> Result<Result<(usize, usize), Unseen>, Refusal> {
-        Ok(self.catalog(tables)?.reach(table))
-    }
-
-    /// Whether the connection can still be used, as far as it knows without
-    /// asking the store.
-    #[cfg(feature = "postgres")]
-    fn usable(&self) -> bool {
-        true
-    }
 }
 
 /// One kind of store: its name, its quoting rule, and how it is opened.
@@ -374,43 +277,23 @@ pub(crate) trait Opener: Send + Sync {
     /// when the dialect cannot quote it.
     fn quote(&self, identifier: &str) -> Option<String>;
 
-    /// The dialect's placeholder for the parameter at `position`, from 1.
-    fn placeholder(&self, position: usize) -> String;
-
-    /// Whose rules of quoting and whose words its statements are read by.
-    fn dialect(&self) -> Dialect;
+    /// The dialect's positional placeholder.
+    fn placeholder(&self) -> &'static str;
 
     /// Whether an insert can return the key the store assigned.
     fn returns_assigned_key(&self) -> bool;
 
-    /// Whether an unused connection is kept for the next run of the same
-    /// surface and session, instead of being closed at release.
-    #[cfg(feature = "postgres")]
-    fn pooled(&self) -> bool {
-        false
-    }
-
-    /// Opens a connection to the store, held to `access` and to its one
-    /// file or its one database, schema, and identity by the store, with
-    /// each setting read back before it is returned.
-    fn open(&self, at: &StoreAt, access: Access) -> Result<Box<dyn Conn>, Refusal>;
+    /// Opens a connection to the store's file, held to `access` and to that
+    /// one file by the store, with each setting read back before it is
+    /// returned.
+    fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal>;
 }
 
-/// The stores this build speaks to, by name.
+/// The stores this build speaks to, by name. Server stores are not built.
 pub(crate) fn opener(store: &str) -> Option<Arc<dyn Opener>> {
-    if store == crate::sqlite::Sqlite.store() {
-        return Some(Arc::new(crate::sqlite::Sqlite));
-    }
-    #[cfg(feature = "postgres")]
-    if store == crate::postgres::Postgres.store() {
-        return Some(Arc::new(crate::postgres::Postgres));
-    }
-    None
+    (store == crate::sqlite::Sqlite.store())
+        .then(|| Arc::new(crate::sqlite::Sqlite) as Arc<dyn Opener>)
 }
 
-/// The names of the stores in a file this build speaks to.
+/// The names of the stores this build speaks to.
 pub(crate) const STORES: &[&str] = &["sqlite"];
-
-/// The names of the server stores this build speaks to.
-#[cfg(feature = "postgres")]
-pub(crate) const SERVER_STORES: &[&str] = &["postgres"];

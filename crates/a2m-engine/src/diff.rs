@@ -3,7 +3,7 @@
 
 use a2m_core::{
     CanonicalJson, Digest, Environment, Failure, FieldHasher, Identity, OperationName, RecordKey,
-    TargetName, Value, WriteEvidence,
+    TargetName, Value,
 };
 use serde::{Deserialize, Serialize};
 
@@ -63,30 +63,6 @@ pub struct DiffRecord {
     pub action: DiffAction,
     /// Its fields, in the record's declared order.
     pub fields: Vec<DiffField>,
-    /// What will stand as the evidence that its write landed. A record
-    /// whose write is `acknowledged` is accepted by the system and not read
-    /// back, and the diff a person approves says so. In the hash only when
-    /// it is not `read_back`, so a diff of before this field hashes the
-    /// same.
-    #[serde(default, skip_serializing_if = "reads_back")]
-    pub evidence: WriteEvidence,
-}
-
-#[allow(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "the form serde's `skip_serializing_if` calls"
-)]
-fn reads_back(evidence: &WriteEvidence) -> bool {
-    *evidence == WriteEvidence::ReadBack
-}
-
-impl DiffRecord {
-    /// Whether the record's write is accepted by the system and not read
-    /// back: what a person who approves the diff is told of it.
-    #[must_use]
-    pub fn not_read_back(&self) -> bool {
-        self.evidence == WriteEvidence::Acknowledged
-    }
 }
 
 /// How many records a diff would create, update, and leave alone.
@@ -190,9 +166,6 @@ impl Diff {
             hasher.field("key", &key);
             hasher.field("operation", record.operation.as_str().as_bytes());
             hasher.field("action", record.action.as_str().as_bytes());
-            if record.evidence != WriteEvidence::ReadBack {
-                hasher.field("evidence", record.evidence.as_str().as_bytes());
-            }
             let mut fields: Vec<&DiffField> = record.fields.iter().collect();
             fields.sort_by(|left, right| left.name.cmp(&right.name));
             hasher.field("fields", &(fields.len() as u64).to_le_bytes());

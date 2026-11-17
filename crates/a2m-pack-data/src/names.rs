@@ -8,25 +8,8 @@ pub(crate) const PACK: &str = "data";
 /// The pack's version, as its manifest states it.
 pub(crate) const PACK_VERSION: &str = "0.0.1";
 
-/// The surface kind of a store in a file.
+/// The surface kind the pack serves.
 pub(crate) const DATABASE: SurfaceKind = SurfaceKind::fixed("database");
-/// The surface kind of a store on a server.
-#[cfg(feature = "postgres")]
-pub(crate) const DATABASE_SERVER: SurfaceKind = SurfaceKind::fixed("database_server");
-
-/// The surface kinds the pack serves in this build.
-pub(crate) fn surface_kinds() -> Vec<SurfaceKind> {
-    vec![
-        DATABASE,
-        #[cfg(feature = "postgres")]
-        DATABASE_SERVER,
-    ]
-}
-
-/// Whether a surface kind is one the pack serves in this build.
-pub(crate) fn is_database(kind: &SurfaceKind) -> bool {
-    surface_kinds().contains(kind)
-}
 /// The file kind the pack owns.
 pub(crate) const STATEMENT: FileKindName = FileKindName::fixed("statement");
 /// The folder of the file kind.
@@ -143,28 +126,6 @@ pub mod codes {
 
     /// The class of [`CONNECTION_LOST`] and [`TIMEOUT`].
     pub const TRANSIENT: FailureClass = FailureClass::Transient;
-
-    /// The server store is not on this machine, and this build makes no
-    /// encrypted link to one: no unencrypted link is ever made.
-    #[cfg(feature = "postgres")]
-    pub const LINK_NOT_ENCRYPTED: FailureCode = FailureCode::fixed("link_not_encrypted");
-    /// The identity the lease signs in as is a superuser, bypasses row
-    /// security, may replicate or make roles, or owns tables of the schema.
-    #[cfg(feature = "postgres")]
-    pub const IDENTITY_IS_ADMINISTRATOR: FailureCode =
-        FailureCode::fixed("identity_is_administrator");
-    /// The session's credential is not a user and a password, which is all a
-    /// server store is signed in with.
-    #[cfg(feature = "postgres")]
-    pub const CREDENTIAL_NOT_CARRIED: FailureCode = FailureCode::fixed("credential_not_carried");
-
-    /// The codes only a build with the server store returns, with their class.
-    #[cfg(feature = "postgres")]
-    pub const SERVER: &[(FailureClass, &str)] = &[
-        (FailureClass::Policy, "link_not_encrypted"),
-        (FailureClass::Policy, "identity_is_administrator"),
-        (FailureClass::Input, "credential_not_carried"),
-    ];
 }
 
 /// The lint codes the pack reports.

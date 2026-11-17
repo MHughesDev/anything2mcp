@@ -43,12 +43,6 @@ pub(crate) const STEP_PUBLISH: StepKind = StepKind::fixed("publish");
 pub(crate) const STEP_ACKNOWLEDGE: StepKind = StepKind::fixed("acknowledge");
 /// Looks through a log for the message that carries the record's token.
 pub(crate) const STEP_SCAN: StepKind = StepKind::fixed("scan");
-/// Reads where a log ends, before a publish to it, and gives that place
-/// for reconcile: a scan for the record's token starts there.
-pub(crate) const STEP_POSITION: StepKind = StepKind::fixed("position");
-/// Looks at a queue for the message a take recorded: gone is the record
-/// found, still held is the record absent. Takes nothing.
-pub(crate) const STEP_TAKEN: StepKind = StepKind::fixed("taken");
 /// Lists the channels the broker reports. Sent by the discoverer only.
 pub(crate) const STEP_CHANNELS: StepKind = StepKind::fixed("channels");
 /// Describes one channel. Sent by the discoverer only.

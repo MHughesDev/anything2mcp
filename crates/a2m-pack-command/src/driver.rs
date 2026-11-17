@@ -22,7 +22,6 @@ use a2m_provider::{
     PrepareContext, Prepared, ProgramRef, Ran, RootName, Roots, ScopedSupervisor, StepFailure,
     StepInput, StepOutcome, SubsystemKind, SurfaceRef, current_platform,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::args::{self, Given};
 use crate::codes::{
@@ -486,10 +485,6 @@ impl CliDriver {
         else {
             return absent;
         };
-        let probed = match probe {
-            Probe::Version => "version",
-            Probe::Help { .. } => "help",
-        };
         let elements = match probe {
             Probe::Version => match &program.version {
                 Some(check) => check.args.clone(),
@@ -576,19 +571,8 @@ impl CliDriver {
             // Read from text that was redacted whole.
             values.insert("version", version);
         }
-        let acting = Acting {
-            means: vec![
-                Detail::new("probe", probed),
-                Detail::new("exit", exit_word(&finished.exit)),
-            ],
-            measured: vec![Detail::new(
-                "stdout_bytes",
-                finished.stdout_bytes.to_string(),
-            )],
-        };
         Ok(StepOutcome::Done(Observed {
             values,
-            captures: vec![Capture::acting(&acting)],
             ..Observed::default()
         }))
     }
@@ -692,16 +676,6 @@ impl CliDriver {
             });
         }
         let captures = vec![
-            Capture::acting(&Acting {
-                means: vec![
-                    Detail::new("command", &name),
-                    Detail::new("exit", exit_word(&finished.exit)),
-                ],
-                measured: vec![
-                    Detail::new("stdout_bytes", finished.stdout_bytes.to_string()),
-                    Detail::new("stderr_bytes", finished.stderr_bytes.to_string()),
-                ],
-            }),
             self.capture("stdout", &finished.stdout),
             self.capture("stderr", &finished.stderr),
         ];
@@ -752,11 +726,17 @@ impl CliDriver {
             Exit::Killed => None,
         };
         // What the program said on standard error: redacted, cleaned, and
-        // only then cut. It is untrusted text, carried apart from the
-        // failure's own sentence.
+        // only then cut. It is untrusted text and is marked as such.
         let said = self.said(&stderr);
         let own = |class, code, what: &str, next: &str| {
-            answered(class, code, format!("The command `{name}` {what}."), next).with_said(&said)
+            answered(
+                class,
+                code,
+                format!(
+                    "The command `{name}` {what}. Its own message, which is untrusted text: \"{said}\"."
+                ),
+                next,
+            )
         };
         let done = match meaning {
             Some(ExitMeaning::Ok) => true,
@@ -991,15 +971,6 @@ fn found<'a>(
         .filter(|program| program.surface == session.surface)
         .ok_or_else(|| not_usable("its command belongs to another surface"))?;
     Ok((entry, command, program))
-}
-
-/// How a program ended, as a word for the trace's signature: its status, or
-/// that a signal ended it.
-fn exit_word(exit: &Exit) -> String {
-    match exit {
-        Exit::Code(code) => code.to_string(),
-        Exit::Killed => "signal".to_owned(),
-    }
 }
 
 /// Removes a run's folder: its files, then the folder itself.

@@ -251,8 +251,6 @@ pub enum Behaviour {
     Saw(Observed),
     Absent,
     DoneWithReconcile,
-    /// Done, giving back as its values what the handle set as recorded.
-    EchoRecorded,
     Fail(StepFailure),
 }
 
@@ -288,10 +286,6 @@ impl Driver for StubDriver {
                 Behaviour::Absent => Ok(StepOutcome::Absent(Observed::default())),
                 Behaviour::DoneWithReconcile => Ok(StepOutcome::Done(Observed {
                     for_reconcile: Values::new().with("assigned", "K-1"),
-                    ..Observed::default()
-                })),
-                Behaviour::EchoRecorded => Ok(StepOutcome::Done(Observed {
-                    values: prepared.recorded().clone(),
                     ..Observed::default()
                 })),
                 Behaviour::Fail(failure) => Err(failure),

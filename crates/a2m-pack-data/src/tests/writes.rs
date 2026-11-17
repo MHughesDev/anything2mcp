@@ -1,6 +1,7 @@
 //! Writes against the stand. Each is proven by what the stand stored and by
 //! how many times the row was written, never by the pack's own read alone.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -16,7 +17,6 @@ use crate::model::{Access, Isolation};
 use crate::names::codes;
 use crate::store::{
     Bound, Catalog, CommitFailed, Conn, Interrupter, Opener, Ran, Refusal, RunLimits, Shape,
-    StoreAt,
 };
 
 const LINE: [&str; 2] = ["A-100", "L-101"];
@@ -351,44 +351,6 @@ async fn a_constraint_refuses_a_write_and_nothing_lands() {
 }
 
 #[tokio::test]
-async fn what_the_store_says_of_a_refused_write_is_said_and_never_the_sentence() {
-    let scene = Scene::new();
-    let binding = scene.binding("example_line_item_create");
-    let line = |quantity: i64| {
-        inputs(&[
-            ("order_id", "A-102"),
-            ("item_code", "L-301"),
-            ("description", "Shelf"),
-        ])
-        .with("quantity", quantity)
-        .with("length", decimal("12"))
-        .with("unit_price", decimal("3.00"))
-    };
-    let (mut run, write) = scene.live(&["A-102", "L-301"]).await;
-    // A check constraint: the store names it; no value is in the words.
-    let stopped = run
-        .steps(&binding.act, &line(0), Some(&write))
-        .await
-        .unwrap_err();
-    let said = stopped.failure.said().expect("the store named the check");
-    assert!(said.contains("check constraint failed"), "{said}");
-    assert!(!stopped.failure.message().contains("quantity_in_range"));
-    assert!(!said.contains("A-102") && !said.contains("L-301"), "{said}");
-    // A key already taken: the store names the columns of the key.
-    run.steps(&binding.act, &line(1), Some(&write))
-        .await
-        .unwrap();
-    let twice = run
-        .steps(&binding.act, &line(1), Some(&write))
-        .await
-        .unwrap_err();
-    let said = twice.failure.said().expect("the store named the key");
-    assert!(said.starts_with("unique constraint failed:"), "{said}");
-    assert!(!said.contains("Shelf") && !said.contains("L-301"), "{said}");
-    run.release().await;
-}
-
-#[tokio::test]
 async fn a_delete_removes_one_row_and_its_read_back_finds_it_absent() {
     let scene = Scene::new();
     let binding = scene.binding("example_line_item_delete");
@@ -678,8 +640,13 @@ async fn nothing_is_written_where_nothing_may_be() {
         .unwrap();
     let port = ReadOnlyPort::new(handle, prepared);
     let args = Values::new();
-    let input =
-        a2m_provider::StepInput::new(&args, a2m_provider::Deadline::after(Duration::from_secs(5)));
+    let input = a2m_provider::StepInput {
+        args: &args,
+        record: None,
+        key: None,
+        stamp: None,
+        deadline: a2m_provider::Deadline::after(Duration::from_secs(5)),
+    };
     let refused = port.act(&binding.act[3], &input).await;
     assert_eq!(failed(refused).0, FailureClass::Policy);
     let (handle, prepared) = port.into_parts();
@@ -742,18 +709,15 @@ impl Opener for LossyStore {
     fn quote(&self, identifier: &str) -> Option<String> {
         crate::sqlite::Sqlite.quote(identifier)
     }
-    fn placeholder(&self, position: usize) -> String {
-        crate::sqlite::Sqlite.placeholder(position)
-    }
-    fn dialect(&self) -> crate::shape::Dialect {
-        crate::sqlite::Sqlite.dialect()
+    fn placeholder(&self) -> &'static str {
+        crate::sqlite::Sqlite.placeholder()
     }
     fn returns_assigned_key(&self) -> bool {
         true
     }
-    fn open(&self, at: &StoreAt, access: Access) -> Result<Box<dyn Conn>, Refusal> {
+    fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal> {
         Ok(Box::new(LosesAnswer {
-            inner: crate::sqlite::Sqlite.open(at, access)?,
+            inner: crate::sqlite::Sqlite.open(file, access)?,
             armed: Arc::clone(&self.armed),
         }))
     }
@@ -817,72 +781,6 @@ async fn a_lost_answer_to_a_commit_is_a_possible_commit_and_never_a_second_write
     ));
     run.release().await;
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
-}
-
-#[tokio::test]
-async fn a_key_the_store_assigned_reconciles_a_lost_commit_by_what_was_recorded() {
-    let armed = Arc::new(AtomicBool::new(true));
-    let lossy = Arc::clone(&armed);
-    let pack = crate::DataPack::with_openers(Arc::new(move |_store: &str| {
-        Some(Arc::new(LossyStore {
-            armed: Arc::clone(&lossy),
-        }) as Arc<dyn Opener>)
-    }));
-    let scene = Scene::with(&pack, Arc::new(NoSecrets));
-    let binding = scene.binding("example_shipment_create");
-    let wanted = inputs(&[
-        ("order_id", "A-100"),
-        ("carrier", "Example Carrier"),
-        ("external_ref", "SHIP-0003"),
-    ]);
-    let (mut run, write) = scene.live(&["SHIP-0003"]).await;
-    for step in &binding.act[..3] {
-        run.step(step, &wanted).await.unwrap();
-    }
-    // The key is known before the commit point, and the engine records it.
-    let StepOutcome::Done(fetched) = run.step(&binding.act[3], &wanted).await.unwrap() else {
-        panic!("the insert returned its key");
-    };
-    let recorded = fetched.for_reconcile;
-    assert_eq!(recorded.get("shipment_id"), Some(&Value::Int(2)));
-
-    // The commit lands and its answer is lost.
-    let lost = run
-        .step_with(&binding.act[4], &Values::new(), Some(&write))
-        .await;
-    assert_eq!(
-        failed(lost),
-        (
-            FailureClass::PossibleCommit,
-            contract::NO_CONFIRMATION,
-            Sent::Unknown
-        )
-    );
-    assert_eq!(scene.db.write_count(Table::Shipments, &["2"]).unwrap(), 1);
-    run.release().await;
-
-    // On a resume the read-back is a new connection. It has no key in its
-    // arguments: it asks for the one the record holds.
-    armed.store(false, Ordering::SeqCst);
-    let mut resumed = scene.prepare(Posture::Live).await;
-    assert!(binding.read_back[1].args.is_empty());
-    let unrecorded = resumed.steps(&binding.read_back, &wanted, None).await;
-    assert_eq!(failed(unrecorded).1, codes::VALUE_NOT_BINDABLE);
-    resumed.recorded = recorded;
-    let read = values(
-        resumed
-            .steps(&binding.read_back, &wanted, None)
-            .await
-            .unwrap(),
-    );
-    assert_eq!(read.get("shipment_id"), Some(&Value::Int(2)));
-    assert_eq!(
-        read.get("external_ref").and_then(Value::as_text),
-        Some("SHIP-0003")
-    );
-    resumed.release().await;
-    // Nothing was written again.
-    assert_eq!(scene.db.write_count(Table::Shipments, &["2"]).unwrap(), 1);
 }
 
 /// The posture the engine gives the one context that writes a declared
@@ -949,10 +847,13 @@ async fn a_commit_not_marked_as_the_commit_point_is_refused_and_nothing_lands() 
     let mut last = None;
     for step in &steps {
         let args = scene.args(step, &wanted);
-        let input = a2m_provider::StepInput::new(
-            &args,
-            a2m_provider::Deadline::after(Duration::from_secs(30)),
-        );
+        let input = a2m_provider::StepInput {
+            args: &args,
+            record: None,
+            key: None,
+            stamp: None,
+            deadline: a2m_provider::Deadline::after(Duration::from_secs(30)),
+        };
         last = Some(a2m_provider::Driver::act(&driver, &mut prepared, step, &input).await);
     }
     assert_eq!(

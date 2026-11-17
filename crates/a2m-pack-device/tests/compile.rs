@@ -123,13 +123,6 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         ["open", "build_frame", "write_frame"]
     );
     assert!(submit.bindings[0].read_back.is_empty());
-    // The device's echo is the only evidence of a command; an update keeps
-    // its read-back by address.
-    assert_eq!(
-        submit.bindings[0].evidence,
-        a2m_core::WriteEvidence::Acknowledged
-    );
-    assert_eq!(binding.evidence, a2m_core::WriteEvidence::ReadBack);
 
     // No step of this mode may be sent twice by itself.
     for operation in &plan.operations {

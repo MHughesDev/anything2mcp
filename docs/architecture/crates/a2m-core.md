@@ -37,7 +37,6 @@ pub enum EffectClass { Read, Write, Irreversible }            // ordered
 pub enum Hazard { None, DataElsewhere, SendsOutside, DeviceFunction, Physical }   // ordered
 pub enum FailureClass { /* twelve */ }
 pub enum EvidenceLevel { /* seven, ordered; default Inferred */ }
-pub enum WriteEvidence { ReadBack, Response, Acknowledged }    // what a write binding offers as evidence; default ReadBack; decision 0161
 pub enum Coverage { Complete, Partial, Unknown }               // default Unknown
 pub enum RunState { /* twelve */ }      impl RunState { pub const fn is_final(self) -> bool; }
 pub enum RecordState { /* six */ }
@@ -71,7 +70,7 @@ pub enum ApproveWrites { CallerConfirms, PersonEachRun, NamedApprover }   // sec
 pub enum WhitespaceRule { Collapse, Trim, Exact }
 pub enum DecimalMark { Point /* "." */, Comma /* "," */ }
 pub enum Rounding { HalfUp, HalfEven, HalfDown, Up, Down, Ceiling, Floor }
-pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey, CallerKey }
+pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey }
 
 // Checked names: lowercase letters, digits, and underscores, starting with a letter. Each has
 // LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name. Each one
@@ -91,8 +90,7 @@ pub struct LintCode(/* owner and rule joined by one dot, 64 in all: kernel.no_fi
 impl LintCode { pub fn owner(&self) -> &str; pub fn rule(&self) -> &str; }
 pub struct InvalidName; pub struct UnknownName;               // both convert to Failure
 
-pub struct Failure { /* class, code, message, next_step; and `said`, what the system itself said, bounded and untrusted */ }
-// Failure::with_said(text), said(), carrying_said(&other): kept apart from the sentence, never joined into it; decision 0162
+pub struct Failure { /* class, code, message, next_step */ }
 pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 
@@ -255,7 +253,7 @@ pub struct BindingPlan {
     pub mode: Mode, pub verb: Verb, pub status: BindingStatus, pub surface: SurfaceIndex,
     pub act: Vec<Step>, pub confirm: Vec<Step>, pub read_back: Vec<Step>,
     pub lookup: Vec<Step>, pub settle_ms: u32,      // for the `stamped` and `find` strategies
-    pub evidence: WriteEvidence,            // read_back, response, or acknowledged (only for an irreversible operation); decision 0161
+    pub prefer_response: bool,
     pub precondition: Option<ExprIndex>,
 }
 
@@ -413,7 +411,6 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 
 ## Open points
 
-- The plan's shape changed once more for decision 0161: a binding's `prefer_response` is now its `evidence`, and the sample's pinned hash moved with it. The format number stays 1, because no release has carried a plan: a plan stored before the change does not load and is compiled again.
 - The plan's parts have met the compiler and not yet an engine. The engine's slice confirms each one or changes it. The format number is still 1 because no release has carried a plan; from the first release on, a change that stored plans cannot be read under raises it.
 - `CaptureLevel` and `ApproveWrites` are here because the plan carries them. `a2m-telemetry` and `a2m-policy` each have a list of their own with the same names, which should become these.
 - A decision point is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.

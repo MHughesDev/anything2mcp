@@ -31,6 +31,10 @@ use crate::codes;
 use crate::name::{ProviderName, SubsystemKind};
 use crate::path::CheckedPath;
 
+// Compiled and tested on every system; only Linux and macOS end a group
+// by its verdict.
+#[cfg_attr(not(unix), allow(dead_code))]
+mod ending;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
@@ -1104,7 +1108,7 @@ impl Supervisor {
     async fn end(&self, id: u64, entry: Entry) -> Option<Leftover> {
         if entry.link == "one_shot" {
             // The run that owns it reaps it; ending the group is enough.
-            return (!entry.group.kill()).then(|| Leftover {
+            return (!entry.group.end().await).then(|| Leftover {
                 kind: Some(entry.kind.clone()),
                 what: format!(
                     "the process group of {} could not be ended",

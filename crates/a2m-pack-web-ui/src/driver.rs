@@ -302,7 +302,11 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
 }
 
 fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
-    Capture::acting(&Acting { means, measured })
+    Capture {
+        name: "acting".to_owned(),
+        media_type: "application/json".to_owned(),
+        bytes: serde_json::to_vec(&Acting { means, measured }).unwrap_or_default(),
+    }
 }
 
 /// The value of one placeholder as one segment of an address.
@@ -612,24 +616,6 @@ impl Session {
             }
         }
         Ok(None)
-    }
-
-    /// What the page itself says in the element of a declared variant: its
-    /// validation message. The base redacts every text it reads, and the
-    /// failure bounds it again. `None` when the variant's element is not
-    /// one element, or has no text to read.
-    async fn said_by(&self, screen: &Screen, variant: &str) -> Option<String> {
-        let variant = screen.variants.get(variant)?;
-        let deadline = Deadline::after(LOOK_ONCE);
-        let element = self
-            .tab
-            .locate(&variant.when.query(), deadline)
-            .await
-            .ok()?;
-        match self.tab.read(&element, &ReadWhat::Text, deadline).await {
-            Ok(RawValue::Text(text)) => Some(text),
-            _ => None,
-        }
     }
 
     /// A snapshot of the page as evidence. It left the base already
@@ -1000,21 +986,14 @@ impl Session {
                     "Look at the page; the record is not where the action would act on it.",
                 ),
             };
-            let refused = StepFailure::not_sent(fail(
+            return Err(StepFailure::not_sent(fail(
                 class,
                 code,
                 format!(
                     "Before {what}, the page shows the variant `{shown_before}`, so its answer to the action could not be told from it. The action was not performed."
                 ),
                 next,
-            ));
-            return Err(match handling {
-                Handling::Stop => match self.said_by(screen, shown_before).await {
-                    Some(said) => refused.with_said(said),
-                    None => refused,
-                },
-                Handling::Absent => refused,
-            });
+            )));
         }
         if self
             .holds_now(&action.confirm.primitive(), deadline)
@@ -1125,19 +1104,12 @@ impl Session {
                 )),
                 // A refusal the page shows after the click, which was not
                 // there before it, is the application's answer to it.
-                (Handling::Stop, _) => {
-                    let refused = StepFailure::answered(fail(
-                        FailureClass::Rejected,
-                        codes::APP_VALIDATION_ERROR,
-                        format!("After {what}, the page shows the variant `{variant}`."),
-                        "Correct the values and run the tool again; the application refused them.",
-                    ));
-                    // The page's own words, apart from the product's.
-                    match self.said_by(screen, variant).await {
-                        Some(said) => refused.with_said(said),
-                        None => refused,
-                    }
-                }
+                (Handling::Stop, _) => StepFailure::answered(fail(
+                    FailureClass::Rejected,
+                    codes::APP_VALIDATION_ERROR,
+                    format!("After {what}, the page shows the variant `{variant}`."),
+                    "Correct the values and run the tool again; the application refused them.",
+                )),
                 // A record that is not where the save left it says nothing
                 // of whether the save landed.
                 (Handling::Absent, true) => no_confirmation(format!(

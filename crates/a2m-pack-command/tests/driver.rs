@@ -151,15 +151,13 @@ impl Scene {
     ) -> Result<StepOutcome, StepFailure> {
         let mut last = StepOutcome::Done(Observed::default());
         for step in steps {
-            let mut input = StepInput::new(args, Deadline::after(with.within.unwrap_or(WITHIN)));
-            match with.record {
-                Some(record) => input = input.for_record(record, with.key, with.stamp),
-                // A step of no record may still be given a key to read by.
-                None => {
-                    input.key = with.key;
-                    input.stamp = with.stamp;
-                }
-            }
+            let input = StepInput {
+                args,
+                record: with.record,
+                key: with.key,
+                stamp: with.stamp,
+                deadline: Deadline::after(with.within.unwrap_or(WITHIN)),
+            };
             let authority = match with.token {
                 Some(token) if step.commits => Authority::Write(token),
                 _ => Authority::Read,
@@ -322,7 +320,6 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
 
     // Five runs of one read: one signature.
     let mut signatures = Vec::new();
-    let mut means = Vec::new();
     for _ in 0..5 {
         let mut prepared = scene.live().await;
         let mut all = Observed::default();
@@ -341,18 +338,10 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
             all.values = one.values;
         }
         scene.handle.release(prepared, false).await;
-        // How the start was done names the command and how it ended, and
-        // never the value that was passed.
-        let acting = all.acting().unwrap();
-        assert!(acting.means.iter().any(|detail| detail.name == "command"));
-        assert!(!format!("{acting:?}").contains("SK-1001"));
-        means.push(acting.means);
         signatures.push(signature(&all));
     }
     signatures.dedup();
     assert_eq!(signatures.len(), 1);
-    means.dedup();
-    assert_eq!(means.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -772,9 +761,10 @@ async fn a_write_is_made_once_and_read_back_and_a_stored_value_that_differs_is_s
         &codes::APP_VALIDATION_ERROR,
         Sent::Answered,
     );
-    // The program's own message is carried apart from the product's words.
-    assert!(rejected.failure.said().is_some(), "{rejected}");
-    assert!(!rejected.failure.message().contains("untrusted text"));
+    assert!(
+        rejected.failure.message().contains("untrusted text"),
+        "{rejected}"
+    );
     // Another start holds the program's lock: busy, and nothing written.
     let held = control.hold_write_lock().unwrap();
     done(
@@ -1065,13 +1055,8 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
             .run(&mut prepared, &steps[..1], &sku("SK-1001"), With::default())
             .await,
     );
-    // How the step was done, and the two streams.
-    assert_eq!(spawned.captures.len(), 3);
-    for capture in spawned
-        .captures
-        .iter()
-        .filter(|capture| !capture.is_acting())
-    {
+    assert_eq!(spawned.captures.len(), 2);
+    for capture in &spawned.captures {
         let printed = String::from_utf8_lossy(&capture.bytes);
         assert!(printed.contains(a2m_core::REDACTED), "{printed}");
         assert!(!holds_part_of(&printed, SECRET), "{printed}");
@@ -1147,9 +1132,7 @@ async fn a_secret_on_standard_error_that_a_cut_would_divide_reaches_no_failure()
             Sent::Answered,
         );
         let shown = format!("{refused:?}");
-        let said = refused.failure.said().unwrap_or_default();
-        assert!(!said.is_empty(), "{shown}");
-        assert!(!refused.failure.message().contains(said), "{shown}");
+        assert!(shown.contains("untrusted text"), "{shown}");
         assert!(!holds_part_of(&shown, SECRET), "{filler}: {shown}");
         for capture in &spawned.captures {
             let printed = String::from_utf8_lossy(&capture.bytes);
@@ -1159,10 +1142,7 @@ async fn a_secret_on_standard_error_that_a_cut_would_divide_reaches_no_failure()
     // The secret within what is quoted is named as redacted, not dropped.
     let (_, refused) = rejected(format!("token {SECRET} ")).await;
     assert!(
-        refused
-            .failure
-            .said()
-            .is_some_and(|said| said.contains(a2m_core::REDACTED)),
+        refused.failure.message().contains(a2m_core::REDACTED),
         "{refused}"
     );
 

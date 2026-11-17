@@ -15,7 +15,7 @@ archetype = "stream"
 verbs = ["read", "list", "await", "publish", "take"]
 # `channels` and `describe` are sent by the discoverer only; no lowering
 # gives them.
-steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "position", "taken", "channels", "describe"]
+steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "channels", "describe"]
 commit_steps = ["publish", "acknowledge"]
 rank = 60
 intent_window = 1
@@ -114,11 +114,6 @@ level = "warning"
 summary = "A channel that is published to says who reads it."
 
 [[lint_rules]]
-code = "stream.protocol_unfit"
-level = "error"
-summary = "A channel states only what the wire protocol its surface speaks can carry."
-
-[[lint_rules]]
 code = "stream.untrusted_unmarked"
 level = "error"
 summary = "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
@@ -155,10 +150,6 @@ code = "protocol_unknown"
 class = "input"
 code = "credential_not_carried"
 
-[[failure_codes]]
-class = "input"
-code = "nothing_recorded"
-
 # A plan compiled by another build of the pack: `a2m-core`'s own code.
 [[failure_codes]]
 class = "input"
@@ -175,10 +166,6 @@ code = "surface_not_declared"
 [[failure_codes]]
 class = "policy"
 code = "scan_limit"
-
-[[failure_codes]]
-class = "policy"
-code = "transport_refused"
 
 [[failure_codes]]
 class = "policy"

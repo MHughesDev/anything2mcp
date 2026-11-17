@@ -290,3 +290,24 @@ async fn a_profile_folder_is_private_to_the_engine_s_user_however_it_was_left() 
     }
     stand.end().await;
 }
+
+/// A tab that is dropped is no longer counted, at once and every time. The
+/// end of a tab's events, which its release causes, is heard on another
+/// thread in the same moment; the count, and with it the browser's health,
+/// must not depend on which comes first. Tried many times, because the
+/// order is not the same each time.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_tab_is_no_longer_counted_whichever_thread_hears_its_end_first() {
+    let stand = Stand::with_browser("released");
+    let browser = stand.open(&profile("clerk")).await;
+    let origins = Origins::of([&Address::new("http://127.0.0.1/").unwrap()]);
+    for _ in 0..20 {
+        let tab = must(browser.acting_tab(&environment(), &origins).await);
+        assert_eq!(stand.browsers.list()[0].tabs, 1);
+        assert_eq!(browser.health(), BrowserHealth::Busy);
+        drop(tab);
+        assert_eq!(stand.browsers.list()[0].tabs, 0);
+        assert_eq!(browser.health(), BrowserHealth::Idle);
+    }
+    stand.end().await;
+}

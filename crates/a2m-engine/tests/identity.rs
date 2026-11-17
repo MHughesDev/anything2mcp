@@ -19,8 +19,8 @@ use std::sync::atomic::Ordering;
 use a2m_core::{FailureClass, RecordState, Value, Values};
 use a2m_engine::{Directive, JobKind, JobOutcome};
 use common::{
-    KIT_ENTER, NOTE_ADD, REF_ADD, SLOT_ADD, Scene, approved, at, completed, failed_as,
-    keyless_slot_add, sheet, slot, waits,
+    KIT_ENTER, NOTE_ADD, REF_ADD, SLOT_ADD, Scene, approved, at, completed, failed_as, sheet, slot,
+    waits,
 };
 
 fn note(order: &str, description: &str) -> Values {
@@ -309,68 +309,6 @@ async fn a_lost_answer_is_reconciled_by_what_was_recorded_before_the_commit_poin
     assert_eq!(scene.hooks.count("add_item"), 1);
     assert_eq!(scene.hooks.count("reserve_code"), 1);
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
-}
-
-// ---- no identity: found again by what was recorded before the save ----
-
-/// A keyless create whose answer was lost: the record is in doubt, with
-/// the code its earlier step recorded.
-async fn keyless_in_doubt() -> (Scene, Values) {
-    let scene = Scene::new(SLOT_ADD, keyless_slot_add).await;
-    let input = slot("A-102", 4, "12");
-    approved(&scene, SLOT_ADD, &input).await;
-    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
-    let outcome = scene.work(JobKind::Execute, SLOT_ADD, input.clone()).await;
-    assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
-    assert_eq!(scene.app.write_count("A-102", "N-001").await.unwrap(), 1);
-    scene.new_lease().await;
-    (scene, input)
-}
-
-#[tokio::test]
-async fn a_keyless_record_in_doubt_that_its_look_finds_is_settled_as_landed() {
-    let (scene, input) = keyless_in_doubt().await;
-    let outcome = scene
-        .work(JobKind::Reconcile, SLOT_ADD, input.clone())
-        .await;
-    assert_eq!(outcome, JobOutcome::Settled { remaining: 0 });
-    assert_eq!(scene.record_states().await, [RecordState::Verified]);
-    // The look was handed the code the step before the save recorded.
-    let looks = scene.hooks.given("taken");
-    assert_eq!(text(&looks.last().unwrap().recorded, "item_code"), "N-001");
-    let outcome = scene.work(JobKind::Execute, SLOT_ADD, input).await;
-    assert!(completed(&outcome), "{outcome:?}");
-    assert_eq!(scene.hooks.count("add_item"), 1);
-    assert_eq!(scene.app.writes().await.unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn a_keyless_record_in_doubt_that_its_look_finds_absent_goes_back_to_planned() {
-    let (scene, input) = keyless_in_doubt().await;
-    *scene.hooks.taken_answer.lock().unwrap() = Some("absent");
-    let outcome = scene
-        .work(JobKind::Reconcile, SLOT_ADD, input.clone())
-        .await;
-    assert_eq!(outcome, JobOutcome::Settled { remaining: 1 });
-    assert_eq!(scene.record_states().await, [RecordState::Planned]);
-    // The ledger keeps the read's evidence with the record it set back.
-    assert!(scene.records().await[0].evidence.is_some());
-    assert_eq!(scene.hooks.count("add_item"), 1);
-}
-
-#[tokio::test]
-async fn a_keyless_record_in_doubt_whose_look_does_not_answer_stays_in_doubt() {
-    let (scene, input) = keyless_in_doubt().await;
-    *scene.hooks.taken_answer.lock().unwrap() = Some("nothing");
-    let outcome = scene.work(JobKind::Reconcile, SLOT_ADD, input).await;
-    let failure = outcome.failure().expect("the record stays in doubt");
-    assert_eq!(failure.class(), FailureClass::PossibleCommit);
-    assert_eq!(failure.code().as_str(), "cannot_reconcile");
-    // What was recorded before the save is shown as the system's data.
-    assert!(failure.said().unwrap().contains("N-001"), "{failure:?}");
-    assert!(!failure.message().contains("N-001"));
-    assert!(scene.record_states().await[0] != RecordState::Verified);
-    assert_eq!(scene.hooks.count("add_item"), 1);
 }
 
 // ---- a header with its lines ----

@@ -401,10 +401,6 @@ async fn a_write_the_application_refuses_is_rejected_and_stores_nothing() {
     );
     // The application answered, so nothing is in doubt.
     assert_eq!(refused.sent, Sent::Answered);
-    // What the page itself said is carried apart from the product's words.
-    let said = refused.failure.said().unwrap();
-    assert!(!said.is_empty());
-    assert!(!refused.failure.message().contains(said));
     handle.release(prepared, true).await;
     assert!(app.writes().await.unwrap().is_empty());
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
@@ -458,11 +454,13 @@ async fn commit(
     assert!(step.commits);
     let args = scene.args(step, inputs);
     let (token, record, key) = write.authority();
-    let input = StepInput::new(&args, Deadline::after(Duration::from_secs(120))).for_record(
-        record,
-        Some(key),
-        None,
-    );
+    let input = StepInput {
+        args: &args,
+        record: Some(record),
+        key: Some(key),
+        stamp: None,
+        deadline: Deadline::after(Duration::from_secs(120)),
+    };
     handle
         .act(prepared, step, &input, Authority::Write(token))
         .await

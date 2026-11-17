@@ -151,25 +151,11 @@ impl std::fmt::Debug for Engine {
 /// project's file, the environment, the flags, and every first-party
 /// pack's manifest, whose settings are the schema of its group.
 fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
-    let mut sources = sources_of(
+    let mut sources = Sources::read(
         &options.paths,
         options.project.as_deref(),
-        &options.environment,
+        options.environment.clone(),
     )?;
-    for (key, value) in &options.flags {
-        sources = sources.with_flag(key, value);
-    }
-    Ok(sources)
-}
-
-/// The same with no flags: the files, the project's file, the
-/// environment, and every first-party pack's manifest.
-fn sources_of(
-    paths: &Paths,
-    project: Option<&Path>,
-    environment: &BTreeMap<String, String>,
-) -> Result<Sources, Failure> {
-    let mut sources = Sources::read(paths, project, environment.clone())?;
     for pack in packs::first_party() {
         // A manifest that does not parse is reported by the registry
         // builder, as a named problem of that pack; the settings loader
@@ -178,17 +164,10 @@ fn sources_of(
             sources = sources.with_pack(Arc::new(manifest));
         }
     }
+    for (key, value) in &options.flags {
+        sources = sources.with_flag(key, value);
+    }
     Ok(sources)
-}
-
-/// The settings an engine of these paths, this project, and this
-/// environment would load: what a client reads before it starts one.
-pub(crate) fn settings_of(
-    paths: &Paths,
-    project: Option<&Path>,
-    environment: &BTreeMap<String, String>,
-) -> Result<Settings, Failure> {
-    Settings::load(&sources_of(paths, project, environment)?)
 }
 
 /// Loads the settings of a process from its sources.
@@ -425,9 +404,6 @@ impl Engine {
         settings: Settings,
         lock: Option<EngineLock>,
     ) -> Result<Self, Failure> {
-        // What every HTTP client trusts is set before any pack registers
-        // and before anything makes a client (decision 0166).
-        crate::trust::install(&settings, options.project.as_deref())?;
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,

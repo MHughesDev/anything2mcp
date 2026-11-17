@@ -11,7 +11,7 @@ use std::sync::Arc;
 use a2m_core::{
     EffectClass, FailsAs, FailureClass, FailureCode, FileKindName, Hazard, IdentityStrategy, Mode,
     PackPayload, PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName,
-    ValueType, Verb, WriteEvidence,
+    ValueType, Verb,
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
@@ -563,17 +563,6 @@ impl Lowering for DeviceLowering {
             EffectClass::Write
         } else {
             EffectClass::Read
-        }
-    }
-
-    /// A `submit` that reads nothing back writes a command, and the device's
-    /// echo is the only evidence there can be. An `update` keeps its read-back
-    /// by address.
-    fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
-        if *binding.verb == self.names.submit && lowered.read_back.is_empty() {
-            WriteEvidence::Acknowledged
-        } else {
-            WriteEvidence::ReadBack
         }
     }
 

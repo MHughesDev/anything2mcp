@@ -420,6 +420,72 @@ async fn a_foreign_link_carries_bytes_both_ways_and_stop_ends_the_group() {
     assert!(rest.is_empty());
 }
 
+/// A group whose leader has exited is ended completely, whatever the leader
+/// left. First a program that starts a child and exits at once: the leader
+/// is gone and its child is left in the group, holding the pipe. Then a
+/// program stopped in the very moment it ends by itself, the end of its pipe
+/// seen and nothing more, as a browser that was asked to close is stopped:
+/// on macOS such a leader is in the middle of its exit, so the group answers
+/// that nothing in it can be signalled while the leader cannot be waited for
+/// yet. That moment is not hit every time, so it is tried many times.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_group_whose_leader_has_exited_is_ended_completely_whatever_it_left() {
+    use a2m_core::SubsystemState;
+    use a2m_provider::ForeignPipe;
+    use tokio::io::AsyncReadExt;
+
+    let supervisor = supervisor();
+    let shell = |script: &str| LaunchSpec {
+        program: ProgramRef {
+            path: "/bin/sh".into(),
+            digest: None,
+        },
+        args: vec!["-c".into(), script.into()],
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("browser").unwrap(),
+        place: None,
+    };
+    let pipe = ForeignPipe {
+        child_reads_fd: 3,
+        child_writes_fd: 4,
+        windows_argument: "--io-pipes={read},{write}".to_owned(),
+    };
+
+    // The child inherits the pipe and would sleep for ten minutes.
+    let mut link = supervisor
+        .start_foreign(shell("/bin/sleep 600 & exit 0"), pipe.clone())
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    while supervisor.list()[0].state != SubsystemState::Exited {
+        assert!(started.elapsed() < WITHIN, "the leader never exited");
+        tokio::task::yield_now().await;
+    }
+    let cleanup = supervisor.stop(link.id).await;
+    assert!(cleanup.complete, "{cleanup:?}");
+    // The child held the pipe, so the end of the pipe is the end of the child.
+    let mut rest = Vec::new();
+    tokio::time::timeout(WITHIN, link.from_child.read_to_end(&mut rest))
+        .await
+        .expect("the child the leader left was not ended")
+        .unwrap();
+
+    for _ in 0..50 {
+        let mut link = supervisor
+            .start_foreign(shell("exit 0"), pipe.clone())
+            .await
+            .unwrap();
+        let mut rest = Vec::new();
+        link.from_child.read_to_end(&mut rest).await.unwrap();
+        let cleanup = supervisor.stop(link.id).await;
+        assert!(cleanup.complete, "{cleanup:?}");
+    }
+    assert!(supervisor.list().is_empty());
+    assert!(supervisor.leftovers().is_empty());
+}
+
 /// A process that is not in the program's group holds the program's output
 /// pipe open after the program has ended: here one that left the group, and
 /// on a system that cannot make a pipe already marked close-on-exec it

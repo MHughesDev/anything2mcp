@@ -214,15 +214,8 @@ pub(crate) struct Inner {
     /// The plans read from the store, by target and hash, the newest
     /// [`PLANS_KEPT`] of them.
     pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
-    /// The drafted plans of trials, newest last, the newest [`DRAFTS_KEPT`].
-    pub(crate) drafts: Mutex<Vec<KeptDraft>>,
     pub(crate) runner: crate::runner::RunnerState,
     pub(crate) signals: Arc<RunSignals>,
-    /// The person's acts that wait on a page, and what became of the last
-    /// ones (decision 0163).
-    pub(crate) acts: Arc<crate::acts::Acts>,
-    /// Where the identifiers of those acts come from.
-    pub(crate) random: Arc<dyn RandomSource>,
     /// One call at a time for each caller's idempotency key, from the
     /// look at the key to binding its run.
     pub(crate) key_locks: crate::signals::KeyLocks,
@@ -366,7 +359,6 @@ impl Kernel {
         );
 
         let signals = Arc::new(RunSignals::default());
-        let acts = crate::acts::Acts::new();
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
@@ -411,7 +403,6 @@ impl Kernel {
                         found.workspace,
                         Arc::clone(&signals),
                         Arc::clone(&prepared.redact),
-                        Arc::clone(&acts),
                     ));
                     policy = Some(opened);
                 }
@@ -509,17 +500,13 @@ impl Kernel {
                 not_in_force,
                 places: crate::project::Places::of_process(),
                 plans: Mutex::new(BTreeMap::new()),
-                drafts: Mutex::new(Vec::new()),
                 runner: crate::runner::RunnerState::default(),
                 signals,
-                acts: Arc::clone(&acts),
-                random: Arc::clone(&prepared.random),
                 key_locks: crate::signals::KeyLocks::default(),
                 wake: Arc::new(Notify::new()),
                 tasks: Mutex::new(Vec::new()),
             }),
         };
-        acts.bind(&kernel.inner);
         kernel.recheck().await;
         kernel.record_start().await;
         kernel.start_tending();
@@ -936,11 +923,6 @@ impl Kernel {
 
 /// How many plans read from the store are kept in memory.
 pub(crate) const PLANS_KEPT: usize = 64;
-/// A drafted plan kept for a trial: its target and hash, and the plan.
-pub(crate) type KeptDraft = ((TargetName, Digest), Arc<Plan>);
-/// How many drafted plans of trials are kept in memory. A trial whose plan
-/// was let go since cannot be resumed; it is tried again.
-pub(crate) const DRAFTS_KEPT: usize = 16;
 
 /// The shortest lease the in-process runner works under. The engine sends
 /// a save only when the lease leaves time for the whole binding, each step

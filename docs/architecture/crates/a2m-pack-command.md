@@ -108,14 +108,6 @@ A step's time limit is its command's. A lookup's `parse` must find exactly one r
 
 **What a `command` finding holds.** Canonical JSON: `name`, `about`, `usage`, `platform`, `digest`, `version`. The finding is at `discovered` with the limitation `not_exercised`: the help listing the command is what was observed. What the usage line's parts mean is read from it by the drafting rule and is not observed.
 
-### After the kernel's second pass (decisions 0161 and 0162)
-
-- Every step input is built with `StepInput::new` and `for_record`. A `spawn` and a probe push the `acting` capture: `means` the command (or the probe) and how it ended (its status, or `signal`); `measured` the byte counts. Five runs of one read give the same `means`, held by a test.
-- A program's error output is carried by `StepFailure::with_said`, redacted, cleaned of control characters, and redacted again before it is cut. The failure's sentence no longer quotes it.
-- `Lowering::evidence` returns `acknowledged` for an operation declared `irreversible`, with identity `none`, whose binding names no `read_back`, and whose act saves: the fixture's `catalog_push`. An operation with an identity and no `read_back` is left to the compiler's refusal. A binding that names a `read_back` keeps it.
-- `delete` is `irreversible` in `least_effect`. **Not done:** a command file's effect that is an open question still does not count as a write in `FileKind::writes`. Counting it makes the pack's own drafter refuse every draft it makes (each leaves `effect` as an open question), and the test of drafting expects the drafts to be written. See the report of the package.
-- Keys: a param that takes a part of the record's key, given no key, is looked for among the step's own values, and when it is not there the step stops unsent, `input`, `schema_invalid`.
-
 ## Used by, and uses
 
 | Used by | For |

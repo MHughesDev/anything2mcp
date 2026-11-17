@@ -6,12 +6,12 @@
 //! what was refused, and by the triggers of the migrations, which refuse the
 //! same things whoever sends the statement.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use a2m_core::{
     ApprovalId, DecisionId, Digest, DigestPurpose, EffectClass, Environment, Epoch, Failure,
     FailureClass, FailureCode, Identity, Mode, OperationName, PrincipalId, RecordKey, RecordState,
-    RunId, RunState, TargetName, Timestamp, WorkspaceId, WriteEvidence,
+    RunId, RunState, TargetName, Timestamp, WorkspaceId,
 };
 use serde_json::json;
 
@@ -298,23 +298,17 @@ pub struct RecordRow {
     pub acted_at: Option<Timestamp>,
     /// When it was last read back by reconcile.
     pub reconciled_at: Option<Timestamp>,
-    /// When it ended on the system's acknowledgement: its write was sent and
-    /// answered, its binding's only evidence is that answer, and nothing was
-    /// read back (decision 0172). The record stays `acted`, is never called
-    /// verified, and is settled, not in doubt.
-    pub acknowledged_at: Option<Timestamp>,
 }
 
 impl RecordRow {
     /// Whether the record must be read back before its run writes again
-    /// (rule 5): it is in `intent`, or `acted` and did not end on an
-    /// acknowledgement; or it `failed` and was not read since, and either
-    /// its write was sent or the failure's class allows another try.
+    /// (rule 5): it is in `intent` or `acted`; or it `failed` and was not
+    /// read since, and either its write was sent or the failure's class
+    /// allows another try.
     #[must_use]
     pub fn in_doubt(&self) -> bool {
         match self.state {
-            RecordState::Intent => true,
-            RecordState::Acted => self.acknowledged_at.is_none(),
+            RecordState::Intent | RecordState::Acted => true,
             RecordState::Failed => {
                 self.reconciled_at.is_none()
                     && (self.acted_at.is_some()
@@ -325,66 +319,6 @@ impl RecordRow {
             }
             _ => false,
         }
-    }
-
-    /// Whether the record ended on the system's acknowledgement: accepted
-    /// by the system and not read back. Such a record is settled; it is
-    /// never verified, and a result that counts it says it was not read
-    /// back.
-    #[must_use]
-    pub fn acknowledged(&self) -> bool {
-        self.state == RecordState::Acted && self.acknowledged_at.is_some()
-    }
-
-    /// The evidence its write ended on, where the ledger knows it: only
-    /// `acknowledged`. A verified record was read back or compared with the
-    /// save's answer, and the ledger keeps the digest it compared, not which
-    /// of the two gave it.
-    #[must_use]
-    pub fn ended_on(&self) -> Option<WriteEvidence> {
-        self.acknowledged().then_some(WriteEvidence::Acknowledged)
-    }
-}
-
-/// How a run's records stand, counted: what a result says of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct RecordTally {
-    /// Read back and matched.
-    pub verified: u32,
-    /// Already held the intended values.
-    pub unchanged: u32,
-    /// Accepted by the system and not read back (decision 0172).
-    pub acknowledged: u32,
-    /// Every other record: planned, in doubt, or failed.
-    pub open: u32,
-}
-
-impl RecordTally {
-    /// Whether the run may complete: every record is verified, unchanged,
-    /// or acknowledged.
-    #[must_use]
-    pub fn settled(&self) -> bool {
-        self.open == 0
-    }
-}
-
-/// What the run's own stored diff says of one record: that its write ends
-/// on the system's acknowledgement. Made only by
-/// [`Store::acknowledged_in_diff`], which opens the diff and reads it; asked
-/// for by [`Ledger::mark_acknowledged`], so that the ledger takes the
-/// evidence a binding offers from the diff a person approved, never from the
-/// caller's word.
-#[derive(Debug)]
-pub struct AcknowledgedInDiff {
-    record: RecordRef,
-    diff: BlobRef,
-}
-
-impl AcknowledgedInDiff {
-    /// Which commit point.
-    #[must_use]
-    pub fn record(&self) -> RecordRef {
-        self.record
     }
 }
 
@@ -620,8 +554,6 @@ pub struct Replayed {
     pub epoch: Epoch,
     /// Each record's state, by step and record number.
     pub records: BTreeMap<(u32, u32), RecordState>,
-    /// The records that ended `acted` on the system's acknowledgement.
-    pub acknowledged: BTreeSet<(u32, u32)>,
 }
 
 /// Rebuilds a run's state from its events, in order.
@@ -636,7 +568,6 @@ pub fn replay(events: &[RunEvent]) -> Result<Replayed, Failure> {
         state: RunState::Queued,
         epoch: Epoch::new(0),
         records: BTreeMap::new(),
-        acknowledged: BTreeSet::new(),
     };
     for event in events {
         let payload: serde_json::Value =
@@ -684,13 +615,7 @@ pub fn replay(events: &[RunEvent]) -> Result<Replayed, Failure> {
                 replayed.records.insert(record()?, RecordState::Intent);
             }
             EventKind::Acted => {
-                // A record that ended on an acknowledgement stays `acted`;
-                // its second `acted` event says so.
-                let place = record()?;
-                if text("evidence") == Some(WriteEvidence::Acknowledged.as_str()) {
-                    replayed.acknowledged.insert(place);
-                }
-                replayed.records.insert(place, RecordState::Acted);
+                replayed.records.insert(record()?, RecordState::Acted);
             }
             EventKind::Verified => {
                 replayed.records.insert(record()?, RecordState::Verified);
@@ -787,28 +712,6 @@ fn failure_of(
     }
 }
 
-/// A failure rebuilt from the payload of the event that stored it, when the
-/// payload carries the class and code the row holds. What the system said
-/// is handed back apart, through [`Failure::with_said`], which bounds it
-/// again; it is never joined into the sentence.
-fn stored_failure(payload: &str, class: FailureClass, code: &FailureCode) -> Option<Failure> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
-    if text("class") != Some(class.as_str()) || text("code") != Some(code.as_str()) {
-        return None;
-    }
-    let failure = Failure::new(
-        class,
-        code.clone(),
-        text("message").unwrap_or_default(),
-        text("next_step").unwrap_or_default(),
-    );
-    Some(match text("said") {
-        Some(said) => failure.with_said(said),
-        None => failure,
-    })
-}
-
 fn epoch_of(number: i64) -> Result<Epoch, Failure> {
     count(number).map(Epoch::new)
 }
@@ -848,8 +751,7 @@ macro_rules! select_records {
             "SELECT run_id, step_seq, record_seq, record_key, record_key_hash, operation, state,
                     intended_hash, before_ref, after_ref, idempotency_token, assigned_key,
                     outputs_ref, intent_epoch, attempts, failure_class, failure_code,
-                    evidence_ref, intent_seq, binding_mode, acted_at, reconciled_at,
-                    acknowledged_at
+                    evidence_ref, intent_seq, binding_mode, acted_at, reconciled_at
              FROM run_records ",
             $rest
         )
@@ -883,7 +785,6 @@ fn record_row(row: &Row) -> Result<(RecordRow, Option<u64>), Failure> {
             mode: parse_opt(row.opt_text(19)?)?,
             acted_at: row.opt_int(20)?.map(moment),
             reconciled_at: row.opt_int(21)?.map(moment),
-            acknowledged_at: row.opt_int(22)?.map(moment),
         },
         row.opt_int(18)?.map(count).transpose()?,
     ))
@@ -953,112 +854,6 @@ impl Store {
         })
         .await
     }
-
-    /// Reads the run's own stored diff, and answers what it says of one
-    /// record when it says the record's write ends on the system's
-    /// acknowledgement (`acknowledged`, decision 0161). The diff is a sealed
-    /// blob, opened outside any transaction; [`Ledger::mark_acknowledged`]
-    /// checks, inside its own, that the run's diff is still this one.
-    ///
-    /// The diff is read as data, by the names the engine's diff writes:
-    /// `records`, and in each `step_seq`, `record_seq`, `operation`, and
-    /// `evidence`, which is absent where it is `read_back`.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` for no such run or record.
-    /// `unknown_variant`/`ledger_state_unexpected` when the run has no
-    /// stored diff, the diff does not hold the record, or holds it with
-    /// another operation or with evidence other than `acknowledged`.
-    /// `busy`/`store_corrupt` when the stored diff does not read. What
-    /// [`crate::Blobs::get`] answers.
-    pub async fn acknowledged_in_diff(
-        &self,
-        record: RecordRef,
-    ) -> Result<AcknowledgedInDiff, Failure> {
-        let (diff, operation) = self
-            .read(move |tx| {
-                let mut ledger = tx.ledger();
-                let run = ledger.run(record.run)?;
-                let row = ledger.record(record)?;
-                Ok((run.diff, row.operation))
-            })
-            .await?;
-        let diff = diff.ok_or_else(|| {
-            failure::unexpected(
-                "the run has no stored diff, so nothing says its write ends on an acknowledgement",
-            )
-        })?;
-        let opened = self.blobs().get(&diff).await?;
-        says_acknowledged(opened.expose(), record, &operation)?;
-        Ok(AcknowledgedInDiff { record, diff })
-    }
-
-    /// Ends a record on the system's acknowledgement, in a transaction of
-    /// its own committed with a sync to disk: [`Store::acknowledged_in_diff`],
-    /// then [`Ledger::mark_acknowledged`], for a caller that holds the proof
-    /// of `acted` by reference.
-    ///
-    /// # Errors
-    ///
-    /// What the two calls answer.
-    pub async fn store_acknowledged(
-        &self,
-        token: &ActedToken,
-        evidence: BlobRef,
-    ) -> Result<(), Failure> {
-        let (record, epoch) = (token.record, token.epoch);
-        let diff = self.acknowledged_in_diff(record).await?;
-        self.write(Durability::Synced, move |tx| {
-            tx.ledger()
-                .mark_acknowledged(&ActedToken { record, epoch }, evidence, &diff)
-        })
-        .await
-    }
-}
-
-/// Whether a stored diff says the record's write ends on the system's
-/// acknowledgement. The diff is the engine's; the ledger reads only the
-/// names it needs, as data.
-fn says_acknowledged(
-    plain: &[u8],
-    record: RecordRef,
-    operation: &OperationName,
-) -> Result<(), Failure> {
-    let unreadable = || failure::corrupt("a stored diff that does not read");
-    let diff: serde_json::Value = serde_json::from_slice(plain).map_err(|_| unreadable())?;
-    let number =
-        |entry: &serde_json::Value, name: &str| entry.get(name).and_then(serde_json::Value::as_u64);
-    let mut found = diff
-        .get("records")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(unreadable)?
-        .iter()
-        .filter(|entry| {
-            number(entry, "step_seq") == Some(u64::from(record.step_seq))
-                && number(entry, "record_seq") == Some(u64::from(record.record_seq))
-        });
-    let entry = found
-        .next()
-        .ok_or_else(|| failure::unexpected("the run's diff does not hold the record"))?;
-    if found.next().is_some() {
-        return Err(failure::corrupt(
-            "a stored diff that holds one record twice",
-        ));
-    }
-    if entry.get("operation").and_then(serde_json::Value::as_str) != Some(operation.as_str()) {
-        return Err(failure::unexpected(
-            "the run's diff holds the record under another operation",
-        ));
-    }
-    if entry.get("evidence").and_then(serde_json::Value::as_str)
-        != Some(WriteEvidence::Acknowledged.as_str())
-    {
-        return Err(failure::unexpected(
-            "the run's diff does not say the record's write ends on an acknowledgement; it must be read back",
-        ));
-    }
-    Ok(())
 }
 
 impl Ledger<'_, '_> {
@@ -1165,8 +960,7 @@ impl Ledger<'_, '_> {
         let rows = self.tx.rows(
             select_records!(
                 "WHERE run_id = ?1
-                   AND (state = 'intent'
-                        OR (state = 'acted' AND acknowledged_at IS NULL)
+                   AND (state IN ('intent', 'acted')
                         OR (state = 'failed' AND reconciled_at IS NULL
                             AND (acted_at IS NOT NULL
                                  OR failure_class NOT IN ('policy', 'stale', 'input'))))
@@ -1200,104 +994,6 @@ impl Ledger<'_, '_> {
                 })
             })
             .collect()
-    }
-
-    /// How the run's records stand, counted: verified, unchanged,
-    /// acknowledged and not read back, and the rest. What a result says of
-    /// them, and what decides whether the run may complete.
-    ///
-    /// # Errors
-    ///
-    /// `busy` failures of the database.
-    pub fn tally(&mut self, run: RunId) -> Result<RecordTally, Failure> {
-        let row = self
-            .tx
-            .row(
-                "SELECT COALESCE(SUM(state = 'verified'), 0),
-                        COALESCE(SUM(state = 'unchanged'), 0),
-                        COALESCE(SUM(state = 'acted' AND acknowledged_at IS NOT NULL), 0),
-                        COUNT(*)
-                 FROM run_records WHERE run_id = ?1",
-                &[run.to_string().into()],
-            )?
-            .ok_or_else(|| failure::corrupt("a count that gave no row"))?;
-        let number = |at: usize| -> Result<u32, Failure> { small(row.int(at)?) };
-        let (verified, unchanged, acknowledged) = (number(0)?, number(1)?, number(2)?);
-        let open = number(3)?
-            .checked_sub(verified + unchanged + acknowledged)
-            .ok_or_else(|| failure::corrupt("a count of records that does not add up"))?;
-        Ok(RecordTally {
-            verified,
-            unchanged,
-            acknowledged,
-            open,
-        })
-    }
-
-    /// The failure that stopped or ended the run, whole, as it was stored:
-    /// its class and code from the run's row; its sentence, its next step,
-    /// and what the system itself said from the event that moved the run.
-    /// What the system said is handed back apart, in [`Failure::said`], and
-    /// is untrusted text: it was bounded and redacted when it was stored,
-    /// and is never joined into the sentence. `None` when the run carries no
-    /// failure, or when the event that stored it is not found.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` for no such run; `busy` failures of the database.
-    pub fn run_failure(&mut self, run: RunId) -> Result<Option<Failure>, Failure> {
-        let row = self.run(run)?;
-        let Some((class, code)) = row.failure else {
-            return Ok(None);
-        };
-        let found = self.tx.row(
-            "SELECT payload FROM run_events
-             WHERE run_id = ?1 AND kind = 'state_changed' ORDER BY seq DESC LIMIT 1",
-            &[run.to_string().into()],
-        )?;
-        let payload = match found {
-            Some(found) => found.text(0)?.to_owned(),
-            None => return Ok(None),
-        };
-        Ok(stored_failure(&payload, class, &code))
-    }
-
-    /// The failure a record was marked `failed` with, whole, as it was
-    /// stored, with what the system said kept apart as [`Failure::said`]:
-    /// as [`Ledger::run_failure`], for one record. `None` when the record
-    /// carries no failure, or when the event that stored it is not found.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` for no such record; `busy` failures of the
-    /// database.
-    pub fn record_failure(&mut self, record: RecordRef) -> Result<Option<Failure>, Failure> {
-        let row = self.record(record)?;
-        let Some((class, code)) = row.failure else {
-            return Ok(None);
-        };
-        if code == failure::CHANGED_SINCE_PREVIEW && class == FailureClass::Stale {
-            // `settle` with `Neither` leaves the ledger's own failure.
-            return Ok(Some(failure::changed_since_preview()));
-        }
-        let rows = self.tx.rows(
-            "SELECT payload FROM run_events
-             WHERE run_id = ?1 AND kind = 'failed' ORDER BY seq DESC",
-            &[record.run.to_string().into()],
-        )?;
-        for found in &rows {
-            let payload = found.text(0)?;
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
-                continue;
-            };
-            let at = |name: &str| value.get(name).and_then(serde_json::Value::as_u64);
-            if at("step") == Some(u64::from(record.step_seq))
-                && at("record") == Some(u64::from(record.record_seq))
-            {
-                return Ok(stored_failure(payload, class, &code));
-            }
-        }
-        Ok(None)
     }
 
     // ---- runs ----------------------------------------------------------
@@ -1443,18 +1139,28 @@ impl Ledger<'_, '_> {
                 "a run that stops or fails carries the failure that ended it",
             ));
         }
-        if to == RunState::Running {
-            if run.state == RunState::NeedsApproval {
-                return Err(failure::approval_missing(
-                    "a run that waits for approval starts through `begin_writes`",
-                ));
+        match to {
+            RunState::Running => {
+                if run.state == RunState::NeedsApproval {
+                    return Err(failure::approval_missing(
+                        "a run that waits for approval starts through `begin_writes`",
+                    ));
+                }
+                self.may_run(&run)?;
             }
-            self.may_run(&run)?;
-        }
-        if to == RunState::Completed && !self.tally(run.id)?.settled() {
-            return Err(failure::unexpected(
-                "a run is completed only when every record is verified, unchanged, or acknowledged",
-            ));
+            RunState::Completed => {
+                let open = self.count_records(
+                    run.id,
+                    "SELECT COUNT(*) FROM run_records
+                     WHERE run_id = ?1 AND state NOT IN ('verified', 'unchanged')",
+                )?;
+                if open > 0 {
+                    return Err(failure::unexpected(
+                        "a run is completed only when every record is verified or unchanged",
+                    ));
+                }
+            }
+            _ => {}
         }
         let why = why.map(|why| self.redacted(why)).transpose()?;
         let payload = match &why {
@@ -1465,7 +1171,6 @@ impl Ledger<'_, '_> {
                 "code": why.code().as_str(),
                 "message": why.message(),
                 "next_step": why.next_step(),
-                "said": why.said(),
             }),
             None => json!({ "from": run.state.as_str(), "to": to.as_str() }),
         };
@@ -1800,10 +1505,9 @@ impl Ledger<'_, '_> {
     pub fn take_lock(&mut self, fence: &Fence, record: RecordRef) -> Result<LockHeld, Failure> {
         let run = self.fenced_for(fence, record)?;
         let row = self.record(record)?;
-        if matches!(row.state, RecordState::Verified | RecordState::Unchanged) || row.acknowledged()
-        {
+        if matches!(row.state, RecordState::Verified | RecordState::Unchanged) {
             return Err(failure::unexpected(
-                "a record that is verified, unchanged, or acknowledged needs no lock",
+                "a record that is verified or unchanged needs no lock",
             ));
         }
         let place = [
@@ -2012,97 +1716,7 @@ impl Ledger<'_, '_> {
                 row.state
             )));
         }
-        if row.acknowledged() {
-            return Err(failure::unexpected(
-                "a record that ended on the system's acknowledgement is settled and is never verified",
-            ));
-        }
         self.verify(&run, &row, fence.epoch, &read_back, EventKind::Verified)
-    }
-
-    /// Ends a record on the system's acknowledgement (decisions 0161 and
-    /// 0172): its intent was stored, its write was sent and answered, and
-    /// the binding's only evidence is that answer, as the run's own stored
-    /// diff says. The record stays `acted`, is never called verified, and
-    /// never counts as read back; it is settled, not in doubt. The evidence
-    /// of the answer is kept, the lock is released, and an `acted` event
-    /// that says `acknowledged` is written, in the same transaction.
-    ///
-    /// # Errors
-    ///
-    /// `possible_commit`/`runner_lost` when the token's lease is not the
-    /// run's current one. `policy`/`approval_missing` when the run was never
-    /// cleared to write (rule 3). `unknown_variant`/`ledger_state_unexpected`
-    /// when the run is not `running` or not irreversible, `diff` is of
-    /// another record or another diff than the run's, the record is not
-    /// `acted` under this lease, already ended, or holds no lock under this
-    /// lease, or the evidence names no blob.
-    pub fn mark_acknowledged(
-        &mut self,
-        token: &ActedToken,
-        evidence: BlobRef,
-        diff: &AcknowledgedInDiff,
-    ) -> Result<(), Failure> {
-        let fence = Fence {
-            run: token.record.run,
-            epoch: token.epoch,
-        };
-        let run = self.fenced(&fence)?;
-        if run.state != RunState::Running {
-            return Err(failure::unexpected(
-                "a record ends on an acknowledgement while the run is `running`",
-            ));
-        }
-        if !run.cleared_to_write() {
-            return Err(failure::approval_missing(
-                "no approval or decision is bound to it",
-            ));
-        }
-        if run.effect != EffectClass::Irreversible {
-            return Err(failure::unexpected(
-                "only an irreversible run has records whose only evidence is an acknowledgement",
-            ));
-        }
-        if diff.record != token.record || run.diff != Some(diff.diff) {
-            return Err(failure::unexpected(
-                "what the diff says was read for another record or another diff",
-            ));
-        }
-        let row = self.record(token.record)?;
-        if row.acknowledged() {
-            return Err(failure::unexpected(
-                "the record ended on an acknowledgement before",
-            ));
-        }
-        if row.state != RecordState::Acted
-            || row.intent_epoch != Some(token.epoch)
-            || row.acted_at.is_none()
-        {
-            return Err(failure::unexpected(format!(
-                "a record ends on an acknowledgement from `acted` under this lease, and this one is `{}`",
-                row.state
-            )));
-        }
-        self.holds_lock(&run, &row, fence.epoch)?;
-        self.event(
-            run.id,
-            fence.epoch,
-            EventKind::Acted,
-            &json!({
-                "step": row.record.step_seq,
-                "record": row.record.record_seq,
-                "evidence": WriteEvidence::Acknowledged.as_str(),
-            }),
-            Some(evidence),
-        )?;
-        let mut params = record_ref_params(&row.record).to_vec();
-        params.extend([SqlValue::from(evidence), self.tx.now().into()]);
-        self.tx.exec(
-            "UPDATE run_records SET evidence_ref = ?4, acknowledged_at = ?5
-             WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
-            &params,
-        )?;
-        self.end_lock(&run, &row, false)
     }
 
     /// Marks a record `failed` with the failure that stopped it. Its lock is
@@ -2134,11 +1748,6 @@ impl Ledger<'_, '_> {
                 row.state
             )));
         }
-        if row.acknowledged() {
-            return Err(failure::unexpected(
-                "a record that ended on the system's acknowledgement is settled and does not fail",
-            ));
-        }
         let why = self.redacted(why)?;
         self.event(
             run.id,
@@ -2150,8 +1759,6 @@ impl Ledger<'_, '_> {
                 "class": why.class().as_str(),
                 "code": why.code().as_str(),
                 "message": why.message(),
-                "next_step": why.next_step(),
-                "said": why.said(),
             }),
             evidence,
         )?;
@@ -2360,8 +1967,7 @@ impl Ledger<'_, '_> {
             .row(
                 "SELECT COUNT(*) FROM run_records
                  WHERE run_id = ?1 AND intent_epoch < ?2
-                   AND (state = 'intent'
-                        OR (state = 'acted' AND acknowledged_at IS NULL)
+                   AND (state IN ('intent', 'acted')
                         OR (state = 'failed' AND reconciled_at IS NULL
                             AND (acted_at IS NOT NULL
                                  OR failure_class NOT IN ('policy', 'stale', 'input'))))",
@@ -2629,8 +2235,7 @@ impl Ledger<'_, '_> {
              WHERE run_id = ?1 AND record_key_hash IN (
                  SELECT record_key_hash FROM run_records
                  WHERE run_id = ?1
-                   AND (state = 'intent'
-                        OR (state = 'acted' AND acknowledged_at IS NULL)
+                   AND (state IN ('intent', 'acted')
                         OR (state = 'failed' AND intent_epoch IS NOT NULL AND reconciled_at IS NULL
                             AND (acted_at IS NOT NULL
                                  OR failure_class NOT IN ('policy', 'stale', 'input')))))",

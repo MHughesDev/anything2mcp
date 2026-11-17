@@ -7,11 +7,10 @@
 //! that ends every read within its limit and publishes with the record's
 //! token; a discoverer that only looks; and the drafting rules.
 //!
-//! A wire protocol is one small interface inside the pack (decision 0104).
-//! Two fill it: `nats`, the NATS client protocol with JetStream, the first
-//! standard one (decision 0167); and `example-broker/1`, the line protocol
-//! of the test broker under `targets/example-broker`. A surface of kind
-//! `broker` says which it speaks.
+//! A wire protocol is one small interface inside the pack. Its first
+//! implementation speaks the line protocol of the test broker under
+//! `targets/example-broker`; which standard protocol comes first is still
+//! to be chosen (decision 0104).
 //!
 //! The product crate makes one call: [`register`].
 
@@ -25,7 +24,6 @@ mod json;
 mod lint;
 mod lower;
 mod names;
-mod nats_wire;
 mod wire;
 
 use std::sync::Arc;
@@ -41,7 +39,7 @@ pub const MANIFEST: &str = include_str!("manifest.toml");
 
 /// The wire protocols this build speaks, by the name a surface of kind
 /// `broker` states under `protocol`.
-pub const PROTOCOLS: &[&str] = &[nats_wire::NAME, example_wire::NAME];
+pub const PROTOCOLS: &[&str] = &[example_wire::NAME];
 
 /// The stream pack.
 #[derive(Debug, Clone, Copy, Default)]
@@ -78,10 +76,7 @@ impl Pack for StreamPack {
             names.mode.clone(),
             Arc::new(driver::StreamDriver::new(
                 Arc::clone(cx.redact()),
-                vec![
-                    Arc::new(nats_wire::NatsProtocol),
-                    Arc::new(example_wire::ExampleProtocol),
-                ],
+                vec![Arc::new(example_wire::ExampleProtocol)],
                 idle_links,
             )),
         )?;
@@ -103,7 +98,6 @@ impl Pack for StreamPack {
                 .lint_rule(Arc::new(lint::UnknownSchema))
                 .lint_rule(Arc::new(lint::ConsumersUnknown))
                 .lint_rule(Arc::new(lint::UntrustedUnmarked))
-                .lint_rule(Arc::new(lint::ProtocolUnfit))
                 .drafting_rule(Arc::new(draft::ChannelDraft::new(names.clone())))
                 .drafting_rule(Arc::new(draft::SchemaDraft::new(names.clone())))
                 .drafting_rule(Arc::new(draft::ReadDraft::new(names.clone()))),

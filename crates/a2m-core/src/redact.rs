@@ -31,19 +31,15 @@ pub trait Redact: Send + Sync {
         self.redact(text) != text
     }
 
-    /// The failure with its sentence, its next step, and what the system
-    /// said redacted. The class and the code are names and are kept.
+    /// The failure with its sentence and its next step redacted. The class
+    /// and the code are names and are kept.
     fn redact_failure(&self, failure: &Failure) -> Failure {
-        let clean = Failure::new(
+        Failure::new(
             failure.class(),
             failure.code().clone(),
             self.redact(failure.message()),
             self.redact(failure.next_step()),
-        );
-        match failure.said() {
-            Some(said) => clean.with_said(self.redact(said)),
-            None => clean,
-        }
+        )
     }
 
     /// The value with every secret in it redacted, at any depth. A field's
@@ -133,8 +129,6 @@ vocabulary! {
         RestrictedValue => "restricted_value",
         /// Naming a record's key in the ledger and in a lock.
         RecordKey => "record_key",
-        /// Matching a caller's idempotency key without keeping it.
-        CallerKey => "caller_key",
     }
 }
 
@@ -253,45 +247,6 @@ mod tests {
         );
         assert_eq!(clean.next_step(), "Sign in again; do not send [redacted].");
         assert!(!format!("{clean:?}").contains(SECRET));
-    }
-
-    #[test]
-    fn what_the_system_said_is_kept_apart_bounded_and_redacted() {
-        let failure = Failure::new(
-            FailureClass::Rejected,
-            FailureCode::new("system_refused").unwrap(),
-            "The system refused the record.",
-            "Correct the record and call again.",
-        )
-        .with_said(format!("total must be positive\n\u{1b}[31m {SECRET}"));
-        // Never joined into the product's own words.
-        assert_eq!(failure.message(), "The system refused the record.");
-        assert_eq!(
-            failure.said(),
-            Some(format!("total must be positive  [31m {SECRET}").as_str())
-        );
-        let clean = Knows(SECRET).redact_failure(&failure);
-        assert_eq!(
-            clean.said(),
-            Some("total must be positive  [31m [redacted]")
-        );
-        // Bounded.
-        let long = failure.clone().with_said("x".repeat(5_000));
-        assert_eq!(
-            long.said().unwrap().chars().count(),
-            crate::failure::SAID_LONGEST + 1
-        );
-        // Nothing to keep is nothing.
-        assert_eq!(failure.clone().with_said(" \n\t ").said(), None);
-        // A failure that stands in for another carries its words.
-        let standing = Failure::new(
-            FailureClass::PossibleCommit,
-            FailureCode::new("no_confirmation").unwrap(),
-            "In doubt.",
-            "Reconcile.",
-        )
-        .carrying_said(&clean);
-        assert_eq!(standing.said(), clean.said());
     }
 
     #[test]

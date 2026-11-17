@@ -84,7 +84,7 @@ Rules have stable codes so they can be cited, silenced with a reason where allow
 | --- | --- | --- |
 | Compiled | In memory, on demand, by `lint`, `try`, and `test` | Once, in a clean deterministic mode, by `publish` |
 | Test rules | Warnings | Errors |
-| Marked | As a draft, by the draft version, which no published plan carries: a draft compiled under any other version is refused ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)); refused by normal callers | Signed with the plan hash |
+| Marked | As a draft; refused by normal callers | Signed with the plan hash |
 | Stored | Nowhere | The plan, the source files, and the gate evidence, together and immutable |
 
 On publish the compiler also writes a review summary ordered by risk, which is what the reviewing person sees first ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)). A published version takes over in stages ([section 224](224-when-the-engine-itself-fails.md)).

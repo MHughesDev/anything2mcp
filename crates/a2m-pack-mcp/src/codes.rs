@@ -92,7 +92,7 @@ pub(crate) fn rejected(tool: &str) -> Failure {
             "The upstream tool `{}` refused the call with its own error result.",
             shown(tool)
         ),
-        "Look at what the tool said, which is shown apart as untrusted text, and correct the input.",
+        "Look at the step's capture for what the tool said, as untrusted text, and correct the input.",
     )
 }
 

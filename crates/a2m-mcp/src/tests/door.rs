@@ -652,9 +652,7 @@ async fn the_router_nests_and_serves_a_call_with_progress_over_a_real_socket() {
             "_meta": {"progressToken": "t"},
         }),
     );
-    let response = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
-        .build()
-        .unwrap()
+    let response = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{port}{path}"))
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")

@@ -22,10 +22,8 @@ use a2m_engine::Diff;
 use a2m_ledger::{AuditEntry, Durability, Fence, RunRow, Store};
 use a2m_policy::{ApprovalSurface, Approved, Channel, Declined, PresenceCheck, PrincipalRef};
 
-use crate::acts::{Acts, PersonActAsk, PersonActId};
 use crate::codes;
 use crate::def::{ActionName, BoxFuture};
-use crate::dispatch::Response;
 use crate::render;
 use crate::signals::RunSignals;
 
@@ -133,7 +131,6 @@ pub struct PresenceProof {
     principal: PrincipalId,
     at: Timestamp,
     prompt: Option<&'static str>,
-    act: Option<PersonActId>,
 }
 
 impl PresenceProof {
@@ -146,22 +143,7 @@ impl PresenceProof {
             principal,
             at,
             prompt: None,
-            act: None,
         }
-    }
-
-    /// The same proof, given for one person's act that waits on a page:
-    /// the desk carries that act out with it and no other.
-    #[must_use]
-    pub const fn for_act(mut self, act: PersonActId) -> Self {
-        self.act = Some(act);
-        self
-    }
-
-    /// The person's act the proof was given for, when it was given for one.
-    #[must_use]
-    pub const fn act(&self) -> Option<PersonActId> {
-        self.act
     }
 
     /// The same proof, naming the prompt that answered, such as the name
@@ -303,32 +285,6 @@ pub trait PersonSurface: Send + Sync {
     /// and waits for the answer.
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer>;
 
-    /// Shows a person's act that an agent asked for on a page of the
-    /// surface, and gives the link that goes into the caller's result. A
-    /// press there raises the presence prompt, and only the proof from
-    /// that press, given for this act ([`PresenceProof::for_act`]), carries
-    /// it out, through [`ApprovalDesk::carry_out`]. A surface with no such
-    /// page refuses by name, and the act is not done.
-    /// Whether this surface has a page for a person's act. The dispatcher
-    /// asks before it pins anything: a surface with none is answered
-    /// `person_required` at once, as before decision 0163.
-    fn shows_person_acts(&self) -> bool {
-        false
-    }
-
-    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
-        Box::pin(async move {
-            Err(codes::policy(
-                codes::PERSON_REQUIRED,
-                format!(
-                    "`{}` is a person's act, and this engine's person surface has no page on which a person can carry it out.",
-                    ask.action
-                ),
-                "Ask the person to run it themselves, at a terminal, with no engine running.",
-            ))
-        })
-    }
-
     /// What this surface's presence prompt can do on this machine now.
     /// `doctor.run` reports it. A surface that does not say reports
     /// [`PresenceReport::unknown`]. Asking raises no prompt.
@@ -415,17 +371,7 @@ pub struct PreviewRecord {
     pub action: &'static str,
     /// Its fields, in the record's declared order.
     pub fields: Vec<PreviewField>,
-    /// What will stand as the evidence that the write landed. `None` when
-    /// it is read back, as most writes are. `Some` with the words the page
-    /// shows beside the record before a person approves it, for a write
-    /// whose only evidence is the system's own acknowledgement: "accepted
-    /// by the system, not read back" (decision 0176).
-    pub not_read_back: Option<&'static str>,
 }
-
-/// What the approval page shows beside a record whose write is accepted by
-/// the system and never read back.
-pub const NOT_READ_BACK: &str = "accepted by the system, not read back";
 
 /// One field of one record of a preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,7 +399,6 @@ pub struct ApprovalDesk {
     workspace: WorkspaceId,
     signals: Arc<RunSignals>,
     redact: Arc<dyn Redact>,
-    acts: Arc<Acts>,
 }
 
 impl std::fmt::Debug for ApprovalDesk {
@@ -488,7 +433,6 @@ impl ApprovalDesk {
         workspace: WorkspaceId,
         signals: Arc<RunSignals>,
         redact: Arc<dyn Redact>,
-        acts: Arc<Acts>,
     ) -> Self {
         Self {
             surface: Arc::new(surface),
@@ -496,50 +440,6 @@ impl ApprovalDesk {
             workspace,
             signals,
             redact,
-            acts,
-        }
-    }
-
-    /// The person's act that waits under `act`, as its page shows it:
-    /// exactly what will be done, every value redacted.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` when nothing waits under `act`: it was carried
-    /// out, declined, or its time ended, or a press is carrying it out.
-    pub fn person_act(&self, act: PersonActId) -> Result<PersonActAsk, Failure> {
-        self.acts.kernel()?.waiting_act(act)
-    }
-
-    /// Carries out the person's act that waits under `act`, once, as the
-    /// person who proved presence. The proof must have been given for this
-    /// act ([`PresenceProof::for_act`]), be the person's the act waits
-    /// for, and be of now; the act is then decided again, for the person,
-    /// and its handler run with the proof. The response is what the act
-    /// came to, redacted: the page shows it, and the same call by the
-    /// program that asked gives it back.
-    ///
-    /// # Errors
-    ///
-    /// `input`/`not_found` when nothing waits under `act`, or a press
-    /// carries it out already; `policy`/`presence_required` for a proof of
-    /// another ask, of another person, or not of now. Nothing is done, and
-    /// an act that waits goes on waiting.
-    pub async fn carry_out(
-        &self,
-        act: PersonActId,
-        proof: PresenceProof,
-    ) -> Result<Response, Failure> {
-        self.acts.kernel()?.carry_out_act(act, proof).await
-    }
-
-    /// Records that the person declined the act, or, with `by_person`
-    /// false, that its page closed unanswered. Nothing is done for it. An
-    /// act that no longer waits is left as it is, so a second press is
-    /// harmless.
-    pub fn decline_act(&self, act: PersonActId, by_person: bool) {
-        if let Ok(kernel) = self.acts.kernel() {
-            kernel.decline_act(act, by_person);
         }
     }
 
@@ -647,7 +547,6 @@ impl ApprovalDesk {
                         }
                     })
                     .collect(),
-                not_read_back: record.not_read_back().then_some(NOT_READ_BACK),
             })
             .collect();
         Ok(ApprovalPreview {

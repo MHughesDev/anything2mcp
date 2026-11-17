@@ -816,13 +816,17 @@ impl HttpDriver {
                 ),
             },
         });
+        let json = |name: &str, bytes: Vec<u8>| Capture {
+            name: name.to_owned(),
+            media_type: "application/json".to_owned(),
+            bytes,
+        };
         vec![
-            Capture::acting(&acting),
-            Capture {
-                name: "exchange".to_owned(),
-                media_type: "application/json".to_owned(),
-                bytes: serde_json::to_vec(&exchange).unwrap_or_default(),
-            },
+            json("acting", serde_json::to_vec(&acting).unwrap_or_default()),
+            json(
+                "exchange",
+                serde_json::to_vec(&exchange).unwrap_or_default(),
+            ),
         ]
     }
 
@@ -1010,25 +1014,7 @@ fn held_answer<'a>(
         .ok_or_else(|| codes::not_usable("no answer is held"))
 }
 
-/// What the system said when it refused a request: the text of the first of
-/// the body's top-level `message`, `detail`, and `error` that is text.
-/// Redacted here, as the failure's own words never carry it; the contract
-/// bounds it again.
-fn said_by_refusal(body: Option<&Json>, redact: &dyn Redact) -> Option<String> {
-    let body = body?;
-    ["message", "detail", "error"]
-        .iter()
-        .find_map(|field| match body.get(field)? {
-            Json::Text(text) => Some(redact.redact(text)),
-            _ => None,
-        })
-}
-
-fn validate(
-    session: &mut Session,
-    step: &Step,
-    redact: &dyn Redact,
-) -> Result<StepOutcome, StepFailure> {
+fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailure> {
     let (name, template) = judged_endpoint(session, step)?;
     let answer = held_answer(&mut session.answer, &name)?;
     let answered = StepFailure::answered;
@@ -1119,18 +1105,14 @@ fn validate(
         )));
     }
     if is(&template.answers.refused).is_some() {
-        let refused = answered(failure_of(
+        return Err(answered(failure_of(
             FailureClass::Rejected,
             codes::APP_VALIDATION_ERROR,
             format!(
                 "The system refused the request to the endpoint `{name}` with status {status}, in the shape the endpoint declares for a refusal."
             ),
             "Correct the input the system refused, then run the tool again.",
-        ));
-        return Err(match said_by_refusal(body.as_ref(), redact) {
-            Some(said) => refused.with_said(said),
-            None => refused,
-        });
+        )));
     }
     Err(answered(failure_of(
         FailureClass::UnknownVariant,
@@ -1353,7 +1335,7 @@ impl Driver for HttpDriver {
             if step.kind == REQUEST {
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
-                validate(session, step, self.redact.as_ref())
+                validate(session, step)
             } else if step.kind == EXTRACT {
                 self.extract(session, step, input)
             } else if step.kind == PROBE {

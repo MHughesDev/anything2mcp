@@ -10,8 +10,14 @@
 //!
 //! Two things differ between the systems and are handled here. macOS
 //! answers "not permitted", where Linux answers success, when a group is
-//! signalled in which nothing is left alive but its exited leader; that
-//! answer means the group is gone. And macOS makes a pipe and marks it
+//! signalled in which every process has exited or is in the middle of
+//! exiting. With the leader exited that answer means the group is gone. But
+//! a leader in the middle of its exit, whose files are already closed, has
+//! not yet exited for the call that waits for it; a browser that was asked
+//! to close is in that moment when the end of its pipe is seen. So on that
+//! answer, with the leader not yet seen to exit, the supervisor waits for
+//! the leader's exit, for a bounded time, and signals again; the verdict is
+//! in [`super::ending`]. And macOS makes a pipe and marks it
 //! close-on-exec in two steps, so a child started by another thread in
 //! between would inherit the pipe; every start therefore holds one lock,
 //! as on Windows.
@@ -43,6 +49,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::unix::pipe;
 use tokio::process::{Child, Command};
 
+use super::ending::{self, Answer, Leader, Verdict};
 use super::{ForeignPipe, StartError};
 
 /// The two ends of a foreign link that stay with the engine.
@@ -103,6 +110,13 @@ fn other(message: &'static str) -> io::Error {
     io::Error::other(message)
 }
 
+/// How long a group that answered "nothing could be signalled" is given for
+/// its leader to finish exiting before it is judged again. On macOS a
+/// leader in the middle of its exit, with its files already closed, answers
+/// so; that lasts moments. Only a leader the engine's user may not signal
+/// waits this long, and its group is then reported as not ended.
+const LEADER_EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Whether the leader has exited. It is not reaped. Call it only while the
 /// leader is unreaped.
 fn leader_exited(pgid: Pid) -> bool {
@@ -115,22 +129,57 @@ fn leader_exited(pgid: Pid) -> bool {
     )
 }
 
-/// Ends every process of the group, and says whether the group is gone.
-/// Call it only while the leader is unreaped, so that the group is ours.
-fn end_group(pgid: Pid) -> bool {
-    match kill_process_group(pgid, Signal::KILL) {
-        // Signalled, or no such group: nothing is left to end.
-        Ok(()) => true,
-        Err(error) if error == rustix::io::Errno::SRCH => true,
-        // macOS answers "not permitted" when the group holds nothing it can
-        // signal, and it does not count an exited process. With the leader
-        // exited that is the ordinary end of a program that left nothing
-        // running. Linux answers success there, and never this for a group
-        // whose leader is our own child. With the leader alive it would
-        // mean the group cannot be ended, and is reported as that.
-        Err(error) if error == rustix::io::Errno::PERM => leader_exited(pgid),
-        Err(_) => false,
+/// Resolves when the leader has exited, without reaping it, or when it can
+/// no longer be waited for.
+async fn leader_exit_of(pid: Pid) {
+    let waited = tokio::task::spawn_blocking(move || {
+        loop {
+            match waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+            ) {
+                Err(error) if error == rustix::io::Errno::INTR => {}
+                _ => break,
+            }
+        }
+    });
+    // A failed join means the wait itself ended; either way it is over.
+    let _ = waited.await;
+}
+
+/// What the system's answer to a signal to a group means. This is the one
+/// place where its error numbers are read. "Not permitted" is the answer
+/// both systems give when the group exists and nothing in it could be
+/// signalled; on macOS that includes a group whose members have all exited
+/// or are exiting, which Linux answers with success. [`ending::verdict`]
+/// tells those apart by the leader.
+///
+/// [`ending::verdict`]: super::ending::verdict
+fn answer(result: rustix::io::Result<()>) -> Answer {
+    match result {
+        Ok(()) => Answer::Signalled,
+        Err(error) if error == rustix::io::Errno::SRCH => Answer::NoGroup,
+        Err(error) if error == rustix::io::Errno::PERM => Answer::NothingSignalled,
+        Err(_) => Answer::Failed,
     }
+}
+
+/// Signals every process of the group to end, and judges the answer. Call
+/// it only while the leader is unreaped, so that the group is ours.
+/// `waited` says whether the leader has already been waited for.
+fn signal_and_judge(pgid: Pid, waited: bool) -> Verdict {
+    let answer = answer(kill_process_group(pgid, Signal::KILL));
+    let leader = if answer != Answer::NothingSignalled {
+        // The verdict does not depend on the leader.
+        Leader::NotSeenToExit
+    } else if leader_exited(pgid) {
+        Leader::Exited
+    } else if waited {
+        Leader::StayedThroughGrace
+    } else {
+        Leader::NotSeenToExit
+    };
+    ending::verdict(answer, leader)
 }
 
 /// What tells a file from every other, and one state of its content from
@@ -323,17 +372,39 @@ impl Group {
         u32::try_from(self.pgid.as_raw_nonzero().get()).unwrap_or(0)
     }
 
-    /// Ends every process of the group. Does nothing once reaping began,
-    /// because the group's identifier is then no longer provably ours.
-    /// Returns false when the group could not be signalled.
+    /// Ends every process of the group, at once and without waiting. Does
+    /// nothing once reaping began, because the group's identifier is then
+    /// no longer provably ours. Returns false when the group could not be
+    /// ended, or when that is not known yet; [`Group::end`] waits to know.
     pub(crate) fn kill(&self) -> bool {
-        let Ok(child) = self.child.lock() else {
-            return false;
-        };
-        if child.is_none() {
-            return true;
+        self.judge(false)
+            .is_none_or(|verdict| verdict == Verdict::Ended)
+    }
+
+    /// Ends every process of the group, without reaping the leader, and
+    /// says whether the group is ended. Where that is not known at once,
+    /// it waits for the leader's exit, for at most the grace, and signals
+    /// again. Once reaping began elsewhere, whoever reaps gives the verdict,
+    /// and this says the group is ended.
+    pub(crate) async fn end(&self) -> bool {
+        match self.judge(false) {
+            None => return true,
+            Some(Verdict::WaitForLeader) => {}
+            Some(verdict) => return verdict == Verdict::Ended,
         }
-        end_group(self.pgid)
+        let _ = tokio::time::timeout(LEADER_EXIT_GRACE, leader_exit_of(self.pgid)).await;
+        self.judge(true)
+            .is_none_or(|verdict| verdict == Verdict::Ended)
+    }
+
+    /// Signals the group and judges the answer, while the leader has not
+    /// been taken for reaping. `None` once it has.
+    fn judge(&self, waited: bool) -> Option<Verdict> {
+        let Ok(child) = self.child.lock() else {
+            return Some(Verdict::NotEnded);
+        };
+        child.as_ref()?;
+        Some(signal_and_judge(self.pgid, waited))
     }
 
     /// Whether the leader has exited. It is not reaped.
@@ -349,20 +420,7 @@ impl Group {
 
     /// Resolves when the leader has exited, without reaping it.
     pub(crate) async fn leader_exit(&self) {
-        let pid = self.pgid;
-        let waited = tokio::task::spawn_blocking(move || {
-            loop {
-                match waitid(
-                    WaitId::Pid(pid),
-                    WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
-                ) {
-                    Err(error) if error == rustix::io::Errno::INTR => {}
-                    _ => break,
-                }
-            }
-        });
-        // A failed join means the wait itself ended; either way it is over.
-        let _ = waited.await;
+        leader_exit_of(self.pgid).await;
     }
 
     /// Takes the child's standard streams, where it was given pipes.
@@ -384,20 +442,24 @@ impl Group {
 
     /// Ends the group and reaps the leader. The status is `None` when the
     /// leader was reaped before, or cannot be waited for. The flag is false
-    /// when the group could not be signalled.
+    /// when the group could not be ended.
     pub(crate) async fn reap(&self) -> (Option<ExitStatus>, bool) {
-        let (taken, ended) = {
-            let Ok(mut child) = self.child.lock() else {
-                return (None, false);
-            };
-            // The leader is unreaped while it is here, so the group is ours.
-            let ended = child.is_none() || end_group(self.pgid);
-            (child.take(), ended)
+        let taken = match self.child.lock() {
+            Ok(mut child) => child.take(),
+            Err(_) => return (None, false),
         };
-        match taken {
-            Some(mut child) => (child.wait().await.ok(), ended),
-            None => (None, ended),
+        let Some(mut child) = taken else {
+            return (None, true);
+        };
+        // The leader is held here and unreaped until it is waited for
+        // below, so the group is ours throughout. The leader is reaped
+        // whatever the verdict, and is waited for in any case.
+        let mut verdict = signal_and_judge(self.pgid, false);
+        if verdict == Verdict::WaitForLeader {
+            let _ = tokio::time::timeout(LEADER_EXIT_GRACE, leader_exit_of(self.pgid)).await;
+            verdict = signal_and_judge(self.pgid, true);
         }
+        (child.wait().await.ok(), verdict == Verdict::Ended)
     }
 }
 
@@ -414,7 +476,17 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
 
-    use super::ended_from_outside;
+    use rustix::io::Errno;
+
+    use super::{Answer, answer, ended_from_outside};
+
+    #[test]
+    fn each_answer_of_the_system_to_a_signal_is_read_as_one_meaning() {
+        assert_eq!(answer(Ok(())), Answer::Signalled);
+        assert_eq!(answer(Err(Errno::SRCH)), Answer::NoGroup);
+        assert_eq!(answer(Err(Errno::PERM)), Answer::NothingSignalled);
+        assert_eq!(answer(Err(Errno::INVAL)), Answer::Failed);
+    }
 
     #[test]
     fn a_signal_reads_as_ended_from_outside_and_an_exit_does_not() {

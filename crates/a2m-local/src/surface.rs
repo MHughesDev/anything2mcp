@@ -10,14 +10,8 @@
 //! the change the page showed and no other. One prompt is up at a time,
 //! and it ends with the page's window. Silence is a decline.
 //!
-//! A person's act an agent asked for, such as publishing a version, is
-//! shown the same way on a page of its own (decision 0163): exactly what
-//! will be done, every value as text; a press of Carry out raises the
-//! presence prompt, and only a proof from that press, given for that act,
-//! reaches the desk, which carries the act out once.
-//!
-//! The listener is not a front door: it answers its pages and their
-//! presses, and nothing else.
+//! The listener is not a front door: it answers its page and two presses,
+//! and nothing else.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -25,9 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_actions::{
-    ApprovalAsk, ApprovalDesk, ApprovalPreview, BoxFuture, PersonActAsk, PersonActId,
-    PersonSurface, PresenceAsk, PresenceProof, PresenceReport, PreviewRecord, SessionAsk,
-    SignInAsk, SurfaceLink,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, BoxFuture, PersonSurface, PresenceAsk,
+    PresenceProof, PresenceReport, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Digest, Failure, PrincipalId, RunId};
@@ -52,9 +45,6 @@ use crate::presence::{
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
-const ACT_PAGE: &str = include_str!("pages/act.html");
-/// The most characters of what an act came to that its answer page shows.
-const RESULT_SHOWN: usize = 2_000;
 
 /// The random bytes in the address's code and in the page's one-time
 /// value.
@@ -109,21 +99,6 @@ struct Page {
     timer: JoinHandle<()>,
 }
 
-/// One person's act that waits on a page.
-struct ActPage {
-    act: PersonActId,
-    action: String,
-    person: PrincipalId,
-    /// The one-time value of the page served last. A press takes it.
-    once: Option<String>,
-    /// A press is being carried out.
-    pressed: bool,
-    /// The window ended while a press was being carried out.
-    ended: bool,
-    deadline: Instant,
-    timer: JoinHandle<()>,
-}
-
 struct Listening {
     port: u16,
     stop: oneshot::Sender<()>,
@@ -135,8 +110,6 @@ struct Waiting {
     listening: Option<Listening>,
     /// The waiting pages, by the code in their address.
     pages: BTreeMap<String, Page>,
-    /// The person's acts that wait on a page, by the code in its address.
-    acts: BTreeMap<String, ActPage>,
     /// Listeners that were told to stop and may still be closing.
     closing: Vec<JoinHandle<()>>,
     /// The changes a person answered, or whose time ended, newest last. A
@@ -323,35 +296,12 @@ impl Inner {
     /// pages.
     fn settle(&self, state: &mut Waiting) {
         if state.pages.is_empty()
-            && state.acts.is_empty()
             && let Some(listening) = state.listening.take()
         {
             let _ = listening.stop.send(());
             state.closing.push(listening.task);
         }
-        self.waiting
-            .send_replace(state.pages.len() + state.acts.len());
-    }
-
-    /// The window of an act's page ended: silence is a decline.
-    fn end_of_act_window(&self, code: &str) {
-        let act = {
-            let mut state = self.state();
-            let Some(page) = state.acts.get_mut(code) else {
-                return;
-            };
-            if page.pressed {
-                page.ended = true;
-                return;
-            }
-            let act = page.act;
-            state.acts.remove(code);
-            self.settle(&mut state);
-            act
-        };
-        if let Some(desk) = self.desk.get() {
-            desk.decline_act(act, false);
-        }
+        self.waiting.send_replace(state.pages.len());
     }
 
     fn remember(state: &mut Waiting, run: RunId, diff_hash: Digest, how: Answered) {
@@ -872,316 +822,6 @@ async fn decline(
     }
 }
 
-/// The input of an act as a table, and the lines to read beside it. Every
-/// name and value is placed as text.
-fn act_html(ask: &PersonActAsk) -> (String, String) {
-    use std::fmt::Write as _;
-    let mut input = String::from(
-        "<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Value</th></tr></thead><tbody>",
-    );
-    for field in &ask.input {
-        let _ = write!(
-            input,
-            "<tr><th scope=\"row\">{}</th><td>{}{}</td></tr>",
-            escape(&field.name),
-            escape(&field.value),
-            if field.cut { " (cut short here)" } else { "" },
-        );
-    }
-    input.push_str("</tbody></table>");
-    let mut details = String::new();
-    if !ask.details.is_empty() {
-        details.push_str("<h2>What it may do</h2><p>The most dangerous first.</p><ul>");
-        for line in &ask.details {
-            let _ = write!(details, "<li>{}</li>", escape(line));
-        }
-        details.push_str("</ul>");
-    }
-    (input, details)
-}
-
-/// The first characters of an act's identifier, as the page and a prompt
-/// that carries words show them.
-fn short_act(act: PersonActId) -> String {
-    act.to_string().chars().take(SHORT_HASH).collect()
-}
-
-async fn act_show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Response {
-    let Ok(once) = inner.code() else {
-        return answer(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "The page cannot be shown",
-            "This machine gave no random value for the page. Nothing was done. Open the link again.",
-        );
-    };
-    let Some(act) = inner.state().acts.get(&code).map(|page| page.act) else {
-        return nothing_here();
-    };
-    let Some(desk) = inner.desk.get() else {
-        return gone();
-    };
-    // The page shows what the desk holds for the act, and nothing kept
-    // from the ask.
-    let Ok(ask) = desk.person_act(act) else {
-        return answer(
-            StatusCode::CONFLICT,
-            "Nothing waits here",
-            "The act this page was opened for no longer waits: it was carried out, declined, or its time ended.",
-        );
-    };
-    let presence = inner.prompt.available().await;
-    let mut state = inner.state();
-    let Some(found) = state.acts.get_mut(&code) else {
-        return nothing_here();
-    };
-    found.once = Some(once.clone());
-    let minutes = inner.window.as_secs().div_ceil(60).max(1);
-    let (input, details) = act_html(&ask);
-    page(
-        StatusCode::OK,
-        fill(
-            ACT_PAGE,
-            &[
-                ("action", &escape(ask.action.as_str())),
-                ("summary", &escape(&ask.summary)),
-                ("asked_through", &escape(&ask.asked_through)),
-                ("act", &escape(&act.to_string())),
-                ("short", &escape(&short_act(act))),
-                ("input", &input),
-                ("details", &details),
-                ("presence", &presence_html(&presence)),
-                ("minutes", &minutes.to_string()),
-                ("code", &escape(&code)),
-                ("once", &escape(&once)),
-            ],
-        ),
-    )
-}
-
-/// What a press on an act's page is about.
-struct ActPressed {
-    act: PersonActId,
-    action: String,
-    person: PrincipalId,
-    deadline: Instant,
-}
-
-/// Takes the act page's one-time value and marks it as pressed, as
-/// [`begin`] does for an approval.
-fn act_begin(inner: &Inner, code: &str, body: &Bytes) -> Result<ActPressed, Box<Response>> {
-    let mut state = inner.state();
-    let Some(found) = state.acts.get_mut(code) else {
-        return Err(Box::new(nothing_here()));
-    };
-    let expected = found.once.take();
-    let fits = match (expected.as_deref(), once_of(body)) {
-        (Some(expected), Some(given)) => same(expected, given),
-        _ => false,
-    };
-    if !fits {
-        return Err(Box::new(answer(
-            StatusCode::FORBIDDEN,
-            "Nothing was done",
-            "The press did not come from the page as it was last shown. Open the link again and press there.",
-        )));
-    }
-    if found.pressed {
-        return Err(Box::new(answer(
-            StatusCode::CONFLICT,
-            "A press is already being answered",
-            "Answer the prompt on this machine, or open the link again when it has closed.",
-        )));
-    }
-    found.pressed = true;
-    Ok(ActPressed {
-        act: found.act,
-        action: found.action.clone(),
-        person: found.person,
-        deadline: found.deadline,
-    })
-}
-
-/// Ends a press on an act's page: an act that was answered, or no longer
-/// waits, takes its page with it; any other waits on, unless its window
-/// ended meanwhile, which is a decline.
-fn act_finish(inner: &Inner, code: &str, settled: bool) {
-    let declined = {
-        let mut state = inner.state();
-        let Some(found) = state.acts.get_mut(code) else {
-            return;
-        };
-        found.pressed = false;
-        let (act, ended) = (found.act, found.ended);
-        if settled || ended {
-            if let Some(gone) = state.acts.remove(code) {
-                gone.timer.abort();
-            }
-            inner.settle(&mut state);
-        }
-        (!settled && ended).then_some(act)
-    };
-    if let (Some(act), Some(desk)) = (declined, inner.desk.get()) {
-        desk.decline_act(act, false);
-    }
-}
-
-fn nothing_done(status: StatusCode, detail: &str) -> (bool, Response) {
-    (false, answer(status, "Nothing was done", detail))
-}
-
-/// What the act came to, as its answer page says it: the engine's own
-/// words, and the result as text.
-fn act_answer(done: &a2m_actions::Response) -> Response {
-    if done.ok {
-        let result = done
-            .result
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_default();
-        let result: String = result.chars().take(RESULT_SHOWN).collect();
-        answer(
-            StatusCode::OK,
-            "Done",
-            &format!(
-                "`{}` was carried out as you, once. What it gave: {result}. The program that asked can call it again to be told. You can close this page.",
-                done.action
-            ),
-        )
-    } else {
-        let why = done
-            .error
-            .as_ref()
-            .map_or("The engine did not say why.", |error| {
-                error.message.as_str()
-            });
-        answer(
-            StatusCode::CONFLICT,
-            "Carried out, and it did not succeed",
-            &format!(
-                "`{}` was tried once, as you, and failed: {why}",
-                done.action
-            ),
-        )
-    }
-}
-
-async fn act_confirm_pressed(inner: &Inner, pressed: &ActPressed) -> (bool, Response) {
-    let Some(desk) = inner.desk.get() else {
-        return nothing_done(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "The engine cannot carry out an act now. Run `anything2mcp doctor run` for the reason.",
-        );
-    };
-    // Asked again at the press: only an act that still waits is prompted
-    // for.
-    if desk.person_act(pressed.act).is_err() {
-        return (
-            true,
-            answer(
-                StatusCode::CONFLICT,
-                "Nothing was done",
-                "The act this page showed no longer waits. Ask the program that asked for it.",
-            ),
-        );
-    }
-    let Ok(_up) = inner.prompting.try_lock() else {
-        return nothing_done(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
-        );
-    };
-    let asked = inner
-        .prompt
-        .ask(
-            PromptText {
-                title: format!("Carry out `{}`", pressed.action),
-                detail: format!("Act {}", short_act(pressed.act)),
-            },
-            pressed.deadline,
-        )
-        .await;
-    let asked = if Instant::now() >= pressed.deadline {
-        PromptAnswer::Dismissed
-    } else {
-        asked
-    };
-    let prompt = match asked {
-        PromptAnswer::Present(prompt) => prompt,
-        PromptAnswer::Confirmed => {
-            return nothing_done(
-                StatusCode::FORBIDDEN,
-                "A confirmation dialog was answered, which proves no person, so nothing was done.",
-            );
-        }
-        PromptAnswer::Dismissed => {
-            return nothing_done(
-                StatusCode::FORBIDDEN,
-                "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
-            );
-        }
-        PromptAnswer::Denied => {
-            return nothing_done(
-                StatusCode::FORBIDDEN,
-                "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
-            );
-        }
-        PromptAnswer::NotAvailable(why) => {
-            return nothing_done(
-                StatusCode::FORBIDDEN,
-                &format!(
-                    "No presence prompt is available on this machine, so nothing is done here. {} {} You can decline the act from the page.",
-                    why.message, why.remedy
-                ),
-            );
-        }
-    };
-    let proof = PresenceProof::new(recorded_check(prompt), pressed.person, inner.clock.now())
-        .naming(prompt.as_str())
-        .for_act(pressed.act);
-    match desk.carry_out(pressed.act, proof).await {
-        Ok(done) => (true, act_answer(&done)),
-        Err(failure) => nothing_done(StatusCode::FORBIDDEN, failure.message()),
-    }
-}
-
-async fn act_confirm(
-    State(inner): State<Arc<Inner>>,
-    Path(code): Path<String>,
-    body: Bytes,
-) -> Response {
-    let pressed = match act_begin(&inner, &code, &body) {
-        Ok(pressed) => pressed,
-        Err(response) => return *response,
-    };
-    // In a task of its own, as a press of Approve is.
-    let carried = tokio::spawn(async move {
-        let (settled, response) = act_confirm_pressed(&inner, &pressed).await;
-        act_finish(&inner, &code, settled);
-        response
-    });
-    carried.await.unwrap_or_else(|_| not_carried_out())
-}
-
-async fn act_decline(
-    State(inner): State<Arc<Inner>>,
-    Path(code): Path<String>,
-    body: Bytes,
-) -> Response {
-    let pressed = match act_begin(&inner, &code, &body) {
-        Ok(pressed) => pressed,
-        Err(response) => return *response,
-    };
-    if let Some(desk) = inner.desk.get() {
-        desk.decline_act(pressed.act, true);
-    }
-    act_finish(&inner, &code, true);
-    answer(
-        StatusCode::OK,
-        "Declined",
-        "The act was declined and nothing was done. You can close this page.",
-    )
-}
-
 impl LocalSurface {
     /// A surface with nothing waiting and no listener open.
     #[must_use]
@@ -1253,9 +893,6 @@ impl LocalSurface {
             .route("/approve/{code}", get(show))
             .route("/approve/{code}/approve", post(approve))
             .route("/approve/{code}/decline", post(decline))
-            .route("/act/{code}", get(act_show))
-            .route("/act/{code}/confirm", post(act_confirm))
-            .route("/act/{code}/decline", post(act_decline))
             .fallback(|| async { nothing_here() })
             .layer(axum::middleware::from_fn_with_state(port, guard))
             .with_state(Arc::clone(&self.inner));
@@ -1397,65 +1034,6 @@ impl PersonSurface for LocalSurface {
             );
             inner.settle(&mut state);
             Ok(Self::link(port, &code, minutes))
-        })
-    }
-
-    fn shows_person_acts(&self) -> bool {
-        self.inner.desk.get().is_some()
-    }
-
-    fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
-        Box::pin(async move {
-            let inner = &self.inner;
-            if inner.desk.get().is_none() {
-                return Err(codes::busy(
-                    codes::SURFACE_UNAVAILABLE,
-                    "The engine cannot carry out a person's act now, so no page is shown.",
-                    "Run `anything2mcp doctor run` for the reason.",
-                ));
-            }
-            let minutes = inner.window.as_secs().div_ceil(60).max(1);
-            let code = inner.code()?;
-            let mut state = inner.state();
-            let port = match self.listen(&mut state) {
-                Ok(port) => port,
-                Err(failure) => {
-                    inner.settle(&mut state);
-                    return Err(failure);
-                }
-            };
-            let deadline = Instant::now() + inner.window;
-            let timer = tokio::spawn({
-                let inner: Weak<Inner> = Arc::downgrade(inner);
-                let code = code.clone();
-                async move {
-                    tokio::time::sleep_until(deadline).await;
-                    if let Some(inner) = inner.upgrade() {
-                        inner.end_of_act_window(&code);
-                    }
-                }
-            });
-            state.acts.insert(
-                code.clone(),
-                ActPage {
-                    act: ask.act,
-                    action: ask.action.to_string(),
-                    person: ask.person,
-                    once: None,
-                    pressed: false,
-                    ended: false,
-                    deadline,
-                    timer,
-                },
-            );
-            inner.settle(&mut state);
-            Ok(SurfaceLink {
-                url: Some(format!("http://127.0.0.1:{port}/act/{code}")),
-                text: format!(
-                    "`{}` is a person's act. Open the link in your own browser on this machine to read exactly what will be done and to carry it out or decline it. The page closes after {minutes} minutes; no answer is a decline.",
-                    ask.action
-                ),
-            })
         })
     }
 

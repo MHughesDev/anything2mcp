@@ -575,7 +575,13 @@ async fn discovery_observes_and_cannot_write() {
     ];
     for (step, class, code) in expected {
         let args = scene.args(&step, &inputs);
-        let input = StepInput::new(&args, Deadline::after(Duration::from_secs(30)));
+        let input = StepInput {
+            args: &args,
+            record: None,
+            key: None,
+            stamp: None,
+            deadline: Deadline::after(Duration::from_secs(30)),
+        };
         let refused = port.act(&step, &input).await.unwrap_err();
         assert_eq!(class_and_code(&refused), (class, code));
         assert_eq!(refused.sent, Sent::NotSent);

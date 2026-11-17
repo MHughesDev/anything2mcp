@@ -44,8 +44,8 @@ pub use canonical::{CanonicalJson, PackPayload};
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};
 pub use effect::{EffectClass, Hazard};
-pub use evidence::{Coverage, EvidenceLevel, WriteEvidence};
-pub use failure::{Failure, FailureClass, FailureCode, SAID_LONGEST};
+pub use evidence::{Coverage, EvidenceLevel};
+pub use failure::{Failure, FailureClass, FailureCode};
 pub use finding::{
     Address, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation, LimitationCode,
     ProducedBy, Source, Subject, Timestamp, UnknownReason,

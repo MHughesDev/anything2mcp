@@ -406,22 +406,19 @@ impl Tree {
 fn help_process(word: &str) -> String {
     let (usage, about) = match word {
         "serve" => (
-            format!("{PROGRAM} serve [--passphrase-from-stdin]"),
+            format!("{PROGRAM} serve"),
             "Runs the local engine in the foreground: the one process that holds the store, \
              serves commands and MCP clients over the local channel of this machine, and shows \
              the page on which a person answers a write that waits.\nIt stops when asked (`anything2mcp engine stop`, or the terminal's \
              interrupt) and after `engine.idle_stop_minutes` with nothing to do.\nA second engine \
-             on the same data directory is refused.\nA command that finds no engine starts this \
-             one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
-             standard input, to its end, instead of from the environment.",
+             on the same data directory is refused.",
         ),
         "bridge" => (
             format!("{PROGRAM} bridge [--toolset use|build]"),
             "The program an MCP client starts: it copies MCP messages between its standard \
              input and output and the local engine's MCP endpoint.\nStandard output carries \
-             protocol messages and nothing else.\nA request that finds no engine starts one; \
-             where none may be started (`engine.in_process`), it is answered with an error \
-             that says to run `anything2mcp serve`.\nThe \
+             protocol messages and nothing else.\nIt starts no engine: until one runs \
+             (`anything2mcp serve`), every request is answered with an error that says so.\nThe \
              project folder is the one it is started in, or the one `--project` names.",
         ),
         _ => (
@@ -843,25 +840,12 @@ mod tests {
             let run = shortcut.on(&registry);
             // The shortcut's own argument, when its steps take one.
             let takes = shortcut.steps.iter().any(|step| step.argument.is_some());
-            let mut line = if takes {
+            let line = if takes {
                 words(&[shortcut.word, "example"])
             } else {
                 words(&[shortcut.word])
             };
-            // A shortcut of one action takes that action's flags, and a
-            // required one is given a value, as its refusal names it.
-            let mut parsed = tree.parse(&line);
-            while let Err(refused) = &parsed {
-                let flag = refused
-                    .message()
-                    .split_once("needs --")
-                    .map(|(_, rest)| rest.trim_end_matches('.').to_owned())
-                    .unwrap_or_else(|| panic!("{refused:?}"));
-                line.extend([format!("--{flag}"), "example".to_owned()]);
-                assert!(line.len() < 12, "{line:?}");
-                parsed = tree.parse(&line);
-            }
-            let parsed = parsed.unwrap();
+            let parsed = tree.parse(&line).unwrap();
             let Parsed::Invoke(_, steps, stop) = parsed else {
                 panic!("{parsed:?}");
             };
