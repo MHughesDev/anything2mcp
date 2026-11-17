@@ -64,10 +64,10 @@ It must never: start a program except through the supervisor it is handed; build
 
 ```rust
 /// The one call the product crate makes.
-pub fn register(builder: &mut a2m_provider::RegistryBuilder);
+pub fn register(builder: &mut RegistryBuilder);
 
 /// The pack itself, for a caller that builds a registry by hand.
-pub struct CommandPack;                 // impl a2m_provider::Pack
+pub struct CommandPack;                 // implements `Pack`
 pub const MANIFEST: &str;               // the embedded manifest
 
 /// The names and failure codes, for the crates that match on them.

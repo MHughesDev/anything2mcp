@@ -1,6 +1,6 @@
 # 306. The command pack
 
-The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It is the second pack to be built. It was chosen because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The mode is proposed: it becomes real by its own decision record when the pack is built, as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires.
+The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It is the second pack to be built. It was chosen because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The mode is real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires.
 
 **It is never a shell.** No command line is ever put together from text an agent supplied, and no program that reads a command line as code is started on an agent's behalf ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
 
@@ -33,9 +33,9 @@ A script that the system ships is allowed only as a fixed pair: the interpreter 
 | 5. A discoverer whose findings claim no more than was observed | "Discovery and drafting" |
 | 6. Failures mapped to the existing classes | "Failures" |
 | 7. Effects and hazards declared | "Effects and hazards" |
-| 8. A decision record for the mode | Written by the lead with the pack, for `cli` |
+| 8. A decision record for the mode | [Decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md) |
 
-It registers, as every pack does: the schema of `commands/` and of the `cli` binding fields, a lowering for each verb, lint rules, the driver, a discoverer and a describer, and drafting rules. It also needs a surface kind, `program`, which [file formats](../../reference/file-formats.md) does not yet let a pack register; see the last section but one.
+It registers, as every pack does: the schema of `commands/` and of the `cli` binding fields, a lowering for each verb, lint rules, the driver, a discoverer and a describer, and drafting rules. It also registers a surface kind, `program`, whose `path` is the program the plan declares for the surface.
 
 ## The `commands/` file kind
 
@@ -46,13 +46,13 @@ A `commands/` file is to a program what an `endpoints/` file is to an HTTP surfa
 surfaces:
   tool: {kind: program, path: /opt/example/bin/example-tool}
 environments:
-  test: {kind: test, surfaces: {tool: {path: /opt/example-test/bin/example-tool}}}
+  test: {kind: test, surfaces: {tool: /opt/example-test/bin/example-tool}}
 ```
 
 ```yaml
 # commands/inventory.yaml
+surface: tool
 program:
-  surface: tool
   digests:                                 # every known build; sha-256 of the file
     linux-x86_64: ["sha256:3f1c...e9"]
     macos-aarch64: ["sha256:71b2...0c"]
@@ -67,37 +67,37 @@ program:
     pass: []                               # nothing is copied from the engine's own environment
   workdir: fresh                           # an empty folder the engine owns, made for each run
   stdin: none
-  limits: {timeout: 10s, grace: 2s, stdout: 1MiB, stderr: 64KiB, concurrency: 1}
+  limits: {timeout: 10s, stdout: 1MiB, stderr: 64KiB}
   prompts: ['^Are you sure\?', '^Password:']
   exits: {0: ok, 2: input, 4: rejected, 5: stale, 6: busy, 75: transient, 77: session_expired}
 
 commands:
   item_show:
     effect: read
-    params: {sku: {type: sku}}
+    params: {sku: {type: sku, pattern: '^[A-Z]{2}-\d{4}$'}}
     args: [item, show, {param: sku}, --format=json]
     exits: {3: absent}
-    output: {json: schemas/item.json}
+    output: {json: {fields: {sku: text, name: text, quantity: integer}}}
 
   item_list:
     effect: read
-    params: {location: {type: location_code, required: false}, ref: {type: stamp, required: false}}
+    params: {location: {type: location_code, required: false}, ref: {type: stamp, required: false, pattern: '^[\w.:-]{1,64}$'}}
     args: [item, list, {flag: --location, param: location}, {flag: --ref, param: ref}]
     output: {table: {separator: tab, header: [sku, name, quantity, location]}}
 
   item_set_quantity:
     effect: write
-    params: {sku: {type: sku}, quantity: {type: whole_count}}
+    params: {sku: {type: sku, pattern: '^[A-Z]{2}-\d{4}$'}, quantity: {type: whole_count}}
     args: [item, set, {param: sku}, {flag: --quantity, param: quantity, join: "="}, --yes]
     exits: {3: absent}
     output: {pattern: '^updated (?<sku>\S+) quantity=(?<quantity>\d+)$', match: one_line}
 
   item_add:
     effect: write
-    params: {name: {type: item_name}, location: {type: location_code}}
+    params: {name: {type: item_name, pattern: '^[^\x00-\x1f]{1,60}$'}, location: {type: location_code}}
     args: [item, add, {flag: --name, param: name}, {flag: --location, param: location},
            {flag: --ref, stamp: true}, --format=json]
-    output: {json: schemas/created.json}
+    output: {json: {fields: {sku: text}}}
     assigns: {sku: output.sku}
 
   catalog_push:
@@ -112,18 +112,18 @@ commands:
 
 | Field | Meaning |
 | --- | --- |
-| `surface` (required) | A surface of kind `program` |
+| `surface`, at the top of the file | A surface of kind `program`. Without it, the target's first one |
 | `digests` (required) | Known builds, by platform. A file with no listed digest does not run ("Failures") |
 | `version` | A command that reports the version, its expected pattern, and the versions the file was written for |
-| `help` | The argument lists discovery may run, with `{command}` standing for a listed command name. None are assumed |
+| `help` | The argument lists discovery may run, with `{command}` standing for the words of a listed command's name, one element each. None are assumed |
 | `env` | `set`: variables and values; `pass`: names copied from the engine's environment. Nothing else reaches the program. `{session.state_dir}` is a folder the engine owns for the session ("Secrets") |
 | `workdir` | `fresh`, or a named folder inside the allowed roots of section 502 |
 | `stdin` | `none` (closed at once), a param, a secret, or a blob. Never a terminal |
-| `limits` | Time limit, the grace before a forced stop, byte ceilings for each stream, and how many may run at once on this surface |
+| `limits` | A time limit and a byte ceiling for each stream. A grace before a forced stop, and more than one start at a time on a surface, are designed and not yet taken: the supervisor has neither ([decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md)) |
 | `prompts` | Patterns that mean the program is asking a person something |
 | `exits` | What each exit status means, shared by every command: `ok`, `absent`, or a failure class. A command may add to it, never change it |
 
-**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`.
+**Command.** `effect` (required: `read`, `write`, or `irreversible`), `hazard` (default `none`), `params` (typed by field types from `types.yaml`; a text param states its own anchored `pattern`), `args` (required), `stdin`, `exits`, `output` (required), `assigns`, `reaches`, `limits`.
 
 **Argument elements.** `args` is the argument list, element by element. Each entry becomes exactly the elements shown, and no element is ever split, joined to another, or read by anything but the program.
 
@@ -138,21 +138,21 @@ commands:
 | `{flag: --ref, stamp: true}` | The flag and the record's stamp ("Identity") |
 | `--` | The end-of-options marker, as written |
 
-**Rules on values.** A value never contains a NUL character. A value given as its own element may not begin with `-` unless it comes after a `--` element, so an input cannot become an option. A text param must have a field type with an anchored pattern or a closed list of values; free text without one does not compile.
+**Rules on values.** A value never contains a NUL character. A value given as its own element may not begin with `-` unless it comes after a `--` element, so an input cannot become an option. A text param must have an anchored `pattern` of its own, or a field type with a closed list of values; free text without one does not compile.
 
 **Output.** One declared form per command, parsed into typed values the engine normalizes with field types as for any mode. Standard error is kept as evidence and is never parsed for values.
 
 | Form | Rule |
 | --- | --- |
-| `json` | The whole of standard output is one document, or one per line with `lines: true`, checked against a schema |
-| `table` | Rows of named columns, split by a declared separator (`tab`, or fixed column positions); a header, if declared, must match exactly |
+| `json` | The whole of standard output is one document, or one per line with `lines: true`, checked against the fields the command declares. A field it does not declare is drift |
+| `table` | Rows of named columns, split by a declared separator (`tab`; fixed column positions are not built); a header, if declared, must match exactly |
 | `pattern` | An anchored pattern with named groups, matching one line, every line, or the whole output; any unmatched line is a failure |
 
 Output is decoded as UTF-8 unless the program declares another encoding. The locale and time zone the program sees come from `env`, so that numbers and dates print the same way on every machine.
 
 **Read or write is declared.** Help text does not say which commands change anything, and a name such as `show` proves nothing. `effect` has no default: a command without one does not compile, and the drafter never fills it.
 
-**The binding.** An operation binds a command as it binds an endpoint: `mode: cli`, `command` (file and command name), `args` (a map from param to expression; a param takes the operation input of the same name when not listed), and `read_back` (a read command, required for `write`).
+**The binding.** An operation binds a command as it binds an endpoint: `mode: cli`, `command` (a command's name, which is unique in a target), `args` (a map from param to expression; a param takes the operation input of the same name when not listed), `read_back` (a read command, required for `write`), and `lookup` (a read command that finds the record by its stamp, or by what the write set). A read-back and a lookup may state `key`: the params that take the parts of the record's key, in order.
 
 ## Verbs and their steps
 
@@ -169,7 +169,7 @@ The pack adds the four step kinds that section 201 lists for the command archety
 | `download` | `spawn`, then `collect` a file the program wrote into the run's own folder. It becomes a blob and comes back as a resource link (section 502) |
 | `call` | `spawn`; `expect`; `parse`. Its effect class is the command's |
 
-`open` and `submit` are not offered. A step carries its kind, the command it refers to, a time limit, and the failure class to raise, as every step does.
+`open` and `submit` are not offered. `upsert`, `upload`, and `download` are not built yet. A step carries its kind, the command it refers to, a time limit, and the failure class to raise, as every step does.
 
 ## The driver
 
@@ -214,7 +214,7 @@ A key the program prints when it creates a record is taken from `assigns` and st
 
 | Effect in the pack's manifest | Held |
 | --- | --- |
-| Starts a process: only programs declared in a published plan's `commands/` files, by path and digest | `enforced` |
+| Starts a process: only the programs a published plan declares for a `program` surface, by path. The builds its `commands/` files list for each platform are checked by the pack before a start, and the digest it matched by the supervisor at the start | `enforced` |
 | Its arguments, environment, working folder, standard input, time limit, and output ceilings | `enforced` |
 | Reads and writes files: the run's own folder and the session's state folder | `enforced` for what the pack does; the program's own file access is `declared` |
 | Uses the network | None for the pack; a command's `reaches` is `declared` |
@@ -235,9 +235,11 @@ A credential reaches a program only through `inject` ([section 215](../2-kernel/
 
 A program that keeps its own sign-in is given `{session.state_dir}`, a folder the engine owns for that session, exactly as a browser is given an engine-owned profile. Its everyday folder is never used. Every injected value is registered with the redactor before the program starts, and both streams pass the redactor before anything is stored or returned. Output is untrusted text (section 213).
 
+Of this section, only the redaction of both streams is built; no credential reaches a program yet. The [crate's design](../../architecture/crates/a2m-pack-command.md) says what remains.
+
 ## Discovery and drafting
 
-**The discoverer** runs only the `help` and `version` forms the target declares, with no input, a fresh empty folder, a bare environment, and a short limit. It runs nothing by default: many programs ignore a flag they do not know and do their ordinary work. Each listed command is a finding of kind `command` at `discovered`, with `not_exercised`; argument names and types read from help are `inferred`. A manual page or completion file at a declared path is read as a file, as `artifact`, and never run. The subject is a `file`: the program's digest and its reported version.
+**The discoverer** runs only the `help` and `version` forms the target declares, with no input, a fresh empty folder, a bare environment, and a short limit. It runs nothing by default: many programs ignore a flag they do not know and do their ordinary work. Each listed command is a finding of kind `command` at `discovered`, with `not_exercised`. It holds the command's usage line as the program printed it; what the parts of that line mean is read by the drafting rule and is never observed. A manual page or completion file at a declared path is read as a file, as `artifact`, and never run. The subject is a `file`: the program's digest and its reported version.
 
 **The drafter** writes, from those findings, a `commands/` draft: the `program` block with the digest and version seen, and one command for each listed command, with its params typed where the help states a type and an open question where it does not. It writes no `effect`, no `exits` beyond `0`, no output form it did not see, no read-back, and no operation (section 402). The scout tries none of the drafted commands, since none has a known effect. A developer who declares a command `read` may try it with `draft.try`; the sandbox cannot make a program unable to write, so for this mode it runs a command only against an environment of kind `test`.
 
@@ -245,26 +247,27 @@ A program that keeps its own sign-in is given `{session.state_dir}`, a folder th
 
 | What went wrong | Class | Code |
 | --- | --- | --- |
-| The path is missing or not executable | `drift` | `program_missing` (proposed) |
-| The file's digest is not listed for this platform | `drift` | `program_digest_changed` (proposed) |
-| The version is absent or not supported | `drift` | `program_version_unsupported` (proposed) |
-| The file or a folder above it is writable by another user | `policy` | `program_path_unsafe` (proposed) |
-| A value is NUL-bearing, or would become an option | `input` | `argument_unsafe` (proposed) |
+| The path is missing or not executable | `drift` | `program_missing` |
+| The file's digest is not listed for this platform | `drift` | `program_digest_changed` |
+| The version is absent or not supported | `drift` | `program_version_unsupported` |
+| The file or a folder above it is writable by another user | `policy` | `program_path_unsafe` |
+| A value is NUL-bearing, or would become an option | `input` | `argument_unsafe` |
 | A value breaks its field type | `input` | `schema_invalid` |
 | An exit declared `rejected`; standard error is the untrusted message | `rejected` | `app_validation_error` |
 | An exit declared `stale` | `stale` | `version_conflict` |
-| An exit declared `busy`, or the surface's `concurrency` is full | `busy` | `program_busy` (proposed) |
+| A write: an exit declared `absent` | `stale` | `record_absent` |
+| An exit declared `busy`, or another start holds the surface | `busy` | `program_busy` |
 | An exit declared `session_expired` | `session_expired` | `needs_login` |
 | An exit declared `transient` | `transient` | `upstream_unavailable` |
-| A read: an exit status not declared, or an end by signal | `unknown_variant` | `unexpected_exit_status` (proposed) |
-| A read: a declared prompt appeared | `unknown_variant` | `unexpected_prompt` (proposed) |
-| A read: output that does not parse | `drift` | `output_unparsed` (proposed) |
+| A read: an exit status not declared, or an end by signal | `unknown_variant` | `unexpected_exit_status` |
+| A read: a declared prompt appeared | `unknown_variant` | `unexpected_prompt` |
+| A read: output that does not parse | `drift` | `output_unparsed` |
 | A read: a stream passed its ceiling | `policy` | `limit_exceeded`, naming the setting |
 | A read: the time limit passed | `transient` | `timeout` |
 | A write: any of the four rows above, after the program started | `possible_commit` | `no_confirmation` |
 | A `find` read-back matched more than one record | `possible_commit` | `ambiguous_match` |
 | The read-back differs | `mismatch` | `read_back_differs` |
-| A stopped program's cleanup could not be confirmed; new starts on the surface wait | `busy` | `cleanup_incomplete` (proposed) |
+| A stopped program's cleanup could not be confirmed; new starts on the surface wait | `busy` | `cleanup_incomplete` |
 
 An `input`, `rejected`, `stale`, `busy`, `session_expired`, or `transient` exit on a write is the developer's statement that nothing changed. The publish gates check it against the test stand before a write reaches `behavior_verified`.
 
@@ -315,6 +318,8 @@ Where the kernel is most likely to need one, most likely first:
 
 If more than items 1 and 3 need a kernel edit, the boundary is redrawn before a third pack is designed, as Stage D says.
 
+As built, item 2 needed one change, the plan's declared programs, and the other six needed none. The count, with what the kernel's types could not express and the pack does without, is in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
+
 ## Another machine
 
 The usual remote-login protocols run a command by handing one line to the remote account's shell, which this pack refuses. So the same program on another machine is reached through a runner there ([section 223](../2-kernel/223-the-runner-protocol.md)): it is the session's home runner, it claims the job, and it starts the program locally by every rule above. A remote transport that starts a program from an element list with no shell may be added later, with its own decision record.
@@ -331,9 +336,11 @@ The usual remote-login protocols run a command by handing one line to the remote
 | 6 | Writes: `create`, `update`, `delete`, read-back, identity, secrets | C3 to C8, C13, and the fault tests of every write |
 | 7 | The discoverer and drafting rules | A scout of `example-cli` drafts C1's commands and tries none |
 
+Steps 2, 3, 6, and 7 are built in `a2m-pack-command`, except what the [crate's design](../../architecture/crates/a2m-pack-command.md) lists as not built. Steps 4 and 5 wait for the engine loop.
+
 ## Open points
 
-- The step payloads, fixed with step 2, and whether `collect` belongs to this archetype or to the file pack of section 308.
+- Whether `collect` belongs to this archetype or to the file pack of section 308. The step payloads are fixed by [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
 - Programs on Windows that parse their command line by their own rule: how to declare it and prove it.
 - How long a digest may be trusted between starts. Taking it every start is safe and slow for large programs; starting the opened, checked file itself, where the platform allows it, closes the gap between check and start.
 - How a person signs a program in when it keeps its own sign-in and asks for it interactively.

@@ -37,17 +37,35 @@ const WORLD: &str = "anything2mcp";
 /// was refused.
 const REFUSED_BINDING: &str = "__anything2mcpRefused";
 
-/// Run in the page's own world, and in every worker, of an observing tab:
-/// a socket is refused when it is made.
+/// Run in the page's own world, and in every worker, of an observing tab.
+/// What request interception cannot see is refused when it is made: a
+/// socket, a peer connection, a shared worker, and a service worker, each
+/// of which could carry a write past the interception. This lock is a
+/// script in the page, so a page that sets out to defeat it can; the
+/// interception of requests is in the browser, and cannot be reached from
+/// the page.
 const REFUSE_SOCKETS: &str = r#"(() => {
-  const report = (address) => { try { globalThis.__anything2mcpRefused(String(address)); } catch (_) {} };
-  for (const name of ["WebSocket", "WebTransport"]) {
+  const report = (what, address) => {
+    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+  };
+  const refusal = () => new DOMException("Refused while the page is only observed.", "SecurityError");
+  for (const name of ["WebSocket", "WebTransport", "SharedWorker", "RTCPeerConnection"]) {
     if (!(name in globalThis)) continue;
     const refused = function (address) {
-      report(address);
-      throw new DOMException("Sockets are refused while the page is only observed.", "SecurityError");
+      report(name, address);
+      throw refusal();
     };
     Object.defineProperty(globalThis, name, { value: refused, writable: false, configurable: false });
+  }
+  if (globalThis.ServiceWorkerContainer) {
+    Object.defineProperty(ServiceWorkerContainer.prototype, "register", {
+      value: function (address) {
+        report("ServiceWorker", address);
+        return Promise.reject(refusal());
+      },
+      writable: false,
+      configurable: false,
+    });
   }
 })()"#;
 
@@ -1532,7 +1550,18 @@ impl Page {
                 }
             }
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
-                self.block("WEBSOCKET", &called.payload);
+                // The payload is the page's: only a known word is taken as
+                // the method, and the rest is an address like any other.
+                let (what, address) = called.payload.split_once(' ').unwrap_or(("", ""));
+                let method = match what {
+                    "WebSocket" => "WEBSOCKET",
+                    "WebTransport" => "WEBTRANSPORT",
+                    "SharedWorker" => "SHAREDWORKER",
+                    "RTCPeerConnection" => "PEERCONNECTION",
+                    "ServiceWorker" => "SERVICEWORKER",
+                    _ => "REFUSED",
+                };
+                self.block(method, address);
             }
             _ => {}
         }
@@ -2047,10 +2076,13 @@ impl ObserveTab {
         Self { page }
     }
 
-    /// The requests this tab refused since the last call, oldest first: a
-    /// method that could change the system, a socket (`WEBSOCKET`), or a
-    /// worker that could not be locked and was not let run (`WORKER`).
-    /// Each is a limitation of what was observed.
+    /// What this tab refused since the last call, oldest first: a request
+    /// whose method could change the system, by its method; a socket
+    /// (`WEBSOCKET`, `WEBTRANSPORT`, `PEERCONNECTION`), a shared worker
+    /// (`SHAREDWORKER`), or a service worker (`SERVICEWORKER`) refused when
+    /// the page made it; and a worker or frame that could not be locked
+    /// and was not let run (`WORKER`). Each is a limitation of what was
+    /// observed.
     #[must_use]
     pub fn blocked(&self) -> Vec<RequestShape> {
         self.page.take_blocked()

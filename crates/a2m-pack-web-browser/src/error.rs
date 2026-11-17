@@ -95,7 +95,9 @@ pub enum LaunchReason {
 /// was going, without the query.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RequestShape {
-    /// The method, or `WEBSOCKET` for a socket refused at creation.
+    /// The method of a request; or what was refused when the page made
+    /// it, such as `WEBSOCKET`; or `WORKER` for a worker that was not let
+    /// run.
     pub method: String,
     /// The address, cut at the query, with every known secret replaced.
     pub address: String,

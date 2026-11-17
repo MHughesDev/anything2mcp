@@ -93,6 +93,8 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     let socket = "(() => { try { new WebSocket('ws://127.0.0.1:9/socket?token=abc'); return 'made'; } \
                   catch (error) { return 'refused'; } })()";
     assert_eq!(must(tab.page.as_the_page(socket, soon()).await), "refused");
+    let shared = "(() => { try { new SharedWorker('/shared.js'); return 'made'; } catch (error) { return 'refused'; } })()";
+    assert_eq!(must(tab.page.as_the_page(shared, soon()).await), "refused");
     let socket_in_worker = "new Promise((resolve) => { const worker = new Worker(URL.createObjectURL(new Blob([\
         \"try { new WebSocket('ws://127.0.0.1:9/worker'); postMessage('made'); } catch (error) { postMessage('refused'); }\"]))); \
         worker.onmessage = (event) => resolve(event.data); })";
