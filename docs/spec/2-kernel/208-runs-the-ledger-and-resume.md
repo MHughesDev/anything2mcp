@@ -144,12 +144,12 @@ How the record is read depends on how it is found again:
 | --- | --- |
 | `natural`, `composite` | The binding's read-back steps alone, from the identity inputs |
 | `stamped` | The lookup by the record's token |
-| `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches inside the settle time waits |
+| `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches waits the settle time out once and looks again |
 | Any, once a key was assigned | By the assigned key |
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
 | `none` | Cannot be read. The run is never resumed by itself and stops for a person |
 
-Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged` are skipped. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
+Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged` are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
 
 **Records with no way to be found again cannot be read back,** so they cannot be reconciled. An operation that creates them is classed `irreversible`, is approved per run, and is never resumed automatically. A pipeline that creates such records avoids this by storing its own key in the system, such as a source id in a reference field; [section 209](209-record-identity-and-dependent-records.md) gives the ways.
 
@@ -163,7 +163,7 @@ The class alone decides what happens next ([section 207](207-the-engine-loop.md)
 
 | Class | Run state | Lock on a record in `intent` or `acted` |
 | --- | --- | --- |
-| `input` | `rejected` | None is held |
+| `input` | `rejected` before anything ran; `failed` once the run is `running` | None is held |
 | `policy`, `stale` | `failed` | Released by the ledger; nothing is in doubt once read |
 | `session_expired` | `needs_login` | Quarantined |
 | `transient` after retries, `busy`, `mismatch`, `edge_blocked`, `unknown_variant`, `rejected` | `stopped` | Quarantined if a record is in doubt, released otherwise |
@@ -227,7 +227,7 @@ Storing an intent: under 2 ms locally and under 5 ms to a control plane on the s
 ## Open points
 
 - **What a write step's inputs may depend on.** A proposed value has to be known at the preview to be approved. A write step whose inputs use the result of a read step that runs after an earlier write cannot be previewed. The compiler should refuse it, and no rule says so yet. An earlier write step's assigned key is the one case section 209 already covers.
-- **The failure class to run state table** is the engine's design and has no decision record yet; slice 3.7 confirms it.
+- **The failure class to run state table** is as the engine carries it out, recorded in [decision 0091](../../decisions/0091-the-engine-loop-as-its-first-two-passes-settled-it.md).
 - **The intent window across bindings** in one pipeline step, when records of two bindings interleave.
 - **Durability on SQLite** is a setting changed per transaction on the one writing connection ([decision 0080](../../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). Its cost is still to be measured against hypothesis H-15.
 - **Whether run rows of reads are summarized at scale.** It follows the open point on sampling decisions in [section 212](212-policy-and-approvals.md).

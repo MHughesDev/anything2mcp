@@ -41,6 +41,11 @@ pub struct CommandArg {
     pub choices: Vec<String>,
     /// What it is.
     pub help: String,
+    /// For a `flag`: the field that standard input fills when the flag is
+    /// given. The command then reads standard input to its end, removes one
+    /// line ending from the end, sends the text as that field, and does not
+    /// send the flag. `None` for every other argument.
+    pub stdin_for: Option<String>,
 }
 
 /// The command face of one action: `anything2mcp <noun> <verb>`.
@@ -86,6 +91,7 @@ pub fn command_faces_of(def: &ActionDef) -> CommandFace {
                 _ => Vec::new(),
             },
             help: field.help.clone(),
+            stdin_for: field.stdin_for.clone(),
         })
         .collect();
     args.sort_by_key(|arg| !arg.positional);
@@ -237,11 +243,21 @@ impl McpResultFace {
                 structured: None,
                 text: error.to_json().to_string(),
             },
-            (None, Some(result)) => Self {
-                is_error: false,
-                structured: Some(result.clone()),
-                text: result.to_string(),
-            },
+            (None, Some(result)) => {
+                // The most useful following call travels inside the result
+                // (spec section 221): every output schema admits `next`.
+                let mut result = result.clone();
+                if let (Some(next), Json::Object(map)) = (&response.next, &mut result)
+                    && !map.contains_key("next")
+                {
+                    map.insert("next".to_owned(), next.to_result_json());
+                }
+                Self {
+                    is_error: false,
+                    text: result.to_string(),
+                    structured: Some(result),
+                }
+            }
             (None, None) => Self {
                 is_error: false,
                 structured: Some(json!({})),
@@ -373,6 +389,67 @@ pub struct Shortcut {
     /// The actions, in order. Empty for `init`, which has no action beneath
     /// it yet.
     pub steps: &'static [ShortcutStep],
+}
+
+/// What a shortcut does on this engine: the steps to carry out, and where it
+/// stops when a step is not built yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutRun {
+    /// The steps to carry out, in order: the shortcut's steps up to the
+    /// first whose action is not built.
+    pub steps: Vec<ShortcutStep>,
+    /// The first action that is not built. The shortcut stops before it and
+    /// carries out no step after it.
+    pub stops_before: Option<&'static str>,
+    /// What to print when the shortcut stops early: what was done, what it
+    /// stopped before, and what was left undone. `None` when every step is
+    /// built.
+    pub note: Option<String>,
+}
+
+impl Shortcut {
+    /// What this shortcut does with the actions `registry` holds. A
+    /// shortcut never begins a step that is not built: it stops before it,
+    /// whatever was done already stays done, and the note says so.
+    #[must_use]
+    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun {
+        let built = |step: &&ShortcutStep| registry.find(step.action).is_some_and(ActionDef::built);
+        let steps: Vec<ShortcutStep> = self.steps.iter().take_while(built).copied().collect();
+        let rest = &self.steps[steps.len()..];
+        let Some(first) = rest.first() else {
+            return ShortcutRun {
+                steps,
+                stops_before: None,
+                note: None,
+            };
+        };
+        let names = |steps: &[ShortcutStep]| {
+            steps
+                .iter()
+                .map(|step| format!("`{}`", step.action))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let note = if steps.is_empty() {
+            format!(
+                "`{}` does nothing yet: its first step, `{}`, is not built. Call `action.search` to see which actions are built.",
+                self.word, first.action
+            )
+        } else {
+            format!(
+                "`{}` stopped before `{}`, which is not built yet. Done: {}. Not done: {}.",
+                self.word,
+                first.action,
+                names(&steps),
+                names(rest)
+            )
+        };
+        ShortcutRun {
+            steps,
+            stops_before: Some(first.action),
+            note: Some(note),
+        }
+    }
 }
 
 const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutStep {

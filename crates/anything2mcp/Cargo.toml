@@ -12,8 +12,11 @@ default-run = "anything2mcp"
 
 [dependencies]
 a2m-actions = { path = "../a2m-actions" }
+a2m-api = { path = "../a2m-api" }
 a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
+a2m-local = { path = "../a2m-local" }
+a2m-mcp = { path = "../a2m-mcp" }
 a2m-pack-command = { path = "../a2m-pack-command" }
 a2m-pack-data = { path = "../a2m-pack-data" }
 a2m-pack-device = { path = "../a2m-pack-device" }
@@ -28,12 +31,18 @@ a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 a2m-vault = { path = "../a2m-vault" }
+# The routers of the front doors are joined here, and the bridge keeps a
+# connection for as long as the body of its answer is read.
+axum.workspace = true
+futures-core.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+# `serve` stops on the operating system's signal; `bridge` copies standard
+# input and output.
+tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
 
 [dev-dependencies]
-# The relay and the small service of the tests read and write sockets.
-tokio = { workspace = true, features = ["io-util"] }
+# The person of a test opens the approval page over loopback.
+reqwest.workspace = true
 example-app = { path = "../../targets/example-app" }
 example-broker = { path = "../../targets/example-broker" }
 example-cli = { path = "../../targets/example-cli" }

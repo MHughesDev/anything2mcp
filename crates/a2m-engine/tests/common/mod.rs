@@ -16,16 +16,17 @@ use std::sync::{Arc, Mutex};
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    ApprovalId, AuthPlan, AuthProviderName, BindingPlan, BindingStatus, CanonicalJson, Digest,
-    EffectClass, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, Epoch, ExprIndex,
-    FailsAs, Failure, FailureClass, FailureCode, FieldFormat, FieldTypeIndex, FieldTypePlan,
-    Finding, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, Mode, OperationIndex,
-    OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload, PermissionManifest,
-    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr, PlanHeader,
-    PrincipalId, ProbePlan, RecordKey, RecordState, Rounding, RunId, RunState, Sensitivity,
-    SignInMode, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
-    TargetName, TargetPlan, Timestamp, ToolAnnotations, ToolPlan, ToolRuns, Value, ValueType,
-    Values, Verb, Version, WhitespaceRule, WorkspaceId,
+    Address, ApprovalId, AuthPlan, AuthProviderName, BindingPlan, BindingStatus, CanonicalJson,
+    Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, Epoch,
+    EvidenceLevel, ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldFormat,
+    FieldTypeIndex, FieldTypePlan, Finding, FindingKind, Hazard, IdentityPlan, IdentityStrategy,
+    InputIndex, InputPlan, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan,
+    PLAN_FORMAT, PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
+    PipelineStep, Plan, PlanExpr, PlanHeader, PrincipalId, ProbePlan, ProducedBy, RecordKey,
+    RecordState, Rounding, RunId, RunState, Sensitivity, SignInMode, Source, SourcePlan, Step,
+    StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan, TargetName,
+    TargetPlan, Timestamp, ToolAnnotations, ToolPlan, ToolRuns, Value, ValueType, Values, Verb,
+    Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
@@ -41,9 +42,12 @@ use a2m_ledger::{
 use a2m_provider::{
     Cleanup, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, Driver, DriverHealth, FindingSink, HostServices, Observed, Pack, PackContext,
-    PrepareContext, Prepared, ProviderSettings, Registrar, Registry, RegistryBuilder, Roots,
-    SandboxPort, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits,
+    Posture, PrepareContext, Prepared, ProviderSettings, Registrar, Registry, RegistryBuilder,
+    Roots, SandboxPort, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits,
     SurfaceDescription, SurfaceRef,
+};
+use a2m_sources::{
+    HiddenRule, Locate, ReaderOptions, RowField, SourceInput, SourceSpec, Sources, TemplateVersion,
 };
 use a2m_telemetry::{CaptureLevel, FinishedTrace, ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, OwnerRef, RandomSource, Vault};
@@ -131,7 +135,7 @@ kind = "pack"
 name = "app_json"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item"]
 rank = 40
 session_reads = 4
 
@@ -139,7 +143,7 @@ session_reads = 4
 name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
-steps = ["get_order", "get_item", "put_item", "get_stock"]
+steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item"]
 rank = 50
 session_reads = 4
 
@@ -158,7 +162,7 @@ archetype = "request"
 kinds = ["call"]
 sources = ["live_system"]
 max_level = "discovered"
-bounds = { seconds = 60, bytes = 1000000, depth = 4 }
+bounds = { seconds = 1, bytes = 1000000, depth = 4 }
 
 [[finding_kinds]]
 name = "call"
@@ -184,10 +188,17 @@ code = "example_shape_changed"
 class = "unknown_variant"
 code = "example_unexpected"
 
+[[failure_codes]]
+class = "possible_commit"
+code = "ambiguous_match"
+
 [effects]
 network = "surfaces"
 sessions = ["json_app"]
 "#;
+
+/// Something a test does as a step reaches a driver.
+pub type StepHook = Box<dyn Fn(&str) + Send + Sync>;
 
 /// What a test can make the driver do.
 #[derive(Default)]
@@ -205,6 +216,32 @@ pub struct Hooks {
     pub session_ended: AtomicBool,
     /// The posture each `prepare` was given.
     pub postures: Mutex<Vec<String>>,
+    /// Every step that reached a driver, with the mode it reached.
+    pub by_mode: Mutex<Vec<(String, String)>>,
+    /// Every step that reached a driver, with the arguments, the key, and
+    /// the stamp it was given.
+    pub given: Mutex<Vec<Given>>,
+    /// Called as each step reaches a driver, with the step's kind.
+    pub before: Mutex<Vec<StepHook>>,
+    /// A step of this kind panics in the driver.
+    pub panics_on: Mutex<Option<String>>,
+    /// A step of this kind never ends in the driver.
+    pub hangs_on: Mutex<Option<String>>,
+    /// Preparing a driver never ends.
+    pub prepare_hangs: AtomicBool,
+    /// The next lookups find nothing, this many times, whatever is stored.
+    pub lookup_lags: AtomicU32,
+}
+
+/// What one step was given.
+#[derive(Debug, Clone)]
+pub struct Given {
+    pub kind: String,
+    pub args: Values,
+    pub key: Option<RecordKey>,
+    pub stamp: Option<String>,
+    /// The address the driver was prepared for.
+    pub address: String,
 }
 
 impl Hooks {
@@ -219,11 +256,50 @@ impl Hooks {
     pub fn count(&self, what: &str) -> usize {
         self.seen().iter().filter(|entry| *entry == what).count()
     }
+
+    /// Calls `f` with the kind of every step that reaches a driver.
+    pub fn on_step(&self, f: impl Fn(&str) + Send + Sync + 'static) {
+        self.before.lock().unwrap().push(Box::new(f));
+    }
+
+    /// The steps of this kind that reached a driver, as they were given.
+    pub fn given(&self, kind: &str) -> Vec<Given> {
+        self.given
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|given| given.kind == kind)
+            .cloned()
+            .collect()
+    }
+
+    /// How many steps reached the driver of a mode.
+    pub fn steps_of(&self, mode: &str) -> usize {
+        self.by_mode
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(held, _)| held == mode)
+            .count()
+    }
 }
 
 struct AppState {
     base: String,
     http: reqwest::Client,
+    /// The pack's half of "cannot write": outside a posture that may
+    /// write, the driver sends nothing that changes the system, whatever
+    /// the step says of itself.
+    read_only: bool,
+}
+
+fn read_only() -> StepFailure {
+    StepFailure::not_sent(Failure::new(
+        FailureClass::Policy,
+        a2m_provider::codes::READ_ONLY_POSTURE,
+        "The driver sends no write where nothing may be written.",
+        "Run the operation live, or against a declared test record.",
+    ))
 }
 
 struct AppDriver {
@@ -263,7 +339,18 @@ fn item_values(body: &serde_json::Value) -> Values {
     if let Some(version) = body["version"].as_i64() {
         values.insert("version", version);
     }
+    if let Some(code) = body["item_code"].as_str() {
+        values.insert("item_code", code);
+    }
     values
+}
+
+fn ambiguous() -> Failure {
+    failure(
+        FailureClass::PossibleCommit,
+        "ambiguous_match",
+        "The lookup found more than one record.",
+    )
 }
 
 impl AppDriver {
@@ -295,6 +382,40 @@ impl AppDriver {
     }
 }
 
+impl AppDriver {
+    /// The line items of an order, as the application shows them.
+    async fn items(
+        &self,
+        state: &AppState,
+        order: &str,
+    ) -> Result<Vec<serde_json::Value>, StepFailure> {
+        let (status, body) = self.get(state, &format!("/api/orders/{order}")).await?;
+        if status != 200 {
+            return Err(StepFailure::answered(failure(
+                FailureClass::Rejected,
+                "example_refused",
+                "The application has no such order.",
+            )));
+        }
+        Ok(body["items"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// The code the imaginary system assigns to the next new line item of
+    /// an order: the test application takes a code from its caller, so the
+    /// driver stands in for the part of a system that hands one out.
+    async fn free_code(&self, state: &AppState, order: &str) -> Result<String, StepFailure> {
+        let items = self.items(state, order).await?;
+        let taken: Vec<&str> = items
+            .iter()
+            .filter_map(|item| item["item_code"].as_str())
+            .collect();
+        let code = (1..10_000)
+            .map(|number| format!("N-{number:03}"))
+            .find(|code| !taken.contains(&code.as_str()));
+        code.ok_or_else(|| StepFailure::not_sent(unavailable("The order has no free code left.")))
+    }
+}
+
 impl Driver for AppDriver {
     fn prepare<'a>(
         &'a self,
@@ -307,9 +428,16 @@ impl Driver for AppDriver {
                 .lock()
                 .unwrap()
                 .push(format!("{:?}", cx.posture));
+            if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             Ok(Prepared::new(AppState {
                 base: cx.surface.surface.address.clone(),
                 http: reqwest::Client::new(),
+                read_only: !matches!(
+                    cx.posture,
+                    Posture::Live | Posture::Sandbox { test_records: true }
+                ),
             }))
         })
     }
@@ -323,6 +451,30 @@ impl Driver for AppDriver {
         Box::pin(async move {
             let hooks = &self.hooks;
             hooks.note(step.kind.as_str());
+            hooks
+                .by_mode
+                .lock()
+                .unwrap()
+                .push((self.mode.to_string(), step.kind.to_string()));
+            hooks.given.lock().unwrap().push(Given {
+                kind: step.kind.to_string(),
+                args: input.args.clone(),
+                key: input.key.cloned(),
+                stamp: input.stamp.map(str::to_owned),
+                address: prepared
+                    .state::<AppState>()
+                    .map(|state| state.base.clone())
+                    .unwrap_or_default(),
+            });
+            for call in hooks.before.lock().unwrap().iter() {
+                call(step.kind.as_str());
+            }
+            if hooks.panics_on.lock().unwrap().as_deref() == Some(step.kind.as_str()) {
+                panic!("the test driver was told to panic in `{}`", step.kind);
+            }
+            if hooks.hangs_on.lock().unwrap().as_deref() == Some(step.kind.as_str()) {
+                std::future::pending::<()>().await;
+            }
             if hooks.session_ended.load(Ordering::SeqCst) {
                 return Err(StepFailure::answered(Failure::new(
                     FailureClass::SessionExpired,
@@ -391,6 +543,9 @@ impl Driver for AppDriver {
                     }
                 }
                 "put_item" => {
+                    if state.read_only {
+                        return Err(read_only());
+                    }
                     if hooks.fail_unsent.swap(false, Ordering::SeqCst) {
                         return Err(StepFailure::not_sent(failure(
                             FailureClass::UnknownVariant,
@@ -452,6 +607,123 @@ impl Driver for AppDriver {
                         ))),
                     }
                 }
+                // A code handed out before the save: known before the
+                // commit point, and recorded for reconcile.
+                "reserve_code" => {
+                    let order = text(args, "order_id")?;
+                    let code = self.free_code(state, &order).await?;
+                    let key = RecordKey::new(vec![order.into(), code.as_str().into()]).unwrap();
+                    Ok(StepOutcome::Done(Observed {
+                        values: Values::new().with("item_code", code.as_str()),
+                        assigned_key: Some(key),
+                        for_reconcile: Values::new().with("item_code", code.as_str()),
+                        captures: Vec::new(),
+                    }))
+                }
+                // A create whose code the system assigns. With no
+                // description of its own, the record's stamp is written
+                // into that field.
+                "add_item" => {
+                    if state.read_only {
+                        return Err(read_only());
+                    }
+                    let order = text(args, "order_id")?;
+                    let code = match args.get("code") {
+                        Some(Value::Text(code)) => code.clone(),
+                        _ => self.free_code(state, &order).await?,
+                    };
+                    let description = match (args.get("description"), input.stamp) {
+                        (Some(Value::Text(text)), _) => text.clone(),
+                        (_, Some(stamp)) => format!("ref:{stamp}"),
+                        _ => {
+                            return Err(StepFailure::not_sent(failure(
+                                FailureClass::UnknownVariant,
+                                "example_unexpected",
+                                "The step was given no description and no stamp.",
+                            )));
+                        }
+                    };
+                    let body = serde_json::json!({
+                        "description": description,
+                        "quantity": args.get("quantity").and_then(Value::as_int).unwrap_or(0),
+                        "length_in": text(args, "length_in")?,
+                    });
+                    let sent = state
+                        .http
+                        .put(format!("{}/api/orders/{order}/items/{code}", state.base))
+                        .json(&body)
+                        .send()
+                        .await;
+                    if hooks.lose_answer.swap(false, Ordering::SeqCst) {
+                        return Err(StepFailure::unknown(unavailable(
+                            "The connection was lost after the request was sent.",
+                        )));
+                    }
+                    let response = sent.map_err(|_| {
+                        StepFailure::unknown(unavailable("The application did not answer."))
+                    })?;
+                    let status = response.status().as_u16();
+                    let answer: serde_json::Value =
+                        response.json().await.unwrap_or(serde_json::Value::Null);
+                    match status {
+                        200 | 201 => Ok(StepOutcome::Done(Observed {
+                            values: item_values(&answer),
+                            assigned_key: Some(
+                                RecordKey::new(vec![order.into(), code.into()]).unwrap(),
+                            ),
+                            ..Observed::default()
+                        })),
+                        _ => Err(StepFailure::answered(failure(
+                            FailureClass::Rejected,
+                            "example_refused",
+                            "The application refused the line item.",
+                        ))),
+                    }
+                }
+                // A lookup: by a description the write sets, or, with none
+                // given, by the record's stamp.
+                "find_item" => {
+                    let order = text(args, "order_id")?;
+                    let wanted = match (args.get("description"), input.stamp) {
+                        (Some(Value::Text(text)), _) => text.clone(),
+                        (_, Some(stamp)) => format!("ref:{stamp}"),
+                        _ => {
+                            return Err(StepFailure::not_sent(failure(
+                                FailureClass::UnknownVariant,
+                                "example_unexpected",
+                                "The lookup was given nothing to look for.",
+                            )));
+                        }
+                    };
+                    if hooks
+                        .lookup_lags
+                        .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                            left.checked_sub(1)
+                        })
+                        .is_ok()
+                    {
+                        return Ok(StepOutcome::Absent(Observed::default()));
+                    }
+                    let items = self.items(state, &order).await?;
+                    let found: Vec<&serde_json::Value> = items
+                        .iter()
+                        .filter(|item| item["description"].as_str() == Some(wanted.as_str()))
+                        .collect();
+                    match found.as_slice() {
+                        [] => Ok(StepOutcome::Absent(Observed::default())),
+                        [item] => {
+                            let code = item["item_code"].as_str().unwrap_or_default();
+                            Ok(StepOutcome::Done(Observed {
+                                values: item_values(item),
+                                assigned_key: Some(
+                                    RecordKey::new(vec![order.into(), code.into()]).unwrap(),
+                                ),
+                                ..Observed::default()
+                            }))
+                        }
+                        _ => Err(StepFailure::answered(ambiguous())),
+                    }
+                }
                 _ => Err(StepFailure::not_sent(failure(
                     FailureClass::UnknownVariant,
                     "example_unexpected",
@@ -473,6 +745,10 @@ impl Driver for AppDriver {
 /// A discoverer that tries to write through its port, and then reads.
 pub struct WritingDiscoverer {
     pub results: Mutex<Vec<Result<StepOutcome, StepFailure>>>,
+    /// The discoverer never ends.
+    pub hangs: AtomicBool,
+    /// The discoverer panics after its first finding.
+    pub panics: AtomicBool,
 }
 
 impl Discoverer for WritingDiscoverer {
@@ -488,9 +764,33 @@ impl Discoverer for WritingDiscoverer {
         &'a self,
         port: &'a dyn SandboxPort,
         scope: &'a DiscoveryScope<'a>,
-        _out: &'a mut dyn FindingSink,
+        out: &'a mut dyn FindingSink,
     ) -> BoxFuture<'a, Result<DiscoveryReport, Failure>> {
         Box::pin(async move {
+            // One finding, as a discoverer of a live system makes it.
+            let finding = Finding::about(
+                Subject::Address(Address::new("http://example.invalid", "/api/orders").unwrap()),
+                FindingKind::new("call").unwrap(),
+                "GET /api/orders/{order_id}",
+                Source::LiveSystem,
+                ProducedBy {
+                    provider: "example_json".to_owned(),
+                    version: "0.1.0".to_owned(),
+                    component: None,
+                },
+                Timestamp::from_unix_millis(START),
+            )
+            .level(EvidenceLevel::Discovered)
+            .build()
+            .unwrap();
+            out.found(finding)?;
+            if self.hangs.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            assert!(
+                !self.panics.load(Ordering::SeqCst),
+                "the test discoverer was told to panic"
+            );
             let args = Values::new()
                 .with("order_id", "A-100")
                 .with("item_code", "L-900")
@@ -504,15 +804,19 @@ impl Discoverer for WritingDiscoverer {
                 stamp: None,
                 deadline: scope.deadline,
             };
-            // A planted step that commits, and the same step dressed as a
-            // read: neither may reach the system.
+            // A planted step that commits, the same step dressed as one
+            // that commits nothing, and a read. Neither of the first two
+            // may change the system.
             let write = step("put_item", &[], true, false);
             let first = port.act(&write, &input).await;
+            let dressed = step("put_item", &[], false, false);
+            let second = port.act(&dressed, &input).await;
             let read = step("get_item", &[], false, true);
-            let second = port.act(&read, &input).await;
+            let third = port.act(&read, &input).await;
             let mut results = self.results.lock().unwrap();
             results.push(first);
             results.push(second);
+            results.push(third);
             Ok(DiscoveryReport::default())
         })
     }
@@ -669,6 +973,25 @@ pub const ITEM_UPSERT: &str = "example_item_upsert";
 pub const ITEM_UPSERT_EXACT: &str = "example_item_upsert_exact";
 pub const SECURE_GET: &str = "example_secure_order_get";
 pub const ORDER_FILL: &str = "example_order_fill";
+/// A create found again by a declared lookup: `find`.
+pub const NOTE_ADD: &str = "example_note_add";
+/// A create found again by its stamp: `stamped`.
+pub const REF_ADD: &str = "example_ref_add";
+/// A create whose key the system hands out before the save.
+pub const SLOT_ADD: &str = "example_slot_add";
+/// A pipeline over the rows of a sheet.
+pub const SHEET_ENTER: &str = "example_sheet_enter";
+/// A pipeline that creates a header and then its lines.
+pub const KIT_ENTER: &str = "example_kit_enter";
+
+/// The sheet the pipelines read: delimited text with a header row.
+pub fn sheet(rows: &[(&str, &str, &str, &str)]) -> Vec<u8> {
+    let mut text = String::from("Code,Description,Quantity,Length\n");
+    for (code, description, quantity, length) in rows {
+        text.push_str(&format!("{code},{description},{quantity},{length}\n"));
+    }
+    text.into_bytes()
+}
 
 /// The plan of the imaginary `example` target, over the test application
 /// at `address`.
@@ -791,6 +1114,7 @@ pub fn plan(address: &str) -> Plan {
             optional("quantity", ValueType::Int),
             optional("length_in", ValueType::Text),
             optional("version", ValueType::Int),
+            optional("item_code", ValueType::Text),
         ]),
     );
     let no_manifest = || PermissionManifest {
@@ -947,6 +1271,133 @@ pub fn plan(address: &str) -> Plan {
         vec![binding(FIRST_MODE, 1, vec![get_order()], Vec::new())],
     ));
 
+    // 5 to 7: creates whose code the system assigns, each found again in
+    // its own way.
+    let result_code = expr(&mut plan, "result.item_code", ValueType::Text);
+    let created_outputs = || {
+        vec![
+            OutputPlan {
+                name: "item_code".to_owned(),
+                ty: ValueType::Text,
+                field_type: Some(FieldTypeIndex::new(identifier)),
+            },
+            OutputPlan {
+                name: "version".to_owned(),
+                ty: ValueType::Int,
+                field_type: None,
+            },
+        ]
+    };
+    let read_created = || {
+        vec![step(
+            "get_item",
+            &[("order_id", order_id), ("item_code", result_code)],
+            false,
+            true,
+        )]
+    };
+    let create = |text: &str,
+                  strategy: IdentityStrategy,
+                  inputs: Vec<InputPlan>,
+                  key: Vec<InputIndex>,
+                  act: Vec<Step>,
+                  lookup: Vec<Step>| {
+        let mut binding = binding(FIRST_MODE, 0, act, read_created());
+        binding.lookup = lookup;
+        OperationPlan {
+            name: name(text),
+            effect: EffectClass::Write,
+            hazard: Hazard::None,
+            inputs,
+            outputs: created_outputs(),
+            identity: IdentityPlan { strategy, key },
+            commit_points: 1,
+            bindings: vec![binding],
+            manifest: no_manifest(),
+            examples: Vec::new(),
+            decision_points: Vec::new(),
+        }
+    };
+    // 5: `find`: the lookup searches on the description the write sets.
+    plan.operations.push(create(
+        NOTE_ADD,
+        IdentityStrategy::Find,
+        vec![
+            input("order_id", identifier, ValueType::Text, true),
+            input("description", free_text, ValueType::Text, true),
+            input("quantity", count, ValueType::Int, true),
+            input("length_in", inches, ValueType::Decimal, true),
+        ],
+        vec![InputIndex::new(0), InputIndex::new(1)],
+        vec![step(
+            "add_item",
+            &[
+                ("order_id", order_id),
+                ("description", description),
+                ("quantity", quantity),
+                ("length_in", length),
+            ],
+            true,
+            false,
+        )],
+        vec![step(
+            "find_item",
+            &[("order_id", order_id), ("description", description)],
+            false,
+            true,
+        )],
+    ));
+    // 6: `stamped`: the write puts the record's stamp in the description,
+    // and the lookup searches for it.
+    let stamped_inputs = || {
+        vec![
+            input("order_id", identifier, ValueType::Text, true),
+            input("quantity", count, ValueType::Int, true),
+            input("length_in", inches, ValueType::Decimal, true),
+        ]
+    };
+    let by_stamp = || vec![step("find_item", &[("order_id", order_id)], false, true)];
+    plan.operations.push(create(
+        REF_ADD,
+        IdentityStrategy::Stamped,
+        stamped_inputs(),
+        vec![InputIndex::new(0)],
+        vec![step(
+            "add_item",
+            &[
+                ("order_id", order_id),
+                ("quantity", quantity),
+                ("length_in", length),
+            ],
+            true,
+            false,
+        )],
+        by_stamp(),
+    ));
+    // 7: the code is handed out by a step before the save, and the save
+    // and the read-back use it.
+    plan.operations.push(create(
+        SLOT_ADD,
+        IdentityStrategy::Stamped,
+        stamped_inputs(),
+        vec![InputIndex::new(0)],
+        vec![
+            step("reserve_code", &[("order_id", order_id)], false, false),
+            step(
+                "add_item",
+                &[
+                    ("order_id", order_id),
+                    ("code", result_code),
+                    ("quantity", quantity),
+                    ("length_in", length),
+                ],
+                true,
+                false,
+            ),
+        ],
+        by_stamp(),
+    ));
+
     for (position, operation) in plan.operations.clone().iter().enumerate() {
         plan.tools.push(tool(
             &operation.name,
@@ -1028,6 +1479,160 @@ pub fn plan(address: &str) -> Plan {
         &name(ORDER_FILL),
         ToolRuns::Pipeline(PipelineIndex::new(0)),
     ));
+
+    // The source both sheet pipelines read: four columns, one row a record.
+    let limits = a2m_sources::Limits {
+        bytes: 1024 * 1024,
+        unpacked_bytes: 1024 * 1024,
+        rows: 1000,
+        cells: 10_000,
+        cell_bytes: 1024,
+    };
+    let layout = Sources::builtin()
+        .describe(
+            "csv",
+            &SourceInput {
+                bytes: &sheet(&[]),
+                limits,
+                options: ReaderOptions::default(),
+            },
+        )
+        .unwrap();
+    let row_field = |name: &str, column: &str, field_type: u32| RowField {
+        name: name.to_owned(),
+        field_type: FieldTypeIndex::new(field_type),
+        column: Some(column.to_owned()),
+        required: true,
+    };
+    let source = || SourcePlan {
+        template: "example_sheet".to_owned(),
+        reader: "csv".to_owned(),
+        mapping: Vec::new(),
+        rows: None,
+        payload: PackPayload::encode(&SourceSpec {
+            versions: vec![TemplateVersion {
+                version: "1".to_owned(),
+                fingerprint: layout.fingerprint.clone(),
+            }],
+            locate: Locate::Document,
+            columns: ["Code", "Description", "Quantity", "Length"]
+                .map(str::to_owned)
+                .to_vec(),
+            fields: vec![
+                row_field("code", "Code", identifier),
+                row_field("description", "Description", free_text),
+                row_field("quantity", "Quantity", count),
+                row_field("length", "Length", inches),
+            ],
+            key: vec!["code".to_owned()],
+            missing: Vec::new(),
+            hidden: HiddenRule::Reject,
+            options: ReaderOptions::default(),
+        })
+        .unwrap(),
+    };
+    let column = |name: &str, ty: ValueType| a2m_core::FieldOf {
+        name: name.to_owned(),
+        ty,
+        required: true,
+    };
+    let rows = expr(
+        &mut plan,
+        "source.rows",
+        ValueType::List(Box::new(ValueType::Record(vec![
+            column("code", ValueType::Text),
+            column("description", ValueType::Text),
+            column("quantity", ValueType::Int),
+            column("length", ValueType::Decimal),
+        ]))),
+    );
+    let row_code = expr(&mut plan, "row.code", ValueType::Text);
+    let row_description = expr(&mut plan, "row.description", ValueType::Text);
+    let row_quantity = expr(&mut plan, "row.quantity", ValueType::Int);
+    let row_length = expr(&mut plan, "row.length", ValueType::Decimal);
+    let arg = |name: &str, value: ExprIndex| StepArg {
+        name: name.to_owned(),
+        value,
+    };
+    let lines = |code: ExprIndex| PipelineStep {
+        id: "lines".to_owned(),
+        operation: OperationIndex::new(2),
+        with: vec![
+            arg("order_id", order_id),
+            arg("item_code", code),
+            arg("description", row_description),
+            arg("quantity", row_quantity),
+            arg("length_in", row_length),
+        ],
+        for_each: Some(rows),
+        checkpoint: None,
+        when: None,
+        expect: None,
+    };
+    // 1: check the order is a draft, enter every row, read the order again.
+    plan.pipelines.push(PipelinePlan {
+        name: name(SHEET_ENTER),
+        effect: EffectClass::Write,
+        hazard: Hazard::None,
+        inputs: vec![input("order_id", identifier, ValueType::Text, true)],
+        source: Some(source()),
+        limits: PipelineLimits::default(),
+        steps: vec![
+            read("check", Some(draft)),
+            lines(row_code),
+            read("after", None),
+        ],
+        success: Vec::new(),
+        headroom_ms: 0,
+    });
+    plan.tools.push(tool(
+        &name(SHEET_ENTER),
+        ToolRuns::Pipeline(PipelineIndex::new(1)),
+    ));
+    // 2: a header whose code the system assigns, then its lines, each
+    // under a code made from the header's.
+    let title = expr(&mut plan, "input.title", ValueType::Text);
+    let one = expr(&mut plan, "1", ValueType::Int);
+    let unit = expr(&mut plan, "decimal(\"1\")", ValueType::Decimal);
+    let under_header = expr(
+        &mut plan,
+        "steps.header.result.item_code + \"-\" + row.code",
+        ValueType::Text,
+    );
+    plan.pipelines.push(PipelinePlan {
+        name: name(KIT_ENTER),
+        effect: EffectClass::Write,
+        hazard: Hazard::None,
+        inputs: vec![
+            input("order_id", identifier, ValueType::Text, true),
+            input("title", free_text, ValueType::Text, true),
+        ],
+        source: Some(source()),
+        limits: PipelineLimits::default(),
+        steps: vec![
+            PipelineStep {
+                id: "header".to_owned(),
+                operation: OperationIndex::new(5),
+                with: vec![
+                    arg("order_id", order_id),
+                    arg("description", title),
+                    arg("quantity", one),
+                    arg("length_in", unit),
+                ],
+                for_each: None,
+                checkpoint: None,
+                when: None,
+                expect: None,
+            },
+            lines(under_header),
+        ],
+        success: Vec::new(),
+        headroom_ms: 0,
+    });
+    plan.tools.push(tool(
+        &name(KIT_ENTER),
+        ToolRuns::Pipeline(PipelineIndex::new(2)),
+    ));
     plan
 }
 
@@ -1046,6 +1651,17 @@ pub struct Faults {
     pub denied: AtomicBool,
     /// Every lease is refused: a person must sign in.
     pub no_session: AtomicBool,
+    /// The store cannot commit once a write has been sent: `acted` is
+    /// refused.
+    pub acted_refused: AtomicBool,
+    /// The store cannot commit when the record is to be marked verified.
+    pub verified_refused: AtomicBool,
+    /// The evidence store takes nothing at all.
+    pub evidence_down: AtomicBool,
+    /// What a step learned before its commit point cannot be stored.
+    pub before_commit_refused: AtomicBool,
+    /// The call of this name never answers.
+    pub hangs_on: Mutex<Option<&'static str>>,
 }
 
 pub struct StoreControl {
@@ -1064,11 +1680,21 @@ pub struct StoreControl {
     pub expiry_reports: AtomicU32,
     pub modes: Mutex<Vec<(RecordRef, Mode)>>,
     pub sent: AtomicBool,
+    /// What was recorded before each record's commit point.
+    pub before_commit: Mutex<Vec<(RecordRef, BlobRef)>>,
 }
 
 impl StoreControl {
     fn fence(&self) -> Fence {
         *self.fence.lock().unwrap()
+    }
+
+    /// Never answers, when the test asked for that of this call.
+    async fn hang(&self, call: &'static str) {
+        let hangs = *self.faults.hangs_on.lock().unwrap() == Some(call);
+        if hangs {
+            std::future::pending::<()>().await;
+        }
     }
 
     /// A person approves a diff. The policy engine's stand-in: one row in
@@ -1108,6 +1734,7 @@ impl Control for StoreControl {
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.hang("decide").await;
             self.questions.lock().unwrap().push(question.clone());
             if self.faults.denied.load(Ordering::SeqCst) {
                 return Err(failure(
@@ -1212,6 +1839,7 @@ impl Control for StoreControl {
         intents: Vec<RecordIntent>,
     ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
         Box::pin(async move {
+            self.hang("intend").await;
             if self.faults.intend_refused.swap(false, Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -1246,8 +1874,16 @@ impl Control for StoreControl {
         acted: Acted,
     ) -> BoxFuture<'a, Result<ActedToken, Failure>> {
         Box::pin(async move {
-            self.hooks.note("acted");
             self.sent.store(true, Ordering::SeqCst);
+            self.hang("acted").await;
+            if self.faults.acted_refused.load(Ordering::SeqCst) {
+                return Err(failure(
+                    FailureClass::Busy,
+                    "store_unavailable",
+                    "The store cannot commit.",
+                ));
+            }
+            self.hooks.note("acted");
             self.store
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().mark_acted(token, acted)
@@ -1262,6 +1898,13 @@ impl Control for StoreControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            if self.faults.verified_refused.load(Ordering::SeqCst) {
+                return Err(failure(
+                    FailureClass::Busy,
+                    "store_unavailable",
+                    "The store cannot commit.",
+                ));
+            }
             self.hooks.note("verified");
             // The store's transaction runs elsewhere and owns what it is
             // given, and the proof is borrowed: the record is settled by
@@ -1345,7 +1988,16 @@ impl Control for StoreControl {
                 EngineEvent::Trace(trace) => {
                     self.traces.lock().unwrap().push(trace.clone());
                 }
-                EngineEvent::BeforeCommit { outputs, .. } => {
+                EngineEvent::BeforeCommit { record, outputs } => {
+                    if self.faults.before_commit_refused.load(Ordering::SeqCst) {
+                        return Err(failure(
+                            FailureClass::Busy,
+                            "store_unavailable",
+                            "The store cannot commit.",
+                        ));
+                    }
+                    self.hooks.note("before_commit");
+                    self.before_commit.lock().unwrap().push((*record, *outputs));
                     let outputs = *outputs;
                     self.store
                         .write(Durability::Synced, move |tx| {
@@ -1369,6 +2021,13 @@ impl Control for StoreControl {
 
     fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(async move {
+            if self.faults.evidence_down.load(Ordering::SeqCst) {
+                return Err(failure(
+                    FailureClass::Busy,
+                    "storage_full",
+                    "The evidence store is full.",
+                ));
+            }
             if self.sent.load(Ordering::SeqCst)
                 && self
                     .faults
@@ -1413,6 +2072,13 @@ pub struct Scene {
     pub conditions: Mutex<Conditions>,
     pub pin: Mutex<Option<Mode>>,
     pub lease: LeaseClock,
+    /// The engine's clock: a test moves it.
+    pub clock: Arc<ManualClock>,
+    /// The bytes of the source input the next jobs carry.
+    pub source: Mutex<Option<Arc<Vec<u8>>>>,
+    /// The environment the next jobs name; the target's default when none.
+    pub environment: Mutex<Option<Environment>>,
+    runs: AtomicU64,
     _folder: Folder,
 }
 
@@ -1435,11 +2101,22 @@ async fn open_store(folder: &Folder) -> (Store, Arc<Vault>) {
 impl Scene {
     /// A scene with a run of `tool` opened, in `queued`.
     pub async fn new(tool: &str, change: impl FnOnce(&mut Plan)) -> Self {
+        Self::with_settings(tool, change, |_| {}).await
+    }
+
+    /// A scene whose engine has other settings than the defaults.
+    pub async fn with_settings(
+        tool: &str,
+        change: impl FnOnce(&mut Plan),
+        settings: impl FnOnce(&mut EngineSettings),
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("scene");
         let hooks = Arc::new(Hooks::default());
         let discoverer = Arc::new(WritingDiscoverer {
             results: Mutex::new(Vec::new()),
+            hangs: AtomicBool::new(false),
+            panics: AtomicBool::new(false),
         });
         let logs = folder.path().join("logs");
         std::fs::create_dir_all(&logs).unwrap();
@@ -1506,12 +2183,15 @@ impl Scene {
             })
             .await
             .unwrap();
+        let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
+        let mut engine_settings = EngineSettings::default();
+        settings(&mut engine_settings);
         let engine = Engine::new(EngineDeps {
             registry,
             redact,
             keyed: vault.keyed_digest().await.unwrap(),
-            clock: Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START))),
-            settings: EngineSettings::default(),
+            clock: clock.clone(),
+            settings: engine_settings,
         });
         let control = Arc::new(StoreControl {
             store,
@@ -1528,6 +2208,7 @@ impl Scene {
             expiry_reports: AtomicU32::new(0),
             modes: Mutex::new(Vec::new()),
             sent: AtomicBool::new(false),
+            before_commit: Mutex::new(Vec::new()),
         });
         Self {
             app,
@@ -1540,8 +2221,63 @@ impl Scene {
             conditions: Mutex::new(Conditions::default()),
             pin: Mutex::new(None),
             lease: LeaseClock::unbounded(),
+            clock,
+            source: Mutex::new(None),
+            environment: Mutex::new(None),
+            runs: AtomicU64::new(0),
             _folder: folder,
         }
+    }
+
+    /// Opens another run of `tool` in the same store, against the same
+    /// test application: a second call by the same caller.
+    pub async fn another_run(&self, tool: &str) {
+        let plan = Arc::clone(&self.control.plan);
+        let tool_name = OperationName::new(tool).unwrap();
+        let (effect, kind) = match plan.tool(&tool_name).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => {
+                (plan.operation(index).unwrap().effect, ToolKind::Operation)
+            }
+            Some(ToolRuns::Pipeline(index)) => {
+                (plan.pipeline(index).unwrap().effect, ToolKind::Pipeline)
+            }
+            None => (EffectClass::Read, ToolKind::Operation),
+        };
+        let hash = self.plan_hash;
+        let number = self.runs.fetch_add(1, Ordering::SeqCst) + 1;
+        let fence = self
+            .control
+            .store
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                let Opened::New(opened) = ledger.open_run(NewRun {
+                    workspace: workspace(),
+                    principal: PrincipalId::from_bytes([2; 16]),
+                    client_label: "test".to_owned(),
+                    tool_name,
+                    tool_kind: kind,
+                    target: TargetName::new("example").unwrap(),
+                    target_version: hash,
+                    environment: Environment::new("test").unwrap(),
+                    identity: None,
+                    effect,
+                    input_hash: Digest::of(&number.to_le_bytes()),
+                    input: None,
+                    retention: RetentionClass::Long,
+                })?
+                else {
+                    panic!("the run exists already");
+                };
+                ledger.new_epoch(opened.run)
+            })
+            .await
+            .unwrap();
+        *self.control.fence.lock().unwrap() = fence;
+        *self.control.approval.lock().unwrap() = None;
+        self.control.sent.store(false, Ordering::SeqCst);
+        self.control.modes.lock().unwrap().clear();
+        self.control.before_commit.lock().unwrap().clear();
+        self.attempt.store(1, Ordering::SeqCst);
     }
 
     pub fn run(&self) -> RunId {
@@ -1570,7 +2306,7 @@ impl Scene {
         self.records().await.iter().map(|row| row.state).collect()
     }
 
-    async fn values(&self, blob: Option<BlobRef>) -> Option<Values> {
+    pub async fn values(&self, blob: Option<BlobRef>) -> Option<Values> {
         let blob = blob?;
         let opened = self.control.store.blobs().get(&blob).await.unwrap();
         Some(decode_values(opened.expose()).unwrap())
@@ -1584,8 +2320,14 @@ impl Scene {
             return None;
         }
         let modes = self.control.modes.lock().unwrap().clone();
+        let recorded = self.control.before_commit.lock().unwrap().clone();
         let mut records = Vec::new();
         for record in self.records().await {
+            let before_commit = recorded
+                .iter()
+                .rev()
+                .find(|(held, _)| *held == record.record)
+                .map(|(_, blob)| *blob);
             records.push(RecordSnapshot {
                 record: record.record,
                 key: record.key.clone(),
@@ -1597,7 +2339,7 @@ impl Scene {
                 idempotency_token: record.idempotency_token.clone(),
                 assigned_key: record.assigned_key.clone(),
                 outputs: self.values(record.outputs).await,
-                before_commit: None,
+                before_commit: self.values(before_commit).await,
                 mode: modes
                     .iter()
                     .rev()
@@ -1615,6 +2357,8 @@ impl Scene {
     }
 
     pub async fn job(&self, kind: JobKind, tool: &str, input: Values) -> JobSpec {
+        let environment = self.environment.lock().unwrap().clone();
+        let source = self.source.lock().unwrap().clone();
         JobSpec {
             run: self.run(),
             workspace: workspace(),
@@ -1623,10 +2367,10 @@ impl Scene {
             kind,
             plan: self.plan_hash,
             tool: ToolRef::Tool(OperationName::new(tool).unwrap()),
-            environment: None,
+            environment,
             identity: None,
             input,
-            source: None,
+            source,
             snapshot: self.snapshot().await,
             conditions: self.conditions.lock().unwrap().clone(),
             pin: self.pin.lock().unwrap().clone(),
@@ -1678,6 +2422,22 @@ impl Scene {
         fence.epoch
     }
 
+    /// Runs a discovery job on a surface of the plan.
+    pub async fn discover(&self, surface: &str) -> JobOutcome {
+        let mut job = self.job(JobKind::Discover, ORDER_GET, Values::new()).await;
+        job.tool = ToolRef::Surface(SurfaceName::new(surface).unwrap());
+        self.engine.run_job(&job, self.control.as_ref()).await
+    }
+
+    /// Every step of the kinds given that reached a driver, in order.
+    pub fn steps(&self, kinds: &[&str]) -> Vec<String> {
+        self.hooks
+            .seen()
+            .into_iter()
+            .filter(|entry| kinds.contains(&entry.as_str()))
+            .collect()
+    }
+
     pub fn last_result(&self) -> Values {
         self.control
             .results
@@ -1702,4 +2462,62 @@ pub fn item(order: &str, code: &str, description: &str, quantity: i64, length: &
 /// The key of a line item, as the engine makes it.
 pub fn item_key(order: &str, code: &str) -> RecordKey {
     RecordKey::new(vec![Value::from(order), Value::from(code)]).unwrap()
+}
+
+// ---- what the tests of writes share ----
+
+pub fn completed(outcome: &JobOutcome) -> bool {
+    matches!(
+        outcome,
+        JobOutcome::Finished {
+            state: RunState::Completed,
+            failure: None
+        }
+    )
+}
+
+pub fn waits(outcome: &JobOutcome) -> bool {
+    matches!(
+        outcome,
+        JobOutcome::Rests {
+            state: RunState::NeedsApproval,
+            failure: None
+        }
+    )
+}
+
+/// The position of the first entry of the log that is `what`.
+pub fn at(log: &[String], what: &str) -> usize {
+    log.iter()
+        .position(|entry| entry == what)
+        .unwrap_or_else(|| panic!("the log has no `{what}`: {log:?}"))
+}
+
+/// Previews a write, has a person approve its diff, and leaves the run
+/// waiting for the execute.
+pub async fn approved(scene: &Scene, tool: &str, input: &Values) {
+    let outcome = scene.work(JobKind::Preview, tool, input.clone()).await;
+    assert!(waits(&outcome), "{outcome:?}");
+    let diff = scene
+        .run_row()
+        .await
+        .diff_hash
+        .expect("a preview stores a diff");
+    scene.control.approve(diff).await;
+}
+
+/// The inputs of a create whose code the system assigns.
+pub fn slot(order: &str, quantity: i64, length: &str) -> Values {
+    Values::new()
+        .with("order_id", order)
+        .with("quantity", quantity)
+        .with("length_in", length)
+}
+
+/// The class and code of the failure an outcome carries.
+pub fn failed_as(outcome: &JobOutcome) -> (FailureClass, String) {
+    let failure = outcome
+        .failure()
+        .unwrap_or_else(|| panic!("the outcome carries no failure: {outcome:?}"));
+    (failure.class(), failure.code().to_string())
 }

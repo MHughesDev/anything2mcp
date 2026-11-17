@@ -135,7 +135,7 @@ A lower layer is compiled as a further restriction. A target file, toolset, or w
 | `effect_too_high` | A grant exists, with a lower highest effect class |
 | `approval_missing` | A write reaches the write phase with no usable approval |
 | `approval_stale` | The approval is expired, used, revoked, or for another diff |
-| `approval_refused` | The approver is not a person, may not approve this run, or the run is not waiting for approval |
+| `approval_refused` | The approver is not a person, may not approve this run, or the run is not waiting for approval. Also the failure of a run that ended `expired` because a person declined it or its approval window ended |
 | `limit_exceeded` | Records per run or a quota |
 | `kill_switch_on` | A kill switch covers the request |
 | `policy_evaluation_failed` | An error while deciding, or no valid set is loaded |

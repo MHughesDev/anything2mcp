@@ -306,6 +306,7 @@ impl Control for InProcessControl {
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|()| self.kernel.run_changed())
         })
     }
 
@@ -369,12 +370,31 @@ impl Control for InProcessControl {
                             Ok(Ok(Clearance::Cleared))
                         }
                         Err(missing) if missing.code() == &a2m_policy::APPROVAL_MISSING => {
+                            // The refusal to write without a person is a
+                            // recorded decision; the run's own events name
+                            // it, so that it can be explained later.
+                            tx.ledger().append_event(
+                                &fence,
+                                EventKind::Need,
+                                &json!({
+                                    "needs": "approval",
+                                    "decision": decision.id.to_string(),
+                                    "diff": diff.to_string(),
+                                }),
+                                None,
+                            )?;
                             Ok(Ok(Clearance::Waits))
                         }
                         Err(stale) => Ok(Err(stale)),
                     }
                 })
                 .await?;
+            if matches!(cleared, Ok(Clearance::Cleared)) {
+                // The approval is used: the run no longer waits to be
+                // resumed.
+                self.kernel.inner.signals.forget(run);
+            }
+            self.kernel.run_changed();
             cleared.map_err(|failure| self.redacted(failure))
         })
     }
@@ -428,6 +448,7 @@ impl Control for InProcessControl {
                 .store_intents(&self.fence, intents)
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|_| self.kernel.run_changed())
         })
     }
 
@@ -444,6 +465,7 @@ impl Control for InProcessControl {
                 })
                 .await
                 .map_err(|failure| self.redacted(failure))
+                .inspect(|_| self.kernel.run_changed())
         })
     }
 
@@ -464,6 +486,7 @@ impl Control for InProcessControl {
             // transaction; a run waiting for it is told.
             if marked.is_ok() {
                 self.freed(record).await;
+                self.kernel.run_changed();
             }
             marked
         })
@@ -489,6 +512,7 @@ impl Control for InProcessControl {
             if let (Ok(key), Ok(sched)) = (key, self.kernel.sched()) {
                 sched.lock_freed(&key);
             }
+            self.kernel.run_changed();
             Ok(())
         })
     }
@@ -511,6 +535,7 @@ impl Control for InProcessControl {
             if settled != Settled::Planned {
                 self.freed(record).await;
             }
+            self.kernel.run_changed();
             Ok(settled)
         })
     }
@@ -713,7 +738,10 @@ impl InProcessControl {
             .store()?
             .write(Durability::Synced, move |tx| {
                 let mut ledger = tx.ledger();
-                if ledger.run(run)?.state == to {
+                let state = ledger.run(run)?.state;
+                // A run that ended while the job was in hand, declined at
+                // the desk or cancelled, stays as it ended.
+                if state == to || state.is_final() {
                     return Ok(());
                 }
                 ledger.set_state(&fence, to, why.as_ref())

@@ -4,13 +4,20 @@
 //! The command tree is built from the action registry each time the
 //! program starts: `anything2mcp <noun> <verb> [arguments]` for every
 //! action with a command face, and the shortcuts, which are data. The
-//! process commands (`serve`, `runner`, `bridge`) are named and not built.
+//! process commands are written by hand: `serve` is the local engine and
+//! `bridge` the stdio proxy of an MCP client; `runner` is named and not
+//! built.
 //!
-//! Every command runs the engine inside its own process: it opens the
-//! kernel, dispatches, and closes. The local engine and its channel are
-//! not in this build, so `--in-process` is accepted and changes nothing.
+//! A command is a thin client when a local engine runs: it sends each
+//! action over the local channel and renders the answer. When none runs
+//! it runs the engine inside its own process: it opens the kernel,
+//! dispatches, and closes. Nothing starts an engine on demand yet
+//! (decision 0131). `--in-process` asks for the second form by name, and
+//! is refused while an engine runs.
 
+mod client;
 mod parse;
+mod process;
 mod render;
 
 use std::collections::BTreeMap;
@@ -23,12 +30,14 @@ use a2m_actions::{
     Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes, command_faces,
 };
 use a2m_core::{Failure, FailureClass};
+use a2m_local::ClientLabel;
 use a2m_telemetry::SystemClock;
 use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
 use parse::{Globals, Parsed, Step, Tree};
+pub use process::READY_LINE;
 
 /// The name of the file that marks a project folder.
 pub const PROJECT_FILE: &str = "anything2mcp.toml";
@@ -198,16 +207,18 @@ fn without_engine(tree: &Tree, parsed: Parsed, json: bool) -> Finished {
     match parsed {
         Parsed::Version => plain(format!("{PROGRAM} {}\n", crate::version())),
         Parsed::Help(text) => plain(text),
-        Parsed::Process(globals, word) => stopped(
+        // Reached only on an engine that is open already; a process
+        // command of the program itself is run by `run_with`.
+        Parsed::Process(globals, word, _) => stopped(
             tree,
             word,
             &Failure::new(
                 FailureClass::Input,
                 codes::ACTION_NOT_BUILT,
                 format!(
-                    "`{PROGRAM} {word}` starts a long-lived role, which this build does not have."
+                    "`{PROGRAM} {word}` starts a process of its own, and an engine is open here already."
                 ),
-                "Run each command by itself; it runs the engine inside its own process.",
+                format!("Run `{PROGRAM} {word}` as a command."),
             ),
             ExitClass::Failed,
             json || globals.json,
@@ -232,8 +243,9 @@ fn without_engine(tree: &Tree, parsed: Parsed, json: bool) -> Finished {
 }
 
 /// Runs one command line: parses it against the command tree, and for an
-/// action or a shortcut opens the engine in this process, dispatches, and
-/// closes.
+/// action or a shortcut sends it to the local engine when one runs, or
+/// else opens the engine in this process, dispatches, and closes. A
+/// process command starts its role.
 pub async fn run_with(args: &[String], host: &Host) -> Finished {
     let json = !host.stdout_is_terminal;
     let tree = match tree() {
@@ -250,6 +262,9 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     };
     let (globals, steps) = match tree.parse(args) {
         Ok(Parsed::Invoke(globals, steps)) => (globals, steps),
+        Ok(Parsed::Process(globals, word, rest)) => {
+            return process::run(&tree, &globals, word, &rest, host, json || globals.json).await;
+        }
         Ok(other) => return without_engine(&tree, other, json),
         Err(failure) => return stopped(&tree, "", &failure, ExitClass::Malformed, json),
     };
@@ -266,6 +281,39 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Ok(paths) => paths,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Failed, json),
     };
+    let project = project_of(&globals, host);
+    match client::find(&paths, ClientLabel::CommandLine).await {
+        Ok(client::Found::Engine(_)) if globals.in_process => {
+            return stopped(
+                &tree,
+                &action,
+                &Failure::new(
+                    FailureClass::Busy,
+                    a2m_local::codes::ENGINE_RUNNING,
+                    "An engine already runs for this user and data directory, so the command cannot run one inside itself.",
+                    "Run the command without `--in-process`: it then uses the running engine.",
+                ),
+                ExitClass::Failed,
+                json,
+            );
+        }
+        Ok(client::Found::Engine(link)) => {
+            return client::run_steps(
+                &link,
+                &tree,
+                &globals,
+                steps,
+                json,
+                host,
+                project.as_deref(),
+            )
+            .await;
+        }
+        // No engine runs, and nothing starts one on demand yet: the
+        // command runs the engine inside its own process.
+        Ok(client::Found::Nothing) => {}
+        Err(failure) => return client::not_reached(&tree, &action, &failure, json),
+    }
     let clock = Arc::new(SystemClock::new());
     let person: Arc<dyn PersonSurface> = match &host.person {
         Some(person) => Arc::clone(person),
@@ -276,7 +324,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     };
     let mut options = EngineOptions::of_machine(paths, host.environment.clone(), person);
     options.clock = clock;
-    options.project = project_of(&globals, host);
+    options.project = project;
     options.key_store.clone_from(&host.key_store);
     let engine = match Engine::open(options).await {
         Ok(engine) => engine,

@@ -38,7 +38,8 @@ pub struct GuardQuestion {
     /// The tool's hazard.
     pub hazard: Hazard,
     /// Whether the job may write: false for a preview, a read, a reconcile
-    /// that only reads, and everything in the sandbox.
+    /// that only reads, and discovery. A try of a write says true: it may
+    /// write a declared test record.
     pub writes: bool,
     /// How many records the run would touch, when the source has been read.
     pub records: Option<u32>,
@@ -208,7 +209,10 @@ impl EngineEvent {
 ///   `possible_commit`, `runner_lost`.
 /// - `intend` returns only after the intents are durable.
 /// - A method that waits (a lease, a lock, a rate budget) waits up to its
-///   own limit and then fails; the engine holds no timer for it.
+///   own limit and then fails. The engine gives any call up after the
+///   longer time its settings name, and treats it as failed: the future is
+///   dropped, so what the call had begun must stand or fall as one
+///   transaction.
 /// - A failure it returns has passed the redactor.
 pub trait Control: Send + Sync {
     /// The plan by its hash. The engine checks the hash again before it

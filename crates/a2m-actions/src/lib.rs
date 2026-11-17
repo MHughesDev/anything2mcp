@@ -23,6 +23,7 @@ pub mod codes;
 mod control;
 mod def;
 mod dispatch;
+mod events;
 mod faces;
 mod handlers;
 mod health;
@@ -31,8 +32,10 @@ mod kernel;
 mod paths;
 mod person;
 mod registry;
+mod render;
 mod runner;
 pub mod settings;
+mod signals;
 mod tools;
 
 pub use def::{
@@ -42,9 +45,10 @@ pub use def::{
 pub use dispatch::{
     Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, Request, Response,
 };
+pub use events::{EVENTS_PAGE, RunEventView, RunEvents};
 pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
-    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutStep, TOOL_PREFIX,
+    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,
     ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
     sdk_methods, tool_name,
 };
@@ -52,7 +56,8 @@ pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
-    ApprovalAsk, ApprovalDesk, PersonSurface, PresenceAsk, PresenceProof, SessionAsk, SignInAsk,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, PREVIEW_RECORDS, PREVIEW_VALUE_CHARS,
+    PersonSurface, PresenceAsk, PresenceProof, PreviewField, PreviewRecord, SessionAsk, SignInAsk,
     SurfaceLink, WaitingApproval,
 };
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
@@ -72,4 +77,6 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod kernel;
+    mod runs;
+    mod second;
 }

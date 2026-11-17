@@ -1,0 +1,581 @@
+//! The front doors, joined: `serve` as the local engine, a command as its
+//! thin client, and `bridge` as the stdio proxy of an MCP client.
+//!
+//! The first two tests run the real program: `serve` is a child process on
+//! a temporary data directory, and commands and a bridge are further
+//! children that find it over the local channel. The third runs the same
+//! local engine inside the test, with the real channel, the real person
+//! surface, both routers, and the kernel, because the program ships no
+//! presence prompt yet and the test must answer one to approve a write.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a test file: a helper that cannot do its work stops the test"
+)]
+
+mod common;
+
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+
+use a2m_actions::{BoxFuture, Paths, PersonSurface};
+use a2m_local::{EngineLock, PresenceKind, PresencePrompt, PromptAnswer, PromptText, StopReason};
+use anything2mcp::cli::{Finished, Host, READY_LINE, run_with};
+use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
+use common::{Machine, Surface};
+use example_app::harness::TestApp;
+use serde_json::{Value as Json, json};
+
+const PLACEHOLDER: &str = "http://127.0.0.1:4010";
+const ORDER_GET: &str = "example_order_get";
+const UPSERT: &str = "example_line_item_upsert";
+const READ_INPUT: &str = r#"{"order_id": "A-100"}"#;
+const OTHER_INPUT: &str = r#"{"order_id": "A-101"}"#;
+/// The length is written as a person writes it, in feet and inches.
+const WRITE_INPUT: &str = r#"{"order_id": "A-102", "item_code": "L-300", "description": "New rail", "quantity": 3, "length_in": "12' 6 1/2\""}"#;
+
+/// How long a test waits for a child process to say or do what it should
+/// do at once. Only a failure waits this long.
+const PATIENCE: Duration = Duration::from_secs(180);
+
+/// A machine whose store is on disk and holds the published `example`
+/// target. A person publishes on an engine in this process, which then
+/// closes: the program itself has no way for a test to be the person.
+async fn published(app: &TestApp) -> Machine {
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+    machine
+}
+
+/// What a child wrote on one of its streams, line by line, as it comes.
+fn lines_of(stream: impl std::io::Read + Send + 'static) -> Receiver<String> {
+    let (send, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    lines
+}
+
+/// Waits for a child to end, and gives its exit code and what was left on
+/// its standard output.
+fn ended(mut child: Child) -> (Option<i32>, String) {
+    let stdout = child.stdout.take();
+    let (send, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut stdout) = stdout {
+            let _ = std::io::Read::read_to_string(&mut stdout, &mut text);
+        }
+        let _ = send.send((child.wait().unwrap().code(), text));
+    });
+    done.recv_timeout(PATIENCE).expect("the process ended")
+}
+
+/// The local engine as a child process: the real program's `serve`.
+struct Served {
+    child: Option<Child>,
+    /// Kept so that what the engine says goes on being read.
+    _said: Receiver<String>,
+}
+
+impl Served {
+    /// Starts `serve` and waits for the line it writes when it answers on
+    /// the local channel.
+    fn start(machine: &Machine) -> Self {
+        let mut child = machine.program(&["serve"]).spawn().unwrap();
+        let said = lines_of(child.stderr.take().unwrap());
+        let mut heard = Vec::new();
+        loop {
+            match said.recv_timeout(PATIENCE) {
+                Ok(line) if line == READY_LINE => break,
+                Ok(line) => heard.push(line),
+                Err(_) => {
+                    let _ = child.kill();
+                    panic!("`serve` did not become ready; it said {heard:?}");
+                }
+            }
+        }
+        Self {
+            child: Some(child),
+            _said: said,
+        }
+    }
+
+    /// Waits for the engine's process to end by itself.
+    fn ended(mut self) -> (Option<i32>, String) {
+        ended(self.child.take().unwrap())
+    }
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        // Only a test that failed leaves the process running.
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Runs a command of the real program to its end, off the test's own
+/// threads, which the test application needs.
+async fn output(mut command: Command) -> Output {
+    tokio::task::spawn_blocking(move || command.output().unwrap())
+        .await
+        .unwrap()
+}
+
+fn object(output: &Output) -> Json {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "not one JSON object: {} / {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+/// A response without what differs from call to call: the identifier of
+/// the recorded decision.
+fn settled(mut response: Json) -> Json {
+    response.as_object_mut().unwrap().remove("decision");
+    response
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_leaves_nothing() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+
+    // A command that does not hold the vault's passphrase cannot run the
+    // engine itself: whatever it reads, the engine read.
+    let without_key = |args: &[&str]| {
+        let mut command = machine.program(args);
+        command.env_remove(PASSPHRASE_VARIABLE);
+        command
+    };
+    let read = ["tool", "call", ORDER_GET, "--input", READ_INPUT];
+    let other = ["tool", "call", ORDER_GET, "--input", OTHER_INPUT];
+
+    // Two commands at once, one engine, two reads.
+    let (first, second) = tokio::join!(output(without_key(&read)), output(without_key(&other)));
+    let mut runs = Vec::new();
+    for (done, customer) in [
+        (&first, "Example Customer One"),
+        (&second, "Example Customer Two"),
+    ] {
+        assert_eq!(done.status.code(), Some(0), "{done:?}");
+        let response = object(done);
+        let result = &response["result"];
+        assert_eq!(result["status"], "completed", "{response}");
+        assert_eq!(result["result"]["customer"], customer);
+        runs.push(result["run_id"].as_str().unwrap().to_owned());
+    }
+    assert_ne!(runs[0], runs[1]);
+
+    // What the engine answers, a command ends on: the same exit code and
+    // the same one object as a command that runs the engine itself.
+    let asked: [&[&str]; 5] = [
+        &["docs", "get", "approvals"],
+        &["run", "get", &runs[0]],
+        &["run", "get", "no-such-run"],
+        &["version", "publish", "example"],
+        &["draft", "lint", "example"],
+    ];
+    let mut through_engine = Vec::new();
+    for args in asked {
+        let done = output(without_key(args)).await;
+        through_engine.push((done.status.code(), settled(object(&done))));
+    }
+    assert_eq!(through_engine[1].0, Some(0), "{through_engine:?}");
+    assert_eq!(through_engine[1].1["result"]["status"], "completed");
+    // A person's act, asked by a program: a person is needed.
+    assert_eq!(through_engine[3].0, Some(3), "{through_engine:?}");
+    assert_eq!(through_engine[3].1["error"]["code"], "person_required");
+    // The engine works on the project folder the command was run in.
+    assert_eq!(through_engine[4].0, Some(0), "{through_engine:?}");
+    assert_eq!(through_engine[4].1["result"]["ok"], true);
+
+    // A command cannot run the engine inside itself while one runs.
+    let inside = output(machine.program(&["--in-process", "engine", "status"])).await;
+    assert_eq!(inside.status.code(), Some(1), "{inside:?}");
+    assert_eq!(object(&inside)["error"]["code"], "engine_running");
+
+    // A second engine on the same data directory is refused by name, and
+    // the first goes on answering.
+    let second = output(machine.program(&["serve"])).await;
+    assert_eq!(second.status.code(), Some(1), "{second:?}");
+    assert_eq!(object(&second)["error"]["code"], "engine_running");
+    let still = output(without_key(&read)).await;
+    assert_eq!(still.status.code(), Some(0), "{still:?}");
+
+    // Asked to stop, the engine closes and its process ends by itself.
+    let stop = output(without_key(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(object(&stop)["result"]["stopping"], true);
+    let (code, printed) = served.ended();
+    assert_eq!(code, Some(0), "{printed}");
+    let last: Json = serde_json::from_str(printed.trim()).unwrap();
+    assert_eq!(last["action"], "serve");
+    assert_eq!(last["result"]["stopped"], "asked");
+
+    // Nothing is left: the runtime directory holds the lock file and no
+    // socket, and the lock is free.
+    let paths = Paths::under(machine.home.path());
+    let left: Vec<String> = std::fs::read_dir(&paths.runtime)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, [a2m_local::ENGINE_LOCK_NAME], "{left:?}");
+    assert!(!EngineLock::held(&paths).unwrap());
+
+    // With no engine, the command that holds no passphrase is on its own,
+    // with no vault: the reads above were the engine's. A command that
+    // holds it runs the engine inside itself, as before, and says the
+    // same as the engine said.
+    let alone = output(without_key(&read)).await;
+    assert_eq!(alone.status.code(), Some(1), "{alone:?}");
+    assert_eq!(object(&alone)["error"]["class"], "busy", "{alone:?}");
+    for (args, through) in asked.iter().zip(&through_engine) {
+        let done = output(machine.program(args)).await;
+        assert_eq!(done.status.code(), through.0, "{args:?}");
+        assert_eq!(settled(object(&done)), through.1, "{args:?}");
+    }
+    let inside = output(machine.program(&["--in-process", "engine", "status"])).await;
+    assert_eq!(inside.status.code(), Some(0), "{inside:?}");
+}
+
+/// The real program's `bridge`, driven by raw protocol messages over its
+/// standard streams.
+struct Bridge {
+    child: Option<Child>,
+    stdin: Option<ChildStdin>,
+    answers: Receiver<String>,
+}
+
+impl Bridge {
+    fn start(machine: &Machine, args: &[&str]) -> Self {
+        let mut command = machine.program(args);
+        // The bridge holds no key and opens no store: it only copies.
+        command
+            .env_remove(PASSPHRASE_VARIABLE)
+            .stdin(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        Self {
+            stdin: child.stdin.take(),
+            answers: lines_of(child.stdout.take().unwrap()),
+            child: Some(child),
+        }
+    }
+
+    fn send(&mut self, message: &Json) {
+        let stdin = self.stdin.as_mut().unwrap();
+        writeln!(stdin, "{message}").unwrap();
+        stdin.flush().unwrap();
+    }
+
+    /// The next line of standard output, which must be one protocol
+    /// message.
+    fn next(&mut self) -> Json {
+        let line = self
+            .answers
+            .recv_timeout(PATIENCE)
+            .expect("the bridge answered");
+        let message: Json = serde_json::from_str(&line)
+            .unwrap_or_else(|_| panic!("standard output held something else: {line}"));
+        assert_eq!(message["jsonrpc"], "2.0", "{line}");
+        message
+    }
+
+    /// The response to request `id`; what comes before it is progress.
+    fn answer(&mut self, id: u64) -> Json {
+        loop {
+            let message = self.next();
+            if message["id"] == json!(id) {
+                return message;
+            }
+            assert!(message.get("id").is_none(), "{message}");
+        }
+    }
+
+    fn ask(&mut self, message: &Json) -> Json {
+        self.send(message);
+        self.answer(message["id"].as_u64().unwrap())
+    }
+
+    /// Ends the input, and gives the exit code, what was left on standard
+    /// output, and standard error.
+    fn close(mut self) -> (Option<i32>, Vec<String>, String) {
+        drop(self.stdin.take());
+        let mut child = self.child.take().unwrap();
+        let stderr = lines_of(child.stderr.take().unwrap());
+        let (code, _) = ended(child);
+        let left: Vec<String> = self.answers.iter().collect();
+        (code, left, stderr.iter().collect::<Vec<_>>().join("\n"))
+    }
+}
+
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// A request of the handshake revision.
+fn request(id: u64, method: &str, params: Json) -> Json {
+    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+}
+
+/// A request of the stateless revision: its `_meta` names the revision,
+/// the client, and the client's capabilities.
+fn stateless(id: u64, method: &str, mut params: Json) -> Json {
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {"name": "raw", "version": "0"},
+    });
+    request(id, method, params)
+}
+
+fn assert_read(answer: &Json) {
+    let result = &answer["result"];
+    assert_ne!(result["isError"], true, "{answer}");
+    let run = &result["structuredContent"];
+    assert_eq!(run["status"], "completed", "{answer}");
+    assert_eq!(run["result"]["customer"], "Example Customer One");
+}
+
+fn assert_lists_tools(answer: &Json) {
+    let tools = answer["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools.iter().any(|tool| tool["name"] == "a2m_tool_call"),
+        "{answer}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bridge_answers_with_the_failure_until_an_engine_runs_and_then_reads_in_both_revisions() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let read = json!({"name": ORDER_GET, "arguments": {"order_id": "A-100"}});
+
+    // No engine runs. The bridge stays, and answers a request with the
+    // failure and what to do, so that its caller is not left waiting.
+    let mut bridge = Bridge::start(&machine, &["bridge"]);
+    let refused = bridge.ask(&stateless(1, "tools/list", json!({})));
+    assert_eq!(refused["error"]["code"], -32000, "{refused}");
+    let data = &refused["error"]["data"];
+    assert_eq!(data["code"], "engine_unreachable", "{refused}");
+    assert!(data.to_string().contains("anything2mcp serve"), "{refused}");
+
+    // An engine is started. The same bridge carries the next request.
+    let served = Served::start(&machine);
+
+    // The stateless revision: no handshake, every request names it.
+    assert_lists_tools(&bridge.ask(&stateless(2, "tools/list", json!({}))));
+    assert_read(&bridge.ask(&stateless(3, "tools/call", read.clone())));
+
+    // The handshake revision, on a bridge of its own, as a client of that
+    // revision starts one.
+    let mut older = Bridge::start(&machine, &["bridge", "--toolset", "use"]);
+    let hello = older.ask(&request(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "raw", "version": "0"},
+        }),
+    ));
+    assert_eq!(hello["result"]["protocolVersion"], "2025-11-25", "{hello}");
+    older.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    assert_lists_tools(&older.ask(&request(2, "tools/list", json!({}))));
+    assert_read(&older.ask(&request(3, "tools/call", read)));
+
+    // The other built-in toolset is served at its own endpoint.
+    let mut build = Bridge::start(&machine, &["bridge", "--toolset=build"]);
+    let listed = build.ask(&stateless(1, "tools/list", json!({})));
+    assert!(listed["result"]["tools"].is_array(), "{listed}");
+
+    // When its input ends a bridge ends, with nothing more on standard
+    // output. The one that started with no engine said so on standard
+    // error, and nowhere else.
+    let (code, left, said) = bridge.close();
+    assert_eq!(code, Some(0), "{said}");
+    assert!(left.is_empty(), "{left:?}");
+    assert!(said.contains("anything2mcp serve"), "{said}");
+    for bridge in [older, build] {
+        let (code, left, said) = bridge.close();
+        assert_eq!(code, Some(0), "{said}");
+        assert!(left.is_empty(), "{left:?}");
+        assert!(said.is_empty(), "{said}");
+    }
+
+    let stop = output(machine.program(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(served.ended().0, Some(0));
+}
+
+/// The presence prompt of a test: the person passes it, and it counts how
+/// often it was raised.
+struct Passed(AtomicU32);
+
+impl PresencePrompt for Passed {
+    fn kind(&self) -> PresenceKind {
+        PresenceKind::OsPrompt
+    }
+
+    fn ask(&self, _text: PromptText) -> BoxFuture<'_, PromptAnswer> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            PromptAnswer::Present
+        })
+    }
+}
+
+/// A command of a program, run as the command line runs it, in this
+/// process: nobody is at a terminal, so the caller is an agent.
+async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
+    let host = Host {
+        cwd: machine.project.path().to_path_buf(),
+        environment: machine.environment(),
+        stdout_is_terminal: false,
+        person_at_terminal: false,
+        person: None,
+        key_store: None,
+    };
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    let finished = run_with(&args, &host).await;
+    let json = serde_json::from_str(finished.stdout.trim())
+        .unwrap_or_else(|_| panic!("not one JSON object: {finished:?}"));
+    (finished, json)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_written_once() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+
+    // The local engine as `serve` runs it, in this process, so that the
+    // test can be the person at the presence prompt.
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    assert!(local.engine().runner_problem().is_none());
+    let serving = tokio::spawn(local.serve());
+
+    // Called by an agent through the engine, the write rests, with a link
+    // to its page on the loopback address.
+    let (rested, response) =
+        command(&machine, &["tool", "call", UPSERT, "--input", WRITE_INPUT]).await;
+    assert_eq!(rested.code, 3, "{rested:?}");
+    let result = &response["result"];
+    assert_eq!(result["status"], "needs_approval", "{response}");
+    let run = result["run_id"].as_str().unwrap().to_owned();
+    let link = result["link"].as_str().unwrap().to_owned();
+    assert!(link.starts_with("http://127.0.0.1:"), "{link}");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // Resuming approves nothing: the run rests on.
+    let (still, response) = command(&machine, &["run", "resume", &run]).await;
+    assert_eq!(still.code, 3, "{still:?}");
+    assert_eq!(response["result"]["status"], "needs_approval");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    // The person opens the page in a browser, reads it, and presses
+    // Approve; the presence prompt is raised, and passed.
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let page = http.get(&link).send().await.unwrap();
+    assert_eq!(page.status().as_u16(), 200);
+    let text = page.text().await.unwrap();
+    assert!(text.contains(UPSERT) && text.contains(&run), "{text}");
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/approve/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/approve"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pressed.status().as_u16(), 200, "{pressed:?}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 1);
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 0);
+
+    // `run resume` completes it. The kernel's `run.resume` now and then
+    // answers in the moment between the runner's claim of the job and its
+    // work on it, with the run still at rest; a caller then resumes again.
+    let mut tries = 0;
+    let (done, response) = loop {
+        let (done, response) = command(&machine, &["run", "resume", &run]).await;
+        tries += 1;
+        if response["result"]["status"] != "needs_approval" || tries == 5 {
+            break (done, response);
+        }
+    };
+    assert_eq!(done.code, 0, "{done:?}");
+    assert_eq!(response["result"]["status"], "completed", "{response}");
+
+    // The test application holds exactly one write, with the values; and
+    // resuming again writes nothing.
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let stored = app.stored_item("A-102", "L-300").await.unwrap().unwrap();
+    assert_eq!(stored.description, "New rail");
+    assert_eq!(stored.quantity, 3);
+    assert_eq!(stored.length_sixteenths, 2408);
+    let (again, _) = command(&machine, &["run", "resume", &run]).await;
+    assert_eq!(again.code, 0, "{again:?}");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // Asked to stop through the channel, the engine stops serving and
+    // closes, and the lock is free.
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    assert!(!EngineLock::held(&Paths::under(machine.home.path())).unwrap());
+}
+
+/// A command sends its action to the action's own REST route. Every
+/// action with a command face has one, so no command is left that only a
+/// one-shot engine could carry out.
+#[test]
+fn every_action_command_has_the_rest_route_a_thin_client_sends_it_to() {
+    let registry = anything2mcp::action_registry().unwrap();
+    let routes: std::collections::BTreeSet<String> = a2m_actions::rest_routes(&registry)
+        .into_iter()
+        .filter(|route| !route.alias && route.method == "POST")
+        .map(|route| route.path)
+        .collect();
+    for face in a2m_actions::command_faces(&registry) {
+        let path = format!("{}/actions/{}", a2m_actions::REST_PREFIX, face.action);
+        assert!(routes.contains(&path), "{}", face.action);
+    }
+}

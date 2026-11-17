@@ -31,6 +31,7 @@ testing = []
 [dev-dependencies]
 a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
+a2m-sources = { path = "../a2m-sources" }
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

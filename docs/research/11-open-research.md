@@ -32,7 +32,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 24 | WebMCP standard status | Phase 8 | 6 |
 | 25 | Gap-review components | The phase each lands in | 32 |
 | 26 | Local channel on three operating systems | Phase 1 | 39 |
-| 27 | Operating-system user-presence checks | Phase 3 | 18, 39 |
+| 27 | Operating-system user-presence checks. Answered by note 20 | Phase 3 | 18, 39 |
 | 28 | Wheel and npm packaging, verified hands-on | Phase 1 | 41 |
 | 29 | Command-line design for agents | Phase 5 | 40 |
 | 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
@@ -92,7 +92,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **26. Local channel on three operating systems.** Rust crates for Unix domain sockets and Windows named pipes behind one interface; serving HTTP over them with the chosen web framework; reading the connecting user's identity on each system; directory and access-list permissions; starting a detached background process and guarding it with a lock file; how comparable tools (language servers, container and database daemons) handle version skew and idle shutdown.
 
-**27. Operating-system user-presence checks.** What Windows Hello, macOS Touch ID and password prompts, and Linux polkit offer to a background process running as the user; whether each can be called from Rust; behavior on machines with no biometric hardware, over remote desktop, and on headless servers; what a program running as the same user can and cannot bypass.
+**27. Operating-system user-presence checks.** (Answered by [note 20](20-operating-system-user-presence-checks.md). The brief stays so that references to it resolve.) What Windows Hello, macOS Touch ID and password prompts, and Linux polkit offer to a background process running as the user; whether each can be called from Rust; behavior on machines with no biometric hardware, over remote desktop, and on headless servers; what a program running as the same user can and cannot bypass.
 
 **28. Wheel and npm packaging, verified hands-on.** Build a maturin `bin` wheel that also carries a pure-Python package and confirm the command and the import both work; the platform tags to publish; a launcher plus platform packages on npm, tested with optional dependencies switched off and with install scripts disabled; what `dist` covers; current registry rules for short-lived publishing credentials and build provenance.
 

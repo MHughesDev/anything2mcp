@@ -1,23 +1,41 @@
+# The pip package: one wheel per platform holding the `anything2mcp` binary
+# and the pure-Python package `anything2mcp`, a thin client of the local
+# engine. maturin builds it in its `bin` mode (decision 0135). maturin runs
+# at build time only; nothing of it is in the wheel.
 [build-system]
-requires = ["flit_core==4.2.0"]
-build-backend = "flit_core.buildapi"
+requires = ["maturin==1.16.0"]
+build-backend = "maturin"
 
 [project]
 name = "anything2mcp"
+# The one version of the product; the audit holds it to Cargo.toml.
 version = "0.0.1"
-description = "Placeholder for Anything2MCP: turn existing software and systems into safe, deterministic MCP tools. Nothing is usable yet."
+description = "Turn existing software and systems into deterministic, verified MCP tools: the anything2mcp program and a thin Python client of its local engine."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
+    "Typing :: Typed",
 ]
 
 [project.urls]
 Repository = "https://github.com/MHughesDev/anything2mcp"
 Changelog = "https://github.com/MHughesDev/anything2mcp/blob/main/CHANGELOG.md"
 Issues = "https://github.com/MHughesDev/anything2mcp/issues"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "../../crates/anything2mcp/Cargo.toml"
+# Only the binary with the product's name; `a2m` is the console script above.
+targets = [{ name = "anything2mcp", kind = "bin" }]
+python-source = "src"
+python-packages = ["anything2mcp"]
+strip = true
+# The short name `a2m`: a small script installed beside the binary.
+data = "wheel-data"
+locked = true

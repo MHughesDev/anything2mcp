@@ -1,0 +1,43 @@
+# 0132. The action registry's second pass: a decline ends the run, and a wait reads the scheduler's own table
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-17
+
+**Changes:** the interface of [`a2m-actions`](../architecture/crates/a2m-actions.md) as [record 0094](0094-the-action-layers-interface-as-building-it-settled-it.md) left it, by additions; what a tool's result looks like to a caller; one sentence of [spec section 212](../spec/2-kernel/212-policy-and-approvals.md). It answers what records [0115](0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md), [0117](0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md), and [0119](0119-the-product-crate-as-building-it-settled-it.md) said they could not get from the action layer.
+
+## Context
+
+The crates built on the action layer found three defects in it and asked for five things. Each defect was reproduced in a test before it was fixed, and the test is kept.
+
+## Decisions
+
+**Three defects.**
+
+1. **A decline ends the run as `expired`, in the transaction that records the decline.** `ApprovalDesk::decline` records the decline through the policy engine and moves the run from `needs_approval` to `expired` with the failure `policy`, `approval_refused`, whose sentence says whether a person declined or the window ended in silence. `run.get` reports that failure from then on, and nobody is asked again. A decline of a run that has already ended records nothing and succeeds, so a second press is harmless; a decline of a run that no longer waits for an approval, because it is running or rests for something else, is `input`, `not_found`. The run's lease number is used as the scheduler uses it when it cancels: nobody writes under it while the run waits, and a job that holds it finds the run ended at its next call. *Instead of:* a new failure code for a decline, which section 212's table does not have; and leaving the move to whoever next resumes the run, which is what was built and why the person was asked again.
+2. **Whoever waits for a run reads the scheduler's own table.** `run.resume` now and then answered `needs_approval` for an approved run: the local channel saw it about once in forty runs, and a loop of three hundred here met it at its 88th. The cause: the wait took a run for resting when its lease number had changed, its state was not an active one, and the runner's in-memory set of runs in hand did not hold it. Between the transaction of the runner's claim, which raises the lease number, and the runner's own note that the job is in hand, all three held. The wait now reads the run's row and the run's unfinished job, waiting or leased, in one transaction; a job is unfinished from the transaction that queues it to the one that records its end, so there is no moment in between. The in-memory set is removed. `a2m-sched` gains one read, `Scheduler::unfinished_job`, for it. *Instead of:* noting the run as in hand earlier, which narrows the window and keeps two sources of one fact.
+3. **Reading a run asks nobody anything.** `run.get` used to tell the run's person every time it found the run resting, which opened a second approval page. Only the calls that start or continue a run, `tool.call` and `run.resume`, tell a person, and they tell them once for one diff of one run: the kernel keeps the link it was given, in memory, and gives it again. A run a person has approved and nobody has resumed says so: `approved: true`, no link, the next step `run.resume`, and the response is not marked as needing a person. That an approval exists is known to the kernel from the desk, in memory; it shapes what a reader is told and decides nothing, because the approval itself is checked in the store when the run is resumed.
+
+**What the crates above asked for.**
+
+4. **The desk shows the change it will approve.** `ApprovalDesk::preview(run, offset)` gives the content of the stored diff: for each record its operation, key, and action, and for each field its name, its current value, its proposed value, and whether it changes. It answers only for a run that waits, reads the stored diff back, computes its hash again, and refuses to show a diff whose hash is not the one the run carries. At most 100 records a call and 400 characters a value; every text passes the redactor. A restricted field is already a hash in the stored diff.
+5. **A caller hands a source to `tool.call` as a path inside the project, or as rows.** `source_file` is resolved by the dispatcher through a checked root made from the project folder of the request, read once, and stored as a blob. `source_rows` is a list of records for a small input, at most 256 KiB, kept as the bytes of a JSON document. The blob's name, a keyed digest of the bytes, is part of the digest that makes a run the same run, and the runner gives the stored bytes to every job of the run. So the engine is never given a path, a resumed run reads the bytes it was called with whatever the file holds by then, and the same call over a changed file is another run. A new table, `actions_run_sources`, holds the reference (migration `0011`). *Not built:* rows for a source whose reader is not `json`. The engine takes a source as bytes; handing rows to `Sources::from_rows` is a change in `a2m-engine`.
+6. **A tool list is one decided step.** `tool.search` takes `full`, and then lists each tool as `tool.describe` gives it, twenty to a page by default so that a page stays under the result size cap. No new action. *Instead of:* a kernel call beside the dispatcher, which would list tools with no recorded decision.
+7. **A run is followed through `Kernel::events` and `Kernel::next_events`.** A page of the run's events after a sequence number, at most 200, redacted; and the same with a wait that ends when an event is appended, the run ends, or the time is up. The wait is on the kernel's notice that a run changed, which every write of the in-process `Control`, the runner's claim and finish, the scheduler's sweep, and the desk now give. They are not actions and record no decision: they show a caller only a run that the same caller started.
+8. **A value of a system is shown as itself.** A tool's result carries an exact number as its exact decimal text, a calendar day as text, and a moment or a length of time as whole milliseconds, where it used to carry the engine's own tagged form (`{"decimal":"0"}`). Stored results keep the tagged form, so nothing is lost.
+9. **A kill switch is `policy`, `kill_switch_on`, wherever it is met.** Section 212 makes the switch the policy engine's, checked first on every decision about work on a system. The scheduler's hold is the same switch seen from the queue; its `busy`, `on_hold` is no longer passed on by `tool.call` and `run.resume`. The question is put to the policy engine, which records its refusal, and that refusal is the answer.
+10. **Every strict output schema admits `next`,** as section 221 shows a result, and the MCP rendering of a success puts the following call into the structured content: `action`, `tool`, `args`, `when`. The command and REST faces carry it beside the result as before.
+11. **`secret.set` says which flag standard input fills.** `value` is optional and a flag `stdin` is added; the command face of the flag carries `stdin_for: "value"`. The front door reads standard input and sends the text as `value`; the kernel never reads it. A call that still carries the flag is refused by name.
+12. **A shortcut never begins a step that is not built.** `Shortcut::on(registry)` gives the steps up to the first action that is not built, the action it stops before, and the sentence to print.
+13. **The refusal to write without a person is named in the run's events.** When a run rests for approval, a `need` event carries the identifier of the recorded decision, so that `policy.explain` can be asked about it.
+
+## Consequences
+
+- The product's test that reads `read["speed"]["decimal"]` must read `read["speed"]` (decision 8).
+- `a2m-local` can end its own memory of declined changes, show the preview on its page, and resume once after an approval.
+- `a2m-mcp` can list published tools with one dispatch for each page and follow a run for progress; `a2m-api` can serve an event stream.
+- The design of `a2m-actions` lists the interface and the proofs.
+
+## What would reopen it
+
+A front door that needs to follow a run it did not start; a source too large to keep as one blob; or a decline that must leave a run resumable.

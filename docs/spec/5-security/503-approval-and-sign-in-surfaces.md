@@ -16,10 +16,10 @@ A diff of forty records does not fit in a system dialog, and a web page alone co
 
 1. **Notify.** The engine raises a system notification and tells the calling client that the run is waiting, with a link.
 2. **Show.** The link opens the diff page in the person's default browser. The engine serves that page from a listener on the loopback address that exists only while something is waiting, on a random port, at an address containing a one-time code. It checks the `Host` and `Origin` of every request and serves nothing else.
-3. **Confirm.** Pressing Approve on the page does not approve anything by itself. It asks the engine to raise the operating system's user-presence prompt: a fingerprint, face, PIN, or password prompt owned by the operating system. The approval is recorded only when that succeeds.
+3. **Confirm.** Pressing Approve on the page does not approve anything by itself. It asks the engine to raise the operating system's user-presence prompt: a fingerprint, face, PIN, or password prompt owned by the operating system. The approval is recorded only when that succeeds. On Windows it is Windows Hello, on macOS the system's own authentication with Touch ID, a paired watch, or the account password, and on a Linux desktop polkit, for an action an administrator has installed ([research note 20](../../research/20-operating-system-user-presence-checks.md)). Where the prompt can carry words, it names the tool, the target, and the first twelve characters of the diff's hash, which the page shows beside Approve; polkit's dialog cannot, and shows a fixed message.
 4. **Bind.** The approval is stored against the diff's hash ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)) and can be used once.
 
-Where the operating system offers no such prompt, step 3 is a native confirmation dialog raised by the engine, showing the tool name and the counts. Section 222 states what that does and does not protect against.
+Where the operating system offers no such prompt, step 3 is a native confirmation dialog raised by the engine, showing the tool name and the counts; it is not in the first build. Over SSH, in a container, and on a headless machine there is neither, and nothing on that machine can approve. Section 222 states what each does and does not protect against.
 
 **This is the one exception to section 222.** The engine opens no network port by default, and that stays true: the loopback listener is not a front door, exists only during a pending approval or sign-in, carries no API, and closes when nothing is waiting.
 
@@ -63,13 +63,13 @@ On a server the identity provider's sign-in is the proof of a person, so no oper
 | The diff page, sign-in status page, and decision-point form | TypeScript, in `web/console` | 3 |
 | The short-lived loopback listener | Rust, in `a2m-local` | 3 |
 | System notifications | Rust, through a cross-platform crate to be chosen | 3 |
-| Operating-system user-presence prompts | Rust, per operating system | 3; needs research brief 27 |
+| Operating-system user-presence prompts | Rust, per operating system: Linux first, then macOS and Windows ([research note 20](../../research/20-operating-system-user-presence-checks.md)) | 3 |
 | The server console's approval pages | TypeScript | 6 |
 | Chat cards | Rust, per chat tool | 6 |
 | The hosted sign-in page | To be designed | 7 |
 
 ## Open points
 
-- Which user-presence prompts a background process can raise on each operating system. If none is usable somewhere, that platform gets the dialog-only fallback and says so in `doctor`.
+- Settled by [research note 20](../../research/20-operating-system-user-presence-checks.md): which user-presence prompts a background process can raise on each operating system, and what `doctor` says where none is usable. Still open: whether the Windows prompt comes to the front for an engine with no window in the foreground, which needs a person to try.
 - Whether opening the default browser is acceptable where that browser is locked down; the fallback is the engine's own browser window.
 - The hosted sign-in page.

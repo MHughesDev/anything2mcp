@@ -170,6 +170,11 @@ fn live_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<Job>, Failure> {
         .transpose()
 }
 
+/// The identifier of the unfinished job of a run, when it has one.
+pub(crate) fn unfinished_job(tx: &mut Tx<'_>, run: RunId) -> Result<Option<JobId>, Failure> {
+    Ok(live_job(tx, run)?.map(|job| job.id))
+}
+
 /// What a runner offers, as the store keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Capabilities {

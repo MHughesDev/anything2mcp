@@ -135,7 +135,9 @@ fn both_names_are_the_same_program() {
         vec!["nothing"],
         vec!["tool", "cal"],
         vec!["tool", "call"],
-        vec!["serve"],
+        vec!["runner"],
+        vec!["serve", "--help"],
+        vec!["bridge", "--toolset", "admin"],
         vec!["init"],
         vec!["docs", "get", "approvals"],
     ] {
@@ -356,11 +358,21 @@ fn the_exit_code_follows_the_failure() {
     assert_eq!(publish.status.code(), Some(3));
     assert_eq!(object(&publish)["error"]["code"], "person_required");
 
-    // A process command is named and not built; a settings file that does
-    // not load stops the command with the file named.
-    let serve = bare.run(&["serve"]);
-    assert_eq!(serve.status.code(), Some(1));
-    assert_eq!(object(&serve)["error"]["code"], "action_not_built");
+    // The process command of a server's role is named and not built; a
+    // process command given a word it does not take is malformed, and the
+    // bridge says so on standard error alone, because its standard output
+    // carries protocol messages and nothing else. A settings file that
+    // does not load stops the command with the file named.
+    let runner = bare.run(&["runner"]);
+    assert_eq!(runner.status.code(), Some(1));
+    assert_eq!(object(&runner)["error"]["code"], "action_not_built");
+    let serve = bare.run(&["serve", "now"]);
+    assert_eq!(serve.status.code(), Some(2));
+    assert_eq!(object(&serve)["error"]["code"], "schema_invalid");
+    let bridge = bare.run(&["bridge", "--toolset", "admin"]);
+    assert_eq!(bridge.status.code(), Some(2));
+    assert!(bridge.stdout.is_empty(), "{bridge:?}");
+    assert!(text(&bridge.stderr).contains("admin"), "{bridge:?}");
     std::fs::write(
         bare.project.path().join("anything2mcp.toml"),
         "[tools]\nno_such_key = 1\n",

@@ -146,9 +146,11 @@ async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
     };
     assert_eq!(failure.class(), FailureClass::Policy);
     assert_eq!(failure.code().as_str(), "plan_unverified");
-    // Nothing was asked of the decider or of a driver.
+    // Nothing was asked of the decider or of a driver: the run was moved
+    // to `validating`, and nothing else happened.
     assert!(scene.control.questions.lock().unwrap().is_empty());
-    assert!(scene.hooks.seen().is_empty());
+    assert_eq!(scene.hooks.seen(), ["moved:validating"]);
+    assert!(scene.hooks.postures.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

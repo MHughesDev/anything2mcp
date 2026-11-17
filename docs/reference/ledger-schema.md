@@ -269,9 +269,9 @@ Rows are inserted in the same transaction as the change they announce, so a mess
 | `request_hash`, `run_id` | text, id | The same key with a different request is refused |
 | `expires_at` | ts | Cleanup |
 
-## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls
+## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls, actions_run_sources
 
-As built by migration `0009`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
+As built by migrations `0009` and `0011`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
 
 | Table | One row is | Key |
 | --- | --- | --- |
@@ -280,6 +280,7 @@ As built by migration `0009`, which `a2m-actions` owns and is the only crate to 
 | `actions_scout_stages` | One finished stage of one scout run, stages 0 to 7: the hash of what it was given and its result, already redacted. A stopped scout continues after the last stage stored | `run_id`, `stage` |
 | `actions_targets` | A target that has a published version, so that a tool can be found by its name alone. Written by `version.publish` in the transaction that stores the version | `workspace_id`, `target` |
 | `actions_run_calls` | What a run was called with: the stored input and the verified facts about the caller, as names and flags and never a credential. Written before the run is admitted | What makes a run the same run (ledger rule 6): `workspace_id`, `principal_id`, `tool_name`, `target_version`, `input_hash` |
+| `actions_run_sources` | The source a run was called with: the blob that holds its bytes, whether it was a file of the project or rows given inline, the path inside the project as the caller wrote it, and its size. Written beside the row of `actions_run_calls`, and read by the runner so that every lease of the run reads the same bytes | The same key as `actions_run_calls` |
 
 ## audit
 

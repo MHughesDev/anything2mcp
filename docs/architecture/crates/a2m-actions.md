@@ -10,7 +10,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 | Layer | 7, Actions |
 | May depend on | Layers 1 to 6 |
 | Depends on | Every kernel crate below it except `a2m-expr`, `a2m-sources`, which it reaches through others. Outside: `serde`, `serde_json`, Tokio, and `toml` for settings files. Schemas are checked by `a2m-files`; no outside validator |
-| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles) |
+| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles). A second pass, after the crates above it were built, is [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) |
 | Carries out | Spec sections [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md); the in-process half of [223](../../spec/2-kernel/223-the-runner-protocol.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
 
 ## Owns
@@ -22,7 +22,8 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 - The on-disk layout of [the technical reference](../../reference/technical-reference.md#on-disk-layout), as one pure function, so that the local channel, the runner journal, and the store agree on paths.
 - The in-process runner loop, and the in-process implementations of `Control` (from `a2m-engine`) and `KeeperWork` (from `a2m-auth`).
 - The only caller of the compiler in `a2m-files`: lint, compile, and draft. A plan, a type in `a2m-core`, is produced there and stored by `version.publish`; the engine receives it through `Control` and never sees the compiler.
-- The meaning of three tables: toolsets, the scout's stage results, and the outcomes of webhook deliveries. Their migrations, like every migration, live in `a2m-ledger`.
+- The meaning of three tables: toolsets, the scout's stage results, and the outcomes of webhook deliveries; and of two more that say what a run was called with, its input and caller, and its source. Their migrations, like every migration, live in `a2m-ledger`.
+- What a caller is shown of a value of a system: an exact number as its exact decimal text, a calendar day as text, a moment and a length of time as whole milliseconds. Inside the engine and in the store a value keeps its kind.
 - The recorded catalog: the list of actions with a digest, from which every face is generated and checked.
 - The scout pipeline, as the handler of `scout.run`.
 - Shortcuts, as data: a word and a fixed list of actions.
@@ -31,7 +32,7 @@ It must never: decide whether something may happen (that is `a2m-policy`); sign 
 
 ## Interface
 
-As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md)). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
+As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md), and [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) for the second pass). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
 
 ```rust
 /// One action. Every face is generated from this and nothing else.
@@ -110,8 +111,20 @@ impl Kernel {
     pub fn paths(&self) -> &Paths;
     pub fn redact(&self) -> Arc<dyn Redact>;
     pub fn telemetry(&self) -> &Telemetry;
+    /// A page of a run's events after a sequence number, at most EVENTS_PAGE (200),
+    /// redacted. Only for a run the caller started. Not an action.
+    pub async fn events(&self, caller: &Principal, run: RunId, after: u64, limit: u32)
+        -> Result<RunEvents, Failure>;
+    /// The same, waiting until an event is appended, the run ends, or `wait` passes.
+    pub async fn next_events(&self, caller: &Principal, run: RunId, after: u64, limit: u32,
+                             wait: Duration) -> Result<RunEvents, Failure>;
     pub async fn close(self, why: CloseReason);
 }
+pub struct RunEvents { pub run: RunId, pub events: Vec<RunEventView>, pub last: u64,
+                       pub state: RunState, pub working: bool, pub ended: bool }
+impl RunEvents { pub const fn settled(&self) -> bool; }   // ended, or resting with no job
+pub struct RunEventView { pub seq: u64, pub lease: u64, pub at: Timestamp, pub kind: String,
+                          pub detail: serde_json::Value }
 impl Prepared {
     pub fn redact(&self) -> Arc<dyn Redact>;
     pub fn telemetry(&self) -> Telemetry;
@@ -133,11 +146,24 @@ pub trait PersonSurface: Send + Sync {
 pub struct ApprovalDesk { /* not Clone; no public constructor; reached by no action */ }
 impl ApprovalDesk {
     pub async fn waiting(&self, run: RunId) -> Result<WaitingApproval, Failure>;
+    /// What the waiting run would change, from the stored diff whose hash `waiting`
+    /// reports: at most PREVIEW_RECORDS (100) records from `offset`, each value cut to
+    /// PREVIEW_VALUE_CHARS (400), every text redacted.
+    pub async fn preview(&self, run: RunId, offset: usize) -> Result<ApprovalPreview, Failure>;
     pub async fn approve(&self, run: RunId, diff_hash: Digest, approver: PrincipalRef,
                          channel: Channel, proof: PresenceProof) -> Result<ApprovalId, Failure>;
+    /// Records the decline and ends the run as `expired`, in one transaction.
     pub async fn decline(&self, run: RunId, by: Option<PrincipalRef>, channel: Channel)
                          -> Result<(), Failure>;
 }
+pub struct ApprovalPreview { pub run: RunId, pub diff_hash: Digest, pub tool: String,
+    pub target: String, pub environment: String, pub create: u32, pub update: u32,
+    pub unchanged: u32, pub total: usize, pub offset: usize, pub records: Vec<PreviewRecord> }
+impl ApprovalPreview { pub const fn complete(&self) -> bool; }
+pub struct PreviewRecord { pub operation: String, pub key: String, pub action: &'static str,
+    pub fields: Vec<PreviewField> }
+pub struct PreviewField { pub name: String, pub current: Option<String>, pub proposed: String,
+    pub changes: bool, pub cut: bool }
 
 pub struct Paths { /* installation_config, config, data, store, blobs, profiles, journal, logs, runtime, cache */ }
 impl Paths { pub fn resolve(env: &Env) -> Result<Paths, Failure>; pub fn under(home: &Path) -> Paths; }
@@ -168,8 +194,17 @@ pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace>;
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace>;
 impl McpResultFace { pub fn of(response: &Response) -> McpResultFace; }
 pub const SHORTCUTS: &[Shortcut];
+impl Shortcut {
+    /// The steps to carry out on this engine: those before the first action that is
+    /// not built, that action, and the sentence to print when it stops early.
+    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun;
+}
+pub struct ShortcutRun { pub steps: Vec<ShortcutStep>, pub stops_before: Option<&'static str>,
+                         pub note: Option<String> }
 pub const PROCESS_COMMANDS: &[&str];
 ```
+
+A `CommandArg` carries `stdin_for`: for a flag, the field that standard input fills when the flag is given. The command then reads standard input to its end, removes one line ending from the end, sends the text as that field, and does not send the flag. Today only `--stdin` of `secret.set` has it, for `value`. The kernel never reads standard input.
 
 ### The dispatcher
 
@@ -181,7 +216,19 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one. The one exception: a `Nothing` action in a `stopped` kernel, which has no store to record a decision in; it reports on the engine and shows no data of any system.
 5. **Person.** For an action with `PersonNeed::Presence`, `confirm_presence` on the role's surface. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt.
 6. **Run.** The handler. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
-7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Not built: marking text that came from a target as untrusted, and keeping a large result as a blob with its reference.
+7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Every strict output schema admits `next`, and the MCP rendering of a success puts it into the structured content as `action`, `tool`, `args`, and `when`. Not built: marking text that came from a target as untrusted, and keeping a large result as a blob with its reference.
+
+### Runs that wait for a person
+
+- **Waiting for a run.** `tool.call` and `run.resume` wait until the run has ended, or rests or has stopped with no job of the scheduler waiting or leased for it. The run's row and its unfinished job are read in one transaction: a job is unfinished from the transaction that queues it to the one that records how it ended, so nothing a runner does between its claim and the end of its work is taken for rest. After an approval, one `run.resume` completes the write.
+- **Telling the person.** Only `tool.call` and `run.resume` tell a run's person that it waits, and once for one diff of one run: the link is kept in memory and given again. `run.get` asks nobody anything; it shows the kept link. A run that a person approved at the desk and nobody has resumed is reported with `approved: true`, no link, and `run.resume` as the next step, and is not marked as needing a person.
+- **A decline.** `ApprovalDesk::decline` records the decline through the policy engine and ends the run as `expired` in the same transaction, with the failure `policy`, `approval_refused`. `run.get` reports it; nobody is asked again; the same call again is a new run.
+- **The refusal to write without a person** is a recorded decision. A `need` event of the run carries its identifier, the word `approval`, and the diff's hash.
+- **A kill switch** met when work is submitted or resumed is answered `policy`, `kill_switch_on`, by the policy engine, which records the refusal. The scheduler's `busy`, `on_hold` is not passed on.
+
+### A source for a pipeline
+
+`tool.call` takes `source_file`, a path inside the project folder of the request, or `source_rows`, a list of records for a small input. The dispatcher resolves the path through a checked root made from the project folder, reads the file once, off the async threads, and stores the bytes as a blob; rows are stored as the bytes of a JSON document, at most 256 KiB. The blob's name is part of the digest that makes a run the same run. The runner hands the stored bytes to every job of the run, so the engine is never given a path and a resume reads the same bytes. A tool that reads a source and is given none, or the other way about, is `input`, `schema_invalid`. Not built: rows for a source that another reader than `json` reads, which needs `a2m-engine` to take rows.
 
 The `Response` is the same structure for every face: `ok`, `action`, `result`, `error`, `warnings`, `next`, the recorded decision, and an exit class (succeeded, failed, malformed, person needed). A run that failed carries both a result, which names the run, and an error; a run that rests waiting for a person carries a result and the exit class `person_needed`. Each face renders it without branching on its content: the command face as the [output contract](../../reference/technical-reference.md#command-output-contract), the MCP face as structured content, REST as JSON with a status code.
 
@@ -229,7 +276,7 @@ The list is the spine's, in its order. The engine opens nothing itself: no store
 | A rate budget | `a2m-sched` |
 | The approval check for a diff hash | `a2m-policy` |
 | Recording an intent, and its token | `a2m-ledger`, in one transaction that also checks the approval policy recorded; the reply is the token the driver's handle requires |
-| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. Each event is also published to `events()` subscribers. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
+| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. After every write the kernel's notice that a run changed is given, which wakes whoever waits in `next_events` or for a run to rest. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
 
 In one process `KeeperWork` is `a2m-auth`'s `InProcessWork` over the keeper's own worker; this crate supplies its two halves, the way to a person and the probe. Submitting a keeper job to `a2m-sched` addressed to a session's home runner is for a runner on another machine and is not built. When the keeper needs a person, to sign in or to give consent on a link, it asks through the keeper's own interface in `a2m-auth`, and this crate answers by calling the role's `PersonSurface::ask_session` with the keeper's own request: a link to open in the person's own browser, a code to enter, or a notice. `ask_sign_in` gives the link that goes into the result of a run that rests at `needs_login`.
 
@@ -269,9 +316,9 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `events`, `approvals`, `Paths`, `PersonSurface` to implement |
-| `a2m-mcp` | `Registry` for tool lists, `dispatch`, `events` for progress |
-| `a2m-api` | `Registry` for routes and OpenAPI, `dispatch`, `events`, `approvals`, `PersonSurface` to implement |
+| `a2m-local` | `Kernel::open`, `dispatch`, `health`, `Paths`, `PersonSurface` to implement, and the `ApprovalDesk` it is handed: `waiting`, `preview`, `approve`, `decline` |
+| `a2m-mcp` | `Registry` for tool lists, `dispatch` (`tool.search` with `full` for the published tools), `next_events` for progress |
+| `a2m-api` | `Registry` for routes and OpenAPI, `dispatch`, `next_events` for an event stream, `PersonSurface` to implement |
 | `a2m-runner` | `Paths`, `KernelSettings` for its own group; not the `Kernel`, which a runner on another machine does not open |
 | `anything2mcp` | `Registry::build`, the settings loader, `Kernel::open`, `start_runner_loop`, `Shortcut`s for the command line |
 
@@ -283,7 +330,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | `a2m-auth` | The keeper: status, sign-in requests, `perform` on the loop |
 | `a2m-files` | Lint, compile, the drafter; this crate is their only caller |
 | `a2m-provider` | The provider registry, contributed actions' handlers, the checked-path type, the comparison |
-| `a2m-sched` | `submit`, `claim`, `complete`, waits for a held lock, budgets |
+| `a2m-sched` | `submit`, `claim`, `finish`, `unfinished_job` for whoever waits for a run, waits for a held lock, budgets |
 | `a2m-engine` | `run`, `reconcile`, `discover` |
 
 ## State
@@ -295,6 +342,8 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | Toolsets | A table in the store, owned by this crate |
 | Scout stage results | A table in the store, owned by this crate: run, stage, input hash, result reference |
 | Webhook delivery outcomes | A table in the store, owned by this crate, beside the outbox the events are written to |
+| What a run was called with | Two tables in the store, owned by this crate: the stored input and the caller's verified facts (`actions_run_calls`), and the stored source (`actions_run_sources`) |
+| Which runs a person approved and nobody resumed yet; the link a run's person was last given | Memory, the newest 1024 runs of each; gone with the process. They shape what a reader is told and decide nothing |
 | Large results | Blobs in the store, by content hash; on one machine also written under the project's `.anything2mcp/out/` by the engine, with a name the engine chose |
 
 ## Failures
@@ -310,6 +359,10 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | `input` | `action_registry_invalid` | A duplicate action name, or a provider's action outside its name space |
 | `policy` | Any code `decide` returns | Refused by policy, passed through unchanged |
 | `policy` | `person_required` | A person's act was asked for by a caller that cannot give one |
+| `policy` | `approval_refused` | What `run.get` reports for a run a person declined, or whose approval window ended |
+| `policy` | `kill_switch_on` | A kill switch covers the work a call would start or resume |
+| `policy` | `approval_stale` | The desk was asked to show a stored diff that is not the one the run waits on |
+| `input` | `file_unavailable` | A source file that is missing, unreadable, or larger than a source may be |
 | `policy` | `caller_not_verified` | A credential this engine does not accept |
 | `policy` | `setting_protected` | A layer loosened a protected setting, or set a key it may not |
 | `policy` | `setting_locked` | A higher layer changed a key the installation file locks |
@@ -330,16 +383,25 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | An empty file is a complete configuration; a layer that may only tighten never loosens; every value names its layer | `tests/settings.rs` |
 | The scout never obtains a write token | Not built |
 | A keeper job always has a slot | Holds by construction in one process: the keeper's work takes no slot. Not tested |
+| A decline ends the run, and the caller is told | `a_decline_ends_the_run_as_expired_and_the_caller_is_told` |
+| After an approval, one `run.resume` completes the write | `one_resume_after_an_approval_completes_the_write_every_time_under_load`: three hundred runs, with readers running beside them |
+| Reading a run asks nobody anything | `reading_a_run_asks_nobody_and_an_approved_run_says_so` |
+| The desk shows only the diff a waiting run carries, bounded and redacted | `the_desk_shows_the_change_a_waiting_run_would_make_and_no_other` |
+| A source reaches the engine as stored bytes, never as a path, and a resume reads the same bytes | `a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes`, which asks the test application what was written |
+| A write refused for want of approval is a recorded decision | `a_write_refused_for_want_of_approval_is_recorded_as_a_decision` |
+| A kill switch is one refusal wherever it is met | `a_kill_switch_is_one_refusal_wherever_it_is_met` |
+| A result that carries `next` fits its action's output schema | `a_result_shows_exact_numbers_as_text_and_carries_its_next_step` |
 
 ## Build order
 
 1. Done: `ActionDef`, `ActionRegistry::build`, and the catalog test. Every action of the catalog is defined as data; one that is not built answers `input` / `action_not_built`.
 2. Done: `Kernel::prepare` and `Kernel::open` with the store, the vault, policy, the keeper, the scheduler, and the engine; the runner loop; `InProcessControl`; the three health states; `Paths`; the settings loader (package 1.4a). Not built: the evidence-space check; a session's probe; the keeper's work for a runner on another machine.
 3. Done: the dispatcher with validation, the health check, the decision, the person need, and redaction; every face as data (`command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, `McpResultFace`). Not built: the live parity test, which needs the role crates; the untrusted mark; large results as blobs.
-4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk`, the vault and policy rows of health.
+4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk` with its preview and a decline that ends the run, the vault and policy rows of health.
 5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
 6. Not built: the scout, `discover.run`, `test.run`.
-7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
+7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data, and `Shortcut::on` says where one stops on this engine. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
+8. Done (the second pass): a source through `tool.call` and the runner; `tool.search` in full; `Kernel::events` and `next_events`; values shown as themselves. Not built: inline rows for a source that is not read as JSON; a call by a published tool's own name in one dispatch, which the MCP endpoint can have by dispatching `tool.call` and reading `input`, `not_found` with no result as an unknown tool.
 
 ## Open points
 
@@ -350,3 +412,6 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 - `browser.install` is a row of the catalog and so an action of the kernel, which names a kind of program. It belongs to the pack that drives one, as an action that pack adds.
 - A word may be both a noun and a shortcut or process command (`run`, `test`, `docs`, `doctor`, `publish`, `runner`). The command face must take the bare word as the shortcut or process command and the word with a verb as the action.
 - The run's caller at guard is the caller who started or last resumed it, kept by this crate. A reconcile job the scheduler queues by itself is decided as the person who started the run.
+- That a run was approved and not yet resumed is known to a reader only while the engine that recorded the approval runs. After a restart `run.get` shows the run as waiting, and a resume completes it all the same.
+- `Kernel::events` shows a run only to the caller that started it. A console that follows other people's runs needs a decision of its own.
+- A response to a call refused by a kill switch carries the decision about the action, an allow, and not the policy engine's recorded refusal of the work.

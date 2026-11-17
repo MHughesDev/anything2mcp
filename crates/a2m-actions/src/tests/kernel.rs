@@ -10,7 +10,7 @@
 //! `Kernel::publish_plan`, which exists only for tests.
 
 #[path = "../../../a2m-engine/tests/common/mod.rs"]
-mod engine;
+pub(super) mod engine;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -31,20 +31,20 @@ use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
 
-const USER: &str = "pat";
+pub(super) const USER: &str = "pat";
 
 /// The person surface of a test: it keeps the desk, notes what it was
 /// asked, and answers the presence prompt as the test set it.
-struct Surface {
+pub(super) struct Surface {
     desk: Mutex<Option<Arc<ApprovalDesk>>>,
-    approvals: Mutex<Vec<ApprovalAsk>>,
-    presence_asked: AtomicU32,
-    person_present: Mutex<bool>,
+    pub(super) approvals: Mutex<Vec<ApprovalAsk>>,
+    pub(super) presence_asked: AtomicU32,
+    pub(super) person_present: Mutex<bool>,
     clock: Arc<dyn Clock>,
 }
 
 impl Surface {
-    fn desk(&self) -> Arc<ApprovalDesk> {
+    pub(super) fn desk(&self) -> Arc<ApprovalDesk> {
         self.desk
             .lock()
             .unwrap()
@@ -141,12 +141,12 @@ fn unreachable_store() -> Failure {
     )
 }
 
-struct World {
-    app: TestApp,
-    kernel: Kernel,
-    surface: Arc<Surface>,
-    caller: Caller,
-    _folder: Folder,
+pub(super) struct World {
+    pub(super) app: TestApp,
+    pub(super) kernel: Kernel,
+    pub(super) surface: Arc<Surface>,
+    pub(super) caller: Caller,
+    pub(super) folder: Folder,
 }
 
 struct Options {
@@ -192,6 +192,8 @@ async fn world(options: Options) -> World {
         hooks: Arc::new(engine::Hooks::default()),
         discoverer: Arc::new(engine::WritingDiscoverer {
             results: Mutex::new(Vec::new()),
+            hangs: std::sync::atomic::AtomicBool::new(false),
+            panics: std::sync::atomic::AtomicBool::new(false),
         }),
     });
     let (registry, problems) = builder.build();
@@ -224,14 +226,14 @@ async fn world(options: Options) -> World {
         kernel,
         surface,
         caller,
-        _folder: folder,
+        folder,
     }
 }
 
 impl World {
     /// A healthy kernel with the runner loop started and the `example`
     /// target published.
-    async fn ready() -> Self {
+    pub(super) async fn ready() -> Self {
         let world = world(Options::default()).await;
         assert_eq!(
             world.kernel.health().state,
@@ -248,13 +250,13 @@ impl World {
         world
     }
 
-    async fn call(&self, action: &str, input: Json) -> Response {
+    pub(super) async fn call(&self, action: &str, input: Json) -> Response {
         self.kernel
             .dispatch(Request::new(action, input, self.caller.clone()))
             .await
     }
 
-    async fn ok(&self, action: &str, input: Json) -> Json {
+    pub(super) async fn ok(&self, action: &str, input: Json) -> Json {
         let response = self.call(action, input).await;
         assert!(response.ok, "{action}: {:?}", response.error);
         response.result.unwrap()
@@ -262,7 +264,7 @@ impl World {
 
     /// How many decisions the audit of policy holds, through the one
     /// action that reads them back.
-    async fn explained(&self, response: &Response) -> Json {
+    pub(super) async fn explained(&self, response: &Response) -> Json {
         let decision = response.decision.expect("a decision was recorded");
         self.ok("policy.explain", json!({"decision": decision.to_string()}))
             .await

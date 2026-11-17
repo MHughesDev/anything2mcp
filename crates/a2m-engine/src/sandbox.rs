@@ -24,6 +24,7 @@ use a2m_telemetry::ChoiceReason;
 use crate::codes;
 use crate::control::{Control, EngineEvent, GuardQuestion};
 use crate::engine::Engine;
+use crate::guard::{Timed, caught};
 use crate::job::{JobOutcome, JobSpec, ToolRef};
 use crate::run::{Candidate, Run};
 
@@ -92,6 +93,8 @@ impl Engine {
                 "A discovery job names a surface, and this one names a tool.",
             ));
         };
+        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let control: &dyn Control = &timed;
         let loaded = self.plan(&job.plan, control).await?;
         let position = Self::environment(&loaded, job)?;
         let plan = &loaded.plan;
@@ -177,7 +180,29 @@ impl Engine {
                 focus: &job.input,
             };
             let mut sink = Collected(Vec::new());
-            let report = discoverer.discover(&port, &scope, &mut sink).await;
+            // A discoverer is a provider's code: it is held to the time its
+            // manifest declares, and a panic in it ends it and not the job.
+            // Every step it asks for only reads, so its future may be
+            // dropped.
+            let looking = caught(discoverer.discover(&port, &scope, &mut sink));
+            let report = match tokio::time::timeout_at(scope.deadline.at(), looking).await {
+                Ok(Some(report)) => report,
+                Ok(None) => Err(codes::fail(
+                    FailureClass::UnknownVariant,
+                    codes::DRIVER_PANICKED,
+                    format!("The discoverer `{}` panicked.", declared.name),
+                    "Report this to the provider's author; the findings made before stand.",
+                )),
+                Err(_) => Err(codes::fail(
+                    FailureClass::Busy,
+                    codes::RUN_TIME_EXCEEDED,
+                    format!(
+                        "The discoverer `{}` did not end within the time its manifest declares.",
+                        declared.name
+                    ),
+                    "Narrow what is observed, or raise the discoverer's bound.",
+                )),
+            };
             let sent = control
                 .send(EngineEvent::Discovered {
                     surface: name.clone(),
@@ -194,7 +219,7 @@ impl Engine {
         }
         if let Some(inner) = port.inner.take() {
             let (handle, prepared) = inner.into_parts();
-            let _ = handle.release(prepared, outcome.is_err()).await;
+            let _ = caught(handle.release(prepared, outcome.is_err())).await;
         }
         outcome
     }

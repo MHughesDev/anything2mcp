@@ -34,8 +34,6 @@ pub const BINDING_DRIFTED: FailureCode = FailureCode::fixed("binding_drifted");
 pub const READ_BACK_DIFFERS: FailureCode = FailureCode::fixed("read_back_differs");
 /// `stale`: a record no longer holds what the preview saw.
 pub const CHANGED_SINCE_PREVIEW: FailureCode = FailureCode::fixed("changed_since_preview");
-/// `possible_commit`: a lookup found more than one record.
-pub const AMBIGUOUS_MATCH: FailureCode = FailureCode::fixed("ambiguous_match");
 /// `possible_commit`: a record in doubt cannot be read, so a person must
 /// settle it.
 pub const CANNOT_RECONCILE: FailureCode = FailureCode::fixed("cannot_reconcile");
@@ -64,6 +62,13 @@ pub const NO_TOKEN: FailureCode = FailureCode::fixed("intent_token_missing");
 /// `unknown_variant`: a binding ended without sending its write.
 pub const COMMIT_SKIPPED: FailureCode = FailureCode::fixed("commit_skipped");
 
+/// `busy`: a call to the control plane was not answered within the time the
+/// engine waits for one.
+pub const CONTROL_UNANSWERED: FailureCode = FailureCode::fixed("control_unanswered");
+/// `unknown_variant`: a provider's code panicked. The engine goes on; the
+/// step does not.
+pub const DRIVER_PANICKED: FailureCode = FailureCode::fixed("driver_panicked");
+
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -81,7 +86,6 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Drift, "binding_drifted"),
     (FailureClass::Mismatch, "read_back_differs"),
     (FailureClass::Stale, "changed_since_preview"),
-    (FailureClass::PossibleCommit, "ambiguous_match"),
     (FailureClass::PossibleCommit, "cannot_reconcile"),
     (FailureClass::PossibleCommit, "no_confirmation"),
     (FailureClass::UnknownVariant, "no_read_back"),
@@ -94,6 +98,8 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Busy, "no_rate_budget"),
     (FailureClass::Policy, "intent_token_missing"),
     (FailureClass::UnknownVariant, "commit_skipped"),
+    (FailureClass::Busy, "control_unanswered"),
+    (FailureClass::UnknownVariant, "driver_panicked"),
 ];
 
 pub(crate) fn fail(

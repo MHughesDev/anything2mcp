@@ -275,6 +275,9 @@ pub enum FieldType {
     TextList,
     /// A map of named values, such as a tool's own input.
     Map,
+    /// A list of maps of named values, such as the rows of a source. The
+    /// command face takes it as JSON.
+    MapList,
     /// Whatever the schema says; for a provider's action, whose schema is
     /// its own.
     Any,
@@ -289,6 +292,7 @@ impl FieldType {
             Self::Word(words) => JsonSchema::words(words),
             Self::TextList => JsonSchema::list(JsonSchema::text()),
             Self::Map => JsonSchema::map_of(JsonSchema::any()),
+            Self::MapList => JsonSchema::list(JsonSchema::map_of(JsonSchema::any())),
             Self::Any => JsonSchema::any(),
         }
     }
@@ -303,7 +307,7 @@ impl FieldType {
             Self::Word(_) => "word",
             Self::TextList => "list",
             Self::Map => "map",
-            Self::Any => "value",
+            Self::MapList | Self::Any => "value",
         }
     }
 }
@@ -322,6 +326,12 @@ pub struct Field {
     pub positional: bool,
     /// What it is, in a sentence.
     pub help: String,
+    /// For a flag of the command line: the field that standard input
+    /// fills when the flag is given. The command reads standard input to
+    /// its end, removes one line ending from the end, sends the text as
+    /// that field, and does not send the flag. `None` for every other
+    /// field.
+    pub stdin_for: Option<String>,
 }
 
 /// An action's input: its fields, and the schema they make.
@@ -361,6 +371,7 @@ impl Input {
                 required: false,
                 positional: false,
                 help: String::new(),
+                stdin_for: None,
             })
             .collect();
         Self { fields, schema }
@@ -462,6 +473,16 @@ impl ActionDef {
     }
 }
 
+/// The shape of `next` in a result: the following action, the name of its
+/// tool, its input, and when to call it.
+pub(crate) fn next_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("action", JsonSchema::text())
+        .required("tool", JsonSchema::text())
+        .required("args", JsonSchema::map_of(JsonSchema::any()))
+        .required("when", JsonSchema::text())
+}
+
 /// Builds a definition. Used by the catalog and nowhere else.
 pub(crate) struct Def(ActionDef);
 
@@ -510,8 +531,25 @@ impl Def {
             required,
             positional: false,
             help: help.to_owned(),
+            stdin_for: None,
         });
         self.0.input = Input::of(fields);
+        self
+    }
+
+    /// A flag of the command line that says: read standard input and send
+    /// it as `field`. Other faces have no standard input; a call that
+    /// carries the flag itself is answered by the handler.
+    pub(crate) fn stdin_flag(
+        mut self,
+        name: &'static str,
+        field: &'static str,
+        help: &'static str,
+    ) -> Self {
+        self = self.push(name, FieldType::Bool, false, help);
+        if let Some(flag) = self.0.input.fields.last_mut() {
+            flag.stdin_for = Some(field.to_owned());
+        }
         self
     }
 
@@ -593,7 +631,11 @@ impl Def {
         self
     }
 
-    pub(crate) fn done(self) -> ActionDef {
+    pub(crate) fn done(mut self) -> ActionDef {
+        // Every result may name the most useful following call (spec
+        // section 221). An output that is a map of anything admits it
+        // already; a strict object is given the key here.
+        self.0.output = self.0.output.optional("next", next_schema());
         self.0
     }
 }

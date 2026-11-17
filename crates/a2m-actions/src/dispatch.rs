@@ -214,6 +214,16 @@ impl Next {
     fn to_json(&self) -> Json {
         json!({"action": self.action, "args": self.args, "when": self.when})
     }
+
+    /// `next` as a result carries it: the action, the name of its tool,
+    /// its input, and when to call it.
+    pub(crate) fn to_result_json(&self) -> Json {
+        let tool = match self.action.split_once('.') {
+            Some((noun, verb)) => format!("{}{noun}_{verb}", crate::faces::TOOL_PREFIX),
+            None => self.action.clone(),
+        };
+        json!({"action": self.action, "tool": tool, "args": self.args, "when": self.when})
+    }
 }
 
 /// A failure as a response carries it.
@@ -945,6 +955,10 @@ fn check_type(def: &ActionDef, name: &str, ty: &FieldType, value: &Json) -> Resu
             .as_object()
             .map(|_| ())
             .ok_or_else(|| wrong("a map of named values".to_owned())),
+        FieldType::MapList => match value.as_array() {
+            Some(items) if items.iter().all(Json::is_object) => Ok(()),
+            _ => Err(wrong("a list of maps of named values".to_owned())),
+        },
         FieldType::Any => Ok(()),
     }
 }

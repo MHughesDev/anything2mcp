@@ -248,7 +248,8 @@ The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the i
 
 - **`ActionRegistry`** holds every action of the catalog as data, built or not.
 - **`Kernel`** is the handle every front door holds. Its `dispatch` takes a **`Request`** and gives a **`Response`**: it checks the input, the health state, and the person need, records one policy decision, runs the handler, and redacts the result.
-- **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves a diff; no action reaches it.
+- **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves or declines a diff, and where an approval page reads what the diff would change (**`ApprovalPreview`**); no action reaches it. A decline ends the run as `expired`.
+- **`Kernel::events`** and **`Kernel::next_events`** give a page of **`RunEvents`** after a sequence number, the second after waiting for one, to the caller that started the run ([decision 0132](../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md)).
 - The faces are data generated from the registry: `command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, and **`McpResultFace`**.
 
 ## REST router
@@ -307,13 +308,13 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required`, `headroom_short`, `lease_stale`, `credential_refused` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed`, `binding_drifted` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned`, `driver_panicked` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match`, `cannot_reconcile` |
 | `stale` | `changed_since_preview`, `version_conflict` |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable`, `prepare_timed_out`, `engine_fault` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed`, `no_binding`, `run_time_exceeded`, `blocked_by_parent`, `evidence_not_stored`, `no_rate_budget`, `job_kind_not_built`, `lease_too_short`, `request_timed_out`, `browser_unavailable` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed`, `no_binding`, `run_time_exceeded`, `blocked_by_parent`, `evidence_not_stored`, `no_rate_budget`, `job_kind_not_built`, `lease_too_short`, `request_timed_out`, `browser_unavailable`, `control_unanswered` |
 
 ## Command line
 

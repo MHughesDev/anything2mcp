@@ -10,8 +10,8 @@ The pack is one crate, `a2m-pack-mcp`. It has no base crate and depends on no ot
 
 | Reaches | How |
 | --- | --- |
-| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the mapping and the published plan declare, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)) |
-| A remote MCP server | Over HTTP, at the address its mapping declares, with the protocol's own authorization |
+| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. Not built on Windows |
+| A remote MCP server | Over HTTP, at the address its `mcp` surface declares, with the protocol's own authorization. As built: plain HTTP with a bearer token; HTTPS and the protocol's authorization flow are not built |
 | A server used only to help discovery | A mapping with `purpose: discovery`, whose tools can never be bound to an operation |
 
 | Refused | Why |
@@ -44,7 +44,7 @@ An upstream MCP server is one of three ways to be a provider ([section 203](../2
 | Found | From the mapping file |
 | What it may be asked to do | Exactly the tools the mapping names, each pinned by digest |
 | Effects | `declared`: the server runs code this runtime cannot see. The person enabling it is told so in those words |
-| Lifecycle | A local program is started on first use under the supervisor, owned as a process group, and stopped when idle; a remote server is reached on first use |
+| Lifecycle | A local program is started on first use under the supervisor, owned as a process group, and stopped when idle; a remote server is reached on first use. Stopping an idle program is not built: a program is stopped when its connection is closed |
 | Listing | The mapping is what `provider.list` shows for it |
 
 Policy, approval, and audit wrap every call, as for any operation. The tools an agent sees are the target's own operations, named `{target}_{module}_{object}_{verb}` and described by the target's files ([section 221](../2-kernel/221-the-tool-surface-agents-see.md)). Their read-only, destructive, and idempotent hints are computed from the operation's effect class, hazard, and effects, never copied from the upstream server's annotations.
@@ -55,10 +55,10 @@ Policy, approval, and audit wrap every call, as for any operation. The tools an 
 | --- | --- |
 | Surface kinds | `mcp` |
 | Modes | `mcp`, archetype request |
-| Step kinds | `call_tool`, a checked name within the mode |
+| Step kinds | `call_tool`, a checked name within the mode; `list_tools`, which only the discoverer sends, through the sandbox port |
 | Driver | One |
 | File kinds | `mappings/`: one file per `mcp` surface |
-| Binding fields | `tool`, `args` |
+| Binding fields | `tool`, `args`; also `surface`, `timeout_ms`, `settle_ms`, `read_back` with its own `args`, and `lookup` with a `tool`, because a read-back and a lookup are calls of their own |
 | Finding kinds | `upstream_tool`, `upstream_server`, each a checked name with the schema of its `found` |
 | Discoverers | `mcp_tools` |
 | Describer | `mcp_describer` |
@@ -68,13 +68,13 @@ Policy, approval, and audit wrap every call, as for any operation. The tools an 
 
 | Field | Meaning |
 | --- | --- |
-| `surface` (required) | The `mcp` surface: a server address, or a local program by path and digest with its arguments and an allowlisted environment |
+| `surface` (required) | The name of the `mcp` surface. The surface in `target.yaml` holds the server address, or `stdio` and a local program by path and digest with its arguments and an allowlisted environment, so that an environment can override the address and the plan declares the program ([decision 0109](../../decisions/0109-the-mcp-pack-as-building-it-settled-it.md)) |
 | `server` | The name and version the server reported when the mapping was written |
 | `tools` (required) | Map of the upstream tool's name to an entry: `digest` of its definition (name, input schema, output schema, annotations), `effect` as the developer judged it, `read_back` naming a mapped read tool for a write, and `untrusted_fields`. An entry may also state `result` (`structured` or `text`), `absent_error` (the text of the tool's error result that means the record is not there), `records` (the field of a list tool's result that holds the records), `key` (the fields of a result that make the record's key), `key_args` (the arguments that take the parts of a record's key, in order, so that a read-back and a lookup need no arguments of their own), `stamp` (the argument that carries a record's stamp), and `free_text: false` (a reviewer's statement that a tool whose whole input is one string does not run it) |
 | `credential` | Which vault reference the server is given, and how: a header for a remote server, an environment variable for a local program. Not built: the mapping has no such field yet. A remote server is given the bearer token of the session's lease, through `upstream_mcp`, and a local program is given no credential |
 | `purpose` | `tools`, or `discovery` for a server used only as a discovery provider |
 
-A definition's digest is taken over its canonical form, with SHA-256.
+A definition's digest is taken over its canonical form, with SHA-256: one JSON text of the tool's name, input schema, output schema, and annotations, object keys in byte order and no spaces. The title and the description are not part of it ([decision 0108](../../decisions/0108-an-upstream-mcp-server-is-reached-only-through-a-pinned-mapping-by-a-client-of-the-packs-own.md)).
 
 ## Verbs and how they lower
 
@@ -92,7 +92,7 @@ A definition's digest is taken over its canonical form, with SHA-256.
 
 | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- |
-| The connection for the session's identity, started or reused; the server's name and version; each mapped tool's definition, digested and compared with its pin | `call_tool` with arguments built from `args` and checked against the pinned input schema | The result is not an error, and its structured content fits the pinned output schema | The mapped read tool, called with the record's key, compared after normalization by the engine |
+| The connection for the session's identity, started or reused; the server's tool list. Each call then compares the definition of the tool it calls with its pin, after reading the list again when the server gave notice that it changed, so a change to one tool stops only the calls to it | `call_tool` with arguments built from `args` and checked against the pinned input schema | The result is not an error, and its structured content fits the pinned output schema | The mapped read tool, called with the record's key, compared after normalization by the engine |
 
 - **One connection per surface and identity.** A local program started by the supervisor, or an HTTP session; never shared between identities.
 - **Every failure says whether the call was sent.** A lost connection, or a lost program, after a write call was sent is `possible_commit`. The supervisor reports whether a request on a lost connection ran.
@@ -103,14 +103,16 @@ A definition's digest is taken over its canonical form, with SHA-256.
 
 | What changed | Found when | Result |
 | --- | --- | --- |
-| A mapped tool's definition | `prepare`, the canary, and on the server's notice that its list changed | Calls to that tool stop as `drift`; bindings on it fall to `shadow` until the mapping is re-pinned and the gates pass |
+| A mapped tool's definition | Before each call, from the list read at `prepare` and again on the server's notice that its list changed; the canary | Calls to that tool stop as `drift`; bindings on it fall to `shadow` until the mapping is re-pinned and the gates pass |
 | A mapped tool is gone | The same | The same |
 | An unmapped tool is added | `mcp_tools` | A finding. Nothing is reachable until a person maps it |
 | The server's reported version | `prepare` | A finding, and the bindings' evidence levels fall ([section 219](../2-kernel/219-the-evidence-ladder.md)); a call still runs if every pin matches |
 
+Not built: the canary; the bindings' fall to `shadow`, and the fall in levels, since nothing lets a driver lower a binding; and the comparison of the server's version at `prepare`. `mcp_tools` reports a changed version as a finding.
+
 ## Sessions and sign-in
 
-The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)). The pack brings one auth provider, `upstream_mcp`: the protocol's own authorization for a remote server.
+The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)). The pack brings one auth provider, `upstream_mcp`: the protocol's own authorization for a remote server. As built, it holds one stored token under the role `token` and places it in the `Authorization` header as a bearer token; an entry that asks for the authorization flow is refused. The second and the last points below are not built, nor is the environment variable of the first.
 
 - The session keeper alone calls it. The tokens it obtains are held by the keeper; one request borrows them through `SessionLease::inject`, which places a token in a request header, or an environment variable into a local program's start, without returning it.
 - When the protocol's authorization needs a person to consent in a browser, `upstream_mcp` asks through the person surface, reached through the keeper: the person is given a link and opens it in their own browser. Nothing drives that browser, and the pack borrows nothing from the web pack. The callback carries the authorization code back to the provider, which exchanges it for tokens the keeper holds.
@@ -126,18 +128,20 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 | A tool on the server's list, marked read-only by the server | A mapping entry with its digest, and a pass-through read operation with one binding | Its name in the language of the work; whether the marking is believed |
 | A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its identity strategy, its read-back tool |
 
+As built, the drafter writes the mapping entry only, for either kind of tool: the pass-through read operation is not drafted yet. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema.
+
 `spec.import` accepts an upstream server's tool list as well as a published description. A server mapped with `purpose: discovery` is a discovery provider: its results are stored as findings at `inferred` and never bound (hypothesis H-27).
 
 ## Lint rules
 
 | Code | Level | Rule |
 | --- | --- | --- |
-| `mcp_tool_unmapped` | Error | A binding names a tool its surface's mapping does not |
-| `mcp_tool_unpinned` | Error | A mapped tool with no definition digest |
-| `mcp_program_unpinned` | Error | A local server program with no digest |
-| `mcp_write_no_readback` | Error, unless the operation is `irreversible` | A write tool with no mapped read tool |
-| `mcp_discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
-| `mcp_free_text` | Warning | A mapped tool whose input is one free-text string the server could run as a command or a query. A reviewer decides; a tool that runs free text is refused |
+| `mcp.tool_unmapped` | Error | A binding names a tool its surface's mapping does not |
+| `mcp.tool_unpinned` | Error | A mapped tool with no definition digest |
+| `mcp.program_unpinned` | Error | A local server program with no digest |
+| `mcp.write_no_readback` | Error, unless the tool is mapped `irreversible` | A write tool with no mapped read tool |
+| `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
+| `mcp.free_text` | Warning | A mapped tool whose input is one free-text string the server could run as a command or a query. A reviewer decides; a tool that runs free text is refused |
 
 ## Effects and hazards
 
@@ -157,11 +161,14 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `drift` | `upstream_tool_changed` | A pin does not match |
 | `drift` | `response_schema_mismatch` | A result that does not fit the pinned output schema |
 | `rejected` | `app_validation_error` | The tool's own error result, for a call that was well formed |
-| `unknown_variant` | `unexpected_status` | A protocol error the mapping did not foresee |
-| `possible_commit` | `no_confirmation` | A write call was sent and the connection or the program was lost before its result |
+| `unknown_variant` | `unexpected_status` | A protocol error the mapping did not foresee; an answer in another revision, sent as an event stream, or that is not a response |
+| `possible_commit` | `no_confirmation` | A write call was sent and the connection or the program was lost before its result. The contract's code: the handle raises it for a committing step whose fate is unknown |
+| `possible_commit` | `ambiguous_match` | A lookup found more than one record |
 | `session_expired` | `needs_login` | The server refused the credential |
-| `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before a call was sent |
-| `policy` | `not_granted` | A call to a tool that is not mapped, if one were ever attempted; the compiler refuses it first |
+| `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before a call was sent, or on a read |
+| `policy` | `not_granted` | A call to a tool that is not mapped, if one were ever attempted; the compiler refuses it first. Also an unpinned tool, a tool of a `discovery` mapping, and a write tool from a step that does not commit |
+| `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema; nothing is sent |
+| `input` | `tls_not_enabled`, `not_built`, `payload_unreadable` | An `https://` surface; a part of this design that is not built; a plan compiled by another build of the pack |
 
 ## The test stand
 
@@ -175,6 +182,8 @@ A small MCP server at `targets/example-mcp` ([README](../../../targets/example-m
 | Text from the server reaches a caller only marked untrusted | Test-application case 27, played by the stand |
 | Discovery calls no tool | The stand counts calls during `mcp_tools` |
 | Two identities never share a connection | A test with two sessions on one server |
+
+As built, no test runs `mcp_tools` yet, so "Discovery calls no tool" is not proven; the other rows are, in the tests the [crate's design](../../architecture/crates/a2m-pack-mcp.md) names.
 
 ## The entry bar
 
@@ -195,9 +204,11 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 The test stand with its control interface first. Then package 8.2: the mapping schema, the driver for reads against a local stand program, and change detection; writes with read-back and the fault cases; `mcp_tools` and its drafting rule; `upstream_mcp` against a remote stand. Package E6, a `discovery` mapping, comes after.
 
+Package 8.2 is built in `a2m-pack-mcp`, except what the [crate's design](../../architecture/crates/a2m-pack-mcp.md) lists as not built. Its tests drive the driver through the kernel's handle; the engine loop has not run the mode.
+
 ## Open points
 
-- Which protocol revisions the client side speaks, after the server-side answer of slice 0.5 (brief 2).
+- Which protocol revisions the client side speaks. Settled: 2025-11-25, which starts with `initialize`, and 2026-07-28, which has no handshake; the surface states which, and nothing is probed ([decision 0108](../../decisions/0108-an-upstream-mcp-server-is-reached-only-through-a-pinned-mapping-by-a-client-of-the-packs-own.md)).
 - Where the consent link's callback lands on a server, when the person's browser cannot reach the runner.
 - Whether a mapped tool's resources and prompts are ever reachable.
 - Whether an upstream server that holds one shared credential may serve several identities. This design gives each identity its own connection and refuses sharing.

@@ -108,7 +108,35 @@ handler!(
     secret_set,
     |kernel, call| {
         let name = call.required("name")?.to_owned();
-        let secret = Secret::new(call.required("value")?);
+        // Standard input is the command line's to read: it sends what it
+        // read as `value` and never sends the flag. A call that still
+        // carries the flag came from a face with no standard input, or from
+        // a command line that did not read it.
+        let value = match (call.text("value"), call.flag("stdin").unwrap_or(false)) {
+            (Some(value), false) => value,
+            (Some(_), true) => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The call gives the secret both as `value` and from standard input.",
+                    "Give one of them.",
+                ));
+            }
+            (None, true) => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The secret was to come from standard input, and the call carries none. Only the command line reads standard input.",
+                    "Pipe the secret into `anything2mcp secret set <name> --stdin`.",
+                ));
+            }
+            (None, false) => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    "`secret.set` needs the secret.",
+                    "On a command line give `--stdin` and pipe the secret in; elsewhere give `value`.",
+                ));
+            }
+        };
+        let secret = Secret::new(value);
         let reference = CredentialRef::new(&format!("{}{name}", CredentialRef::SCHEME))
             .map_err(|_| {
                 codes::input(
