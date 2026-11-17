@@ -1,6 +1,6 @@
 # 309. The stream pack
 
-Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The pack is designed here before it is built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Proposed mode: `stream`. A mode becomes real only by decision record when its pack is built ([record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)).
+Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The pack is designed here before it is built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Mode: `stream`, registered when the pack was built ([record 0105](../../decisions/0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md)); the same record lists where building changed this section.
 
 The stream archetype is the furthest from what the engine loop was first drawn for. The loop assumes a record that is there to be read before and after a write. A message is often not: it is sent, it is taken, and it is gone. This section says plainly where that bends the loop, and what the pack does about it.
 
@@ -16,22 +16,23 @@ The stream archetype is the furthest from what the engine loop was first drawn f
 
 ## The file kind: `channels/`
 
-One file per channel. It holds everything the pack knows about where messages are and what they look like. An operation names a channel; it never names a topic or a queue directly. Field types stay in `types.yaml` and message schemas in their own files, as rule eight requires.
+One file per channel. It holds everything the pack knows about where messages are and what they look like. An operation names a channel; it never names a topic or a queue directly. Field types stay in `types.yaml` and message schemas in their own files under `schemas/`, as rule eight requires. A schema file is YAML and holds the part of JSON Schema the pack checks: an object, `required`, and `properties` with a `type` and an `enum` of texts.
 
 ```yaml
 channel: orders.status            # module.name, as screens are named
 surface: broker                   # a surface of kind broker in target.yaml
 address: example.orders.status    # the topic, queue, or feed as the broker names it
-shape: retained                   # retained | log | queue
+shape: retained                   # retained | log | queue | topic
 role: state                       # state | events
-schema: schemas/order_status.json # JSON Schema for the message body
-encoding: json                    # json | text; others when a reader for them exists
+schema: order_status              # a message schema that a file under schemas/ defines
+encoding: json                    # json; text and others when a reader for them exists
 key:
   field: order_id                 # the message key; for retained, what one value is kept per
   type: identifier
 correlation:
   field: headers.correlation_id   # how a reply is matched to a request
-read_through: own_subscription    # own_subscription | browse | none
+read_through: own_subscription    # own_subscription | browse | none, or a list of the first two
+subscription: example.runtime     # the runtime's own subscription, as the broker names it
 ownership: shared                 # shared | runtime_owned
 consumers: outside                # outside | none | unknown; default unknown
 idempotency:
@@ -47,14 +48,15 @@ limits:
 
 | Field | Meaning |
 | --- | --- |
-| `shape` | `retained`: the broker keeps the last value per key. `log`: the broker keeps messages in order, each at a position it reports. `queue`: a message is delivered to one reader and removed when acknowledged |
+| `shape` | `retained`: the broker keeps the last value per key. `log`: the broker keeps messages in order, each at a position it reports. `queue`: a message is delivered to one reader and removed when acknowledged. `topic`: every open subscription gets a copy, and nothing is kept |
 | `role` | `state`: the latest value for a key is the record, and a newer one supersedes it. `events`: each message is a thing that happened and is acted on by whoever reads it. A judgment the developer makes; never drafted |
-| `read_through` | How the runtime reads without taking from others: a subscription of its own, the broker's browse, or not at all |
+| `read_through` | How the runtime reads without taking from others: a subscription of its own, the broker's browse, both, or not at all. `list` uses the browse and `await` the subscription |
+| `subscription` | The runtime's own subscription. On a log it may be left out: the run then reads through a cursor of its own, which the broker discards |
 | `ownership` | `runtime_owned` only when the target declares that nothing else reads this queue |
 | `consumers` | Who reads what is published. `unknown` is treated as `outside` |
 | `wait` | Default and largest wait for this channel; the settings hold a ceiling for all ([section 226](../2-kernel/226-configuration.md)) |
 
-The surface kind `broker` takes an `address` list, a `protocol`, and a `rate`, as other surfaces do. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression.
+The surface kind `broker` takes one `address`, a `protocol`, and a `rate`, as other surfaces do. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression.
 
 ```yaml
 operation: example_order_status_set
@@ -82,11 +84,11 @@ The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists
 | `list` | `read` | `browse` up to `browse_count` | Messages held now, with coverage |
 | `await` | `read` | `subscribe` from a recorded position, `await` a match | The message, or nothing within the limit |
 | `publish` | By the table under "Read-back" | `publish`, then the read-back steps | The broker's acknowledgement and position |
-| `take` | `write` on the runtime's own queue | `subscribe`, `await`, `acknowledge` | The message |
+| `take` | `irreversible` on the runtime's own queue | `subscribe`, `await`, `acknowledge` | The message |
 
 **Every wait ends.** The compiler refuses an `await` with no time limit, or one above the channel's `max` or the settings' ceiling. There is no verb that keeps a subscription open after the call returns.
 
-**Nothing arriving is an answer, not a failure.** An `await` that sees no match within its limit returns `arrived: false`, how long it waited, and the coverage of what it watched. An operation that needs a message declares `on_nothing: fail`, and then the run stops with the class `transient` and the code `nothing_arrived`.
+**Nothing arriving is an answer, not a failure.** An `await` that sees no match within its limit returns `arrived: false`, how long it waited, and the coverage of what it watched. A binding that needs a message states `on_nothing: fail`, and then the run stops with the class `transient` and the code `nothing_arrived`. A `take` always needs one.
 
 **A wait starts from a recorded position.** In prepare, the driver records the position each subscribed partition stands at and stores it with the run. A resumed wait starts from the same place, so a reply that came while the runner was lost is still found. On a `queue` with no positions, a wait starts at the moment of subscribing and says so as a limitation.
 
@@ -122,7 +124,7 @@ Brokers deliver at least once. A publish whose acknowledgement was lost may have
 
 | What the target offers | How a publish is made safe to resume |
 | --- | --- |
-| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker. Identity `stamped` |
+| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
 | A `retained` state channel | Identity `natural` by the key. Reconcile reads `latest`: the intended value means it landed; the value seen before means it did not; anything else is `stale` |
 | A `log` with positions | Identity `stamped`. Reconcile scans from the position recorded at intent, on the partitions the key maps to, for the token. Found means it landed. Not found with `complete` coverage of that range means it did not |
 | Consumers that ignore a repeated token, declared | Recorded and shown at approval; it does not change the class. The runtime cannot see a consumer |
@@ -138,7 +140,7 @@ Reading a queue removes messages that others expected. The pack's rules:
 2. **Never acknowledge on a shared queue.** `take` compiles only on a channel with `ownership: runtime_owned`.
 3. **Otherwise only look.** Where the broker offers a browse or a peek, `list` uses it. Where it does not, and there is no subscription of the runtime's own, the channel cannot be read, and the compiler says so.
 4. **Discovery never consumes,** whatever the channel declares.
-5. **Record, then acknowledge.** A `take` stores the message in the ledger before it acknowledges. If the run stops between the two, the broker delivers the message again, and the ledger already holds its identifier, so it is returned once. This is the only read-like verb with a ledger row, and that is why it is classed `write`.
+5. **Record, then acknowledge.** A `take` stores the message in the ledger before it acknowledges. If the run stops between the two, the broker delivers the message again, and the ledger already holds its identifier, so it is returned once. This is the only read-like verb with a ledger row. It is declared `irreversible` with no identity: an acknowledged message cannot be read again or put back.
 
 ## Identity, sessions, effects
 
@@ -179,7 +181,7 @@ The drafter never writes a publish, a `take`, or a subscription name.
 | Read back | Fits only for retained and logged channels. Everywhere else the write is `irreversible`, and most publishes are |
 | Preview | A publish has no current value except on a state channel. The diff is a create, every time |
 | Reads | A wait is a read that is not repeatable and that can take as long as its limit. It holds a runner for that time, and the trace signature of two waits differs in what arrived |
-| Ledger | A read normally has no record row. `take` needs one, so it is classed `write` |
+| Ledger | A read normally has no record row. `take` needs one, so its acknowledging step commits |
 
 These strains are contained in the pack, and none needs a kernel change. One may: a long wait holding a runner may need the scheduler to count waits apart from other reads. That is recorded as evidence for hypothesis H-26 when the pack is built, and H-29 is tested by whether the stream archetype held without a special case in the engine.
 
@@ -187,11 +189,11 @@ These strains are contained in the pack, and none needs a kernel change. One may
 
 | Class | Codes | When |
 | --- | --- | --- |
-| `input` | `schema_invalid`, `value_out_of_range`, `message_too_large` | The message fails its schema or the size limit; nothing is sent |
-| `policy` | `ack_not_owned`, `surface_not_declared` | A `take` on a shared queue; a broker address not declared |
+| `input` | `schema_invalid`, `value_out_of_range`, `message_too_large`, `protocol_unknown` | The message fails its schema or the size limit, or the surface names a protocol this build does not speak; nothing is sent |
+| `policy` | `ack_not_owned`, `surface_not_declared`, `scan_limit` | A `take` on a shared queue; a broker address not declared; a log longer than a scan for a record's token may read |
 | `session_expired` | `needs_login` | The broker refuses the credentials |
 | `rejected` | `broker_refused` | The broker refuses the message, with its reason |
-| `drift` | `channel_missing`, `shape_changed`, `response_schema_mismatch` | The channel is gone, its shape or key changed, or a message fails its schema |
+| `drift` | `channel_missing`, `shape_changed`, `response_schema_mismatch`, `position_out_of_range` | The channel is gone, its shape or key changed, a message fails its schema, or a position is no longer held |
 | `unknown_variant` | `unexpected_reply` | The broker answers in a way the driver has no rule for |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable`, `nothing_arrived` | Before a publish was sent, or on a read |
 | `possible_commit` | `no_confirmation` | A publish was sent and no acknowledgement came |
@@ -229,7 +231,7 @@ Stated as needs, each an outside crate to be verified: a client for the chosen b
 
 ## Open points
 
-- Which protocol first. One with a small open specification, retained values per key, and correlation fields in the message is the likely start; a log with positions may need a second protocol.
+- Which protocol first. One with a small open specification, retained values per key, and correlation fields in the message is the likely start; a log with positions may need a second protocol. A protocol is one interface inside the pack, and [record 0104](../../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) says what it must offer.
 - Whether waits need their own count in the scheduler's budgets.
 - Whether a transactional publish across several channels is one commit point. Not offered until a target needs it.
 - Triggers: whether a matching message may start a run. Still not designed.

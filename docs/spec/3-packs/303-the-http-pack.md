@@ -15,9 +15,9 @@ The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no o
 
 | Refused | Why |
 | --- | --- |
-| Sending to an origin the plan did not resolve, or following a redirect to another origin | Section [502](../5-security/502-defending-against-a-manipulated-agent.md): no input changes where a request goes |
+| Sending to an origin the plan did not resolve, following a redirect, or using a proxy | Section [502](../5-security/502-defending-against-a-manipulated-agent.md): no input changes where a request goes |
 | A secret in a template, a finding, or a trace | Rule four. Credentials reach a request only through injection |
-| Holding a credential beyond one request, or renewing a token, even when a response says it expired | Only the session keeper renews. The driver reports the sign and stops |
+| Holding a credential beyond one pass of the loop, or renewing a token, even when a response says it expired | Only the session keeper renews. The driver reports the sign and stops ([decision 0097](../../decisions/0097-what-the-provider-contract-could-not-give-the-http-driver-and-what-the-pack-does-instead.md)) |
 | Retrying inside a step | The engine decides what is tried again |
 | Drafting an operation for a method its description does not mark safe | A drafted read must be a read |
 | An `http` binding on an endpoint whose requests the front end computes or signs | It would skip logic only the page carries out. Such an endpoint is `page_http` or `ui` only |
@@ -60,7 +60,10 @@ Endpoints live only in the endpoint catalog (rule eight). There is one catalog, 
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | JSON Schema files |
+| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum` ([decision 0096](../../decisions/0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md)) |
+| `responses` | The answers the endpoint declares: `ok` and `absent` statuses, and `refused`, `conflict`, and `unavailable`, each a status with an optional `when` on a field of the body |
+| `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
+| `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
 | `idempotency_header` | The header that carries the record's idempotency token, if the service accepts one |
 | `version` | Where a record's version is read, and how it is sent back as a precondition |
@@ -68,7 +71,7 @@ Endpoints live only in the endpoint catalog (rule eight). There is one catalog, 
 
 The full format is in the [file formats](../../reference/file-formats.md#endpointsyaml).
 
-**Typed templates.** The pack's template is a resolved origin, a path of literal segments and typed holes, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition. A request is built position by position from it. No input can change the origin, the shape of the path, or which header a value goes in ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). A template that would resolve outside the declared surfaces is refused at compile time and checked again before sending.
+**Typed templates.** The pack's template is a surface, whose address in the run's environment is the origin, a path of literal segments and holes that each fill one whole segment, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition. A request is built position by position from it. No input can change the origin, the shape of the path, or which header a value goes in ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). A template that would resolve outside the declared surfaces is refused at compile time and checked again before sending.
 
 | Behavior of a service | Built-in handling |
 | --- | --- |
@@ -105,7 +108,8 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 
 - **Every failure says whether the request was sent.** A write request sent wholly or in part with no complete answer is `possible_commit`; before any byte of a write was sent, a lost connection is `transient`.
 - **A 404 on a declared lookup is an answer, not a failure:** the record is absent.
-- **A redirect is never followed across origins.** A redirect to the target's identity host is a sign of expiry.
+- **A redirect is never followed.** One to the target's identity host is a sign of expiry; one to any other origin stops as `policy`, `surface_not_declared`; one within the surface is a status like any other.
+- **TLS is not in the first build.** A surface reached over HTTPS is refused with `input`, `tls_not_enabled`.
 - **Edge answers are recognized by status and header,** never retried, and stop as `edge_blocked`.
 - Overhead stays under 5 ms beyond the system's own time, a budget until measured ([section 225](../2-kernel/225-performance.md)).
 
@@ -123,7 +127,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 | `obo_token` | An on-behalf-of exchange from the caller's token | The same |
 | `os_broker` | A token from the operating system's sign-in broker, on user devices | The same |
 
-- `SessionLease::inject` places a token or the session's cookies into one outgoing request without returning them. Warm connections are kept by session and origin; cookies and tokens are never held by the pack.
+- The lease places a token or the session's cookies into the driver's prepared client without returning them. The client holds them for one pass of the loop, sends them only to an endpoint that takes the session's credential, and wipes them at release. Warm connections are kept by session and origin.
 - The keeper hands the driver short-lived tokens in memory only.
 - A status and path matching the target's declared expiry signal, or a redirect to its identity host, is reported through the lease as `needs_login`. The driver never renews.
 - Where an authorization-code response arrives on a server, when no loopback address reaches the person's browser, is open.
@@ -151,14 +155,14 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 
 | Code | Level | Rule |
 | --- | --- | --- |
-| `http_secret_literal` | Error | A header, query, or body template holds a literal that looks like a credential |
-| `http_no_response_schema` | Error | An endpoint without a response schema |
-| `http_effect_method` | Warning | An endpoint marked `read` whose method is not one its description, or HTTP itself, marks safe |
-| `http_signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser |
-| `http_placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry |
-| `http_graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash |
-| `api_operation_missing` | Error | An `operation_id` not in the pinned description |
-| `api_description_changed` | Error | The pinned description's digest differs from the one the binding was written against |
+| `http.secret_literal` | Error | A header, query, or body template holds a literal that looks like a credential |
+| `http.no_response_schema` | Error | An endpoint without a response schema |
+| `http.effect_method` | Warning | An endpoint marked `read` whose method is not one its description, or HTTP itself, marks safe |
+| `http.signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser |
+| `http.placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry; refused by the lowering |
+| `http.graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash. Not built |
+| `http.api_operation_missing` | Error | An `operation_id` not in the pinned description. Not built |
+| `http.api_description_changed` | Error | The pinned description's digest differs from the one the binding was written against. Not built |
 
 ## Effects and hazards
 
@@ -182,7 +186,9 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `unknown_variant` | `unexpected_status` | A status the endpoint does not declare |
 | `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
-| `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces |
+| `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or a redirect to another origin |
+| `unknown_variant` | `response_too_large` | An answer over the limit on its size |
+| `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read |
 
 ## The test stand
 
@@ -213,7 +219,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 ## Build order
 
-Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
+Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Built so far: the `http` mode against cases 1 to 4 and 17, credentials and sign-in signals, and the OpenAPI import with its endpoint drafts; the [crate's design](../../architecture/crates/a2m-pack-http.md) lists what is not. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
 
 ## Open points
 

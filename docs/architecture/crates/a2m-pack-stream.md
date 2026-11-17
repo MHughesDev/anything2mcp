@@ -29,7 +29,7 @@ It must never: choose a channel from a step argument; keep a subscription open a
 | Registration | Content |
 | --- | --- |
 | Mode | `stream`, archetype stream; rank 60; four reads and one write at a time in a session; a write holds the link |
-| Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names in `a2m_pack_stream::PROTOCOLS` |
+| Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names in the crate's `PROTOCOLS` constant |
 | Step kinds | `latest`, `browse`, `subscribe`, `await`, `publish`, `acknowledge`, `scan` from lowerings; `channels` and `describe` from the discoverer only |
 | Driver | One, for `stream` |
 | File kinds | `channel` in `channels/`, `message_schema` in `schemas/`, both for `broker` surfaces |

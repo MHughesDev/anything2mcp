@@ -165,10 +165,13 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | JSON Schema files |
+| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `responses` | The answers the endpoint declares. `ok`: accepted statuses, 200 unless given. `absent`: statuses that mean the record does not exist, on a lookup. `refused`, `conflict`, `unavailable`: lists of a `status` with an optional `when`, a map from a top-level field of the body to the text it must hold; a `conflict` may name the field that holds the record's version now, as `current`. An answer that matches nothing declared stops the step |
+| `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
+| `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
 | `idempotency_header` | Header that carries the record's idempotency token, if the application accepts one |
-| `version` | Where a record's version is read and how it is sent back as a precondition |
+| `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}` |
 | `volatile` | Request fields to ignore when comparing with a shadow |
 
 ## `operations/*.yaml`
@@ -195,7 +198,7 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | Mode | Its fields |
 | --- | --- |
 | `ui`, `desktop` | `screen`, `verb`, `fields` (map of screen field to expression), `action` |
-| `page_http`, `http` | `endpoint`, `path_params`, `query`, `body` (maps of name to expression) |
+| `page_http`, `http` | `endpoint`, `path_params`, `query`, `body` (maps of name to expression). For `http`, also `extract`: a map from an output's name to where its value is in the answer, as property names joined by dots, with one `*` for a list; an output with no entry is the answer's field of its own name |
 | `api` | `operation_id` from the imported description, and `args` |
 | `mcp`, `site_tools` | `tool` and `args` |
 
