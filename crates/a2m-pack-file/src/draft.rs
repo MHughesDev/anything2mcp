@@ -170,6 +170,20 @@ impl LayoutDraft {
         self.format != Format::Json
     }
 
+    /// The record kind as a description names it: the document, and the
+    /// record kind where a file holds several. Both names are the pack's
+    /// own spelling of the file's words.
+    fn named(&self, kind: &KindDraft) -> String {
+        if self.format == Format::Delimited {
+            format!("the document `{}`", self.document)
+        } else {
+            format!(
+                "the record kind `{}` of the document `{}`",
+                kind.name, self.document
+            )
+        }
+    }
+
     /// The object a read over a record kind names: the document, and the
     /// record kind where a file holds several.
     fn object(&self, kind: &KindDraft) -> String {
@@ -363,9 +377,10 @@ impl DraftingRule for ReadsFromLayout {
                     ("bindings", DraftValue::List(vec![DraftValue::map(binding("list"))])),
                     (
                         "description",
-                        DraftValue::text(
-                            "Lists the rows of one file in the order the file holds them, as many as the list limit allows, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional.",
-                        ),
+                        DraftValue::text(&format!(
+                            "Lists the rows of {} in the order the file holds them, as many as the list limit allows, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional.",
+                            layout.named(kind)
+                        )),
                     ),
                 ]),
             });
@@ -407,9 +422,10 @@ impl DraftingRule for ReadsFromLayout {
                     ("bindings", DraftValue::List(vec![DraftValue::map(get_binding)])),
                     (
                         "description",
-                        DraftValue::text(
-                            "Reads one row of one file by its key, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.",
-                        ),
+                        DraftValue::text(&format!(
+                            "Reads one row of {} by its key, each value as the text the file holds, marked untrusted. Drafted by rule from the file's layout; its name is provisional, and its key is still to be stated.",
+                            layout.named(kind)
+                        )),
                     ),
                 ]),
             });

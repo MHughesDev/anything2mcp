@@ -185,6 +185,12 @@ impl Desk {
     }
 }
 
+/// The one read a developer writes by hand before the scout can observe
+/// the surface (see the stop below): the test application's order, by its
+/// number.
+const SEED_ENDPOINT: &str = "endpoint: order_get\nsurface: api\nmethod: GET\npath: \"/api/orders/{order_id}\"\nauth: none\neffect: read\nheaders: {accept: \"application/json\"}\nresponses: {absent: [404]}\nresponse_schema:\n  type: object\n  required: [order_id, customer, status]\n  properties:\n    order_id: {type: string}\n    customer: {type: string}\n    status: {type: string, enum: [draft, submitted]}\n";
+const SEED_OPERATION: &str = "operation: example_order_get\ntitle: Get an order\neffect: read\nkey: order_id\ninputs:\n  order_id: {type: identifier, description: \"Order number shown in the application\"}\noutputs:\n  status: {type: identifier}\n  customer: {type: text}\nexamples:\n  - {order_id: \"A-100\"}\nbindings:\n  - mode: http\n    verb: read\n    endpoint: order_get\ndescription: >\n  Reads the status and the customer of one order.\n";
+
 /// The target file a developer writes once `target add` has made it: the
 /// one surface, the test application's address, and a test environment.
 fn target_file(address: &str) -> String {
@@ -263,7 +269,28 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
 
     // 3. The scout and its report.
     let first = desk.scout(false).await;
-    println!("{first}");
+    let surfaces = &first["result"]["content"]["surfaces"];
+    let ended = &surfaces[0]["ended"];
+    // The named stop of today: a target that declares only its surface
+    // has nothing the scout's sandbox can observe it through. The engine
+    // prepares the driver of the first binding in the plan that acts on
+    // the surface (`a2m-engine`, `sandbox.rs`), and a new target has none,
+    // so the published description is not read (`busy`/`no_binding`) and
+    // the live look finds nothing. This lifts when discovery prepares the
+    // surface kind's driver without a binding: the engine's package of the
+    // scout (decision 0179's stage 3). Until then a developer writes one
+    // read by hand first, as the stop's fix says.
+    assert_eq!(ended[0]["discoverer"], "http_description", "{first}");
+    assert_eq!(ended[0]["report"]["failure"]["code"], "no_binding", "{first}");
+    assert_eq!(ended[1]["findings"], 0, "{first}");
+    assert_eq!(first["result"]["content"]["drafted"]["written"], json!([]), "{first}");
+    desk.write("endpoints/orders.yaml", SEED_ENDPOINT).await;
+    desk.write("operations/orders.yaml", SEED_OPERATION).await;
+
+    let scouted = desk.scout(true).await;
+    println!("{scouted}");
+    let again = desk.scout(true).await;
+    println!("{}", again["result"]["report_hash"]);
 
     let elapsed = began.elapsed();
     println!("the first hour took {:.1} s", elapsed.as_secs_f64());

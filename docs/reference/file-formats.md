@@ -281,7 +281,15 @@ An `expression` and `rows` read `row`, the record of the row's cells by header t
 | `expect` (required) | The expected result, or the expected trace signature |
 | `restore` | For live write tests: true to put the original values back afterwards |
 
-A fixture folder holds recorded snapshots and exchanges and a marker file stating that it was scrubbed: `fixture.yaml`, with `scrubbed: true`.
+A fixture folder holds a marker file stating that it was scrubbed, `fixture.yaml` with `scrubbed: true`, and the recorded answers an offline test is replayed from ([decisions 0177](../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md) and [0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)):
+
+| File | What it holds |
+| --- | --- |
+| `<name>.json` | The answer of each step named `<name>`: the entry of the pack's file the step refers to (a call, an endpoint, a statement, a document, an upstream tool, or the last part of an entry such as `surface/tool`), or, for a step that refers to none, its kind. An object of the values the step observed; `null` for a record that is absent; or a list of those, given in order to the steps of that name, each once. An exact number is written as text |
+| `<name>.request.json` | For a committing step: the values the engine must send it, by argument name, an object or a list in the order the saves are sent. Compared field by field with what was sent; a save sent with no recorded request fails the test |
+| Any other file | A file a step or a source reads. A pipeline's source is named by the test's input `source`, a file of this folder, read through the checked paths |
+
+A step with no answer left fails the test as `fixture_no_answer`, and nothing is sent. In `expect`, a field the result does not hold may name the run itself: `state` (its end state, `completed` unless given), `records_verified` (records read back and matched, or found unchanged), and `failure` (the code it stopped with). A test of a write runs in a ledger of its own, thrown away when it ends.
 
 ## Expressions
 

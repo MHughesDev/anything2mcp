@@ -80,6 +80,10 @@ summary = "A binding writes only a format the pack has a patch editor for: delim
 finding_kind = "file_layout"
 file_kind = "document"
 
+[[drafting_rules]]
+finding_kind = "file_layout"
+file_kind = "operation"
+
 [[failure_codes]]
 class = "drift"
 code = "file_missing"

@@ -1516,7 +1516,10 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     assert!(!described.text.contains("stock.csv"));
 
     // The drafter writes a document for each layout, with the file's own
-    // fingerprint, and leaves the key and every type as an open question.
+    // fingerprint. A cell of delimited text or a workbook is the text it
+    // holds; a JSON value's type and every key are left as questions. With
+    // no `target.yaml` in the folder, no read is drafted: a read is named
+    // after its target.
     let folder = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
@@ -1541,8 +1544,9 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
             .filter(|question| question.file.as_str() == file)
             .count()
     };
-    // One for the key, and one for the type of each of the four columns.
-    assert_eq!(questions("documents/stock.yaml"), 5);
+    // Delimited text: no question. JSON: the key, and each value's type.
+    assert_eq!(questions("documents/stock.yaml"), 0);
+    assert!(questions("documents/example_settings.yaml") > 0);
     // A question is the pack's own words. No header, table name, or file
     // name reaches it: text in a file may be written as an instruction.
     for question in &drafted.open_questions {
@@ -1569,6 +1573,234 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     );
     // Nothing is drafted for a write.
     assert!(!stock.contains("writable"), "{stock}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// Discovers the files named, through a port that can only read, and
+/// drafts from what was found into a folder holding the fixtures' own
+/// `target.yaml`, so that reads are drafted beside the documents.
+async fn drafted_from(
+    scene: &Scene,
+    names: &[&str],
+) -> (std::path::PathBuf, a2m_files::DraftReport) {
+    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_provider::{CheckedPaths, Deadline, DiscoveryScope, ReadOnlyPort, RootName};
+
+    let surface = scene.surface("price_files");
+    let description = a2m_provider::SurfaceDescription {
+        kind: SurfaceKind::new("file").unwrap(),
+        archetype: Archetype::Artifact,
+        address: "prices".to_owned(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let roots = common::roots(&scene.stand, Access::Read);
+    let mut paths = CheckedPaths::none();
+    for name in names {
+        let path = roots
+            .check(&RootName::new("project").unwrap(), name, Access::Read)
+            .unwrap();
+        paths.insert(*name, path);
+    }
+    let (handle, prepared) = scene.prepared(&surface, None, Posture::Discovery).await;
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(std::time::Duration::from_secs(30)),
+        paths: &paths,
+        redact: &a2m_core::NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    let folder = std::env::temp_dir().join(format!(
+        "a2m-pack-file-drafted-reads-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(
+        common::fixtures().join("target.yaml"),
+        folder.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(
+        scene.registry.compiler_set(),
+        &a2m_files::TargetRoot::new(&folder),
+    )
+    .draft(&kept.0)
+    .unwrap();
+    (folder, report)
+}
+
+#[tokio::test]
+async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_the_key() {
+    let mut scene = Scene::new();
+    let (folder, report) = drafted_from(&scene, &[seed::STOCK_CSV, seed::ADJUSTMENTS_CSV]).await;
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        written,
+        [
+            "documents/adjustments.yaml",
+            "documents/stock.yaml",
+            "operations/adjustments_get.yaml",
+            "operations/adjustments_list.yaml",
+            "operations/stock_get.yaml",
+            "operations/stock_list.yaml",
+        ]
+    );
+    assert!(report.refused.is_empty(), "{report:?}");
+    // The documents and the lists hold no question; the reads by key hold
+    // every one: the key, and the type of each key field.
+    let mut questioned: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    questioned.dedup();
+    assert_eq!(
+        questioned,
+        ["operations/adjustments_get.yaml", "operations/stock_get.yaml"]
+    );
+    let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
+    assert!(
+        stock.contains("type: \"untrusted_text\"") && !stock.contains("key:"),
+        "{stock}"
+    );
+    assert!(!stock.contains("writable"), "{stock}");
+
+    // While a read by key holds its questions, nothing compiles, and the
+    // compiler names the file and the question.
+    let held = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    let question = held.find("kernel.open_question").unwrap();
+    assert!(
+        question.at.file.as_str().ends_with("_get.yaml"),
+        "{held:?}"
+    );
+    // Set aside, as the scout sets aside a draft that holds a question,
+    // the documents and the lists compile.
+    for file in &questioned {
+        std::fs::remove_file(folder.join(file)).unwrap();
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let untrusted = scene
+        .plan
+        .field_types
+        .iter()
+        .position(|field_type| field_type.name == a2m_files::UNTRUSTED_TEXT)
+        .unwrap();
+    assert!(scene.plan.field_types[untrusted].untrusted);
+    let normalizer = a2m_expr::Normalizer::load(
+        scene
+            .plan
+            .expression(scene.plan.field_types[untrusted].normalizer.unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    for (file, operation) in [
+        (seed::STOCK_CSV, "example_stock_list"),
+        (seed::ADJUSTMENTS_CSV, "example_adjustments_list"),
+    ] {
+        let observed = scene.read_operation(operation, &Values::new()).await.unwrap();
+        let result = common::outputs_of(&scene.plan, operation, last_values(&observed));
+        let plan = scene
+            .plan
+            .operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap();
+        // Each output is marked untrusted, but whether more rows were left.
+        for output in &plan.outputs {
+            let marked = output
+                .field_type
+                .is_some_and(|index| scene.plan.field_types[index.get()].untrusted);
+            assert_eq!(marked, output.name != "truncated", "{}", output.name);
+        }
+        assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
+        // What the stand holds, column by column, read by its own reader.
+        let stored = scene.stand.stored_rows(file, ',').unwrap();
+        let (headers, rows) = stored.split_first().unwrap();
+        for (position, header) in headers.iter().enumerate() {
+            let list = result.get(header).and_then(Value::as_list).unwrap();
+            let expected: Vec<Value> = rows
+                .iter()
+                .map(|row| normalizer.normalize(&text(&row[position])).unwrap().normalized)
+                .collect();
+            assert_eq!(list, expected.as_slice(), "{file} {header}");
+        }
+    }
+    // A field that begins with a sign a spreadsheet program would run is
+    // returned as the text it is, and marked: the formula rule is a rule of
+    // writes, and a value is never changed.
+    let observed = scene
+        .read_operation("example_adjustments_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(&scene.plan, "example_adjustments_list", last_values(&observed));
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    assert_eq!(
+        column("amount"),
+        [text("=1+2"), text("+15"), text("-12.50"), text("7")]
+    );
+    assert_eq!(column("memo")[1], text("@reviewer"));
+    assert_eq!(column("memo")[3], text("=HYPERLINK(\"x\")"));
+    // Nothing was written.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // A write over the drafted document does not compile: its rows have no
+    // key, which is still the question of the read by key.
+    let write = "operation: example_stock_set
+effect: write
+key: item_code
+inputs:
+  item_code: {type: identifier}
+  on_hand: {type: integer}
+bindings:
+  - mode: file
+    verb: update
+    document: stock
+    record: rows
+    key: {item_code: input.item_code}
+    fields: {on_hand: input.on_hand}
+    read_back: {record: rows}
+description: >
+  Sets the quantity on hand of one item in the stock file.
+";
+    std::fs::write(folder.join("operations").join("stock_set.yaml"), write).unwrap();
+    let refused = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    assert!(
+        refused
+            .iter()
+            .any(|problem| problem.message.contains("states no key")
+                && problem.message.contains("open question")),
+        "{refused:?}"
+    );
+    // Nor does marking a drafted field writable: a written field is of a
+    // type someone stated.
+    std::fs::write(
+        folder.join("documents").join("stock.yaml"),
+        stock.replacen(
+            "type: \"untrusted_text\"",
+            "type: \"untrusted_text\"\n        writable: true",
+            1,
+        ),
+    )
+    .unwrap();
+    let refused = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
+    assert!(
+        refused
+            .iter()
+            .any(|problem| problem.code.as_str() == "file.document_invalid"
+                && problem.message.contains("untrusted_text")),
+        "{refused:?}"
+    );
     let _ = std::fs::remove_dir_all(&folder);
 }
 
