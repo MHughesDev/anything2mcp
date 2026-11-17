@@ -14,12 +14,12 @@
 //! empty (decision 0112).
 
 use a2m_core::{
-    FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes::{self, shown};
@@ -41,6 +41,8 @@ pub const INVOKE: StepKind = StepKind::fixed("invoke");
 
 const READ_VERBS: &[&str] = &["read", "list"];
 const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "submit"];
+/// The verbs whose write cannot be taken back.
+const IRREVERSIBLE_VERBS: &[&str] = &["submit"];
 
 /// How long a step may take when the target states no timeout under the
 /// step kind's name.
@@ -424,6 +426,32 @@ impl Lowering for UiLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// Only an `invoke` may save, and then as its action declares; a
+    /// `goto`, `wait`, `read`, or `set` never does.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == INVOKE {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// The HTTP pack's rule, for one meaning of a verb across the modes
+    /// (decision 0144): a verb that reads is a read; `submit` cannot be
+    /// taken back; any other write is a write when the binding names how
+    /// the record is read back, and `irreversible` when it names nothing,
+    /// since what was written could never be found again.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        let verb = binding.verb.as_str();
+        if READ_VERBS.contains(&verb) {
+            EffectClass::Read
+        } else if IRREVERSIBLE_VERBS.contains(&verb) || binding.field("read_back").is_none() {
+            EffectClass::Irreversible
+        } else {
+            EffectClass::Write
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

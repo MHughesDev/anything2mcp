@@ -29,7 +29,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 21 | Lessons from RPA products | Phase 3 | 8, 10, 31 |
 | 22 | Reproducibility and observability | Phase 9 | 28, 29 |
 | 23 | Vendor APIs and terms of use | Before the first real target | 34 |
-| 24 | WebMCP standard status | Phase 8 | 6 |
+| 24 | WebMCP standard status. Answered by note 25 | Phase 8 | 6 |
 | 25 | Gap-review components | The phase each lands in | 32 |
 | 26 | Local channel on three operating systems | Phase 1 | 39 |
 | 27 | Operating-system user-presence checks. Answered by note 20 | Phase 3 | 18, 39 |
@@ -37,6 +37,9 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 29 | Command-line design for agents | Phase 5 | 40 |
 | 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
 | 31 | Cedar spike. Answered by decision 0082 | Phase 3 | 45 |
+| 32 | First standard wire protocol of the stream pack. Answered by note 22 | Milestone 8, packages J2 and J3 | 309 |
+| 33 | Client crates for a server database beside the embedded one. Answered by note 23 | Milestone 8 package G3; milestone 9 package 6.1 | 307, 208 |
+| 34 | What turning TLS on needs in this workspace. Answered by note 24 | Before the first real target; milestone 9 | 226, 303 |
 
 ## Briefs
 
@@ -86,7 +89,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **23. Vendor APIs and terms of use.** For the first real target, chosen privately by the owner: what its published API covers and omits; rate limits; whether it offers its own MCP server; what its terms say about automated access. In general: what typical SaaS terms say about automating a licensed user's own account. Not legal advice. Keep the application's name out of the repository.
 
-**24. WebMCP standard status.** The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
+**24. WebMCP standard status.** (Answered by [note 25](25-webmcp-standard-status.md). The brief stays so that references to it resolve.) The current state of the W3C community-group proposal and Chrome's implementation; whether tools can be discovered and called by an external agent through the DevTools protocol; adoption.
 
 **25. Gap-review components.** For each component in [spec section 604](../spec/6-running-it/604-management-and-operations.md), find prior art and pitfalls before designing it in detail: environments, triggers, mid-run input, undo, read caching, data classification, identity isolation, single-session apps, tool versioning, authorization records, usage metering, updates, and target packs.
 
@@ -101,3 +104,9 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 **30. Sign-in in engine-owned profiles, and device-bound sessions.** On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
 
 **31. Cedar spike.** (Answered by [decision 0082](../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which ran the spike and chose the policy crate's own evaluator. The brief stays so that references to it resolve.) Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Anything2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.
+
+**32. First standard wire protocol of the stream pack.** (Answered by [note 22](22-stream-wire-protocol.md). The brief stays so that references to it resolve.) Added after [decision 0104](../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) left the choice open. Compare NATS with JetStream, MQTT 5, AMQP 1.0, and Kafka against the nine requirements of that record. Check each client crate on the registry and against the closed licence list, and weigh a client of our own against a crate.
+
+**33. Client crates for a server database beside the embedded one.** (Answered by [note 23](23-server-database-clients.md). The brief stays so that references to it resolve.) Added for the ledger's Postgres back end and the data pack's server store. Compare the client crates for Postgres, MySQL, and SQL Server on maintenance, licence tree, C code, encrypted links, and what they leave to the caller: deadlines, the fate of a failed call, read-only transactions, exact numbers, pools.
+
+**34. What turning TLS on needs in this workspace.** (Answered by [note 24](24-turning-tls-on.md). The brief stays so that references to it resolve.) Added after the overnight build's journal named "TLS is off". What the HTTP client, the server listener, the database and stream links, and the test stands need; the cost of each stack; trust roots on three systems and in minimal containers.

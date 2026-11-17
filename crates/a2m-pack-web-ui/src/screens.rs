@@ -549,6 +549,14 @@ impl FileKind for ScreenKind {
         &self.schema
     }
 
+    /// A screen that declares any action describes a write: an action is a
+    /// click on the system, and whether it saves is the word of whoever
+    /// wrote it. The drafter writes none (decision 0144).
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("actions")
+            .is_some_and(|actions| !actions.entries().is_empty())
+    }
+
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
         doc.get("screen")
             .and_then(|name| {

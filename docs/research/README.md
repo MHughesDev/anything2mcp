@@ -14,7 +14,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [08-entra-identity.md](08-entra-identity.md) | Acting as a user or a service under Entra ID | Partial |
 | [09-rust-building-blocks.md](09-rust-building-blocks.md) | Crates and engine options | Partial; most crates unverified |
 | [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `anything2mcp` | Completed; quick reviews |
-| [11-open-research.md](11-open-research.md) | 31 research briefs still to run | To do; briefs 1, 2, and 27 are answered by notes 17, 18, and 20 |
+| [11-open-research.md](11-open-research.md) | 34 research briefs | To do; briefs 1, 2, 24, 27, 32, 33, and 34 are answered by notes 17, 18, 25, 20, 22, 23, and 24 |
 | [12-packaging-and-agent-interfaces.md](12-packaging-and-agent-interfaces.md) | Package names, pip and npm packaging, commands versus MCP tools | Partial; search results and registry checks |
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |
 | [14-sessions-and-policy-engines.md](14-sessions-and-policy-engines.md) | Browser profile limits, device-bound sessions, Entra session rules, Cedar | Partial; search results only |
@@ -25,6 +25,10 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [19-desktop-accessibility-base.md](19-desktop-accessibility-base.md) | What the desktop pack stands on, on each operating system | Completed; the Linux back end was run against two small windows, the Windows and macOS programs were type-checked and not run |
 | [20-operating-system-user-presence-checks.md](20-operating-system-user-presence-checks.md) | Which prompt the operating system owns can prove a person is present, on each system; what a program running as the user can do against it; how to call each from Rust | Completed; documentation and source read, call paths type-checked for three systems, no prompt pressed |
 | [21-wheel-and-npm-packaging.md](21-wheel-and-npm-packaging.md) | How the pip wheel carries the binary and a client, the npm launcher and platform packages, the platform tags, `dist`, and the registries' rules for short-lived publishing credentials | Completed; built and installed on Linux x86-64 only, registry documentation read in its sources, nothing published |
+| [22-stream-wire-protocol.md](22-stream-wire-protocol.md) | Which standard protocol the stream pack speaks first, and whether its client is a crate or our own | Completed; documentation and the server's source read, client crates checked on the registry, nothing run against a broker |
+| [23-server-database-clients.md](23-server-database-clients.md) | Client crates for Postgres, MySQL, and SQL Server beside the embedded store, for the ledger and the data pack | Completed; registry, source, and licence trees checked, nothing compiled or run |
+| [24-turning-tls-on.md](24-turning-tls-on.md) | What it takes to switch TLS on across the workspace: the panic, the options, the cost, the server side, trust roots | Completed; the repository and the crates' source read, licence trees checked, nothing compiled or run |
+| [25-webmcp-standard-status.md](25-webmcp-standard-status.md) | The state of the WebMCP draft and whether the engine can call a site's tools through the DevTools protocol | Completed; the draft's repository read, the protocol run against one Chrome build on Linux only |
 
 ## How to read the status
 
