@@ -70,6 +70,11 @@ impl TestBroker {
     ///
     /// Returns an error if no port could be bound.
     pub async fn start() -> Result<Self, HarnessError> {
+        // A test that builds the product's own registry in this process
+        // reaches the broker it started: the stream pack's ordinary
+        // registration offers the stand's protocol from now on, here only.
+        // The shipped program never links the stand (decision 0201).
+        a2m_pack_stream::offer_test_broker_protocol_in_this_process();
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .map_err(HarnessError::Start)?;

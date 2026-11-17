@@ -49,7 +49,7 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 | Driver | One |
 | File kinds | Owns `screens/` for surfaces of kind `desktop`. Registration is keyed by file kind and surface kind, so the web pack's registration for `web` surfaces does not collide. `reach` takes a window match (process, title, or an automation identifier) or `from` another screen with an action. The `css` locator is not accepted; `test_id` means the interface's automation identifier |
 | Binding fields | `screen`, `verb`, `fields`, `action`, as for `ui` |
-| Control names | `text`, `textarea`, `number`, `select`, `combobox`, `checkbox`, `radio`, `date`, `grid`, `tree`, `tabs`, `dialog`, where the operating system's interface exposes them. The rest are refused until a test passes |
+| Control names | `desktop_text`, `textarea`, `number`, `select`, `combobox`, `checkbox`, `radio`, `date`, `grid`, `tree`, `tabs`, `dialog`, where the operating system's interface exposes them. The rest are refused until a test passes |
 | Finding kinds | `window` for desktop subjects, built: one window's shape, never a value; `surface` with `desktop_probe` |
 | Discoverers | `desktop_probe`, `desktop_snapshot` |
 | Describer | `desktop_describer`, in the snapshot text form |

@@ -27,7 +27,7 @@
 //! macOS back ends (on those systems the driver stops at prepare with
 //! `system_not_built`), keys and clicks, starting an application, the
 //! discoverer `desktop_probe`, the lint rules of the design, and every
-//! control but `text`.
+//! control but `desktop_text`.
 //!
 //! The product crate registers the pack with one call, [`add_to`].
 //!

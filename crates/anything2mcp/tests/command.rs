@@ -400,6 +400,7 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
     let names = [
         "command",
         "data",
+        "desktop",
         "device",
         "file",
         "http",
@@ -408,9 +409,10 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
         "web",
         "web_probe",
     ];
-    // The web pack's two providers need a browser on the machine, so only
-    // the others are held to `ready` here.
-    let needs_a_program = ["web", "web_probe"];
+    // The web pack's two providers need a browser on the machine, and the
+    // desktop pack needs the accessibility bus and is built for Linux only,
+    // so only the others are held to `ready` here.
+    let needs_a_program = ["desktop", "web", "web_probe"];
     for off in names {
         let bare = Bare::new();
         bare.installation(&format!("[providers]\ndisabled = [\"{off}\"]\n"));

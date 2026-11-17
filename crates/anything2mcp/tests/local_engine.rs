@@ -931,6 +931,14 @@ async fn an_agents_publish_waits_on_its_page_and_a_persons_press_publishes_it_on
     assert_eq!(page.status().as_u16(), 200);
     let text = page.text().await.unwrap();
     assert!(text.contains("version.publish"), "{text}");
+    // The page says where the version leads, by address, in each environment.
+    assert!(
+        text.contains(&format!(
+            "<h2>Where it leads</h2><ul><li><code>api</code>, a surface of the kind <code>http</code>, leads to <code>{}</code> in the environment <code>test</code>;",
+            app.url("").trim_end_matches('/')
+        )),
+        "{text}"
+    );
     let marker = "name=\"once\" value=\"";
     let from = text.find(marker).unwrap() + marker.len();
     let once = &text[from..from + text[from..].find('"').unwrap()];

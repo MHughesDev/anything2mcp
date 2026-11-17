@@ -19,11 +19,6 @@ mod state;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-// The stand depends on the stream pack only to turn on the pack's
-// `example-protocol`, the protocol it speaks, in every build that has the
-// stand as a dependency (decision 0197). It uses nothing of the pack.
-use a2m_pack_stream as _;
-
 use tokio::sync::watch;
 
 use crate::state::State;

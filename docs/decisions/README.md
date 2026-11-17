@@ -201,3 +201,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0195 | [A read never runs where the page may write, and a page keeps only its structure](0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md) | Accepted (design decision) |
 | 0196 | [The engine and the registry after the acknowledgement ruling and the first hour](0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md) | Accepted (design decision) |
 | 0198 | [The desktop pack's first slice reads Linux applications through a look-only back end](0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md) | Accepted (design decision) |
+| 0199 | [The halves left for each other are joined](0199-the-halves-left-for-each-other-are-joined.md) | Accepted (design decision) |

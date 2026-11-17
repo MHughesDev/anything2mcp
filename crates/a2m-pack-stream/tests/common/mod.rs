@@ -70,14 +70,15 @@ fn host(folder: &Folder, redact: Arc<dyn Redact>) -> HostServices {
     }
 }
 
-/// A registry that holds the stream pack and nothing else.
+/// A registry that holds the stream pack and nothing else, registered as a
+/// test registers it: with the test broker's protocol.
 pub fn registry_with(
     folder: &Folder,
     settings: ProviderSettings,
     redact: Arc<dyn Redact>,
 ) -> Registry {
     let mut builder = RegistryBuilder::new(settings, host(folder, redact));
-    a2m_pack_stream::register(&mut builder);
+    a2m_pack_stream::register_with_test_broker(&mut builder);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     registry

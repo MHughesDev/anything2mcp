@@ -12,9 +12,11 @@
 //! standard one (decision 0167); and `example-broker/1`, the line protocol
 //! of the test broker under `targets/example-broker`. A surface of kind
 //! `broker` says which it speaks. The second exists only to speak to that
-//! stand, so it is built only with the feature `example-protocol`, which
-//! the stand turns on for every build that has the stand as a dependency:
-//! the tests. The shipped product does not offer it (decision 0197).
+//! stand, so the registration the product makes, [`register`], never offers
+//! it: only a test's own registration does, [`register_with_test_broker`],
+//! or a process in which the stand's harness has started a broker
+//! (decision 0201, which replaces the feature of decision 0197). Whatever
+//! a build unifies, the shipped program offers `nats` alone.
 //!
 //! The product crate makes one call: [`register`].
 
@@ -23,7 +25,6 @@ pub mod codes;
 mod discover;
 mod draft;
 mod driver;
-#[cfg(feature = "example-protocol")]
 mod example_wire;
 mod json;
 mod lint;
@@ -33,6 +34,7 @@ mod nats_wire;
 mod wire;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use a2m_core::{Failure, Value};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
@@ -43,26 +45,76 @@ use crate::names::{BROKER, Names};
 /// The pack's manifest, as the registry reads it.
 pub const MANIFEST: &str = include_str!("manifest.toml");
 
-/// The wire protocols this build speaks, by the name a surface of kind
-/// `broker` states under `protocol`. A surface naming another does not
-/// compile.
-#[cfg(feature = "example-protocol")]
-pub const PROTOCOLS: &[&str] = &[nats_wire::NAME, example_wire::NAME];
-/// The wire protocols this build speaks, by the name a surface of kind
-/// `broker` states under `protocol`. A surface naming another does not
-/// compile. The test broker's own protocol is not among them: it is built
-/// only with the feature `example-protocol`.
-#[cfg(not(feature = "example-protocol"))]
+/// The wire protocols the product's registration offers, by the name a
+/// surface of kind `broker` states under `protocol`. A surface naming
+/// another does not compile. The test broker's protocol is not among them.
 pub const PROTOCOLS: &[&str] = &[nats_wire::NAME];
 
-/// The stream pack.
+/// The test broker's protocol, offered only by a test's own registration.
+pub const TEST_BROKER_PROTOCOL: &str = example_wire::NAME;
+
+/// What a registration that offers the test broker's protocol offers.
+const WITH_TEST_BROKER: &[&str] = &[nats_wire::NAME, example_wire::NAME];
+
+/// The stream pack. The value the product registers offers [`PROTOCOLS`];
+/// [`StreamPack::with_test_broker`] offers the test broker's protocol too.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct StreamPack;
+pub struct StreamPack {
+    test_broker: bool,
+}
+
+impl StreamPack {
+    /// The pack as a test registers it to speak to the test broker under
+    /// `targets/example-broker`: the product never does.
+    #[must_use]
+    pub const fn with_test_broker() -> Self {
+        Self { test_broker: true }
+    }
+
+    /// The wire protocols this registration offers.
+    #[must_use]
+    pub fn protocols(&self) -> &'static [&'static str] {
+        if self.test_broker {
+            WITH_TEST_BROKER
+        } else {
+            PROTOCOLS
+        }
+    }
+}
+
+/// Set once the stand's harness has started a broker in this process.
+static TEST_BROKER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Test equipment: from now on, in this process, [`register`] offers the
+/// test broker's protocol as [`register_with_test_broker`] does. Called by
+/// the harness of `targets/example-broker` when it starts a broker, so that
+/// a test that builds the product's own registry in its process (the
+/// product's end-to-end tests) reaches the broker it started. The shipped
+/// program never links the stand, so nothing in it calls this, and a rule
+/// of this crate's tests holds that no other source names it. Nothing a
+/// caller sends reaches it.
+#[doc(hidden)]
+pub fn offer_test_broker_protocol_in_this_process() {
+    TEST_BROKER_STARTED.store(true, Ordering::SeqCst);
+}
 
 /// Hands the stream pack to the registry builder. This is the one call the
-/// product crate makes for the pack.
+/// product crate makes for the pack. It offers [`PROTOCOLS`], and never the
+/// test broker's protocol unless a broker of the stand was started in this
+/// process.
 pub fn register(builder: &mut RegistryBuilder) {
-    builder.add_pack(&StreamPack);
+    if TEST_BROKER_STARTED.load(Ordering::SeqCst) {
+        register_with_test_broker(builder);
+    } else {
+        builder.add_pack(&StreamPack::default());
+    }
+}
+
+/// Hands the stream pack to the registry builder with the test broker's
+/// protocol offered too: a test's own registration. The product never
+/// calls it.
+pub fn register_with_test_broker(builder: &mut RegistryBuilder) {
+    builder.add_pack(&StreamPack::with_test_broker());
 }
 
 /// A whole-number setting of the pack's own group. The registry has
@@ -96,7 +148,7 @@ impl Pack for StreamPack {
             names.mode.clone(),
             Arc::new(driver::StreamDriver::new(
                 Arc::clone(cx.redact()),
-                protocols(ceiling),
+                protocols(ceiling, self.test_broker),
                 idle_links,
             )),
         )?;
@@ -107,7 +159,7 @@ impl Pack for StreamPack {
                     "address",
                     JsonSchema::object()
                         .required("address", JsonSchema::text())
-                        .required("protocol", JsonSchema::words(PROTOCOLS)),
+                        .required("protocol", JsonSchema::words(self.protocols())),
                 ))
                 .file_kind(Arc::new(channel::ChannelKind::new(ceiling_ms)))
                 .file_kind(Arc::new(channel::SchemaKind::new()))
@@ -137,25 +189,15 @@ impl Pack for StreamPack {
     }
 }
 
-/// The wire protocols the driver speaks: those of [`PROTOCOLS`].
-fn protocols(ceiling: usize) -> Vec<Arc<dyn wire::Protocol>> {
+/// The wire protocols the driver speaks: `nats`, and the test broker's
+/// only for a registration that offers it.
+fn protocols(ceiling: usize, test_broker: bool) -> Vec<Arc<dyn wire::Protocol>> {
     let mut protocols: Vec<Arc<dyn wire::Protocol>> =
         vec![Arc::new(nats_wire::NatsProtocol::new(ceiling))];
-    protocols.extend(stand_protocol());
+    if test_broker {
+        protocols.push(Arc::new(example_wire::ExampleProtocol));
+    }
     protocols
-}
-
-/// The test broker's protocol, in a build with the feature
-/// `example-protocol`.
-#[cfg(feature = "example-protocol")]
-fn stand_protocol() -> Option<Arc<dyn wire::Protocol>> {
-    Some(Arc::new(example_wire::ExampleProtocol))
-}
-
-/// Nothing: this build does not speak the test broker's protocol.
-#[cfg(not(feature = "example-protocol"))]
-fn stand_protocol() -> Option<Arc<dyn wire::Protocol>> {
-    None
 }
 
 /// The pack's version, as its manifest states it: the text of the first
@@ -178,36 +220,64 @@ mod tests {
 
     use std::path::Path;
 
-    /// Decision 0197: the test broker's protocol is not offered by the
-    /// shipped product. Only the stand's manifest turns the feature on, and
-    /// no crate of the workspace has the stand as anything but a
-    /// development dependency (the documentation audit holds that), so a
-    /// build of the product alone never speaks it.
+    /// Decision 0201: only the stand's harness opens the test broker's
+    /// protocol to the ordinary registration, and the product names only
+    /// the ordinary registration. No manifest turns a feature on for it:
+    /// there is none to turn on.
     #[test]
-    fn only_the_test_broker_turns_its_protocol_on() {
+    fn only_the_test_broker_offers_its_protocol_to_the_ordinary_registration() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap();
-        let mut turning_on = Vec::new();
-        for top in ["crates", "targets", "bench"] {
-            let Ok(entries) = std::fs::read_dir(root.join(top)) else {
+        let mut naming = Vec::new();
+        let mut folders = vec![
+            root.join("crates"),
+            root.join("targets"),
+            root.join("bench"),
+        ];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else {
                 continue;
             };
             for entry in entries {
-                let manifest = entry.unwrap().path().join("Cargo.toml");
-                let Ok(text) = std::fs::read_to_string(&manifest) else {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "target") {
+                        folders.push(path);
+                    }
+                    continue;
+                }
+                let ours = path.starts_with(root.join("crates").join("a2m-pack-stream"));
+                let rust = path.extension().is_some_and(|extension| extension == "rs");
+                let cargo = path.file_name().is_some_and(|name| name == "Cargo.toml");
+                if !rust && !cargo {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                let own = manifest.ends_with(Path::new("a2m-pack-stream").join("Cargo.toml"));
-                if !own && text.contains("\"example-protocol\"") {
-                    let folder = manifest.parent().unwrap();
-                    turning_on.push(folder.file_name().unwrap().to_string_lossy().into_owned());
+                if rust && !ours && text.contains("offer_test_broker_protocol_in_this_process") {
+                    naming.push(path.strip_prefix(root).unwrap().to_path_buf());
+                }
+                if cargo && text.contains("example-protocol") {
+                    naming.push(path.strip_prefix(root).unwrap().to_path_buf());
                 }
             }
         }
-        assert_eq!(turning_on, ["example-broker"]);
-        // In this build, a test build, the stand is a dependency.
-        assert!(super::PROTOCOLS.contains(&"example-broker/1"));
+        assert_eq!(
+            naming,
+            [Path::new("targets")
+                .join("example-broker")
+                .join("src")
+                .join("harness.rs")]
+        );
+        // What the product calls offers the real protocol alone.
+        assert_eq!(super::StreamPack::default().protocols(), ["nats"]);
+        assert_eq!(super::PROTOCOLS, ["nats"]);
+        assert_eq!(
+            super::StreamPack::with_test_broker().protocols(),
+            ["nats", super::TEST_BROKER_PROTOCOL]
+        );
     }
 }

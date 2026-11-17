@@ -7,13 +7,6 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[features]
-# `example-broker/1`, the line protocol of the test broker under
-# `targets/example-broker`, which exists only to speak to that stand. Off in
-# the shipped product; the stand turns it on for every build that has the
-# stand as a dependency, which is the tests (decision 0197).
-example-protocol = []
-
 [dependencies]
 a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }

@@ -47,10 +47,6 @@ pub(crate) enum WireErrorKind {
     /// The named subscription is not declared on the broker.
     SubscriptionMissing,
     /// Another connection holds the named subscription.
-    #[cfg_attr(
-        not(feature = "example-protocol"),
-        allow(dead_code, reason = "only the test broker's protocol says so")
-    )]
     SubscriptionInUse,
     /// The position is not one the log holds.
     PositionOutOfRange,

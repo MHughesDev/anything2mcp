@@ -2,7 +2,7 @@
 # write half (set, invoke, a commit point, a read-back), the Windows and
 # macOS back ends, keys and clicks, starting an application, the
 # `desktop_probe` discoverer, the lint rules of the design, and every
-# control but `text`. No platform list: the compiler side works on every
+# control but `desktop_text`. No platform list: the compiler side works on every
 # system, and the driver stops at prepare with `system_not_built` where it
 # has no back end.
 manifest_format = 1
@@ -65,7 +65,7 @@ finding_kind = "window"
 file_kind = "operation"
 
 [[controls]]
-name = "text"
+name = "desktop_text"
 
 [[failure_codes]]
 class = "drift"

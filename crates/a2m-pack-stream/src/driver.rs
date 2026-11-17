@@ -2102,7 +2102,6 @@ mod tests {
             Ok(Some(Credential::UserPassword { user, password }))
                 if user == "example-user" && password.expose() == "secret-for-tests-one"
         ));
-        #[cfg(feature = "example-protocol")]
         {
             assert!(
                 crate::example_wire::ExampleProtocol.carries(&Credential::Token(Secret::new("x")))

@@ -6,11 +6,11 @@ surface: desk
 reach: {window: {role: frame, title: "Example order"}}
 ready: {visible: {role: table, name: "Line items"}}
 fields:
-  order_number: {type: untrusted_text, control: text, locate: [{role: entry, name: "Order number"}]}
-  customer: {type: untrusted_text, control: text, locate: [{role: entry, name: "Customer"}]}
-  status: {type: untrusted_text, control: text, locate: [{role: entry, name: "Status"}]}
-  reference: {type: untrusted_text, control: text, locate: [{role: entry, name: "Reference"}]}
-  access_code: {type: untrusted_text, control: text, locate: [{role: password_text, name: "Access code"}]}
+  order_number: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: "Order number"}]}
+  customer: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: "Customer"}]}
+  status: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: "Status"}]}
+  reference: {type: untrusted_text, control: desktop_text, locate: [{role: entry, name: "Reference"}]}
+  access_code: {type: untrusted_text, control: desktop_text, locate: [{role: password_text, name: "Access code"}]}
 rows:
   locate:
     - {role: table, name: "Line items"}

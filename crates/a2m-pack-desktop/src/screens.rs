@@ -30,7 +30,7 @@ pub const DESKTOP_SURFACE: SurfaceKind = SurfaceKind::fixed("desktop");
 /// The controls this pack has a rule for: a value read as text. Each is
 /// declared in the manifest and registered with the compiler, which
 /// refuses any other.
-pub const CONTROLS: &[&str] = &["text"];
+pub const CONTROLS: &[&str] = &["desktop_text"];
 
 /// A code of this pack's compiler.
 pub(crate) fn code(rule: &'static str) -> LintCode {

@@ -404,7 +404,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         let field = |locate: DraftValue| {
             DraftValue::map(vec![
                 ("type", DraftValue::text(UNTRUSTED_TEXT)),
-                ("control", DraftValue::text("text")),
+                ("control", DraftValue::text("desktop_text")),
                 ("locate", locate),
             ])
         };
@@ -468,7 +468,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 snake(name),
                 DraftValue::map(vec![
                     ("type", DraftValue::text(UNTRUSTED_TEXT)),
-                    ("control", DraftValue::text("text")),
+                    ("control", DraftValue::text("desktop_text")),
                     ("locate", question),
                 ]),
             )
