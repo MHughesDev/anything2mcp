@@ -1,0 +1,183 @@
+//! A plan as the engine holds it: checked against its hash, with every
+//! expression parsed once and every field type's normalizer ready.
+
+use std::sync::Arc;
+
+use a2m_core::{
+    Digest, ExprIndex, Failure, FailureClass, FieldTypeIndex, InputPlan, Plan, Sensitivity, Value,
+    Values,
+};
+use a2m_expr::{Bindings, Normalizer, Program, names};
+
+use crate::codes;
+
+/// The name a step's expression reads for the record's current values: what
+/// the system held when the engine last read the record, as the driver gave
+/// it, or null when the record does not exist.
+pub const CURRENT: &str = "current";
+
+pub(crate) struct Loaded {
+    pub plan: Arc<Plan>,
+    pub hash: Digest,
+    programs: Vec<Program>,
+    normalizers: Vec<Option<Normalizer>>,
+}
+
+impl Loaded {
+    /// Checks the plan against the hash the job names, and loads it.
+    pub fn load(plan: Arc<Plan>, expected: &Digest) -> Result<Self, Failure> {
+        let unverified = || {
+            codes::fail(
+                FailureClass::Policy,
+                codes::PLAN_UNVERIFIED,
+                "The plan handed to the engine is not the plan the job names by its hash.",
+                "Publish the target again from its stored sources.",
+            )
+        };
+        let encoded = plan.encode().map_err(|_| unverified())?;
+        if encoded.hash != *expected {
+            return Err(unverified());
+        }
+        let programs = plan
+            .expressions
+            .iter()
+            .map(Program::load)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut normalizers = Vec::with_capacity(plan.field_types.len());
+        for field_type in &plan.field_types {
+            let normalizer = match field_type.normalizer {
+                Some(index) => {
+                    let expr = plan.expression(index).ok_or_else(unverified)?;
+                    Some(Normalizer::load(expr)?)
+                }
+                None => None,
+            };
+            normalizers.push(normalizer);
+        }
+        Ok(Self {
+            plan,
+            hash: *expected,
+            programs,
+            normalizers,
+        })
+    }
+
+    pub fn eval(&self, index: ExprIndex, scope: &Scope) -> Result<Value, Failure> {
+        let program = self.programs.get(index.get()).ok_or_else(|| {
+            codes::job_invalid("The plan refers to an expression it does not hold.")
+        })?;
+        let bindings = Bindings::new()
+            .with(names::INPUT, &scope.input)
+            .with(names::RESULT, &scope.result)
+            .with(names::ROW, &scope.row)
+            .with(names::SOURCE, &scope.source)
+            .with(names::STEPS, &scope.steps)
+            .with(names::ENV, &scope.env)
+            .with(CURRENT, &scope.current);
+        program.evaluate(&bindings)
+    }
+
+    /// Whether an expression that gives true or false holds.
+    pub fn holds(&self, index: ExprIndex, scope: &Scope) -> Result<bool, Failure> {
+        Ok(self.eval(index, scope)?.as_bool().unwrap_or(false))
+    }
+
+    pub fn sensitivity(&self, field_type: Option<FieldTypeIndex>) -> Sensitivity {
+        field_type
+            .and_then(|index| self.plan.field_type(index))
+            .map_or(Sensitivity::Internal, |field_type| field_type.sensitivity)
+    }
+
+    /// A raw value under its field type's rule. A field with no normalizer
+    /// is compared as it stands.
+    pub fn normalize(
+        &self,
+        field_type: Option<FieldTypeIndex>,
+        raw: &Value,
+    ) -> Result<Value, Failure> {
+        match field_type.and_then(|index| self.normalizers.get(index.get())) {
+            Some(Some(normalizer)) => Ok(normalizer.normalize(raw)?.normalized),
+            _ => Ok(raw.clone()),
+        }
+    }
+
+    /// Validates the inputs of an operation or a pipeline against their
+    /// declarations, and normalizes each by its field type. Every problem
+    /// is reported at once, by the name of its input and never by a value.
+    pub fn inputs(&self, declared: &[InputPlan], given: &Values) -> Result<Values, Failure> {
+        let mut problems = Vec::new();
+        let mut out = Values::new();
+        for name in given.names() {
+            if !declared.iter().any(|input| input.name == name) {
+                problems.push(format!("`{name}` is not an input"));
+            }
+        }
+        for input in declared {
+            let raw = given
+                .get(&input.name)
+                .filter(|value| !value.is_null())
+                .or(input.default.as_ref());
+            let Some(raw) = raw else {
+                if input.required {
+                    problems.push(format!("`{}` is required", input.name));
+                }
+                continue;
+            };
+            match self.normalize(Some(input.field_type), raw) {
+                Ok(value) if value.has_type(&input.ty) => {
+                    out.insert(input.name.clone(), value);
+                }
+                Ok(_) => problems.push(format!("`{}` is not a {}", input.name, input.ty.name())),
+                Err(failure) => problems.push(format!(
+                    "`{}` cannot be read as its type ({})",
+                    input.name,
+                    failure.code()
+                )),
+            }
+        }
+        if problems.is_empty() {
+            Ok(out)
+        } else {
+            Err(codes::fail(
+                FailureClass::Input,
+                codes::INPUT_INVALID,
+                format!("The inputs were refused: {}.", problems.join("; ")),
+                "Correct every input named and call the tool again.",
+            ))
+        }
+    }
+}
+
+/// The values an expression may read, by the names the file formats give.
+#[derive(Debug, Clone)]
+pub(crate) struct Scope {
+    pub input: Value,
+    pub result: Value,
+    pub row: Value,
+    pub source: Value,
+    pub steps: Value,
+    pub env: Value,
+    pub current: Value,
+}
+
+impl Scope {
+    pub fn new(env: Value) -> Self {
+        Self {
+            input: Value::Record(Values::new()),
+            result: Value::Record(Values::new()),
+            row: Value::Null,
+            source: Value::Null,
+            steps: Value::Record(Values::new()),
+            env,
+            current: Value::Null,
+        }
+    }
+
+    pub fn with_input(&self, input: &Values) -> Self {
+        let mut scope = self.clone();
+        scope.input = Value::Record(input.clone());
+        scope.result = Value::Record(Values::new());
+        scope.current = Value::Null;
+        scope
+    }
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approve a write</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+dt { font-weight: 600; margin-top: 0.75rem; }
+dd { margin: 0; overflow-wrap: anywhere; }
+code { font-family: ui-monospace, monospace; }
+.presses { display: flex; gap: 1rem; margin-top: 1.5rem; }
+button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>A write waits for your approval</h1>
+<p>{{summary}}</p>
+<dl>
+<dt>Tool</dt><dd><code>{{tool}}</code></dd>
+<dt>Run</dt><dd><code>{{run}}</code></dd>
+<dt>Started by</dt><dd>A program on this machine, acting for you (<code>{{started_by}}</code>)</dd>
+<dt>Hash of the change</dt><dd><code>{{diff_hash}}</code></dd>
+</dl>
+<p>This page does not show the changed records yet. <code>anything2mcp run get</code> for this run names the stored change; check that the hash there is the hash above. An approval is recorded for that exact change and no other.</p>
+<p>Pressing Approve does not approve by itself: this machine then asks for proof that a person is present. This page closes {{minutes}} minutes after it was first asked for. No answer is a decline.</p>
+<div class="presses">
+<form method="post" action="/approve/{{code}}/approve">
+<input type="hidden" name="once" value="{{once}}">
+<button type="submit">Approve</button>
+</form>
+<form method="post" action="/approve/{{code}}/decline">
+<input type="hidden" name="once" value="{{once}}">
+<button type="submit">Decline</button>
+</form>
+</div>
+</main>
+</body>
+</html>

@@ -1,0 +1,15 @@
+operation: example_pump_speed_get
+title: Get the pump's speed
+effect: read
+inputs: {}
+outputs:
+  speed: {type: pump_speed_rpm}
+  running: {type: boolean}
+bindings:
+  - mode: device
+    verb: read
+    status: verified
+    device_map: controller.main
+    read: {speed: pump_speed_measured, running: pump_running}
+description: >
+  Reads the pump's measured speed and whether it is running.

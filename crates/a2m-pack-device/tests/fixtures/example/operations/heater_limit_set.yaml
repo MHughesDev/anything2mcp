@@ -1,0 +1,20 @@
+operation: example_heater_limit_set
+title: Set the heater power limit
+# A register is found by its name in the map, and the kernel takes a
+# record key only from an input, so the operation has no identity and is
+# irreversible. The register is still read back.
+effect: irreversible
+commit_points: 1
+inputs:
+  limit: {type: integer, description: "Heater power limit, in percent"}
+outputs:
+  limit: {type: integer}
+bindings:
+  - mode: device
+    verb: update
+    status: shadow
+    device_map: controller.main
+    registers: {heater_power_limit: input.limit}
+    read_back: {limit: heater_power_limit}
+description: >
+  Sets the heater power limit and reads it back.

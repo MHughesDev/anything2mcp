@@ -1,0 +1,66 @@
+endpoint: order_list
+surface: api
+method: GET
+path: "/api/orders"
+auth: none
+effect: read
+headers: {accept: "application/json"}
+response_schema:
+  type: array
+  items:
+    type: object
+    required: [order_id, status]
+    properties:
+      order_id: {type: string}
+      customer: {type: string}
+      status: {type: string, enum: [draft, submitted]}
+      lines: {type: integer}
+---
+endpoint: order_get
+surface: api
+method: GET
+path: "/api/orders/{order_id}"
+auth: none
+effect: read
+headers: {accept: "application/json"}
+responses: {absent: [404]}
+response_schema:
+  type: object
+  required: [order_id, customer, status, items]
+  properties:
+    order_id: {type: string}
+    customer: {type: string}
+    status: {type: string, enum: [draft, submitted]}
+    items: {type: array, items: {type: object}}
+---
+endpoint: order_totals
+surface: api
+method: GET
+path: "/api/orders/{order_id}/totals"
+auth: none
+effect: read
+responses: {absent: [404]}
+response_schema:
+  type: object
+  required: [order_id, lines, total_quantity, total_length_in]
+  properties:
+    order_id: {type: string}
+    lines: {type: integer}
+    total_quantity: {type: integer}
+    total_length_in: {type: string}
+---
+endpoint: stock_get
+surface: api
+method: GET
+path: "/api/stock/{item_code}"
+auth: none
+effect: read
+responses:
+  unavailable:
+    - {status: 503, when: {error: unavailable}}
+response_schema:
+  type: object
+  required: [item_code, in_stock]
+  properties:
+    item_code: {type: string}
+    in_stock: {type: integer}

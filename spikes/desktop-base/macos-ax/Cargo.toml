@@ -1,0 +1,15 @@
+# Throwaway. Roadmap package 8.1, macOS: the Accessibility interface
+# (AXUIElement, AXObserver) through the `objc2` project's generated bindings.
+# Type-checked from Linux for aarch64-apple-darwin; never run.
+[package]
+name = "spike-desktop-macos-ax"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-application-services = { version = "=0.3.2", default-features = false, features = ["std", "HIServices", "AXUIElement", "AXError", "AXAttributeConstants", "AXActionConstants", "AXNotificationConstants", "AXRoleConstants", "AXValueConstants", "libc"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFString", "CFArray", "CFRunLoop", "CFDate", "CFDictionary", "CFNumber", "CFBase"] }

@@ -22,9 +22,9 @@ The MCP face is `a2m-mcp` and the REST face is `a2m-api` ([crate designs](../../
 | Revision | How it is served |
 | --- | --- |
 | 2026-07-28 | Stateless. No handshake and no session header ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)). Every request carries everything |
-| 2025-11-25 | Kept for older clients for as long as the Rust SDK supports both. The initialize exchange is answered from settings. No session identifier is issued, which that revision allows, so the server stays stateless |
+| 2025-11-25 | Kept for older clients for as long as clients in use open with the handshake. The initialize exchange is answered from settings. No session identifier is issued, which that revision allows, so the server stays stateless |
 
-The official Rust SDK, `rmcp`, provides stdio and Streamable HTTP server transports, OAuth support, and elicitation ([docs.rs](https://docs.rs/crate/rmcp)). One `rmcp` service serves both revisions with no session for either; the spike of roadmap package 0.5 ran it, and the server stands on that crate behind a seam of its own ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)). A request that names a revision in its metadata is served under it; `initialize` selects 2025-11-25; an unserved revision is refused with the list of those served. The difference between revisions is kept inside `a2m-mcp`.
+One service serves both revisions with no session for either ([decision 0071](../../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md), [research note 18](../../research/18-mcp-server-base.md)). Its protocol layer is the project's own: the official Rust SDK, `rmcp`, was built on first and left, because its tree holds a crate declared unmaintained ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)). A request that names a revision in its metadata is served under it; `initialize` selects 2025-11-25; an unserved revision is refused with the list of those served. The difference between revisions is kept inside `a2m-mcp`.
 
 - **Explicit handles.** Because the protocol has no sessions, all continuity is carried by `run_id`, which matches the ledger's design exactly.
 - **One endpoint per toolset.** A toolset's list is the same for every caller connected to it; rights are checked at call time, and a refused call is a clear `policy` result. What each toolset lists, the names, descriptions, schemas, annotations, and results agents see, are in [section 221](221-the-tool-surface-agents-see.md).
@@ -56,6 +56,8 @@ Every route is generated from an action. There are two forms: the action route, 
 | `GET /api/v1/sessions` | `session.status` |
 | `GET /api/v1/runs/{id}/events` | The event stream below, authorized as `run.get` |
 | `GET /api/v1/openapi.json` | Generated from the registry; served by `a2m-api`, not an action |
+
+The two aliases of `tool.call` are not served yet: the catalog gives `tool.call` no alias, and an action has at most one, so an operation or a pipeline is called through `POST /api/v1/actions/tool.call` for now ([`a2m-api`](../../architecture/crates/a2m-api.md)).
 
 - **Calls.** `POST /api/v1/operations/{name}/calls` starts a call and returns a result or a `run_id`. An `Idempotency-Key` header is accepted on every call whose effect is a write.
 - **Status codes** come from the response's exit class alone: 200 for success; 202 for a run that rests waiting for a person or is still running; 400 for malformed; 401 for no caller; 403 for `policy`; 409 for `stale`; 429 and 503 for `busy`, with a retry time; 500 for anything else. The body is always the full response, so a client never needs the status code to know what happened.
@@ -106,7 +108,7 @@ The [technical reference](../../reference/technical-reference.md#local-channel) 
 5. **Idle stop.** With no runs, no captures, no pending approval, and no clients for a set time, 30 minutes by default (`engine.idle_stop_minutes`), the engine saves session state to the vault and exits. The session keeper holds the engine open for a session that would not survive a restart, up to its keep-alive window ([section 215](215-sessions-and-the-session-keeper.md)). The next command starts the engine again, and sessions resume from the vault.
 6. **Crash.** Runs in flight are left `running` in the ledger under a lease nobody holds. The next start sets each to `stopped` with the class `possible_commit` and the code `runner_lost`, and reconciles before any resumed write ([section 208](208-runs-the-ledger-and-resume.md)).
 
-Two locks are used. The engine lock is held by the engine for its whole life and proves one engine per user. The start lock is held by a client only while it starts the engine, so two clients never start two. Both are operating-system file locks in the runtime directory, released when the process dies; no lock is judged by a file merely existing.
+Two locks are used. The engine lock is held by the engine for its whole life and proves one engine per user. The start lock is held by a client only while it starts the engine, so two clients never start two. Both are operating-system file locks, released when the process dies; no lock is judged by a file merely existing. The engine lock is taken in the runtime directory and in the data directory together, so that two runtime directories never lead two engines to one store ([decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md)).
 
 **In-process mode.** For CI jobs and containers that run one command and exit, `--in-process` runs the engine inside the command itself, with no background process and no channel. It refuses to start while the engine lock is held (`engine_running`).
 

@@ -1,0 +1,46 @@
+operation: example_line_item_get
+title: Get a line item
+effect: read
+key: [order_id, item_code]
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+outputs:
+  description: {type: text}
+  quantity: {type: integer}
+  length_in: {type: length_ft_in}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: line_item_get
+description: >
+  Reads one line item of an order.
+---
+operation: example_line_item_upsert
+title: Create or update a line item
+effect: write
+key: [order_id, item_code]
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  description: {type: text, description: "What the item is"}
+  quantity: {type: integer, description: "How many"}
+  length_in: {type: length_ft_in, description: "Length, in inches"}
+outputs:
+  description: {type: text}
+  quantity: {type: integer}
+  length_in: {type: length_ft_in}
+bindings:
+  - mode: http
+    verb: upsert
+    status: shadow
+    endpoint: line_item_put
+    body:
+      description: input.description
+      quantity: input.quantity
+      length_in: input.length_in
+    read_back: {endpoint: line_item_get}
+description: >
+  Creates or updates one line item on a draft order.

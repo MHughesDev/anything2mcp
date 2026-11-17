@@ -1,0 +1,34 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Example account service", "version": "1"},
+  "paths": {
+    "/account": {
+      "get": {
+        "operationId": "getAccount",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Account"}}}}
+        }
+      }
+    },
+    "/orders/{orderId}": {
+      "get": {
+        "operationId": "getOrder",
+        "responses": {
+          "200": {"content": {"application/json": {"schema": {
+            "type": "object", "required": ["order_id"],
+            "properties": {"order_id": {"type": "string"}, "status": {"type": "string", "enum": ["draft", "submitted"]}}
+          }}}},
+          "404": {"description": "No such order"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteOrder",
+        "responses": {"204": {"description": "Deleted"}}
+      }
+    }
+  },
+  "components": {"schemas": {"Account": {
+    "type": "object", "required": ["name"],
+    "properties": {"name": {"type": "string"}, "echo": {"type": "string", "nullable": true}}
+  }}}
+}

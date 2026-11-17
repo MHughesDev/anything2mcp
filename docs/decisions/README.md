@@ -105,3 +105,27 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0122 | [Small things the core crate gives its builders, and a secret is wiped when dropped](0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) | Accepted (design decision) |
 | 0123 | [The Linux Secret Service back end is left out until its store crate stands on maintained crates](0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md) | Accepted (design decision) |
 | 0124 | [The plan declares a surface's programs, and a schema checks run-time values](0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md) | Accepted (design decision) |
+| 0096 | [The HTTP pack's endpoint entry, steps, and payload, as building them settled them](0096-the-http-packs-endpoint-entry-steps-and-payload-as-building-them-settled-them.md) | Accepted (design decision) |
+| 0097 | [What the provider contract could not give the HTTP driver, and what the pack does instead](0097-what-the-provider-contract-could-not-give-the-http-driver-and-what-the-pack-does-instead.md) | Accepted (design decision) |
+| 0100 | [The mode `sql`, and the data pack's contract as building it settled it](0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0101 | [What the data pack refuses, and how it names it](0101-what-the-data-pack-refuses-and-how-it-names-it.md) | Accepted (design decision) |
+| 0102 | [The `file` mode, and what the file pack registers](0102-the-file-mode-and-what-the-file-pack-registers.md) | Accepted (design decision) |
+| 0103 | [The file pack, as building it settled it](0103-the-file-pack-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0098 | [The `cli` mode is real, and a program is a surface](0098-the-cli-mode-is-real-and-a-program-is-a-surface.md) | Accepted (design decision) |
+| 0104 | [A wire protocol is one interface inside the stream pack, and the first standard one is still to be chosen](0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) | Accepted (design decision) |
+| 0105 | [The `stream` mode, and the stream pack as building it settled it](0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0099 | [The command pack as building it settled it, and what the kernel could not give it](0099-the-command-pack-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0110 | [The browser engine's interface as building it settled it](0110-the-browser-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0111 | [An observing tab's lock as built, and what the browser was measured to do](0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md) | Accepted (design decision) |
+| 0094 | [The action layer's interface, as building it settled it](0094-the-action-layers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0095 | [The settings loader and the in-process runner, as built](0095-the-settings-loader-and-the-in-process-runner-as-built.md) | Accepted (design decision) |
+| 0116 | [The REST router takes its caller from the mount and chooses its status in one table](0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md) | Accepted (design decision) |
+| 0114 | [The web probe as built: three discoverers over an observing tab](0114-the-web-probe-as-built-three-discoverers-over-an-observing-tab.md) | Accepted (design decision) |
+| 0112 | [The `ui` driver as built: five step kinds, and a commit that waits for its confirmation](0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md) | Accepted (design decision) |
+| 0113 | [A screen's fingerprint is a section, absent is a variant, and a table is read by its headings](0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md) | Accepted (design decision) |
+| 0115 | [The MCP endpoint as built: checks in front of the SDK, and a redactor on the way out](0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md) | Accepted (design decision) |
+| 0117 | [The local channel and the person surface on one machine, as built](0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md) | Accepted (design decision) |
+| 0120 | [The desktop pack stands on each system's own interface, through thin bindings](0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md) | Accepted (design decision) |
+| 0130 | [The MCP protocol layer is our own, because the SDK brings an unmaintained crate](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md) | Accepted (design decision) |
+| 0119 | [The product crate, as building it settled it](0119-the-product-crate-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0134 | [One browser starts at a time, and a silent start is slow, not foreign](0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md) | Accepted (design decision) |

@@ -1,0 +1,19 @@
+# The store of the imaginary order-entry system `example`, as the data pack
+# sees it. It describes no real product. The file is the test stand's, in
+# the root the tests name `project`.
+schema_version: 1
+target: example
+title: Example order entry, its store
+surfaces:
+  orders_db:
+    kind: database
+    store: sqlite
+    file: example.db
+    stands: alone
+environments:
+  test:
+    kind: test
+    test_records: [["A-100", "L-101"]]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

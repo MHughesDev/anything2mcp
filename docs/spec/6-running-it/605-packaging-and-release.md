@@ -64,7 +64,7 @@ The folders that are not crates (`targets/`, `bindings/`, `web/console/`, `plugi
 | Need | Choice | Note |
 | --- | --- | --- |
 | Async runtime, HTTP server and client | Tokio, Axum, Hyper with rustls | Standard, fast, no OpenSSL dependency |
-| MCP protocol | `rmcp`, the official Rust SDK | Tracks the 2026-07-28 specification ([docs.rs](https://docs.rs/crate/rmcp)) |
+| MCP protocol | Own protocol layer, in `a2m-mcp` | The official Rust SDK, `rmcp`, was built on first and left: its tree holds a crate declared unmaintained ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)) |
 | Browser | Own DevTools-protocol engine, in the web pack | It stands on a protocol client of our own, over the debugging pipe. Package 0.4 weighed chromiumoxide and Rustwright as a base and chose this ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)) |
 | Desktop accessibility | [xa11y](https://docs.rs/crate/xa11y/0.3.0) or per-platform crates | xa11y offers one API over UI Automation, AXUIElement, and AT-SPI2, under MIT; package 8.1 decides |
 | Storage | SQLite for one machine, Postgres for servers | One schema, two back ends |

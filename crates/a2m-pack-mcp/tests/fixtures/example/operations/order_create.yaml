@@ -1,0 +1,21 @@
+operation: example_order_create
+title: Create an order
+effect: write
+identity: {strategy: stamped}
+commit_points: 1
+inputs:
+  customer: {type: free_text, description: "Who the order is for"}
+  note: {type: free_text, required: false, description: "A note for the order"}
+outputs:
+  customer: {type: free_text}
+  note: {type: free_text}
+bindings:
+  - mode: mcp
+    verb: create
+    status: shadow
+    tool: orders_create
+    args: {customer: input.customer, note: input.note}
+    read_back: {}
+    lookup: {tool: orders_list}
+description: >
+  Creates one draft order. The server assigns its number.

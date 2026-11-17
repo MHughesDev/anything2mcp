@@ -1,0 +1,21 @@
+operation: example_stock_set
+title: Set the stock of an item
+effect: write
+key: item_code
+commit_points: 1
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1002"}
+  on_hand: {type: integer, description: "The quantity on hand"}
+outputs:
+  on_hand: {type: integer}
+bindings:
+  - mode: file
+    verb: update
+    status: shadow
+    document: stock
+    record: stock
+    key: {item_code: input.item_code}
+    fields: {on_hand: input.on_hand}
+    read_back: {record: stock}
+description: >
+  Sets the quantity on hand of one item in the stock file.

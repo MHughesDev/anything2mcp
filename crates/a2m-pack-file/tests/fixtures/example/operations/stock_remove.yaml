@@ -1,0 +1,19 @@
+operation: example_stock_remove
+title: Remove an item from the stock
+effect: write
+key: item_code
+commit_points: 1
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1005"}
+outputs:
+  on_hand: {type: integer}
+bindings:
+  - mode: file
+    verb: delete
+    status: shadow
+    document: stock
+    record: stock
+    key: {item_code: input.item_code}
+    read_back: {record: stock}
+description: >
+  Removes one item from the stock file.

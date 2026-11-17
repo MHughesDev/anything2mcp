@@ -1,0 +1,18 @@
+surface: config_files
+file: example-settings.json
+format: json
+fingerprint:
+  keys: [target, schema_version, standard_discount, tax_rate, rounding, max_weight_kg, labels, warehouses, empty_list, empty_object, note]
+records:
+  warehouse:
+    path: [warehouses]
+    key: [code]
+    fields:
+      code: {path: [code], type: identifier}
+      cutoff: {path: [cutoff_time], type: cutoff, writable: true}
+  general:
+    path: []
+    fields:
+      schema_version: {path: [schema_version], type: integer, writable: true}
+      discount: {path: [standard_discount], type: rate}
+      note: {path: [note], type: note}

@@ -1,0 +1,23 @@
+# The imaginary order-entry system `example`, reached through the MCP server
+# it provides. It describes no real product. These files are the MCP pack's
+# own fixtures: they compile with the pack's registrations and nothing else.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  orders:
+    kind: mcp
+    address: "http://127.0.0.1:9/mcp"
+  orders_local:
+    kind: mcp
+    address: stdio
+    program: "/opt/example/bin/example-mcp"
+    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    environment: {EXAMPLE_MCP_STATE: "/var/lib/example-mcp"}
+environments:
+  test:
+    kind: test
+    test_records: ["A-100"]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

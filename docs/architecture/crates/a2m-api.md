@@ -27,24 +27,27 @@ It must never: hold a route that the registry did not generate; check a credenti
 ## Interface
 
 ```rust
-/// Built from the registry. Pure: the caller decides which listener carries it.
-pub fn router(kernel: Kernel, cfg: ApiSettings, carrier: Carrier) -> BoxedHttpService;
-pub enum Carrier { Local, Server }     // Local leaves out the console and every approval page
+/// Built from the registry. Pure: the caller decides which listener carries it,
+/// and puts the verified `Caller` on each request as an extension (decision 0116).
+pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<axum::Router, Failure>;
+pub struct ApiSettings { pub max_body_bytes: usize, pub body_timeout: Duration, pub request_timeout: Duration }
+pub fn status_of(response: &Response) -> StatusCode;      // the one status table
+pub fn openapi(registry: &ActionRegistry) -> serde_json::Value;
+pub fn served_routes(registry: &ActionRegistry) -> Vec<ServedRoute>;  // what the router serves
+pub const OPENAPI_PATH: &str = "/api/v1/openapi.json";
+pub mod codes;  // caller_missing, body_too_large, content_type_unsupported, query_invalid, ...
 
-/// The server's listener.
+// Not built yet (sketch):
+pub enum Carrier { Local, Server }     // comes back with the server's pages
 pub struct ServerListener { /* bind address, TLS, trusted proxies, base_url */ }
 impl ServerListener {
     pub async fn bind(cfg: &ServerSettings) -> Result<ServerListener, Failure>;
     /// Serves the REST router and every extra mount, such as /mcp/<toolset>.
-    pub async fn serve(self, api: BoxedHttpService, mounts: Vec<(PathPrefix, BoxedHttpService)>)
+    pub async fn serve(self, api: axum::Router, mounts: Vec<(PathPrefix, axum::Router)>)
         -> StopReason;
 }
-
-pub fn openapi(registry: &Registry, toolset: Option<&Toolset>) -> OpenApiDocument;
-
 pub struct WebhookDeliverer { /* reads the outbox through the Kernel; one task */ }
 impl WebhookDeliverer { pub fn start(kernel: Kernel, cfg: WebhookSettings) -> Self; }
-
 pub struct ServerSurface { /* console base address, approval-page signer */ }
 impl PersonSurface for ServerSurface { /* see a2m-actions */ }
 ```
@@ -70,7 +73,16 @@ The aliases in the technical reference map onto actions as follows. Each is the 
 | `GET /api/v1/openapi.json` | Generated from the registry; served by this crate, not an action |
 | `GET /api/v1/runs/{id}/events` | The event stream below; reading a run's events is authorized as `run.get` |
 
-A request is turned into a `Request` with the caller, the toolset if the route names one, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen from the exit class alone: 200 for success, 202 for a run that rests waiting for a person or is still running, 400 for malformed, 401 for no caller, 403 for `policy`, 409 for `stale`, 429 and 503 for `busy` with a retry time, 500 for anything else. The body is always the full `Response`, so a client never needs the status code to know what happened.
+A request is turned into a `Request` with the caller, the toolset if the route names one, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen by `status_of` from the exit class and the failure class: 200 for success, 202 for a run that rests waiting for a person, 400 for malformed, 401 for no caller, 403 for `policy`, 409 for `stale`, 503 for `busy`, 500 for anything else, and the door's own codes for 404, 405, 408, 413, and 415 ([decision 0116](../../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). A still-running run is 200.
+
+What a caller that sends too much, or too slowly, sees:
+
+| Request | Answer |
+| --- | --- |
+| A body over the limit (1 MiB by default), up to four times the limit | 413 `body_too_large`, always: the door reads and discards the rest (for at most 5 s) before it answers |
+| Any other refusal before the body is read (no caller, a bad header, a query on a POST, no such route), with a body up to four times the limit | That refusal, always, after the same draining |
+| A body declared or found longer than four times the limit | 413 `body_too_large`, or the connection closed while the client is still writing; nothing is dispatched in either case |
+| A body that stops arriving | 408 `body_timed_out` when `body_timeout` (30 s) is up; a client still writing then may see the connection closed instead | A `Retry-After` time for `busy` is not sent yet: the response carries none. The body is always the full `Response`, so a client never needs the status code to know what happened.
 
 The `/api/v1/admin/...` row of the technical reference is not a separate surface: the admin actions are reached by their action routes. See the open points.
 
@@ -112,7 +124,7 @@ A webhook is delivered from the outbox, a table in the store written in the same
 
 The pages are the TypeScript of `web/console`, built and handed to this crate by the product crate. Every rule for every surface in spec section 503 applies: equally easy approve and decline, an expiry with the approval window, restricted fields shown only to approvers allowed to see them, a timeout as a decline. An agent's identity can never hold the approver role, so its sign-in is never a proof of a person.
 
-On the local channel, with `Carrier::Local`, none of these pages and no approval route exist; the local surfaces are `a2m-local`'s.
+On the local channel none of these pages and no approval route exist; the local surfaces are `a2m-local`'s. Today no router serves any of them: `Carrier` returns with step 6 of the build order.
 
 ## Used by, and uses
 
@@ -133,27 +145,27 @@ It calls `a2m-actions` for the registry, `dispatch`, `verify_caller`, `events`, 
 
 ## Failures
 
-The dispatcher's, rendered. This crate adds: `input` / `schema_invalid` for a body that is not JSON; `transient` / `upstream_unavailable` recorded against a webhook delivery that failed.
+The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `input` / `schema_invalid` for a body that is not one JSON object; `input` / `body_too_large`, `content_type_unsupported`, `query_invalid`, `path_field_conflict`, `idempotency_key_invalid`, `route_not_found`, `method_not_allowed`, `body_timed_out`; `policy` / `caller_missing`. In place of an answer: `busy` / `request_timed_out`, `transient` / `engine_fault`. Later: `transient` / `upstream_unavailable` recorded against a webhook delivery that failed.
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| Every route is generated from an action | The parity test in `a2m-actions`, over the router's route list |
-| The OpenAPI document equals the routes | A test that calls every operation the document lists |
-| `Carrier::Local` has no approval page and no approval route | A test over the router built for the local channel |
+| Every route is generated from an action | The router binds only `rest_routes`; `served_routes` is its list, and the OpenAPI test holds the document to it |
+| The OpenAPI document equals the routes | `the_openapi_document_describes_every_route_and_nothing_else`: equal both ways, and every operation called |
+| The router has no approval page and no approval route | `the_door_offers_no_way_to_approve`: over every served route, and a resting write that a resume through the door does not write |
 | An event stream resumed from an identifier misses and repeats nothing | A test that cuts a stream mid-run |
 | A webhook goes only to a configured destination | A test with an input naming another address |
 | A caller cannot approve through the server's pages | The exit test of package 6.5 |
 
 ## Build order
 
-1. The router with the action route only, carried on the local channel. Package 1.4.
-2. The aliases of `tool.call`, `run.get`, `run.resume`, `run.cancel`, and `session.status`, as `rest_alias` data.
-3. The OpenAPI document and its test. Package 6.4.
-4. The event stream; the outbox and the deliverer. Package 6.4.
-5. The server listener, token checks through the kernel, protected resource metadata. With package 6.2.
-6. `ServerSurface` and the console's approval page. Package 6.5.
+1. Done: the router with the action route, carried on whatever the product crate mounts it on; the caller comes as a request extension; limits on body size and time. Package 1.4.
+2. Done, partly: the aliases the registry declares as `rest_alias` data: `tool.search`, `run.get`, `run.resume`, `run.cancel`, `session.status`. Not built: `POST /operations/{name}/calls` and `/pipelines/{name}/runs` for `tool.call`, because the catalog gives `tool.call` no alias and one action has at most one; `a2m-actions` must give it one (or two) with `{name}` filling `tool`.
+3. Done: the OpenAPI document and its test (every served route described, nothing else, every operation called). Not built: a toolset's own document. Package 6.4.
+4. Not built: the event stream; the kernel exposes no event stream yet (`Kernel::events`, resumable from a sequence number, is what it needs). The outbox and the deliverer: the store has no outbox table and settings no destinations. Package 6.4.
+5. Not built: the server listener, its token checks, protected resource metadata; `verify_caller` refuses bearer tokens and API keys in this build. With package 6.2.
+6. Not built: `ServerSurface` and the console's approval page; needs a person's sign-in on a server and the console's pages. Package 6.5.
 
 ## Open points
 

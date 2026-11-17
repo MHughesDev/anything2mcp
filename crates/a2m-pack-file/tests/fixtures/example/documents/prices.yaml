@@ -1,0 +1,15 @@
+surface: price_files
+file: price-list.xlsx
+format: workbook
+fingerprint: {sheets: [Prices, Notes], tables: [price_table], names: [standard_discount]}
+records:
+  price:
+    table: {sheet: Prices, name: price_table}
+    key: [item_code]
+    fields:
+      item_code: {header: Item code, type: identifier}
+      unit_price: {header: Unit price, type: rate}
+  discount:
+    cell: {name: standard_discount}
+    fields:
+      value: {type: rate}

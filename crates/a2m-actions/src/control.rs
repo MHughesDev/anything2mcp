@@ -1,0 +1,730 @@
+//! `Control` in one process: everything the engine asks for while it runs a
+//! job, answered by the store, the policy engine, the session keeper, and
+//! the scheduler directly.
+//!
+//! One `InProcessControl` is built for one claimed job. It attaches the run
+//! and the lease number to every call itself, so the engine can neither
+//! forge nor forget them.
+
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
+use a2m_core::{
+    Digest, Failure, FailureClass, Identity, Mode, Plan, RunState, SurfaceIndex, SurfaceName,
+    Values,
+};
+use a2m_engine::{
+    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
+    encode_values,
+};
+use a2m_ledger::{
+    Acted, ActedToken, BlobKind, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld,
+    NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
+};
+use a2m_policy::{Context, LimitCheck, ModuleName, Outcome, Question, Resource, ToolRef};
+use a2m_sched::{BudgetKey, LeaseRef, RateLimit, ResourceKey};
+use a2m_vault::OwnerRef;
+use serde_json::json;
+
+use crate::codes;
+use crate::kernel::Kernel;
+use crate::runner::CallerFacts;
+
+/// How long a job waits for a record another run holds.
+const LOCK_WAIT: Duration = Duration::from_secs(60);
+
+/// `Control` for one job of one run, in the process that holds the store.
+pub(crate) struct InProcessControl {
+    kernel: Kernel,
+    fence: Fence,
+    lease: LeaseRef,
+    run: RunRow,
+    plan: Arc<Plan>,
+    caller: CallerFacts,
+    /// The mode each intent was stored for, for a later claim's snapshot.
+    pub(crate) modes: Mutex<Vec<(RecordRef, Mode)>>,
+}
+
+impl InProcessControl {
+    pub(crate) fn new(
+        kernel: Kernel,
+        fence: Fence,
+        lease: LeaseRef,
+        run: RunRow,
+        plan: Arc<Plan>,
+        caller: CallerFacts,
+    ) -> Self {
+        Self {
+            kernel,
+            fence,
+            lease,
+            run,
+            plan,
+            caller,
+            modes: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn redacted(&self, failure: Failure) -> Failure {
+        self.kernel.redact().redact_failure(&failure)
+    }
+
+    /// The identity the run acts as: the person who started it. A dedicated
+    /// account comes with toolsets, which are not built.
+    fn identity(&self) -> Identity {
+        Identity::Person(self.run.principal)
+    }
+
+    fn surface_index(&self, name: &SurfaceName) -> Option<SurfaceIndex> {
+        self.plan
+            .surfaces
+            .iter()
+            .position(|surface| &surface.name == name)
+            .and_then(|at| u32::try_from(at).ok())
+            .map(SurfaceIndex::new)
+    }
+
+    /// The key of the lock on one record, as the scheduler queues waits
+    /// for it.
+    async fn lock_key(&self, record: RecordRef) -> Result<ResourceKey, Failure> {
+        let row = self
+            .kernel
+            .store()?
+            .read(move |tx| tx.ledger().record(record))
+            .await?;
+        Ok(ResourceKey::record(
+            self.run.workspace,
+            &self.run.target,
+            &self.run.environment,
+            &row.key_hash,
+        ))
+    }
+
+    /// Tells the scheduler that a commit may have released the record's
+    /// lock, so that the run that waited first asks the ledger again.
+    async fn freed(&self, record: RecordRef) {
+        if let (Ok(key), Ok(sched)) = (self.lock_key(record).await, self.kernel.sched()) {
+            sched.lock_freed(&key);
+        }
+    }
+}
+
+impl Control for InProcessControl {
+    fn plan<'a>(&'a self, hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
+        Box::pin(async move {
+            self.kernel
+                .plan_by_hash(&self.run.target, hash)
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let policy = self.kernel.policy().cloned().ok_or_else(|| {
+                codes::busy(
+                    codes::ENGINE_DEGRADED,
+                    "No policy set is loaded, so nothing can be decided.",
+                    "Call `doctor.run` for the fix.",
+                )
+            })?;
+            let module = self
+                .plan
+                .tool(&question.tool)
+                .and_then(|tool| tool.module.clone())
+                .unwrap_or_else(|| "main".to_owned());
+            let mut context = Context::plain(self.run.workspace, question.environment.clone());
+            context.effect = question.effect;
+            context.hazard = question.hazard;
+            context.records = question.records;
+            context.toolset = self.caller.toolset.clone();
+            context.caller_is_agent = self.caller.is_agent;
+            context.acting_for = self.caller.acting_for.clone();
+            let request = a2m_policy::Request {
+                principal: self.caller.principal.clone(),
+                question: Question::UseTool,
+                resource: Resource::Tool(ToolRef {
+                    target: self.run.target.clone(),
+                    module: ModuleName::new(&module)?,
+                    tool: question.tool.clone(),
+                }),
+                context,
+                run: Some(self.run.id),
+                diff_hash: None,
+            };
+            let limits = LimitCheck {
+                principal: self.caller.principal.clone(),
+                workspace: self.run.workspace,
+                records: question.records,
+                count_call: false,
+            };
+            // The decision is recorded whether it allows or refuses, so the
+            // transaction commits either way.
+            let decided = self
+                .kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    let decision = policy.decide(tx, &request);
+                    if let Some(refusal) = decision.refusal.clone() {
+                        return Ok(Err(refusal));
+                    }
+                    if !decision.allowed() {
+                        return Ok(Err(codes::policy(
+                            a2m_policy::NOT_GRANTED,
+                            "Policy did not allow this call.",
+                            "Ask an administrator for a grant on this tool.",
+                        )));
+                    }
+                    Ok(policy.check_limits(tx, &limits))
+                })
+                .await?;
+            decided.map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn session_lease<'a>(
+        &'a self,
+        want: &'a SessionWant,
+    ) -> BoxFuture<'a, Result<SessionLease, Failure>> {
+        Box::pin(async move {
+            let keeper = self.kernel.keeper()?;
+            let auth = self
+                .surface_index(&want.surface)
+                .and_then(|index| self.plan.auth_of(index))
+                .ok_or_else(|| {
+                    codes::input(
+                        a2m_auth::codes::AUTH_SETTINGS_INVALID,
+                        format!("The surface `{}` declares no sign-in.", want.surface),
+                        "Declare the surface in the target's auth file, then publish again.",
+                    )
+                })?;
+            // Decision 0121: the keeper's entry, field by field from the
+            // plan.
+            let mut entry = AuthEntry::new(auth.provider.clone());
+            for setting in &auth.settings {
+                entry = entry.setting(&setting.name, &setting.value);
+            }
+            for credential in &auth.credentials {
+                entry = entry.credential(&credential.role, credential.reference.clone());
+            }
+            entry.idle = auth.idle_ms.map(Duration::from_millis);
+            entry.absolute = auth.absolute_ms.map(Duration::from_millis);
+            entry.attempt_limit = auth.attempt_limit;
+            entry.movable = auth.movable;
+
+            let settings = self.kernel.settings();
+            let wait = if settings.text("engine.person") == Some("absent") {
+                Wait::NoWait
+            } else {
+                let minutes = settings.int("sessions.login_wait_minutes").unwrap_or(5);
+                match u64::try_from(minutes) {
+                    Ok(0) | Err(_) => Wait::NoWait,
+                    Ok(minutes) => Wait::Interactive(Duration::from_secs(minutes * 60)),
+                }
+            };
+            let decided = self.run.decision.unwrap_or(self.caller.decision);
+            keeper
+                .lease(LeaseRequest {
+                    key: SessionKey {
+                        workspace: self.run.workspace,
+                        target: self.run.target.clone(),
+                        environment: self.run.environment.clone(),
+                        identity: self.identity(),
+                    },
+                    entry: Arc::new(entry),
+                    run: self.run.id,
+                    decided,
+                    acting_for: self.caller.person(),
+                    wait,
+                    headroom: want.headroom,
+                    purpose: Purpose::Run,
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn report_expiry<'a>(&'a self, lease: &'a SessionLease, sign: ExpirySign) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            if let Ok(keeper) = self.kernel.keeper() {
+                keeper.report(lease, sign).await;
+            }
+        })
+    }
+
+    fn rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<u32, Failure>> {
+        Box::pin(async move {
+            let sched = self.kernel.sched()?;
+            let key = BudgetKey::surface(
+                self.run.workspace,
+                &self.run.target,
+                &self.run.environment,
+                surface.as_str(),
+            )?;
+            // The surface's own declared budget, set once; a surface that
+            // declares none takes the scheduler's conservative default.
+            if let Some(rate) = self
+                .surface_index(surface)
+                .and_then(|index| self.plan.surface(index))
+                .and_then(|surface| surface.rate)
+                && self.kernel.note_budget(&key)
+            {
+                sched
+                    .set_budget(
+                        key.clone(),
+                        RateLimit {
+                            capacity: rate.requests.max(1),
+                            refill: rate.requests.max(1),
+                            per: Duration::from_millis(u64::from(rate.per_ms.max(1))),
+                        },
+                    )
+                    .await?;
+            }
+            sched
+                .rate(&self.lease, &[key], want.max(1))
+                .await
+                .map(|grant| grant.requests)
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn store_preview<'a>(&'a self, preview: &'a Preview) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let fence = self.fence;
+            let preview = preview.clone();
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    let mut ledger = tx.ledger();
+                    ledger.plan_records(&fence, &preview.records)?;
+                    ledger.store_diff(&fence, preview.diff, Some(preview.diff_blob))
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn approval<'a>(&'a self, diff: &'a Digest) -> BoxFuture<'a, Result<Clearance, Failure>> {
+        Box::pin(async move {
+            let policy = self.kernel.policy().cloned().ok_or_else(|| {
+                codes::busy(
+                    codes::ENGINE_DEGRADED,
+                    "No policy set is loaded, so no approval can be checked.",
+                    "Call `doctor.run` for the fix.",
+                )
+            })?;
+            let fence = self.fence;
+            let run = self.run.id;
+            let diff = *diff;
+            let module = self
+                .plan
+                .tool(&self.run.tool_name)
+                .and_then(|tool| tool.module.clone())
+                .unwrap_or_else(|| "main".to_owned());
+            let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
+            context.effect = self.run.effect;
+            context.toolset = self.caller.toolset.clone();
+            context.caller_is_agent = self.caller.is_agent;
+            context.acting_for = self.caller.acting_for.clone();
+            let request = a2m_policy::Request {
+                principal: self.caller.principal.clone(),
+                question: Question::WriteWithoutPerson,
+                resource: Resource::Tool(ToolRef {
+                    target: self.run.target.clone(),
+                    module: ModuleName::new(&module)?,
+                    tool: self.run.tool_name.clone(),
+                }),
+                context,
+                run: Some(run),
+                diff_hash: Some(diff),
+            };
+            // One transaction: the question "may this write proceed without
+            // a person" is decided and recorded; then either that decision
+            // or a person's approval, marked used here, clears the run, and
+            // the ledger moves it to `running`. A run that nobody cleared
+            // waits, and the recorded decision still commits.
+            let cleared = self
+                .kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    let decision = policy.decide(tx, &request);
+                    if let Some(clearance) = decision.clearance() {
+                        tx.ledger().begin_writes(&fence, clearance)?;
+                        return Ok(Ok(Clearance::Cleared));
+                    }
+                    // A kill switch stops the run here; it is not a wait.
+                    if let Outcome::Refused(refusal) = decision.outcome()
+                        && refusal.code() == &a2m_policy::KILL_SWITCH_ON
+                    {
+                        return Ok(Err(refusal.clone()));
+                    }
+                    match policy.consume(tx, run, &diff) {
+                        Ok(clearance) => {
+                            tx.ledger().begin_writes(&fence, clearance)?;
+                            Ok(Ok(Clearance::Cleared))
+                        }
+                        Err(missing) if missing.code() == &a2m_policy::APPROVAL_MISSING => {
+                            Ok(Ok(Clearance::Waits))
+                        }
+                        Err(stale) => Ok(Err(stale)),
+                    }
+                })
+                .await?;
+            cleared.map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn lock<'a>(&'a self, record: RecordRef) -> BoxFuture<'a, Result<LockHeld, Failure>> {
+        Box::pin(async move {
+            let store = self.kernel.store()?;
+            let sched = self.kernel.sched()?;
+            let key = self.lock_key(record).await?;
+            let fence = self.fence;
+            loop {
+                // The ticket is taken before the ledger is asked, so that a
+                // release between the refusal and the wait is not missed.
+                let ticket = sched.lock_ticket(&key);
+                match store
+                    .write(Durability::Synced, move |tx| {
+                        tx.ledger().take_lock(&fence, record)
+                    })
+                    .await
+                {
+                    Ok(held) => return Ok(held),
+                    Err(locked) if locked.code() == &a2m_ledger::codes::RECORD_LOCKED => {
+                        sched
+                            .wait_lock(&self.lease, ticket, LOCK_WAIT)
+                            .await
+                            .map_err(|failure| self.redacted(failure))?;
+                    }
+                    Err(other) => return Err(self.redacted(other)),
+                }
+            }
+        })
+    }
+
+    fn intend<'a>(
+        &'a self,
+        intents: Vec<RecordIntent>,
+    ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
+        Box::pin(async move {
+            for intent in &intents {
+                if let Some(mode) = &intent.mode {
+                    self.modes
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((intent.record, mode.clone()));
+                }
+            }
+            // Fail closed: no ledger, no write. The intents are durable
+            // before a token exists.
+            self.kernel
+                .store()?
+                .store_intents(&self.fence, intents)
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn acted<'a>(
+        &'a self,
+        token: IntentToken,
+        acted: Acted,
+    ) -> BoxFuture<'a, Result<ActedToken, Failure>> {
+        Box::pin(async move {
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().mark_acted(token, acted)
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn verified<'a>(
+        &'a self,
+        token: &'a ActedToken,
+        read_back: ReadBack,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let record = token.record();
+            let marked = self
+                .kernel
+                .store()?
+                .store_verified(token, read_back)
+                .await
+                .map_err(|failure| self.redacted(failure));
+            // The ledger released the record's lock in the same
+            // transaction; a run waiting for it is told.
+            if marked.is_ok() {
+                self.freed(record).await;
+            }
+            marked
+        })
+    }
+
+    fn failed<'a>(
+        &'a self,
+        record: RecordRef,
+        why: &'a Failure,
+        evidence: Option<BlobRef>,
+    ) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let fence = self.fence;
+            let why = self.redacted(why.clone());
+            let key = self.lock_key(record).await;
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().mark_failed(&fence, record, &why, evidence)
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))?;
+            if let (Ok(key), Ok(sched)) = (key, self.kernel.sched()) {
+                sched.lock_freed(&key);
+            }
+            Ok(())
+        })
+    }
+
+    fn settle<'a>(
+        &'a self,
+        record: RecordRef,
+        seen: Reconciled,
+    ) -> BoxFuture<'a, Result<Settled, Failure>> {
+        Box::pin(async move {
+            let fence = self.fence;
+            let settled = self
+                .kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().settle(&fence, record, seen)
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))?;
+            if settled != Settled::Planned {
+                self.freed(record).await;
+            }
+            Ok(settled)
+        })
+    }
+
+    fn send<'a>(&'a self, event: EngineEvent) -> BoxFuture<'a, Result<(), Failure>> {
+        Box::pin(async move {
+            let store = self.kernel.store()?;
+            let fence = self.fence;
+            let run = self.run.id;
+            let sent = match event {
+                EngineEvent::Moved(to) => {
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger().set_state(&fence, to, None)
+                        })
+                        .await
+                }
+                EngineEvent::StepStarted {
+                    step_seq,
+                    operation,
+                } => {
+                    let payload = json!({"step": step_seq, "operation": operation.as_str()});
+                    store
+                        .write(Durability::Relaxed, move |tx| {
+                            tx.ledger()
+                                .append_event(&fence, EventKind::StepStarted, &payload, None)
+                                .map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::BindingChosen {
+                    operation,
+                    mode,
+                    provider,
+                    provider_version,
+                    provider_digest,
+                    passed_over,
+                    ..
+                } => {
+                    let payload = json!({
+                        "operation": operation.as_str(),
+                        "mode": mode.as_str(),
+                        "provider": provider,
+                        "provider_version": provider_version.to_string(),
+                        "provider_digest": provider_digest.to_string(),
+                        "passed_over": passed_over.iter().map(|passed| json!({
+                            "mode": passed.mode.as_str(),
+                            "class": passed.class.as_str(),
+                            "code": passed.code.as_str(),
+                        })).collect::<Vec<_>>(),
+                    });
+                    store
+                        .write(Durability::Relaxed, move |tx| {
+                            tx.ledger()
+                                .append_event(&fence, EventKind::BindingChosen, &payload, None)
+                                .map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::BeforeCommit { record, outputs } => {
+                    let payload = json!({
+                        "before_commit": true,
+                        "step": record.step_seq,
+                        "record": record.record_seq,
+                    });
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger()
+                                .append_event(&fence, EventKind::Need, &payload, Some(outputs))
+                                .map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::Result(values) => self.store_result(&values).await,
+                EngineEvent::BindingHealth {
+                    operation,
+                    mode,
+                    surface,
+                    failure,
+                } => {
+                    // The health of a binding is the engine's own table,
+                    // which is not built; the sign is kept as a run event.
+                    let payload = json!({
+                        "binding_health": true,
+                        "operation": operation.as_str(),
+                        "mode": mode.as_str(),
+                        "surface": surface.as_str(),
+                        "class": failure.as_ref().map(|(class, _)| class.as_str()),
+                        "code": failure.as_ref().map(|(_, code)| code.as_str()),
+                    });
+                    store
+                        .write(Durability::Relaxed, move |tx| {
+                            tx.ledger()
+                                .append_event(&fence, EventKind::Need, &payload, None)
+                                .map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::VerifiedDiffers { evidence, .. } => {
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger().late_evidence(run, evidence).map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::Discovered { findings, .. } => {
+                    // Each finding was checked against its provider's
+                    // manifest by the sandbox; the store names it by the
+                    // digest of its content.
+                    let workspace = self.run.workspace;
+                    let target = self.run.target.clone();
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            for finding in &findings {
+                                tx.findings().put(&workspace, &target, finding)?;
+                            }
+                            Ok(())
+                        })
+                        .await
+                }
+                EngineEvent::Trace(trace) => {
+                    let blob = self
+                        .evidence(Evidence {
+                            kind: BlobKind::Trace,
+                            class: RetentionClass::Long,
+                            bytes: trace.bytes,
+                        })
+                        .await?;
+                    store
+                        .write(Durability::Relaxed, move |tx| {
+                            tx.ledger().store_trace(run, blob)
+                        })
+                        .await
+                }
+            };
+            self.kernel.run_changed();
+            sent.map_err(|failure| self.redacted(failure))
+        })
+    }
+
+    fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>> {
+        Box::pin(async move {
+            self.kernel
+                .store()?
+                .blobs()
+                .put(NewBlob {
+                    workspace: self.run.workspace,
+                    owner: OwnerRef::of(&self.identity()),
+                    kind: blob.kind,
+                    class: blob.class,
+                    plain: blob.bytes,
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))
+        })
+    }
+}
+
+impl InProcessControl {
+    async fn store_result(&self, values: &Values) -> Result<(), Failure> {
+        // Everything leaving passes the redactor; the stored result is what
+        // a later `run.get` returns.
+        let redacted = self.kernel.redact().redact_values(values);
+        let blob = self
+            .evidence(Evidence {
+                kind: BlobKind::Result,
+                class: RetentionClass::Long,
+                bytes: encode_values(&redacted)?,
+            })
+            .await?;
+        let fence = self.fence;
+        self.kernel
+            .store()?
+            .write(Durability::Synced, move |tx| {
+                tx.ledger().store_result(&fence, blob)
+            })
+            .await
+    }
+
+    /// Whether the outcome leaves a record in doubt, which the scheduler
+    /// answers with a reconcile job.
+    pub(crate) async fn in_doubt(&self) -> bool {
+        let run = self.run.id;
+        match self.kernel.store() {
+            Ok(store) => store
+                .read(move |tx| tx.ledger().in_doubt(run))
+                .await
+                .is_ok_and(|records| !records.is_empty()),
+            Err(_) => false,
+        }
+    }
+
+    /// Applies a job's outcome to the run, under the job's lease.
+    pub(crate) async fn apply(&self, to: RunState, why: Option<Failure>) -> Result<(), Failure> {
+        let fence = self.fence;
+        let run = self.run.id;
+        let why = why.map(|why| self.redacted(why));
+        let moved = self
+            .kernel
+            .store()?
+            .write(Durability::Synced, move |tx| {
+                let mut ledger = tx.ledger();
+                if ledger.run(run)?.state == to {
+                    return Ok(());
+                }
+                ledger.set_state(&fence, to, why.as_ref())
+            })
+            .await;
+        self.kernel.run_changed();
+        moved
+    }
+}
+
+/// Whether a failure class means a write may have been sent.
+pub(crate) const fn may_have_written(class: FailureClass) -> bool {
+    matches!(class, FailureClass::PossibleCommit)
+}

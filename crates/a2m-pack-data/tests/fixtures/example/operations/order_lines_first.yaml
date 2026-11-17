@@ -1,0 +1,15 @@
+operation: example_order_lines_first
+title: List the first lines of an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  item_code: {type: identifier, list: true}
+bindings:
+  - mode: sql
+    verb: search
+    statement: first_lines_of_order
+description: >
+  Lists the first two line items of one order and says whether more exist.
+  Prefer example_order_lines_list to read every line of an order.

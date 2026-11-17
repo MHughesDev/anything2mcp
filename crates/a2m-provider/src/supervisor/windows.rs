@@ -12,14 +12,16 @@
 //! started at that moment would otherwise inherit the first child's pipe.
 
 use std::fs::{File, OpenOptions};
+use std::future::Future;
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::process::ExitStatus;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll, Waker};
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::windows::named_pipe::ServerOptions;
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::process::{Child, Command};
 use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
 use windows_sys::Win32::System::JobObjects::{
@@ -136,6 +138,70 @@ fn set_inherit(file: &File, on: bool) -> io::Result<()> {
     }
 }
 
+/// The four ends of a foreign link. The engine keeps the two server ends,
+/// which the runtime reads and writes without blocking. The child gets the
+/// two client ends, opened for ordinary blocking use, which is what a child
+/// expects of a handle it is given.
+struct ForeignEnds {
+    to_child: NamedPipeServer,
+    from_child: NamedPipeServer,
+    child_reads: File,
+    child_writes: File,
+}
+
+/// Completes the engine's end of a pipe whose client end is already open.
+///
+/// The runtime starts no read and reports no room to write on a server end
+/// until that end has been connected, also when its client is already
+/// there. Without this the engine's ends carry nothing in either direction:
+/// a request is never written and an answer never read, while the child
+/// waits. With the client already open the connection completes at once,
+/// so it is asked for once here and never waited for.
+fn connect_now(server: &NamedPipeServer) -> io::Result<()> {
+    let mut connecting = std::pin::pin!(server.connect());
+    let mut context = Context::from_waker(Waker::noop());
+    match connecting.as_mut().poll(&mut context) {
+        Poll::Ready(connected) => connected,
+        Poll::Pending => Err(other(
+            "the engine's end of a pipe did not connect to its client end",
+        )),
+    }
+}
+
+/// Makes the two pipes of a foreign link, each with both of its ends open
+/// and connected.
+fn foreign_ends() -> io::Result<ForeignEnds> {
+    // The name is not a secret: each pipe allows one instance and one
+    // client, and this process is that client before the child starts.
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let count = COUNT.fetch_add(1, Ordering::Relaxed);
+    let unique = format!("{}-{count}", std::process::id());
+    let down = format!(r"\\.\pipe\anything2mcp-{unique}-to-child");
+    let up = format!(r"\\.\pipe\anything2mcp-{unique}-from-child");
+    let to_child = ServerOptions::new()
+        .first_pipe_instance(true)
+        .max_instances(1)
+        .access_inbound(false)
+        .access_outbound(true)
+        .create(&down)?;
+    let from_child = ServerOptions::new()
+        .first_pipe_instance(true)
+        .max_instances(1)
+        .access_inbound(true)
+        .access_outbound(false)
+        .create(&up)?;
+    let child_reads = OpenOptions::new().read(true).open(&down)?;
+    let child_writes = OpenOptions::new().write(true).open(&up)?;
+    connect_now(&to_child)?;
+    connect_now(&from_child)?;
+    Ok(ForeignEnds {
+        to_child,
+        from_child,
+        child_reads,
+        child_writes,
+    })
+}
+
 /// Starts `command` inside a new job object. With `foreign`, the child
 /// inherits the two pipe ends, named by value in one added argument.
 #[allow(unsafe_code)] // one call into the operating system, explained below
@@ -148,28 +214,12 @@ pub(crate) fn spawn(
     let pipes = match foreign {
         None => None,
         Some(pipe_spec) => {
-            // The name is not a secret: each pipe allows one instance and
-            // one client, and this process is that client before the child
-            // starts.
-            static COUNT: AtomicU64 = AtomicU64::new(0);
-            let count = COUNT.fetch_add(1, Ordering::Relaxed);
-            let unique = format!("{}-{count}", std::process::id());
-            let down = format!(r"\\.\pipe\anything2mcp-{unique}-to-child");
-            let up = format!(r"\\.\pipe\anything2mcp-{unique}-from-child");
-            let to_child = ServerOptions::new()
-                .first_pipe_instance(true)
-                .max_instances(1)
-                .access_inbound(false)
-                .access_outbound(true)
-                .create(&down)?;
-            let from_child = ServerOptions::new()
-                .first_pipe_instance(true)
-                .max_instances(1)
-                .access_inbound(true)
-                .access_outbound(false)
-                .create(&up)?;
-            let child_reads = OpenOptions::new().read(true).open(&down)?;
-            let child_writes = OpenOptions::new().write(true).open(&up)?;
+            let ForeignEnds {
+                to_child,
+                from_child,
+                child_reads,
+                child_writes,
+            } = foreign_ends()?;
             command.arg(
                 pipe_spec
                     .windows_argument
@@ -299,7 +349,47 @@ mod tests {
     use std::os::windows::process::ExitStatusExt;
     use std::process::ExitStatus;
 
-    use super::{ENDED_BY_SUPERVISOR, ended_from_outside, new_job, set_inherit};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::{
+        ENDED_BY_SUPERVISOR, ForeignEnds, ended_from_outside, foreign_ends, new_job, set_inherit,
+    };
+
+    /// The pipes of a foreign link, without a child: a thread stands for
+    /// the child and uses its two ends with ordinary blocking calls, as a
+    /// child does. A request written by the engine arrives, an answer
+    /// written by the child is read, and the child closing its ends is the
+    /// end of the pipe.
+    #[tokio::test]
+    async fn the_two_pipes_of_a_foreign_link_carry_bytes_both_ways() {
+        let ForeignEnds {
+            mut to_child,
+            mut from_child,
+            child_reads,
+            child_writes,
+        } = foreign_ends().unwrap();
+        let child = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut reads, mut writes) = (child_reads, child_writes);
+            let mut request = [0_u8; 4];
+            reads.read_exact(&mut request).unwrap();
+            writes.write_all(&request).unwrap();
+            writes.write_all(b"!").unwrap();
+        });
+        let carried = async {
+            to_child.write_all(b"ping").await.unwrap();
+            let mut answer = Vec::new();
+            // A pipe whose other end closed reads as its end, or as broken;
+            // either way what was written before is all there.
+            let _ = from_child.read_to_end(&mut answer).await;
+            answer
+        };
+        let answer = tokio::time::timeout(std::time::Duration::from_secs(60), carried)
+            .await
+            .expect("the pipes of a foreign link carried nothing");
+        assert_eq!(answer, b"ping!");
+        child.join().unwrap();
+    }
 
     #[test]
     fn only_the_supervisors_own_status_reads_as_ended_from_outside() {

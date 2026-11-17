@@ -1,0 +1,5 @@
+test: example_stock_get
+kind: offline
+fixture: stock_get
+inputs: {item_code: "EX-1002"}
+expect: {description: "Example bracket", on_hand: 12, note: ""}

@@ -1,0 +1,15 @@
+operation: example_order_search
+title: Search orders
+effect: read
+inputs:
+  query: {type: free_text, description: "Text to look for in the customer or the note"}
+outputs:
+  text: {type: free_text}
+bindings:
+  - mode: mcp
+    verb: search
+    status: draft
+    tool: orders_search
+    args: {query: input.query}
+description: >
+  Finds orders whose customer or note contains a text.

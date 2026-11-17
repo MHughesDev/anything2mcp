@@ -1,0 +1,20 @@
+operation: example_item_add
+title: Add an item
+effect: write
+identity: {strategy: stamped}
+commit_points: 1
+inputs:
+  name: {type: item_name, description: "The item's name, 1 to 60 characters"}
+  location: {type: location_code, description: "Where the item is kept, such as A01"}
+outputs:
+  sku: {type: identifier}
+bindings:
+  - mode: cli
+    verb: create
+    status: shadow
+    command: item_add
+    read_back: {command: item_show, key: [sku]}
+    lookup: {command: item_find_by_ref}
+description: >
+  Creates one item of the inventory. The program assigns the item's code,
+  which is returned. Prefer example_item_set_quantity to change an item.

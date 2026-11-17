@@ -73,29 +73,45 @@ pub enum JobOutcome {
 Everything the engine needs from the control plane while it runs a job, and nothing more. In one process `a2m-actions` implements it by calling the scheduler, the keeper, policy, and the store directly; on a runner `a2m-runner` implements it as `need` and `events` calls over the link. Every call carries the job's lease number, attached by the implementation, so the engine can neither forge nor forget it. The same test suite runs against both implementations.
 
 ```rust
-#[async_trait]
 pub trait Control: Send + Sync {
     /// The plan by its hash. The engine checks the hash again before using it.
-    async fn plan(&self, hash: &Digest) -> Result<Arc<Plan>, Failure>;
+    fn plan(&self, hash: &Digest) -> Result<Arc<Plan>, Failure>;
     /// The policy decision at guard, made and recorded by `a2m-policy` behind the implementation.
-    async fn decide(&self, q: &GuardQuestion) -> Result<(), Failure>;
-    /// A session lease. The keeper renews behind it if it must; a refusal is `session_expired` or `needs_login`.
-    async fn session_lease(&self, want: &SessionWant) -> Result<SessionLease, Failure>;
+    fn decide(&self, question: &GuardQuestion) -> Result<(), Failure>;
+    /// A session lease. The keeper renews behind it if it must; a refusal is of class `session_expired`.
+    fn session_lease(&self, want: &SessionWant) -> Result<SessionLease, Failure>;
+    /// A driver's sign that the session has ended, relayed to the keeper. The engine never renews.
+    fn report_expiry(&self, lease: &SessionLease, sign: ExpirySign);
+    /// A rate budget of up to `want` requests, waiting through the scheduler up to its limit.
+    fn rate(&self, surface: &SurfaceName, want: u32) -> Result<u32, Failure>;
+    /// Stores what the preview found: the commit points and the diff.
+    fn store_preview(&self, preview: &Preview) -> Result<(), Failure>;
+    /// The approval check: uses the approval bound to `diff` and moves the run to `running`,
+    /// in one transaction. `Waits` when no approval has been given yet.
+    fn approval(&self, diff: &Digest) -> Result<Clearance, Failure>;
     /// A record lock, from the ledger, waiting through the scheduler up to its limit; then `record_locked`.
-    async fn lock(&self, key: &LockKey) -> Result<RecordLock, Failure>;
-    /// A rate budget to spend locally, or the time at which one will be possible.
-    async fn rate(&self, surface: &SurfaceRef, want: u32) -> Result<RateGrant, Failure>;
-    /// The approval check: uses the approval bound to `diff` and moves the run to `running`, in one transaction.
-    async fn approval(&self, run: &RunId, diff: &Digest) -> Result<(), Failure>;
+    fn lock(&self, record: RecordRef) -> Result<LockHeld, Failure>;
     /// Record intents and get their tokens. Durable before it returns.
-    async fn intend(&self, intents: &[Intent]) -> Result<Vec<IntentToken>, Failure>;
-    /// Events: ledger transitions, outputs known before a commit point, the step trace, binding health.
-    /// Each says whether it must be acknowledged before the engine goes on.
-    async fn send(&self, ev: EngineEvent) -> Result<(), Failure>;
+    fn intend(&self, intents: Vec<RecordIntent>) -> Result<Vec<IntentToken>, Failure>;
+    /// Marks a record `acted`: its write was sent. Uses the token up.
+    fn acted(&self, token: IntentToken, acted: Acted) -> Result<ActedToken, Failure>;
+    /// Marks a record `verified`, with what was read back and its evidence.
+    fn verified(&self, token: &ActedToken, read_back: ReadBack) -> Result<(), Failure>;
+    /// Marks a record `failed` with the failure that stopped it.
+    fn failed(&self, record: RecordRef, why: &Failure, evidence: Option<BlobRef>) -> Result<(), Failure>;
+    /// Settles a record in doubt with what reading it showed.
+    fn settle(&self, record: RecordRef, seen: Reconciled) -> Result<Settled, Failure>;
+    /// Events: ledger transitions, outputs known before a commit point, the result, the step trace,
+    /// binding health, what a discoverer found. Each says whether it must be acknowledged.
+    fn send(&self, event: EngineEvent) -> Result<(), Failure>;
     /// Evidence, already redacted.
-    async fn evidence(&self, blob: Evidence) -> Result<BlobRef, Failure>;
+    fn evidence(&self, blob: Evidence) -> Result<BlobRef, Failure>;
 }
 ```
+
+Every method is asynchronous. The block above leaves that out to stay readable: in the code each takes `&'a self` and returns a `BoxFuture<'a, ...>` of the type shown, so the trait is a trait object and needs no macro, and an implementation writes `Box::pin(async move { ... })`.
+
+`verified` borrows the proof that the record is `acted`, and the store runs its transaction on a thread of its own, which takes only what it can own. An implementation over the store therefore cannot hand the proof to `mark_verified`; it settles the record by name with `settle(fence, record, Reconciled::Landed(read_back))`, under the lease the proof carries, where the ledger makes the same comparison. Both implementations that exist do this. Whether `verified` should take the proof by value instead is an open point below.
 
 `GuardQuestion` is the engine's own type: the run, the tool, the effect class, the hazard, the binding chosen. `a2m-actions` turns it into a policy request; the engine never sees a policy type. A record lock is released by the ledger itself when the record reaches `verified` or `unchanged`, in the same transaction, and quarantined when the run stops with the record in doubt, so `Control` has no unlock. What used to be asked for and is not on the list arrives as data in `JobSpec`, filled by the runner when it claims the job: the input, the run snapshot, the conditions of choosing, and the lease's clock and directive.
 
@@ -216,9 +232,32 @@ It produces every class through the loop. Codes it defines itself:
 
 | Class | Code | When |
 | --- | --- | --- |
-| `policy` | `plan_unverified` | The plan's hash does not match its reference |
+| `policy` | `plan_unverified` | The plan's bytes do not give the hash the job names |
+| `policy` | `record_limit_exceeded` | The run would touch more records than its limit allows |
+| `policy` | `sandbox_read_only` | A write was asked for where nothing may be written |
+| `policy` | `intent_token_missing` | An intent was stored and no token came back for it; nothing was sent |
+| `input` | `job_invalid` | The job names a tool, an environment, or a surface the plan does not hold, or is of a kind the tool cannot run as |
+| `input` | `input_invalid` | An input is missing, is not declared, or is not of its type |
 | `busy` | `engine_degraded`, `no_binding` | A write on a degraded kernel; no binding qualifies for a reason that is not session, edge, or drift |
-| `unknown_variant` | `expect_failed` | A leading read's `expect` no longer holds before the first write |
+| `busy` | `run_time_exceeded` | The run passed the longest time its pipeline allows |
+| `busy` | `blocked_by_parent` | A record waits on a parent record that failed |
+| `busy` | `evidence_not_stored` | Evidence could not be stored, so nothing can be marked verified |
+| `busy` | `no_rate_budget` | No rate budget was granted for a surface |
+| `busy` | `job_kind_not_built` | The job is of a kind this engine does not carry out yet |
+| `transient` | `prepare_timed_out` | A driver was not ready within the time preparing may take |
+| `session_expired` | `needs_login` | The session ended and could not be had again |
+| `edge_blocked` | `edge_blocked` | The surface is blocked at the edge |
+| `drift` | `binding_drifted` | Every binding that could carry the call out has drifted |
+| `stale` | `changed_since_preview` | A record no longer holds what the preview saw |
+| `mismatch` | `read_back_differs` | The value read back differs from the value intended |
+| `unknown_variant` | `expect_failed` | An `expect` does not hold: a leading read's before the first write, or a step's |
+| `unknown_variant` | `field_not_read_back` | Reading a record gave no value for a field the operation writes |
+| `unknown_variant` | `no_read_back` | A binding has no steps that read the record, so nothing it writes can be verified |
+| `unknown_variant` | `output_unexpected` | A step returned a value the plan gives no place to |
+| `unknown_variant` | `commit_skipped` | A binding ended without sending its write |
+| `possible_commit` | `no_confirmation` | A write was sent and the system's answer is not known |
+| `possible_commit` | `ambiguous_match` | A lookup found more than one record |
+| `possible_commit` | `cannot_reconcile` | A record in doubt cannot be read, so a person must settle it |
 
 ## Invariants
 
@@ -252,6 +291,7 @@ It produces every class through the loop. Codes it defines itself:
 
 ## Open points
 
+- Whether `Control::verified` should take the proof of `acted` by value, as `acted` takes the intent token, so that an implementation over the store can call `mark_verified` itself and need not go through `settle`. The trait is held as it is while `a2m-actions` is built against it.
 - Whether `Diff` and its canonical form should move to `a2m-core` so that the approval surface can render one without the engine.
 - How a shadow binding predicts: a posture in which the handle refuses every step that reaches the system and the driver returns what it would have sent.
 - Whether the conditions of choosing, read once at claim, go stale during a long pipeline; if so, `Control` needs a way to read them again, which is not on its list today.

@@ -3,14 +3,16 @@
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::{ConnectInfo, Request, State};
+use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::AppState;
+use crate::connection::ConnectionHandle;
 
 /// What a fault does to a request it applies to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +28,30 @@ pub enum FaultKind {
         /// The HTTP status to answer with.
         status: u16,
     },
+    /// Case 17: carry the request out as usual, so a write is stored, then close
+    /// the connection without sending any answer. It applies to requests that may
+    /// write (any method but `GET` and `HEAD`); a read passes by without using it
+    /// up. It needs the application served by [`crate::serve`] or the harness; on
+    /// a router served some other way the answer is a 500 instead.
+    LostAfterCommit,
+    /// Case 31: answer as usual, but with one field of a JSON answer renamed,
+    /// wherever it appears in the answer, as if the application had changed shape.
+    ChangedShape {
+        /// The field to rename.
+        field: String,
+        /// Its new name.
+        renamed_to: String,
+    },
+}
+
+impl FaultKind {
+    /// Whether this kind of fault applies to a request with this method.
+    fn applies_to(&self, method: &Method) -> bool {
+        match self {
+            Self::LostAfterCommit => method != Method::GET && method != Method::HEAD,
+            _ => true,
+        }
+    }
 }
 
 /// One fault and the requests it applies to.
@@ -63,12 +89,13 @@ impl Fault {
 
 impl AppState {
     /// The first fault that applies to this path, used up by one.
-    async fn take_fault(&self, path: &str) -> Option<FaultKind> {
+    async fn take_fault(&self, method: &Method, path: &str) -> Option<FaultKind> {
         let mut inner = self.lock().await;
         let index = inner.faults.iter().position(|f| {
-            f.path_prefix
-                .as_deref()
-                .is_none_or(|prefix| path.starts_with(prefix))
+            f.kind.applies_to(method)
+                && f.path_prefix
+                    .as_deref()
+                    .is_none_or(|prefix| path.starts_with(prefix))
         })?;
         let fault = &mut inner.faults[index];
         let kind = fault.kind.clone();
@@ -84,7 +111,10 @@ impl AppState {
 
 /// Applies the first matching fault to a request, or lets it through.
 pub(crate) async fn apply(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    match state.take_fault(request.uri().path()).await {
+    match state
+        .take_fault(request.method(), request.uri().path())
+        .await
+    {
         Some(FaultKind::Delay { ms }) => {
             tokio::time::sleep(Duration::from_millis(ms)).await;
             next.run(request).await
@@ -94,6 +124,72 @@ pub(crate) async fn apply(State(state): State<AppState>, request: Request, next:
             (status, Json(json!({"error": "fault", "message": "A fault was switched on for this request."})))
                 .into_response()
         }
+        Some(FaultKind::LostAfterCommit) => {
+            let connection = request
+                .extensions()
+                .get::<ConnectInfo<ConnectionHandle>>()
+                .map(|info| info.0.clone());
+            let response = next.run(request).await;
+            match connection {
+                Some(connection) => {
+                    connection.cut();
+                    response
+                }
+                None => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": "fault_not_possible",
+                        "message": "The connection cannot be cut: serve the application with example_app::serve.",
+                    })),
+                )
+                    .into_response(),
+            }
+        }
+        Some(FaultKind::ChangedShape { field, renamed_to }) => {
+            changed_shape(next.run(request).await, &field, &renamed_to).await
+        }
         None => next.run(request).await,
+    }
+}
+
+/// The largest answer the shape fault will rewrite.
+const MAX_REWRITTEN_BYTES: usize = 4 * 1024 * 1024;
+
+/// The same answer with `field` renamed to `renamed_to` wherever it appears, if the
+/// answer is JSON; any other answer is passed on unchanged.
+async fn changed_shape(response: Response, field: &str, renamed_to: &str) -> Response {
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_REWRITTEN_BYTES).await else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the answer could not be read",
+        )
+            .into_response();
+    };
+    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    rename(&mut value, field, renamed_to);
+    let rewritten = value.to_string();
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(rewritten))
+}
+
+fn rename(value: &mut Value, field: &str, renamed_to: &str) {
+    match value {
+        Value::Object(map) => {
+            if let Some(taken) = map.remove(field) {
+                map.insert(renamed_to.to_owned(), taken);
+            }
+            for child in map.values_mut() {
+                rename(child, field, renamed_to);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                rename(child, field, renamed_to);
+            }
+        }
+        _ => {}
     }
 }

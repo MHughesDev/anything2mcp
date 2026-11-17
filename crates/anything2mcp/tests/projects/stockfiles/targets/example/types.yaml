@@ -1,0 +1,11 @@
+types:
+  cutoff:
+    base: text
+  note:
+    base: text
+    untrusted: true
+    sensitivity: internal
+  rate:
+    base: decimal
+    places: 2
+    rounding: half_even

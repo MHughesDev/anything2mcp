@@ -1,0 +1,57 @@
+operation: example_account_get
+title: Get the account
+effect: read
+inputs: {}
+outputs:
+  name: {type: text}
+  echo: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: account_get
+description: >
+  Reads the name of the signed-in account.
+---
+operation: example_notice_get
+title: Get the notice
+effect: read
+inputs: {}
+outputs:
+  name: {type: text}
+  echo: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: notice_get
+description: >
+  Reads the public notice, which takes no credential.
+---
+operation: example_moved_get
+title: Get what has moved
+effect: read
+inputs:
+  place: {type: identifier, description: "Where the system sends the request"}
+outputs:
+  name: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: moved_get
+description: >
+  Reads a place the system answers with a redirect.
+---
+operation: example_large_get
+title: Get the large answer
+effect: read
+inputs: {}
+outputs: {}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: large_get
+description: >
+  Reads an answer that is larger than its endpoint allows.

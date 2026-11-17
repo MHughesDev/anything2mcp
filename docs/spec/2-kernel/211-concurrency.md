@@ -16,6 +16,8 @@ One running system serves many agents and applications at the same time. A sched
 | Writes in parallel per session | 1 for UI, 4 for HTTP | Each mode's default is in its provider's manifest. Some systems misbehave with parallel saves from one user |
 | Global browser contexts, in the web pack | Sized to memory | Protects the machine |
 | Queue length per target | 100 | A full queue returns `busy` with a retry time instead of hanging |
+| Waiting jobs per caller | 25 | A caller over its cap gets `busy`, `caller_queue_full`, so one caller cannot fill a target's queue |
+| Queue wait | 5 minutes | A job that no runner takes in that time ends, and its run stops as `busy` with what was missing |
 | Priority | Interactive before batch | A person's request jumps a nightly pipeline |
 | Per-caller quota | Configurable | Stops one agent from starving others |
 
@@ -24,3 +26,7 @@ One running system serves many agents and applications at the same time. A sched
 **Desktop limits.** A desktop application usually has one window and one input focus, so desktop runs on one application are always serialized. The same holds for anything a mode's manifest marks as held alone by one write, such as a device link.
 
 **Rate limits.** Each surface has a request budget, set from the system's documented limit or a conservative default. Calls over budget wait in the queue rather than hitting the system.
+
+## Open points
+
+- The ledger grants a record lock to whoever asks first, so a run woken for a lock can lose it to a run that never waited ([decision 0093](../../decisions/0093-the-schedulers-interface-as-building-it-settled-it.md)). Whether waiters need an order is not settled.

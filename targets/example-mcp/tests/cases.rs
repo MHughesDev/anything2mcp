@@ -13,7 +13,7 @@ use example_mcp::faults::{Drift, Fault, FaultKind, Malformed};
 use example_mcp::harness::{HttpStand, StdioStand, stdio_program};
 use example_mcp::protocol::{
     CREDENTIAL_REFUSED, HANDSHAKE_REVISION, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND,
-    PARSE_ERROR, STATELESS_REVISION, STATELESS_VERSION_META_KEY,
+    PARSE_ERROR, STATELESS_REVISION, STATELESS_VERSION_META_KEY, UNSUPPORTED_VERSION,
 };
 use example_mcp::state::{CallOutcome, Transport};
 use example_mcp::stdio::EXIT_DROPPED;
@@ -481,7 +481,8 @@ fn stdio_revisions_are_negotiated_and_an_unknown_one_is_not_served() -> Outcome 
     let listed = stateless.request("tools/list", meta(STATELESS_REVISION))?;
     assert!(listed["result"]["tools"].is_array());
     let unknown = stateless.request("tools/list", meta("1999-01-01"))?;
-    assert_eq!(unknown["error"]["code"], INVALID_PARAMS);
+    assert_eq!(unknown["error"]["code"], UNSUPPORTED_VERSION);
+    assert_eq!(unknown["error"]["data"]["requested"], "1999-01-01");
     assert_eq!(
         unknown["error"]["data"]["supported"],
         json!([STATELESS_REVISION, HANDSHAKE_REVISION])
@@ -534,6 +535,7 @@ async fn http_revisions_sessions_and_the_request_with_no_handshake() -> Outcome 
     bare.revision = Some("1999-01-01".to_owned());
     let (status, unknown) = bare.request("tools/list", Value::Null).await?;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(unknown["error"]["code"], UNSUPPORTED_VERSION);
     assert_eq!(unknown["error"]["data"]["requested"], "1999-01-01");
 
     // A session lasts until the client ends it or the server forgets it.

@@ -1,0 +1,5 @@
+test: example_customer_get
+kind: offline
+fixture: customer_get
+inputs: {customer_id: "C-100"}
+expect: {name: "Example Customer One", credit_limit_cents: 500000, notes: ""}

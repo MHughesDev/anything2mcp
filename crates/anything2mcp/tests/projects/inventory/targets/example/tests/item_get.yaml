@@ -1,0 +1,5 @@
+test: example_item_get
+kind: offline
+fixture: item_get
+inputs: {sku: "SK-1001"}
+expect: {name: "Example rail", quantity: 4, location: A01}

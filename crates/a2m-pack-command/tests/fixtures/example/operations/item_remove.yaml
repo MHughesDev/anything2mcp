@@ -1,0 +1,18 @@
+operation: example_item_remove
+title: Remove an item
+effect: write
+key: sku
+commit_points: 1
+inputs:
+  sku: {type: identifier, description: "Item code, such as SK-1001"}
+outputs:
+  sku: {type: identifier}
+bindings:
+  - mode: cli
+    verb: delete
+    status: shadow
+    command: item_remove
+    read_back: {command: item_show}
+description: >
+  Removes one item from the inventory, and reads it back to see it is gone.
+  Prefer example_item_set_quantity to set an item's quantity to zero.

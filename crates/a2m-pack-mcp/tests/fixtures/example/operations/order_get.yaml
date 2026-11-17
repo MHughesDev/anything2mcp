@@ -1,0 +1,18 @@
+operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number, such as A-100"}
+outputs:
+  status: {type: order_status}
+  customer: {type: free_text}
+  note: {type: free_text}
+bindings:
+  - mode: mcp
+    verb: read
+    status: verified
+    tool: orders_get
+    args: {order_id: input.order_id}
+description: >
+  Reads the status, the customer, and the note of one order.

@@ -1,0 +1,16 @@
+operation: example_price_get
+title: Get the unit price of an item
+effect: read
+key: item_code
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1002"}
+outputs:
+  unit_price: {type: rate}
+bindings:
+  - mode: file
+    verb: read
+    document: prices
+    record: price
+    key: {item_code: input.item_code}
+description: >
+  Reads the unit price of one item from the price workbook.

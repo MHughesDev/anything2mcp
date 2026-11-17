@@ -55,6 +55,12 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 26 | Switches language and number format | Fixed locale; comparison by code, not label | 8 |
 | 27 | Returns text containing instructions aimed at an agent | Untrusted fields; the manipulation test suite | 3 |
 | 28 | Exists as a small native desktop program with the same data | The desktop driver | 8 |
+| 29 | Takes a bearer token or an API key on its JSON interface, and revokes one when told to | Credentials in the HTTP modes; a refused credential is not tried again | 2 |
+| 30 | Serves a description of its JSON interface | Reading a described interface; the description held to what is served | 4 |
+| 31 | Answers in a changed shape when told to | An unknown response shape stops, never guessed at | 1 |
+| 32 | Has pages that write by themselves: on load, from a worker, over a WebSocket, and behind links that look like actions | That discovery never writes | 5 |
+| 33 | Uses the browser's own controls: a select, a check box, a radio group, a date field, a text area, a confirmation dialog before saving, and a button disabled until a field is valid | One widget driver each for the native controls | 1 |
+| 34 | Redirects to another host name | A redirect off the target stops; no input changes where a request goes | 2 |
 
 ## The driver conformance suite
 
@@ -80,6 +86,25 @@ As of slice 0.3, on 2026-11-16: cases 1 to 4, in `targets/example-app/`. Its [RE
 
 - **The control interface** has Reset, Inspect, Count writes, and Set a fault. Set a mode is not built; the first case that needs it is case 13.
 - **Faults** so far are a delay and a status. Dropping a connection after a commit arrives with case 17.
+
+As of 2026-11-17 these were added, each without changing anything that was there. The README lists the addresses and the control calls.
+
+| Case | What is built | What is not |
+| --- | --- | --- |
+| 10, 11 | Case 33 covers the browser's own controls; its page always asks for confirmation | The custom controls of case 10; a dialog that appears only sometimes |
+| 13 | Sign-in by form under `/secure`, a session cookie, sign-out, a lockout after five failures in a row, and a one-time code step switched on by a mode. The control interface counts attempts, failures, and refusals | Sign-in by redirect to a separate identity page |
+| 14 | The control interface expires or revokes every session | Idle and total time limits on a clock |
+| 15 | A mode in which a new sign-in revokes the other sessions | |
+| 17 | The fault "lost after commit": the write is stored and the connection closes with no answer. It covers the JSON interface and so the pages' saves, which go through it | |
+| 23 | Fixed routes for a 403 edge page and a 429 with a retry time; the status fault gives either on any path | A challenge page and a maintenance page |
+| 29 | The whole JSON interface again for a bearer token and for an API key header, with 401 and `WWW-Authenticate`; the control interface revokes either | |
+| 30 | An OpenAPI 3.1 document, written by hand; a test calls every operation it names and compares its list with the served routes | The signed-in copies are named in its text, not as paths |
+| 31 | The fault "changed shape" renames one field in a JSON answer | |
+| 32 | The four trap pages, each write counted by name | The WebSocket route refuses the upgrade after counting the handshake, so no socket opens |
+| 33 | The delivery-details page and its JSON routes | No automated test drives the page's script; that waits for the interface driver |
+| 34 | A redirect to the other loopback name on the same port | |
+
+Set a mode now exists for signing in only: the one-time code step and one session per account.
 - **The harness** is `example_app::harness::TestApp`. A test starts an application on a free port, uses it over HTTP, and asks the control interface what was stored and how many times. Two applications in one test share nothing.
 - **Lengths** are stored as whole sixteenths of an inch and travel as decimal text, so the application itself never holds a float.
 - **A line item that does not exist** has no form at its own address; the form for a new one is at a different address. That is the shape hypothesis H-23 is about.

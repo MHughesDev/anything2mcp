@@ -1,0 +1,10 @@
+# The same server as a local program. One tool is mapped.
+surface: orders_local
+tools:
+  orders_get:
+    digest: "sha256:945f610cfadfb8a9656a1702f1ce4c5a8dbb403f6b6d2246a3ac46836312ec44"
+    effect: read
+    absent_error: "There is no order"
+    key_args: [order_id]
+    untrusted_fields: [customer, note, reference]
+    free_text: false

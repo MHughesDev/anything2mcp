@@ -29,7 +29,18 @@ The owner asked for the whole system to be built end to end, without stopping, b
 - `a2m-sources`: csv, json, and xlsx readers of our own over one outside crate that inflates; exact decimals through all three; template fingerprints (0086, 0087).
 - `a2m-sched`: admission, queues with round robin between callers, leases with fencing through the ledger, exclusive resources with an ordering rule, budgets by the store's clock (0093).
 
-Pull request 11 carries everything above. About 600 tests pass on Linux.
+**Wave 4: the contract.** `a2m-provider`: the manifest and its checks, the registry as an immutable snapshot with a digest, the driver interface behind a handle that refuses a committing step without the ledger's intent token, discoverers that cannot write by the types, checked paths, and the supervisor for programs run to completion and programs that speak over pipes (0088 to 0090). A third small pass put a surface's declared programs in the plan and let a schema check run-time values (0124).
+
+Pull request 11 carries everything above. It merged green on Windows, macOS, and Linux, after four runs: the first found the advisory, the second and third the three defects described under Learned.
+
+**Wave 5: the loop, the registry, and the first packs.**
+
+- `a2m-engine`: build-order steps 1 to 7 proven against the test application through a real driver and a real store behind `Control`: a read through every layer, the signed trace, the plan's hash checked at guard, `needs_login`, a verified write, comparison after normalization, and resume without a duplicate. Steps 8 to 10 (identity strategies, dependent records, pipelines, sources, the fault rows of section 224, the sandbox) are written and have no test yet.
+- `a2m-actions`: all 91 catalog actions as data, 26 served; the settings loader; `Kernel::prepare` and `Kernel::open`; the in-process `Control` and runner loop; the dispatcher; the person surface and the approval desk (0094, 0095). A tool call reads end to end, and a write rests for approval, is approved at the desk, and is written once.
+- Seven packs, each proven against its test stand through the driver handle with real intent tokens: HTTP (0096, 0097), command (0098, 0099), data (0100, 0101), file (0102, 0103), stream (0104, 0105), device, and MCP. None had yet run through the engine loop when this was written.
+- `a2m-pack-web-browser`: the browser engine on our own DevTools client, with 13 tests that drive a real browser against the test application (0110, 0111).
+
+Pull request 12 carries wave 5.
 
 ## Learned
 
@@ -37,6 +48,9 @@ Pull request 11 carries everything above. About 600 tests pass on Linux.
 - **Starting a layer before the layer below has finished costs little.** An agent told that a dependency is being finished starts with its outside crates and its pure logic, and meets the dependency's real interface when it lands. No agent wrote a stand-in.
 - **Every large outside crate that the design named was refused on evidence,** and its replacement was small: the CEL interpreter, Cedar, a JSON Schema validator, the spreadsheet and csv readers, a DevTools client. What was kept from outside is what should not be written twice: a cipher, a key store, SQLite, a TLS stack, the MCP SDK, a YAML event parser, Unicode normalization, decimals.
 - **The closed licence list earned its keep.** It refused Cedar's build tree, two DevTools crates, and a WebDriver client, each for a real reason that a looser list would have let through.
+- **The three operating systems found four things in their first hour, and each was real.** The advisory check refused three unmaintained crates under the Linux key store, so that back end was removed and the check left alone ([decision 0123](../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)). On macOS, a signal to a process group whose only member is its exited leader answers "not permitted", which the supervisor read as a group it could not end. On Windows, a program that the supervisor ended looked like one that exited by itself with status 1, so a write cut off by shutdown would have read as an ordinary failure and not as a write in doubt. And a keeper test read what the keeper's task does after its last write without waiting for it, which the scheduling on Windows exposed; tracing it found two real inaccuracies in how the keeper reported being idle. None of the four could have been found on Linux.
+- **Every pack asked the provider contract for the same few things.** A place in a step's outcome for how the step was done, so the trace's signature can cover it; untrusted text from the system in a failure; the values kept for reconcile handed back to a step on resume; a clock for a discoverer; a session's lease at the moment of a request. Six agents who never saw each other's work each listed them. That agreement is the measurement hypothesis H-26 asked for: the kernel is neutral in shape, and its contract was a little too thin. The command pack forced one change to the plan (decision 0124); the rest wait for one pass after the end-to-end proofs exist.
+- **A disk that fills destroys files quietly.** A dozen agents building into one target folder filled the disk; files being written at that moment were left empty, and two agents had to rewrite theirs. Builds now carry no debug information and no incremental state, which made the folder nine times smaller.
 - **A shared tree needs shared numbers.** Decision records and store migrations are numbered, and agents working at once need their numbers handed out before they start.
 
 ## Changed in the design
@@ -49,7 +63,7 @@ Pull request 11 carries everything above. About 600 tests pass on Linux.
 
 ## Noticed, not acted on
 
-- **Windows and macOS had run nothing when this was written.** Agents checked that their gated code compiles and lints for both, where a crate has no C in its tree. Pull request 11 is the first run.
+- **The session's usage limit was reached once,** with the engine, the action registry, and eight packs half-built. All twelve agents stopped at once. Their files were on disk and each was resumed from where it stopped when the owner reset the limit.
 - **TLS is off.** With the TLS feature on, every HTTP client in a build must have a cryptography provider installed in its process, or it stops when it is made. Until one change installs it everywhere, an `https` identity service is refused by name, and only loopback endpoints are used.
 - **Named time zones are not built;** a target's zone is `UTC` or a fixed offset.
 - **The ledger grants a record lock to whoever asks first,** so a run woken by the scheduler can lose the lock to a run that never waited.

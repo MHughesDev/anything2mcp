@@ -1,0 +1,14 @@
+operation: example_echo_text
+title: Echo a text
+effect: read
+inputs:
+  text: {type: item_name, description: "Any text, to see how the tool receives it"}
+outputs: {}
+bindings:
+  - mode: cli
+    verb: call
+    status: verified
+    command: echo_text
+description: >
+  Hands one text to the tool twice, joined to a flag and as an argument of
+  its own. Prefer example_item_get for anything about the inventory.

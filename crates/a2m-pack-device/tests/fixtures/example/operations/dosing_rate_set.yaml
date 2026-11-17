@@ -1,0 +1,20 @@
+operation: example_dosing_rate_set
+title: Set the dosing rate
+# A register is found by its name in the map, and the kernel takes a
+# record key only from an input, so the operation has no identity and is
+# irreversible. The register is still read back.
+effect: irreversible
+commit_points: 1
+inputs:
+  rate: {type: dosing_rate_lpm, description: "Dosing rate, in litres per minute"}
+outputs:
+  rate: {type: dosing_rate_lpm}
+bindings:
+  - mode: device
+    verb: update
+    status: shadow
+    device_map: controller.main
+    registers: {dosing_rate: input.rate}
+    read_back: {rate: dosing_rate}
+description: >
+  Sets the dosing rate and reads it back.

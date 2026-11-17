@@ -1,0 +1,16 @@
+operation: example_settings_get
+title: Get the general settings
+effect: read
+inputs: {}
+outputs:
+  schema_version: {type: integer}
+  discount: {type: rate}
+  note: {type: note}
+bindings:
+  - mode: file
+    verb: read
+    document: settings
+    record: general
+description: >
+  Reads the schema version, the standard discount, and the note from the
+  settings file.

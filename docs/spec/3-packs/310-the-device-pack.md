@@ -259,9 +259,9 @@ None of these needs a kernel change beyond the identity precondition above. They
 | `busy` | `session_in_use` | Another run holds the link |
 | `unknown_variant` | `device_identity_mismatch`, `unexpected_reply` | Model or firmware not in the map; a reply of no declared form |
 | `rejected` | `device_refused` | The device answers with an exception: an address or a value it will not take |
-| `edge_blocked` | `device_protected`, `image_protected` | A protection on the device or the image refuses |
+| `edge_blocked` | `device_protected`, `image_protected` | A protection on the device or the image refuses. Not yet raised: the pack as built has no firmware path and no protection check |
 | `transient` | `timeout`, `connection_lost`, `frame_corrupt` | On a read, or before a write frame was sent |
-| `possible_commit` | `no_confirmation`, `device_not_returned` | A write frame was sent and no clear acknowledgement came; an update did not come back |
+| `possible_commit` | `no_confirmation`, `device_not_returned` | A write frame was sent and no clear acknowledgement came; an update did not come back. `device_not_returned` is not yet raised: firmware updates are not built |
 | `mismatch` | `read_back_differs`, `sensor_out_of_tolerance` | The register or the declared sensor disagrees |
 
 A device may also answer that it is busy. On a read that is `transient`. On a write it is never retried, like every write in this pack.

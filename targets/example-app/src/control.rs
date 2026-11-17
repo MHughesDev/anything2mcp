@@ -9,8 +9,15 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::auth::{AuthSettings, Credential};
 use crate::faults::Fault;
 use crate::{AppState, Inner};
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Revoke {
+    credential: Credential,
+}
 
 /// Settings a test can change.
 #[derive(Debug, Deserialize)]
@@ -28,6 +35,62 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/writes", get(writes))
         .route("/faults", get(faults).post(add_fault).delete(clear_faults))
         .route("/settings", post(settings))
+        .route("/orders/{order_id}/delivery", get(stored_delivery))
+        .route("/auth", get(auth_report))
+        .route("/auth/settings", post(auth_settings))
+        .route("/auth/sessions/expire", post(expire_sessions))
+        .route("/auth/sessions/revoke", post(revoke_sessions))
+        .route("/auth/revoke", post(revoke))
+        .route("/traps", get(trap_writes))
+}
+
+/// Exactly what is stored for an order's delivery details, or `null`, and how many
+/// times they were written since the last reset.
+async fn stored_delivery(
+    State(state): State<AppState>,
+    Path(order_id): Path<String>,
+) -> Json<Value> {
+    let inner = state.lock().await;
+    Json(json!({
+        "stored": inner.deliveries.get(&order_id),
+        "writes": inner.deliveries.write_count(&order_id),
+    }))
+}
+
+/// What the application counted about signing in.
+async fn auth_report(State(state): State<AppState>) -> Json<Value> {
+    Json(json!(state.lock().await.auth.report()))
+}
+
+async fn auth_settings(
+    State(state): State<AppState>,
+    Json(settings): Json<AuthSettings>,
+) -> StatusCode {
+    state.lock().await.auth.set_settings(settings);
+    StatusCode::NO_CONTENT
+}
+
+/// Every usable session ends as if it had timed out.
+async fn expire_sessions(State(state): State<AppState>) -> StatusCode {
+    state.lock().await.auth.expire_sessions();
+    StatusCode::NO_CONTENT
+}
+
+/// Every usable session ends as if an administrator had ended it.
+async fn revoke_sessions(State(state): State<AppState>) -> StatusCode {
+    state.lock().await.auth.revoke_sessions();
+    StatusCode::NO_CONTENT
+}
+
+/// The bearer token or the API key stops working until the next reset.
+async fn revoke(State(state): State<AppState>, Json(revoke): Json<Revoke>) -> StatusCode {
+    state.lock().await.auth.revoke(revoke.credential);
+    StatusCode::NO_CONTENT
+}
+
+/// How many times each trap page's write arrived, by name.
+async fn trap_writes(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({"writes": state.lock().await.trap_writes}))
 }
 
 /// Restores the seed data and clears every fault, counter, and setting.

@@ -36,7 +36,7 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 | 28 | Wheel and npm packaging, verified hands-on | Phase 1 | 41 |
 | 29 | Command-line design for agents | Phase 5 | 40 |
 | 30 | Sign-in in engine-owned profiles, and device-bound sessions | Phase 2 | 44 |
-| 31 | Cedar spike | Phase 3 | 45 |
+| 31 | Cedar spike. Answered by decision 0082 | Phase 3 | 45 |
 
 ## Briefs
 
@@ -100,4 +100,4 @@ Run an item before the build phase that depends on it. The phase numbers refer t
 
 **30. Sign-in in engine-owned profiles, and device-bound sessions.** On Windows, macOS, and Linux, with Chrome and Edge: does a new data directory sign in silently through the device's account, and what must be configured for it to; how Device Bound Session Credentials behave in an automated browser, on virtual machines, and in containers; how to tell from outside that a session is device-bound; what exporting and restoring cookies does to such a session.
 
-**31. Cedar spike.** Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Anything2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.
+**31. Cedar spike.** (Answered by [decision 0082](../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md), which ran the spike and chose the policy crate's own evaluator. The brief stays so that references to it resolve.) Add the `cedar-policy` crate to a test binary and measure the size it adds and the time per decision for a realistic policy set; confirm its license; model Anything2MCP's principals, tools, and questions in a Cedar schema; test strict validation and the fail-closed wrapper; assess partial evaluation for listing what a caller may use.

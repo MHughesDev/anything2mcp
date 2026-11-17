@@ -86,6 +86,8 @@ impl Store {
         where T: Send + 'static, F: FnOnce(&mut Tx<'_>) -> Result<T, Failure> + Send + 'static;
     /// Rule 1. Commits with Durability::Synced, then gives the tokens. Up to the intent window at once.
     pub async fn store_intents(&self, fence: &Fence, intents: Vec<RecordIntent>) -> Result<Vec<IntentToken>, Failure>;
+    /// `mark_verified` in a transaction of its own, for a caller that holds the proof of `acted` by reference.
+    pub async fn store_verified(&self, token: &ActedToken, read_back: ReadBack) -> Result<(), Failure>;
     pub fn blobs(&self) -> Blobs<'_>;
     pub async fn health(&self) -> StoreHealth;          // can commit; vault attached
     pub async fn tables(&self) -> Result<Vec<(String, Option<Owner>)>, Failure>;

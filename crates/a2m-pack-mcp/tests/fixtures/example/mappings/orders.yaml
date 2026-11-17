@@ -1,0 +1,38 @@
+# The only tools of the `orders` server that can be reached. Each digest
+# pins the tool's definition as discovery reported it.
+surface: orders
+server: {name: example-mcp, version: "1.0.0"}
+purpose: tools
+tools:
+  orders_get:
+    digest: "sha256:945f610cfadfb8a9656a1702f1ce4c5a8dbb403f6b6d2246a3ac46836312ec44"
+    effect: read
+    absent_error: "There is no order"
+    key_args: [order_id]
+    untrusted_fields: [customer, note, reference]
+    free_text: false
+  orders_list:
+    digest: "sha256:7da9228bf1cf93b83b43e4888dc369c490e226d6b90040123aed9062e2f2799a"
+    effect: read
+    records: orders
+    stamp: reference
+    untrusted_fields: [orders]
+  orders_search:
+    digest: "sha256:2251bdee8a60ad36fed87e00f6619a2c0e2aa8907520475a74d63e441b130b6d"
+    effect: read
+    result: text
+    free_text: true
+  orders_create:
+    digest: "sha256:f59d6a3edd5c60bc1d3d654cbb09daa097ba30ddf6702e0d864ce31bc44c16dd"
+    effect: write
+    read_back: orders_get
+    key: [order_id]
+    stamp: reference
+  orders_update:
+    digest: "sha256:4dae58ac57727e98baba35c455cb2dcffa9d03d5c3c205cbbfe05407966d0ce1"
+    effect: write
+    read_back: orders_get
+    result: text
+  orders_report:
+    digest: "sha256:76c8cdcb994efe4cd6da78ea52d828ff60f4b52292f76cd91ba0105d608799d8"
+    effect: read

@@ -3,6 +3,7 @@
 //!
 //! A test never proves a write using Anything2MCP's own read path alone. It asks here.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::Deserialize;
@@ -10,8 +11,29 @@ use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+use crate::auth::{AuthReport, AuthSettings, Credential};
+use crate::details::StoredDelivery;
 use crate::faults::Fault;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
+
+/// The one account's username. Made up.
+pub const USERNAME: &str = "example-user";
+/// The one account's password. Made up.
+pub const PASSWORD: &str = "secret-for-tests-password";
+/// The one-time code asked for when the second factor is on. Fixed, and made up.
+pub const SECOND_FACTOR_CODE: &str = "246810";
+/// The bearer token the routes under `/secure/bearer` take. Made up.
+pub const BEARER_TOKEN: &str = "example-token-for-tests-1";
+/// The API key the routes under `/secure/key` take, in [`API_KEY_HEADER`]. Made up.
+pub const API_KEY: &str = "example-key-for-tests-1";
+/// The header that carries the API key.
+pub const API_KEY_HEADER: &str = "x-api-key";
+/// The cookie that carries a session.
+pub const SESSION_COOKIE: &str = "example_session";
+/// The cookie that carries a sign-in waiting for its one-time code.
+pub const PENDING_COOKIE: &str = "example_pending";
+/// Failed sign-ins in a row after which the account is locked until a reset.
+pub const LOCKOUT_AFTER: u64 = 5;
 
 /// Why the harness could not do what a test asked.
 #[derive(Debug)]
@@ -60,6 +82,16 @@ struct Stored<T> {
 #[derive(Deserialize)]
 struct Writes {
     writes: Vec<WriteRecord>,
+}
+
+#[derive(Deserialize)]
+struct DeliveryWrites {
+    writes: u64,
+}
+
+#[derive(Deserialize)]
+struct TrapWrites {
+    writes: BTreeMap<String, u64>,
 }
 
 #[derive(Deserialize)]
@@ -210,6 +242,130 @@ impl TestApp {
             .await
     }
 
+    /// Exactly what is stored for an order's delivery details, if anything (case 33).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn stored_delivery(
+        &self,
+        order_id: &str,
+    ) -> Result<Option<StoredDelivery>, HarnessError> {
+        let path = format!("/__control/orders/{order_id}/delivery");
+        Ok(self.ask::<Stored<StoredDelivery>>(&path).await?.stored)
+    }
+
+    /// How many times an order's delivery details were written since the last reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn delivery_write_count(&self, order_id: &str) -> Result<u64, HarnessError> {
+        let path = format!("/__control/orders/{order_id}/delivery");
+        Ok(self.ask::<DeliveryWrites>(&path).await?.writes)
+    }
+
+    /// What the application counted about signing in since the last reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn auth_report(&self) -> Result<AuthReport, HarnessError> {
+        self.ask("/__control/auth").await
+    }
+
+    /// Sets the sign-in modes: the one-time code step, and one session per account.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn set_auth_settings(&self, settings: &AuthSettings) -> Result<(), HarnessError> {
+        self.command(
+            self.http
+                .post(self.url("/__control/auth/settings"))
+                .json(settings),
+        )
+        .await
+    }
+
+    /// Ends every usable session as if it had timed out.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn expire_sessions(&self) -> Result<(), HarnessError> {
+        self.command(self.http.post(self.url("/__control/auth/sessions/expire")))
+            .await
+    }
+
+    /// Ends every usable session as if an administrator had ended it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn revoke_sessions(&self) -> Result<(), HarnessError> {
+        self.command(self.http.post(self.url("/__control/auth/sessions/revoke")))
+            .await
+    }
+
+    /// Revokes the bearer token or the API key until the next reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn revoke(&self, credential: Credential) -> Result<(), HarnessError> {
+        let body = serde_json::json!({"credential": credential});
+        self.command(
+            self.http
+                .post(self.url("/__control/auth/revoke"))
+                .json(&body),
+        )
+        .await
+    }
+
+    /// How many times each trap page's write arrived since the last reset, by name
+    /// (case 32). A name that never arrived is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn trap_writes(&self) -> Result<BTreeMap<String, u64>, HarnessError> {
+        Ok(self.ask::<TrapWrites>("/__control/traps").await?.writes)
+    }
+
+    /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step
+    /// when it is on, as a person would, and returns the value for a `Cookie` header
+    /// that carries the new session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the application did not give a session.
+    pub async fn session_cookie(&self) -> Result<String, HarnessError> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let form = format!("username={USERNAME}&password={PASSWORD}");
+        let mut response = client
+            .post(self.url("/secure/sign-in"))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(form)
+            .send()
+            .await?;
+        if let Some(pending) = cookie_from(&response, PENDING_COOKIE) {
+            response = client
+                .post(self.url("/secure/sign-in/code"))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("{PENDING_COOKIE}={pending}"))
+                .body(format!("code={SECOND_FACTOR_CODE}"))
+                .send()
+                .await?;
+        }
+        match cookie_from(&response, SESSION_COOKIE) {
+            Some(session) if !session.is_empty() => Ok(format!("{SESSION_COOKIE}={session}")),
+            _ => Err(HarnessError::Status(response.status().as_u16())),
+        }
+    }
+
     async fn command(&self, request: reqwest::RequestBuilder) -> Result<(), HarnessError> {
         let response = request.send().await?;
         if response.status().is_success() {
@@ -226,6 +382,20 @@ impl TestApp {
         }
         Ok(response.json().await?)
     }
+}
+
+/// The value a response sets for one cookie, if it sets it.
+fn cookie_from(response: &reqwest::Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split(';').next())
+        .filter_map(|pair| pair.trim().split_once('='))
+        .filter(|(n, _)| *n == name)
+        .map(|(_, v)| v.to_owned())
+        .next_back()
 }
 
 impl Drop for TestApp {

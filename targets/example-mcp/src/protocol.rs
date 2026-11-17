@@ -17,9 +17,8 @@ pub const STATELESS_REVISION: &str = "2026-07-28";
 pub const REVISIONS: [&str; 2] = [STATELESS_REVISION, HANDSHAKE_REVISION];
 /// Where a request with no handshake names its revision, under `params._meta`.
 ///
-/// Not verified against the text of the 2026-07-28 revision, which could not
-/// be read when the stand was built. Research note 6 says the version travels
-/// in `_meta`; this key follows the protocol's rule for reserved names.
+/// Verified against the text of the 2026-07-28 revision: research note 18
+/// read the key in the specification's own files.
 pub const STATELESS_VERSION_META_KEY: &str = "io.modelcontextprotocol/protocolVersion";
 /// The HTTP header that names the revision of a request.
 pub const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
@@ -32,9 +31,13 @@ pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
 /// JSON-RPC: no such method.
 pub const METHOD_NOT_FOUND: i64 = -32601;
-/// JSON-RPC: bad parameters. Also an unknown tool, an unknown cursor, and an
-/// unsupported revision, as the protocol says.
+/// JSON-RPC: bad parameters. Also an unknown tool, an unknown cursor, and a
+/// revision refused in the handshake, as the protocol says.
 pub const INVALID_PARAMS: i64 = -32602;
+/// The protocol's own error for a request with no handshake that names a
+/// revision the server does not serve. Its `data` holds `supported` and
+/// `requested` (research note 18).
+pub const UNSUPPORTED_VERSION: i64 = -32022;
 /// The stdio program's answer when the credential it was started with is not
 /// accepted. The protocol names no code for this over stdio; this one is the
 /// stand's own.
@@ -102,10 +105,20 @@ impl RpcError {
         self
     }
 
+    /// The refusal of a revision in the handshake.
     fn unsupported_revision(requested: &str, supported: &[&str]) -> Self {
         Self {
             data: Some(json!({"supported": supported, "requested": requested})),
             ..Self::new(INVALID_PARAMS, "Unsupported protocol version").status(400)
+        }
+    }
+
+    /// The refusal of a request with no handshake that names a revision the
+    /// stand does not serve.
+    fn unserved_revision(requested: &str, supported: &[&str]) -> Self {
+        Self {
+            code: UNSUPPORTED_VERSION,
+            ..Self::unsupported_revision(requested, supported)
         }
     }
 
@@ -328,7 +341,7 @@ fn admit(
                     Ok(id)
                 }
                 Some(HANDSHAKE_REVISION) | None => Err(RpcError::not_initialized()),
-                Some(other) => Err(RpcError::unsupported_revision(other, &REVISIONS)),
+                Some(other) => Err(RpcError::unserved_revision(other, &REVISIONS)),
             }
         }
     }
@@ -419,8 +432,7 @@ pub(crate) fn dispatch(state: &mut State, conn: &mut Conn, incoming: &Incoming<'
         && method != "initialize"
         && !REVISIONS.contains(&named)
     {
-        return RpcError::unsupported_revision(named, &REVISIONS)
-            .into_outcome(id.unwrap_or(&no_id));
+        return RpcError::unserved_revision(named, &REVISIONS).into_outcome(id.unwrap_or(&no_id));
     }
 
     let Some(id) = id else {

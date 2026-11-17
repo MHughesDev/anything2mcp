@@ -1,0 +1,17 @@
+# The imaginary order-entry system `example`, reached through the part of
+# its JSON interface that takes a bearer token. It describes no real
+# product. A test gives the surface the address of the application it
+# started.
+schema_version: 1
+target: example
+title: Example order entry, signed in
+surfaces:
+  api:
+    kind: http
+    base: "http://127.0.0.1:4010"
+environments:
+  test:
+    kind: test
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

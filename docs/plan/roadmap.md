@@ -58,7 +58,7 @@ A package is one branch and one pull request. When it merges, its row changes to
 | B2a | The checked names that arrive with packs (surface kinds, step kinds, file kinds, lint codes, finding kinds, control names), and the plan's types as data with the check of a plan's hash | `a2m-core` | B2 | A plan whose bytes changed fails its hash check; a badly formed name is refused. Settled by decisions [0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) and [0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) | done |
 | B3 | The provider manifest, the registry, and a pack registering nothing but its modes | `a2m-provider` | B1 | A manifest that asks for an undeclared effect is refused with a named failure; a mode registered twice is refused. Settled by decisions [0088](../decisions/0088-the-provider-contracts-outside-crates.md), [0089](../decisions/0089-the-provider-contract-as-building-it-settled-it.md), and [0090](../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md) | done |
 | B4 | Target file schemas and the loader, for the file kinds the kernel owns. This is slice 0.6 | `a2m-files`, `a2m-core` | B1 | The `example` target's files validate; a broken one fails with a file, a line, and a fix. Settled by decisions [0078](../decisions/0078-target-files-are-read-by-an-event-parser-into-our-own-located-tree-and-checked-by-our-own-schema-subset.md) and [0079](../decisions/0079-the-compilers-registration-points-and-the-file-formats-as-the-code-settles-them.md) | done |
-| B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | ready |
+| B5 | The first two actions, `provider.list` and `provider.describe`, defined and not yet served | `a2m-actions` | B3 | The catalog and the registry agree, checked by a test | done |
 | 0.4 | Spike: the browser engine base, with research brief 1 | `spikes/` | 0.3 | A results table per candidate and a decision record: [decision 0070](../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md) | done |
 | 0.5 | Spike: an MCP server with one tool over stdio, with research brief 2 | `spikes/` | None | Two unrelated MCP clients call the tool; a decision record on the revisions served: [decision 0071](../decisions/0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md) | done |
 | 0.7 | The benchmark harness: measures overhead beyond the test application's own time | `bench/` | 0.3 | A sample benchmark runs in CI and stores its result | done |
@@ -69,13 +69,13 @@ Phase 1 of the build plan. One read travels through every layer, each as thin as
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| 1.1 | The skeleton: a hand-written plan, the engine loop with an in-process `Control`, the driver interface, the interface driver reading one field, a result printed by a command | `a2m-core`, `a2m-provider`, `a2m-engine`, `a2m-actions`, `a2m-pack-web-browser`, `a2m-pack-web-ui`, `anything2mcp` | 0.4, B2a, B3 | One command reads one value from the test application. Settles the driver interface by decision record | ready |
-| 1.2 | The step trace and its signature. Built so far: the trace and its signature exist in `a2m-telemetry`, proven on simulated steps | `a2m-telemetry`, `a2m-engine` | 1.1 | Five runs, one signature | held |
+| 1.1 | The skeleton: a hand-written plan, the engine loop with an in-process `Control`, the driver interface, the interface driver reading one field, a result printed by a command. Built so far: the engine loop reads one value from the test application through a driver registered by a test pack, and through the action registry's `tool.call`; the command that prints it is the product crate's, in progress | `a2m-core`, `a2m-provider`, `a2m-engine`, `a2m-actions`, `a2m-pack-web-browser`, `a2m-pack-web-ui`, `anything2mcp` | 0.4, B2a, B3 | One command reads one value from the test application. Settles the driver interface by decision record | ready |
+| 1.2 | The step trace and its signature. Built so far: the trace and its signature exist in `a2m-telemetry`, proven on simulated steps; the engine sends the signed trace through `Control`; five runs with one signature is proven on simulated steps and not yet on real runs | `a2m-telemetry`, `a2m-engine` | 1.1 | Five runs, one signature | held |
 | 1.3 | The compiler replaces the hand-written plan; packs register their file kinds and lowerings. Built so far: the compiler and the registration points exist, proven through a test pack | `a2m-files`, `a2m-expr`, `a2m-provider`, `a2m-pack-web-ui` | 1.1, B4 | The same read from target files; the plan is byte-identical on three operating systems | held |
-| 1.4 | The store for reads, and the local engine: one process, two clients. Built so far: the store exists | `a2m-ledger`, `a2m-local`, `a2m-actions` | 1.2 | Two commands at once share one browser; a different user is refused; a read leaves a run row and its events | held |
-| 1.4a | The settings loader: one schema, the layers in order, an unknown key refused, and where each value came from | `a2m-actions` | 1.4 | An empty file is a complete configuration; a file that loosens a protected setting is refused; `config.show` names the layer of every value | held |
-| 1.5 | The action registry with generated faces, and MCP over stdio | `a2m-actions`, `a2m-mcp`, `anything2mcp` | 1.4, 0.5 | An MCP client calls the same read; a hand-written face fails CI | held |
-| 1.6 | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | `a2m-pack-web-browser`, `a2m-pack-web-ui` | 1.3 | The Phase 1 cases of the test application pass on three operating systems | held |
+| 1.4 | The store for reads, and the local engine: one process, two clients. Built so far: the store, the kernel handle, and the settings loader exist; the local engine's channel is in progress | `a2m-ledger`, `a2m-local`, `a2m-actions` | 1.2 | Two commands at once share one browser; a different user is refused; a read leaves a run row and its events | held |
+| 1.4a | The settings loader: one schema, the layers in order, an unknown key refused, and where each value came from | `a2m-actions` | 1.4 | An empty file is a complete configuration; a file that loosens a protected setting is refused; `config.show` names the layer of every value | done |
+| 1.5 | The action registry with generated faces, and MCP over stdio. Built so far: the registry half and the REST and MCP face descriptions exist; the MCP service is in progress | `a2m-actions`, `a2m-mcp`, `anything2mcp` | 1.4, 0.5 | An MCP client calls the same read; a hand-written face fails CI | held |
+| 1.6 | The rest of the read verbs, locators, wait conditions, and widget drivers for reading. Built so far: the browser engine exists in `a2m-pack-web-browser`: locating, reading, waiting, acting, snapshots, the observing tab, and in-page requests; the drivers on it are in progress | `a2m-pack-web-browser`, `a2m-pack-web-ui` | 1.3 | The Phase 1 cases of the test application pass on three operating systems | held |
 | 1.7 | Measure every budget; a design review round; a locally built wheel installs | `bench/`, `bindings/python` | 1.6, 0.7 | Numbers recorded, budgets confirmed or revised by decision record | held |
 
 ## Milestone 2: the signed-in read
@@ -99,12 +99,12 @@ Phase 3. At its end the first usable product exists: stop, use it, and review th
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | 3.1 | The ledger tables and its nine rules as tests, with no application involved | `a2m-ledger` | 1.4 | Each rule fails a test when broken | done |
-| 3.2 | The policy gate with the built-in local policy set. Built so far: the policy gate exists; its joining in the action registry is to come | `a2m-policy`, `a2m-actions` | 3.1 | A write without approval is refused, and the refusal is recorded | ready |
-| 3.3 | One write to one field, with the intent recorded first and the value read back, approved by a stub | `a2m-engine`, `a2m-ledger`, `a2m-pack-web-ui` | 3.2 | The test application confirms exactly one write | held |
+| 3.2 | The policy gate with the built-in local policy set. Built so far: the policy gate exists and is joined in the action registry, where every dispatch records one decision; a write without approval rests as `needs_approval` and writes nothing, but no test yet asserts the recorded refusal of that write | `a2m-policy`, `a2m-actions` | 3.1 | A write without approval is refused, and the refusal is recorded | ready |
+| 3.3 | One write to one field, with the intent recorded first and the value read back, approved by a stub. Built so far: one write through a test pack's driver, with the intent recorded first and the value read back, confirmed once by the test application, in the tests of `a2m-engine` and `a2m-actions`; the interface driver's write is to come. The browser engine it needs exists | `a2m-engine`, `a2m-ledger`, `a2m-pack-web-ui` | 3.2 | The test application confirms exactly one write | held |
 | 3.4 | Field types and normalization. Built so far: field types and normalizers exist | `a2m-files`, `a2m-expr`, `a2m-engine` | 3.3 | A value the application rounds is compared correctly | held |
-| 3.5 | Preview, the diff, and its hash | `a2m-engine`, `a2m-ledger` | 3.4 | The same hash on three operating systems | held |
-| 3.6 | The approval surface replaces the stub | `a2m-policy`, `a2m-local`, `a2m-api` | 3.5 | A person approves; a script cannot | held |
-| 3.7 | Stop and resume, with reconcile before any write | `a2m-engine`, `a2m-ledger`, `a2m-sched` | 3.6 | Killed at a random step and resumed: no duplicate, nothing unverified | held |
+| 3.5 | Preview, the diff, and its hash. Built so far: the preview stores the diff and its hash, and an approval of another diff does not let the run write; proven on Linux only | `a2m-engine`, `a2m-ledger` | 3.4 | The same hash on three operating systems | held |
+| 3.6 | The approval surface replaces the stub. Built so far: the approval desk in `a2m-actions`, where a person approves and an agent is refused; no action can approve | `a2m-policy`, `a2m-local`, `a2m-api` | 3.5 | A person approves; a script cannot | held |
+| 3.7 | Stop and resume, with reconcile before any write. Built so far: a lost answer is reconciled and never sent twice, and a resume reads before it writes, with faults injected at named steps; no kill at a random step yet | `a2m-engine`, `a2m-ledger`, `a2m-sched` | 3.6 | Killed at a random step and resumed: no duplicate, nothing unverified | held |
 | 3.8 | Identity strategies and dependent records | `a2m-engine`, `a2m-files` | 3.7 | A header and its lines, created once | held |
 | 3.9 | Sources and a full pipeline. Built so far: the readers and the compiler half exist | `a2m-sources`, `a2m-expr`, `a2m-files`, `a2m-engine` | 3.8 | A spreadsheet entered, then run again with nothing changed | held |
 | 3.10 | Engine faults and the first manipulation tests; a design review round | All kernel crates | 3.9 | Each fault leaves no duplicate and no unverified record | held |
@@ -118,9 +118,9 @@ Stage D. The command pack is designed in [section 306](../spec/3-packs/306-the-c
 | --- | --- | --- | --- | --- | --- |
 | D1 | The design of the command pack | Documents | None | Section 306 answers every item of the entry bar | done |
 | D2 | The command-line test stand, with its control interface: `targets/example-cli` | `targets/` | D1 | Its own tests, on three operating systems | done |
-| D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode | New pack crates | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
-| D4 | The result of hypothesis H-26: every kernel change the pack forced, counted | Documents | D3 | A hypothesis result file. If the kernel changed more than slightly, the boundary is redrawn before another pack starts | held |
-| D5 | Writes through the command pack: a declared read-back command, `possible_commit` on a killed process | The command pack's crates | D4, 3.7 | The test stand confirms one write after a kill and a resume | held |
+| D3 | The command pack, read verbs only, as new pack crates; the decision record for its mode. Built so far: the command pack against `targets/example-cli` through the driver handle | `a2m-pack-command` | D2, 1.3 | A read through the same engine loop, with one trace signature across five runs | held |
+| D4 | The result of hypothesis H-26: every kernel change the pack forced, counted. Built so far: the measurement is in decision 0099; one kernel change was forced, decision 0124; the result file is to come | Documents | D3 | A hypothesis result file. If the kernel changed more than slightly, the boundary is redrawn before another pack starts | held |
+| D5 | Writes through the command pack: a declared read-back command, `possible_commit` on a killed process. Built so far: writes through the driver handle; secrets passed to a child and three verbs are not built | The command pack's crates | D4, 3.7 | The test stand confirms one write after a kill and a resume | held |
 
 ## Milestone 5: the scout
 
@@ -129,7 +129,7 @@ Stage E, with the scout of [section 402](../spec/4-building-tools/402-the-scout-
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | E1 | The discoverer extension point, the findings and unknowns store, and the sandbox that makes a write impossible | `a2m-provider`, `a2m-ledger`, `a2m-engine` | B2, B3, 1.4 | A finding cannot be stored above `discovered`; a discoverer that tries to write is stopped | held |
-| E2 | The web pack's discoverers: the probe, snapshots, traffic capture, endpoint inference | `a2m-pack-web-probe` | E1, 2.6 | Test application cases for capture and inference | held |
+| E2 | The web pack's discoverers: the probe, snapshots, traffic capture, endpoint inference. Built so far: the browser engine takes snapshots and has the observing tab; the discoverers on it are in progress | `a2m-pack-web-probe` | E1, 2.6 | Test application cases for capture and inference | held |
 | E3 | Described against observed: the comparison, and the unknowns it raises | `a2m-provider` | E2 | An endpoint present in a description and never seen is reported as `inferred` | held |
 | E4 | The drafter, and each pack's drafting rules. Built so far: the drafter's kernel half exists | `a2m-files`, the packs | E1, 1.3 | A draft made by rule compiles, names its findings, and carries no unit or key the system did not state | held |
 | E5 | The scout pipeline and its report | `a2m-actions` | E3, E4 | Scouting the test application twice gives the same report, by hash; no write is ever tried. The result of hypothesis H-31 | held |
@@ -141,8 +141,8 @@ Phase 4. The request modes of the web pack and the HTTP pack.
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| 4.1 | The `http` driver: reads, then writes with read-back | `a2m-pack-http` | 3.7 | The test application's cases pass over direct requests | held |
-| 4.2 | The `page_http` driver: requests made from inside the page, with the page's own tokens | `a2m-pack-web-ui` | 4.1 | The anti-forgery case of the test application passes | held |
+| 4.1 | The `http` driver: reads, then writes with read-back. Built so far: the HTTP pack's reads and verified writes pass against the test application through the driver handle (cases 1 to 4 and 17), not yet through the engine loop | `a2m-pack-http` | 3.7 | The test application's cases pass over direct requests | held |
+| 4.2 | The `page_http` driver: requests made from inside the page, with the page's own tokens. Built so far: the browser engine makes in-page requests; the driver on it is in progress | `a2m-pack-web-ui` | 4.1 | The anti-forgery case of the test application passes | held |
 | 4.3 | Shadow, comparison, and promotion of a binding | `a2m-engine`, `a2m-ledger` | 4.1 | A binding is promoted only after the set number of exact matches; a mismatch stops promotion | held |
 | 4.4 | Import of published descriptions, as discoverers and drafting rules; the `api` mode | `a2m-pack-http` | E4 | A described service becomes drafted reads that compile | held |
 | 4.5 | The exit test of Phase 4 | Benchmarks | 4.3 | An operation gains a request binding through shadow, returns identical results, and runs at least ten times faster | held |
@@ -171,17 +171,17 @@ One pack at a time, each through the entry bar of [section 202](../spec/2-kernel
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | G1 | The data pack's test stand: a local database with a control query, at `targets/example-db` | `targets/` | None | Its own tests | done |
-| G2 | The data pack, reads only, with the store's own catalog as its discoverer | New pack crates | G1, D4 | A read by key; a statement that is not a read is refused by the database, not by parsing | held |
-| G3 | Writes: a required key, a rows-affected check inside the transaction, read-back by key | The data pack's crates | G2, D5 | The stand confirms one row changed; any other count rolls back | held |
+| G2 | The data pack, reads only, with the store's own catalog as its discoverer. Built so far: the data pack on an embedded database file | `a2m-pack-data` | G1, D4 | A read by key; a statement that is not a read is refused by the database, not by parsing | held |
+| G3 | Writes: a required key, a rows-affected check inside the transaction, read-back by key. Built so far: writes on an embedded database file; the server store and the later parts are not built | The data pack's crates | G2, D5 | The stand confirms one row changed; any other count rolls back | held |
 | H1 | The file pack's test stand: files in a temporary folder, with a control interface that reports the bytes on disk, at `targets/example-files` | `targets/` | None | Its own tests | done |
-| H2 | The file pack, reads only | New pack crates | H1, D4 | A value read from a named place in each supported format | held |
-| H3 | Writes: a new file that replaces the old one in one step; read-back by opening it again | The file pack's crates | H2, D5 | Killed mid-write and resumed: the file is the old one or the new one, never a mixture | held |
+| H2 | The file pack, reads only. Built so far: delimited text and JSON read, and workbooks read | `a2m-pack-file` | H1, D4 | A value read from a named place in each supported format | held |
+| H3 | Writes: a new file that replaces the old one in one step; read-back by opening it again. Built so far: delimited text and JSON written | The file pack's crates | H2, D5 | Killed mid-write and resumed: the file is the old one or the new one, never a mixture | held |
 | J1 | The stream pack's test stand: a small local broker with a control interface, at `targets/example-broker` | `targets/` | None | Its own tests | done |
-| J2 | The stream pack, bounded reads only; discovery that never consumes | New pack crates | J1, D4 | A read ends within its limit; the stand shows no message was taken from anyone | held |
-| J3 | Publishing, with a key that makes it safe to resume | The stream pack's crates | J2, D5 | A resumed publish delivers one message, by the stand's count | held |
+| J2 | The stream pack, bounded reads only; discovery that never consumes. Built so far: against the test stand's own protocol; no standard protocol yet | `a2m-pack-stream` | J1, D4 | A read ends within its limit; the stand shows no message was taken from anyone | held |
+| J3 | Publishing, with a key that makes it safe to resume. Built so far: keyed publishes against the test stand's own protocol; no standard protocol yet | The stream pack's crates | J2, D5 | A resumed publish delivers one message, by the stand's count | held |
 | K1 | The device pack's test stand: a simulated device, with a control interface that reports every frame, at `targets/example-device` | `targets/` | None | Its own tests | done |
-| K2 | The device pack, reads only | New pack crates | K1, D4 | A register read through the engine loop; the stand shows only read frames | held |
-| K3 | Writes against the simulator only: a range limit enforced before a frame is sent; approval by a person every run | The device pack's crates | K2, D5 | A value outside its range sends no frame; a lost link after a write is `possible_commit` | held |
+| K2 | The device pack, reads only. Built so far: reads | `a2m-pack-device` | K1, D4 | A register read through the engine loop; the stand shows only read frames | held |
+| K3 | Writes against the simulator only: a range limit enforced before a frame is sent; approval by a person every run. Built so far: writes with the range enforced first; firmware is not built | The device pack's crates | K2, D5 | A value outside its range sends no frame; a lost link after a write is `possible_commit` | held |
 | K4 | Firmware: inspection as discovery through an optional provider; the update operation through the simulated device's own mechanism | The device pack's crates | K3, E1 | Findings are `inferred`; an update without a declared recovery path cannot be published | held |
 
 ## Milestone 9: a server
@@ -207,7 +207,7 @@ Phase 8.
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
 | 8.1 | Spike: desktop accessibility, with research brief 19 | `spikes/` | None | A decision record choosing the base | ready |
-| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; a small MCP server as its test stand. The test stand exists at `targets/example-mcp` | `a2m-pack-mcp`, `targets/` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
+| 8.2 | The MCP pack: pass-through to an upstream server through a mapping file, with verification added; a small MCP server as its test stand. The test stand exists at `targets/example-mcp`. Built so far: the MCP pack over HTTP and, on Unix, a local program | `a2m-pack-mcp`, `targets/` | 3.7 | Only mapped tools are reachable; a changed upstream tool is `drift` | held |
 | 8.2a | Tools a site publishes, as a mode of the web pack | `a2m-pack-web-ui`, `targets/example-app` | 1.6 | A page of the test application registers a tool and it is called through the engine loop | held |
 | 8.3 | The desktop pack | `a2m-pack-desktop` | 8.1, D4 | Test application case 28 passes on three operating systems | held |
 | 8.4 | Platform profiles and the remaining widget drivers | `a2m-pack-web-ui`, `profiles/` | 1.6 | Every control in the test application is set and read back | held |
@@ -241,7 +241,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are B5, 1.1, 3.2, and 8.1. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5; it is still held by package 1.4.
+Right now, the packages marked `ready` are 1.1, 3.2, and 8.1. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5; it is still held by package 1.4.
 
 ## Rules for changing this document
 

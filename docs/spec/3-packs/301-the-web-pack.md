@@ -77,7 +77,7 @@ If the HTTP pack is not enabled, a `page_http` binding does not compile, and the
 | `submit` | Yes | Yes | If offered |
 | `call` | No | Yes | Yes |
 
-`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)).
+`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
 
 ## The driver, part by part
 
@@ -290,7 +290,7 @@ In an observing tab:
 | What could change the system | What happens |
 | --- | --- |
 | A request whose method is not GET, HEAD, or OPTIONS | Intercepted and failed before it leaves the browser, unless it matches the tab's safe requests, which only a person sets. Each one is reported as a limitation on the finding |
-| A request from a worker the tab starts | The same interception is attached to every worker before it runs; service workers are bypassed |
+| A request from a worker the tab starts | A dedicated worker's requests pass through its page's interception, which is on before the page runs; any other child takes its own before it runs or is not let run; service workers are bypassed ([decision 0111](../../decisions/0111-an-observing-tabs-lock-as-built-and-what-the-browser-was-measured-to-do.md)) |
 | A WebSocket | Refused at creation, and reported as a limitation |
 | A beacon, a form submission, a download | Failed by the same interception, or refused |
 | Navigation | Only to an address the caller passes, or a plain link as above |
@@ -344,15 +344,15 @@ Codes are stable once released.
 
 | Code | Level | Rule |
 | --- | --- | --- |
-| `web_css_not_last` | Error | A `css` locator is allowed only last in a list |
-| `web_css_used` | Warning | Any `css` locator |
-| `web_generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile |
-| `web_no_fingerprint` | Error | A field or action with no fingerprint |
-| `web_commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted |
-| `web_variant_unhandled` | Error | A variant with no handling |
-| `web_frame_undeclared` | Error | A screen whose locators need a frame and declare none |
-| `web_profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` |
-| `web_signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified |
+| `web.css_not_last` | Error | A `css` locator is allowed only last in a list |
+| `web.css_used` | Warning | Any `css` locator |
+| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile |
+| `web.no_fingerprint` | Error | A field or action with no fingerprint |
+| `web.commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted |
+| `web.variant_unhandled` | Error | A variant with no handling |
+| `web.frame_undeclared` | Error | A screen whose locators need a frame and declare none |
+| `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` |
+| `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified |
 
 ## Drafting rules
 
@@ -390,9 +390,9 @@ The pack masks restricted and password values in every snapshot and screenshot i
 | `stale` | `version_conflict` | The version precondition failed |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The edge answered instead of the application. Never retried; a person is told ([section 302](302-the-web-pack-browser-engine.md)) |
 | `session_expired` | `needs_login` | Reported through the lease, after the keeper has the signal |
-| `policy` | `surface_not_declared`, `path_not_allowed` | A navigation or in-page request to an origin the target did not declare; a browser program the scoped supervisor does not allow |
+| `policy` | `surface_not_declared`, `effect_not_declared` | A navigation or in-page request to an origin the target did not declare; a browser program the pack's manifest does not declare, which the scoped supervisor refuses |
 | `busy` | `browser_unavailable` | The browser is not installed |
-| `transient` | `timeout`, `connection_lost` | Before anything was sent |
+| `transient` | `timeout`, `connection_lost` | Before anything was sent. Also a browser that was started and did not answer before the launch deadline: it is closed, and a slow start on a cold machine passes ([decision 0134](../../decisions/0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md)) |
 
 `locator_ambiguous`, `unknown_platform`, and `browser_unavailable` are proposed codes, settled as the crates are built. In discovery, `unknown_platform` is not a stop: the finding says so. `edge_blocked` stops discovery of that surface, and `needs_login` is reported per surface while the scout carries on with the others.
 

@@ -1,0 +1,16 @@
+operation: example_order_status_get
+title: Get the status of an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  status: {type: text}
+bindings:
+  - mode: stream
+    verb: read
+    status: verified
+    channel: orders.status
+    key: {order_id: input.order_id}
+description: >
+  Reads the last status the broker holds for one order.

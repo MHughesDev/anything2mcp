@@ -1,0 +1,21 @@
+operation: example_warehouse_add
+title: Add a warehouse
+effect: write
+key: code
+commit_points: 1
+inputs:
+  code: {type: identifier, description: "Warehouse code, such as W4"}
+  cutoff: {type: cutoff, description: "The cutoff time, such as 13:00"}
+outputs:
+  cutoff: {type: cutoff}
+bindings:
+  - mode: file
+    verb: create
+    status: shadow
+    document: settings
+    record: warehouse
+    key: {code: input.code}
+    fields: {cutoff: input.cutoff}
+    read_back: {record: warehouse}
+description: >
+  Adds one warehouse to the settings file.

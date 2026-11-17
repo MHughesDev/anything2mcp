@@ -6,7 +6,7 @@
 
 ### MCP
 
-- `rmcp` is the official Rust SDK for the Model Context Protocol; its 3.x README targets the 2026-07-28 specification. Features include stdio and Streamable HTTP server transports, OAuth support, and elicitation. [docs.rs rmcp](https://docs.rs/crate/rmcp)
+- `rmcp` is the official Rust SDK for the Model Context Protocol; its 3.x README targets the 2026-07-28 specification. Features include stdio and Streamable HTTP server transports, OAuth support, and elicitation. [docs.rs rmcp](https://docs.rs/crate/rmcp) The product does not use it: its dependency tree holds a crate that was declared unmaintained, so the MCP protocol layer is the product's own ([decision 0130](../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)).
 
 ### Browser engine
 

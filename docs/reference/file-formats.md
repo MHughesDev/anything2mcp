@@ -4,7 +4,7 @@ Every field of every target file. [Spec section 205](../spec/2-kernel/205-target
 
 This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
 
-**Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The packs designed and not yet built bring their own, each given field by field in its spec section: `commands/` (command pack), `statements/` (data pack), `documents/` (file pack), `channels/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
+**Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The other packs bring their own, each given field by field in its spec section and listed [below](#kinds-the-other-packs-bring): `commands/` (command pack), `statements/` (data pack), `documents/` (file pack), `channels/` and `schemas/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
 
 Conventions: names are lowercase with underscores. *Required* fields are marked. A field that takes an *expression* takes CEL ([expressions](#expressions)). A field that takes a *condition* takes one of the [conditions](#conditions).
 
@@ -30,7 +30,7 @@ Conventions: names are lowercase with underscores. *Required* fields are marked.
 | Field | Meaning |
 | --- | --- |
 | `kind` (required) | A surface kind that an enabled pack registers. The first four packs register `web`, `http`, `mcp`, and `desktop`; the designed packs add `program`, `database`, `file`, `broker`, and `device_link`. The fields below the kind are the registering pack's. A field the pack marks as naming a program takes an absolute path, and the plan declares that program for the surface; a relative path is `kernel.program_invalid` |
-| `origin`, `base`, `server`, `app` | The address for the kind: a web origin, an API base address, an MCP server address, or a desktop application identifier. Other kinds have their own, given in their pack's section |
+| `origin`, `base`, `address`, `app` | The address for the kind: a web origin (`web`), an API base address (`http`), an MCP server address (`mcp`; a local server also names its `program` and `digest`), or a desktop application identifier. Other kinds have their own, given in their pack's section and listed [below](#kinds-the-other-packs-bring) |
 | `stands` | For a surface that may sit under an application, such as a database or a file: `alone`, or `beneath` naming the surface of the application that owns it. With neither, no write binding on the surface compiles |
 | `profile` | A platform profile name, or `auto` to detect |
 | `same_session_as` | Another surface whose sign-in this one shares |
@@ -99,8 +99,8 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `frame` | A declared frame path, when the screen is inside a frame |
 | `fields` | Map of field name to a field (below) |
 | `actions` | Map of action name to an action (below) |
-| `rows` | For a grid: how to find a row by key, and its columns as fields |
-| `variants` | Named states that can appear, such as a confirmation dialog, each with a condition and a handling: `confirm`, `dismiss`, or `stop` |
+| `rows` | For a table: its `locate` and `fingerprint`, its `header`, the text of every heading in order, and its `columns`, each a name with the `header` it is under and its `type`. An output that is a list takes the column of its name. Finding one row by its key is not built |
+| `variants` | Named states that can appear, such as a confirmation dialog, each with a condition `when` and a handling: `confirm`, `dismiss`, `stop`, or `absent`, which says the record the screen shows does not exist. As built: `when` is `{visible: locator}`, and the handling is `stop` or `absent` |
 
 **Field.**
 
@@ -109,7 +109,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `type` (required) | A field type |
 | `control` (required) | A widget driver from the technical reference |
 | `locate` (required) | Ordered list of [locators](#locators) |
-| `fingerprint` (required) | What must also be true of the matched element: `near_text`, `section`, `role` |
+| `fingerprint` (required) | What must also be true of the matched element: `section`, a locator of the one element it is inside, and optionally `near_text`, a text that section shows ([decision 0113](../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)) |
 | `read` | `value`, `text`, or an attribute name; default by control |
 | `commit` | What commits the value in the page: `blur`, `enter`, or `none` |
 
@@ -118,6 +118,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | Field | Meaning |
 | --- | --- |
 | `locate` (required) | Ordered list of locators |
+| `fingerprint` (required) | As for a field |
 | `confirm` (required) | The condition that shows the action took effect |
 | `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md)); an action without it is not a save |
 
@@ -127,7 +128,7 @@ Tried in order; the first that matches exactly one element and passes the finger
 
 | Locator | Matches by |
 | --- | --- |
-| `{role, name}` | Accessibility role and accessible name |
+| `{role, name}` | Accessibility role and accessible name. Both are written; `name: ""` matches an element with no accessible name |
 | `{label}` | The text of the label associated with the control |
 | `{placeholder}` | Placeholder text |
 | `{text}` | Visible text, exact unless `contains: true` |
@@ -165,11 +166,28 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `query`, `headers` | Templates; no secrets |
 | `auth` | `session`, `token`, or `none`; supplied by the session keeper |
 | `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
-| `request_schema`, `response_schema` (response required) | JSON Schema files |
+| `request_schema`, `response_schema` (response required) | The shape of each body, written in the entry in a closed subset of JSON Schema: `type`, `nullable`, `properties`, `required`, `additionalProperties`, `items`, `enum`. Any other word is refused |
+| `responses` | The answers the endpoint declares. `ok`: accepted statuses, 200 unless given. `absent`: statuses that mean the record does not exist, on a lookup. `refused`, `conflict`, `unavailable`: lists of a `status` with an optional `when`, a map from a top-level field of the body to the text it must hold; a `conflict` may name the field that holds the record's version now, as `current`. An answer that matches nothing declared stops the step |
+| `signed` | True when the front end computes or signs the request; an `http` binding on it does not compile |
+| `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
 | `idempotency_header` | Header that carries the record's idempotency token, if the application accepts one |
-| `version` | Where a record's version is read and how it is sent back as a precondition |
+| `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}` |
 | `volatile` | Request fields to ignore when comparing with a shadow |
+
+## Kinds the other packs bring
+
+Each pack registers these file kinds and surface kinds in its manifest. The fields are given in the pack's spec section and the design of its crate.
+
+| Folder | File kind | Surface kind and its address keys | Pack |
+| --- | --- | --- | --- |
+| `endpoints/` | `endpoint`, [above](#endpointsyaml) | `http`: `base` | [Section 303](../spec/3-packs/303-the-http-pack.md); [`a2m-pack-http`](../architecture/crates/a2m-pack-http.md) |
+| `commands/` | `command` | `program`: `path`, and `digest` | [Section 306](../spec/3-packs/306-the-command-pack.md); [`a2m-pack-command`](../architecture/crates/a2m-pack-command.md) |
+| `statements/` | `statement` | `database`: `file`, `store`, and `root` | [Section 307](../spec/3-packs/307-the-data-pack.md); [`a2m-pack-data`](../architecture/crates/a2m-pack-data.md) |
+| `documents/` | `document` | `file`: `folder`, and `root` | [Section 308](../spec/3-packs/308-the-file-pack.md); [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md) |
+| `channels/`, `schemas/` | `channel`, `message_schema` | `broker`: `address`, and `protocol` | [Section 309](../spec/3-packs/309-the-stream-pack.md); [`a2m-pack-stream`](../architecture/crates/a2m-pack-stream.md) |
+| `registers/` | `register` | `device_link`: `address`, `protocol`, and `unit` | [Section 310](../spec/3-packs/310-the-device-pack.md); [`a2m-pack-device`](../architecture/crates/a2m-pack-device.md) |
+| `mappings/` | `mapping` | `mcp`: `address`; a local server also names its `program` and `digest` | [Section 304](../spec/3-packs/304-the-mcp-pack.md); [`a2m-pack-mcp`](../architecture/crates/a2m-pack-mcp.md) |
 
 ## `operations/*.yaml`
 
@@ -195,13 +213,13 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | Mode | Its fields |
 | --- | --- |
 | `ui`, `desktop` | `screen`, `verb`, `fields` (map of screen field to expression), `action` |
-| `page_http`, `http` | `endpoint`, `path_params`, `query`, `body` (maps of name to expression) |
+| `page_http`, `http` | `endpoint`, `path_params`, `query`, `body` (maps of name to expression). For `http`, also `extract`: a map from an output's name to where its value is in the answer, as property names joined by dots, with one `*` for a list; an output with no entry is the answer's field of its own name |
 | `api` | `operation_id` from the imported description, and `args` |
 | `mcp`, `site_tools` | `tool` and `args` |
 
 A lookup used by `identity: find` may declare a `settle` time for applications whose searches lag behind their writes. `read_back` names an endpoint, a screen field, or an upstream tool, and may say `prefer: response` to use the save response when it carries the stored values.
 
-**Placeholders.** A placeholder in an endpoint's `path` or a screen's `reach` address takes the operation input of the same name. `path_params` is needed only to rename or compute one. A placeholder that matches no input and has no entry does not compile.
+**Placeholders.** A placeholder in an endpoint's `path` or a screen's `reach` address takes the operation input of the same name. `path_params` is needed only to rename or compute one. In an endpoint's `path` a placeholder is one whole segment, such as `/orders/{order_id}`. A placeholder that matches no input and has no entry does not compile.
 
 **`read_back` is also the record's lookup.** For `natural` and `composite` identity it is the only declared way to read the record, so the preview, the freshness check, and reconcile all use it as well as the check after a write ([spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md)). It must therefore work on its own before any write, reached from the identity inputs alone, and it must report a record that does not exist as absent, not as a failure. `prefer: response` applies only straight after a save; the other three reads always go to the application.
 

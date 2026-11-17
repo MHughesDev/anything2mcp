@@ -1,0 +1,16 @@
+operation: example_fault_reset
+title: Reset the fault latch
+effect: irreversible
+hazard: device_function
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: device
+    verb: submit
+    status: shadow
+    device_map: controller.main
+    registers: {fault_reset: "true"}
+description: >
+  Sends the command that clears the fault latch. A command has nothing to
+  read back, so a person approves every run.

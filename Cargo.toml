@@ -79,6 +79,15 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
 # program's version line, its prompts, its output, and its text arguments.
 # Matching takes time linear in the text, which output from a program needs.
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
+# The client end of the local channel (decision 0117): hyper's HTTP/1.1
+# connection over a socket or a named pipe, and the adapter between Tokio's
+# and hyper's stream traits. axum already brings both crates.
+hyper = { version = "1.12.0", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+# The stream trait alone, for the event stream a2m-mcp answers a call with
+# when its caller asked for progress (decisions 0115 and 0130). Already in the
+# tree of axum. The MCP protocol layer itself is our own: no SDK crate.
+futures-core = { version = "0.3.34", default-features = false }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.

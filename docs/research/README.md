@@ -22,6 +22,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [16-rea-methods.md](16-rea-methods.md) | How the REA project controls outside engines, records evidence, designs tools, and observes applications and firmware; what applies here | Completed; read from source at one commit |
 | [17-browser-engine-base.md](17-browser-engine-base.md) | What the browser engine stands on: a DevTools-protocol client of our own, an existing crate, or WebDriver | Completed; a spike run on Linux only, and source read |
 | [18-mcp-server-base.md](18-mcp-server-base.md) | What the MCP server stands on, and which protocol revisions it serves | Completed; a spike with two reference client libraries, and the specification's text read |
+| [19-desktop-accessibility-base.md](19-desktop-accessibility-base.md) | What the desktop pack stands on, on each operating system | Completed; the Linux back end was run against two small windows, the Windows and macOS programs were type-checked and not run |
 
 ## How to read the status
 

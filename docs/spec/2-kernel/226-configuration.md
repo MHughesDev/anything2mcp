@@ -2,7 +2,7 @@
 
 Anything2MCP is meant to be fitted closely to where it runs: one person's laptop, a job in continuous integration, a company server. This section is the whole design of what can be configured and how: the principles, the guardrails no setting can reach, the layers and their precedence, the scopes at which something is set, the protected settings, the presets, every group of settings, the settings each pack brings, what is configured in a target's files instead, and how a change takes effect. The settings types and the loader that layers them live in `a2m-actions`, so that `config.show` and `config.set` speak the same rules as start-up ([crate design](../../architecture/crates/a2m-actions.md)). Settings are TOML, target files are YAML ([decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md)).
 
-Key names in this section are a draft until the settings loader is built. The groups, the defaults, the scopes, and what is protected are the design.
+The key names are those of the settings loader ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). Every key holds one value: a setting with parts, such as a budget, is written as one key for each part.
 
 ## Principles
 
@@ -111,8 +111,8 @@ A preset is a named bundle of values that a person picks instead of setting twen
 | Preset | For | What it sets |
 | --- | --- | --- |
 | `standard` | The default; one person, at the keyboard | Nothing. It is the defaults |
-| `cautious` | A first look at a system, or a person who wants every step in view | Grants top out at `read` for agents; writes, even pre-approved ones, need a person each run; `authoring.scout.run = "on_request"` and `try_reads = false`; `evidence.capture = "standard"` for reads too; record limit 10; keep-alive 1 hour |
-| `ci` | A job in continuous integration, with no person present | `engine.in_process = true`; `engine.person = "absent"`, so anything that would wait for a person fails at once; writes only to declared test records in a `test` environment, through `test.run`; the scout and capture off; logs as JSON to standard output; `sessions.login_wait_minutes = 0` |
+| `cautious` | A first look at a system, or a person who wants every step in view | `policy.agent_effect_ceiling = "read"`; `policy.pre_approval = false`, so writes, even pre-approved ones, need a person each run; `authoring.scout.run = "on_request"` and `try_reads = false`; `evidence.capture = "standard"` for reads too; record limit 10; keep-alive 1 hour |
+| `ci` | A job in continuous integration, with no person present | `engine.in_process = true`; `engine.person = "absent"`, so anything that would wait for a person fails at once; `policy.writes_outside_tests = false`, so writes go only to declared test records in a `test` environment; `authoring.scout.run = "off"` and `authoring.capture.enabled = false`; logs as JSON to standard output; `sessions.login_wait_minutes = 0` |
 
 **Rules for presets.**
 
@@ -139,7 +139,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `store.database` | A SQLite path, or a Postgres address with a secret reference | One SQLite file in the data directory | I | no |
 | `store.blobs` | A directory, or an object store address | The data directory | I | no |
 | `store.free_space_floor` | Bytes | A draft: 1 GiB; below it the kernel is `degraded` ([section 224](224-when-the-engine-itself-fails.md)) | I | no |
-| `vault.backend` | `os_keystore`, or an external secrets manager by reference | `os_keystore` | I | no |
+| `vault.backend` | `os_keystore`; `passphrase`, which derives the root key from the passphrase the engine is started with, in the environment variable `A2M_VAULT_PASSPHRASE`; or an external secrets manager by reference | `os_keystore` | I | no |
 | `vault.root_key` | A key reference | The key store's own | I | no |
 | `files.allowed_roots` | Named folders | The project folder | U | yes |
 | `files.max_upload_bytes` | Bytes | A draft | U | no |
@@ -153,6 +153,9 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `policy.max_records_per_run` | Count | 50 | U | yes |
 | `policy.approval_window_minutes` | Minutes | 15 | U | yes |
 | `policy.preview_freshness_seconds` | Seconds | 60 | U | yes |
+| `policy.agent_effect_ceiling` | `read`, `write`, `irreversible`: the highest effect class a grant gives an agent | `irreversible` | U | yes |
+| `policy.pre_approval` | Boolean: whether a pre-approval rule may let a write proceed without a person each run | On | U | yes |
+| `policy.writes_outside_tests` | Boolean: whether writes may go anywhere but declared test records in a test environment | On | U | yes |
 
 **Identity and sessions.** On a server, the keep-alive window is set per toolset and this is its default.
 
@@ -172,8 +175,8 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `engine.in_process` | Boolean | Off | U | no |
 | `engine.person` | `present`: work that needs a person waits; `absent`: it stops at once with its named state | `present` | U | no |
 | `engine.retries.transient` | 0 to 5 | 2 | U | no |
-| `engine.time_limit_ceiling` | Duration; the longest step time limit a target may declare here | A draft: 10 minutes | I | no |
-| `engine.shadow.matches_to_promote` | `{ read, write }` | `{ read = 5, write = 20 }` | I | yes |
+| `engine.time_limit_ceiling_seconds` | Seconds; the longest step time limit a target may declare here | A draft: 600 | I | no |
+| `engine.shadow.matches_to_promote.read`, `engine.shadow.matches_to_promote.write` | Counts | 5, 20 | I | yes |
 | `engine.promoted_writes` | `after_promotion`, `never`: whether writes may use a binding promoted from shadow | `after_promotion` | U | no |
 | `ledger.intent_window.<mode>` | 1 up to the manifest's value | The mode's `intent_window` in its manifest | U | no |
 | `modes.disabled` | Modes that may not be used here | None | U | no |
@@ -193,12 +196,13 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
-| `authoring.scout.run` | `on_request`, `on_add` | `on_add` in `solo` and `workstation`; `on_request` otherwise | P | no |
+| `authoring.scout.run` | `off`, `on_request`, `on_add` | `on_add` in `solo` and `workstation`; `on_request` otherwise | P | no |
 | `authoring.scout.try_reads` | Boolean | On | P | no |
-| `authoring.scout.budget` | Time, requests, depth | Small enough that an ordinary system ends within minutes; a target until measured | P | no |
+| `authoring.scout.budget.seconds`, `authoring.scout.budget.requests`, `authoring.scout.budget.depth` | Time, requests, depth | 300, 500, 3: small enough that an ordinary system ends within minutes; a target until measured | P | no |
 | `authoring.scout.providers` | Optional discoverers by name | None; first-party discoverers are always available | P | no |
+| `authoring.capture.enabled` | Boolean: whether recording may be started at all | On | P | no |
 | `authoring.capture.values` | Boolean: keep values, not only shapes | Off | P | yes |
-| `authoring.capture.limits` | Time, bytes, exchanges | A draft | P | no |
+| `authoring.capture.limits.seconds`, `authoring.capture.limits.bytes`, `authoring.capture.limits.exchanges` | Time, bytes, exchanges | A draft | P | no |
 
 **Evidence and telemetry.**
 
@@ -216,7 +220,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
-| `server.listen`, `server.tls`, `server.base_url`, `server.trusted_proxies` | Addresses, certificate references | None: no port is opened on one machine | I | no |
+| `server.listen`, `server.tls.certificate`, `server.tls.key`, `server.base_url`, `server.trusted_proxies` | Addresses, certificate references | None: no port is opened on one machine | I | no |
 | `server.front_doors` | `mcp_http`, `rest`, `console` | None on one machine | I | no |
 | `server.local_http` | Boolean, for `workstation` | Off | I | yes |
 | `server.webhooks` | Destinations, each checked against egress | None | I | yes |
@@ -241,7 +245,8 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
-| `providers.enabled` | Provider names; set through `provider.enable` and `provider.disable` | Every first-party pack whose requirements are present; no optional provider | I | yes, for a provider that starts a process, reaches a network, or is only `declared` |
+| `providers.enabled` | Optional provider names; set through `provider.enable` and `provider.disable` | No optional provider | I | yes, for a provider that starts a process, reaches a network, or is only `declared` |
+| `providers.disabled` | First-party packs switched off | None: every first-party pack whose requirements are present is enabled | I | no |
 | `providers.mode.<mode>` | The provider that drives a mode two ready providers offer | None, which is `provider_ambiguous` when it matters ([section 203](203-the-provider-contract.md)) | I | no |
 | `providers.attach` | Processes a person has named | None | U | yes |
 | `plugins.allow_unsigned` | Plug-in digests | None | I | yes |
@@ -254,7 +259,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 | `updates.check` | Boolean | Off; on a server updating is off and a version is pinned | I | yes |
 | `updates.channel` | `stable`, `beta` | `stable` | I | no |
 | `logging.level` | `error`, `warn`, `info`, `debug` | `info` | U | no |
-| `logging.format`, `logging.to` | `text`, `json`; the logs directory or standard error | `text`, the logs directory | U | no |
+| `logging.format`, `logging.to` | `text`, `json`; `file` for the logs directory, `stderr`, or `stdout` | `text`, `file` | U | no |
 | `locale.messages` | A language for messages and the console | `en` | U | no |
 | `locale.display_timezone` | A time zone for times shown to people | The machine's | U | no |
 
@@ -287,6 +292,27 @@ What the other packs would configure, from their sections:
 | File ([section 308](../3-packs/308-the-file-pack.md)) | The largest file opened; the largest number of records read at once |
 | Stream ([section 309](../3-packs/309-the-stream-pack.md)) | The ceiling on every wait, which a channel's `max` may not pass; the size of a discovery sample |
 | Device ([section 310](../3-packs/310-the-device-pack.md)) | Whether serial ports may be listed at all; a floor under every link's `min_gap` and a ceiling on frames per run; the firmware inspection provider, off |
+
+The settings the built packs declare so far, as their manifests state them. Each is a whole number; each pack's design and manifest give its bounds.
+
+| Key | What it bounds | Default |
+| --- | --- | --- |
+| `packs.http.max_response_bytes` | The bytes of one response read before the driver stops | 8000000 |
+| `packs.command.max_timeout_ms` | The longest one start of a program may run, whatever a target states; lower is safer | 600000 |
+| `packs.command.max_output_bytes` | The bytes kept of each output stream; lower is safer | 16777216 |
+| `packs.data.max_rows` | The most rows a statement's `max_rows` may ask for | 1000 |
+| `packs.data.result_bytes` | The bytes of text one statement's result may hold | 4000000 |
+| `packs.file.max_bytes` | The bytes one file may have | 16777216 |
+| `packs.file.max_rows` | The rows one part of a file may have | 200000 |
+| `packs.file.max_cells` | The values one file may have | 2000000 |
+| `packs.file.max_cell_bytes` | The bytes one value may have | 65536 |
+| `packs.stream.wait_ceiling_seconds` | The longest any wait for a message may last; a channel or binding that asks for more does not compile | 60 |
+| `packs.stream.sample_count` | The messages of one channel a discovery looks at, taking none | 5 |
+| `packs.stream.idle_links` | The open connections to one broker kept ready between runs of one session | 2 |
+| `packs.device.reply_within_ms` | How long a reply may take when a map states no pace | 1000 |
+| `packs.device.min_gap_ms` | The least time between two frames when a map states no pace | 50 |
+| `packs.mcp.max_message_bytes` | The bytes of one answer from an upstream server that are read | 4194304 |
+| `packs.mcp.max_tools` | The tools of one upstream server's list that are read | 500 |
 
 ## Configuring a target
 
@@ -384,7 +410,7 @@ keys = ["policy.*", "network.*", "files.*"]
 
 ## Open points
 
-- Key names, the form of environment variable names, and the paths of the installation and user files are drafts until the settings loader is built. `config.show` is planned for Phase 1 and `config.set` for Phase 3.
+- `config.set` is planned for Phase 3. Until it is built, a loosened protected value comes only from the installation file, and the record bound to a presence check, which takes the place of the user layer for one key, does not exist.
 - Defaults marked "a draft" (the free-space floor, the time-limit ceiling, upload and result caps, capture limits, browser recycling) are set when they are first measured.
 - Settings at the scope of a workspace beyond policy and toolsets, such as a workspace's trace retention, have no action yet. `config.set` is for the local user.
 - How the console on a server records a change to a protected setting, and whether a server's installation file should be signed.

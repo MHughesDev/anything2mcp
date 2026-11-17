@@ -1,0 +1,16 @@
+endpoint: order_get
+surface: api
+method: GET
+path: "/secure/bearer/api/orders/{order_id}"
+auth: token
+effect: read
+headers: {accept: "application/json"}
+responses: {absent: [404]}
+response_schema:
+  type: object
+  required: [order_id, customer, status, items]
+  properties:
+    order_id: {type: string}
+    customer: {type: string}
+    status: {type: string, enum: [draft, submitted]}
+    items: {type: array, items: {type: object}}

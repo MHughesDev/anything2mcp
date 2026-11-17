@@ -9,7 +9,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 | Side | Kernel |
 | Layer | 7, Actions |
 | May depend on | Layers 1 to 6 |
-| Depends on | Every kernel crate below it. Outside: `serde`, `serde_json`, Tokio, and a JSON Schema validator, an outside crate to be verified |
+| Depends on | Every kernel crate below it except `a2m-expr`, `a2m-sources`, which it reaches through others. Outside: `serde`, `serde_json`, Tokio, and `toml` for settings files. Schemas are checked by `a2m-files`; no outside validator |
 | Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles) |
 | Carries out | Spec sections [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md); the in-process half of [223](../../spec/2-kernel/223-the-runner-protocol.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
 
@@ -31,89 +31,144 @@ It must never: decide whether something may happen (that is `a2m-policy`); sign 
 
 ## Interface
 
+As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md)). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
+
 ```rust
 /// One action. Every face is generated from this and nothing else.
 pub struct ActionDef {
-    pub name: ActionName,              // noun.verb, checked; the noun is a word of the command line
-    pub summary: &'static str,         // one line; the first 240 characters choose the tool (spec section 220)
-    pub input: Schema,                 // strict: no unknown fields; flat; at most about ten properties
-    pub output: Schema,                // published; not sent in a tool list unless asked
-    pub examples: &'static [Example],  // one to three, from recorded tests
-    pub shape: Shape,                  // Inspect, List, Trace, Compare, Observe, Change: one per action
+    pub name: ActionName,              // noun.verb, checked
+    pub summary: String,               // one line; the first 240 characters choose the tool
+    pub input: Input,                  // flat fields, and the strict JsonSchema they make
+    pub output: JsonSchema,            // published
+    pub examples: Vec<&'static str>,   // example inputs, as JSON text; each fits the schema
+    pub shape: Shape,                  // Inspect, List, Trace, Compare, Observe, Change
     pub effect: Effect,                // Fixed(EffectClass), or OfTool for tool.call
-    pub lowest_role: Role,             // the role column of the catalog; Role is defined in a2m-policy
+    pub who: Who,                      // the catalog's "Who" column; role(effect) gives the Role
     pub listed: Listed,                // No, Use, Build, UseAndBuild
-    pub long_running: bool,            // returns a run_id at once
-    pub needs: HealthNeed,             // Nothing, Reads, Writes: which health state it can run in
-    pub person: PersonNeed,            // None, Presence: the act is a person's (version.publish, protected config.set)
-    pub runs_in: RunsIn,               // Engine; or Client for the engine.* actions that act on the process
-    pub rest_alias: Option<RestAlias>, // a resource-shaped route generated beside /actions/{name}
-    pub handler: Handler,
+    pub long_running: bool,
+    pub needs: HealthNeed,             // Nothing, Reads, Writes
+    pub person: PersonNeed,            // None, Presence, PresenceWhenLoosening
+    pub runs_in: RunsIn,               // Engine, Client
+    pub faces: Faces,                  // all four, today
+    pub rest_alias: Option<RestAlias>,
+    pub phase: &'static str,           // the catalog's phase or stage
+    pub handler: Handler,              // Kernel(fn), Provider(name), Client, NotBuilt
 }
 
-pub enum Handler {
-    Kernel(fn(&Kernel, Call) -> BoxFuture<'_, Result<Outcome, Failure>>),
-    Provider(ProviderActionRef),       // the handler interface is defined in a2m-provider, implemented by
-                                       // packs and plug-ins; the dispatcher calls it like any other
-    Client,                            // carried out by the client end; see a2m-local
-}
-
-pub struct Registry { /* ActionDef by name, in catalog order; frozen after build */ }
-impl Registry {
-    /// The kernel's own actions plus every provider contribution in the provider registry.
-    /// Refuses a duplicate name, a provider action outside its name space, and a built-in
-    /// toolset whose listed actions exceed its cap.
-    pub fn build(providers: &ProviderRegistry) -> Result<Registry, Failure>;
+pub struct ActionRegistry { /* ActionDef by name, in catalog order; frozen */ }
+impl ActionRegistry {
+    pub fn build(providers: &ProviderRegistry) -> Result<ActionRegistry, Failure>;
+    pub fn kernel_only() -> ActionRegistry;             // for generators: no provider's actions
     pub fn get(&self, name: &ActionName) -> Option<&ActionDef>;
-    pub fn catalog(&self) -> Catalog;  // serializable list plus a digest; the input to every generator
+    pub fn find(&self, name: &str) -> Option<&ActionDef>;
+    pub fn by_tool_name(&self, name: &str) -> Option<&ActionDef>;   // a2m_<noun>_<verb>
+    pub fn iter(&self) -> impl Iterator<Item = &ActionDef>;
+    pub fn toolset(&self, toolset: BuiltInToolset) -> Vec<&ActionDef>;   // listed, within the cap
+    pub fn past_cap(&self, toolset: BuiltInToolset) -> Vec<&ActionDef>;  // marked, reached by action.run
+    pub fn catalog(&self) -> Catalog;                   // serializable, with a digest
 }
 
-/// What a front door hands the dispatcher after it has authenticated the caller.
+/// What a front door hands the dispatcher after the kernel verified the caller.
 pub struct Request {
-    pub action: ActionName,
-    pub input: serde_json::Value,
-    pub caller: Caller,                // principal, client label, front door, toolset, is_agent
+    pub action: String,                // as the caller wrote it; the dispatcher finds it
+    pub input: serde_json::Value,      // an object, or null
+    pub caller: Caller,                // Principal, client label, FrontDoor, toolset, is_agent
     pub idempotency_key: Option<String>,
-    pub project: Option<ProjectRef>,   // the project folder a local command was run in; turned into
-                                       // a2m-provider's checked-path type before any use
+    pub project: Option<PathBuf>,      // checked against the allowed roots before any use
+}
+pub struct Response {
+    pub ok: bool, pub action: String,
+    pub result: Option<serde_json::Value>, pub error: Option<ErrorBody>,
+    pub warnings: Vec<String>, pub next: Option<Next>,
+    pub exit: ExitClass,               // Succeeded, Failed, Malformed, PersonNeeded
+    pub decision: Option<DecisionId>,
 }
 
+pub struct KernelParts {
+    pub settings: Settings, pub paths: Paths, pub place: StorePlace,   // Disk, Memory
+    pub key_store: Arc<dyn KeyStore>, pub clock: Arc<dyn Clock>,
+    pub random: Arc<dyn RandomSource>, pub os_user: String,
+}
 pub struct Kernel { /* Arc of every service below; cheap to clone */ }
 impl Kernel {
-    /// Opens the store and runs migrations, opens the vault, loads policy, starts the keeper,
-    /// the scheduler, and the engine. Never fails for an impaired part: it opens in a lower
-    /// health state and says why. Fails only for settings that do not load.
-    pub async fn open(settings: KernelSettings, providers: ProviderRegistry,
-                      actions: Registry, person: Arc<dyn PersonSurface>) -> Result<Kernel, Failure>;
-    pub async fn dispatch(&self, request: Request) -> Response;
-    /// The one place a network credential is checked: a bearer token against the configured
-    /// issuer and audience, or an API key against its stored hash. Front doors extract the
-    /// credential from their transport and call this; they never check one themselves.
+    /// The store with its migrations, the vault joined to it, telemetry. Never fails.
+    pub async fn prepare(parts: KernelParts) -> Prepared;
+    /// Policy, the keeper, the scheduler, the action registry, the tending task. Never
+    /// fails. Hands the approval desk to `person` and keeps no copy.
+    pub async fn open(prepared: Prepared, providers: ProviderRegistry,
+                      problems: Vec<RegistryProblem>, person: Arc<dyn PersonSurface>) -> Kernel;
     pub async fn verify_caller(&self, credential: CallerCredential) -> Result<Principal, Failure>;
-    pub fn health(&self) -> Health;                       // Ok, Degraded(reason), Stopped(reason)
-    pub fn events(&self, run: RunId) -> EventStream;      // live, from the ledger's sequence number
-    pub fn approvals(&self) -> &ApprovalDesk;             // for approval surfaces; reached by no action
-    pub fn start_runner_loop(&self, slots: Slots) -> RunnerLoop;
-    pub async fn close(self, why: CloseReason);           // saves sessions to the vault first
+    pub fn status_only_caller(&self) -> Principal;       // for a stopped engine's status
+    pub async fn dispatch(&self, request: Request) -> Response;
+    pub fn health(&self) -> Health;                      // state, and every impaired part
+    pub async fn recheck(&self) -> Health;
+    pub async fn tend(&self);                            // sweep, keeper tick, recheck
+    pub async fn start_runner_loop(&self, slots: u32) -> Result<RunnerLoop, Failure>;
+    pub fn actions(&self) -> &ActionRegistry;
+    pub fn providers(&self) -> &ProviderRegistry;
+    pub fn settings(&self) -> &Settings;
+    pub fn paths(&self) -> &Paths;
+    pub fn redact(&self) -> Arc<dyn Redact>;
+    pub fn telemetry(&self) -> &Telemetry;
+    pub async fn close(self, why: CloseReason);
 }
+impl Prepared {
+    pub fn redact(&self) -> Arc<dyn Redact>;
+    pub fn telemetry(&self) -> Telemetry;
+    pub fn settings(&self) -> &Settings;
+    pub fn host_services(&self, supervisor: Supervisor, roots: Roots) -> HostServices;
+}
+pub enum CallerCredential { LocalUser(String), Bearer(Secret), ApiKey(Secret) }
 
-/// What a role supplies so that a person can be reached. a2m-local implements it with a
-/// notification, the loopback page, and the operating system's prompt; a2m-api with the
-/// console pages behind the identity provider's sign-in.
+/// What a role supplies so that a person can be reached. Every method returns a boxed
+/// future, so the trait is a trait object.
 pub trait PersonSurface: Send + Sync {
-    async fn ask_approval(&self, ask: ApprovalAsk) -> Result<SurfaceLink, Failure>;
-    async fn ask_sign_in(&self, ask: SignInAsk) -> Result<SurfaceLink, Failure>;
-    async fn confirm_presence(&self, ask: PresenceAsk) -> Result<PresenceProof, Failure>;
-    /// A plain link for the person to open in their own browser, such as an authorization
-    /// page a sign-in provider needs consent on. Nothing drives that browser; the surface only
-    /// notifies and shows the link, and the provider learns the outcome by its own protocol.
-    async fn give_link(&self, ask: LinkAsk) -> Result<SurfaceLink, Failure>;
+    fn take_desk(&self, desk: ApprovalDesk);             // once, from Kernel::open
+    fn ask_approval(&self, ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>>;
+    fn ask_sign_in(&self, ask: SignInAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>>;
+    fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>>;
+    fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer>;   // the keeper's asks
+    fn return_address(&self) -> Option<String> { None }
+}
+pub struct ApprovalDesk { /* not Clone; no public constructor; reached by no action */ }
+impl ApprovalDesk {
+    pub async fn waiting(&self, run: RunId) -> Result<WaitingApproval, Failure>;
+    pub async fn approve(&self, run: RunId, diff_hash: Digest, approver: PrincipalRef,
+                         channel: Channel, proof: PresenceProof) -> Result<ApprovalId, Failure>;
+    pub async fn decline(&self, run: RunId, by: Option<PrincipalRef>, channel: Channel)
+                         -> Result<(), Failure>;
 }
 
-pub struct ApprovalDesk { /* records an answer through a2m-policy, given a PresenceProof */ }
-pub struct Paths { /* config, data, store, blobs, profiles, journal, logs, runtime, cache */ }
-impl Paths { pub fn resolve(env: &Env) -> Result<Paths, Failure>; }  // A2M_HOME wins
-pub struct Shortcut { pub word: &'static str, pub steps: &'static [ShortcutStep] }
+pub struct Paths { /* installation_config, config, data, store, blobs, profiles, journal, logs, runtime, cache */ }
+impl Paths { pub fn resolve(env: &Env) -> Result<Paths, Failure>; pub fn under(home: &Path) -> Paths; }
+
+pub struct Settings { /* every key, its value, the layer that set it */ }
+impl Settings {
+    pub fn load(sources: &Sources) -> Result<Settings, Failure>;          // start-up: any problem stops
+    pub fn load_all(sources: &Sources) -> (Settings, Vec<Failure>);       // doctor: every problem
+    pub fn defaults() -> Settings;
+    pub fn get / text / int / flag / list(&self, key: &str);
+    pub fn entry(&self, key: &str) -> Option<&Entry>;                    // value, layer, origin, overridden
+    pub fn provider_settings(&self) -> ProviderSettings;                 // for RegistryBuilder::new
+    pub fn show(&self, key: Option<&str>) -> Result<serde_json::Value, Failure>;
+    pub fn digest(&self) -> Digest;
+}
+pub struct Sources { /* installation, presets, user, project, environment, flags, serve, packs */ }
+impl Sources {
+    pub fn read(paths: &Paths, project: Option<&Path>, environment: BTreeMap<String, String>)
+        -> Result<Sources, Failure>;
+    pub fn with_pack(self, manifest: Arc<Manifest>) -> Sources;
+}
+
+/// The faces, as data.
+pub fn command_faces(registry: &ActionRegistry) -> Vec<CommandFace>;
+pub fn mcp_tools(registry: &ActionRegistry, toolset: BuiltInToolset) -> Vec<McpToolFace>;
+pub fn mcp_tool(def: &ActionDef) -> McpToolFace;
+pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace>;
+pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace>;
+impl McpResultFace { pub fn of(response: &Response) -> McpResultFace; }
+pub const SHORTCUTS: &[Shortcut];
+pub const PROCESS_COMMANDS: &[&str];
 ```
 
 ### The dispatcher
@@ -121,14 +176,14 @@ pub struct Shortcut { pub word: &'static str, pub steps: &'static [ShortcutStep]
 A front door authenticates and builds a `Request`; it decides nothing. `dispatch` then does, in this order, and every refusal is an ordinary `Failure`:
 
 1. **Find.** An unknown name is `input` / `schema_invalid`, with the nearest names as the fix.
-2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 220).
+2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 220): the second is `input` / `not_found`.
 3. **Health.** The action's `needs` against the kernel's state. A write in `degraded`, or anything but a `Nothing` action in `stopped`, returns `busy` / `engine_degraded` with the reason.
-4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one.
+4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one. The one exception: a `Nothing` action in a `stopped` kernel, which has no store to record a decision in; it reports on the engine and shows no data of any system.
 5. **Person.** For an action with `PersonNeed::Presence`, `confirm_presence` on the role's surface. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt.
 6. **Run.** The handler. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
-7. **Shape.** Pass every outgoing string through `Redact`; mark text that came from a target as untrusted; cut to the result size cap and say which limit cut it; keep a large result as a blob and return its reference with a size and a summary; add `next`.
+7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Not built: marking text that came from a target as untrusted, and keeping a large result as a blob with its reference.
 
-The `Response` is the same structure for every face: `ok`, `action`, `result` or `error`, `warnings`, `next`, and an exit class (succeeded, failed, malformed, person needed). Each face renders it without branching on its content: the command face as the [output contract](../../reference/technical-reference.md#command-output-contract), the MCP face as structured content, REST as JSON with a status code.
+The `Response` is the same structure for every face: `ok`, `action`, `result`, `error`, `warnings`, `next`, the recorded decision, and an exit class (succeeded, failed, malformed, person needed). A run that failed carries both a result, which names the run, and an error; a run that rests waiting for a person carries a result and the exit class `person_needed`. Each face renders it without branching on its content: the command face as the [output contract](../../reference/technical-reference.md#command-output-contract), the MCP face as structured content, REST as JSON with a status code.
 
 ### `Kernel::open` and health
 
@@ -142,27 +197,26 @@ The `Response` is the same structure for every face: `ok`, `action`, `result` or
 | Plans | `a2m-ledger` | A plan that fails its hash check is unavailable alone | `ok` |
 | Keeper, scheduler, engine | `a2m-auth`, `a2m-sched`, `a2m-engine` | Not expected to fail; a failure is `stopped` | |
 
-The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
+The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The evidence-space row is not built. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 
-Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other.
+Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other. Not built at open: today such a run is stopped by the scheduler's sweep once its lease has ended, so an engine started within the lease of one that was killed sees the run as `running` until then.
 
 ### The in-process runner loop
 
 ```rust
+sched.hello(offer).await?;                           // once, before the first claim
 loop {
-    let lease = sched.claim(offer, wait).await?;     // long wait on a named condition, never a sleep
-    let control = InProcessControl::new(&kernel, &lease);
-    let outcome = match lease.job.kind {
-        JobKind::Run       => engine.run(&lease.job, &control).await,
-        JobKind::Reconcile => engine.reconcile(&lease.job, &control).await,
-        JobKind::Keeper(w) => keeper.perform(w, &control).await,     // the keeper's work half
-        JobKind::Discover  => engine.discover(&lease.job, &control).await,  // the sandbox
-    };
-    sched.complete(lease, outcome).await?;
+    for lease in sched.claim(runner, free_slots, wait).await? {   // waits on work arriving
+        // one thread per job in hand, driven by the same runtime
+        let control = InProcessControl::new(kernel, lease.fence(), lease.lease_ref(), run, plan, caller);
+        let outcome = engine.run_job(&job_spec, &control).await;  // a task sends heartbeats meanwhile
+        control.apply(outcome.run_state(), outcome.failure()).await?;   // under the job's lease
+        sched.finish(&lease.lease_ref(), job_end).await?;
+    }
 }
 ```
 
-Slots come from settings per mode, as a runner on another machine states them in `hello`. Keeper jobs have a reserved slot, so a run waiting for a renewal can never hold the only slot the renewal needs. The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+Slots are a count given to `start_runner_loop`, offered for every registered mode. The keeper's work does not take a slot in one process: it runs on the keeper's own worker (`InProcessWork` of `a2m-auth`), so a run waiting for a renewal can never hold the slot the renewal needs. In one process the lease is at least 100 seconds, and a job the engine gives back with a full lease left stops with `busy` / `lease_too_short` ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
 
 The list is the spine's, in its order. The engine opens nothing itself: no store, no policy engine, no compiler.
 
@@ -175,9 +229,9 @@ The list is the spine's, in its order. The engine opens nothing itself: no store
 | A rate budget | `a2m-sched` |
 | The approval check for a diff hash | `a2m-policy` |
 | Recording an intent, and its token | `a2m-ledger`, in one transaction that also checks the approval policy recorded; the reply is the token the driver's handle requires |
-| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. Each event is also published to `events()` subscribers |
+| Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. Each event is also published to `events()` subscribers. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
 
-`KeeperWork` is implemented by submitting a `Keeper` job to `a2m-sched` addressed to the session's home runner, and waiting for its outcome. In one process the home runner is this loop. When the keeper needs a person, to sign in or to give consent on a link, it asks through the keeper's own interface in `a2m-auth`, and this crate answers by calling the role's `PersonSurface`: `ask_sign_in` for a sign-in window a pack's provider opens, `give_link` for a provider outside the web pack, such as authorization-code sign-in or an upstream MCP server's, that needs the person's consent in their own browser.
+In one process `KeeperWork` is `a2m-auth`'s `InProcessWork` over the keeper's own worker; this crate supplies its two halves, the way to a person and the probe. Submitting a keeper job to `a2m-sched` addressed to a session's home runner is for a runner on another machine and is not built. When the keeper needs a person, to sign in or to give consent on a link, it asks through the keeper's own interface in `a2m-auth`, and this crate answers by calling the role's `PersonSurface::ask_session` with the keeper's own request: a link to open in the person's own browser, a code to enter, or a notice. `ask_sign_in` gives the link that goes into the result of a run that rests at `needs_login`.
 
 ### Generated faces
 
@@ -248,38 +302,51 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | Class | Code | When |
 | --- | --- | --- |
 | `input` | `schema_invalid` | No such action; input breaks the schema |
-| `input` | `path_not_allowed` | A project or file path that fails the check behind `a2m-provider`'s checked-path type |
+| `input` | `not_found` | A valid input names something that does not exist: a tool, a run, a provider, a setting, a topic |
+| `input` | `action_not_built` | The action is in the catalog and has no handler yet |
+| `input` | `client_action` | An action the client end carries out reached the engine |
+| `input` | `path_not_allowed` | No project folder, or a path that fails the check behind `a2m-provider`'s checked-path type |
+| `input` | `settings_invalid` | An unknown key, a wrong type, or a file that is not TOML, with the file and line |
+| `input` | `action_registry_invalid` | A duplicate action name, or a provider's action outside its name space |
 | `policy` | Any code `decide` returns | Refused by policy, passed through unchanged |
-| `policy` | `person_required` (new) | A person's act was asked for by a caller that cannot give one |
+| `policy` | `person_required` | A person's act was asked for by a caller that cannot give one |
+| `policy` | `caller_not_verified` | A credential this engine does not accept |
+| `policy` | `setting_protected` | A layer loosened a protected setting, or set a key it may not |
+| `policy` | `setting_locked` | A higher layer changed a key the installation file locks |
 | `busy` | `engine_degraded` | The health state forbids the action |
-| `busy` | `queue_full` | Passed through from `a2m-sched` |
+| `busy` | `lease_too_short` | A step may take longer than a job's lease lasts |
+| `busy` | `queue_full` and the scheduler's other codes | Passed through from `a2m-sched` |
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| Every dispatch records exactly one decision before the handler runs | A test that dispatches every action with an allowing and a refusing policy and counts decisions |
-| No action, route, tool, or command reaches `ApprovalDesk` | A test that walks every generated face; a review rule on the desk's callers |
-| The four faces of an action give the same result for the same input | The parity test of spec section 220 |
-| Nothing leaves `dispatch` without passing `Redact` | The planted-secret fault test, through every face |
-| A write never runs in `degraded` or `stopped` | Fault tests that remove the store, the vault, and the policy set |
-| The registry equals the action catalog, in names, roles, and listing | A test that reads the catalog document |
-| The scout never obtains a write token | A test that plants a discoverer and a drafted operation that would write |
-| A keeper job always has a slot | A test that fills every run slot with runs waiting for a renewal |
+| Every dispatch records one decision before the handler runs | `every_dispatch_records_one_decision_and_a_refusal_carries_its_four_parts`: a missing tool, an action not built, and a refused publish each carry a decision. Not yet proven with a refusing policy set, or for every action |
+| No action reaches `ApprovalDesk` | The kernel holds no desk: it is moved to the person surface. `no_action_can_approve`; the write test approves at the desk and through nothing else |
+| The four faces of an action share its name and its schema | `every_action_has_all_four_faces_and_they_share_its_name`. The parity test through live faces belongs to the role crates |
+| Nothing leaves `dispatch` without passing `Redact` | `a_planted_secret_appears_in_no_result`, through the dispatcher |
+| A write never runs in `degraded` or `stopped` | `a_stopped_store_serves_status_and_nothing_else`, `without_a_key_store_the_kernel_is_degraded_and_writes_nothing` |
+| The registry equals the action catalog, in names, roles, and listing | `the_registry_holds_exactly_the_actions_of_the_catalog`, which reads the catalog document |
+| An empty file is a complete configuration; a layer that may only tighten never loosens; every value names its layer | `tests/settings.rs` |
+| The scout never obtains a write token | Not built |
+| A keeper job always has a slot | Holds by construction in one process: the keeper's work takes no slot. Not tested |
 
 ## Build order
 
-1. `ActionDef`, `Registry::build`, and the catalog test, with `provider.list` and `provider.describe` defined and not served. Package B5.
-2. `Kernel::open` with the store and the engine, the runner loop, `InProcessControl`, health with two parts, `Paths`. Package 1.4.
-3. The dispatcher with validation and shaping; the command and MCP faces; the parity test. Package 1.5.
-4. `decide` in the dispatcher, approval checks in `Control`, `PersonSurface`, `ApprovalDesk`, the vault and policy rows of health. Packages 3.2, 3.6, 3.10.
-5. `KeeperWork` and the reserved slot, with the keeper. Phase 2.
-6. The scout, stage by stage, each resumable. Package E5.
-7. Every authoring action, shortcuts, the recorded catalog and its generators. Packages 5.1, 5.2.
+1. Done: `ActionDef`, `ActionRegistry::build`, and the catalog test. Every action of the catalog is defined as data; one that is not built answers `input` / `action_not_built`.
+2. Done: `Kernel::prepare` and `Kernel::open` with the store, the vault, policy, the keeper, the scheduler, and the engine; the runner loop; `InProcessControl`; the three health states; `Paths`; the settings loader (package 1.4a). Not built: the evidence-space check; a session's probe; the keeper's work for a runner on another machine.
+3. Done: the dispatcher with validation, the health check, the decision, the person need, and redaction; every face as data (`command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, `McpResultFace`). Not built: the live parity test, which needs the role crates; the untrusted mark; large results as blobs.
+4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk`, the vault and policy rows of health.
+5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
+6. Not built: the scout, `discover.run`, `test.run`.
+7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
 
 ## Open points
 
 - Where large results go when the caller is a remote program: a blob reference and a fetch route, most likely.
 - Whether `engine.*` actions keep an MCP tool and a REST route at all, since they act on a process a remote caller cannot see. Today the rule is four faces for every action.
-- How a shortcut threads one action's output into the next without the client holding logic: declared field mappings in the `Shortcut` data is the proposal.
-- The JSON Schema validator crate, and whether schemas are written by hand or derived from Rust types.
+- How a shortcut threads one action's output into the next without the client holding logic. Today a shortcut's step names the field that takes the shortcut's own argument, and nothing more.
+- An action a provider adds has no summary, role, or listing of its own: the provider contract gives a name, two schemas, and an effect. Such an action is given the role `Builder` for a read and `Admin` otherwise, and is not listed.
+- `browser.install` is a row of the catalog and so an action of the kernel, which names a kind of program. It belongs to the pack that drives one, as an action that pack adds.
+- A word may be both a noun and a shortcut or process command (`run`, `test`, `docs`, `doctor`, `publish`, `runner`). The command face must take the bare word as the shortcut or process command and the word with a verb as the action.
+- The run's caller at guard is the caller who started or last resumed it, kept by this crate. A reconcile job the scheduler queues by itself is decided as the person who started the run.

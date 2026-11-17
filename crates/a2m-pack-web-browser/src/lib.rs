@@ -1,6 +1,49 @@
-//! The web pack's base: the DevTools-protocol browser engine and the platform profiles.
+//! The web pack's base: a browser engine that speaks the DevTools protocol
+//! to Chrome, Edge, or Chromium over the debugging pipe, with a client of
+//! its own (decision 0070).
 //!
-//! Nothing is implemented yet. A pack crate sees the kernel up to the provider
-//! contract and the base of its own pack; the layering table in
-//! `docs/reference/technical-reference.md` is the rule, and this crate's design is
+//! It starts browsers through the scoped supervisor with a data directory
+//! the engine owns ([`Browsers`]), opens tabs in one of two postures
+//! ([`ActTab`], which may act, and [`ObserveTab`], which cannot), locates
+//! elements by meaning, reads them, waits on named conditions, takes
+//! snapshots from the accessibility tree, and says for every act whether
+//! its input reached the page ([`Dispatch`]). It is not a driver and it
+//! registers nothing: `a2m-pack-web-ui` and `a2m-pack-web-probe` are built
+//! on it.
+//!
+//! No type of the protocol client is public, so that the base can change
+//! without touching the crates above. The design is
 //! `docs/architecture/crates/a2m-pack-web-browser.md`.
+//!
+//! Not built yet: a visible window, exporting and importing a session's
+//! state, the watching tab, frames, the stream of network exchanges,
+//! pop-ups, downloads, uploads, recycling, and the platform profiles.
+
+mod browsers;
+mod client;
+mod error;
+mod launch;
+mod protocol;
+mod snapshot;
+mod tab;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
+#[cfg(test)]
+mod tests;
+
+pub use a2m_provider::Deadline;
+
+pub use browsers::{
+    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, Observer,
+    OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
+};
+pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
+pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
+pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
+pub use tab::{
+    ActTab, By, DialogAnswer, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment,
+    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests,
+    TextMatch,
+};
