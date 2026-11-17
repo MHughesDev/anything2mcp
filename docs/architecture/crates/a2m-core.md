@@ -38,6 +38,7 @@ pub enum Hazard { None, DataElsewhere, SendsOutside, DeviceFunction, Physical } 
 pub enum FailureClass { /* twelve */ }
 pub enum EvidenceLevel { /* seven, ordered; default Inferred */ }
 pub enum WriteEvidence { ReadBack, Response, Acknowledged }    // what a write binding offers as evidence; default ReadBack; decision 0161
+pub enum SurfaceNotice { UnencryptedCredentials }              // what a door must show beside a surface; words() fixed; decision 0193
 pub enum Coverage { Complete, Partial, Unknown }               // default Unknown
 pub enum RunState { /* twelve */ }      impl RunState { pub const fn is_final(self) -> bool; }
 pub enum RecordState { /* six */ }
@@ -96,6 +97,11 @@ pub struct Failure { /* class, code, message, next_step; and `said`, what the sy
 // with_said keeps the text whole up to SAID_CEILING (64 KiB), above it SAID_TOO_LONG in its place: nothing is cut,
 // joined, or flattened before the redactor sees it. said_cut / said_shown(redacted, SAID_LONGEST) cut it for a door,
 // never inside a redaction mark, and said_shown escapes control characters; decision 0185
+// said_hides(c) names every character that can reorder, hide, or restyle shown text: controls and terminal escapes,
+// bidirectional marks and isolates, invisible format characters, line and paragraph separators, variation selectors
+// and tags. said_cut keeps the text raw; it is escaped once, where a door shows it: said_shown (a line of its own),
+// said_quoted (between quotes: quotes and backslashes too), said_neutral (inside JSON: all but line feed and tab).
+// A Failure read as data is held to the same SAID_CEILING; decision 0193
 pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 
@@ -259,6 +265,8 @@ pub struct BindingPlan {
     pub act: Vec<Step>, pub confirm: Vec<Step>, pub read_back: Vec<Step>,
     pub lookup: Vec<Step>, pub settle_ms: u32,      // for the `stamped` and `find` strategies
     pub evidence: WriteEvidence,            // read_back, response, or acknowledged (only for an irreversible operation); decision 0161
+                                            // and never where acknowledgement_may_stand(strategy, read_back) is false:
+                                            // a record read back by its key is verified by that read; decision 0193
     pub precondition: Option<ExprIndex>,
 }
 

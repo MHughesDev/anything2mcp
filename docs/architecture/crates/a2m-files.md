@@ -244,7 +244,10 @@ pub trait DraftingRule: Send + Sync {
 }
 
 /// A surface kind a pack serves, as data. `programs` says which of its fields name a program the surface's driver may start.
-pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema, pub programs: Vec<ProgramField> }
+pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema, pub programs: Vec<ProgramField>, pub notices: Vec<NoticeField> }
+// with_notice(key, word, SurfaceNotice): a surface of the kind carries the notice while its own field `key` holds `word`;
+// CompilerSet::surface_notices(&SurfacePlan) is what a door asks. Computed from the plan's surface and the registration,
+// so the plan's shape and pinned hash are unchanged; decision 0193
 impl SurfaceKindSpec {
     pub fn new(kind: SurfaceKind, address_key: &str, fields: JsonSchema) -> Self;       // starts no program
     pub fn with_program(self, path_key: &str, digest_key: Option<&str>) -> Self;
@@ -292,7 +295,7 @@ The views are read-only.
 | `OperationView` | Through a binding or a `ResolvedView` | `name()`, `effect()`, `hazard()`, `strategy()`, `key()`, `inputs()`, `input(name)`, `outputs()`, `doc()` |
 | `LowerContext` | `Lowering::lower` | `target()`, `operation()`, `expr(doc, expected)`, `expr_at(text, place, expected)`, `expr_type(index)`, `section(kind, surface_kind)` for the pack's own compiled sections, `entries(kind, surface_kind)` and `section_index(kind, surface_kind)` for a kind it owns or declared in `reads` |
 | `ResolvedView` | `LintRule::check` | `target()`, `mode()`, `sources()`, `operations()`, `entries(kind, surface_kind)` |
-| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)` |
+| `DraftContext` | `DraftingRule::draft` | `target()`, `existing()`, `open_question(text)`, `open_question_quoting(sentence, words)`: the product's sentence and the system's words kept apart (`Quoting`, `OpenQuestion::quoting`), the words redacted by the drafter's redactor (`Drafter::with_redact`), cleaned, at most 4 parts of 64 characters; `OpenQuestion::stored` and `StoredQuestion::read` keep them apart in the unknowns ledger's one text, and an older text reads whole (decision 0193) |
 
 A lowering sees its own binding, the operation's inputs and key, the field types, and its own pack's compiled sections. Of another pack's kinds it sees only those it declared in `reads`, as validated entries, never as that pack's compiled section or code. It makes expressions only through the context, which type-checks them and returns the plan's `ExprIndex`.
 
@@ -388,6 +391,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 
 9. Done: what the safety audit found ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)): the rules of a write the compiler holds by itself, with `StepCommits`, `Lowering::commits`, and `Lowering::least_effect`; the Scope rule's form; the drafter's writing and what it may draft, with `FileKind::writes`; the loader's bounds; the credential lint's words and what a diagnostic never quotes.
 
+11. Done ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)): `kernel.acknowledged_where_read_back`, a binding whose record has a key and whose read-back exists is never ended on an acknowledgement, the plan's check asks the same `acknowledgement_may_stand`; `open_question_quoting`; surface notices.
 10. Done ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)): a binding's evidence (`Lowering::evidence`), held to `irreversible` for `acknowledged` by the least-effect check; a binding's steps may read `current` and `record`; a draft compiled under any version but `DRAFT_VERSION` is refused, `kernel.draft_under_release_version`; and a tool's output schema allows the text `[redacted]` wherever it declares a number, a date, a moment, or a length of time.
 
 **Two rules every pack is held to** (decision 0161). *A delete is `irreversible`*, unless its binding declares how the record is restored, which no binding can declare yet: a pack's `least_effect` gives `irreversible` for every verb that deletes, and the compiler's least-effect check then holds every operation of it there. Today the file pack says `write` for its `delete`; the data, command, MCP, and HTTP packs say `irreversible`; the web, device, and stream packs have no delete. *An effect left as an open question is undecided, not a write* ([decision 0178](../../decisions/0178-an-effect-left-as-an-open-question-is-undecided-not-a-write.md), which changes this half of decision 0161): `FileKind::writes` is true for an entry declared to write and false for one whose effect is an open question, so the drafter may write it; nothing can use it, because the schema checker refuses an open question wherever it stands, and the file does not compile until a person answers. A pack may be stricter where it has evidence of its own, as the HTTP pack is for an unsafe method.

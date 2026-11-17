@@ -342,6 +342,11 @@ pub struct StepInput<'a> {
 }                                                             // StepInput::new(args, deadline).for_record(record, key, stamp)
 // What the record's earlier steps returned in `for_reconcile`, for the step being acted: `Prepared::recorded()`,
 // set by the handle (`DriverHandle::act_recorded`) for the one call of `act` and empty outside it (decision 0162).
+// Whether another record of the operation, in any run of the workspace, holds a recorded value (decision 0193):
+// Prepared::recorded_elsewhere(name, &value, deadline) -> RecordedElsewhere { Held(RecordRef), NotHeld, CannotTell },
+// compared by recorded_digest(value), never handed back; answered by an OtherRecords the engine passes to
+// DriverHandle::act_asking for one step; CannotTell without one, outside act, for a malformed name, a null, a list,
+// a record, a masked value, a late answer, or an answer that names the asking record.
 pub enum StepOutcome { Done(Observed), Absent(Observed) }
 #[derive(Default)]
 pub struct Observed {
@@ -365,6 +370,12 @@ impl Roots {
     pub fn narrowed(&self, read: &[RootName], write: &[RootName]) -> Result<Self, Failure>;        // what one manifest declares
     pub fn folder(&self, root: &RootName, access: Access) -> Result<CheckedPath, Failure>;
     pub fn check(&self, root: &RootName, relative: &str, access: Access) -> Result<CheckedPath, Failure>;
+    // A root of each request's project, bound to no folder at registry time (decision 0193):
+    pub fn add_project(&mut self, name: RootName, access: Access) -> Result<(), Failure>;
+    pub fn check_in(&self, root: &RootName, relative: &str, access: Access, paths: &CheckedPaths) -> Result<CheckedPath, Failure>;
+    pub fn folder_in(&self, root: &RootName, access: Access, paths: &CheckedPaths) -> Result<CheckedPath, Failure>;
+    pub fn holds(&self, root: &RootName, access: Access) -> bool;   pub fn is_project(&self, root: &RootName) -> bool;
+    // check and folder refuse such a root with input/project_folder_missing; check_in resolves it in paths.project_folder()
 }
 pub enum Access { Read, Write }
 pub enum EntryKind { Absent, File, Folder, Link, Other }
@@ -710,6 +721,7 @@ The codes are constants in this crate's `codes` module, and `codes::ALL` lists e
 6. Done: the supervisor for `OneShot` and `Foreign` links, `ScopedSupervisor`, and `CheckedPath`. Done after the safety audit (decision 0148): digests at every start on one opened file, the suspended start on Windows, writes that never go through a link, `entry_kind`, `create_dir`, the handle's rule for a write that was sent, its backstop redaction, `commit_steps`, and the kernel's own codes. Not built: `Framed` links with the handshake, the request queue, and joining a start for a place that is taken.
 7. Not built: ownership records through `a2m-ledger`, and leftovers recognized at start.
 8. Not built: the plug-in host and protocol version 1, and the check of a plug-in's signature. A plug-in found on the machine is listed as present and not enabled. Package F3 for listing; Phase 8 for driving.
+11. Done ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)): `Temporary::replace` puts in place only the file it made, by identity before the rename and after it; on Windows the identity is the 128-bit `FileIdInfo` with the 64-bit index where a file system gives none, the temporary file is shared with nobody while it is written, and `keep_owner_and_mode` answers `true` only where the target has the very owner and access list the new file took, so a target with an access list of its own is told apart (compiled and linted from a copy; CI's Windows job runs `nobody_else_opens_the_temporary_file_while_it_is_written`, `a_file_or_link_swapped_in_at_the_temporary_name_is_never_put_in_place`, and `a_target_with_an_access_list_of_its_own_is_told_apart_on_windows`); a refused manifest that says a name another provider holds is unnamed; the recorded-elsewhere question; roots of each request's project.
 10. Done ([decision 0176](../../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)): a save's temporary file is made private (mode 0600 on Unix), `Temporary::keep_owner_and_mode`, `Temporary::identity`, `FileIdentity::of_open`, and a temporary file removed only while its name still holds it; `RefusedProvider` and `Registry::refused`, so a provider whose manifest was refused is named with its problem. On Windows the temporary file takes the access list its folder passes down, and `keep_owner_and_mode` keeps the read-only flag alone and answers `false`.
 11. Done ([decision 0177](../../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)): `Replay`, `RecordedAnswer`, `Recorded`, `answers_to`, and `Registry::replay_driver`, the replay every pack gets from the contract; the contract's code `unknown_variant`/`fixture_no_answer`. Then ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `RecordedAnswer::repeats`, an answer that answers every step of its name, and `Replay::sent`, what the engine sent to each committing step.
 9. Done (decision 0162): what earlier steps recorded (`Prepared::recorded`, `DriverHandle::act_recorded`); how a step was done (`Capture::acting`, `Observed::acting`); what the system said (`StepFailure::with_said`, kept by the handle through its redaction and through a write in doubt); the project folder (`CheckedPaths::with_project`, `project`, `project_folder`, `input`/`project_folder_missing`); the save in steps, a file's identity, and `may_write`; `StepInput::new`. Tests: `tests/handle.rs`, `tests/paths.rs`.

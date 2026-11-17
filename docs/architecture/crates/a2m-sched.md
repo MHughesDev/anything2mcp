@@ -42,6 +42,7 @@ impl Scheduler {
     pub async fn submit(&self, s: Submission) -> Result<Admitted, Failure>;
     pub async fn enqueue(&self, e: Enqueue) -> Result<JobId, Failure>;      // a further job for a run that exists: execute after approval, resume
     pub async fn cancel(&self, run: RunId) -> Result<CancelOutcome, Failure>;
+    pub async fn wake_reconcile(&self, run: RunId, at: Timestamp) -> Result<bool, Failure>;  // a settle time: bring a waiting reconcile forward
 
     // Runners. Called by the in-process runner loop in `a2m-actions`, or by the control plane's side of the runner link.
     pub async fn hello(&self, offer: RunnerOffer) -> Result<RunnerTerms, Failure>;    // heartbeat interval, lease length, protocol
@@ -126,7 +127,7 @@ pub struct RateLimit { pub capacity: u32, pub refill: u32, pub per: Duration }
 pub struct RateGrant { pub requests: u32, pub over: Duration }
 pub enum HoldScope { Everything, Workspace(WorkspaceId), Target(WorkspaceId, TargetName), Caller(WorkspaceId, PrincipalId) }
 pub struct SweepReport { pub lost: Vec<JobId>, pub reconcile: Vec<JobId>, pub expired: Vec<JobId>, pub waits_ended: usize }
-pub struct SchedSettings { queue_length, caller_queue_cap, queue_wait, lease_length, heartbeat_interval, lost_after, quarantine, default_rate }
+pub struct SchedSettings { queue_length, caller_queue_cap, queue_wait, lease_length, heartbeat_interval, lost_after, quarantine, default_rate, reconcile_wait, reconcile_wait_ceiling }
 ```
 
 Contracts the signatures do not show:
@@ -174,6 +175,8 @@ The loop that runs work in the same process says `hello` like any runner, so che
 | Quarantine | 60 s, or the job's `max_step` if greater | Before anyone touches the run's records again |
 
 Leasing a job of a run raises the run's lease number through the ledger and writes it to the job in the same transaction, so the ledger refuses anything older. A lease ends in one of three ways: `finish`; `finish` with `LeaseEnding`, which puts the job back in the queue; or loss. A `finish` with `Stopped` queues a reconcile job when the runner says a record is in doubt, and also when the ledger does: the ledger is asked for the run's records whose intent was stored and that were never read back, and the runner's `in_doubt: false` is not taken against it.
+
+**A run that rests is not read without end** ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)). Only a stop of the class `possible_commit`, `transient`, or `busy` is queued again by the scheduler on its own; a stop of any other class waits for a person, and a resume reconciles first. A reconcile queued after `n` reconciles of the same run ended in a row waits `reconcile_wait` (5 s) doubled `n - 1` times, never more than `reconcile_wait_ceiling` (15 min); the first waits nothing; after a lost lease the wait is the longer of that and the quarantine. So a paused-clock minute sees four reconciles of one run at most (at 0, 5, 15, and 35 s), and two hours some fifteen. Two named conditions wake a waiting reconcile early: `enqueue` for the run, a person's resume or execute, makes it available at once, in a transaction of its own; `wake_reconcile(run, at)` brings it forward to a settle time. Neither ever brings it before the end of a lost lease's quarantine.
 
 On loss, `sweep` does section 223's steps in one transaction:
 
@@ -262,6 +265,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | Budgets refill by the clock only, and a restart does not refill them | Sweeps and calls with the clock standing still; a restart |
 | A clock that went back refills no budget twice | A bucket counted to an hour from now, as a clock set back leaves it: the moment stays, and nothing refills before it |
 | A stopped job is reconciled when the ledger holds a record in doubt, whatever its runner reported | A job that stored an intent and reports `in_doubt: false`; the store is asked for the reconcile job |
+| A run that rests is not read without end: a person's stop is never queued again on its own, and a reconcile queued again waits longer each time | For each failure class, a minute and two hours of a paused clock with a reconcile that never settles; a resume, a settle time, and a quarantine |
 | A waiter whose lease has run out is granted nothing | A key freed at the moment the waiter's lease ended, before any sweep; the store is asked who holds it |
 | What one write holds alone has one key, and two jobs that name it run one after the other | Three jobs on two surfaces with three free slots |
 | Everything queued or leased is found again after a restart | The store closed and opened again: the queue, the lease, the runner, the hold; a job whose runner is gone is recovered by the deadline rule |
