@@ -223,15 +223,31 @@ pub(crate) fn failure(error: &BrowserError, scope: &DiscoveryScope<'_>) -> Failu
             "The browser was lost, or did not answer in time, while a page was read.",
             "Run discovery again.",
         ),
-        other => Failure::new(
-            FailureClass::UnknownVariant,
-            codes::PAGE_UNREADABLE,
-            scope.redact.redact(&codes::shown(&format!(
-                "The page could not be read: {other}."
-            ))),
-            "Look at the page in a browser; report this if the page is an ordinary one.",
-        ),
+        other => unreadable(other),
     }
+}
+
+/// The failure of a page that could not be read. It names what kind of
+/// answer the browser gave and holds none of its text: the text of an
+/// answer no rule covers can be the page's own, and free text from the
+/// system goes into no message (spec section 502).
+pub(crate) fn unreadable(error: &BrowserError) -> Failure {
+    let what = match error {
+        BrowserError::NotFound => "an element it looked for is not there",
+        BrowserError::Ambiguous { .. } => "an element it looked for is there more than once",
+        BrowserError::NotActionable(_) => "an element it looked for cannot be used",
+        BrowserError::UnexpectedDialog { .. } => "the page opened a dialog",
+        BrowserError::PasswordField => "it would have read a password",
+        BrowserError::TooLarge { .. } => "what it read is larger than the limit",
+        BrowserError::RequestFailed(_) => "a request of the page did not complete",
+        _ => "the browser answered in a way no rule covers",
+    };
+    Failure::new(
+        FailureClass::UnknownVariant,
+        codes::PAGE_UNREADABLE,
+        format!("The page could not be read: {what}."),
+        "Look at the page in a browser; report this if the page is an ordinary one.",
+    )
 }
 
 /// Whether exactly one, or more than one, rendered element matches.
@@ -380,10 +396,37 @@ impl Core {
         if asked.origin != declared.origin {
             return Err(not_declared("the address"));
         }
-        let loaded = tab
-            .goto(address, scope.deadline)
-            .await
-            .map_err(|error| failure(&error, scope))?;
+        // Every address the tab is sent to passes the same check, whatever
+        // named it: the surface, a focus, or a link (decision 0144).
+        if looks_like_an_action(after_origin(address.as_str())) {
+            return Err(looks_like_an_action_refused("is"));
+        }
+        let loaded = match tab.goto(address, scope.deadline).await {
+            Ok(loaded) => loaded,
+            // The answer sent the tab to another origin, and the browser
+            // ended the move there: nothing of that origin was fetched. A
+            // surface that sends its visitor elsewhere is seen as asking for
+            // a sign-in there, as before the browser held the tab.
+            Err(BrowserError::ForeignOrigin(origin)) => {
+                let ended = Place::parse(&origin).ok_or_else(|| not_declared("the address"))?;
+                return Ok(Arrival {
+                    asked,
+                    ended,
+                    title: String::new(),
+                    status: None,
+                    standing: Standing::SignIn("other_origin"),
+                });
+            }
+            Err(error) => return Err(failure(&error, scope)),
+        };
+        // A redirect is followed by the browser before this crate sees it;
+        // one that ended at an address that looks like an action is not
+        // read, and stops the discovery.
+        if looks_like_an_action(after_origin(&loaded.address)) {
+            return Err(looks_like_an_action_refused(
+                "was sent on to an address that",
+            ));
+        }
         let ended = Place::parse(&loaded.address).ok_or_else(|| {
             Failure::new(
                 FailureClass::UnknownVariant,
@@ -408,7 +451,7 @@ impl Core {
         Ok(Arrival {
             asked,
             ended,
-            title: scope.redact.redact(&loaded.title),
+            title: codes::shown(&scope.redact.redact(&loaded.title)),
             status: loaded.status,
             standing,
         })
@@ -474,6 +517,24 @@ impl Core {
         }
         Ok(builder.build()?)
     }
+}
+
+/// What follows the origin of an address: its path and its query. The
+/// host is the surface's own, and a host's name is not an action.
+fn after_origin(address: &str) -> &str {
+    let rest = address.split_once("://").map_or(address, |(_, rest)| rest);
+    rest.find(['/', '?', '#']).map_or("", |at| &rest[at..])
+}
+
+fn looks_like_an_action_refused(how: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        codes::ADDRESS_LOOKS_LIKE_AN_ACTION,
+        format!(
+            "Discovery was to look at a page whose address {how} looks like an action, and a system may act on a plain visit to such an address. It was not looked at."
+        ),
+        "Leave the address out of the focus, or look at the page in a browser yourself; discovery never visits an address that looks like an action.",
+    )
 }
 
 fn not_declared(what: &str) -> Failure {

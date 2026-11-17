@@ -80,6 +80,10 @@ class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
+class = "policy"
+code = "address_looks_like_an_action"
+
+[[failure_codes]]
 class = "input"
 code = "focus_invalid"
 
