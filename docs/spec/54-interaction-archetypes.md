@@ -18,6 +18,8 @@ Decision 0005 fixed seven modes. Those seven stay exactly as they are. Further m
 
 "Later" modes are names for planning. Each becomes real only when its pack clears the bar in section 55.
 
+**In the kernel, the archetype is a fixed type and a mode is a registered name** ([record 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). The kernel knows the seven archetypes and holds no list of modes. A provider registers each mode it brings, with its archetype, and a binding that names a mode nobody registered does not compile. The engine's handling differs by archetype and never by mode.
+
 ## How each archetype fills the loop
 
 The loop is guard, choose, prepare, intend, act, confirm, read back, record. Guard, choose, intend, and record belong to the kernel and never differ. The other four are the archetype's.

@@ -1,11 +1,17 @@
 [package]
 name = "a2m-core"
-description = "Shared types for Anything2MCP: targets, operations, bindings, effect classes, and failure classes."
+description = "Shared types for Anything2MCP: the closed vocabularies, failures, and the secret wrapper."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

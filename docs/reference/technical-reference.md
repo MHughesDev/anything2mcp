@@ -28,6 +28,34 @@ Three rules follow from the table, and the audit states each one by name when it
 
 Only the product crate names packs, and it does nothing else with them than hand them to the registry.
 
+## Core types
+
+The crate `a2m-core` holds the words every other crate shares. A word with a fixed set of values is an enum whose names are the ones in the documents; a test in the crate reads the documents and fails when the two differ, in content or in order. Each enum reads and writes its values by name, in files, in the ledger, and in JSON.
+
+| Type | Values | Defined in |
+| --- | --- | --- |
+| `Archetype` | Seven, fixed | [Spec section 54](../spec/54-interaction-archetypes.md) |
+| `EffectClass` | Three, ordered from least to most serious | [Spec section 18](../spec/18-safety-policy-and-approvals.md) |
+| `Hazard` | Five, ordered from least to most serious | [Spec section 61](../spec/61-effects-hazards-and-consent.md) |
+| `FailureClass` | Twelve | "Failure codes" below, and [spec section 8](../spec/08-execution-engine.md) |
+| `EvidenceLevel` | Seven, ordered as the ladder; the default is the weakest | [Spec section 59](../spec/59-the-evidence-ladder.md) |
+| `Coverage` | Three; the default is `unknown` | [Spec section 58](../spec/58-discovery-and-findings.md) |
+| `RunState`, `RecordState` | Twelve and six | [Spec section 42](../spec/42-run-ledger-design.md) |
+| `SessionState` | Eight | [Spec section 44](../spec/44-session-keeper.md) |
+| `BindingStatus` | Four | [File formats](file-formats.md) |
+
+Two words are checked names and not enums, because their values arrive with packs and crates ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)):
+
+| Type | Shape | Who supplies the values |
+| --- | --- | --- |
+| `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its archetype |
+| `FailureCode` | The same shape; at most 64 characters | Each crate names the codes it can produce; a code never changes once released |
+
+Two more types complete the crate:
+
+- **`Failure`** is a class, a code, a plain sentence, and a next step. The sentence and the next step are shown to callers and must never contain a secret. A name that is not one of a vocabulary's values, or is badly formed, becomes a failure of class `input` with the code `schema_invalid`, and its next step lists the values that would have been accepted.
+- **`Secret`** wraps a value that must never be shown. Printing it gives `[redacted]`. It cannot be serialized or copied, and the build fails if it ever can. The value is reached only through a method named `expose`, so that every use can be found.
+
 ## Driver interface
 
 Every mode implements one trait. The sketch is illustrative, not final.

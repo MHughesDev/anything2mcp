@@ -8,7 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
-| 2026-11-17 | [The rename, the owner's answers, and the rules for working without waiting](2026-11-17-the-rename-and-the-rules.md) | Everything renamed to Anything2MCP; kernel and packs enforced by the audit; MIT; agents no longer wait; the scout designed; the public files written; nothing published |
+| 2026-11-17 | [The rename, the owner's answers, and the rules for working without waiting](2026-11-17-the-rename-and-the-rules.md) | Everything renamed to Anything2MCP; kernel and packs enforced by the audit; MIT; agents no longer wait; the scout designed; the public files written; the core types built; nothing published |
 | 2026-11-17 | [The universal design, sections 53 to 66](2026-11-17-the-universal-design.md) | A deep study of REA from source; fourteen new spec sections; six decision records; nothing built or renamed |
 | 2026-11-16 | [The owner renames the product Anything2MCP](2026-11-16-anything2mcp-direction.md) | An audit, the REA study, and one long-term plan; nothing renamed or built yet |
 | 2026-11-16 | [Lens 6, then slices 0.1, 0.2 up to the publish, and 0.3](2026-11-16-lens-6-and-slice-0-1.md) | One pipeline walked through the design and its joins fixed; the workspace and CI built; the release workflow ready and nothing published; the test application built |
