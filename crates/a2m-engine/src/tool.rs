@@ -2147,7 +2147,13 @@ async fn reconcile_keyless(
             // one page: it proves nothing.
             Ok(None) => {}
             Err(Stop::Fail(failure)) => {
-                return Err(keyless_in_doubt(run, found, record, &unanswered(&failure), None));
+                return Err(keyless_in_doubt(
+                    run,
+                    found,
+                    record,
+                    &unanswered(&failure),
+                    None,
+                ));
             }
             Err(stop) => return Err(stop),
         }
@@ -2168,12 +2174,10 @@ async fn reconcile_keyless(
     let settle_ms = i64::from(binding.settle_ms);
     let act_ms = i64::try_from(run.time_of(&binding.act).as_millis()).unwrap_or(i64::MAX);
     let sent_by = held.and_then(|held| {
-        held.sent_by
-            .map(Timestamp::as_unix_millis)
-            .or_else(|| {
-                held.intent_at
-                    .map(|at| at.as_unix_millis().saturating_add(act_ms))
-            })
+        held.sent_by.map(Timestamp::as_unix_millis).or_else(|| {
+            held.intent_at
+                .map(|at| at.as_unix_millis().saturating_add(act_ms))
+        })
     });
     let Some(sent_by) = sent_by else {
         return Err(keyless_in_doubt(
@@ -2204,7 +2208,13 @@ async fn reconcile_keyless(
             Ok(Some(raw)) => return keyless_found(run, loaded, found, record, raw).await,
             Ok(None) => {}
             Err(Stop::Fail(failure)) => {
-                return Err(keyless_in_doubt(run, found, record, &unanswered(&failure), None));
+                return Err(keyless_in_doubt(
+                    run,
+                    found,
+                    record,
+                    &unanswered(&failure),
+                    None,
+                ));
             }
             Err(stop) => return Err(stop),
         }

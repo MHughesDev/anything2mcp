@@ -179,7 +179,8 @@ pub const SAID_LONGEST: usize = 400;
 pub const SAID_CEILING: usize = 64 * 1024;
 
 /// What stands in `said` for a text above [`SAID_CEILING`].
-pub const SAID_TOO_LONG: &str = "(what the system said was longer than 64 KiB, and none of it was kept)";
+pub const SAID_TOO_LONG: &str =
+    "(what the system said was longer than 64 KiB, and none of it was kept)";
 
 /// What the system said, as a failure keeps it: whole, with its line
 /// breaks and every other character as given, so that the redactor, which

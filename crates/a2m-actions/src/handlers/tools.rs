@@ -1165,10 +1165,20 @@ pub(crate) enum Tell {
 /// What the system itself said, as a failure carries it, in a field of its
 /// own and marked as the system's words: never joined into the sentence or
 /// the next step, and never an instruction (decision 0162, point 4).
+///
+/// The failure holds the text whole, as the redactor saw it. Only here, for
+/// display, is it cut to [`a2m_core::SAID_LONGEST`] characters, never inside
+/// a redaction mark, and `cut` says so (decision 0185). Its line breaks are
+/// carried as JSON escapes them.
 pub(crate) fn said_json(failure: &Failure) -> Option<Json> {
-    failure
-        .said()
-        .map(|said| json!({"by": SAID_BY, "text": said}))
+    failure.said().map(|said| {
+        let (text, cut) = a2m_core::said_cut(said, a2m_core::SAID_LONGEST);
+        if cut {
+            json!({"by": SAID_BY, "text": text, "cut": true})
+        } else {
+            json!({"by": SAID_BY, "text": text})
+        }
+    })
 }
 
 /// Who `said` is the words of.

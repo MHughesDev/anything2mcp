@@ -250,7 +250,10 @@ impl Diff {
                 binding.hashed(&mut hasher);
             }
             if !record.could_take.is_empty() {
-                hasher.field("could_take", &(record.could_take.len() as u64).to_le_bytes());
+                hasher.field(
+                    "could_take",
+                    &(record.could_take.len() as u64).to_le_bytes(),
+                );
                 for binding in &record.could_take {
                     binding.hashed(&mut hasher);
                 }

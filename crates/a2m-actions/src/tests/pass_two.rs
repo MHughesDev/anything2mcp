@@ -97,9 +97,12 @@ async fn a_write_that_ends_on_an_acknowledgement_is_settled_completes_and_is_nev
     // Each names the binding that writes it, and that binding's evidence
     // (decision 0185).
     assert!(
-        preview.records.iter().all(|record| record.binding_later.is_none()
-            && record.bindings.len() == 1
-            && record.bindings[0].evidence == "acknowledged"),
+        preview
+            .records
+            .iter()
+            .all(|record| record.binding_later.is_none()
+                && record.bindings.len() == 1
+                && record.bindings[0].evidence == "acknowledged"),
         "{preview:?}"
     );
     world.approve(id).await;

@@ -988,9 +988,10 @@ impl Manifest {
                 ));
             }
             if !unique(mode.absence_steps.iter())
-                || mode.absence_steps.iter().any(|kind| {
-                    !mode.steps.contains(kind) || mode.commit_steps.contains(kind)
-                })
+                || mode
+                    .absence_steps
+                    .iter()
+                    .any(|kind| !mode.steps.contains(kind) || mode.commit_steps.contains(kind))
             {
                 return Err(invalid(
                     "modes",

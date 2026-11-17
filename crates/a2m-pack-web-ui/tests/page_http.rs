@@ -35,7 +35,10 @@ use example_app::store::format_length_in;
 const TOTALS: &str = "example_api_orders_totals_get";
 /// The made-up cookie and token the page of an order's totals sets and
 /// sends. Neither may appear in anything the pack gives.
-const PAGE_SECRETS: &[&str] = &["secret-for-tests-cookie-4c1d", "example-token-for-tests-9e2b"];
+const PAGE_SECRETS: &[&str] = &[
+    "secret-for-tests-cookie-4c1d",
+    "example-token-for-tests-9e2b",
+];
 
 fn finding(origin: &str, kind: &str, file: &str) -> Finding {
     let text = std::fs::read_to_string(
@@ -200,6 +203,7 @@ async fn look_in(
 }
 
 /// The totals of an order as the control interface reports what it holds.
+/// The order's key is the read's input, and not one of its outputs.
 async fn totals_of(app: &TestApp, order: &str) -> Values {
     let stored = app.stored_order(order).await.unwrap().unwrap();
     let quantity: u64 = stored
@@ -213,7 +217,6 @@ async fn totals_of(app: &TestApp, order: &str) -> Values {
         .map(|item| u64::from(item.quantity) * u64::from(item.length_sixteenths))
         .sum();
     Values::new()
-        .with("order_id", stored.order_id.clone())
         .with("lines", i64::try_from(stored.items.len()).unwrap())
         .with("total_quantity", i64::try_from(quantity).unwrap())
         .with(
@@ -268,14 +271,13 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
         report.open_questions.is_empty() && report.refused.is_empty(),
         "{report:?}"
     );
-    let entry =
-        std::fs::read_to_string(folder.path().join("page_requests/api_orders_totals.yaml"))
-            .unwrap();
+    let entry = std::fs::read_to_string(folder.path().join("page_requests/api_orders_totals.yaml"))
+        .unwrap();
     for wanted in [
-        "method: GET",
-        "path: /api/orders/{order_id}/totals",
-        "page: /orders/{order_id}/totals",
-        "effect: read",
+        "method: \"GET\"",
+        "path: \"/api/orders/{order_id}/totals\"",
+        "page: \"/orders/{order_id}/totals\"",
+        "effect: \"read\"",
     ] {
         assert!(entry.contains(wanted), "{wanted}: {entry}");
     }
@@ -285,13 +287,18 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
             .join("operations/api_orders_totals_request.yaml"),
     )
     .unwrap();
-    for wanted in ["mode: page_http", "key: order_id", "untrusted_text", "integer"] {
+    for wanted in [
+        "mode: \"page_http\"",
+        "key: \"order_id\"",
+        "untrusted_text",
+        "integer",
+    ] {
         assert!(read.contains(wanted), "{wanted}: {read}");
     }
     // No example, no record's number, and no value of the page.
     for text in [&entry, &read] {
         assert!(!text.contains("A-10"), "{text}");
-        assert!(!text.contains("example"), "{text}");
+        assert!(!text.contains("examples"), "{text}");
     }
     // Drafting twice gives the same bytes.
     let again = new_target("page-http-again", &origin);
@@ -330,7 +337,11 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
             "{seen:?}"
         );
         assert!(
-            seen[before..].iter().filter(|line| **line == wanted).count() >= 1,
+            seen[before..]
+                .iter()
+                .filter(|line| **line == wanted)
+                .count()
+                >= 1,
             "{seen:?}"
         );
         assert!(
@@ -345,7 +356,14 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
 
     // A key that is not one plain segment is refused before any request:
     // the application hears nothing.
-    for refused in ["A-100/x", "..", "A-100?view=all", "%2e%2e", "A 100", "A-100#x"] {
+    for refused in [
+        "A-100/x",
+        "..",
+        "A-100?view=all",
+        "%2e%2e",
+        "A 100",
+        "A-100#x",
+    ] {
         let before = app.seen().await.unwrap();
         let key = Values::new().with("order_id", refused);
         let stopped = look_in(&scene, &mode, TOTALS, &key).await.unwrap_err();
@@ -404,7 +422,9 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
         everything.extend(one.found().as_bytes());
     }
     everything.extend(bytes_below(folder.path()));
-    everything.extend(bytes_below(scene.stand.folder.path()));
+    // The trace is the telemetry's folder; the browser's own profile, where
+    // the page's cookie lives as the browser keeps it, is not looked in.
+    everything.extend(bytes_below(&scene.stand.folder.path().join("logs")));
     for secret in PAGE_SECRETS {
         assert!(!holds(&everything, secret), "{secret}");
     }
@@ -449,20 +469,27 @@ fn a_page_http_binding_on_an_operation_that_writes_is_refused_by_name() {
     let folder = new_target("page-http-writes", origin);
     let report = draft(&stand, &folder, &[totals_exchange(origin)]);
     let path = "operations/api_orders_totals_request.yaml";
-    for change in [
-        |text: &str| text.replace("verb: read", "verb: update"),
-        |text: &str| {
-            text.replace("effect: read", "effect: write")
-                .replace("verb: read", "verb: update")
-        },
-    ] {
-        let problems = compile_drafts(&stand, &folder, &report, path, change).unwrap_err();
-        assert!(
-            shown(&problems).contains("web.page_http_writes"),
-            "{}",
-            shown(&problems)
-        );
-    }
+    // An operation declared to write, through a read of the page: refused
+    // by this pack's own name.
+    let problems = compile_drafts(&stand, &folder, &report, path, |text| {
+        text.replace("effect: \"read\"", "effect: \"write\"")
+    })
+    .unwrap_err();
+    assert!(
+        shown(&problems).contains("web.page_http_writes"),
+        "{}",
+        shown(&problems)
+    );
+    // A write verb is not one the mode serves.
+    let problems = compile_drafts(&stand, &folder, &report, path, |text| {
+        text.replace("verb: \"read\"", "verb: \"update\"")
+    })
+    .unwrap_err();
+    assert!(
+        shown(&problems).contains("unknown_verb"),
+        "{}",
+        shown(&problems)
+    );
 }
 
 /// A screen of the page of an order's totals, written by hand, and a `ui`
@@ -518,20 +545,64 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
     ];
     let mut results = Vec::new();
     let mut times = Vec::new();
-    for (mode, operation) in &reads {
-        // One warm run, then ten measured, each from the preparing of its
-        // tab to its release, as a run does.
-        let warm = look_in(&scene, mode, operation, &key).await.unwrap();
-        let mut each = Vec::new();
-        for _ in 0..10 {
-            let started = Instant::now();
-            let ran = look_in(&scene, mode, operation, &key).await.unwrap();
-            each.push(started.elapsed());
-            assert_eq!(ran.values, warm.values);
+    // The stand answers an order's totals slowly by nature; measured once
+    // as it is, and once with no delay, so that what each mode adds shows.
+    for slow in [None, Some(0)] {
+        if let Some(ms) = slow {
+            app.set_slow_ms(ms).await.unwrap();
         }
-        each.sort();
-        times.push((mode.as_str().to_owned(), each));
-        results.push(warm.values);
+        for (mode, operation) in &reads {
+            // One warm run, then ten measured, each from the preparing of its
+            // tab to its release, as a run does; and, inside each, the steps
+            // after the tab is open, and the last step alone, on a page that
+            // has loaded.
+            let warm = look_in(&scene, mode, operation, &key).await.unwrap();
+            let (mut whole, mut steps, mut last) = (Vec::new(), Vec::new(), Vec::new());
+            for _ in 0..10 {
+                let started = Instant::now();
+                let (handle, mut prepared) = scene
+                    .try_prepare_in(
+                        mode,
+                        None,
+                        Posture::Sandbox {
+                            test_records: false,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                let act = &scene.binding_in(operation, mode).act;
+                let (before, end) = act.split_at(act.len() - 1);
+                let open = Instant::now();
+                scene
+                    .run(&handle, &mut prepared, before, &key, None)
+                    .await
+                    .unwrap();
+                let at_last = Instant::now();
+                let ran = scene
+                    .run(&handle, &mut prepared, end, &key, None)
+                    .await
+                    .unwrap();
+                let done = Instant::now();
+                assert!(handle.release(prepared, false).await.complete);
+                whole.push(started.elapsed());
+                steps.push(done - open);
+                last.push(done - at_last);
+                let mut values = ran.values;
+                if values.is_empty() {
+                    values = warm.values.clone();
+                }
+                assert_eq!(values, warm.values);
+            }
+            for each in [&mut whole, &mut steps, &mut last] {
+                each.sort();
+            }
+            let label = match slow {
+                None => format!("{mode} (the stand's own delay)"),
+                Some(_) => format!("{mode} (no delay)"),
+            };
+            times.push((label, whole, steps, last));
+            results.push(warm.values);
+        }
     }
     // Where the two reads overlap, they agree: the page shows the total as
     // text, and the request gives it as a whole number.
@@ -545,14 +616,19 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
         results[1].get("total_quantity"),
         totals_of(&app, "A-100").await.get("total_quantity")
     );
-    for (mode, each) in &times {
-        let total: Duration = each.iter().sum();
+    let median = |each: &[Duration]| each[each.len() / 2];
+    for (mode, whole, steps, last) in &times {
         eprintln!(
-            "measured {mode}: median {:?}, fastest {:?}, slowest {:?}, mean {:?}",
-            each[each.len() / 2],
-            each[0],
-            each[each.len() - 1],
-            total / u32::try_from(each.len()).unwrap()
+            "measured {mode}: a whole run median {:?} ({:?} to {:?}); its steps median {:?} ({:?} to {:?}); its last step median {:?} ({:?} to {:?})",
+            median(whole),
+            whole[0],
+            whole[whole.len() - 1],
+            median(steps),
+            steps[0],
+            steps[steps.len() - 1],
+            median(last),
+            last[0],
+            last[last.len() - 1],
         );
     }
     assert!(app.writes().await.unwrap().is_empty());

@@ -4,7 +4,7 @@
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |
 //! | `read` | `goto` the page that makes the request, `request` | | |
-//! | the write verbs | Refused by the compiler: the write half is not designed | | |
+//! | the write verbs | Not served: the compiler refuses them, and an operation declared to write, by name | | |
 //!
 //! The `goto` sends an observing tab to the page the entry names and waits,
 //! as every `goto` does, for its document to load: that is the named
@@ -58,10 +58,11 @@ pub const REQUEST: StepKind = StepKind::fixed("request");
 /// What the name of a `request` step's argument starts with.
 pub(crate) const PATH_ARG: &str = "path.";
 
+/// The one verb this mode serves. A write verb is not one the manifest
+/// declares, so the compiler refuses it as `kernel.unknown_verb`; a read
+/// verb on an operation declared to write is refused here, as
+/// `web.page_http_writes`.
 const READ_VERBS: &[&str] = &["read"];
-/// The verbs that write. A binding of this mode with one of them is
-/// refused by name until the write half is designed.
-const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "submit", "delete"];
 
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
@@ -85,11 +86,7 @@ impl PageHttpLowering {
         Self {
             mode,
             schema: JsonSchema::object().required("endpoint", JsonSchema::name()),
-            verbs: READ_VERBS
-                .iter()
-                .chain(WRITE_VERBS)
-                .map(|verb| Verb::fixed(verb))
-                .collect(),
+            verbs: READ_VERBS.iter().map(|verb| Verb::fixed(verb)).collect(),
             step_kinds: vec![GOTO, REQUEST],
         }
     }

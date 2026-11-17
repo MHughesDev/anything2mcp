@@ -945,11 +945,12 @@ impl Kernel {
                         }
                         // What followed the send was recorded at this
                         // moment: the send was made before it.
-                        EventKind::Acted | EventKind::Failed => {
-                            if sent_by.is_none_or(|at| at.as_unix_millis() < event.at.as_unix_millis())
-                            {
-                                sent_by = Some(event.at);
-                            }
+                        EventKind::Acted | EventKind::Failed
+                            if sent_by.is_none_or(|at| {
+                                at.as_unix_millis() < event.at.as_unix_millis()
+                            }) =>
+                        {
+                            sent_by = Some(event.at);
                         }
                         _ => {}
                     }

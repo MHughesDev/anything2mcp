@@ -609,9 +609,12 @@ pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "bridge"];
 /// The line a command prints for what the system itself said, apart from
 /// the failure's sentence and its next step, marked as the system's words.
 /// Every control character is shown as its escape, so that nothing the
-/// system said can move the cursor, ring, or rewrite the line before it.
+/// system said can move the cursor, ring, or rewrite the line before it,
+/// and a line break stays visible. The text, already redacted, is cut to
+/// [`a2m_core::SAID_LONGEST`] characters, never inside a redaction mark.
 #[must_use]
 pub fn said_line(said: &str) -> String {
+    let (said, cut) = a2m_core::said_cut(said, a2m_core::SAID_LONGEST);
     let mut shown = String::with_capacity(said.len() + 24);
     shown.push_str("The system said: \"");
     for c in said.chars() {
@@ -620,6 +623,9 @@ pub fn said_line(said: &str) -> String {
         } else {
             shown.push(c);
         }
+    }
+    if cut {
+        shown.push('…');
     }
     shown.push('"');
     shown

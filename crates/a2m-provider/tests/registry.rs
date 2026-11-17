@@ -218,7 +218,10 @@ fn a_badly_formed_name_or_file_is_refused_with_the_line() {
     );
     // A step kind whose absence is authoritative is one of the mode's
     // step kinds, and never one that always commits.
-    for absence in ["absence_steps = [\"look\"]", "commit_steps = [\"send\"]\nabsence_steps = [\"send\"]"] {
+    for absence in [
+        "absence_steps = [\"look\"]",
+        "commit_steps = [\"send\"]\nabsence_steps = [\"send\"]",
+    ] {
         let declares = manifest("alpha", "request", "").replace(
             "steps = [\"fetch\", \"send\"]",
             &format!("steps = [\"fetch\", \"send\"]\n{absence}"),

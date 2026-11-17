@@ -264,23 +264,33 @@ mod tests {
             "Correct the record and call again.",
         )
         .with_said(format!("total must be positive\n\u{1b}[31m {SECRET}"));
-        // Never joined into the product's own words.
+        // Never joined into the product's own words, and kept whole: line
+        // breaks and control characters as the system gave them.
         assert_eq!(failure.message(), "The system refused the record.");
         assert_eq!(
             failure.said(),
-            Some(format!("total must be positive  [31m {SECRET}").as_str())
+            Some(format!("total must be positive\n\u{1b}[31m {SECRET}").as_str())
         );
         let clean = Knows(SECRET).redact_failure(&failure);
         assert_eq!(
             clean.said(),
-            Some("total must be positive  [31m [redacted]")
+            Some("total must be positive\n\u{1b}[31m [redacted]")
         );
-        // Bounded.
-        let long = failure.clone().with_said("x".repeat(5_000));
+        // A door shows it escaped, never flattened.
         assert_eq!(
-            long.said().unwrap().chars().count(),
-            crate::failure::SAID_LONGEST + 1
+            crate::said_shown(clean.said().unwrap(), crate::SAID_LONGEST),
+            (
+                "total must be positive\\n\\u{1b}[31m [redacted]".to_owned(),
+                false
+            )
         );
+        // Above the ceiling it is dropped whole, never cut to a prefix.
+        let long = failure
+            .clone()
+            .with_said("x".repeat(crate::SAID_CEILING + 1));
+        assert_eq!(long.said(), Some(crate::SAID_TOO_LONG));
+        let whole = failure.clone().with_said("x".repeat(5_000));
+        assert_eq!(whole.said().unwrap().len(), 5_000);
         // Nothing to keep is nothing.
         assert_eq!(failure.clone().with_said(" \n\t ").said(), None);
         // A failure that stands in for another carries its words.
@@ -292,6 +302,46 @@ mod tests {
         )
         .carrying_said(&clean);
         assert_eq!(standing.said(), clean.said());
+    }
+
+    /// Decision 0185: nothing is cut, joined, or flattened before the
+    /// redactor sees what the system said.
+    #[test]
+    fn a_secret_of_several_lines_or_across_the_display_cut_is_redacted_whole() {
+        const KEY: &str = "secret-for-tests-line-one\nsecret-for-tests-line-two\n";
+        let failure = Failure::new(
+            FailureClass::Rejected,
+            FailureCode::new("system_refused").unwrap(),
+            "The system refused the record.",
+            "Correct the record and call again.",
+        );
+        // A secret of several lines, echoed in an error.
+        let echoed = failure
+            .clone()
+            .with_said(format!("could not parse key:\n{KEY}end"));
+        let clean = Knows(KEY).redact_failure(&echoed);
+        let said = clean.said().unwrap();
+        assert!(
+            !said.contains("line-one") && !said.contains("line-two"),
+            "{said}"
+        );
+        assert_eq!(said, "could not parse key:\n[redacted]end");
+
+        // A secret that starts near the old cut of 400 characters.
+        let before = "x".repeat(crate::SAID_LONGEST - 20);
+        let straddles = failure.with_said(format!("{before}{SECRET} and more"));
+        let clean = Knows(SECRET).redact_failure(&straddles);
+        let said = clean.said().unwrap();
+        assert!(!said.contains("battery"), "the secret's tail passed");
+        assert!(!said.contains("correct horse"), "the secret's head passed");
+        // Cut for display after redaction, the mark is never split: what is
+        // shown ends before it.
+        let (shown, cut) = crate::said_shown(said, crate::SAID_LONGEST - 10);
+        assert!(cut);
+        assert_eq!(shown, format!("{before}[redacted]…"));
+        let (shown, cut) = crate::said_shown(said, crate::SAID_LONGEST - 15);
+        assert!(cut);
+        assert_eq!(shown, format!("{before}…"));
     }
 
     #[test]

@@ -524,7 +524,10 @@ async fn a_write_through_another_binding_than_the_approved_one_is_not_sent() {
     approved(&scene, common::SLOT_ADD, &input).await;
     // The person was shown the first binding and its evidence.
     let diff = stored_diff(&scene).await;
-    let named = diff.records[0].binding.as_ref().expect("the binding is named");
+    let named = diff.records[0]
+        .binding
+        .as_ref()
+        .expect("the binding is named");
     assert_eq!(
         (named.position, named.evidence),
         (0, a2m_core::WriteEvidence::ReadBack)
@@ -564,9 +567,9 @@ async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_c
         }
     })
     .await;
-    *scene.source.lock().unwrap() = Some(std::sync::Arc::new(common::sheet(&[
-        ("A", "Left leg", "2", "30"),
-    ])));
+    *scene.source.lock().unwrap() = Some(std::sync::Arc::new(common::sheet(&[(
+        "A", "Left leg", "2", "30",
+    )])));
     let kit = a2m_core::Values::new()
         .with("order_id", "A-102")
         .with("title", "Table kit");

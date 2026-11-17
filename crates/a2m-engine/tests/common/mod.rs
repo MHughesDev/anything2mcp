@@ -829,8 +829,8 @@ impl AppDriver {
                 "reserve_code" => {
                     let order = text(args, "order_id")?;
                     let code = self.free_code(state, &order).await?;
-                    let key = RecordKey::new(vec![order.as_str().into(), code.as_str().into()])
-                        .unwrap();
+                    let key =
+                        RecordKey::new(vec![order.as_str().into(), code.as_str().into()]).unwrap();
                     Ok(StepOutcome::Done(Observed {
                         values: Values::new().with("item_code", code.as_str()),
                         assigned_key: Some(key),
