@@ -333,7 +333,7 @@ The tests are inside the crate, under `src/tests/`, because the fault of a lost 
 
 ## Open points
 
-- **A write that names no read-back.** A binding of a `form: table` write that does not name `read_back:` lowers with none; the compiler accepts that only for an operation declared `irreversible` with identity `none`, such as an insert whose key the store assigns. Whether such a write is acceptable without a read-back is not settled here ([decision 0175](../../decisions/0175-the-data-and-device-packs-take-up-the-second-pass-of-the-provider-contract.md)).
+- **A write that names no read-back** is refused by the pack (`data.read_back_invalid`) unless the operation is `irreversible` with identity `none`: an append of a row no one names. That binding states `WriteEvidence::Acknowledged`, and the store's count of exactly one row, checked before the commit, is its evidence ([decision 0175](../../decisions/0175-the-data-and-device-packs-take-up-the-second-pass-of-the-provider-contract.md)).
 - **A store in a root a person added.** The manifest lists roots by name, so the pack can declare only `project`.
 - **How the engine gives the driver the store's file.** Nothing in the plan says that a surface's address is a file in a root, so the engine hands none over. Until a plan can say it, a run that was handed no path gets the file through the pack's own roots: the surface's root and its address below it, checked by the one check that makes a path ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md)).
 - **A statement interrupted at its time limit** is built and not proven: the stand cannot slow a statement.

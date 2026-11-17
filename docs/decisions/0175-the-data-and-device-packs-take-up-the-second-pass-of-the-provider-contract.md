@@ -21,7 +21,7 @@ The kernel's second pass added to the contract only what a pack takes up by choi
 
 One fix came with it: a commit sent into a link that had already ended is now `not_sent` and not `answered`, as the server tests always expected; the test that held it was racing.
 
-## For the lead: writes with no read-back, described and not decided
+## The two writes with no read-back, described (decided below)
 
 - **Device `submit`.** It writes a command and reads nothing back: the step after it only checks the echo. It is `irreversible` by `least_effect`, so a person approves every run. It is the one kind of write in the device pack with no read-back. It could be `WriteEvidence::Acknowledged`; that was not done, since the brief for this pack lists none.
 - **Data `create` with identity `none` and no `read_back:`.** The lowering accepts a `form: table` write that names no read-back, and the compiler accepts it when the operation is `irreversible` with identity `none`. The test fixture for an assigned-key insert had none until this record; it now names one. Whether the pack should require one is open.
@@ -31,3 +31,8 @@ One fix came with it: a commit sent into a link that had already ended is now `n
 - The five-run proof for a read is a test of each pack, through the handle.
 - The device pack's read-back path is proven with no key: the record's `key` is `None` and no step reads it.
 - Nothing here changes a plan's shape, except that the data fixture's `example_shipment_create` carries a read-back.
+
+## The two writes with no read-back, as the lead decided them
+
+- **Device `submit`** states `WriteEvidence::Acknowledged`: the device's echo is the only evidence there can be for a command that sets no readable value. `Lowering::evidence` returns it for a `submit` whose lowered read-back is empty, and `read_back` for everything else; an `update` keeps its read-back by address. The operation is `irreversible` by `least_effect`, and the fixture `example_fault_reset` declares it and compiles with evidence `acknowledged`. The frame is still recorded before it is sent (decision 0137), so a lost echo leaves a record in doubt with the frame in what was recorded.
+- **Data, a write that names no `read_back`.** The pack states `Acknowledged` only for an operation declared `irreversible` with identity `none`, where the store's count of exactly one row, checked inside the transaction before the commit, is the evidence. Every other `form: table` write that names no `read_back` is refused by the pack's own rule, `data.read_back_invalid`, with a fix that says to name the read the pack writes by key; the pack no longer rests on the kernel's rule alone. The assigned-key insert fixture keeps the read-back it was given.

@@ -120,13 +120,19 @@ async fn gone(machine: &Machine) -> Json {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let text = log(machine);
-    let last = text
-        .lines()
-        .rev()
-        .find(|line| line.starts_with('{'))
-        .unwrap_or_else(|| panic!("the engine wrote no last object: {text}"));
-    serde_json::from_str(last).unwrap()
+    // The engine lets go of its lock once its kernel has closed, and then
+    // prints the object it ends with: that is waited for too.
+    loop {
+        let text = log(machine);
+        if let Some(last) = text.lines().rev().find(|line| line.starts_with('{')) {
+            return serde_json::from_str(last).unwrap();
+        }
+        assert!(
+            tokio::time::Instant::now() < give_up,
+            "the engine wrote no last object: {text}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn stop(machine: &Machine) {

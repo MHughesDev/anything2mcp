@@ -393,3 +393,74 @@ fn a_write_never_compiles_as_a_read_and_a_delete_never_as_a_plain_write() {
         .expect("a delete declared as a plain write");
     assert!(problem.fix.contains("irreversible"), "{problem}");
 }
+
+/// Compiles a copy of the fixtures after one replacement, and gives the plan.
+fn plan_after(file: &[&str], from: &str, to: &str) -> a2m_core::Plan {
+    let folder = Folder::new("compile");
+    let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
+    let root = folder.path().join("example");
+    copy(&fixtures(), &root);
+    let path = file.iter().fold(root.clone(), |path, part| path.join(part));
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(text.contains(from), "the fixture no longer holds `{from}`");
+    std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    match compile_folder(&registry, &root) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("it must compile: {problems:#?}"),
+    }
+}
+
+fn evidence_of(plan: &a2m_core::Plan, operation: &str) -> a2m_core::WriteEvidence {
+    plan.operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap()
+        .bindings[0]
+        .evidence
+}
+
+#[test]
+fn an_append_with_no_key_states_the_stores_count_as_its_evidence_and_every_other_write_is_read_back()
+ {
+    // The assigned-key insert keeps the read-back it names.
+    let plan = plan_after(
+        &["operations", "shipment_create.yaml"],
+        "    verb: create\n",
+        "    verb: create\n",
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_shipment_create"),
+        a2m_core::WriteEvidence::ReadBack
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_line_item_update"),
+        a2m_core::WriteEvidence::ReadBack
+    );
+    // The same insert with no read-back: `irreversible`, identity `none`.
+    let plan = plan_after(
+        &["operations", "shipment_create.yaml"],
+        "    read_back: shipment_read_back\n",
+        "",
+    );
+    assert_eq!(
+        evidence_of(&plan, "example_shipment_create"),
+        a2m_core::WriteEvidence::Acknowledged
+    );
+}
+
+#[test]
+fn a_keyed_write_with_no_read_back_is_refused_by_the_pack_and_the_fix_names_the_read() {
+    let problems = errors_after(
+        &["operations", "line_item_update.yaml"],
+        "    read_back: line_item_by_key\n",
+        "",
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| { problem.fix.contains("read the pack writes by key") }),
+        "{problems:#?}"
+    );
+}

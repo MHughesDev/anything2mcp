@@ -11,17 +11,29 @@
 //! nobody can know beforehand and is made only if nothing has that name;
 //! whatever has it is left exactly as it is. What the save made is known by
 //! its identity, and only a file with that identity is ever removed.
+//!
+//! The provider contract has a save in steps of its own,
+//! `CheckedPath::create_temporary` and `Temporary`. The pack takes from the
+//! contract what keeps every guarantee here: whether the engine's user may
+//! write the file (`CheckedPath::may_write`), and the flush of the folder
+//! after the replace (`CheckedPath::flush_folder`), with the contract's
+//! codes mapped to the pack's own. It keeps its own temporary file, write,
+//! and replace, because the contract's `Temporary` hands out no handle: the
+//! new file could not be given the old file's owner, group, and permission
+//! bits before a byte is written, it is made readable by more than the
+//! engine's user, and it is removed by its name rather than its identity
+//! (decision 0173).
 
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{ErrorKind, Write as _};
+use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::PathBuf;
 
-use a2m_core::Digest;
+use a2m_core::{Digest, Failure};
 use a2m_provider::StepFailure;
 
 use crate::codes::{self, stop};
-use crate::open::{held_by_another, locked, not_allowed, unavailable};
-use crate::place::{Folder, Identity, Named, Open};
+use crate::open::{held_by_another, locked, missing, not_allowed, unavailable};
+use crate::place::{Folder, Identity, Named, not_writable};
 
 /// How many names are tried for a temporary file before the save stops.
 const NAMES_TRIED: usize = 4;
@@ -103,6 +115,28 @@ fn storage_full() -> StepFailure {
     )
 }
 
+/// A failure of a call of the provider contract, under the pack's own code
+/// where the pack has one that means the same: a file that is not there is
+/// `file_missing`, one the engine's user may not write `file_protected`,
+/// one another program holds `file_locked`, and a full disk
+/// `storage_full`. The contract's other codes, such as `path_not_allowed`
+/// and `file_unavailable`, are the pack's own words too and pass as they
+/// are. So no two codes of the pack mean one thing.
+pub(crate) fn from_contract(failure: Failure) -> StepFailure {
+    let code = failure.code();
+    if *code == a2m_provider::codes::PATH_MISSING {
+        missing()
+    } else if *code == a2m_provider::codes::PATH_DENIED {
+        not_writable()
+    } else if *code == a2m_provider::codes::PATH_LOCKED {
+        StepFailure::not_sent(locked())
+    } else if *code == a2m_provider::codes::DISK_FULL {
+        storage_full()
+    } else {
+        StepFailure::not_sent(failure)
+    }
+}
+
 /// Sixteen characters nobody can know beforehand, from the operating
 /// system's randomness.
 fn random_part() -> Result<String, StepFailure> {
@@ -129,7 +163,8 @@ fn create_temporary(
     for _ in 0..NAMES_TRIED {
         let path = folder.beside(&format!("{name}.a2m-{token}-{}.tmp", random()?))?;
         let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
+        // Read too: what was written is read back through the same handle.
+        options.read(true).write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt as _;
@@ -219,6 +254,38 @@ fn held(job: &SaveJob) -> Result<(), StepFailure> {
     }
 }
 
+/// Whether the temporary file holds, from its start, exactly the bytes the
+/// save built: read back through the handle it was written with, so no
+/// other file can stand in for it.
+fn holds_what_was_built(file: &mut File, job: &SaveJob) -> Result<(), StepFailure> {
+    let unreadable =
+        || StepFailure::not_sent(unavailable("could not be read back beside the old one"));
+    file.seek(SeekFrom::Start(0)).map_err(|_| unreadable())?;
+    let mut back = Vec::new();
+    file.take(job.max_bytes.saturating_add(1))
+        .read_to_end(&mut back)
+        .map_err(|_| unreadable())?;
+    if Digest::of(&back) == job.intended {
+        Ok(())
+    } else {
+        Err(StepFailure::not_sent(unavailable(
+            "was not written beside the old one as it was built; the old file is untouched",
+        )))
+    }
+}
+
+/// After the replace: the folder's list of names is written to the disk, by
+/// the contract's call. Where that fails, the new file has its name and the
+/// name may not outlast a loss of power, so the save is not reported done:
+/// its fate is unknown, and reconcile reads the file.
+fn flushed(job: &SaveJob) -> Result<(), StepFailure> {
+    job.target.checked().flush_folder().map_err(|_| {
+        StepFailure::unknown(unavailable(
+            "was replaced, and its folder could not be written to the disk",
+        ))
+    })
+}
+
 /// What the file's own bytes say after the operating system refused the
 /// replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,8 +334,13 @@ fn replace(
         ));
     }
     // A replace needs only the right to write the folder. The pack asks for
-    // more: the right to write the file itself. Nothing is written here.
-    drop(job.target.open(Open::WriteProbe).map_err(gone_is_changed)?);
+    // more: the right to write the file itself, which the contract asks of
+    // the operating system, following no link. Nothing is written.
+    match job.target.checked().may_write() {
+        Ok(true) => {}
+        Ok(false) => return Err(not_writable()),
+        Err(failure) => return Err(gone_is_changed(from_contract(failure))),
+    }
     held(job)?;
 
     let (mut file, path) = create_temporary(folder, &job.name, &job.token, random)?;
@@ -297,7 +369,10 @@ fn replace(
                     }
                 }),
                 Ok(false) | Err(_) => Err(not_kept()),
-            }),
+            })
+            // What the temporary file holds is read back through its own
+            // handle and must be, byte for byte, what was built.
+            .and_then(|()| holds_what_was_built(&mut file, job)),
         Ok(false) | Err(_) => Err(not_kept()),
     };
     let made = Made::of(&file, path);
@@ -322,17 +397,11 @@ fn replace(
     // The commit point: one call, and the name is the new file's. The call
     // follows no link at either name.
     match fs::rename(&made.path, job.target.path()) {
-        Ok(()) => {
-            folder.flush();
-            Ok(())
-        }
+        Ok(()) => flushed(job),
         Err(error) => {
             // The system said no. The file's own bytes say what happened.
             match after_refusal(job.target.digest(job.max_bytes), job.before, job.intended) {
-                Refused::Landed => {
-                    folder.flush();
-                    Ok(())
-                }
+                Refused::Landed => flushed(job),
                 Refused::Unknown => {
                     *left = Some(made);
                     Err(StepFailure::unknown(unavailable(

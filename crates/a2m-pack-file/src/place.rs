@@ -88,20 +88,34 @@ fn link_count(_metadata: &Metadata) -> Option<u64> {
 pub(crate) struct Folder {
     checked: CheckedPath,
     root: PathBuf,
+    /// What the pack may do in the folder: what it was checked for, or
+    /// less where the manifest declares less.
+    access: Access,
 }
 
 impl Folder {
     /// The folder `checked`, inside the root whose own folder is `root`.
     pub(crate) fn new(checked: CheckedPath, root: &CheckedPath) -> Self {
         Self {
+            access: checked.access(),
             checked,
             root: root.as_path().to_path_buf(),
         }
     }
 
-    /// What the folder was checked for.
+    /// The same, for reading alone, whatever it was checked for: a folder
+    /// of the caller's project, which the manifest declares the pack reads
+    /// and never writes.
+    pub(crate) fn reading(checked: CheckedPath, root: &CheckedPath) -> Self {
+        Self {
+            access: Access::Read,
+            ..Self::new(checked, root)
+        }
+    }
+
+    /// What the pack may do in the folder.
     pub(crate) fn access(&self) -> Access {
-        self.checked.access()
+        self.access
     }
 
     /// Looks, at the moment of use, that the folder is still the folder the
@@ -189,18 +203,6 @@ impl Folder {
         }
     }
 
-    /// Flushes the folder, so that a new name in it survives a loss of
-    /// power. Only where the system allows a folder to be opened and flushed.
-    #[cfg(unix)]
-    pub(crate) fn flush(&self) {
-        if let Ok(folder) = File::open(self.checked.as_path()) {
-            let _ = folder.sync_all();
-        }
-    }
-
-    /// Flushes the folder, where the system allows it. Here it does not.
-    #[cfg(not(unix))]
-    pub(crate) fn flush(&self) {}
 }
 
 fn gone(error: &std::io::Error) -> bool {
@@ -237,6 +239,13 @@ impl Named {
     /// last part: a look at the name, and a rename onto it.
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The same name, as the roots' check gave it, for the provider
+    /// contract's own calls on it: whether the engine's user may write it,
+    /// and the flush of its folder.
+    pub(crate) fn checked(&self) -> &CheckedPath {
+        &self.checked
     }
 
     /// What is at the name itself, with no link followed: a regular file

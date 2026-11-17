@@ -16,8 +16,8 @@ use a2m_core::{
 };
 use a2m_expr::Normalizer;
 use a2m_provider::{
-    Access, BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
-    RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
+    PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
 use serde::Deserialize;
@@ -128,6 +128,9 @@ struct State {
     /// Temporary files this driver made and may not have removed.
     temporary: Vec<Made>,
 }
+
+/// The root whose folder is the caller's project folder.
+const PROJECT_ROOT: &str = "project";
 
 /// The fields a `file` surface adds beside its folder.
 #[derive(Debug, Default, Deserialize)]
@@ -309,7 +312,14 @@ fn token(stamp: &str) -> String {
 }
 
 impl FileDriver {
-    fn folder(&self, surface: &SurfaceRef) -> Result<Folder, StepFailure> {
+    /// The surface's folder. In the root `project` it is a folder of the
+    /// caller's project: the project folder of the request that started the
+    /// run, which the run's checked paths hold, and never the pack's root of
+    /// that name, which is the folder the engine was started in. A run with
+    /// no project folder stops by name. The manifest declares that the pack
+    /// reads the project and does not write it, so such a folder is for
+    /// reading alone.
+    fn folder(&self, surface: &SurfaceRef, paths: &CheckedPaths) -> Result<Folder, StepFailure> {
         let payload = &surface.surface.payload;
         let fields: SurfaceFields = if payload.is_none() {
             SurfaceFields::default()
@@ -321,6 +331,15 @@ impl FileDriver {
         let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
             .map_err(StepFailure::not_sent)?;
         let address = surface.surface.address.as_str();
+        if root.as_str() == PROJECT_ROOT {
+            let project = paths.project_folder().map_err(StepFailure::not_sent)?;
+            let folder = if address == "." {
+                project.clone()
+            } else {
+                project.join(address).map_err(StepFailure::not_sent)?
+            };
+            return Ok(Folder::reading(folder, project));
+        }
         let under = |access| {
             if address == "." {
                 self.roots.folder(&root, access)
@@ -911,7 +930,7 @@ impl Driver for FileDriver {
             if cx.surface.surface.kind != SURFACE_KIND {
                 return Err(plan_unreadable("the surface is not of the kind `file`"));
             }
-            let folder = self.folder(cx.surface)?;
+            let folder = self.folder(cx.surface, cx.paths)?;
             let section = cx.plan.packs.iter().find(|section| {
                 section.pack == PACK
                     && section.kind == DOCUMENT_KIND
