@@ -63,7 +63,10 @@ impl Spike {
             records.push((name, object(&t["records"])));
         }
         Ok(Self {
-            name: data["server"]["name"].as_str().unwrap_or("spike").to_owned(),
+            name: data["server"]["name"]
+                .as_str()
+                .unwrap_or("spike")
+                .to_owned(),
             version: data["server"]["version"].as_str().unwrap_or("0").to_owned(),
             instructions: data["instructions"].as_str().unwrap_or_default().to_owned(),
             tools,
@@ -138,7 +141,9 @@ impl ServerHandler for Spike {
                 "error": {"class": "input", "code": "not_found", "retry_safe": false,
                           "message": format!("No order {order_id}.")}
             }));
-            result.content = vec![ContentBlock::text(format!("input/not_found: no order {order_id}."))];
+            result.content = vec![ContentBlock::text(format!(
+                "input/not_found: no order {order_id}."
+            ))];
             return Ok(result.into());
         };
         let mut result = CallToolResult::structured(record.clone());
@@ -155,7 +160,9 @@ impl ServerHandler for Spike {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().ok_or("usage: spike-mcp-on-sdk <tools.json> [revisions]")?;
+    let path = args
+        .next()
+        .ok_or("usage: spike-mcp-on-sdk <tools.json> [revisions]")?;
     let revisions: Vec<ProtocolVersion> = args
         .next()
         .unwrap_or_else(|| "2025-11-25,2026-07-28".to_owned())

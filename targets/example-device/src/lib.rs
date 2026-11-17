@@ -30,7 +30,7 @@ pub use device::{
     VENDOR,
 };
 pub use faults::{Corruption, Fault, FaultKind, Scope};
-pub use firmware::{UpdateCommand, UpdateError, UpdateState, Version};
+pub use firmware::{Slot, UpdateCommand, UpdateError, UpdateState, Version};
 pub use harness::{StartError, TestDevice};
 pub use map::{Access, Data, Point, PointId, Table, Value};
 pub use protocol::{Exception, FrameKind, Request};

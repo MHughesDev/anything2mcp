@@ -16,8 +16,8 @@ use crate::digest::Digest;
 use crate::effect::{EffectClass, Hazard};
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::ident::{
-    Environment, FileKindName, OperationName, StepKind, SurfaceKind, SurfaceName, TargetName,
-    Verb, Version,
+    Environment, FileKindName, OperationName, StepKind, SurfaceKind, SurfaceName, TargetName, Verb,
+    Version,
 };
 use crate::kind::Mode;
 use crate::state::BindingStatus;
@@ -761,7 +761,11 @@ impl Plan {
 
     /// The pack section a pack compiled for one file kind and surface kind.
     #[must_use]
-    pub fn section_of(&self, kind: &FileKindName, surface_kind: &SurfaceKind) -> Option<&PackSection> {
+    pub fn section_of(
+        &self,
+        kind: &FileKindName,
+        surface_kind: &SurfaceKind,
+    ) -> Option<&PackSection> {
         self.packs
             .iter()
             .find(|section| &section.kind == kind && &section.surface_kind == surface_kind)
@@ -928,7 +932,9 @@ impl Plan {
         if !READABLE_FORMATS.contains(&format) {
             return Err(refused(
                 FailureCode::PLAN_FORMAT_UNSUPPORTED,
-                format!("The plan is in format {format} and this engine reads format {PLAN_FORMAT}."),
+                format!(
+                    "The plan is in format {format} and this engine reads format {PLAN_FORMAT}."
+                ),
             ));
         }
         let plan: Self = serde_json::from_slice(&body[1..]).map_err(|error| {
@@ -1253,7 +1259,7 @@ mod tests {
     /// Windows, macOS, and Linux, in every run. If the encoding or the
     /// sample changes on purpose, this changes with it, and the plan format
     /// number says whether stored plans still load.
-    const SAMPLE_HASH: &str = "@@SAMPLE_HASH@@";
+    const SAMPLE_HASH: &str = "cdb71441dc100a559a4312a64eca6255715bfa9be9f830ee3fc02729beaaa708";
 
     #[test]
     fn a_plan_encodes_to_the_same_bytes_every_time_and_on_every_machine() {
@@ -1282,7 +1288,10 @@ mod tests {
             .with("due", Date::new(2026, 11, 17).unwrap())
             .with("order_id", "SO-1001")
             .with("total", Decimal::parse("12.5").unwrap());
-        assert_eq!(turned.encode().unwrap().bytes, sample().encode().unwrap().bytes);
+        assert_eq!(
+            turned.encode().unwrap().bytes,
+            sample().encode().unwrap().bytes
+        );
     }
 
     #[test]
@@ -1337,7 +1346,11 @@ mod tests {
         let failure = decode_own(b"anything2mcp-plan 2\n{}").unwrap_err();
         assert_eq!(failure.class(), FailureClass::Input);
         assert_eq!(failure.code(), &FailureCode::PLAN_FORMAT_UNSUPPORTED);
-        assert!(failure.next_step().contains("migrate"), "{}", failure.next_step());
+        assert!(
+            failure.next_step().contains("migrate"),
+            "{}",
+            failure.next_step()
+        );
         let failure = decode_own(b"anything2mcp-plan 0\n{}").unwrap_err();
         assert_eq!(failure.code(), &FailureCode::PLAN_FORMAT_UNSUPPORTED);
     }
@@ -1345,14 +1358,20 @@ mod tests {
     #[test]
     fn bytes_with_the_right_hash_that_are_not_a_plan_are_refused() {
         let good = sample().encode().unwrap().bytes;
-        let body = String::from_utf8(good[good.iter().position(|b| *b == b'\n').unwrap() + 1..].to_vec()).unwrap();
+        let body =
+            String::from_utf8(good[good.iter().position(|b| *b == b'\n').unwrap() + 1..].to_vec())
+                .unwrap();
         let with_line = |line: &str, body: &str| [line.as_bytes(), body.as_bytes()].concat();
 
         let unknown_field = body.replacen("{\"environments\"", "{\"added\":1,\"environments\"", 1);
         assert_ne!(unknown_field, body);
         let with_float = body.replacen("\"commit_points\":1", "\"commit_points\":1.0", 1);
         assert_ne!(with_float, body);
-        let other_format_inside = body.replacen("\"format\":1,\"minimum_engine\"", "\"format\":7,\"minimum_engine\"", 1);
+        let other_format_inside = body.replacen(
+            "\"format\":1,\"minimum_engine\"",
+            "\"format\":7,\"minimum_engine\"",
+            1,
+        );
         assert_ne!(other_format_inside, body);
 
         let cases: Vec<Vec<u8>> = vec![
@@ -1385,7 +1404,8 @@ mod tests {
 
     #[test]
     fn a_plan_with_a_loose_reference_is_refused_on_the_way_out_and_on_the_way_in() {
-        let loosen: [(&str, fn(&mut Plan)); 9] = [
+        type Loosen = fn(&mut Plan);
+        let loosen: [(&str, Loosen); 9] = [
             ("expression", |plan| {
                 plan.operations[0].bindings[0].read_back[0].args[0].value = ExprIndex::new(99);
             }),
@@ -1463,27 +1483,64 @@ mod tests {
     #[test]
     fn the_parts_of_a_plan_are_found_by_index_and_by_name() {
         let plan = sample();
-        assert_eq!(plan.expression(ExprIndex::new(0)).unwrap().source, "input.order_id");
+        assert_eq!(
+            plan.expression(ExprIndex::new(0)).unwrap().source,
+            "input.order_id"
+        );
         assert!(plan.expression(ExprIndex::new(3)).is_none());
-        assert_eq!(plan.surface(SurfaceIndex::new(1)).unwrap().name.as_str(), "site");
-        assert_eq!(plan.field_type(FieldTypeIndex::new(1)).unwrap().name, "money");
-        assert_eq!(plan.operation(OperationIndex::new(0)).unwrap().commit_points, 1);
+        assert_eq!(
+            plan.surface(SurfaceIndex::new(1)).unwrap().name.as_str(),
+            "site"
+        );
+        assert_eq!(
+            plan.field_type(FieldTypeIndex::new(1)).unwrap().name,
+            "money"
+        );
+        assert_eq!(
+            plan.operation(OperationIndex::new(0))
+                .unwrap()
+                .commit_points,
+            1
+        );
         assert_eq!(plan.pipeline(PipelineIndex::new(0)).unwrap().steps.len(), 1);
-        assert_eq!(plan.section(SectionIndex::new(0)).unwrap().pack, "example_http");
+        assert_eq!(
+            plan.section(SectionIndex::new(0)).unwrap().pack,
+            "example_http"
+        );
         let name = OperationName::new("example_orders_import").unwrap();
-        assert_eq!(plan.tool(&name).unwrap().runs, ToolRuns::Pipeline(PipelineIndex::new(0)));
-        assert!(plan.tool(&OperationName::new("example_missing").unwrap()).is_none());
+        assert_eq!(
+            plan.tool(&name).unwrap().runs,
+            ToolRuns::Pipeline(PipelineIndex::new(0))
+        );
+        assert!(
+            plan.tool(&OperationName::new("example_missing").unwrap())
+                .is_none()
+        );
         let endpoint = FileKindName::new("endpoint").unwrap();
-        assert!(plan.section_of(&endpoint, &SurfaceKind::new("http").unwrap()).is_some());
-        assert!(plan.section_of(&endpoint, &SurfaceKind::new("web").unwrap()).is_none());
+        assert!(
+            plan.section_of(&endpoint, &SurfaceKind::new("http").unwrap())
+                .is_some()
+        );
+        assert!(
+            plan.section_of(&endpoint, &SurfaceKind::new("web").unwrap())
+                .is_none()
+        );
     }
 
     #[test]
     fn a_plan_is_shown_as_stable_text() {
         let shown = sample().show().unwrap();
         assert_eq!(shown, sample().show().unwrap());
-        assert!(shown.starts_with(&format!("plan example 1.4.0\nformat 1\nhash {SAMPLE_HASH}\n{{\n")), "{shown}");
-        assert!(shown.contains("\n      \"name\": \"example_order_update\""), "{shown}");
+        assert!(
+            shown.starts_with(&format!(
+                "plan example 1.4.0\nformat 1\nhash {SAMPLE_HASH}\n{{\n"
+            )),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("\n      \"name\": \"example_order_update\""),
+            "{shown}"
+        );
         assert!(shown.ends_with("}\n"));
         assert!(!shown.contains('\r'));
     }

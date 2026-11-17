@@ -178,7 +178,9 @@ impl Date {
 const fn days_in(year: u16, month: u8) -> u8 {
     match month {
         4 | 6 | 9 | 11 => 30,
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
         2 => 28,
         _ => 31,
     }
@@ -606,7 +608,10 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::Text(text))
             }
 
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Value, A::Error> {
                 let mut items = Vec::new();
                 while let Some(item) = seq.next_element()? {
                     items.push(item);
@@ -614,7 +619,10 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::List(items))
             }
 
-            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Value, A::Error> {
                 use serde::de::Error;
                 let Some(kind) = map.next_key::<String>()? else {
                     return Err(A::Error::custom(
@@ -947,7 +955,12 @@ mod tests {
             .with("due", Date::new(2026, 11, 17).unwrap())
             .with("wait", Value::Duration(Millis::new(-1_500)))
             .with("lines", vec![d("1"), Value::Null, Value::List(vec![])])
-            .with("inner", Values::new().with("code", "A1").with("empty", Values::new()))
+            .with(
+                "inner",
+                Values::new()
+                    .with("code", "A1")
+                    .with("empty", Values::new()),
+            )
     }
 
     #[test]
@@ -967,7 +980,10 @@ mod tests {
 
     #[test]
     fn named_values_are_the_same_whatever_order_they_were_added_in() {
-        let forward = Values::new().with("b", 2i64).with("a", 1i64).with("c", d("3.0"));
+        let forward = Values::new()
+            .with("b", 2i64)
+            .with("a", 1i64)
+            .with("c", d("3.0"));
         let backward: Values = [("c", d("3")), ("a", Value::Int(1)), ("b", Value::Int(2))]
             .into_iter()
             .collect();
@@ -1028,12 +1044,29 @@ mod tests {
         assert_eq!(date.to_string(), "2028-02-29");
         assert!(Date::new(2026, 11, 17).unwrap() < Date::new(2026, 12, 1).unwrap());
         for bad in [
-            "2026-02-29", "2026-13-01", "2026-00-10", "2026-11-00", "2026-11-31", "1900-02-29",
-            "26-11-17", "2026-1-7", "2026/11/17", "2026-11-17T00:00", "", "２０２６-11-17",
+            "2026-02-29",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-11-00",
+            "2026-11-31",
+            "1900-02-29",
+            "26-11-17",
+            "2026-1-7",
+            "2026/11/17",
+            "2026-11-17T00:00",
+            "",
+            "２０２６-11-17",
         ] {
-            assert_eq!(bad.parse::<Date>(), Err(InvalidValue::DateMalformed), "{bad}");
+            assert_eq!(
+                bad.parse::<Date>(),
+                Err(InvalidValue::DateMalformed),
+                "{bad}"
+            );
         }
-        assert_eq!("0000-01-01".parse::<Date>(), Err(InvalidValue::DateOutOfRange));
+        assert_eq!(
+            "0000-01-01".parse::<Date>(),
+            Err(InvalidValue::DateOutOfRange)
+        );
         assert_eq!(Date::new(10_000, 1, 1), Err(InvalidValue::DateOutOfRange));
         let failure: Failure = InvalidValue::DateMalformed.into();
         assert_eq!(failure.class(), FailureClass::Input);
@@ -1066,7 +1099,10 @@ mod tests {
             assert!(date > previous);
             previous = date;
         }
-        assert_eq!(Date::from_days(2_932_897), Err(InvalidValue::DateOutOfRange));
+        assert_eq!(
+            Date::from_days(2_932_897),
+            Err(InvalidValue::DateOutOfRange)
+        );
         assert_eq!(Date::from_days(-719_163), Err(InvalidValue::DateOutOfRange));
         assert_eq!(Date::from_days(i32::MIN), Err(InvalidValue::DateOutOfRange));
     }
@@ -1077,7 +1113,10 @@ mod tests {
         let turned = RecordKey::new(vec![Value::Int(3), Value::from("SO-1001")]).unwrap();
         assert_ne!(key, turned);
         assert_ne!(key.canonical_bytes(), turned.canonical_bytes());
-        assert_eq!(String::from_utf8(key.canonical_bytes()).unwrap(), r#"["SO-1001",3]"#);
+        assert_eq!(
+            String::from_utf8(key.canonical_bytes()).unwrap(),
+            r#"["SO-1001",3]"#
+        );
         assert_eq!(
             RecordKey::new(vec![d("7.0")]).unwrap().canonical_bytes(),
             RecordKey::new(vec![d("7")]).unwrap().canonical_bytes()
@@ -1086,7 +1125,11 @@ mod tests {
         assert_eq!(serde_json::from_str::<RecordKey>(&json).unwrap(), key);
 
         assert_eq!(RecordKey::new(vec![]), Err(InvalidValue::KeyEmpty));
-        for bad in [Value::Null, Value::List(vec![]), Value::Record(Values::new())] {
+        for bad in [
+            Value::Null,
+            Value::List(vec![]),
+            Value::Record(Values::new()),
+        ] {
             assert_eq!(
                 RecordKey::new(vec![Value::Int(1), bad]),
                 Err(InvalidValue::KeyPartNotPlain)
@@ -1106,7 +1149,10 @@ mod tests {
             FieldOf::optional("status", ValueType::Choice),
             FieldOf::optional("lines", ValueType::list_of(ValueType::Int)),
         ]);
-        let good = Values::new().with("id", "SO-1").with("total", d("9.5")).with("status", "open");
+        let good = Values::new()
+            .with("id", "SO-1")
+            .with("total", d("9.5"))
+            .with("status", "open");
         assert!(Value::Record(good.clone()).has_type(&order));
         assert!(Value::Record(good.clone().with("lines", vec![Value::Int(1)])).has_type(&order));
 

@@ -104,7 +104,10 @@ mod tests {
     #[test]
     fn the_standard_form_is_read_and_written_back() {
         let context = TraceContext::parse(GOOD).unwrap();
-        assert_eq!(context.trace_id(), 0x0af7_6519_16cd_43dd_8448_eb21_1c80_319c);
+        assert_eq!(
+            context.trace_id(),
+            0x0af7_6519_16cd_43dd_8448_eb21_1c80_319c
+        );
         assert_eq!(context.span_id(), 0xb7ad_6b71_6920_3331);
         assert!(context.sampled());
         assert_eq!(context.to_string(), GOOD);

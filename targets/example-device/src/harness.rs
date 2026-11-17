@@ -162,6 +162,7 @@ async fn serve_link(shared: Arc<Shared>, mut stream: TcpStream) {
     let _ = stream.set_nodelay(true);
     loop {
         let arrived = tokio::select! {
+            biased;
             _ = cut.changed() => break,
             arrived = read_frame(&mut stream) => arrived,
         };

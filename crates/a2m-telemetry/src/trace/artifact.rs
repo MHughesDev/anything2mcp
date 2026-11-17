@@ -112,19 +112,23 @@ pub struct ArtifactRef {
     pub blob: Digest,
 }
 
-/// Whether `level` keeps an artifact of `kind` taken at `at` (section 217,
-/// "Capture levels").
-pub(crate) const fn level_keeps(level: CaptureLevel, kind: ArtifactKind, at: CapturePoint) -> bool {
-    match level {
-        CaptureLevel::Minimal => false,
-        CaptureLevel::Standard => match kind {
-            ArtifactKind::Snapshot | ArtifactKind::WindowTree => {
-                matches!(at, CapturePoint::Checkpoint | CapturePoint::Failure)
-            }
-            // Outside `full`, a screenshot is kept only at a failure.
-            ArtifactKind::Screenshot => matches!(at, CapturePoint::Failure),
-            ArtifactKind::Exchange => false,
-        },
-        CaptureLevel::Full => true,
+impl CaptureLevel {
+    /// Whether this level keeps an artifact of `kind` taken at `at` (section
+    /// 217, "Capture levels"). The engine asks before it has a driver take
+    /// evidence nobody will keep.
+    #[must_use]
+    pub const fn keeps(self, kind: ArtifactKind, at: CapturePoint) -> bool {
+        match self {
+            Self::Minimal => false,
+            Self::Standard => match kind {
+                ArtifactKind::Snapshot | ArtifactKind::WindowTree => {
+                    matches!(at, CapturePoint::Checkpoint | CapturePoint::Failure)
+                }
+                // Outside `full`, a screenshot is kept only at a failure.
+                ArtifactKind::Screenshot => matches!(at, CapturePoint::Failure),
+                ArtifactKind::Exchange => false,
+            },
+            Self::Full => true,
+        }
     }
 }

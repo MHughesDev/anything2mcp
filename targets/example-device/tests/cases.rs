@@ -689,8 +689,17 @@ async fn a_restart_resets_volatile_points_and_keeps_the_rest() -> Outcome {
     client.data(&write_coil_pdu(VALVE, true)).await?;
     assert!(control.outputs().valve_open);
 
+    // The link that was open is gone: a frame sent on it is never handled.
     control.restart();
+    let received = control.frames().len();
+    assert!(
+        client
+            .ask(&write_register_pdu(SETPOINT, 4000))
+            .await
+            .is_err()
+    );
     assert!(client.closed().await?);
+    assert_eq!(control.frames().len(), received);
 
     let now = control.inspect();
     assert_eq!((now.restarts, now.powered), (1, true));

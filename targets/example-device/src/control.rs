@@ -121,6 +121,14 @@ pub(crate) struct Plan {
     pub(crate) close: bool,
 }
 
+/// One open link: its number, and the count of restarts it was opened after.
+/// A frame that arrives on a link from before a restart is never handled.
+#[derive(Clone, Copy)]
+pub(crate) struct Link {
+    number: u64,
+    cuts: u64,
+}
+
 pub(crate) struct Inner {
     pub(crate) device: Device,
     frames: Vec<FrameRecord>,
@@ -141,13 +149,21 @@ impl Inner {
     }
 
     /// A link was accepted. `None` while the device is down: the link closes at once.
-    pub(crate) fn link_opened(&mut self) -> Option<u64> {
+    pub(crate) fn link_opened(&mut self) -> Option<Link> {
         if !self.device.powered {
             return None;
         }
         self.open_links += 1;
         self.links_opened += 1;
-        Some(self.links_opened)
+        Some(Link {
+            number: self.links_opened,
+            cuts: self.device.cuts,
+        })
+    }
+
+    /// Whether the device still serves a link: it is up, and has not restarted since the link opened.
+    fn serves(&self, link: Link) -> bool {
+        self.device.powered && self.device.cuts == link.cuts
     }
 
     /// A link closed, whoever closed it.
@@ -164,11 +180,11 @@ impl Inner {
     }
 
     /// A header that is not this protocol's arrived. The link closes with no reply.
-    pub(crate) fn bad_header(&mut self, link: u64, header: &Header, raw: Vec<u8>) {
-        if self.device.powered {
+    pub(crate) fn bad_header(&mut self, link: Link, header: &Header, raw: Vec<u8>) {
+        if self.serves(link) {
             self.record(FrameRecord {
                 sequence: 0,
-                link,
+                link: link.number,
                 transaction: header.transaction,
                 unit: header.unit,
                 function: 0,
@@ -200,8 +216,8 @@ impl Inner {
 
     /// One frame arrived: apply the fault that is due, let the device deal
     /// with the request, write the record, and let the device's time step once.
-    pub(crate) fn handle(&mut self, link: u64, header: &Header, pdu: &[u8], raw: Vec<u8>) -> Plan {
-        if !self.device.powered {
+    pub(crate) fn handle(&mut self, link: Link, header: &Header, pdu: &[u8], raw: Vec<u8>) -> Plan {
+        if !self.serves(link) {
             return Plan {
                 reply: None,
                 delay_ms: None,
@@ -273,7 +289,7 @@ impl Inner {
 
         self.record(FrameRecord {
             sequence: 0,
-            link,
+            link: link.number,
             transaction: header.transaction,
             unit: header.unit,
             function,

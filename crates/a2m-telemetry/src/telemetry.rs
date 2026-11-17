@@ -180,7 +180,6 @@ impl Telemetry {
     /// Starts a span named `name`. Under `parent` it joins that trace as a
     /// child; without one it starts a trace of its own. The span ends when
     /// the guard is dropped.
-    #[must_use]
     pub fn span(
         &self,
         name: &'static str,
@@ -193,7 +192,6 @@ impl Telemetry {
     /// Starts the span of one MCP call, named for the method and the tool as
     /// OpenTelemetry's conventions for MCP ask. `parent` is the trace context
     /// the caller sent, if any.
-    #[must_use]
     pub fn call_span(
         &self,
         method: McpMethod,
@@ -212,7 +210,6 @@ impl Telemetry {
     }
 
     /// Starts the span of one step.
-    #[must_use]
     pub fn step_span(
         &self,
         kind: &StepKind,

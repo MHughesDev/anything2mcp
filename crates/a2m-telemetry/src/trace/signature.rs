@@ -34,7 +34,8 @@ impl Canon {
     pub(crate) fn bytes(&mut self, name: &str, value: &[u8]) {
         self.0.extend_from_slice(&(name.len() as u64).to_le_bytes());
         self.0.extend_from_slice(name.as_bytes());
-        self.0.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        self.0
+            .extend_from_slice(&(value.len() as u64).to_le_bytes());
         self.0.extend_from_slice(value);
     }
 
@@ -118,7 +119,10 @@ mod tests {
             canon.finish()
         };
         assert_ne!(digest(&[("a", "bc")]), digest(&[("ab", "c")]));
-        assert_ne!(digest(&[("a", "b"), ("c", "d")]), digest(&[("a", "bc"), ("", "d")]));
+        assert_ne!(
+            digest(&[("a", "b"), ("c", "d")]),
+            digest(&[("a", "bc"), ("", "d")])
+        );
         assert_eq!(digest(&[("a", "b")]), digest(&[("a", "b")]));
     }
 

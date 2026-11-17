@@ -16,14 +16,14 @@ mod wire;
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, FailureClass, FailureCode, Mode, OperationName, RecordKey, RunId, StepKind, Value,
-    Version, WorkspaceId,
+    Digest, FailureClass, FailureCode, Mode, OperationName, RecordKey, RunId, Sensitivity,
+    StepKind, Value, Version, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 
 pub use artifact::{
-    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, DropReason, KeptArtifact,
-    MaskReport, OfferedArtifact,
+    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, DropReason, KeptArtifact, MaskReport,
+    OfferedArtifact,
 };
 pub use builder::{DEFAULT_TRACE_LIMIT, FinishedTrace, TraceBuilder, TraceRefused};
 pub use wire::{
@@ -214,24 +214,14 @@ impl Detail {
     }
 }
 
-/// How sensitive a field's values are: the label its field type carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Sensitivity {
-    /// Kept as it is at every level.
-    Public,
-    /// Kept as it is at `standard` and above; as a keyed digest at `minimal`.
-    Internal,
-    /// Kept only as a keyed digest, never as a value.
-    Restricted,
-}
-
 /// One field's values at one step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TracedValue {
     /// The field's name.
     pub field: String,
-    /// The field's sensitivity label.
+    /// The field's sensitivity label. `public` is kept as it is at every
+    /// level; `internal` as it is at `standard` and above, and as a keyed
+    /// digest at `minimal`; `restricted` only ever as a keyed digest.
     pub sensitivity: Sensitivity,
     /// True when the plan declares the field's value volatile: it is kept in
     /// the trace and left out of the signature.

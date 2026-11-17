@@ -11,4 +11,5 @@ pub const STORAGE_FULL: FailureCode = FailureCode::fixed("storage_full");
 pub const TRACE_HOLDS_SECRET: FailureCode = FailureCode::fixed("trace_holds_secret");
 
 /// Class `input`: the settings given to `start` cannot be used.
-pub const TELEMETRY_SETTINGS_INVALID: FailureCode = FailureCode::fixed("telemetry_settings_invalid");
+pub const TELEMETRY_SETTINGS_INVALID: FailureCode =
+    FailureCode::fixed("telemetry_settings_invalid");

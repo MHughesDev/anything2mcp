@@ -180,6 +180,46 @@ async fn main() {
         helped.median_ms, helped.p95_ms
     ));
 
+    // A late element: noticed by an observer, against asking again every 50 ms.
+    // The page adds the element 120 ms after it is asked and notes when it did.
+    const LATE: &str = "(() => { window.__late = null; document.getElementById('late')?.remove(); \
+        setTimeout(() => { const p = document.createElement('p'); p.id = 'late'; \
+        document.body.append(p); window.__late = performance.now(); }, 120); })()";
+    const SEEN_BY_OBSERVER: &str = "new Promise((resolve) => { \
+        const seen = () => resolve(performance.now() - window.__late); \
+        if (document.getElementById('late')) return seen(); \
+        new MutationObserver((_, o) => { if (document.getElementById('late')) { o.disconnect(); seen(); } }) \
+            .observe(document.body, {childList: true}); })";
+    let eval = |expression: &'static str, wait: bool| {
+        tab.call("Runtime.evaluate", json!({"expression": expression, "awaitPromise": wait, "returnByValue": true}))
+    };
+    let (mut observed, mut polled) = (Vec::new(), Vec::new());
+    for _ in 0..20 {
+        // The observer: the page itself measures from the insert to the notice, and
+        // one round trip, measured above, carries the answer.
+        eval(LATE, false).await.expect("late");
+        let seen = eval(SEEN_BY_OBSERVER, true).await.expect("observer");
+        observed.push(Duration::from_secs_f64(seen["result"]["value"].as_f64().unwrap_or(0.0) / 1000.0));
+        // The poll: ask every 50 ms; each answer says how long the element had been there.
+        eval(LATE, false).await.expect("late");
+        loop {
+            let age = eval("window.__late === null ? null : performance.now() - window.__late", false)
+                .await
+                .expect("poll");
+            if let Some(age) = age["result"]["value"].as_f64() {
+                polled.push(Duration::from_secs_f64(age / 1000.0));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await; // the poll under test
+        }
+    }
+    let (observed, polled) = (common::summarize(observed), common::summarize(polled));
+    report.notes.push(format!(
+        "a late element, 20 times: an in-page observer notices it {} ms after it appears (median; max {}), \
+         a 50 ms poll {} ms (median; max {})",
+        observed.median_ms, observed.max_ms, polled.median_ms, polled.max_ms
+    ));
+
     // A snapshot of the accessibility tree.
     let t = Instant::now();
     let tree = tab.call("Accessibility.getFullAXTree", json!({})).await.expect("tree");

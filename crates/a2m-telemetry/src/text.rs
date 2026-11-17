@@ -96,7 +96,10 @@ mod tests {
     #[test]
     fn hidden_characters_are_removed() {
         assert_eq!(clean_text("pa\u{200B}id\u{202E}"), "paid");
-        assert_eq!(clean_text("\u{FEFF}line one\nline\ttwo\u{0007}"), "line one\nline\ttwo");
+        assert_eq!(
+            clean_text("\u{FEFF}line one\nline\ttwo\u{0007}"),
+            "line one\nline\ttwo"
+        );
         assert_eq!(clean_text("tag\u{E0041}ged"), "tagged");
     }
 

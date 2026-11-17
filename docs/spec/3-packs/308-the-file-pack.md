@@ -232,9 +232,9 @@ The scout tries each drafted read five times. Opening a file for reading is a re
 
 ## The test stand
 
-Files in a temporary folder, under `targets/`, proposed as `targets/example-files/`. It is the cheapest stand of any pack and runs the same on Windows, macOS, and Linux, which matters because replacing a file behaves differently on each. Seed files are small and synthetic, written by the stand at reset from a seed description.
+Files in a temporary folder, in `targets/example-files/`. It is the cheapest stand of any pack and runs the same on Windows, macOS, and Linux, which matters because replacing a file behaves differently on each. Seed files are small and synthetic, written by the stand at reset from a seed description.
 
-**The control interface reports the bytes on disk**, and reads values through the stand's own reader, which shares no code with the pack or with `a2m-sources`. Reset writes the seed files. Inspect returns a file's digest, size, file identity, and the value at a place. Count writes reports how many times each file was replaced, from the folder's change notifications, which the stand watches from before the test starts. Set a fault does one of the cases below.
+**The control interface reports the bytes on disk**, and reads values through the stand's own reader, which shares no code with the pack or with `a2m-sources`. Reset writes the seed files. Inspect returns a file's digest and size, its file identity on Unix, and, for delimited text and JSON, the value at a place. Count writes reports how many times each file changed between two looks the test asks for, from a ledger of digests the stand keeps; it tells a replacement from an edit in place on Unix only. Set a fault does one of the cases below.
 
 | # | The stand does this | Risk it exercises |
 | --- | --- | --- |

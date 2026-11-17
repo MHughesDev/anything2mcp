@@ -128,7 +128,10 @@ pub fn keyed_digest_under(
     purpose: DigestPurpose,
     bytes: &[u8],
 ) -> Digest {
-    let workspace_key = hmac_sha256(key, &[b"anything2mcp workspace digest key 1", workspace.as_bytes()]);
+    let workspace_key = hmac_sha256(
+        key,
+        &[b"anything2mcp workspace digest key 1", workspace.as_bytes()],
+    );
     hmac_sha256(
         workspace_key.as_bytes(),
         &[purpose.as_str().as_bytes(), &[0], bytes],
@@ -185,7 +188,10 @@ mod tests {
         assert!(redactor.contains_secret(&format!("token={SECRET};")));
         assert!(!redactor.contains_secret("token=other;"));
         assert!(!redactor.contains_secret(""));
-        assert_eq!(redactor.redact(&format!("a {SECRET} b {SECRET}")), "a [redacted] b [redacted]");
+        assert_eq!(
+            redactor.redact(&format!("a {SECRET} b {SECRET}")),
+            "a [redacted] b [redacted]"
+        );
     }
 
     #[test]
@@ -199,7 +205,10 @@ mod tests {
         let clean = Knows(SECRET).redact_failure(&failure);
         assert_eq!(clean.class(), FailureClass::Rejected);
         assert_eq!(clean.code().as_str(), "system_refused");
-        assert_eq!(clean.message(), "The system answered: bad token [redacted].");
+        assert_eq!(
+            clean.message(),
+            "The system answered: bad token [redacted]."
+        );
         assert_eq!(clean.next_step(), "Sign in again; do not send [redacted].");
         assert!(!format!("{clean:?}").contains(SECRET));
     }
@@ -211,11 +220,16 @@ mod tests {
             .with("count", 3i64)
             .with(
                 "lines",
-                vec![Value::from(SECRET), Value::Record(Values::new().with(SECRET, SECRET))],
+                vec![
+                    Value::from(SECRET),
+                    Value::Record(Values::new().with(SECRET, SECRET)),
+                ],
             );
         let clean = Knows(SECRET).redact_values(&values);
         assert!(!format!("{clean:?}").contains(SECRET));
-        assert!(!Knows(SECRET).contains_secret(&String::from_utf8(clean.canonical_bytes()).unwrap()));
+        assert!(
+            !Knows(SECRET).contains_secret(&String::from_utf8(clean.canonical_bytes()).unwrap())
+        );
         assert_eq!(clean.get("count"), Some(&Value::Int(3)));
         assert_eq!(clean.get("note"), Some(&Value::from("see [redacted]")));
     }
@@ -260,20 +274,41 @@ mod tests {
     fn a_keyed_digest_differs_by_key_by_workspace_and_by_purpose() {
         struct Held([u8; 32]);
         impl KeyedDigest for Held {
-            fn keyed_digest(&self, workspace: &WorkspaceId, purpose: DigestPurpose, bytes: &[u8]) -> Digest {
+            fn keyed_digest(
+                &self,
+                workspace: &WorkspaceId,
+                purpose: DigestPurpose,
+                bytes: &[u8],
+            ) -> Digest {
                 keyed_digest_under(&self.0, workspace, purpose, bytes)
             }
         }
-        let workspace = |n: u8| WorkspaceId::from_parts(Timestamp::from_unix_millis(1), [n; 10]).unwrap();
+        let workspace =
+            |n: u8| WorkspaceId::from_parts(Timestamp::from_unix_millis(1), [n; 10]).unwrap();
         let held = Held([7; 32]);
         let base = held.keyed_digest(&workspace(1), DigestPurpose::BlobName, b"content");
 
-        assert_eq!(base, held.keyed_digest(&workspace(1), DigestPurpose::BlobName, b"content"));
+        assert_eq!(
+            base,
+            held.keyed_digest(&workspace(1), DigestPurpose::BlobName, b"content")
+        );
         assert_ne!(base, Digest::of(b"content"));
-        assert_ne!(base, Held([8; 32]).keyed_digest(&workspace(1), DigestPurpose::BlobName, b"content"));
-        assert_ne!(base, held.keyed_digest(&workspace(2), DigestPurpose::BlobName, b"content"));
-        assert_ne!(base, held.keyed_digest(&workspace(1), DigestPurpose::RestrictedValue, b"content"));
-        assert_ne!(base, held.keyed_digest(&workspace(1), DigestPurpose::BlobName, b"contents"));
+        assert_ne!(
+            base,
+            Held([8; 32]).keyed_digest(&workspace(1), DigestPurpose::BlobName, b"content")
+        );
+        assert_ne!(
+            base,
+            held.keyed_digest(&workspace(2), DigestPurpose::BlobName, b"content")
+        );
+        assert_ne!(
+            base,
+            held.keyed_digest(&workspace(1), DigestPurpose::RestrictedValue, b"content")
+        );
+        assert_ne!(
+            base,
+            held.keyed_digest(&workspace(1), DigestPurpose::BlobName, b"contents")
+        );
         // The purpose and the bytes cannot run into each other.
         assert_ne!(
             keyed_digest_under(&[7; 32], &workspace(1), DigestPurpose::BlobName, b"x"),

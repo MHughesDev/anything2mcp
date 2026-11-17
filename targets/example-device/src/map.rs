@@ -243,6 +243,7 @@ pub const POINTS: &[Point] = &[
         .scaled("0.1", "rpm")
         .note("Read only, in a table that can be written: a write is refused with exception 02."),
     Point::new(Id::UpdateCommand, "update_command", Holding, 900, U16, Write)
+        .range(1, 5)
         .note("A command of the update mechanism. Must be written alone. Reads as zero."),
     Point::new(Id::UpdateImageLength, "update_image_length", Holding, 901, U16, ReadWrite)
         .scaled("1", "bytes")

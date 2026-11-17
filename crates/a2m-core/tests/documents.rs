@@ -5,8 +5,10 @@
 use std::path::Path;
 
 use a2m_core::{
-    Archetype, BindingStatus, Coverage, EffectClass, EvidenceLevel, FailureClass, Hazard,
-    LimitationCode, RecordState, RunState, SessionState, Source, Subject,
+    Archetype, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
+    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, IdentityStrategy,
+    LimitationCode, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
+    SubsystemMove, SubsystemState, TestKind,
 };
 
 /// Reads a document from the repository's `docs` folder.
@@ -210,6 +212,104 @@ fn kinds_of_subject_are_the_ones_in_the_discovery_section() {
 }
 
 #[test]
+fn availability_states_are_the_ones_in_the_provider_contract() {
+    let spec = document("spec/2-kernel/203-the-provider-contract.md");
+    assert_eq!(column(&spec, "| State | Meaning |", 0), Availability::NAMES);
+}
+
+/// The cell of the supervisor's rule that names a connection's health states
+/// and what to do about each.
+fn health_rule() -> String {
+    let spec = document("spec/2-kernel/204-supervising-subsystems.md");
+    let section = between(&spec, "## Long-lived connections", "## Stopping something");
+    table(section, "| Rule | Detail |")
+        .into_iter()
+        .find(|row| row[0] == "A health state, with what to do")
+        .expect("the health state row")
+        .swap_remove(1)
+}
+
+#[test]
+fn subsystem_states_are_the_ones_the_supervisor_gives() {
+    assert_eq!(code_words(&health_rule()), SubsystemState::NAMES);
+}
+
+#[test]
+fn subsystem_moves_are_the_ones_the_supervisor_gives() {
+    let rule = health_rule();
+    let (_, listed) = rule.split_once("one of ").expect("the moves");
+    let moves: Vec<&str> = listed
+        .split(',')
+        .map(|word| word.trim().trim_start_matches("or ").trim())
+        .collect();
+    assert_eq!(moves, SubsystemMove::NAMES);
+}
+
+#[test]
+fn doctor_states_are_the_ones_doctor_reports() {
+    let spec = document("spec/2-kernel/204-supervising-subsystems.md");
+    let section = between(&spec, "## What `doctor` reports", "## Open points");
+    // The first word written as code is the heading's own `doctor`.
+    assert_eq!(code_words(section)[1..], *DoctorState::NAMES);
+}
+
+#[test]
+fn identity_strategies_are_the_ones_in_the_record_identity_section() {
+    let spec = document("spec/2-kernel/209-record-identity-and-dependent-records.md");
+    assert_eq!(column(&spec, "| Strategy |", 0), IdentityStrategy::NAMES);
+}
+
+/// The words written as code in the meaning of one field of a file format:
+/// the row `field` of the first table between two headings.
+fn format_words(start: &str, end: &str, field: &str) -> Vec<String> {
+    let formats = document("reference/file-formats.md");
+    let section = between(&formats, start, end);
+    let row = table(section, "| Field | Meaning |")
+        .into_iter()
+        .find(|row| row[0] == field)
+        .unwrap_or_else(|| panic!("no row {field:?} after {start:?}"));
+    code_words(&row[1])
+}
+
+#[test]
+fn field_type_bases_are_the_ones_in_the_file_formats() {
+    let listed = format_words(
+        "## `types.yaml`",
+        "## `screens/*.yaml`",
+        "`base` (required)",
+    );
+    assert_eq!(listed, FieldBase::NAMES);
+}
+
+#[test]
+fn sensitivity_labels_are_the_ones_in_the_file_formats() {
+    let listed = format_words("## `types.yaml`", "## `screens/*.yaml`", "`sensitivity`");
+    assert_eq!(listed, Sensitivity::NAMES);
+}
+
+#[test]
+fn environment_kinds_are_the_ones_in_the_file_formats() {
+    let listed = format_words("**Environment.**", "## `auth.yaml`", "`kind` (required)");
+    assert_eq!(listed, EnvironmentKind::NAMES);
+}
+
+#[test]
+fn test_kinds_are_the_ones_in_the_file_formats() {
+    let listed = format_words(
+        "## `tests/*.yaml` and `fixtures/`",
+        "## Expressions",
+        "`kind` (required)",
+    );
+    assert_eq!(listed, TestKind::NAMES);
+}
+
+#[test]
+fn checkpoints_are_the_ones_in_the_file_formats() {
+    let listed = format_words("**Step.**", "## `sources/*.yaml`", "`checkpoint`");
+    assert_eq!(listed, Checkpoint::NAMES);
+}
+
+#[test]
 fn every_vocabulary_reads_back_what_it_writes() {
     fn round_trip<T>(all: &[T], names: &[&str])
     where
@@ -232,6 +332,18 @@ fn every_vocabulary_reads_back_what_it_writes() {
         assert!(serde_json::from_str::<T>("\"no such value\"").is_err());
     }
     round_trip(Archetype::ALL, Archetype::NAMES);
+    round_trip(Availability::ALL, Availability::NAMES);
+    round_trip(Checkpoint::ALL, Checkpoint::NAMES);
+    round_trip(DoctorState::ALL, DoctorState::NAMES);
+    round_trip(EnvironmentKind::ALL, EnvironmentKind::NAMES);
+    round_trip(FieldBase::ALL, FieldBase::NAMES);
+    round_trip(IdentityStrategy::ALL, IdentityStrategy::NAMES);
+    round_trip(Sensitivity::ALL, Sensitivity::NAMES);
+    round_trip(SubsystemMove::ALL, SubsystemMove::NAMES);
+    round_trip(SubsystemState::ALL, SubsystemState::NAMES);
+    round_trip(TestKind::ALL, TestKind::NAMES);
+    round_trip(a2m_core::DigestPurpose::ALL, a2m_core::DigestPurpose::NAMES);
+    round_trip(a2m_core::Rounding::ALL, a2m_core::Rounding::NAMES);
     round_trip(BindingStatus::ALL, BindingStatus::NAMES);
     round_trip(Coverage::ALL, Coverage::NAMES);
     round_trip(EffectClass::ALL, EffectClass::NAMES);

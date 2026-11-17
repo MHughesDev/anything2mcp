@@ -490,7 +490,11 @@ impl FromStr for Version {
                 && part.len() <= 10
                 && part.bytes().all(|b| b.is_ascii_digit())
                 && (part == "0" || !part.starts_with('0'));
-            if plain { part.parse::<u32>().ok() } else { None }
+            if plain {
+                part.parse::<u32>().ok()
+            } else {
+                None
+            }
         };
         let mut parts = text.split('.');
         let version = (|| {
@@ -561,7 +565,10 @@ mod tests {
     fn a_checked_name_is_read_and_written_as_its_text_and_says_nothing_of_registration() {
         let kind = StepKind::new("locate").unwrap();
         assert_eq!(serde_json::to_string(&kind).unwrap(), "\"locate\"");
-        assert_eq!(serde_json::from_str::<StepKind>("\"locate\"").unwrap(), kind);
+        assert_eq!(
+            serde_json::from_str::<StepKind>("\"locate\"").unwrap(),
+            kind
+        );
         assert!(serde_json::from_str::<StepKind>("\"Locate It\"").is_err());
         assert_eq!("upsert".parse::<Verb>().unwrap().to_string(), "upsert");
     }
@@ -676,7 +683,14 @@ mod tests {
             let json = serde_json::to_string(&identity).unwrap();
             assert_eq!(serde_json::from_str::<Identity>(&json).unwrap(), identity);
         }
-        for bad in ["", "order_desk", "account:", "account:Order Desk", "person:x", "role:admin"] {
+        for bad in [
+            "",
+            "order_desk",
+            "account:",
+            "account:Order Desk",
+            "person:x",
+            "role:admin",
+        ] {
             assert!(bad.parse::<Identity>().is_err(), "{bad}");
         }
     }
@@ -688,7 +702,17 @@ mod tests {
         assert!(version > Version::new(1, 9, 7));
         assert_eq!(version.to_string(), "1.10.0");
         assert_eq!(serde_json::to_string(&version).unwrap(), "\"1.10.0\"");
-        for bad in ["", "1", "1.2", "1.2.3.4", "1.02.3", "1.-2.3", "1.2.x", "+1.2.3", "1.2.99999999999"] {
+        for bad in [
+            "",
+            "1",
+            "1.2",
+            "1.2.3.4",
+            "1.02.3",
+            "1.-2.3",
+            "1.2.x",
+            "+1.2.3",
+            "1.2.99999999999",
+        ] {
             assert!(bad.parse::<Version>().is_err(), "{bad}");
         }
     }

@@ -29,5 +29,19 @@ for s in by-hand on-sdk; do
     run ts2-pin      node callers/ts_caller.mjs v2 pin clients/ts2
   done
 done
+# The SDK variant's stateless Streamable HTTP mode: raw requests, then the Python client.
+(cd on-sdk && cargo build --release --features http --target-dir "$CARGO_TARGET_DIR/with-http") || exit 1
+http_bin="target/with-http/release/spike-mcp-on-sdk"
+callers/http_probe.sh "$http_bin" tools.json > results/http-on-sdk.txt 2>&1
+port_file=$(mktemp)
+"$http_bin" tools.json "$BOTH" --http > "$port_file" 2> /dev/null &
+http_pid=$!
+for _ in $(seq 50); do [ -s "$port_file" ] && break; sleep 0.1; done
+for mode in auto legacy; do
+  name="py-auto"; [ "$mode" = legacy ] && name="py-handshake"
+  "$PY" callers/py_caller.py "$mode" "results/$name-both-on-sdk-over-http.json" "http://127.0.0.1:$(head -1 "$port_file")/mcp" > /dev/null 2>&1
+done
+kill "$http_pid"; rm -f "$port_file"
+
 python3 callers/summarize.py results > results/summary.md
 cat results/summary.md

@@ -327,8 +327,11 @@ mod tests {
     fn a_map_with_no_order_of_its_own_is_written_in_one_order() {
         // A hash map iterates in an order that differs between runs. The
         // encoding must not let that through.
-        let names = ["zulu", "alpha", "mike", "bravo", "yankee", "charlie", "x", "delta"];
-        let expected = to_bytes(&names.iter().map(|n| (*n, 1)).collect::<BTreeMap<_, _>>()).unwrap();
+        let names = [
+            "zulu", "alpha", "mike", "bravo", "yankee", "charlie", "x", "delta",
+        ];
+        let expected =
+            to_bytes(&names.iter().map(|n| (*n, 1)).collect::<BTreeMap<_, _>>()).unwrap();
         for _ in 0..20 {
             let map: HashMap<&str, u32> = names.iter().map(|n| (*n, 1)).collect();
             assert_eq!(to_bytes(&map).unwrap(), expected);
@@ -355,7 +358,10 @@ mod tests {
         let mut out = Vec::new();
         write_string(&mut out, text);
         let written = String::from_utf8(out).unwrap();
-        assert!(written.contains("\\u0007") && written.contains("\\u0000"), "{written}");
+        assert!(
+            written.contains("\\u0007") && written.contains("\\u0000"),
+            "{written}"
+        );
         assert!(written.contains("é 日本"), "{written}");
         assert_eq!(serde_json::from_str::<String>(&written).unwrap(), text);
         // The outside crate escapes the same way, so its output is canonical too.
@@ -367,7 +373,10 @@ mod tests {
         let payload = PackPayload::encode(&template()).unwrap();
         assert_eq!(payload.decode::<Template>().unwrap(), template());
         assert_eq!(payload, PackPayload::encode(&template()).unwrap());
-        assert_eq!(payload.digest(), PackPayload::encode(&template()).unwrap().digest());
+        assert_eq!(
+            payload.digest(),
+            PackPayload::encode(&template()).unwrap().digest()
+        );
 
         let failure = payload.decode::<Vec<String>>().unwrap_err();
         assert_eq!(failure.class(), FailureClass::Input);
@@ -375,7 +384,10 @@ mod tests {
         assert!(!failure.message().contains("orders"), "{failure}");
 
         assert!(CanonicalJson::none().is_none());
-        assert_eq!(CanonicalJson::default().decode::<Option<u8>>().unwrap(), None);
+        assert_eq!(
+            CanonicalJson::default().decode::<Option<u8>>().unwrap(),
+            None
+        );
         assert!(!format!("{payload:?}").contains("orders"));
     }
 
@@ -390,7 +402,12 @@ mod tests {
     #[test]
     fn the_readable_form_has_the_same_content_in_the_same_order() {
         let readable = to_readable(&template()).unwrap();
-        assert!(readable.starts_with("{\n  \"headers\": {\n    \"accept\": \"application/json\"\n  },\n  \"method\""), "{readable}");
+        assert!(
+            readable.starts_with(
+                "{\n  \"headers\": {\n    \"accept\": \"application/json\"\n  },\n  \"method\""
+            ),
+            "{readable}"
+        );
         assert!(!readable.contains('\r'));
         let back: serde_json::Value = serde_json::from_str(&readable).unwrap();
         assert_eq!(to_bytes(&back).unwrap(), to_bytes(&template()).unwrap());

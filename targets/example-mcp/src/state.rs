@@ -260,7 +260,7 @@ impl State {
 #[derive(Debug)]
 pub(crate) enum Backing {
     /// In this process. The HTTP form.
-    Memory(Mutex<State>),
+    Memory(Box<Mutex<State>>),
     /// In a folder: `state.json`, guarded by a lock on the file `lock`, so
     /// that several programs and the harness can share it.
     Folder(PathBuf),
@@ -268,7 +268,7 @@ pub(crate) enum Backing {
 
 impl Backing {
     pub(crate) fn memory() -> Self {
-        Self::Memory(Mutex::new(State::default()))
+        Self::Memory(Box::new(Mutex::new(State::default())))
     }
 
     /// Runs `change` on the state, alone, and keeps what it changed.
@@ -306,7 +306,13 @@ impl Backing {
                     // stopped in the middle never leaves half a file.
                     let new = folder.join(STATE_FILE_NEW);
                     fs::write(&new, &after)?;
-                    fs::rename(&new, &path)?;
+                    if fs::rename(&new, &path).is_err() {
+                        // Some systems refuse to replace a file that a
+                        // scanner has open. Writing in place is as good while
+                        // the lock is held.
+                        fs::write(&path, &after)?;
+                        let _ = fs::remove_file(&new);
+                    }
                 }
                 // The lock is released when `lock` is dropped here.
                 Ok(result)

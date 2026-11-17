@@ -11,14 +11,12 @@
 //! `docs/architecture/crates/a2m-telemetry.md` describes every entry.
 
 use a2m_core::{
-    Digest, Failure, FailureClass, FailureCode, Limitation, Mode, OperationName, RunId, StepKind,
-    Value, Version,
+    Digest, Failure, FailureClass, FailureCode, Limitation, Mode, OperationName, RunId,
+    Sensitivity, StepKind, Value, Version,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{
-    Acting, ArtifactRef, CaptureLevel, ChoiceReason, Locating, Phase, Sensitivity, TraceOutcome,
-};
+use super::{Acting, ArtifactRef, CaptureLevel, ChoiceReason, Locating, Phase, TraceOutcome};
 
 /// The version of the trace schema this crate writes.
 pub const TRACE_SCHEMA: u32 = 1;
@@ -143,10 +141,7 @@ pub struct ValueLine {
     pub matched: Option<bool>,
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde calls skip_serializing_if with a reference"
-)]
+/// For serde, which asks with a reference.
 const fn is_false(flag: &bool) -> bool {
     !*flag
 }

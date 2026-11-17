@@ -54,7 +54,11 @@ struct RpcError {
 }
 
 fn err(code: i64, message: impl Into<String>) -> RpcError {
-    RpcError { code, message: message.into(), data: None }
+    RpcError {
+        code,
+        message: message.into(),
+        data: None,
+    }
 }
 
 impl Server {
@@ -81,7 +85,10 @@ impl Server {
     }
 
     fn legacy_revisions(&self) -> Vec<&String> {
-        self.revisions.iter().filter(|r| r.as_str() < FIRST_MODERN).collect()
+        self.revisions
+            .iter()
+            .filter(|r| r.as_str() < FIRST_MODERN)
+            .collect()
     }
 
     fn unsupported(&self, requested: &str) -> RpcError {
@@ -102,13 +109,19 @@ impl Server {
         let serves_modern = self.revisions.iter().any(|r| r.as_str() >= FIRST_MODERN);
         if let Some(version) = meta.get(META_VERSION).filter(|_| serves_modern) {
             let Some(version) = version.as_str() else {
-                return Err(err(INVALID_PARAMS, format!("_meta.{META_VERSION} must be a string")));
+                return Err(err(
+                    INVALID_PARAMS,
+                    format!("_meta.{META_VERSION} must be a string"),
+                ));
             };
             if version < FIRST_MODERN || !self.revisions.iter().any(|r| r == version) {
                 return Err(self.unsupported(version));
             }
             if !meta[META_CAPABILITIES].is_object() {
-                return Err(err(INVALID_PARAMS, format!("_meta.{META_CAPABILITIES} is required")));
+                return Err(err(
+                    INVALID_PARAMS,
+                    format!("_meta.{META_CAPABILITIES} is required"),
+                ));
             }
             return Ok(Era::Modern);
         }
@@ -116,7 +129,10 @@ impl Server {
             Ok(true) => Ok(Era::Legacy),
             _ => Err(err(
                 INVALID_PARAMS,
-                format!("no initialize handshake and no _meta.{META_VERSION}; served: {}", self.revisions.join(", ")),
+                format!(
+                    "no initialize handshake and no _meta.{META_VERSION}; served: {}",
+                    self.revisions.join(", ")
+                ),
             )),
         }
     }
@@ -144,7 +160,11 @@ impl Server {
         };
         let legacy = self.legacy_revisions();
         // The handshake rule: the client's revision if we serve it, else our newest handshake revision.
-        let Some(agreed) = legacy.iter().find(|r| r.as_str() == requested).or(legacy.last()) else {
+        let Some(agreed) = legacy
+            .iter()
+            .find(|r| r.as_str() == requested)
+            .or(legacy.last())
+        else {
             return Err(self.unsupported(requested));
         };
         if let Ok(mut slot) = self.legacy.lock() {
@@ -159,7 +179,14 @@ impl Server {
     }
 
     fn tools(&self) -> Vec<Value> {
-        let listed = ["name", "title", "description", "inputSchema", "outputSchema", "annotations"];
+        let listed = [
+            "name",
+            "title",
+            "description",
+            "inputSchema",
+            "outputSchema",
+            "annotations",
+        ];
         self.data["tools"]
             .as_array()
             .map(|tools| {
@@ -185,10 +212,14 @@ impl Server {
             return self.initialize(params);
         }
         // The handshake revisions allow a ping before `initialize`; the modern ones have no ping.
-        if method == "ping" && params["_meta"].get(META_VERSION).is_none() && !self.legacy_revisions().is_empty() {
+        if method == "ping"
+            && params["_meta"].get(META_VERSION).is_none()
+            && !self.legacy_revisions().is_empty()
+        {
             return Ok(json!({}));
         }
-        if method == "server/discover" && !self.revisions.iter().any(|r| r.as_str() >= FIRST_MODERN) {
+        if method == "server/discover" && !self.revisions.iter().any(|r| r.as_str() >= FIRST_MODERN)
+        {
             return Err(err(METHOD_NOT_FOUND, format!("Method not found: {method}")));
         }
         let era = self.era(params)?;
@@ -225,7 +256,9 @@ impl Server {
             Err(e) => return Some(Err(e)),
         };
         let name = params["name"].as_str().unwrap_or_default();
-        let tool = self.data["tools"].as_array().and_then(|ts| ts.iter().find(|t| t["name"] == name));
+        let tool = self.data["tools"]
+            .as_array()
+            .and_then(|ts| ts.iter().find(|t| t["name"] == name));
         let Some(tool) = tool else {
             return Some(Err(err(INVALID_PARAMS, format!("Unknown tool: {name}"))));
         };
@@ -238,7 +271,10 @@ impl Server {
             Some(Ok(self.finish(&era, result)))
         };
         let Some(order_id) = args["order_id"].as_str() else {
-            return tool_error("input/schema_invalid: order_id is required and must be a string.".to_owned(), None);
+            return tool_error(
+                "input/schema_invalid: order_id is required and must be a string.".to_owned(),
+                None,
+            );
         };
         if let Some(wait_ms) = args["wait_ms"].as_u64() {
             let token = params["_meta"].get("progressToken").cloned();
@@ -249,16 +285,20 @@ impl Server {
                     return None;
                 }
                 if let Some(token) = &token {
-                    self.send(&json!({"jsonrpc": "2.0", "method": "notifications/progress",
-                        "params": {"progressToken": token, "progress": step, "total": 4}}));
+                    self.send(
+                        &json!({"jsonrpc": "2.0", "method": "notifications/progress",
+                        "params": {"progressToken": token, "progress": step, "total": 4}}),
+                    );
                 }
             }
         }
         let Some(record) = tool["records"].get(order_id) else {
             return tool_error(
                 format!("input/not_found: no order {order_id}."),
-                Some(json!({"error": {"class": "input", "code": "not_found", "retry_safe": false,
-                    "message": format!("No order {order_id}.")}})),
+                Some(
+                    json!({"error": {"class": "input", "code": "not_found", "retry_safe": false,
+                    "message": format!("No order {order_id}.")}}),
+                ),
             );
         };
         let text = format!(
@@ -288,7 +328,10 @@ impl Server {
             if object.contains_key("result") || object.contains_key("error") {
                 return; // A response; this server sends no requests, so it has nothing to match.
             }
-            return self.respond(&id.unwrap_or(Value::Null), Err(err(INVALID_REQUEST, "Invalid Request")));
+            return self.respond(
+                &id.unwrap_or(Value::Null),
+                Err(err(INVALID_REQUEST, "Invalid Request")),
+            );
         };
         if object.get("jsonrpc") != Some(&json!("2.0")) || !id_ok {
             return self.respond(&Value::Null, Err(err(INVALID_REQUEST, "Invalid Request")));
@@ -334,7 +377,9 @@ impl Server {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().ok_or("usage: spike-mcp-by-hand <tools.json> [revisions]")?;
+    let path = args
+        .next()
+        .ok_or("usage: spike-mcp-by-hand <tools.json> [revisions]")?;
     let mut revisions: Vec<String> = args
         .next()
         .unwrap_or_else(|| "2025-11-25,2026-07-28".to_owned())
@@ -358,7 +403,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     // Let calls in flight answer before the process ends. A spike may poll.
-    while server.in_flight.lock().map(|m| !m.is_empty()).unwrap_or(false) {
+    while server
+        .in_flight
+        .lock()
+        .map(|m| !m.is_empty())
+        .unwrap_or(false)
+    {
         std::thread::sleep(Duration::from_millis(5));
     }
     Ok(())

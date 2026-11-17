@@ -148,7 +148,10 @@ impl Collector {
     }
 
     pub(crate) fn count(&mut self, name: &'static str, attrs: &[Attr], by: u64) {
-        let value = self.counters.entry((name, series_attrs(attrs))).or_insert(0);
+        let value = self
+            .counters
+            .entry((name, series_attrs(attrs)))
+            .or_insert(0);
         *value = value.saturating_add(by);
     }
 
@@ -225,7 +228,10 @@ impl Collector {
 /// A series' attributes as keys and values, sorted so that the order they
 /// were given in does not make two series of one.
 fn series_attrs(attrs: &[Attr]) -> Vec<(&'static str, String)> {
-    let mut pairs: Vec<_> = attrs.iter().map(|attr| (attr.key(), attr.value())).collect();
+    let mut pairs: Vec<_> = attrs
+        .iter()
+        .map(|attr| (attr.key(), attr.value()))
+        .collect();
     pairs.sort();
     pairs
 }

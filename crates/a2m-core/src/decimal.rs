@@ -394,7 +394,12 @@ mod tests {
             value.hash(&mut hasher);
             hasher.finish()
         };
-        for (a, b) in [("1.5", "1.50"), ("0", "-0.000"), ("40", "40.0"), ("-7.10", "-7.1")] {
+        for (a, b) in [
+            ("1.5", "1.50"),
+            ("0", "-0.000"),
+            ("40", "40.0"),
+            ("-7.10", "-7.1"),
+        ] {
             assert_eq!(d(a), d(b), "{a} {b}");
             assert_eq!(d(a).to_string(), d(b).to_string(), "{a} {b}");
             assert_eq!(hash(&d(a)), hash(&d(b)), "{a} {b}");
@@ -423,7 +428,11 @@ mod tests {
             "", "-", ".", "1.", ".5", "+1", "1e3", "1,000", " 1", "1 ", "0x10", "NaN", "1.2.3",
             "--1", "١",
         ] {
-            assert_eq!(Decimal::parse(bad), Err(InvalidValue::DecimalMalformed), "{bad}");
+            assert_eq!(
+                Decimal::parse(bad),
+                Err(InvalidValue::DecimalMalformed),
+                "{bad}"
+            );
         }
         let failure: Failure = Decimal::parse("1e3").unwrap_err().into();
         assert_eq!(failure.code(), &FailureCode::VALUE_OUT_OF_RANGE);
@@ -436,14 +445,24 @@ mod tests {
             "0.00000000000000000000000000001",
             "1.00000000000000000000000000001",
         ] {
-            assert_eq!(Decimal::parse(bad), Err(InvalidValue::DecimalOutOfRange), "{bad}");
+            assert_eq!(
+                Decimal::parse(bad),
+                Err(InvalidValue::DecimalOutOfRange),
+                "{bad}"
+            );
         }
-        assert_eq!(d("79228162514264337593543950335").checked_add(&d("1")), None);
+        assert_eq!(
+            d("79228162514264337593543950335").checked_add(&d("1")),
+            None
+        );
         assert_eq!(
             d("0.0000000000000000001").checked_mul(&d("0.0000000001")),
             None
         );
-        assert_eq!(d("0.00000000000001").checked_mul(&d("100000")).unwrap(), d("0.000000001"));
+        assert_eq!(
+            d("0.00000000000001").checked_mul(&d("100000")).unwrap(),
+            d("0.000000001")
+        );
     }
 
     #[test]
@@ -467,7 +486,10 @@ mod tests {
         let cases = [
             ("2.25", ["2.3", "2.2", "2.2", "2.3", "2.2", "2.3", "2.2"]),
             ("2.35", ["2.4", "2.4", "2.3", "2.4", "2.3", "2.4", "2.3"]),
-            ("-2.25", ["-2.3", "-2.2", "-2.2", "-2.3", "-2.2", "-2.2", "-2.3"]),
+            (
+                "-2.25",
+                ["-2.3", "-2.2", "-2.2", "-2.3", "-2.2", "-2.2", "-2.3"],
+            ),
             ("2.21", ["2.2", "2.2", "2.2", "2.3", "2.2", "2.3", "2.2"]),
             ("2.2", ["2.2", "2.2", "2.2", "2.2", "2.2", "2.2", "2.2"]),
         ];
@@ -532,7 +554,10 @@ mod tests {
     #[test]
     fn a_decimal_is_read_and_written_as_text_never_as_a_number() {
         assert_eq!(serde_json::to_string(&d("12.50")).unwrap(), "\"12.5\"");
-        assert_eq!(serde_json::from_str::<Decimal>("\"12.50\"").unwrap(), d("12.5"));
+        assert_eq!(
+            serde_json::from_str::<Decimal>("\"12.50\"").unwrap(),
+            d("12.5")
+        );
         assert!(serde_json::from_str::<Decimal>("12.5").is_err());
         assert!(serde_json::from_str::<Decimal>("\"1e2\"").is_err());
         assert_eq!(format!("{:?}", d("1.0")), "Decimal(1)");

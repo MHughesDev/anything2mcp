@@ -731,8 +731,11 @@ async fn http_the_connection_is_lost_after_a_write_was_committed() -> Outcome {
     // No status and no body: the socket closed.
     assert!(client.send(&message).await.is_err());
     assert_eq!(note_of(control, "A-100")?, "Dock 6");
+    // The client did not send it again by itself: one call, one write.
     assert_eq!(control.write_count("A-100")?, 1);
-    assert_eq!(control.calls()?[0].fault, Some(FaultKind::DropAfterCommit));
+    let calls = control.calls()?;
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].fault, Some(FaultKind::DropAfterCommit));
 
     // The session outlives the lost connection, and the read shows the write.
     let read = client
