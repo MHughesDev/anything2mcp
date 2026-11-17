@@ -1,6 +1,6 @@
 # `a2m-pack-command`
 
-The command pack: the `cli` driver: a declared program, run to completion by the supervisor, with typed arguments and parsed output. The pack is designed in [spec section 306](../../spec/3-packs/306-the-command-pack.md); this document says how its crate is put together, and is completed by the package that builds it.
+The command pack: the `cli` driver over declared programs. A program is started by its absolute path, with an element list built from typed positions, through the kernel's supervisor; it runs to its end; its exit status is read against a declared table and its output is parsed by one declared form. It is never a shell. The pack is designed in [spec section 306](../../spec/3-packs/306-the-command-pack.md); this document says how its crate is put together and what is built.
 
 ## Facts
 
@@ -9,38 +9,172 @@ The command pack: the `cli` driver: a declared program, run to completion by the
 | Side | Pack: command |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | Nothing yet. To come: `a2m-core`, `a2m-files` for registration, `a2m-auth` for the session lease, `a2m-provider` for the contract, `a2m-telemetry` |
-| Built in | Packages D3, D5 of the [roadmap](../../plan/roadmap.md) |
-| Carries out | Spec section [306](../../spec/3-packs/306-the-command-pack.md) |
+| Depends on | `a2m-core` (`Plan`, `Step`, `Value`, `Finding`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature, and its code `needs_login`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `ScopedSupervisor`, `Roots`), `a2m-telemetry` (the clock a finding is dated with). Outside: `regex`, `serde`, `sha2`, `tokio`; on Linux and macOS `rustix`, for the engine's own user identifier ([decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md)) |
+| Built in | Packages D3 and D5 of the [roadmap](../../plan/roadmap.md) |
+| Carries out | Spec section [306](../../spec/3-packs/306-the-command-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the command archetype); [204](../../spec/2-kernel/204-supervising-subsystems.md) (every start goes through the supervisor); [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes what runs) |
 
 ## Owns
 
-What section 306 gives the pack: its mode, its file kinds, its lowerings and lint rules, its driver, its discoverer, and its drafting rules. It must never reach the engine, the scheduler, the store, or another pack's crates.
+- The `cli` mode, real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), and the surface kind `program`.
+- The `commands/` file kind: its schema, its rules, and its compilation into the pack's own section of the plan.
+- The lowering of a `cli` binding into `spawn`, `expect`, and `parse` steps, with the pack's own step payload.
+- Building the element list a program is started with, checking a program's file before it is started, reading its exit status, and parsing its output.
+- The `command` finding kind and the shape of its `found`; the discoverer `help`; the drafting rule from `command` findings to `commands/` drafts.
+
+It must never: start a program except through the supervisor it is handed; build a command line; let a value become an option, a program, or a path; start a shell, an interpreter, or a script; start a command where nothing may be written; retry; parse standard error for values; give a program a variable its file does not list; put a secret in an argument.
+
+## What it registers
+
+| Registration | Content |
+| --- | --- |
+| Provider | `command`; settings under `packs.command` |
+| Mode | `cli`, archetype command; one write holds the surface |
+| Surface kind | `program`. Fields: `path` (the address; the program's absolute path) and `digest` (optional; one digest that holds on every machine). Both are declared as the surface's program, so the compiler puts the path of every environment in the plan's declared programs ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)) |
+| Step kinds | `spawn`, `expect`, `parse` |
+| Verbs | `read`, `list`, `search`, `create`, `update`, `delete`, `call` |
+| File kind | `command`, in `commands/`, for `program` surfaces |
+| Binding fields | `command` (a command's name), `args` (param to expression), `read_back` and `lookup` (each `command`, `args`, and `key`: the params that take the parts of the record's key, in order) |
+| Finding kind | `command` |
+| Discoverer, describer | `help`; its describer counts the commands and keeps every word a program said apart, as untrusted |
+| Drafting rule | From `command` findings to `commands/` files |
+| Lint rules | `command.shell_program` (error) and `command.write_exit_declared` (warning), as rules that look across files. The rules below are checked where a file is compiled, under the pack's own codes |
+| Effects | `plan_programs = true` and no program of its own; one write root, `command_runs`; no network |
+| Settings | `packs.command.max_timeout_ms` (default 600000) and `packs.command.max_output_bytes` (default 16 MiB): ceilings over what a target's files state |
+
+### Rules checked when a file is compiled
+
+| Code | Rule |
+| --- | --- |
+| `command.surface_missing` | The file's commands run on a surface of kind `program` |
+| `command.digest_invalid` | A digest is `sha256:` and 64 lowercase hexadecimal characters |
+| `command.pattern_invalid`, `command.pattern_not_anchored` | A pattern compiles and is anchored: at both ends for a param, an output, and the version; at its start for a prompt. The version pattern has a group named `version`; an output pattern names at least one group |
+| `command.text_param_open` | A text param has an anchored pattern, or its field type is a `choice` |
+| `command.param_type_unsupported` | A param is text, a whole number, an exact number, a truth value, or a date |
+| `command.code_argument`, `command.code_flag` | No param is marked as code, and no flag that runs its value (`-c`, `-e`, `--eval`, `--exec`, and the like) carries a param |
+| `command.arg_malformed`, `command.param_unknown`, `command.param_unused` | An argument entry is one of the forms of section 306, names a declared param, and every declared param is carried |
+| `command.exit_malformed`, `command.exit_changed`, `command.no_ok_exit` | An exit status is a whole number with a meaning; a command adds statuses and changes none; one status means `ok` |
+| `command.output_malformed` | One output form, with its columns or fields named once |
+| `command.assigns_unknown` | `assigns` names one declared field of the output |
+| `command.reaches_without_hazard`, `command.hazard_needs_irreversible` | A command that reaches outside declares a hazard, and a command with a hazard is `irreversible` |
+| `command.env_malformed`, `command.limit_malformed` | A variable's name and value, and a limit, are well formed |
+| `command.state_dir_not_built` | `{session.state_dir}` is refused until it is built |
+| `command.unknown_command`, `command.effect_mismatch`, `command.read_back_writes`, `command.param_unbound`, `command.stamp_missing` | A binding names a defined command whose effect fits its verb and its operation; a read-back or lookup command is `read`; every required param has a value; a `stamped` operation's command and lookup both carry the stamp |
 
 ## Interface
 
-One public function that registers the pack with the registry builder of `a2m-provider`. Everything else is private.
+```rust
+/// The one call the product crate makes.
+pub fn register(builder: &mut a2m_provider::RegistryBuilder);
+
+/// The pack itself, for a caller that builds a registry by hand.
+pub struct CommandPack;                 // impl a2m_provider::Pack
+pub const MANIFEST: &str;               // the embedded manifest
+
+/// The names and failure codes, for the crates that match on them.
+pub mod codes {
+    pub const PACK: &str = "command";
+    pub fn mode() -> Mode;              // `cli`
+    pub const SURFACE_KIND: SurfaceKind;  // `program`
+    pub const FILE_KIND: FileKindName;    // `command`
+    pub const SPAWN: StepKind;  pub const EXPECT: StepKind;  pub const PARSE: StepKind;
+    pub const ALL: &[(FailureClass, &str)];   // every code the manifest declares
+    pub const PROGRAM_MISSING: FailureCode;   // and one constant for each code below
+}
+```
+
+Everything else is private. The driver is reached through `Registry::driver`, the discoverer through `Registry::discoverers_for`, and the compiler's parts through `Registry::compiler_set`.
+
+**The compiled section** (format 1) holds one entry for each program block and every command by name. Two files that say the same of one program share one entry, so its version is asked once. **The step payload** is `{"step":"command","key_params":[...],"one":bool}` for a step of a command, whose name is the step's reference, and `{"step":"probe","program":n,"probe":{...}}` for a declared help or version form.
+
+**How a binding lowers.**
+
+| | `act` | `confirm` | `read_back`, `lookup` |
+| --- | --- | --- | --- |
+| A read (`read`, `list`, `search`, and `call` of a `read` command) | `spawn`, `expect`, `parse` | None | None |
+| A write | `spawn`, marked `commits` | `expect`, `parse` | `spawn`, `expect`, `parse` of the named `read` command, with `expect` and `parse` marked `lookup` |
+
+A step's time limit is its command's. A lookup's `parse` must find exactly one record: none is absent, more is `possible_commit`/`ambiguous_match`.
+
+**What `act` returns.** `spawn`: two captures, `stdout` and `stderr`, redacted. `expect`: nothing, or absent for a lookup whose exit status means `absent`. `parse`: the values of the declared output form, and the assigned key when the command declares `assigns`. Rows come back as the value `rows`, a list of records. A JSON field is typed by its declared kind; a table cell and a pattern group are text, for the engine to normalize by field type.
+
+**What a `command` finding holds.** Canonical JSON: `name`, `about`, `usage`, `platform`, `digest`, `version`. The finding is at `discovered` with the limitation `not_exercised`: the help listing the command is what was observed. What the usage line's parts mean is read from it by the drafting rule and is not observed.
 
 ## Used by, and uses
 
-Used by the product crate only, which hands the pack to the registry. Uses the provider contract and the layers below it.
+| Used by | For |
+| --- | --- |
+| The product crate | `register`, once |
+| `a2m-engine`, through the handle | The steps of a `cli` binding |
+| `a2m-actions` | The compiler set and the discoverer, through the registry |
+
+It uses the supervisor it is handed in `PrepareContext` for every start; the roots of its own manifest for the run's folder; the redactor of its `PackContext` on both streams; and nothing of the engine, the scheduler, the store, or another pack.
 
 ## State
 
-None of its own. A live connection, process, or file handle belongs to a session on its home runner and is held behind the driver.
+A `Session` behind `Prepared`, for one run on one surface: the decoded section, the program's path and the digest it had when it was checked, the scoped supervisor, the posture, the run's folder, and how the last start ended, kept between `spawn`, `expect`, and `parse`. Nothing is kept between runs. The run's folder is made in `prepare` and removed in `release`.
 
 ## Failures
 
-The failure classes and codes of section 306.
+| Class | Code | When | Sent |
+| --- | --- | --- | --- |
+| `drift` | `program_missing` | The path is missing, is not a file, or cannot be run | Not sent |
+| `drift` | `program_digest_changed` | The file's digest is not listed for this platform, or changed after it was checked | Not sent |
+| `drift` | `program_version_unsupported` | The version command did not report a supported version in the declared form | Answered |
+| `policy` | `program_path_unsafe` | The path is not absolute; it is a shell, an interpreter, or a script; the file or a folder above it can be written by another user | Not sent |
+| `policy` | `read_only_posture` | A command where only help and version forms may run: discovery, or the sandbox outside an environment of kind `test` | Not sent |
+| `input` | `argument_unsafe` | A value holds a NUL character, or would be read as an option | Not sent |
+| `input` | `schema_invalid` | A value breaks its param's pattern, list, or kind, or is missing; or an exit declared `input` | Not sent; answered |
+| `rejected` | `app_validation_error` | An exit declared `rejected`. The program's message is in the failure, marked as untrusted | Answered |
+| `stale` | `version_conflict`, `record_absent` | An exit declared `stale`; an exit declared `absent` on a step that is no lookup | Answered |
+| `busy` | `program_busy` | An exit declared `busy`, or another start holds the surface | Answered; not sent |
+| `transient` | `upstream_unavailable`, `timeout` | An exit declared `transient`; a read's time limit | Answered; unknown |
+| `session_expired` | `needs_login` | An exit declared `session_expired` | Answered |
+| `unknown_variant` | `unexpected_exit_status`, `unexpected_prompt` | A read: an undeclared status or an end by signal; a declared prompt in either stream | Answered |
+| `drift` | `output_unparsed` | A read: output that is not of its declared form, or not UTF-8 | Answered |
+| `policy` | `limit_exceeded` | A read: a stream wrote more than its ceiling. The message names the setting | Answered |
+| `possible_commit` | `no_confirmation` | A write: the time limit, an undeclared status, a signal, a prompt, output that does not parse, or a ceiling passed, after the program started | Unknown |
+| `possible_commit` | `ambiguous_match` | A lookup found more than one record | Answered |
+
+The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shutting_down`, `start_failed`) pass through unsent.
 
 ## Invariants
 
-Those of section 306, each proven against the pack's test stand under `targets/`.
+| Invariant | Proven by |
+| --- | --- |
+| The registry builds with only this pack, its digest is stable, and the manifest declares exactly the codes the driver raises | `tests/files.rs` |
+| The `example` files compile twice, and from disk, to the same bytes; the plan declares the program of every environment | `tests/files.rs` |
+| A file that breaks a rule is refused with its file, a line, and a fix: twenty-three cases | `tests/files.rs` |
+| Each argument entry becomes exactly its elements; a value cannot become an option, hold a NUL character, or break its param; a refusal never quotes the value | `src/args.rs`; `tests/driver.rs` against the stand's record of what it was started with |
+| Each output form is read; any line, field, or column the form does not cover is a failure | `src/output.rs`, `src/json.rs`; `tests/driver.rs` with the stand's drift fault |
+| A program is given only the declared variables and a fresh folder that is removed afterwards | `tests/driver.rs` |
+| Five runs of one read give one signature | `tests/driver.rs` |
+| A write is started once, only with the ledger's token, and the stand stored what was intended | `tests/driver.rs`, asking the stand's data file |
+| A write killed at its time limit after it committed, killed before it committed, ended with an undeclared status, with changed output, or with a question is `possible_commit`, and is not started again | `tests/driver.rs` |
+| A created record's assigned key is taken at once; it is found by its stamp; two records with one stamp are ambiguous | `tests/driver.rs` |
+| A secret the program prints reaches no capture, value, or failure | `tests/driver.rs` |
+| Another version, another build, and a missing file are refused before a command runs; a build changed after `prepare` is not started | `tests/driver.rs` |
+| A time limit ends the program and what it started; a ceiling is named | `tests/driver.rs` |
+| Discovery starts only declared help and version forms, with a bare environment, and changes nothing; a command is refused in discovery, and in the sandbox outside a test environment; the drafts state no effect, no exit beyond `0`, no output form, and no read-back | `tests/driver.rs` |
+| A shell, a script, and a file another user can write are refused | `src/safety.rs`, on Linux and macOS |
 
 ## Build order
 
-1. Not started.
+1. Done: the manifest and registration.
+2. Done: the `commands/` schema, its rules, and the lowering of `read`, `list`, `search`, `create`, `update`, `delete`, and `call`.
+3. Done: the driver for reads: `prepare`, `spawn`, `expect`, `parse`, and stopping, which is the supervisor's.
+4. Done: writes with read-back, the assigned key, the stamp, and lookup.
+5. Done: the discoverer, its describer, and the drafting rule.
+6. Not built: `upsert`, `upload`, `download`, and the `collect` step.
+7. Not built: secrets. No credential reaches a program yet: standard input is always closed, and the lease is not applied. `{session.state_dir}` does not compile.
+8. Not built: `stdin` from a param or a blob; a working folder other than a fresh one; an encoding other than UTF-8; a table split at fixed positions; the fixed pair of an interpreter and a script; reading a manual page or a completion file; a grace period before a forced stop; more than one start at a time on a surface.
+9. Not built: on Windows, the check that nobody else can write the program's file or a folder above it.
+10. Not proven here: Windows and macOS. The crate's tree compiles SQLite, so it cannot be checked for those systems from Linux; the tests are written to run there and have not.
 
 ## Open points
 
-- Everything the building package settles.
+- A value is written in one canonical form for its kind: a whole number in digits, an exact number as its plain text, a date as `YYYY-MM-DD`. Writing a value as its field type's `format` shows it is not built.
+- An exit status that a developer declares to mean nothing changed is believed. The publish gates are to check it against the test stand, as section 306 says; nothing in this crate does.
+- A stream that passes its ceiling does not end the program: the supervisor reads on and drops, and the driver names the failure when the program has ended.
+- The version is asked once in every `prepare`, not once for a lease.
+- The folder of a run is removed file by file and then as an empty folder; a folder a program made inside it is left, and reported as an incomplete cleanup.
+- What the kernel could not give the pack is listed in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
