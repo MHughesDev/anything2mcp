@@ -196,31 +196,33 @@ fn kept_said(text: &str) -> Option<String> {
     Some(text.to_owned())
 }
 
+/// What the system said, cut for display from text that was already
+/// redacted: its first `longest` characters, ending before a redaction mark
+/// that the cut would split, so that no part of a mark, and nothing a mark
+/// stands for, is shown as if it were text. The `bool` says whether it was
+/// cut.
+#[must_use]
+pub fn said_cut(redacted: &str, longest: usize) -> (&str, bool) {
+    let Some((mut at, _)) = redacted.char_indices().nth(longest) else {
+        return (redacted, false);
+    };
+    let mark = crate::redact::REDACTED;
+    for (start, _) in redacted.match_indices(mark) {
+        if start < at && at < start + mark.len() {
+            at = start;
+        }
+    }
+    (&redacted[..at], true)
+}
+
 /// What the system said, as a door shows it, from text that was already
-/// redacted: cut to `longest` characters at a place that does not split a
-/// redaction mark, with `…` after a cut, and every control character
-/// escaped (`\n`, `\u{1b}`), never removed, so that the text cannot move
-/// a cursor or rewrite a line and a line break stays visible. The `bool`
-/// says whether it was cut.
+/// redacted: cut by [`said_cut`], with `…` after a cut, and every control
+/// character escaped (`\n`, `\u{1b}`), never removed, so that the text
+/// cannot move a cursor or rewrite a line, and a line break stays visible.
+/// The `bool` says whether it was cut.
 #[must_use]
 pub fn said_shown(redacted: &str, longest: usize) -> (String, bool) {
-    let cut_at = redacted
-        .char_indices()
-        .nth(longest)
-        .map(|(byte, _)| byte);
-    let (kept, cut) = match cut_at {
-        None => (redacted, false),
-        Some(mut at) => {
-            // A mark that the cut would split is left out whole.
-            let mark = crate::redact::REDACTED;
-            for (start, _) in redacted.match_indices(mark) {
-                if start < at && at < start + mark.len() {
-                    at = start;
-                }
-            }
-            (&redacted[..at], true)
-        }
-    };
+    let (kept, cut) = said_cut(redacted, longest);
     let mut shown = String::with_capacity(kept.len() + 4);
     for c in kept.chars() {
         if c.is_control() {
