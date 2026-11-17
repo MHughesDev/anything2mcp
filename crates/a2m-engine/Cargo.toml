@@ -7,29 +7,5 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[features]
-# The in-memory `Control` of `a2m_engine::testing`, for the tests of this
-# crate and of the crates that call the engine.
-testing = []
-
-[dependencies]
-a2m-auth = { path = "../a2m-auth" }
-a2m-core = { path = "../a2m-core" }
-a2m-expr = { path = "../a2m-expr" }
-a2m-ledger = { path = "../a2m-ledger" }
-a2m-provider = { path = "../a2m-provider" }
-a2m-sources = { path = "../a2m-sources" }
-a2m-telemetry = { path = "../a2m-telemetry" }
-serde.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
-a2m-engine = { path = ".", features = ["testing"] }
-a2m-vault = { path = "../a2m-vault" }
-example-app = { path = "../../targets/example-app" }
-reqwest.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
-
 [lints]
 workspace = true
