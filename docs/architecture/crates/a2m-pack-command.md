@@ -143,7 +143,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 | --- | --- |
 | The registry builds with only this pack, its digest is stable, and the manifest declares exactly the codes the driver raises | `tests/files.rs` |
 | The `example` files compile twice, and from disk, to the same bytes; the plan declares the program of every environment | `tests/files.rs` |
-| A file that breaks a rule is refused with its file, a line, and a fix: twenty-three cases | `tests/files.rs` |
+| A file that breaks a rule is refused with its file, a line, and a fix: twenty-two cases | `tests/files.rs` |
 | Each argument entry becomes exactly its elements; a value cannot become an option, hold a NUL character, or break its param; a refusal never quotes the value | `src/args.rs`; `tests/driver.rs` against the stand's record of what it was started with |
 | Each output form is read; any line, field, or column the form does not cover is a failure | `src/output.rs`, `src/json.rs`; `tests/driver.rs` with the stand's drift fault |
 | A program is given only the declared variables and a fresh folder that is removed afterwards | `tests/driver.rs` |
