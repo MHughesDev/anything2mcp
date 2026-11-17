@@ -270,6 +270,12 @@ impl Machine {
 
     /// Opens an engine on this machine, as the product does.
     pub async fn open(&self) -> World {
+        self.open_at(None).await
+    }
+
+    /// The same, with the machine's clock replaced: an engine started at
+    /// a later time than the one before it.
+    pub async fn open_at(&self, clock: Option<Arc<dyn Clock>>) -> World {
         let mut options = EngineOptions::of_machine(
             Paths::under(self.home.path()),
             self.environment(),
@@ -278,6 +284,9 @@ impl Machine {
         options.project = Some(self.project.path().to_path_buf());
         options.place = self.place;
         options.key_store.clone_from(&self.key_store);
+        if let Some(clock) = clock {
+            options.clock = clock;
+        }
         let engine = Engine::open(options).await.expect("the settings load");
         assert!(
             engine.runner_problem().is_none(),

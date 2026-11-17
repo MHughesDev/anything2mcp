@@ -12,6 +12,8 @@ use common::proxy::{OnWrite, Proxy};
 use common::{Machine, World};
 use example_app::harness::TestApp;
 use serde_json::Value as Json;
+use std::sync::Arc;
+use a2m_telemetry::{Clock, ManualClock, SystemClock};
 
 const PLACEHOLDER: &str = "http://127.0.0.1:4010";
 const UPSERT: &str = "example_line_item_upsert";
@@ -211,12 +213,21 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
     program.kill().unwrap();
     program.wait().unwrap();
 
-    // A new engine finds the run its dead runner left, and says a write
-    // may have gone through.
-    let world = machine.open().await;
-    let left = world.ok(&["run", "get", &run]).await;
-    assert_eq!(left["status"], "stopped", "{left}");
-    assert_eq!(left["failure"]["class"], "possible_commit", "{left}");
+    // The machine is started again ten minutes later. The lease of the
+    // dead process has ended, the engine's tending declares it lost, and
+    // the run says a write may have gone through.
+    let later = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
+        SystemClock::new().now().as_unix_millis() + 600_000,
+    )));
+    let world = machine
+        .open_at(Some(Arc::clone(&later) as Arc<dyn Clock>))
+        .await;
+    world.engine.kernel().tend().await;
+    let left = world.agent(&["run", "get", &run]).await;
+    assert_eq!(left.result()["status"], "stopped", "{:?}", left.finished);
+    assert_eq!(left.error()["class"], "possible_commit");
+    assert_eq!(left.error()["code"], "runner_lost");
+    assert_eq!(left.error()["retry_safe"], false);
 
     // Resuming reconciles the record before anything is sent, finds the
     // write, and completes the run without writing again.
