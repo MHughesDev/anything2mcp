@@ -6,8 +6,8 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_no_browser_the_failure_is_named_and_nothing_starts() {
-    let mut settings = BrowserSettings::default();
-    settings.program = Some(std::env::temp_dir().join("a2m-no-such-browser-program"));
+    let settings = BrowserSettings::default()
+        .with_program(std::env::temp_dir().join("a2m-no-such-browser-program"));
     let stand = Stand::new("none", settings, &[]);
     assert_eq!(
         stand.browsers.availability(),
@@ -35,8 +35,7 @@ async fn with_no_browser_the_failure_is_named_and_nothing_starts() {
 async fn a_program_the_manifest_does_not_declare_is_not_started() {
     // The test's own program stands for one a person named in settings
     // and no manifest declares.
-    let mut settings = BrowserSettings::default();
-    settings.program = Some(std::env::current_exe().unwrap());
+    let settings = BrowserSettings::default().with_program(std::env::current_exe().unwrap());
     let stand = Stand::new("undeclared", settings, &[]);
     let error = stand
         .browsers
@@ -63,8 +62,7 @@ async fn a_program_that_is_not_a_browser_is_closed_and_leaves_nothing() {
     // Declared, started, and not a browser: it answers nothing over the
     // pipe, so the engine does not own it and ends it.
     let program = std::env::current_exe().unwrap();
-    let mut settings = BrowserSettings::default();
-    settings.program = Some(program.clone());
+    let settings = BrowserSettings::default().with_program(program.clone());
     let stand = Stand::new("substituted", settings, &[&program]);
     let error = stand
         .browsers
@@ -87,8 +85,7 @@ async fn a_program_that_is_not_a_browser_is_closed_and_leaves_nothing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_data_directory_that_leads_outside_the_profile_root_is_refused() {
     let program = std::env::current_exe().unwrap();
-    let mut settings = BrowserSettings::default();
-    settings.program = Some(program.clone());
+    let settings = BrowserSettings::default().with_program(program.clone());
     let stand = Stand::new("link", settings, &[&program]);
     // A link planted where the profile's folder would be made.
     let outside = stand.folder.0.join("outside");
@@ -117,8 +114,8 @@ async fn a_data_directory_that_leads_outside_the_profile_root_is_refused() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_whose_digest_is_not_a_known_one_is_closed() {
-    let mut settings = test_support::settings();
-    settings.known_digests = vec![Digest::of(b"another program")];
+    let settings =
+        test_support::settings().with_known_digests(vec![Digest::of(b"another program")]);
     let stand = Stand::new("digest", settings, &[]);
     let error = stand
         .browsers

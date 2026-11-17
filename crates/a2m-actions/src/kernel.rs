@@ -30,7 +30,7 @@ use tokio::task::JoinHandle;
 
 use crate::codes;
 use crate::dispatch::Principal;
-use crate::health::{Health, HealthState, Impaired, Part};
+use crate::health::{Health, Impaired, Part};
 use crate::keeper::{PersonBridge, ProbeBridge};
 use crate::paths::Paths;
 use crate::person::{ApprovalDesk, PersonSurface};

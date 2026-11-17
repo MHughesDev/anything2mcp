@@ -425,11 +425,7 @@ async fn the_faults_of_the_application_are_each_named() {
     let folder = Folder::new("drift");
     let registry = registry(&folder, Arc::new(NoSecrets));
     let plan = compile_changed(&registry, "example", "endpoints/orders.yaml", |text| {
-        text.replacen(
-            "enum: [draft, submitted]}\n    items:",
-            "enum: [open, closed]}\n    items:",
-            1,
-        )
+        text.replace("enum: [draft, submitted]", "enum: [open, closed]")
     })
     .unwrap()
     .plan;

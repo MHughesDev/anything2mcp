@@ -78,6 +78,22 @@ impl Default for BrowserSettings {
     }
 }
 
+impl BrowserSettings {
+    /// The same settings with the browser program a person named.
+    #[must_use]
+    pub fn with_program(mut self, program: PathBuf) -> Self {
+        self.program = Some(program);
+        self
+    }
+
+    /// The same settings with the digests a person has reviewed.
+    #[must_use]
+    pub fn with_known_digests(mut self, digests: Vec<Digest>) -> Self {
+        self.known_digests = digests;
+        self
+    }
+}
+
 /// Which browser: one per target, environment, and identity. Two keys
 /// never share a process or a data directory.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

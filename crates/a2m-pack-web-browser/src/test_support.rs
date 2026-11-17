@@ -35,10 +35,11 @@ pub fn browser_program() -> Option<PathBuf> {
 /// environment names and, when it asks, no sandbox.
 #[must_use]
 pub fn settings() -> BrowserSettings {
-    let mut settings = BrowserSettings::default();
-    settings.program = browser_program();
-    settings.without_sandbox = std::env::var(NO_SANDBOX_VARIABLE).is_ok_and(|value| value == "1");
-    settings
+    BrowserSettings {
+        program: browser_program(),
+        without_sandbox: std::env::var(NO_SANDBOX_VARIABLE).is_ok_and(|value| value == "1"),
+        ..BrowserSettings::default()
+    }
 }
 
 /// A `[[requirements]]` entry for the manifest of a test's pack: the known

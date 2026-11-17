@@ -341,8 +341,14 @@ impl Kernel {
                         return;
                     };
                     let kernel = kernel.clone();
-                    tokio::spawn(async move {
-                        kernel.work(lease, terms).await;
+                    // The engine's future is not `Send`: a driver's prepared
+                    // state is held across its waits and may not be shared
+                    // between threads. So a job runs on a thread of its
+                    // own, driven by this same runtime, whose timers and
+                    // connections it goes on using.
+                    let runtime = tokio::runtime::Handle::current();
+                    tokio::task::spawn_blocking(move || {
+                        runtime.block_on(kernel.work(lease, terms));
                         drop(permit);
                     });
                 }
@@ -580,6 +586,13 @@ impl Kernel {
                 }
             }
             JobOutcome::LeaseEnding => JobEnd::LeaseEnding,
+            // A reconcile or a second look ended: the run's state stays.
+            JobOutcome::Settled { .. } => JobEnd::Done,
+            JobOutcome::Left(failure) => JobEnd::Stopped {
+                class: failure.class(),
+                code: failure.code().clone(),
+                in_doubt: false,
+            },
         };
         Ok(end)
     }

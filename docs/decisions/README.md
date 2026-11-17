@@ -111,3 +111,6 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0101 | [What the data pack refuses, and how it names it](0101-what-the-data-pack-refuses-and-how-it-names-it.md) | Accepted (design decision) |
 | 0102 | [The `file` mode, and what the file pack registers](0102-the-file-mode-and-what-the-file-pack-registers.md) | Accepted (design decision) |
 | 0103 | [The file pack, as building it settled it](0103-the-file-pack-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0098 | [The `cli` mode is real, and a program is a surface](0098-the-cli-mode-is-real-and-a-program-is-a-surface.md) | Accepted (design decision) |
+| 0104 | [A wire protocol is one interface inside the stream pack, and the first standard one is still to be chosen](0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) | Accepted (design decision) |
+| 0105 | [The `stream` mode, and the stream pack as building it settled it](0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md) | Accepted (design decision) |

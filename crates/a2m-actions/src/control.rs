@@ -603,6 +603,28 @@ impl Control for InProcessControl {
                         })
                         .await
                 }
+                EngineEvent::VerifiedDiffers { evidence, .. } => {
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            tx.ledger().late_evidence(run, evidence).map(|_| ())
+                        })
+                        .await
+                }
+                EngineEvent::Discovered { findings, .. } => {
+                    // Each finding was checked against its provider's
+                    // manifest by the sandbox; the store names it by the
+                    // digest of its content.
+                    let workspace = self.run.workspace;
+                    let target = self.run.target.clone();
+                    store
+                        .write(Durability::Synced, move |tx| {
+                            for finding in &findings {
+                                tx.findings().put(&workspace, &target, finding)?;
+                            }
+                            Ok(())
+                        })
+                        .await
+                }
                 EngineEvent::Trace(trace) => {
                     let blob = self
                         .evidence(Evidence {

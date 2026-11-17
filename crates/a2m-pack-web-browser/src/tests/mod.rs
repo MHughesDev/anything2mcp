@@ -207,10 +207,10 @@ fn processes_naming(folder: &Path) -> Vec<u32> {
         if process == std::process::id() {
             continue;
         }
-        if let Ok(line) = std::fs::read(entry.path().join("cmdline")) {
-            if String::from_utf8_lossy(&line).contains(&needle) {
-                found.push(process);
-            }
+        if let Ok(line) = std::fs::read(entry.path().join("cmdline"))
+            && String::from_utf8_lossy(&line).contains(&needle)
+        {
+            found.push(process);
         }
     }
     found
