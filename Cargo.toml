@@ -75,6 +75,10 @@ toml = { version = "1.2.1", default-features = false, features = ["std", "serde"
 command-fds = { version = "0.3.3", features = ["tokio"] }
 rustix = { version = "1.1.6", default-features = false, features = ["std", "process"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+# The command pack's one outside crate (decision 0099): patterns for a
+# program's version line, its prompts, its output, and its text arguments.
+# Matching takes time linear in the text, which output from a program needs.
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode-perl"] }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.

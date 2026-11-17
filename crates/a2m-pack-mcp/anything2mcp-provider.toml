@@ -1,0 +1,159 @@
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "mcp"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+[[modes]]
+name = "mcp"
+archetype = "request"
+verbs = ["read", "list", "search", "create", "update", "upsert", "delete", "download", "submit", "call"]
+steps = ["call_tool", "list_tools"]
+rank = 30
+session_reads = 4
+session_writes = 1
+
+[[surface_kinds]]
+name = "mcp"
+archetype = "request"
+session = true
+
+[points]
+driver = ["mcp"]
+discoverer = ["mcp_tools"]
+auth_provider = ["upstream_mcp"]
+
+[[discoverers]]
+name = "mcp_tools"
+archetype = "request"
+kinds = ["upstream_tool", "upstream_server"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 60, bytes = 4194304, depth = 1 }
+surface_kinds = ["mcp"]
+
+[[file_kinds]]
+name = "mapping"
+directory = "mappings/"
+surface_kinds = ["mcp"]
+
+[[finding_kinds]]
+name = "upstream_tool"
+surface_kinds = ["mcp"]
+
+[[finding_kinds]]
+name = "upstream_server"
+surface_kinds = ["mcp"]
+
+[[failure_codes]]
+class = "drift"
+code = "upstream_tool_changed"
+
+[[failure_codes]]
+class = "drift"
+code = "response_schema_mismatch"
+
+[[failure_codes]]
+class = "rejected"
+code = "app_validation_error"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "unexpected_status"
+
+[[failure_codes]]
+class = "possible_commit"
+code = "ambiguous_match"
+
+[[failure_codes]]
+class = "transient"
+code = "timeout"
+
+[[failure_codes]]
+class = "transient"
+code = "connection_lost"
+
+[[failure_codes]]
+class = "transient"
+code = "upstream_unavailable"
+
+[[failure_codes]]
+class = "policy"
+code = "not_granted"
+
+[[failure_codes]]
+class = "input"
+code = "arguments_invalid"
+
+[[failure_codes]]
+class = "input"
+code = "tls_not_enabled"
+
+[[failure_codes]]
+class = "input"
+code = "not_built"
+
+[[lint_rules]]
+code = "mcp.tool_unmapped"
+level = "error"
+summary = "A binding names a tool that its surface's mapping names."
+
+[[lint_rules]]
+code = "mcp.tool_unpinned"
+level = "error"
+summary = "A mapped tool states the digest of its definition."
+
+[[lint_rules]]
+code = "mcp.program_unpinned"
+level = "error"
+summary = "A local server program states its digest."
+
+[[lint_rules]]
+code = "mcp.write_no_readback"
+level = "error"
+summary = "A tool mapped as a write names a mapped read tool, or is mapped as irreversible."
+
+[[lint_rules]]
+code = "mcp.discovery_bound"
+level = "error"
+summary = "No binding uses a tool of a mapping whose purpose is discovery."
+
+[[lint_rules]]
+code = "mcp.free_text"
+level = "warning"
+summary = "A mapped tool whose input is one free-text string is reviewed before it is used."
+
+[[drafting_rules]]
+finding_kind = "upstream_tool"
+file_kind = "mapping"
+
+[effects]
+processes = []
+plan_programs = true
+read_roots = []
+write_roots = []
+network = "surfaces"
+sessions = ["mcp"]
+
+[evidence]
+max_level = "discovered"
+vouches_for = ["live_system"]
+
+[[settings]]
+key = "max_message_bytes"
+type = "int"
+default = 4194304
+min = 1024
+max = 67108864
+doc = "The most bytes of one answer from an upstream server that are read."
+
+[[settings]]
+key = "max_tools"
+type = "int"
+default = 500
+min = 1
+max = 10000
+doc = "The most tools of one upstream server's list that are read."
