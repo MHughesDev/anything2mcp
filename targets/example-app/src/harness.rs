@@ -115,7 +115,6 @@ pub struct TestApp {
 /// acts as a user over plain HTTP. With the feature `tls` on, its TLS
 /// configuration states its provider and trusts nothing, so that a client is
 /// made without a provider installed for the process.
-#[must_use]
 pub fn client_builder() -> reqwest::ClientBuilder {
     #[cfg(feature = "tls")]
     {

@@ -230,3 +230,23 @@ jobs:
       - name: Show polkit's log when a stage failed
         if: failure()
         run: sudo journalctl --unit polkit.service --no-pager | tail -n 200
+
+  tls:
+    name: Rust with TLS on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Lint with TLS on
+        run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --all-targets --locked --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls -- -D warnings
+      - name: Test with TLS on
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app --locked --no-fail-fast --features a2m-auth/tls,a2m-pack-http/tls,a2m-pack-mcp/tls,example-app/tls

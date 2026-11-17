@@ -49,11 +49,9 @@ async fn approve(world: &World, run: &str) {
         .principal
         .principal()
         .clone();
-    let proof = PresenceProof::new(
-        PresenceCheck::OsPrompt,
-        person.id,
-        Timestamp::from_unix_millis(0),
-    );
+    // The proof is taken now, on the engine's own clock: the desk refuses
+    // one older than a proof of presence may be.
+    let proof = PresenceProof::new(PresenceCheck::OsPrompt, person.id, world.clock.now());
     // An agent cannot approve, whatever it holds.
     let by_agent = desk
         .approve(

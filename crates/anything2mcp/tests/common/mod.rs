@@ -305,6 +305,7 @@ impl Machine {
         if let Some(clock) = clock {
             options.clock = clock;
         }
+        let clock = Arc::clone(&options.clock);
         let engine = Engine::open(options).await.expect("the settings load");
         assert!(
             engine.runner_problem().is_none(),
@@ -314,6 +315,7 @@ impl Machine {
         World {
             engine,
             surface: Arc::clone(&self.surface),
+            clock,
         }
     }
 }
@@ -322,6 +324,9 @@ impl Machine {
 pub struct World {
     pub engine: Engine,
     pub surface: Arc<Surface>,
+    /// The clock the engine was opened with: a proof of presence is taken
+    /// at its now, because the desk refuses one older than two minutes.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// What one command gave, with its standard output read as JSON.
