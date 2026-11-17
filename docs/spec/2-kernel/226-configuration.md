@@ -139,7 +139,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `store.database` | A SQLite path, or a Postgres address with a secret reference | One SQLite file in the data directory | I | no |
 | `store.blobs` | A directory, or an object store address | The data directory | I | no |
 | `store.free_space_floor` | Bytes | A draft: 1 GiB; below it the kernel is `degraded` ([section 224](224-when-the-engine-itself-fails.md)) | I | no |
-| `vault.backend` | `os_keystore`, or an external secrets manager by reference | `os_keystore` | I | no |
+| `vault.backend` | `os_keystore`; `passphrase`, which derives the root key from the passphrase the engine is started with, in the environment variable `A2M_VAULT_PASSPHRASE`; or an external secrets manager by reference | `os_keystore` | I | no |
 | `vault.root_key` | A key reference | The key store's own | I | no |
 | `files.allowed_roots` | Named folders | The project folder | U | yes |
 | `files.max_upload_bytes` | Bytes | A draft | U | no |

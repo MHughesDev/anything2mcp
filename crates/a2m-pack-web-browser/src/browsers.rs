@@ -42,7 +42,10 @@ pub struct BrowserSettings {
     /// The digests of the browser programs a person has reviewed. When
     /// the list is not empty, a program with another digest is closed.
     pub known_digests: Vec<Digest>,
-    /// How long a browser may take to start and answer over its pipe.
+    /// How long a browser may take to start and answer over its pipe. A
+    /// ceiling for a cold machine, not a budget: a browser's first start
+    /// after the machine came up, with the system's scanner reading it,
+    /// was measured at over 30 seconds on a hosted Windows machine.
     pub launch_deadline: Duration,
     /// How long a browser may take to close by itself before its process
     /// group is ended.
@@ -67,7 +70,7 @@ impl Default for BrowserSettings {
         Self {
             program: None,
             known_digests: Vec::new(),
-            launch_deadline: Duration::from_secs(30),
+            launch_deadline: Duration::from_secs(120),
             close_deadline: Duration::from_secs(10),
             call_deadline: Duration::from_secs(30),
             max_message_bytes: 64 * 1024 * 1024,
@@ -204,6 +207,42 @@ impl Shared {
     }
 }
 
+/// Held by every start of a browser in this process, whichever set of
+/// browsers asks, until the browser has answered or been closed.
+static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// For the tests: how many starts were under way at once, at the most.
+#[cfg(test)]
+pub(crate) mod starts {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NOW: AtomicUsize = AtomicUsize::new(0);
+    static MOST: AtomicUsize = AtomicUsize::new(0);
+    static ALL: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) struct Counted;
+
+    impl Counted {
+        pub(crate) fn begin() -> Self {
+            let now = NOW.fetch_add(1, Ordering::SeqCst) + 1;
+            MOST.fetch_max(now, Ordering::SeqCst);
+            ALL.fetch_add(1, Ordering::SeqCst);
+            Self
+        }
+    }
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            NOW.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The most starts under way at once, and how many there were in all.
+    pub(crate) fn seen() -> (usize, usize) {
+        (MOST.load(Ordering::SeqCst), ALL.load(Ordering::SeqCst))
+    }
+}
+
 /// Why the first request over the pipe had no answer, with the step that
 /// failed: whether the request could be written at all, whether the pipe
 /// ended, and what the program said. A start on a new operating system is
@@ -314,8 +353,9 @@ impl Browsers {
     /// the place, or the count (its own failure, such as
     /// `policy`/`effect_not_declared`); the data directory is not inside
     /// the profile root; or what started is not a browser the engine can
-    /// own (`unknown_variant`/`browser_not_owned`), in which case it was
-    /// closed.
+    /// own (`unknown_variant`/`browser_not_owned`), or it did not answer
+    /// before the launch deadline (`transient`/`timeout`); in both cases
+    /// it was closed.
     pub async fn open(
         &self,
         profile: &ProfileKey,
@@ -355,6 +395,13 @@ impl Browsers {
         }
         let kind = SubsystemKind::new(BROWSER_KIND)
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
+        // One start at a time in the whole process, from the start of the
+        // program to its first answer. Several browsers that start cold at
+        // the same moment each take many times longer than one after the
+        // other, and a start is bounded by a deadline.
+        let _one_start = STARTING.lock().await;
+        #[cfg(test)]
+        let _counted = starts::Counted::begin();
         let link = shared
             .supervisor
             .start_foreign(
@@ -385,7 +432,9 @@ impl Browsers {
         // Ownership: the digest of the program that runs, and what it
         // answers over the pipe only its owner holds.
         let owned = if !known.is_empty() && !reviewed {
-            Err("its digest is not one of the known digests in the settings".to_owned())
+            Err(LaunchReason::NotOwned(
+                "its digest is not one of the known digests in the settings".to_owned(),
+            ))
         } else {
             match client
                 .call(
@@ -396,20 +445,32 @@ impl Browsers {
                 .await
             {
                 Ok(version) if version.protocol_version == PROTOCOL_VERSION => Ok(version.product),
-                Ok(_) => Err("it speaks another version of the protocol".to_owned()),
-                Err(error) => Err(unanswered(
-                    &error,
-                    shared.settings.launch_deadline,
-                    shared.redact.as_ref(),
+                Ok(_) => Err(LaunchReason::NotOwned(
+                    "it speaks another version of the protocol".to_owned(),
                 )),
+                Err(error) => {
+                    let why = unanswered(
+                        &error,
+                        shared.settings.launch_deadline,
+                        shared.redact.as_ref(),
+                    );
+                    // Silence with the pipe still open is not proof of
+                    // anything but slowness: a browser on a cold machine
+                    // can take longer than any deadline. Everything else
+                    // is a program that is not a browser.
+                    Err(match error {
+                        ClientError::Timeout { .. } => LaunchReason::NoAnswer(why),
+                        _ => LaunchReason::NotOwned(why),
+                    })
+                }
             }
         };
         let product = match owned {
             Ok(product) => product,
-            Err(why) => {
+            Err(reason) => {
                 client.close();
                 shared.supervisor.stop(subsystem).await;
-                return Err(failed(LaunchReason::NotOwned(why)));
+                return Err(failed(reason));
             }
         };
         let inner = Arc::new(BrowserInner {

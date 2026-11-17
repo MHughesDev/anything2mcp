@@ -180,6 +180,35 @@ async fn two_identities_never_share_a_process_or_a_data_directory() {
     stand.end().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn browsers_asked_for_at_once_start_one_after_the_other_and_all_answer() {
+    // Six sets of browsers, as six tests or six packs would have, all
+    // asking at the same moment.
+    let stands: Vec<Stand> = (0..6)
+        .map(|number| Stand::with_browser(&format!("at-once-{number}")))
+        .collect();
+    let clerk = profile("clerk");
+    let opened = stands
+        .iter()
+        .map(|stand| {
+            let (browsers, clerk) = (stand.browsers.clone(), clerk.clone());
+            tokio::spawn(async move { browsers.open(&clerk, Visibility::Background).await })
+        })
+        .collect::<Vec<_>>();
+    for one in opened {
+        let browser = must(one.await.unwrap());
+        assert_eq!(browser.health(), BrowserHealth::Idle);
+    }
+    // No two starts in this process were ever under way together, here or
+    // in any other test of this run.
+    let (most_at_once, all) = crate::browsers::starts::seen();
+    assert!(all >= 6, "{all}");
+    assert_eq!(most_at_once, 1);
+    for stand in stands {
+        stand.end().await;
+    }
+}
+
 #[test]
 fn a_shared_cell_gives_every_caller_the_first_caller_s_browsers() {
     let stand = Stand::new("shared", BrowserSettings::default(), &[]);

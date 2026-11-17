@@ -127,3 +127,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0117 | [The local channel and the person surface on one machine, as built](0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md) | Accepted (design decision) |
 | 0120 | [The desktop pack stands on each system's own interface, through thin bindings](0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md) | Accepted (design decision) |
 | 0130 | [The MCP protocol layer is our own, because the SDK brings an unmaintained crate](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md) | Accepted (design decision) |
+| 0119 | [The product crate, as building it settled it](0119-the-product-crate-as-building-it-settled-it.md) | Accepted (design decision) |

@@ -36,6 +36,9 @@ const USER: &str = "pat";
 /// A person surface that keeps the desk and answers no prompt.
 struct Surface {
     desk: Mutex<Option<ApprovalDesk>>,
+    /// How many approvals were asked for: a write the dispatcher is handed
+    /// rests and asks for one.
+    asked: std::sync::atomic::AtomicUsize,
 }
 
 impl PersonSurface for Surface {
@@ -45,6 +48,7 @@ impl PersonSurface for Surface {
 
     fn ask_approval(&self, ask: ApprovalAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
         Box::pin(async move {
+            self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(SurfaceLink {
                 url: None,
                 text: format!("Approve run {} at the machine.", ask.run),
@@ -87,6 +91,7 @@ struct World {
     base: String,
     http: reqwest::Client,
     server: tokio::task::JoinHandle<()>,
+    surface: Arc<Surface>,
     _folder: Folder,
 }
 
@@ -127,8 +132,15 @@ impl World {
         assert!(problems.is_empty(), "{problems:?}");
         let surface = Arc::new(Surface {
             desk: Mutex::new(None),
+            asked: std::sync::atomic::AtomicUsize::new(0),
         });
-        let kernel = Kernel::open(prepared, registry, problems, surface).await;
+        let kernel = Kernel::open(
+            prepared,
+            registry,
+            problems,
+            Arc::clone(&surface) as Arc<dyn PersonSurface>,
+        )
+        .await;
         assert_eq!(kernel.health().state, HealthState::Ok);
         kernel.start_runner_loop(2).await.unwrap();
         kernel
@@ -158,6 +170,7 @@ impl World {
             base,
             http: reqwest::Client::new(),
             server,
+            surface,
             _folder: folder,
         }
     }
@@ -198,14 +211,10 @@ impl World {
         (status, answer.json().await.unwrap())
     }
 
-    /// How many entries the audit log holds: every request the dispatcher
-    /// is handed adds to it.
-    async fn audit_total(&self) -> u64 {
-        let (status, body) = self
-            .post("/api/v1/actions/audit.query", &json!({"limit": 1}))
-            .await;
-        assert_eq!(status, 200, "{body}");
-        body["result"]["total"].as_u64().unwrap()
+    /// How many writes the dispatcher was handed: each rests and asks the
+    /// person surface for an approval.
+    fn writes_asked(&self) -> usize {
+        self.surface.asked.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The status line's code of a raw exchange: the bytes sent, then what
@@ -232,6 +241,17 @@ impl World {
         self.server.abort();
         self.kernel.close(CloseReason::Asked).await;
     }
+}
+
+/// A write of the test application's, well formed.
+fn write_call() -> Json {
+    json!({"tool": ITEM_UPSERT, "input": {
+        "order_id": "A-102",
+        "item_code": "L-300",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    }})
 }
 
 /// A failure's body: exactly the four parts and whether a retry is safe,
@@ -348,8 +368,13 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
     let url = format!("{}/api/v1/actions/tool.search", world.base);
     // Within the drain ceiling (four times the 1 MiB limit), every refusal
     // is delivered, whichever check refuses and whether the body was read.
-    let big = format!("{{\"query\": \"{}\"}}", "a".repeat(2 * 1024 * 1024));
-    let under = format!("{{\"query\": \"{}\"}}", "a".repeat(512 * 1024));
+    // A write that would rest and ask for an approval if it were
+    // dispatched, padded with
+    // white space, which JSON allows.
+    let call = |padding: usize| format!("{}{}", write_call(), " ".repeat(padding));
+    let big = call(2 * 1024 * 1024);
+    let under = call(512 * 1024);
+    let call_url = format!("{}/api/v1/actions/tool.call", world.base);
     let json_post = |url: &str, body: &str| {
         world
             .http
@@ -361,7 +386,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
         (
             world
                 .http
-                .post(&url)
+                .post(&call_url)
                 .header("content-type", "text/plain")
                 .body(big.clone()),
             413,
@@ -371,7 +396,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
         (
             world
                 .http
-                .post(&url)
+                .post(&call_url)
                 .header("content-type", "text/plain")
                 .body(under.clone()),
             415,
@@ -379,20 +404,20 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
             "content_type_unsupported",
         ),
         (
-            json_post(&format!("{url}?query=order"), &big),
+            json_post(&format!("{call_url}?query=order"), &big),
             400,
             "input",
             "query_invalid",
         ),
         (
-            json_post(&url, &big).header("idempotency-key", "two words"),
+            json_post(&call_url, &big).header("idempotency-key", "two words"),
             400,
             "input",
             "idempotency_key_invalid",
         ),
         (
             json_post(
-                &format!("{}/bare/api/v1/actions/tool.search", world.base),
+                &format!("{}/bare/api/v1/actions/tool.call", world.base),
                 &big,
             ),
             401,
@@ -478,7 +503,7 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
             "query_invalid",
         ),
     ];
-    let before = world.audit_total().await;
+    let before = world.writes_asked();
     for (request, want_status, want_class, want_code) in cases {
         let (status, body) = world.raw(request).await;
         assert_eq!(status, want_status, "{body}");
@@ -487,8 +512,11 @@ async fn input_that_is_not_well_formed_is_refused_at_the_door() {
         // handed; none was made.
         assert!(body.get("decision").is_none(), "{body}");
     }
-    // Only the audit query itself was handed to the dispatcher.
-    assert_eq!(world.audit_total().await, before + 1);
+    // None reached the dispatcher; the same write, sent well, does.
+    assert_eq!(world.writes_asked(), before);
+    let (status, body) = world.raw(json_post(&call_url, &call(1024))).await;
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(world.writes_asked(), before + 1);
     world.close().await;
 }
 
@@ -500,14 +528,16 @@ async fn a_body_past_the_limits_is_refused_or_cut_off_and_reaches_nothing() {
         ..ApiSettings::default()
     })
     .await;
-    let url = format!("{}/api/v1/actions/tool.search", world.base);
-    let before = world.audit_total().await;
+    let url = format!("{}/api/v1/actions/tool.call", world.base);
+    let before = world.writes_asked();
+    // A write that would rest and ask for an approval if it were
+    // dispatched, padded with white space.
     let post = |size: usize| {
         world
             .http
             .post(&url)
             .header("content-type", "application/json")
-            .body(format!("{{\"query\": \"{}\"}}", "a".repeat(size)))
+            .body(format!("{}{}", write_call(), " ".repeat(size)))
     };
 
     // Over the limit and within the drain ceiling: the refusal, always.
@@ -529,13 +559,13 @@ async fn a_body_past_the_limits_is_refused_or_cut_off_and_reaches_nothing() {
     // A body that stops arriving: refused when its time is up. The client
     // sends ten bytes of the hundred it declared, then nothing.
     let head = format!(
-        "POST /api/v1/actions/tool.search HTTP/1.1\r\nhost: {}\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{{\"query\": ",
+        "POST /api/v1/actions/tool.call HTTP/1.1\r\nhost: {}\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{{\"tool\": ",
         world.base.trim_start_matches("http://")
     );
     assert_eq!(world.raw_tcp(head.as_bytes()).await, 408);
 
-    // None of them reached the dispatcher: only the audit query did.
-    assert_eq!(world.audit_total().await, before + 1);
+    // None of them reached the dispatcher: no run was made.
+    assert_eq!(world.writes_asked(), before);
     world.close().await;
 }
 

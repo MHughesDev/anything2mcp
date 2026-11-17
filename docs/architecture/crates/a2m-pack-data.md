@@ -136,7 +136,7 @@ pub(crate) trait Conn: Send {                      // one open connection; every
 
 ### What the driver is given, and what it gives back
 
-- **The store's file** arrives in `PrepareContext::paths` as a checked path under the surface's name. The driver takes it only when its root is the surface's `root` and its path below the root is the surface's address. It resolves no path.
+- **The store's file** arrives in `PrepareContext::paths` as a checked path under the surface's name. The driver takes it only when its root is the surface's `root` and its path below the root is the surface's address. When the run was handed none, the driver checks the same root and address with the roots its manifest declares. It resolves no path itself.
 - **The lease** is not used: an embedded file has no sign-in.
 - **A step's arguments** are bound by name to the statement's parameters, in placeholder order. Text is bound as text, a whole number as a whole number, a truth value as 0 or 1, a decimal and a date as their exact text. A list, a record, a moment, and a missing argument stop the step unsent.
 - **What a step returns.** A read of one record: its fields by name, and its version under the version column's name; nothing found is `Absent`. A list: `rows`, a list of records, and `more`. An insert whose key the store assigns: the key's fields, also as `assigned_key` and in `for_reconcile`, from the `fetch` before `commit`. Every text passes the redactor. Values are returned as stored; the field type's normalizer, which the engine applies, is what makes `150.5` and `150.5000` agree.
@@ -258,7 +258,7 @@ The tests are inside the crate, under `src/tests/`, because the fault of a lost 
 - **The step trace.** The driver notes for each step what it did (`means`: the step, the statement, the access) and what it measured (`measured`: rows, bytes, rows changed). `Observed` has no place for an `Acting`, so the notes stay in the session and only the tests read them.
 - **Evidence on a failure.** `StepFailure` carries no capture, so the name of a refused constraint cannot be handed on as untrusted evidence. The message names the kind of constraint only.
 - **A store in a root a person added.** The manifest lists roots by name, so the pack can declare only `project`.
-- **How the engine gives the driver the store's file.** Nothing in the plan says that a surface's address is a file in a root. The driver expects the checked path under the surface's name.
+- **How the engine gives the driver the store's file.** Nothing in the plan says that a surface's address is a file in a root, so the engine hands none over. Until a plan can say it, a run that was handed no path gets the file through the pack's own roots: the surface's root and its address below it, checked by the one check that makes a path ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md)).
 - **A statement interrupted at its time limit** is built and not proven: the stand cannot slow a statement.
 - **A read-only file** maps to `denied_by_store` and is not proven here: the stand's fault does not bind the superuser the tests ran as.
 - **Functions that reach outside**, columns of floating type, and reading back from a replica: as in section 307.

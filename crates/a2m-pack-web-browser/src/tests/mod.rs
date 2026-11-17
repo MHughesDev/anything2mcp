@@ -309,6 +309,10 @@ fn every_code_has_one_class_and_the_conversions_use_them() {
             Some((FailureClass::UnknownVariant, codes::BROWSER_NOT_OWNED)),
         ),
         (
+            BrowserError::LaunchFailed(LaunchReason::NoAnswer("x".to_owned())),
+            Some((FailureClass::Transient, codes::TIMEOUT)),
+        ),
+        (
             BrowserError::Disconnected {
                 dispatch: Dispatch::NotSent,
             },

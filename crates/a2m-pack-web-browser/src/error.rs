@@ -83,10 +83,14 @@ pub enum LaunchReason {
     /// The supervisor did not start the program; this is its failure, kept
     /// whole: an undeclared program, a limit, a place that is taken.
     Supervisor(Failure),
-    /// The program started and is not a browser this crate can own: it did
-    /// not answer over the pipe, answered with another protocol, or its
-    /// digest is not a known one. It was closed.
+    /// The program started and is not a browser this crate can own: its
+    /// pipe ended or carried something else, it answered with another
+    /// protocol, or its digest is not a known one. It was closed.
     NotOwned(String),
+    /// The program started, its pipe stayed open, and it did not answer
+    /// before the launch deadline. It was closed. It may be a browser that
+    /// starts slowly, so this passes: nothing reached any system.
+    NoAnswer(String),
     /// The data directory could not be made inside the profile root.
     DataDirectory(Failure),
 }
@@ -207,6 +211,12 @@ impl BrowserError {
                 format!("The program that was started is not a browser the engine can own: {why}."),
                 "Check the browser program named in the settings, and its version.",
             )),
+            Self::LaunchFailed(LaunchReason::NoAnswer(why)) => Some(Failure::new(
+                FailureClass::Transient,
+                codes::TIMEOUT,
+                format!("The browser was started and closed again: {why}."),
+                "Try again; a browser's first start on a cold machine can be slow. If it persists, check the browser program, or allow more time in the settings.",
+            )),
             Self::Crashed {
                 dispatch: Dispatch::NotSent,
             }
@@ -274,6 +284,9 @@ impl fmt::Display for BrowserError {
                 LaunchReason::NotInstalled => f.write_str("no browser is installed"),
                 LaunchReason::Supervisor(failure) | LaunchReason::DataDirectory(failure) => {
                     write!(f, "the browser was not started: {failure}")
+                }
+                LaunchReason::NoAnswer(why) => {
+                    write!(f, "the browser was started and closed again: {why}")
                 }
                 LaunchReason::NotOwned(why) => {
                     write!(

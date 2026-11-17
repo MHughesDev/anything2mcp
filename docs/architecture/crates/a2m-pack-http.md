@@ -116,6 +116,8 @@ What the kernel gives this crate, and what it does not:
 | `read`, `list`, `search` | `request`, `validate`, `extract` | | |
 | The write verbs | `request`, marked as the commit point, and as idempotent when the endpoint names an idempotency header | `validate`; and `extract` of the save's own answer with `prefer: response` | `request`, `validate`, `extract` on the endpoint `read_back` names, each a lookup |
 
+A `request` step has the target's time limit for a request, 30 seconds unless the target says otherwise. A `validate` or `extract` step judges an answer already held, sends nothing, and has a limit of one second: the engine sums a binding's step limits before a commit point, and five request limits would pass the lease of the in-process runner ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md)).
+
 ### The entry bar
 
 | # | Item | This crate's answer |

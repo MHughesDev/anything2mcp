@@ -5,6 +5,9 @@
 //!
 //! Nothing here looks at what a result holds: text is the same JSON, laid
 //! out as indented lines.
+//!
+//! Exit code 4, the engine could not be reached or started, is not raised
+//! in this build: every command runs the engine in its own process.
 
 use a2m_actions::{ErrorBody, ExitClass, PROGRAM, Response};
 use a2m_core::Failure;
@@ -12,14 +15,6 @@ use serde_json::Value as Json;
 
 use super::Finished;
 use super::parse::{Tree, command_line};
-
-/// Exit code when the engine could not be reached or started. Not raised
-/// in this build: every command runs the engine in its own process.
-#[allow(
-    dead_code,
-    reason = "the code of the output contract; raised when commands become clients"
-)]
-pub(crate) const ENGINE_UNREACHABLE: u8 = 4;
 
 /// A response for a failure met before any action was dispatched.
 pub(crate) fn refused(action: &str, failure: &Failure, exit: ExitClass) -> Response {

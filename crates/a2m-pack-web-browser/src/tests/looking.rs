@@ -192,28 +192,32 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     let browser = stand.open(&profile("clerk")).await;
     let tab = must(browser.acting_tab(&environment()).await);
 
-    // An element that arrives late is noticed when it arrives.
-    let late = page_of(
-        "<!doctype html><title>Late</title><p id=old>Loading</p><script>\
-         setTimeout(() => { const b = document.createElement('button'); b.textContent = 'Late'; \
-         document.body.append(b); document.getElementById('old').remove(); }, 150);</script>",
-    );
+    // An element that arrives late is noticed when it arrives. Nothing in
+    // this page runs on a timer: the element is added when the test says
+    // so, so that "not there yet" and "there now" are facts and not a
+    // guess at how fast the machine is.
+    let late = page_of("<!doctype html><title>Late</title><p id=old>Loading</p>");
     must(tab.page.goto_text(&late, soon()).await);
     let button = Query::role("button", "Late");
     assert_eq!(
         tab.locate(&button, soon()).await.unwrap_err(),
         BrowserError::NotFound
     );
-    must(
-        tab.wait(
-            &Primitive::All(vec![
-                Primitive::Visible(button.clone()),
-                Primitive::Hidden(css("#old")),
-            ]),
-            soon(),
-        )
-        .await,
+    let arrived = Primitive::All(vec![
+        Primitive::Visible(button.clone()),
+        Primitive::Hidden(css("#old")),
+    ]);
+    let arrive = "(() => { const b = document.createElement('button'); b.textContent = 'Late'; \
+                  document.body.append(b); document.getElementById('old').remove(); return 'added'; })()";
+    // The wait is begun first and the page's change second: both travel on
+    // the one link in that order, so the wait is under way in the page
+    // when the element is added, and an observer has to notice it.
+    let (waited, added) = tokio::join!(
+        tab.wait(&arrived, soon()),
+        tab.page.as_the_page(arrive, soon())
     );
+    assert_eq!(must(added), "added");
+    must(waited);
     must(tab.locate(&button, soon()).await);
     must(tab.wait(&Primitive::Enabled(button.clone()), soon()).await);
 
@@ -234,26 +238,27 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     assert_eq!(never.failure().unwrap().code(), &codes::TIMEOUT);
 
     // A wait that is under way when the page moves on is re-armed in the
-    // new document, by the event that replaced the old one.
+    // new document, by the event that replaced the old one. Again the test
+    // says when: the wait is begun on the form, where the table is not,
+    // and then the page is told to move.
     must(
         tab.goto(&Address::new(&app.url(FORM)).unwrap(), soon())
             .await,
     );
-    must(
+    let table = Query::role("table", "Line items");
+    assert_eq!(
+        tab.locate(&table, soon()).await.unwrap_err(),
+        BrowserError::NotFound
+    );
+    let there = Primitive::Visible(table.clone());
+    let (waited, _moving) = tokio::join!(
+        tab.wait(&there, soon()),
+        // Its own answer may be lost with the document it leaves.
         tab.page
-            .as_the_page(
-                "setTimeout(() => { location.href = '/orders/A-100'; }, 150); 'armed'",
-                soon(),
-            )
-            .await,
+            .as_the_page("location.href = '/orders/A-100'; 'moving'", soon())
     );
-    must(
-        tab.wait(
-            &Primitive::Visible(Query::role("table", "Line items")),
-            soon(),
-        )
-        .await,
-    );
+    must(waited);
+    must(tab.locate(&table, soon()).await);
     must(
         tab.wait(
             &Primitive::Url(TextMatch {

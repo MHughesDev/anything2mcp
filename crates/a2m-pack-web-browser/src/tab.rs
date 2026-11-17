@@ -475,6 +475,8 @@ pub(crate) struct Page {
     world: watch::Sender<Option<i64>>,
     status: watch::Sender<Status>,
     nav: watch::Sender<Nav>,
+    /// How many dialogs of the page have closed.
+    dialogs_closed: watch::Sender<u64>,
     blocked: Mutex<Vec<RequestShape>>,
     safe: Option<SafeRequests>,
     browser: Arc<BrowserInner>,
@@ -1310,13 +1312,28 @@ impl Page {
                 prompt_text: None,
             },
         };
+        let mut closed = self.dialogs_closed.subscribe();
+        let before = *closed.borrow_and_update();
         self.raw(&command, deadline, false)
             .await
-            .map(|_| ())
             .map_err(|error| match error {
                 Ended::Browser(error) => error,
                 Ended::Client(error) => self.client_error(error),
-            })
+            })?;
+        // The browser's answer and its event that the dialog closed travel
+        // separately. The tab is usable again when the event has been
+        // heard, so the answer is given only then: a call made right after
+        // it is not told that a dialog is still open.
+        let heard = tokio::time::timeout_at(deadline.at(), closed.wait_for(|now| *now > before));
+        match heard.await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(_)) => Err(BrowserError::Disconnected {
+                dispatch: Dispatch::Sent,
+            }),
+            Err(_) => Err(BrowserError::Timeout {
+                dispatch: Dispatch::Sent,
+            }),
+        }
     }
 
     /// Runs an expression as one of the page's own scripts would run, and
@@ -1496,6 +1513,7 @@ impl Page {
                     }
                     dialog
                 });
+                self.dialogs_closed.send_modify(|closed| *closed += 1);
             }
             EventKind::TargetCrashed if own => {
                 self.status.send_replace(Status::Crashed);
@@ -1734,6 +1752,7 @@ pub(crate) async fn open_page(
         world: watch::Sender::new(None),
         status: watch::Sender::new(Status::Open),
         nav: watch::Sender::new(Nav::default()),
+        dialogs_closed: watch::Sender::new(0),
         blocked: Mutex::new(Vec::new()),
         safe: match posture {
             Posture::Act => None,
