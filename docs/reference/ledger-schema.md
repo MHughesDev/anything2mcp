@@ -1,6 +1,6 @@
 # Ledger schema
 
-Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, and `a2m-sched` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, and `0007-sched-jobs-runners-holds-and-budgets.sql`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
+Table definitions for the run ledger described in [spec section 208](../spec/2-kernel/208-runs-the-ledger-and-resume.md) and the scheduling tables used by [spec section 223](../spec/2-kernel/223-the-runner-protocol.md). The tables of `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sched`, and `a2m-actions` are built. Their definitions in force are the migration files in `crates/a2m-ledger/migrations/`: `0001-ledger-keys-and-blobs.sql`, `0002-ledger-runs-records-and-locks.sql`, `0003-ledger-findings-versions-and-audit.sql`, `0004-policy-approvals-and-decisions.sql`, `0005-policy-versions-switches-and-limits.sql`, `0006-auth-sessions-events-state-and-credentials.sql`, `0007-sched-jobs-runners-holds-and-budgets.sql`, and `0009-actions-installation-toolsets-and-scout-stages.sql`. There is no `0008`. Where this page and a file differ the file is right. The other tables here are a design draft until their owner writes the migration. Any change after a release is a numbered migration.
 
 Types are written generically. `id` is a time-ordered UUID. `json` is `jsonb` on Postgres and text on SQLite. `ref` names a blob by a keyed digest of its content: a digest made with a key the vault holds, so that someone who can read the store cannot confirm a guessed value by hashing it. `ts` is a timestamp in UTC.
 
@@ -268,6 +268,18 @@ Rows are inserted in the same transaction as the change they announce, so a mess
 | `principal_id`, `key` | id, text | Primary key; the caller's own idempotency key on REST calls |
 | `request_hash`, `run_id` | text, id | The same key with a different request is refused |
 | `expires_at` | ts | Cleanup |
+
+## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls
+
+As built by migration `0009`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
+
+| Table | One row is | Key |
+| --- | --- | --- |
+| `actions_installation` | One fact about the installation, by name: the workspace of one machine, the principal of its user, the digest of the recorded catalog, the digest of the settings at the last start. Never a secret | `name` |
+| `actions_toolsets` | A toolset, as JSON written through `toolset.create` and `toolset.update`, with who updated it and when | `workspace_id`, `name` |
+| `actions_scout_stages` | One finished stage of one scout run, stages 0 to 7: the hash of what it was given and its result, already redacted. A stopped scout continues after the last stage stored | `run_id`, `stage` |
+| `actions_targets` | A target that has a published version, so that a tool can be found by its name alone. Written by `version.publish` in the transaction that stores the version | `workspace_id`, `target` |
+| `actions_run_calls` | What a run was called with: the stored input and the verified facts about the caller, as names and flags and never a credential. Written before the run is admitted | What makes a run the same run (ledger rule 6): `workspace_id`, `principal_id`, `tool_name`, `target_version`, `input_hash` |
 
 ## audit
 

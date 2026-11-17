@@ -178,3 +178,62 @@ async fn an_answer_lost_after_the_write_was_sent_is_reconciled_and_not_written_t
     assert!(kinds.contains(&"reconcile_read"), "{kinds:?}");
     world.close().await;
 }
+
+/// What the real program printed, read as the one JSON object of the
+/// output contract.
+fn printed(output: &std::process::Output) -> Json {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "not one JSON object: {} / {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_run_is_resumed() {
+    let app = TestApp::start().await.unwrap();
+    let proxy = Proxy::start(&app.url("")).await;
+    let machine = Machine::new("orders", &[(PLACEHOLDER, proxy.url())]).with_passphrase();
+
+    // A person publishes and approves on an engine that then closes.
+    let world = published(&app, &machine).await;
+    let run = approved_write(&world).await;
+    world.close().await;
+
+    // The real program resumes the run. The system stores the write, the
+    // answer is held back, and the program is killed while it waits.
+    proxy.on_write(OnWrite::HoldAnswer);
+    let mut program = machine.program(&["run", "resume", &run]).spawn().unwrap();
+    proxy.stored().await;
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    program.kill().unwrap();
+    program.wait().unwrap();
+
+    // A new engine finds the run its dead runner left, and says a write
+    // may have gone through.
+    let world = machine.open().await;
+    let left = world.ok(&["run", "get", &run]).await;
+    assert_eq!(left["status"], "stopped", "{left}");
+    assert_eq!(left["failure"]["class"], "possible_commit", "{left}");
+
+    // Resuming reconciles the record before anything is sent, finds the
+    // write, and completes the run without writing again.
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.finished.code, 0, "{:?}", done.finished);
+    assert_eq!(done.result()["status"], "completed");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let stored = app.stored_item("A-102", "L-300").await.unwrap().unwrap();
+    assert_eq!(stored.quantity, 3);
+    world.close().await;
+
+    // The real program reads the finished run back, and prints one object.
+    let output = machine.program(&["run", "get", &run]).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(printed(&output)["result"]["status"], "completed");
+    // The passphrase is in nothing the program printed.
+    for text in [&output.stdout, &output.stderr] {
+        assert!(!String::from_utf8_lossy(text).contains(common::PASSPHRASE));
+    }
+}

@@ -183,9 +183,14 @@ pub struct Machine {
     pub home: Folder,
     pub project: Folder,
     pub surface: Arc<Surface>,
-    pub key_store: Arc<dyn KeyStore>,
+    /// `None` is the machine's own, as its settings choose it.
+    pub key_store: Option<Arc<dyn KeyStore>>,
     pub place: StorePlace,
+    passphrase: Option<String>,
 }
+
+/// A made-up passphrase for the vault of a test machine.
+pub const PASSPHRASE: &str = "secret-for-tests-vault-passphrase";
 
 impl Machine {
     /// A machine whose project holds the target files of `project`, with
@@ -198,8 +203,9 @@ impl Machine {
             home,
             project: folder,
             surface: Surface::new(),
-            key_store: Arc::new(MemoryKeyStore::new()),
+            key_store: Some(Arc::new(MemoryKeyStore::new())),
             place: StorePlace::Memory,
+            passphrase: None,
         }
     }
 
@@ -210,7 +216,49 @@ impl Machine {
         self
     }
 
+    /// The same machine as the real program finds it: the store on disk,
+    /// and the vault's root key from a passphrase, which the installation's
+    /// settings file chooses and the environment gives. This is the route
+    /// a machine with no key store of its own takes.
+    pub fn with_passphrase(mut self) -> Self {
+        let installation = Paths::under(self.home.path()).installation_config;
+        std::fs::create_dir_all(&installation).unwrap();
+        std::fs::write(
+            installation.join("settings.toml"),
+            "[vault]\nbackend = \"passphrase\"\n",
+        )
+        .unwrap();
+        self.place = StorePlace::Disk;
+        self.key_store = None;
+        self.passphrase = Some(PASSPHRASE.to_owned());
+        self
+    }
+
+    /// The real program, started in this machine's project folder.
+    pub fn program(&self, args: &[&str]) -> std::process::Command {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_anything2mcp"));
+        command
+            .args(args)
+            .current_dir(self.project.path())
+            .envs(self.environment())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        command
+    }
+
     pub fn environment(&self) -> BTreeMap<String, String> {
+        let mut environment = self.base_environment();
+        if let Some(passphrase) = &self.passphrase {
+            environment.insert(
+                anything2mcp::PASSPHRASE_VARIABLE.to_owned(),
+                passphrase.clone(),
+            );
+        }
+        environment
+    }
+
+    fn base_environment(&self) -> BTreeMap<String, String> {
         BTreeMap::from([
             (
                 "A2M_HOME".to_owned(),
@@ -229,7 +277,7 @@ impl Machine {
         );
         options.project = Some(self.project.path().to_path_buf());
         options.place = self.place;
-        options.key_store = Some(Arc::clone(&self.key_store));
+        options.key_store.clone_from(&self.key_store);
         let engine = Engine::open(options).await.expect("the settings load");
         assert!(
             engine.runner_problem().is_none(),

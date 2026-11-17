@@ -121,3 +121,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0095 | [The settings loader and the in-process runner, as built](0095-the-settings-loader-and-the-in-process-runner-as-built.md) | Accepted (design decision) |
 | 0116 | [The REST router takes its caller from the mount and chooses its status in one table](0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md) | Accepted (design decision) |
 | 0114 | [The web probe as built: three discoverers over an observing tab](0114-the-web-probe-as-built-three-discoverers-over-an-observing-tab.md) | Accepted (design decision) |
+| 0112 | [The `ui` driver as built: five step kinds, and a commit that waits for its confirmation](0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md) | Accepted (design decision) |
+| 0113 | [A screen's fingerprint is a section, absent is a variant, and a table is read by its headings](0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md) | Accepted (design decision) |

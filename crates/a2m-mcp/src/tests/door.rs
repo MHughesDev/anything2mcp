@@ -1,1 +1,664 @@
-//! The proofs of a front door.
+//! The proofs every front door owes, the lines of the checklist that hold
+//! on one transport only, and the two ways the proxy is not a pure copier.
+
+use std::sync::{Arc, Mutex, OnceLock};
+
+use serde_json::{Value as Json, json};
+
+use super::engine::{ITEM_UPSERT, ORDER_GET};
+use super::wire::{H, Http, M, Stdio, h, m, m_at};
+use super::world::World;
+use crate::{McpPeer, McpSettings, Revision};
+
+fn code(answer: &Json) -> i64 {
+    answer["error"]["code"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("not an error: {answer}"))
+}
+
+fn call(id: i64, name: &str, arguments: Json) -> Json {
+    h(
+        id,
+        "tools/call",
+        json!({"name": name, "arguments": arguments}),
+    )
+}
+
+/// The one text item of a result, as JSON.
+fn text_of(answer: &Json) -> Json {
+    serde_json::from_str(answer["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_the_dispatcher() {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service.clone());
+    let ping = h(1, "ping", json!({})).to_string();
+
+    // A foreign `Host`, or none, is refused before the body is read: the
+    // body here is not JSON, and the answer is not about that.
+    for host in ["evil.example", "localhost.evil.example", ""] {
+        let reply = http.send(b"{not json", &[("host", host)]).await;
+        assert_eq!(reply.status, 403, "{host}");
+        assert!(reply.messages.is_empty());
+    }
+    for host in ["localhost", "localhost:8731", "127.0.0.1:9", "[::1]:9"] {
+        assert_eq!(
+            http.send(ping.as_bytes(), &[("host", host)]).await.status,
+            200,
+            "{host}"
+        );
+    }
+
+    // Only `POST`: no stream is opened by the server, and there is no
+    // session to end.
+    for method in ["GET", "DELETE"] {
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri("/mcp/use")
+            .header("host", "localhost")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(super::world::peer());
+        assert_eq!(service.handle(request).await.status().as_u16(), 405);
+    }
+
+    // A caller the channel did not name, a peer that is not this engine's
+    // user, and a bearer token, which this build's kernel refuses. The
+    // token is in nothing that comes back.
+    let token = "example-token-0123456789";
+    let nobody = Http {
+        service: service.clone(),
+        peer: None,
+    };
+    let reply = nobody.send(ping.as_bytes(), &[]).await;
+    assert_eq!(reply.status, 401);
+    assert_eq!(code(reply.only()), -32001);
+    assert_eq!(reply.only()["error"]["data"]["class"], "policy");
+    assert_eq!(reply.only()["error"]["data"]["code"], "caller_missing");
+    let reply = nobody
+        .send(
+            ping.as_bytes(),
+            &[("authorization", &format!("Bearer {token}"))],
+        )
+        .await;
+    assert_eq!(reply.status, 401);
+    assert_eq!(reply.only()["error"]["data"]["code"], "caller_not_verified");
+    assert!(!String::from_utf8_lossy(&reply.body).contains(token));
+    let stranger = Http {
+        service: service.clone(),
+        peer: Some(McpPeer {
+            user: "sam".to_owned(),
+            label: String::new(),
+        }),
+    };
+    let reply = stranger.send(ping.as_bytes(), &[]).await;
+    assert_eq!(reply.status, 403);
+    assert_eq!(reply.only()["error"]["data"]["code"], "caller_not_verified");
+
+    // A body over the limit.
+    let small = McpSettings {
+        max_request_bytes: 64,
+        ..McpSettings::local()
+    };
+    let reply = Http::new(world.service("use", small))
+        .send(
+            h(1, "ping", json!({"padding": "x".repeat(100)}))
+                .to_string()
+                .as_bytes(),
+            &[],
+        )
+        .await;
+    assert_eq!(reply.status, 413);
+
+    // Two unrelated things that are not well formed: each is refused with
+    // the JSON-RPC error and the named failure.
+    for (bytes, rpc) in [
+        (b"\xff\xfe not json at all".as_slice(), -32700),
+        (
+            br#"[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]"#.as_slice(),
+            -32600,
+        ),
+        (
+            br#"{"jsonrpc":"1.0","id":1,"method":"tools/list"}"#.as_slice(),
+            -32600,
+        ),
+        (
+            br#"{"jsonrpc":"2.0","id":{"a":1},"method":"tools/list"}"#.as_slice(),
+            -32600,
+        ),
+    ] {
+        let reply = http.send(bytes, &[]).await;
+        assert_eq!(reply.status, 400);
+        let answer = reply.only();
+        assert_eq!(code(answer), rpc, "{answer}");
+        assert_eq!(answer["error"]["data"]["class"], "input");
+        assert_eq!(answer["error"]["data"]["code"], "schema_invalid");
+        assert!(!answer["error"]["data"]["fix"].as_str().unwrap().is_empty());
+    }
+    // Parameters of the wrong shape are refused by the protocol, too.
+    let reply = http
+        .post(&h(
+            2,
+            "tools/call",
+            json!({"name": "a2m_tool_search", "arguments": "text"}),
+        ))
+        .await;
+    assert_eq!(code(reply.only()), -32602);
+
+    // None of the above was handed to the dispatcher.
+    assert_eq!(service.dispatched(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_carries_no_session_and_its_headers_must_agree_with_the_body() {
+    let world = World::ready().await;
+    let http = Http::new(world.service("use", McpSettings::local()));
+
+    // `initialize` issues no session identifier, and a later request of
+    // the handshake revision is served as it comes: with its header, and
+    // with none.
+    let reply = http
+        .post(&h(
+            1,
+            "initialize",
+            json!({"protocolVersion": H, "capabilities": {}, "clientInfo": {"name": "c", "version": "0"}}),
+        ))
+        .await;
+    assert_eq!(reply.status, 200);
+    assert!(!reply.session);
+    let list = h(2, "tools/list", json!({})).to_string();
+    for headers in [vec![], vec![("mcp-protocol-version", H)]] {
+        let reply = http.send(list.as_bytes(), &headers).await;
+        assert_eq!(reply.status, 200);
+        assert!(!reply.session);
+        assert!(reply.only()["result"]["tools"].is_array());
+    }
+
+    // A revision that is not served is status 400, in the body or in the
+    // header alone.
+    let reply = http
+        .post(&m_at("2030-01-01", 3, "tools/list", json!({})))
+        .await;
+    assert_eq!(reply.status, 400);
+    assert_eq!(code(reply.only()), -32022);
+    let reply = http
+        .send(list.as_bytes(), &[("mcp-protocol-version", "2025-03-26")])
+        .await;
+    assert_eq!(reply.status, 400);
+    assert_eq!(code(reply.only()), -32022);
+    assert_eq!(reply.only()["error"]["data"]["requested"], "2025-03-26");
+
+    // Each of the three headers of the stateless revision must say what
+    // the body says.
+    let asked = m(
+        4,
+        "tools/call",
+        json!({"name": "a2m_tool_search", "arguments": {}}),
+    );
+    let good = [
+        ("mcp-protocol-version", M),
+        ("mcp-method", "tools/call"),
+        ("mcp-name", "a2m_tool_search"),
+    ];
+    let reply = http.send(asked.to_string().as_bytes(), &good).await;
+    assert_eq!(reply.status, 200, "{:?}", reply.messages);
+    for (at, wrong) in [(0, H), (1, "tools/list"), (2, "a2m_tool_call")] {
+        let mut headers = good;
+        headers[at].1 = wrong;
+        let reply = http.send(asked.to_string().as_bytes(), &headers).await;
+        assert_eq!(reply.status, 400, "{headers:?}");
+        assert_eq!(code(reply.only()), -32020, "{headers:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_set_to_one_revision_turns_the_other_away_as_the_rule_says() {
+    let world = World::ready().await;
+    let only = |revision: Revision| McpSettings {
+        revisions: vec![revision],
+        ..McpSettings::local()
+    };
+    let init = h(
+        1,
+        "initialize",
+        json!({"protocolVersion": H, "capabilities": {}, "clientInfo": {"name": "c", "version": "0"}}),
+    );
+
+    // The stateless revision alone: `initialize` is refused with the
+    // revisions served, and a request that names no revision is refused.
+    let modern = Http::new(world.service("use", only(Revision::Stateless)));
+    let reply = modern.post(&init).await;
+    assert_eq!(code(reply.only()), -32022);
+    assert_eq!(reply.only()["error"]["data"]["supported"], json!([M]));
+    assert_eq!(reply.only()["error"]["data"]["requested"], H);
+    let reply = modern.post(&h(2, "tools/list", json!({}))).await;
+    assert_eq!(code(reply.only()), -32602);
+    let reply = modern.post(&m(3, "server/discover", json!({}))).await;
+    assert_eq!(reply.only()["result"]["supportedVersions"], json!([M]));
+    assert!(modern.post(&m(4, "tools/list", json!({}))).await.only()["result"]["tools"].is_array());
+
+    // The handshake revision alone: discovery is an unknown method, so a
+    // client that speaks both falls back; a request that names the newer
+    // revision is refused with the revisions served.
+    let old = Http::new(world.service("use", only(Revision::Handshake)));
+    let reply = old.post(&m(5, "server/discover", json!({}))).await;
+    assert_eq!(code(reply.only()), -32601);
+    assert_eq!(reply.only()["id"], 5);
+    let reply = old.post(&m(6, "tools/list", json!({}))).await;
+    assert_eq!(code(reply.only()), -32022);
+    assert_eq!(reply.only()["error"]["data"]["supported"], json!([H]));
+    assert_eq!(old.post(&init).await.only()["result"]["protocolVersion"], H);
+    assert!(old.post(&h(7, "tools/list", json!({}))).await.only()["result"]["tools"].is_array());
+
+    // Settings that name no revision, and a toolset this build does not
+    // list, are refused when the endpoint is made.
+    let none = McpSettings {
+        revisions: Vec::new(),
+        ..McpSettings::local()
+    };
+    for (toolset, settings) in [("use", none), ("orders", McpSettings::local())] {
+        let refused = crate::McpService::new(
+            world.kernel.clone(),
+            a2m_policy::ToolsetName::new(toolset).unwrap(),
+            settings,
+        )
+        .unwrap_err();
+        assert_eq!(refused.class(), a2m_core::FailureClass::Input);
+        assert_eq!(refused.code().as_str(), "mcp_not_served");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_proxy_copies_what_the_endpoint_answers_byte_for_byte() {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service.clone());
+    let mut stdio = Stdio::start(service);
+    let init = json!({"protocolVersion": H, "capabilities": {}, "clientInfo": {"name": "c", "version": "0"}});
+    for message in [
+        h(1, "ping", json!({})),
+        h("two", "initialize", init),
+        m(3, "server/discover", json!({})),
+        h(4, "tools/list", json!({})),
+        m(5, "tools/list", json!({})),
+        m(6, "nope/nope", json!({})),
+        m_at("1900-01-01", 7, "tools/list", json!({})),
+        call(8, "a2m_tool_call", json!({"tool": "example_nope_get"})),
+        m(
+            9,
+            "tools/call",
+            json!({"name": "example_nope_get", "arguments": {}}),
+        ),
+        json!({"jsonrpc": "2.0", "id": 10}),
+    ] {
+        let direct = http.post(&message).await;
+        stdio.write(message.to_string().as_bytes()).await;
+        let line = stdio.line().await.unwrap();
+        assert_eq!(
+            String::from_utf8(line).unwrap(),
+            String::from_utf8(direct.body).unwrap(),
+            "{message}"
+        );
+    }
+    let (rest, ended) = stdio.close().await;
+    assert!(rest.is_empty());
+    ended.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_line_closes_that_requests_stream_and_other_requests_are_still_answered() {
+    // No runner: the run stays queued, so the call stays open.
+    let world = World::open(false).await;
+    let service = world.service("use", McpSettings::local());
+    let mut stopped = service.cancellations();
+    let mut stdio = Stdio::start(service);
+    let slow = h(
+        "slow",
+        "tools/call",
+        json!({
+            "name": "a2m_tool_call",
+            "arguments": {"tool": ORDER_GET, "input": {"order_id": "A-100"}, "wait_seconds": 600},
+            "_meta": {"progressToken": "p"},
+        }),
+    );
+    stdio.write(slow.to_string().as_bytes()).await;
+    // The call is under way once its first progress arrives.
+    let note = stdio.message().await;
+    assert_eq!(note["method"], "notifications/progress");
+    assert_eq!(note["params"]["progressToken"], "p");
+
+    let cancel = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": "slow"},
+    });
+    stdio.write(cancel.to_string().as_bytes()).await;
+    // The server saw the stream close, and stopped waiting.
+    tokio::time::timeout(std::time::Duration::from_secs(60), stopped.changed())
+        .await
+        .expect("the endpoint noticed the closed stream")
+        .unwrap();
+
+    // Another request is still answered, and nothing more is ever written
+    // for the cancelled one.
+    stdio
+        .write(h("after", "ping", json!({})).to_string().as_bytes())
+        .await;
+    let answer = stdio.message().await;
+    assert_eq!(answer["id"], "after");
+    let (rest, ended) = stdio.close().await;
+    assert!(rest.is_empty(), "{rest:?}");
+    ended.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_rests_with_a_link_and_the_next_call_and_the_door_offers_no_way_to_approve() {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service);
+    let input = json!({
+        "order_id": "A-102",
+        "item_code": "L-300",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    });
+    // The published tool, called by its own name.
+    let reply = http
+        .post(&m(
+            1,
+            "tools/call",
+            json!({"name": ITEM_UPSERT, "arguments": input}),
+        ))
+        .await;
+    let result = &reply.only()["result"];
+    let run = &result["structuredContent"];
+    assert_eq!(run["status"], "needs_approval", "{result}");
+    // The link is where a person goes; following it approves nothing.
+    assert!(
+        run["link"]
+            .as_str()
+            .unwrap()
+            .contains(run["run_id"].as_str().unwrap())
+    );
+    // The following call is named beside the result, as a tool of this
+    // toolset.
+    let next = &result["_meta"]["anything2mcp/next"];
+    assert_eq!(next["tool"], "a2m_run_resume", "{result}");
+    assert_eq!(next["args"]["run_id"], run["run_id"]);
+    // The test application was asked to store nothing.
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+    assert_eq!(
+        world
+            .surface
+            .approvals
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+
+    // Everything the door exposes: the methods it serves and the tools of
+    // both toolsets. None of them approves, and no name an agent might
+    // try is a tool.
+    for toolset in ["use", "build"] {
+        let http = Http::new(world.service(toolset, McpSettings::local()));
+        let listed = http.post(&h(2, "tools/list", json!({}))).await;
+        for tool in listed.only()["result"]["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            assert!(!name.contains("approv"), "{name}");
+        }
+        for name in [
+            "a2m_run_approve",
+            "a2m_approval_approve",
+            "a2m_approval_grant",
+        ] {
+            let reply = http
+                .post(&call(3, name, json!({"run_id": run["run_id"]})))
+                .await;
+            assert_eq!(code(reply.only()), -32602, "{name}");
+        }
+        for method in ["approvals/approve", "run/approve", "elicitation/create"] {
+            let reply = http.post(&h(4, method, json!({}))).await;
+            assert!(reply.only().get("result").is_none(), "{method}");
+        }
+    }
+    // Nor does the registry behind the generic tool hold such an action.
+    assert!(
+        world
+            .kernel
+            .actions()
+            .iter()
+            .all(|def| !def.name.to_string().contains("approv"))
+    );
+    // The run still rests, and nothing was written.
+    let reply = http
+        .post(&call(5, "a2m_run_get", json!({"run_id": run["run_id"]})))
+        .await;
+    assert_eq!(
+        reply.only()["result"]["structuredContent"]["status"],
+        "needs_approval"
+    );
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_call_carries_the_failure_and_nothing_else() {
+    let world = World::ready().await;
+    let http = Http::new(world.service("use", McpSettings::local()));
+    // A person stops everything; the agent's call is then policy's to
+    // refuse.
+    let stopped = world
+        .direct("killswitch.set", json!({"scope": "everything", "on": true}))
+        .await;
+    assert!(stopped.ok, "{:?}", stopped.error);
+    let arguments = json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}});
+    for asked in [
+        call(1, "a2m_tool_call", arguments),
+        call(2, ORDER_GET, json!({"order_id": "A-100"})),
+    ] {
+        let reply = http.post(&asked).await;
+        let result = &reply.only()["result"];
+        assert_eq!(result["isError"], true, "{result}");
+        let keys: Vec<&String> = result.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["content", "isError"], "{result}");
+        let failure = text_of(reply.only());
+        assert_eq!(failure["class"], "policy", "{failure}");
+        let keys: Vec<&String> = failure.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["class", "code", "fix", "message", "retry_safe"]);
+        for key in ["code", "message", "fix"] {
+            assert!(!failure[key].as_str().unwrap().is_empty(), "{key}");
+        }
+    }
+}
+
+/// Every event and span the process logs, at the most verbose level, as
+/// text. The SDK logs through the `tracing` crate.
+struct Captured(Arc<Mutex<String>>);
+
+struct Fields<'a>(&'a mut String);
+
+impl tracing::field::Visit for Fields<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.0.push_str(&format!(" {}={value:?}", field.name()));
+    }
+}
+
+impl tracing::Subscriber for Captured {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        span.record(&mut Fields(&mut self.0.lock().unwrap()));
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+        values.record(&mut Fields(&mut self.0.lock().unwrap()));
+    }
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut text = self.0.lock().unwrap();
+        text.push_str(event.metadata().target());
+        event.record(&mut Fields(&mut text));
+        text.push('\n');
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+const SECRET: &str = "Example Customer Two";
+
+/// Plants the secret: the test application is made to answer with a value
+/// the vault has released as a secret, the customer's name of one order.
+async fn plant(world: &World) {
+    let stored = world
+        .direct(
+            "secret.set",
+            json!({"name": "example_password", "value": SECRET}),
+        )
+        .await;
+    assert!(stored.ok, "{:?}", stored.error);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_planted_secret_appears_in_nothing_the_door_sends() {
+    let world = World::ready().await;
+    plant(&world).await;
+    let token = "example-token-for-the-planted-secret-test";
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service.clone());
+    let mut stdio = Stdio::start(service.clone());
+    let mut sent = Vec::new();
+    let read = json!({"tool": ORDER_GET, "input": {"order_id": "A-101"}});
+    for (at, message) in [
+        call(1, "a2m_tool_call", read),
+        m(2, "tools/call", json!({"name": ORDER_GET, "arguments": {"order_id": "A-101"}, "_meta": {"progressToken": 1}})),
+        // Failures that quote the caller's own input.
+        call(3, "a2m_tool_call", json!({"tool": ORDER_GET, "input": {"order_id": SECRET}})),
+        call(4, "a2m_tool_search", json!({"query": SECRET})),
+        call(5, SECRET, json!({})),
+        h(6, SECRET, json!({})),
+        h(7, "tools/list", json!({"cursor": SECRET})),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let direct = http.post(&message).await;
+        sent.push(String::from_utf8_lossy(&direct.body).into_owned());
+        if at == 0 {
+            // The read did happen, and its value was redacted.
+            let run = &direct.only()["result"]["structuredContent"];
+            assert_eq!(run["status"], "completed", "{run}");
+            assert_eq!(run["result"]["customer"], a2m_core::REDACTED);
+            let run_id = run["run_id"].clone();
+            for tool in ["a2m_run_get", "a2m_trace_show"] {
+                let later = http.post(&call(9, tool, json!({"run_id": run_id}))).await;
+                sent.push(String::from_utf8_lossy(&later.body).into_owned());
+            }
+        }
+        sent.extend(ask_lines(&mut stdio, &message).await);
+    }
+    // A caller's token: refused, and repeated nowhere.
+    let nobody = Http {
+        service,
+        peer: None,
+    };
+    let reply = nobody
+        .send(
+            h(8, "ping", json!({})).to_string().as_bytes(),
+            &[("authorization", &format!("Bearer {token}"))],
+        )
+        .await;
+    assert_eq!(reply.status, 401);
+    sent.push(String::from_utf8_lossy(&reply.body).into_owned());
+    let (rest, ended) = stdio.close().await;
+    assert!(rest.is_empty());
+    ended.unwrap();
+
+    assert!(sent.len() >= 16, "{}", sent.len());
+    for text in &sent {
+        assert!(!text.contains(SECRET), "{text}");
+        assert!(!text.contains(token), "{text}");
+    }
+}
+
+/// One thread, so that the log captured is this test's alone.
+#[tokio::test]
+async fn the_sdks_log_at_its_most_verbose_holds_no_secret_of_the_engine_and_no_token() {
+    let log = Arc::new(Mutex::new(String::new()));
+    let _guard = tracing::subscriber::set_default(Captured(Arc::clone(&log)));
+    let world = World::ready().await;
+    plant(&world).await;
+    let token = "example-token-for-the-log-test";
+    let marker = "example-marker-sent-by-the-caller";
+    let service = world.service("use", McpSettings::local());
+    let http = Http {
+        service: service.clone(),
+        peer: Some(McpPeer {
+            user: super::world::USER.to_owned(),
+            label: "label-of-the-log-test".to_owned(),
+        }),
+    };
+    let mut stdio = Stdio::start(service);
+    for message in [
+        call(
+            1,
+            "a2m_tool_call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-101"}}),
+        ),
+        m(
+            2,
+            "tools/call",
+            json!({"name": ORDER_GET, "arguments": {"order_id": "A-101"}, "_meta": {"progressToken": 1}}),
+        ),
+        call(3, "a2m_tool_search", json!({"query": marker})),
+    ] {
+        // A token beside a peer the channel named is dropped unread.
+        let reply = http
+            .send(
+                message.to_string().as_bytes(),
+                &[("authorization", &format!("Bearer {token}"))],
+            )
+            .await;
+        assert_eq!(reply.status, 200);
+        ask_lines(&mut stdio, &message).await;
+    }
+    let (_, ended) = stdio.close().await;
+    ended.unwrap();
+
+    let logged = log.lock().unwrap().clone();
+    // The capture works: the SDK's own events are in it, results included.
+    assert!(logged.contains("rmcp"), "{logged}");
+    assert!(logged.contains(a2m_core::REDACTED), "{logged}");
+    // What the engine holds as a secret reached the SDK redacted, and the
+    // caller's token never reached it.
+    assert!(!logged.contains(SECRET));
+    assert!(!logged.contains(token));
+    // What the SDK does log is the caller's own message, input included.
+    // The process's log must therefore pass the redactor or stay above the
+    // trace level; this crate cannot make the SDK say less.
+    assert!(logged.contains(marker));
+}
+
+/// Sends one request through the proxy and returns every line answered.
+async fn ask_lines(stdio: &mut Stdio, message: &Json) -> Vec<String> {
+    stdio.write(message.to_string().as_bytes()).await;
+    let mut lines = Vec::new();
+    loop {
+        let line = String::from_utf8(stdio.line().await.unwrap()).unwrap();
+        let last = serde_json::from_str::<Json>(&line)
+            .unwrap()
+            .get("id")
+            .is_some();
+        lines.push(line);
+        if last {
+            return lines;
+        }
+    }
+}
