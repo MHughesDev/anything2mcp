@@ -13,6 +13,7 @@ use example_cli::harness::Stand;
 use example_db::harness::TestDb;
 use example_db::schema::Table;
 use example_device::TestDevice;
+use example_app::harness::TestApp;
 use example_files::harness::FileStand;
 use example_mcp::harness::HttpStand;
 use serde_json::Value as Json;
@@ -222,5 +223,25 @@ async fn a_data_store_is_read_through_the_data_pack() {
     );
     assert_eq!(read["notes"], held.text("notes").unwrap(), "{read}");
     assert_eq!(stand.writes().unwrap().len(), writes);
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_is_read_through_the_web_pack() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("pages", &[("http://127.0.0.1:4010", &app.url(""))]).on_disk();
+    let world = published(&machine).await;
+    let read = read_twice(
+        &world,
+        "example_line_item_get",
+        r#"{"order_id": "A-100", "item_code": "L-101"}"#,
+        "ui",
+    )
+    .await;
+    // The value is what the application holds for the line item.
+    let held = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    assert_eq!(read["description"], held.description.as_str(), "{read}");
+    assert_eq!(read["quantity"], held.quantity, "{read}");
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0);
     world.close().await;
 }

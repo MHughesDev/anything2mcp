@@ -18,6 +18,9 @@ a2m-pack-file = { path = "../a2m-pack-file" }
 a2m-pack-http = { path = "../a2m-pack-http" }
 a2m-pack-mcp = { path = "../a2m-pack-mcp" }
 a2m-pack-stream = { path = "../a2m-pack-stream" }
+a2m-pack-web-browser = { path = "../a2m-pack-web-browser" }
+a2m-pack-web-probe = { path = "../a2m-pack-web-probe" }
+a2m-pack-web-ui = { path = "../a2m-pack-web-ui" }
 a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }

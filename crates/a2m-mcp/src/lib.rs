@@ -10,10 +10,9 @@
 //! [`stdio_proxy`] is the other half: a line copier between a client's
 //! standard streams and that endpoint, for a client that starts a program.
 //!
-//! The service stands on the official SDK crate behind a seam (decision
-//! 0071): no type of that crate appears in this crate's public interface,
-//! and everything promised is a list of messages in the crate's design,
-//! tested with raw messages.
+//! The protocol layer is this crate's own (decision 0130): everything
+//! promised is a list of messages in the crate's design, tested with raw
+//! messages.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 7.
@@ -21,8 +20,8 @@
 mod clean;
 pub mod codes;
 mod http;
+mod protocol;
 mod proxy;
-mod sdk;
 mod settings;
 mod tools;
 

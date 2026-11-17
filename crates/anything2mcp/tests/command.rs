@@ -344,7 +344,20 @@ fn the_exit_code_follows_the_failure() {
 
 #[test]
 fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
-    let names = ["command", "data", "device", "file", "http", "mcp", "stream"];
+    let names = [
+        "command",
+        "data",
+        "device",
+        "file",
+        "http",
+        "mcp",
+        "stream",
+        "web",
+        "web_probe",
+    ];
+    // The web pack's two providers need a browser on the machine, so only
+    // the others are held to `ready` here.
+    let needs_a_program = ["web", "web_probe"];
     for off in names {
         let bare = Bare::new();
         bare.installation(&format!("[providers]\ndisabled = [\"{off}\"]\n"));
@@ -356,15 +369,31 @@ fn a_pack_that_is_switched_off_is_listed_and_registers_nothing() {
             .collect();
         assert_eq!(found, names, "every first-party pack is listed");
         for provider in &providers {
-            let is_off = provider["name"] == off;
-            assert_eq!(provider["registered"], !is_off, "{provider}");
-            assert_eq!(
-                provider["availability"],
-                if is_off { "not_enabled" } else { "ready" },
-                "{provider}"
-            );
-            assert_eq!(provider["problems"], serde_json::json!([]), "{provider}");
+            let name = provider["name"].as_str().unwrap();
+            if name == off {
+                assert_eq!(provider["registered"], false, "{provider}");
+                assert_eq!(provider["availability"], "not_enabled", "{provider}");
+                assert!(
+                    provider["fix"].as_str().unwrap().contains("provider enable"),
+                    "{provider}"
+                );
+            } else if !needs_a_program.contains(&name) {
+                assert_eq!(provider["registered"], true, "{provider}");
+                assert_eq!(provider["availability"], "ready", "{provider}");
+            }
+            // A pack that reads a kind whose owner is switched off stays,
+            // with the problem named and the way out: never a crash.
+            if off == "http" && name == "web_probe" {
+                let problem = &provider["problems"][0];
+                assert_eq!(problem["code"], "kind_owner_missing", "{provider}");
+                assert!(problem["fix"].as_str().unwrap().contains("`http`"));
+            } else {
+                assert_eq!(provider["problems"], serde_json::json!([]), "{provider}");
+            }
         }
+        // The pack is still described, from its manifest.
+        let described = object(&bare.run(&["provider", "describe", off]));
+        assert_eq!(described["result"]["name"], off, "{described}");
     }
 }
 

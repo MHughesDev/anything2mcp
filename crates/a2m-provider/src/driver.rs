@@ -149,7 +149,7 @@ impl fmt::Debug for PrepareContext<'_> {
 
 /// What `prepare` acquired: the driver's own state, opaque to the kernel.
 pub struct Prepared {
-    state: Box<dyn Any + Send + Sync>,
+    state: Box<dyn Any + Send>,
     guard: Option<Guard>,
 }
 
@@ -164,7 +164,7 @@ struct Guard {
 impl Prepared {
     /// Wraps the driver's state.
     #[must_use]
-    pub fn new<T: Any + Send + Sync>(state: T) -> Self {
+    pub fn new<T: Any + Send>(state: T) -> Self {
         Self {
             state: Box::new(state),
             guard: None,

@@ -13,7 +13,6 @@ a2m-core = { path = "../a2m-core" }
 a2m-policy = { path = "../a2m-policy" }
 axum.workspace = true
 futures-core.workspace = true
-rmcp.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 

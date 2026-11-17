@@ -1,27 +1,35 @@
-//! The endpoint: what is checked before a message reaches the SDK.
+//! The endpoint over HTTP: what is checked before a message is served,
+//! and how an answer leaves.
 //!
-//! In order: the `Host`, the HTTP method, the caller, the size of the
-//! body, that the body is JSON, that it is one request or one
-//! notification, and that the revision it names is served. Each is
-//! answered here, with a JSON-RPC error and a named failure, so that none
-//! of them depends on what the service stands on. A notification is
-//! answered here too: a stateless server has nothing to do with one.
+//! In order: the `Host`, the HTTP method, the content types, the caller,
+//! the size of the body, that the body is JSON, that it is one request or
+//! one notification, the revision it names, and the shape of a tool call.
+//! Each is answered here, with a JSON-RPC error and a named failure. A
+//! notification is answered here too: a stateless server has nothing to
+//! do with one. What passes is served by [`crate::protocol`].
+//!
+//! An answer is one JSON message, or a stream of events when the caller
+//! asked for progress. Every text in every message passes the redactor on
+//! its way out.
 
+use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::task::{Context, Poll, ready};
 
 use a2m_actions::{BuiltInToolset, Caller, CallerCredential, FrontDoor, Kernel};
-use a2m_core::{Failure, Secret};
+use a2m_core::{Failure, Redact, Secret};
 use a2m_policy::ToolsetName;
-use axum::body::Body;
-use axum::http::header::{ALLOW, AUTHORIZATION, CONTENT_TYPE, HOST};
+use axum::body::{Body, Bytes};
+use axum::http::header::{ACCEPT, ALLOW, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use serde_json::{Value as Json, json};
+use tokio::sync::mpsc;
 
-use crate::sdk::{Sdk, Verified};
 use crate::settings::{McpSettings, Revision};
 use crate::tools::Core;
-use crate::{clean, codes};
+use crate::{clean, codes, protocol};
 
 /// An HTTP request, as the endpoint takes it.
 pub type HttpRequest = Request<Body>;
@@ -30,8 +38,14 @@ pub type HttpResponse = Response<Body>;
 
 /// The header that names the revision of a request.
 pub(crate) const VERSION_HEADER: &str = "mcp-protocol-version";
+/// The header that repeats the method of a request.
+pub(crate) const METHOD_HEADER: &str = "mcp-method";
+/// The header that repeats the name of the tool, prompt, or resource.
+pub(crate) const NAME_HEADER: &str = "mcp-name";
 /// The key of the revision in a request's `_meta`.
 pub(crate) const VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
+/// The key of the client's capabilities in a request's `_meta`.
+const CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
 
 /// The path an endpoint is mounted at, and the proxy posts to.
 #[must_use]
@@ -51,12 +65,45 @@ pub struct McpPeer {
     pub label: String,
 }
 
+/// What the endpoint answers, before it is put on the wire.
+pub(crate) enum Answer {
+    /// A status and a sentence, for what is refused before a message is
+    /// read.
+    Plain(StatusCode, &'static str),
+    /// A status and no body.
+    Empty(StatusCode),
+    /// One JSON-RPC message.
+    Message(StatusCode, Json),
+    /// The messages of one request as they come: its progress, then its
+    /// response. Dropping the receiver is how the sender learns that the
+    /// caller has gone.
+    Stream(mpsc::Receiver<Json>),
+}
+
+/// The messages of a stream as server-sent events, each redacted as it
+/// passes.
+struct Events {
+    messages: mpsc::Receiver<Json>,
+    redact: Arc<dyn Redact>,
+}
+
+impl futures_core::Stream for Events {
+    type Item = Result<Bytes, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let next = ready!(self.messages.poll_recv(cx));
+        Poll::Ready(next.map(|mut message| {
+            clean::walk(self.redact.as_ref(), &mut message);
+            Ok(Bytes::from(format!("data: {message}\n\n")))
+        }))
+    }
+}
+
 /// One MCP endpoint, for one toolset. Cheap to clone; it holds no state
 /// between requests.
 #[derive(Clone)]
 pub struct McpService {
     core: Arc<Core>,
-    sdk: Sdk,
 }
 
 impl std::fmt::Debug for McpService {
@@ -90,17 +137,15 @@ impl McpService {
                     "Serve `use` or `build`.",
                 )
             })?;
-        let core = Arc::new(Core {
-            kernel,
-            toolset,
-            builtin,
-            settings: settings.checked()?,
-            dispatched: AtomicU64::new(0),
-            cancelled: tokio::sync::watch::channel(0).0,
-        });
         Ok(Self {
-            sdk: Sdk::new(Arc::clone(&core)),
-            core,
+            core: Arc::new(Core {
+                kernel,
+                toolset,
+                builtin,
+                settings: settings.checked()?,
+                dispatched: AtomicU64::new(0),
+                cancelled: tokio::sync::watch::channel(0).0,
+            }),
         })
     }
 
@@ -123,15 +168,42 @@ impl McpService {
     /// redactor on its way out, the protocol's own errors included: they
     /// can quote what the caller sent.
     pub async fn handle(&self, request: HttpRequest) -> HttpResponse {
-        let answer = self.answer(request).await;
-        clean::outgoing(self.core.kernel.redact(), answer).await
+        let redact = self.core.kernel.redact();
+        let (status, kind, body) = match self.answer(request).await {
+            Answer::Plain(status, text) => (status, "text/plain; charset=utf-8", Body::from(text)),
+            Answer::Empty(status) => {
+                let mut response = Response::new(Body::empty());
+                *response.status_mut() = status;
+                return response;
+            }
+            Answer::Message(status, mut message) => {
+                clean::walk(redact.as_ref(), &mut message);
+                (status, "application/json", Body::from(message.to_string()))
+            }
+            Answer::Stream(messages) => (
+                StatusCode::OK,
+                "text/event-stream",
+                Body::from_stream(Events { messages, redact }),
+            ),
+        };
+        let mut response = Response::new(body);
+        *response.status_mut() = status;
+        let headers = response.headers_mut();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(kind));
+        if status == StatusCode::METHOD_NOT_ALLOWED {
+            headers.insert(ALLOW, HeaderValue::from_static("POST"));
+        }
+        if kind == "text/event-stream" {
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        }
+        response
     }
 
-    async fn answer(&self, request: HttpRequest) -> HttpResponse {
+    async fn answer(&self, request: HttpRequest) -> Answer {
         let (mut parts, body) = request.into_parts();
         let settings = &self.core.settings;
         if !host_allowed(&parts.headers, &settings.allowed_hosts) {
-            return plain(
+            return Answer::Plain(
                 StatusCode::FORBIDDEN,
                 "The Host of this request is not served.",
             );
@@ -139,11 +211,27 @@ impl McpService {
         if parts.method != Method::POST {
             // No stream is opened by the server and there is no session to
             // end, so `POST` is the one method.
-            let mut response = plain(StatusCode::METHOD_NOT_ALLOWED, "Send a POST.");
-            response
-                .headers_mut()
-                .insert(ALLOW, HeaderValue::from_static("POST"));
-            return response;
+            return Answer::Plain(StatusCode::METHOD_NOT_ALLOWED, "Send a POST.");
+        }
+        if !header_says(&parts.headers, CONTENT_TYPE.as_str(), &["application/json"]) {
+            return Answer::Plain(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Send the message as application/json.",
+            );
+        }
+        // An answer is one JSON message or a stream of events, and the
+        // caller must take either.
+        if !header_says(&parts.headers, ACCEPT.as_str(), &["*/*"])
+            && !header_says(
+                &parts.headers,
+                ACCEPT.as_str(),
+                &["application/json", "text/event-stream"],
+            )
+        {
+            return Answer::Plain(
+                StatusCode::NOT_ACCEPTABLE,
+                "Accept both application/json and text/event-stream.",
+            );
         }
         let caller = match self.caller(&mut parts).await {
             Ok(caller) => caller,
@@ -158,7 +246,7 @@ impl McpService {
             }
         };
         let Ok(bytes) = axum::body::to_bytes(body, settings.max_request_bytes).await else {
-            return plain(StatusCode::PAYLOAD_TOO_LARGE, "The request is too large.");
+            return Answer::Plain(StatusCode::PAYLOAD_TOO_LARGE, "The request is too large.");
         };
         let Ok(message) = serde_json::from_slice::<Json>(&bytes) else {
             return malformed(codes::PARSE_ERROR, &Json::Null, "The body is not JSON.");
@@ -177,7 +265,7 @@ impl McpService {
         };
         let id = match message.get("id") {
             // A notification. Nothing is owed and nothing is kept.
-            None => return empty(StatusCode::ACCEPTED),
+            None => return Answer::Empty(StatusCode::ACCEPTED),
             Some(id) if id.is_string() || id.is_i64() || id.is_u64() => id,
             Some(_) => {
                 return malformed(
@@ -187,9 +275,17 @@ impl McpService {
                 );
             }
         };
-        if let Some(refused) = self.revision_rule(&mut parts.headers, &message, method, id) {
-            return refused;
+        if message.get("params").is_some_and(|given| !given.is_object()) {
+            return malformed(
+                codes::INVALID_PARAMS,
+                id,
+                "A request's parameters are an object.",
+            );
         }
+        let stateless = match self.revision_rule(&parts.headers, &message, method, id) {
+            Ok(stateless) => stateless,
+            Err(refused) => return refused,
+        };
         // The one method that reaches the dispatcher with a caller's
         // input: its parameters have their shape before anything else
         // reads them.
@@ -205,16 +301,14 @@ impl McpService {
                 "A tool call names its tool as text and gives its arguments as an object.",
             );
         }
-        parts.extensions.insert(Verified(caller));
-        self.sdk
-            .handle(Request::from_parts(parts, Body::from(bytes)))
-            .await
+        protocol::serve(&self.core, caller, &message, method, id, stateless).await
     }
 
     /// The caller of a request: one the mount already had checked, the
     /// peer the channel saw, or the bearer token of a server's caller. The
-    /// kernel checks the last two; this build's kernel refuses every token. The token is taken out of the request,
-    /// so nothing after this point can log it.
+    /// kernel checks the last two; this build's kernel refuses every
+    /// token. The token is taken out of the request first, so nothing
+    /// after this point can read it.
     async fn caller(
         &self,
         parts: &mut axum::http::request::Parts,
@@ -275,16 +369,15 @@ impl McpService {
         Ok(caller)
     }
 
-    /// How a revision is agreed (decision 0071), for the parts that must
-    /// not depend on the SDK. Returns the refusal, or nothing when the
-    /// request goes on.
+    /// How a revision is agreed (decision 0071). Returns whether the
+    /// request is of the stateless revision, or the refusal.
     fn revision_rule(
         &self,
-        headers: &mut HeaderMap,
+        headers: &HeaderMap,
         message: &Json,
         method: &str,
         id: &Json,
-    ) -> Option<HttpResponse> {
+    ) -> Result<bool, Answer> {
         let settings = &self.core.settings;
         let unserved = |requested: &str| {
             let supported: Vec<&str> = settings.revisions.iter().map(|r| r.as_str()).collect();
@@ -296,67 +389,102 @@ impl McpService {
                 Some(json!({"supported": supported, "requested": requested})),
             )
         };
+        let missing = |what: &str| {
+            let sentence = format!("The request's `_meta` does not hold `{what}`.");
+            rpc_error(
+                StatusCode::BAD_REQUEST,
+                id,
+                codes::INVALID_PARAMS,
+                &sentence,
+                Some(codes::failure_data(&codes::input(
+                    codes::SCHEMA_INVALID,
+                    sentence.clone(),
+                    format!(
+                        "Send `{VERSION_KEY}` and `{CAPABILITIES_KEY}` in `params._meta`, as revision {} asks.",
+                        Revision::Stateless.as_str()
+                    ),
+                ))),
+            )
+        };
+        let mismatch = |header: &str| {
+            rpc_error(
+                StatusCode::BAD_REQUEST,
+                id,
+                codes::HEADER_MISMATCH,
+                &format!("The `{header}` header does not say what the body says."),
+                None,
+            )
+        };
         // A client that speaks both revisions falls back to the handshake
         // when discovery is an unknown method, so this comes first.
         if method == "server/discover" && !settings.serves(Revision::Stateless) {
-            return Some(rpc_error(
-                StatusCode::OK,
-                id,
-                codes::METHOD_NOT_FOUND,
-                "server/discover",
-                None,
-            ));
+            return Err(protocol::unknown_method(id));
         }
         let served = |text: &str| Revision::parse(text).is_some_and(|r| settings.serves(r));
-        let in_header = headers
-            .get(VERSION_HEADER)
-            .map(|value| value.to_str().unwrap_or("").to_owned());
+        let header = |name: &str| {
+            headers
+                .get(name)
+                .map(|value| value.to_str().unwrap_or("").to_owned())
+        };
+        let in_header = header(VERSION_HEADER);
         if let Some(text) = in_header.as_deref().filter(|text| !served(text)) {
-            return Some(unserved(text));
+            return Err(unserved(text));
         }
-        let in_body = message
-            .pointer("/params/_meta")
+        let meta = message.pointer("/params/_meta");
+        let in_body = meta
             .and_then(|meta| meta.get(VERSION_KEY))
             .and_then(Json::as_str);
         if let Some(text) = in_body.filter(|text| !served(text)) {
-            return Some(unserved(text));
+            return Err(unserved(text));
         }
-        match method {
-            "initialize" if !settings.serves(Revision::Handshake) => {
+        if method == "initialize" {
+            // The handshake names its revision in its own parameters, and
+            // is answered from settings.
+            if !settings.serves(Revision::Handshake) {
                 let requested = message
                     .pointer("/params/protocolVersion")
                     .and_then(Json::as_str)
                     .unwrap_or(Revision::Handshake.as_str());
-                Some(unserved(requested))
+                return Err(unserved(requested));
             }
-            "initialize" | "server/discover" => None,
-            _ if in_body.is_some() => None,
-            // A request that names no revision in its body is of the
-            // handshake revision.
-            _ if settings.serves(Revision::Handshake) => {
-                if in_header.is_none() {
-                    headers.insert(
-                        VERSION_HEADER,
-                        HeaderValue::from_static(Revision::Handshake.as_str()),
-                    );
-                }
-                None
-            }
-            _ => Some(rpc_error(
-                StatusCode::BAD_REQUEST,
-                id,
-                codes::INVALID_PARAMS,
-                "The request's _meta does not name its protocol version.",
-                Some(codes::failure_data(&codes::input(
-                    codes::SCHEMA_INVALID,
-                    "The request's `_meta` does not name its protocol version.",
-                    format!(
-                        "Send `{VERSION_KEY}` in `params._meta`; this server serves {}.",
-                        Revision::Stateless.as_str()
-                    ),
-                ))),
-            )),
+            return Ok(false);
         }
+        let Some(named) = in_body else {
+            // A request that names no revision in its body is of the
+            // handshake revision, when that is served and nothing says
+            // otherwise.
+            let stateless_asked = method == "server/discover"
+                || in_header.as_deref() == Some(Revision::Stateless.as_str());
+            if stateless_asked || !settings.serves(Revision::Handshake) {
+                return Err(missing(VERSION_KEY));
+            }
+            return Ok(false);
+        };
+        // A request that names its revision says the same in its headers.
+        if in_header.as_deref() != Some(named) {
+            return Err(mismatch(VERSION_HEADER));
+        }
+        if header(METHOD_HEADER).is_some_and(|said| said != method) {
+            return Err(mismatch(METHOD_HEADER));
+        }
+        let name = match method {
+            "tools/call" | "prompts/get" => message.pointer("/params/name"),
+            "resources/read" => message.pointer("/params/uri"),
+            _ => None,
+        }
+        .and_then(Json::as_str);
+        if header(NAME_HEADER).is_some_and(|said| Some(said.as_str()) != name) {
+            return Err(mismatch(NAME_HEADER));
+        }
+        let stateless = named == Revision::Stateless.as_str();
+        if stateless
+            && !meta
+                .and_then(|meta| meta.get(CAPABILITIES_KEY))
+                .is_some_and(Json::is_object)
+        {
+            return Err(missing(CAPABILITIES_KEY));
+        }
+        Ok(stateless)
     }
 
     /// Told each time a call stops waiting because its caller went away.
@@ -393,46 +521,49 @@ fn host_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
         .any(|entry| entry.eq_ignore_ascii_case(&host) || entry.eq_ignore_ascii_case(name))
 }
 
-fn plain(status: StatusCode, text: &'static str) -> HttpResponse {
-    let mut response = Response::new(Body::from(text));
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    response
+/// Whether the header `name` lists every one of `types`.
+fn header_says(headers: &HeaderMap, name: &str, types: &[&str]) -> bool {
+    let said: Vec<String> = headers
+        .get_all(name)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|part| {
+            part.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
+        .collect();
+    types
+        .iter()
+        .all(|wanted| said.iter().any(|part| part == wanted))
 }
 
-fn empty(status: StatusCode) -> HttpResponse {
-    let mut response = Response::new(Body::empty());
-    *response.status_mut() = status;
-    response
-}
-
-/// A JSON-RPC error as an HTTP response.
+/// A JSON-RPC error as an answer.
 pub(crate) fn rpc_error(
     status: StatusCode,
     id: &Json,
     code: i64,
     message: &str,
     data: Option<Json>,
-) -> HttpResponse {
+) -> Answer {
+    Answer::Message(status, error_message(id, code, message, data))
+}
+
+/// A JSON-RPC error as a message.
+pub(crate) fn error_message(id: &Json, code: i64, message: &str, data: Option<Json>) -> Json {
     let mut error = json!({"code": code, "message": message});
     if let Some(data) = data {
         error["data"] = data;
     }
-    let body = json!({"jsonrpc": "2.0", "id": id, "error": error}).to_string();
-    let mut response = Response::new(Body::from(body));
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
+    json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
 /// The answer to a message that is not well formed: the JSON-RPC error,
-/// and the one failure this crate adds, `input`/`schema_invalid`.
-fn malformed(code: i64, id: &Json, message: &str) -> HttpResponse {
+/// and the failure this crate adds, `input`/`schema_invalid`.
+fn malformed(code: i64, id: &Json, message: &str) -> Answer {
     let failure = codes::input(
         codes::SCHEMA_INVALID,
         message,

@@ -1,6 +1,9 @@
 # Throwaway. Package 8.1: could case 28 be one Rust program on all three
 # systems? egui draws its own widgets and publishes their accessibility tree
 # through AccessKit (UI Automation, NSAccessibility, AT-SPI).
+# Built without `default_fonts`: its fonts are under OFL-1.1 and a font licence,
+# neither on the closed list. The tree is still published (seen on Linux);
+# whether the text is drawn was not looked at.
 [package]
 name = "spike-desktop-stand-egui"
 version = "0.0.0"
@@ -11,4 +14,4 @@ license = "MIT"
 [workspace]
 
 [dependencies]
-eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11"] }
+eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "glow", "x11"] }

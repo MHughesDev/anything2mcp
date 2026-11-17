@@ -178,4 +178,4 @@ actions [Action { name: "click", description: "", keybinding: "" }]
 invoke confirm_ms 4 via property-change (accessible-name Name("Saved"))
 store {"writes": 1, "description": "Hinge, steel", "quantity": "4", "taxable": false}
 no_event ends_err true after_ms 5001
---- note: the switch is the person's setting org.gnome.desktop.interface toolkit-accessibility, kept in their dconf database; it stayed on after the bus ended, and was reset afterwards
+--- note: the switch is the person's desktop setting `toolkit-accessibility`, kept in their settings database; it stayed on after the bus ended, and was reset afterwards

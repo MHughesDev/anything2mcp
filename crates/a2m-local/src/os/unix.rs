@@ -23,8 +23,8 @@ const SOCKET_MODE: u32 = 0o600;
 /// The mode bits of everyone but the owner.
 const OTHERS: u32 = 0o077;
 
-/// The user this process runs as, as the text of its user id.
-#[allow(clippy::unnecessary_wraps)] // the same signature as on Windows, where the call can fail
+/// The user this process runs as, as the text of its user id. It cannot
+/// fail here; the signature is the one Windows needs, where it can.
 pub(crate) fn current_user() -> io::Result<String> {
     Ok(rustix::process::getuid().as_raw().to_string())
 }
