@@ -397,4 +397,13 @@ pub trait Control: Send + Sync {
     ) -> Option<Arc<dyn a2m_provider::OtherRecords>> {
         None
     }
+
+    /// What one step of a `Try` job that only reads observed: its values,
+    /// or `None` for a record it found absent. Told as each such step
+    /// ends, in order, so that a control plane recording a fixture from a
+    /// trial has every answer in the form a replay gives it back (decision
+    /// 0196). The values are the system's: a control plane keeps them in
+    /// memory only, scrubs them, and stores none of them as they are.
+    /// Nothing by default.
+    fn step_observed(&self, _step: &a2m_core::Step, _observed: Option<&Values>) {}
 }

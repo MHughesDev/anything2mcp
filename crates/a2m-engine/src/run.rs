@@ -27,7 +27,7 @@ use crate::compare::Field;
 use crate::control::{Control, EngineEvent, KeptCapture, PassedOver, SessionWant};
 use crate::engine::Engine;
 use crate::guard::caught;
-use crate::job::{Directive, JobSpec, KernelHealth};
+use crate::job::{Directive, JobKind, JobSpec, KernelHealth};
 use crate::loaded::{Loaded, Scope};
 
 /// Why the work on a job stopped before its end.
@@ -832,6 +832,18 @@ impl<'a> Run<'a> {
                 }
             };
             let took = self.engine.deps.clock.elapsed().saturating_sub(started);
+            // A trial tells its control plane what each step that only
+            // reads observed, for a fixture to be recorded from it
+            // (decision 0196). Nothing that commits, and no other job.
+            if self.job.kind == JobKind::Try && !cx.step.commits {
+                match &result {
+                    Ok(StepOutcome::Done(observed)) => {
+                        self.control.step_observed(cx.step, Some(&observed.values));
+                    }
+                    Ok(StepOutcome::Absent(_)) => self.control.step_observed(cx.step, None),
+                    Err(_) => {}
+                }
+            }
             let artifacts = self.keep_captures(&cx, &result).await;
             self.traced(&cx, &result, took, artifacts);
             match result {

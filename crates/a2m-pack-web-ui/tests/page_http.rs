@@ -681,6 +681,21 @@ fn a_page_http_binding_on_an_operation_that_writes_is_refused_by_name() {
         "{}",
         shown(&problems)
     );
+    // A page request whose path holds a word of an action is refused: a
+    // GET there may act.
+    let problems = compile_drafts(
+        &stand,
+        &folder,
+        &report,
+        "page_requests/api_orders_totals.yaml",
+        |text| text.replace("/totals\"", "/purge\""),
+    )
+    .unwrap_err();
+    assert!(
+        shown(&problems).contains("web.request_path_invalid"),
+        "{}",
+        shown(&problems)
+    );
     // A write verb is not one the mode serves.
     let problems = compile_drafts(&stand, &folder, &report, path, |text| {
         text.replace("verb: \"read\"", "verb: \"update\"")

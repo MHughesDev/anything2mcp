@@ -198,4 +198,8 @@ impl Control for Timed<'_> {
     ) -> Option<std::sync::Arc<dyn a2m_provider::OtherRecords>> {
         self.inner.other_records(operation, asking)
     }
+
+    fn step_observed(&self, step: &a2m_core::Step, observed: Option<&a2m_core::Values>) {
+        self.inner.step_observed(step, observed);
+    }
 }

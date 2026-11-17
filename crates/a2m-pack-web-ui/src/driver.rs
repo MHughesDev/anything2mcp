@@ -1817,6 +1817,9 @@ mod tests {
             Some(text("a\u{0}b")),
             Some(text("a\nb")),
             Some(text("\u{e9}")),
+            // A word of an action, which a sibling route could act on.
+            Some(text("purge")),
+            Some(text("export-cancel")),
             Some(Value::Bool(true)),
             None,
         ] {

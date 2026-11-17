@@ -29,6 +29,7 @@ What was looked up while designing Anything2MCP, what it found, and how far each
 | [23-server-database-clients.md](23-server-database-clients.md) | Client crates for Postgres, MySQL, and SQL Server beside the embedded store, for the ledger and the data pack | Completed; registry, source, and licence trees checked, nothing compiled or run |
 | [24-turning-tls-on.md](24-turning-tls-on.md) | What it takes to switch TLS on across the workspace: the panic, the options, the cost, the server side, trust roots | Completed; the repository and the crates' source read, licence trees checked, nothing compiled or run |
 | [25-webmcp-standard-status.md](25-webmcp-standard-status.md) | The state of the WebMCP draft and whether the engine can call a site's tools through the DevTools protocol | Completed; the draft's repository read, the protocol run against one Chrome build on Linux only |
+| [26-desktop-pack-before-it-is-built.md](26-desktop-pack-before-it-is-built.md) | What the desktop pack needs before it is built: each operating system's accessibility interface, the crates, a test stand that runs in CI, the product's rules applied to a desktop application, and the first slice | Completed; sources and registries read, nothing compiled or run; builds on note 19 |
 
 ## How to read the status
 
