@@ -16,7 +16,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 1 (Browser engine base)
 
-**Mostly touches.** w2m-core, w2m-files, the workspace skeleton, the test application, bench
+**Mostly touches.** a2m-core, a2m-files, the workspace skeleton, the test application, bench
 
 ## Phase 1: Solo read path
 
@@ -30,7 +30,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 2 (MCP features and dual-revision serving); brief 3 (Locators and hard widgets on the DevTools protocol); brief 11 (File-format prior art); brief 26 (Local channel on three operating systems); brief 28 (Wheel and npm packaging, verified hands-on)
 
-**Mostly touches.** w2m-core, w2m-files, w2m-expr, w2m-engine, w2m-browser, w2m-driver-ui, w2m-actions, w2m-local, w2m-mcp, w2m-telemetry, web2mcp
+**Mostly touches.** a2m-core, a2m-files, a2m-expr, a2m-engine, a2m-pack-web-browser, a2m-pack-web-ui, a2m-actions, a2m-local, a2m-mcp, a2m-telemetry, anything2mcp
 
 **Actions built.** `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.trace`, `screen.snapshot`, `draft.lint`, `plan.show`, `engine.status`, `engine.start`, `engine.stop`, `engine.logs`, `config.show`, `browser.install`, `trace.show`, `trace.export`
 
@@ -46,7 +46,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 4 (Session persistence and Entra session rules); brief 5 (Vault design per operating system); brief 6 (Web sign-in methods and auto-detection); brief 30 (Sign-in in engine-owned profiles, and device-bound sessions)
 
-**Mostly touches.** w2m-auth, w2m-vault
+**Mostly touches.** a2m-auth, a2m-vault
 
 **Actions built.** `session.status`, `session.login`, `session.revoke`, `auth.detect`, `secret.set`, `doctor.run`
 
@@ -62,7 +62,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 7 (Durable execution and idempotency); brief 8 (Human approval patterns); brief 12 (Testing against third-party apps); brief 21 (Lessons from RPA products); brief 27 (Operating-system user-presence checks); brief 31 (Cedar spike)
 
-**Mostly touches.** w2m-ledger, w2m-policy, w2m-sources, w2m-sched
+**Mostly touches.** a2m-ledger, a2m-policy, a2m-sources, a2m-sched
 
 **Actions built.** `run.list`, `run.resume`, `run.cancel`, `test.run`, `fixture.record`, `killswitch.set`, `config.set`
 
@@ -78,7 +78,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 9 (Network channel practice and endpoint inference)
 
-**Mostly touches.** w2m-driver-http, w2m-probe
+**Mostly touches.** a2m-pack-http, a2m-pack-web-probe
 
 **Actions built.** `capture.start`, `capture.stop`, `endpoints.infer`, `spec.import`, `shadow.report`, `binding.promote`
 
@@ -94,7 +94,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 10 (AI discovery turned into deterministic steps); brief 29 (Command-line design for agents)
 
-**Mostly touches.** w2m-actions, bindings/python, bindings/typescript, the release pipeline
+**Mostly touches.** a2m-actions, bindings/python, bindings/typescript, the release pipeline
 
 **Actions built.** `target.add`, `target.probe`, `target.status`, `target.list`, `draft.read`, `draft.write`, `draft.try`, `version.diff`, `publish.request`, `version.publish`, `version.rollback`, `client.connect`, `action.search`, `action.describe`, `action.run`, `docs.get`
 
@@ -110,7 +110,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 13 (Local and remote MCP transport security); brief 14 (Prompt injection and MCP-specific threats); brief 15 (Enterprise governance of agent tools); brief 16 (Hosted-agent compatibility, hands-on)
 
-**Mostly touches.** w2m-api, w2m-mcp, w2m-policy, web/console
+**Mostly touches.** a2m-api, a2m-mcp, a2m-policy, web/console
 
 **Actions built.** `version.activate`, `version.bundle`, `version.import`, `toolset.create`, `toolset.update`, `toolset.list`, `grant.add`, `grant.remove`, `grant.list`, `policy.publish`, `policy.test`, `policy.explain`, `session.list`, `session.end`, `audit.query`
 
@@ -126,7 +126,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 17 (Remote sign-in to a server-hosted browser); brief 18 (Deployment and scaling patterns)
 
-**Mostly touches.** w2m-runner, w2m-sched, w2m-auth
+**Mostly touches.** a2m-runner, a2m-sched, a2m-auth
 
 **Actions built.** `runner.enroll`, `runner.list`, `runner.drain`, `runner.revoke`, `delegation.grant`, `delegation.revoke`, `delegation.list`
 
@@ -142,7 +142,7 @@ For every phase, also read [AGENTS.md](../../AGENTS.md), the [glossary](../refer
 
 **Research to run first.** brief 19 (Desktop accessibility automation); brief 24 (WebMCP standard status)
 
-**Mostly touches.** w2m-driver-desktop, w2m-driver-mcp, w2m-driver-ui, plugins, profiles
+**Mostly touches.** a2m-pack-desktop, a2m-pack-mcp, a2m-pack-web-ui, plugins, profiles
 
 **Actions built.** `plugin.install`, `plugin.list`
 

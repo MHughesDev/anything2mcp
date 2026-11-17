@@ -1,6 +1,6 @@
 # The test application
 
-An imaginary order-entry system named `example`. Web2MCP is proven against this application and never against a real one. The plan for it, and the list of cases it must imitate, is in [docs/plan/test-application.md](../../docs/plan/test-application.md). Cases 1 to 4 are built.
+An imaginary order-entry system named `example`. Anything2MCP is proven against this application and never against a real one. The plan for it, and the list of cases it must imitate, is in [docs/plan/test-application.md](../../docs/plan/test-application.md). Cases 1 to 4 are built.
 
 ## Running it
 

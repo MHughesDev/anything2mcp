@@ -1,6 +1,6 @@
 # 0018. License: Apache-2.0
 
-**Status:** Accepted. Decided in the system design; the owner delegated these choices.
+**Status:** Superseded by [0057](0057-the-licence-is-mit.md) on 2026-11-17. Was: Accepted. Decided in the system design; the owner delegated these choices.
 
 **Date:** 2026-11-15
 

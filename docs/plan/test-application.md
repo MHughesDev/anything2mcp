@@ -1,10 +1,10 @@
 # The test application and the driver conformance suite
 
-Web2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Phase 0 builds the first part of both; later phases add to them.
+Anything2MCP is never tested against a real business application. Everything is proven against one purpose-built application that imitates the hard cases, and against a fixed list of behaviors every interface driver must pass. Phase 0 builds the first part of both; later phases add to them.
 
 ## Principles
 
-- **Ground truth comes from the application, not from Web2MCP.** The test application has a control interface that reports what it has actually stored. A test that asks "was the record written once?" asks the application, never Web2MCP's own read path.
+- **Ground truth comes from the application, not from Anything2MCP.** The test application has a control interface that reports what it has actually stored. A test that asks "was the record written once?" asks the application, never Anything2MCP's own read path.
 - **Every fault can be switched on.** Slow responses, dropped connections, conflicts, and blocks are settings of the test application, so a failure is reproduced on demand.
 - **It names no real product.** It is an imaginary order-entry application, the same `example` target used throughout the documents.
 - **It is ordinary and small.** A Rust web server with plain pages and no build step for the first cases. Pages written with particular front-end frameworks are added in Phase 8, where each framework's behavior is the thing under test.
@@ -23,7 +23,7 @@ Available only in the test application, under its own path.
 
 ## Cases
 
-Each case exists because of a named risk. *Phase* is when Web2MCP must pass it.
+Each case exists because of a named risk. *Phase* is when Anything2MCP must pass it.
 
 | # | The application does this | Risk it exercises | Phase |
 | --- | --- | --- | --- |
@@ -46,7 +46,7 @@ Each case exists because of a named risk. *Phase* is when Web2MCP must pass it.
 | 17 | Commits a write and then drops the connection before answering | `possible_commit` and reconcile | 3 |
 | 18 | Assigns the identifier on create, with and without a spare reference field | Identity strategies: `stamped` and `find` | 3 |
 | 19 | Has a header with lines, saved separately, and another saved in one request | Dependent records; one commit point with nested records | 3 |
-| 20 | Creates a duplicate if the same create is sent twice | That Web2MCP never sends it twice | 3 |
+| 20 | Creates a duplicate if the same create is sent twice | That Anything2MCP never sends it twice | 3 |
 | 21 | Lets a second user change a record between preview and write | `changed_since_preview` | 3 |
 | 22 | Computes a value in the browser before saving, and signs a request in the browser | Endpoint mining stopping at shadow; the HTTP binding marked unsupported | 4 |
 | 23 | Answers with a rate-limit status, a challenge page, or a maintenance page when told to | `edge_blocked` and surface health; no retry | 4 |

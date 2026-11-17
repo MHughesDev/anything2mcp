@@ -15,7 +15,7 @@ The policy engine is the one place that decides whether something may happen. Fr
 
 Authorization decisions are evaluated with Cedar, an open-source policy language whose engine is a Rust crate. Its semantics are the first two properties above: a request is denied unless a permit applies, and a single matching forbid denies it. Its documentation describes forbid policies as guardrails that permit policies cannot cross ([research note 14](../research/14-sessions-and-policy-engines.md)). Using it means the hardest part, the meaning of overlapping rules, is specified and tested by someone else.
 
-**One caution, handled.** Cedar skips a policy whose evaluation raises an error. A skipped forbid would fail open. Web2MCP therefore validates every policy against its schema before the policy set can be published, which rules out the type errors that cause skips, and treats any evaluation error reported with a decision as a denial.
+**One caution, handled.** Cedar skips a policy whose evaluation raises an error. A skipped forbid would fail open. Anything2MCP therefore validates every policy against its schema before the policy set can be published, which rules out the type errors that cause skips, and treats any evaluation error reported with a decision as a denial.
 
 Whether Cedar's size and speed fit the budgets below is to be confirmed by a spike before Phase 6. If it does not fit, the fallback is a small in-house matcher with the same two semantics, behind the same interface.
 
@@ -50,7 +50,7 @@ Because tools sit inside modules inside targets, one grant on a target covers ev
 
 | Layer | Written by | Can it be overridden? |
 | --- | --- | --- |
-| Built-in guardrails | Web2MCP | No. They are forbids |
+| Built-in guardrails | Anything2MCP | No. They are forbids |
 | Organization | Administrators | No lower layer can permit what it forbids |
 | Workspace | Workspace administrators | The same, within the workspace |
 | Toolset | Whoever defines the toolset | Narrows only |
@@ -109,7 +109,7 @@ Reads stop after step 6 and go straight to step 10.
 ## Explaining a decision
 
 - Every decision is stored: who asked, what for, the answer, the rules that determined it, and the policy version.
-- `web2mcp policy explain` shows why a past call was allowed or denied.
+- `anything2mcp policy explain` shows why a past call was allowed or denied.
 - "What could this person do?" and "who can call this tool?" are answered by running the questions over the catalog, without waiting for a real call.
 - A denial tells the caller the code and what to ask for, never the content of the rules.
 

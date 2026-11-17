@@ -4,18 +4,29 @@ This file holds the engineering detail behind the [system design](../spec/README
 
 ## Crate layering
 
-Crates depend only downward, which keeps build times short and the core small. A crate may depend on crates in lower layers only, never on one in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge ([decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md)).
+Crates depend only downward, which keeps build times short and the core small. A crate may depend only on the layers its row names, never on a crate in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge ([decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md), [decision 0056](../decisions/0056-one-name-everywhere-anything2mcp.md)).
+
+Layers 1 to 6 are the kernel. Layers 7 and 8 are the packs ([spec section 55](../spec/55-kernel-and-packs.md)).
 
 | Layer | Crates | May depend on |
 | --- | --- | --- |
-| 1. Types | `w2m-core` | Nothing internal |
-| 2. Foundations | `w2m-files`, `w2m-expr`, `w2m-vault`, `w2m-telemetry` | Layer 1 |
-| 3. Services | `w2m-ledger`, `w2m-policy`, `w2m-auth`, `w2m-sources`, `w2m-browser` | Layers 1 to 2 |
-| 4. Drivers | `w2m-driver-ui`, `w2m-driver-http`, `w2m-driver-mcp`, `w2m-driver-desktop` | Layers 1 to 3 |
-| 5. Engine | `w2m-engine`, `w2m-sched`, `w2m-probe` | Layers 1 to 4 |
-| 6. Actions | `w2m-actions` | Layers 1 to 5 |
-| 7. Roles | `w2m-runner`, `w2m-mcp`, `w2m-api`, `w2m-local` | Layers 1 to 6 |
-| 8. Product | `web2mcp` | Everything |
+| 1. Types | `a2m-core` | Nothing internal |
+| 2. Foundations | `a2m-files`, `a2m-expr`, `a2m-vault`, `a2m-telemetry` | Layer 1 |
+| 3. Services | `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sources`, `a2m-provider` | Layers 1 to 2 |
+| 4. Engine | `a2m-engine`, `a2m-sched` | Layers 1 to 3 |
+| 5. Actions | `a2m-actions` | Layers 1 to 4 |
+| 6. Roles | `a2m-runner`, `a2m-mcp`, `a2m-api`, `a2m-local` | Layers 1 to 5 |
+| 7. Pack bases | `a2m-pack-web-browser` | Layers 1 to 3 |
+| 8. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop` | Layers 1 to 3, and the base of its own pack |
+| 9. Product | `anything2mcp` | Everything |
+
+Three rules follow from the table, and the audit states each one by name when it is broken:
+
+- **A kernel crate never depends on a pack crate.** The engine reaches a driver through the registry in `a2m-provider`, never by naming a pack.
+- **A pack crate sees only the kernel's first three layers.** It cannot call the engine, the scheduler, the action registry, or a front door. It registers what it offers and is called.
+- **A pack crate depends on another pack crate only when that crate is the base of its own pack.** The pack is the third word of the name: `a2m-pack-web-ui` may use `a2m-pack-web-browser`, and `a2m-pack-http` may not.
+
+Only the product crate names packs, and it does nothing else with them than hand them to the registry.
 
 ## Driver interface
 
@@ -180,7 +191,7 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 
 ## Command line
 
-Every action in the [action catalog](action-catalog.md) is a command of the form `web2mcp <noun> <verb>`, with a matching MCP tool, REST route, and SDK method. The nouns are `tool`, `run`, `session`, `target`, `auth`, `screen`, `capture`, `endpoints`, `spec`, `draft`, `test`, `fixture`, `shadow`, `plan`, `version`, `publish`, `binding`, `toolset`, `grant`, `policy`, `runner`, `killswitch`, `audit`, `secret`, `vault`, `delegation`, `engine`, `config`, `doctor`, `browser`, `plugin`, `client`, `trace`, `action`, `docs`, `self`, `provider`, `component`, `discover`, `finding`, and `unknown`.
+Every action in the [action catalog](action-catalog.md) is a command of the form `anything2mcp <noun> <verb>`, with a matching MCP tool, REST route, and SDK method. The nouns are `tool`, `run`, `session`, `target`, `auth`, `screen`, `capture`, `endpoints`, `spec`, `draft`, `test`, `fixture`, `shadow`, `plan`, `version`, `publish`, `binding`, `toolset`, `grant`, `policy`, `runner`, `killswitch`, `audit`, `secret`, `vault`, `delegation`, `engine`, `config`, `doctor`, `browser`, `plugin`, `client`, `trace`, `action`, `docs`, `self`, `provider`, `component`, `discover`, `finding`, `unknown`, and `scout`.
 
 | Kind | Commands |
 | --- | --- |
@@ -197,7 +208,7 @@ On a local machine no command approves a write; see spec section 39. On a server
 | Success | `{"ok": true, "action", "result", "warnings", "next"}` |
 | Failure | `{"ok": false, "error": {"code", "class", "message", "fix"}}` |
 | Exit codes | 0 success; 1 action failed; 2 malformed command; 3 a person is needed; 4 engine unreachable |
-| Large results | Written under `.web2mcp/out/`; the result carries path, size, and summary |
+| Large results | Written under `.anything2mcp/out/`; the result carries path, size, and summary |
 | Prompts | None when output is not a terminal |
 
 ## Local channel
@@ -213,7 +224,7 @@ On a local machine no command approves a write; see spec section 39. On a server
 
 ## On-disk layout
 
-Each operating system's own conventions are followed. `W2M_HOME` overrides all of them with one directory. Exact paths are confirmed when the paths module is written in Phase 1.
+Each operating system's own conventions are followed. `A2M_HOME` overrides all of them with one directory. Exact paths are confirmed when the paths module is written in Phase 1.
 
 | What | Windows | macOS | Linux |
 | --- | --- | --- | --- |

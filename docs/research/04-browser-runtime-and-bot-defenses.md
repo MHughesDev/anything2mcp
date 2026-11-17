@@ -42,4 +42,4 @@
 
 ## Note on the Rust engine
 
-These findings describe Playwright-based services. Web2MCP's browser engine speaks the DevTools protocol directly from Rust (see [09-rust-building-blocks.md](09-rust-building-blocks.md)). The lifecycle lessons carry over; the specific flags and behaviors must be re-verified against the chosen engine.
+These findings describe Playwright-based services. Anything2MCP's browser engine speaks the DevTools protocol directly from Rust (see [09-rust-building-blocks.md](09-rust-building-blocks.md)). The lifecycle lessons carry over; the specific flags and behaviors must be re-verified against the chosen engine.

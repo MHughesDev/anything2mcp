@@ -1,0 +1,11 @@
+[package]
+name = "a2m-pack-web-browser"
+description = "The web pack's base: the DevTools-protocol browser engine that locates, acts, waits, and watches the network."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

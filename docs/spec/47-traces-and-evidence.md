@@ -1,6 +1,6 @@
 # 47. Traces and evidence
 
-Everything Web2MCP claims about a run has to be checkable afterwards, and several parts of the system consume that record: the publish gates, the repair loop, shadow comparison, and people investigating a problem. This section defines what is captured, in what form, how secrets are kept out of it, and how it connects to outside monitoring. It extends [section 28](28-observability-audit-and-repair.md).
+Everything Anything2MCP claims about a run has to be checkable afterwards, and several parts of the system consume that record: the publish gates, the repair loop, shadow comparison, and people investigating a problem. This section defines what is captured, in what form, how secrets are kept out of it, and how it connects to outside monitoring. It extends [section 28](28-observability-audit-and-repair.md).
 
 ## Three layers
 
@@ -61,21 +61,21 @@ A test in CI plants a known secret in the test application's traffic and fails i
 - **Step trace:** JSON Lines, one record per step, with a published schema.
 - **Network exchanges:** a subset of the HAR format, so existing viewers open them.
 - **Snapshots:** the compact accessibility snapshot the authoring tools already produce.
-- **Export:** `web2mcp trace export` writes one archive with a manifest, for attaching to a bug report.
-- **Viewing:** `web2mcp trace show` in a terminal, and a page in the admin console.
+- **Export:** `anything2mcp trace export` writes one archive with a manifest, for attaching to a bug report.
+- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console.
 - **For agents:** the trace tool returns a summary and resource links. A whole trace is never returned inline.
 
 ## Logs
 
-The engine also writes ordinary logs for operating it: structured, one JSON object per line, with levels, rotated by size, and passed through the same redactor. Logs say what the engine did as a program. They are never the record of a run; that is the ledger and the trace. `web2mcp engine logs` shows them.
+The engine also writes ordinary logs for operating it: structured, one JSON object per line, with levels, rotated by size, and passed through the same redactor. Logs say what the engine did as a program. They are never the record of a run; that is the ledger and the trace. `anything2mcp engine logs` shows them.
 
 ## Connecting to outside monitoring
 
 Export through OpenTelemetry is optional and off by default on a local machine.
 
 - Each MCP call produces a span that follows OpenTelemetry's semantic conventions for MCP: the span is named for the method and the tool, and carries the method name and the tool name as attributes. Those conventions are still marked as in development, so the names may change ([research note 15](../research/15-traces-and-key-stores.md)).
-- Trace context sent by the calling agent in the request's metadata is honored, so the agent's trace and Web2MCP's join into one.
-- Steps appear as child spans with Web2MCP's own attributes: mode, binding, and failure class.
+- Trace context sent by the calling agent in the request's metadata is honored, so the agent's trace and Anything2MCP's join into one.
+- Steps appear as child spans with Anything2MCP's own attributes: mode, binding, and failure class.
 - No value, snapshot, or secret is ever placed in a span. Spans carry names, timings, and outcomes only.
 - Metrics: call duration per tool, plus success, mismatch, retry, and drift rates per tool version.
 
@@ -93,7 +93,7 @@ Restricted fields are masked in all of it. The agent proposes a file change; it 
 
 ## Fixtures from traces
 
-`web2mcp fixture record` turns captured evidence into a fixture for offline tests.
+`anything2mcp fixture record` turns captured evidence into a fixture for offline tests.
 
 - Values are replaced with synthetic ones of the same field type, keeping structure and lengths.
 - The fixture carries a marker stating that it was scrubbed, and a hash.

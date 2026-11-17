@@ -17,10 +17,10 @@ A version is published only when every gate passes, and the evidence is stored w
 | Agent usability | A test agent with no prior knowledge completes scripted tasks using only the generated names, descriptions, and results | Each toolset |
 | Human review | A person reads the generated description, schema, effect class, and permissions | All |
 
-**Where writes are tested.** In order of preference: the vendor's sandbox or a test environment; a dedicated test record in production that the tests restore after use; otherwise the write operation stays unpublished. Web2MCP never proves a write by performing it on live business data.
+**Where writes are tested.** In order of preference: the vendor's sandbox or a test environment; a dedicated test record in production that the tests restore after use; otherwise the write operation stays unpublished. Anything2MCP never proves a write by performing it on live business data.
 
 **After publishing.** Scheduled read-only canaries re-run the contract gate, more often for platforms that ship interface changes frequently. A failure marks the affected binding unhealthy; if no verified binding remains, the tool is marked unavailable before anyone runs a write.
 
 **Creates.** For an operation that creates records: the same create run twice leaves one record, and a run stopped between sending a create and recording it finds that record on resume ([section 50](50-record-identity-and-dependent-records.md)).
 
-**Testing Web2MCP itself.** The [test application plan](../plan/test-application.md) lists every case and the driver conformance suite. The repository ships a test application that imitates the hard cases: virtualized grids, postback forms, single-page apps, anti-forgery tokens, optimistic locking, and a desktop app. Every driver and widget driver is tested against it on Windows, macOS, and Linux in CI.
+**Testing Anything2MCP itself.** The [test application plan](../plan/test-application.md) lists every case and the driver conformance suite. The repository ships a test application that imitates the hard cases: virtualized grids, postback forms, single-page apps, anti-forgery tokens, optimistic locking, and a desktop app. Every driver and widget driver is tested against it on Windows, macOS, and Linux in CI.

@@ -29,7 +29,7 @@ Each slice follows the loop in the [working method](working-method.md). "Shown w
 | # | Slice | Shown working | Hypotheses |
 | --- | --- | --- | --- |
 | 0.1 | Repository skeleton: workspace, empty crates, CI on three operating systems, the documentation audit in CI | A green build on a pull request | None |
-| 0.2 | The release workflow and a placeholder release to PyPI | `pip install web2mcp` installs the placeholder | None |
+| 0.2 | The release workflow and a placeholder release to PyPI | `pip install anything2mcp` installs the placeholder | None |
 | 0.3 | The test application: cases 1 to 4, the control interface, the ground-truth harness | A test resets the application, changes a record, and asks the application what it stored | None |
 | 0.4 | Spike: the browser engine base, against the conformance suite's first groups | A results table per candidate and a decision | H-01, H-02, H-03 |
 | 0.5 | Spike: an MCP server with one tool over stdio | Two MCP clients call the tool | H-06 in part |
@@ -59,7 +59,7 @@ The desktop spike in the Phase 0 task list can wait until just before Phase 8. I
 | 2.4 | Session states, the probe, and expiry | An expired session returns `needs_login` | None |
 | 2.5 | Renewal, with one renewer | Ten runs, one renewal | H-04 |
 | 2.6 | The remaining providers and discovery | Each sign-in variant of the test application is classified and works | H-05 |
-| 2.7 | With the owner's go-ahead: one read on one real application; a design review round | Five identical runs | H-05, H-22 |
+| 2.7 | A design review round. The read on a real application that stood here moves to the end of the build, with the owner ([decision 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)); until then the proof is five identical runs of a signed-in read on the test application | Five identical runs | H-05, H-22 |
 
 ### Phase 3
 

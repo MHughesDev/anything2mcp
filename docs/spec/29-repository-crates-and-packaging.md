@@ -3,43 +3,50 @@
 One Cargo workspace holds the whole system. The engine is a set of small Rust crates behind one binary. Rust is the default for everything; another language is used where it clearly fits better.
 
 ```text
-web2mcp/
+anything2mcp/
   Cargo.toml              # workspace
   crates/
-    w2m-core/             # shared types: targets, operations, bindings, effects, failure classes
-    w2m-files/            # schemas, loader, linter, plan compiler
-    w2m-expr/             # CEL evaluation; host functions for units, numbers, dates
-    w2m-engine/           # engine loop, mode selection, read-back, normalization
-    w2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
-    w2m-policy/           # grants, effect classes, approvals, limits
-    w2m-sched/            # queues, record locks, quotas, runner dispatch
-    w2m-auth/             # auth providers, auth discovery, session keeper
-    w2m-vault/            # envelope encryption, key-store back ends, redactor
-    w2m-browser/          # DevTools-protocol engine: locate, act, wait, network
-    w2m-driver-ui/        # ui and page_http drivers, widget drivers, platform profiles
-    w2m-driver-http/      # http and api drivers; OpenAPI, GraphQL, OData import
-    w2m-driver-mcp/       # upstream MCP pass-through and site tools
-    w2m-driver-desktop/   # Windows UI Automation, macOS Accessibility, Linux AT-SPI
-    w2m-sources/          # xlsx, csv, json readers; template fingerprints; mappings
-    w2m-probe/            # capability probe, traffic capture, endpoint inference
-    w2m-actions/          # the action registry: one definition per authoring and admin action
-    w2m-local/            # local channel: socket and named pipe, peer check, engine lifecycle
-    w2m-mcp/              # MCP server: stdio, Streamable HTTP, toolsets, authoring tools
-    w2m-api/              # REST API, OpenAPI generation, webhooks
-    w2m-runner/           # runner role and the control-plane link
-    w2m-telemetry/        # traces, metrics, OpenTelemetry export
-    web2mcp/              # the binary and the embeddable library facade
+    # The kernel: the same whatever kind of system is integrated.
+    a2m-core/             # shared types: targets, operations, bindings, effects, failure classes
+    a2m-files/            # schemas, loader, linter, plan compiler
+    a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
+    a2m-vault/            # envelope encryption, key-store back ends, redactor
+    a2m-telemetry/        # traces, metrics, OpenTelemetry export
+    a2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
+    a2m-policy/           # grants, effect classes, approvals, limits
+    a2m-auth/             # auth providers, auth discovery, session keeper
+    a2m-sources/          # xlsx, csv, json readers; template fingerprints; mappings
+    a2m-provider/         # the provider contract: manifests, the registry, the supervisor, the plug-in host
+    a2m-engine/           # engine loop, mode selection, read-back, normalization
+    a2m-sched/            # queues, record locks, quotas, runner dispatch
+    a2m-actions/          # the action registry: one definition per authoring and admin action
+    a2m-local/            # local channel: socket and named pipe, peer check, engine lifecycle
+    a2m-mcp/              # MCP server: stdio, Streamable HTTP, toolsets, authoring tools
+    a2m-api/              # REST API, OpenAPI generation, webhooks
+    a2m-runner/           # runner role and the control-plane link
+    # The packs: each knows one kind of system.
+    a2m-pack-web-browser/ # web pack base: DevTools-protocol engine: locate, act, wait, network
+    a2m-pack-web-ui/      # web pack: ui and page_http drivers, widget drivers, platform profiles
+    a2m-pack-web-probe/   # web pack: capability probe, traffic capture, endpoint inference
+    a2m-pack-http/        # HTTP pack: http and api drivers; OpenAPI, GraphQL, OData import
+    a2m-pack-mcp/         # MCP pack: upstream MCP pass-through and site tools
+    a2m-pack-desktop/     # desktop pack: Windows UI Automation, macOS Accessibility, Linux AT-SPI
+    # The product: wires the packs into the kernel.
+    anything2mcp/         # the `anything2mcp` and `a2m` commands and the embeddable library facade
   bindings/
-    python/               # pip package `web2mcp`: ships the binary and a thin pure-Python SDK
-    typescript/           # npm package `w2mcp`: launcher, platform packages, and a thin SDK
+    python/               # pip package `anything2mcp`: ships the binary and a thin pure-Python SDK
+    typescript/           # npm package `anything2mcp`: launcher, platform packages, and a thin SDK
   web/console/            # admin console, approval page, sign-in page (TypeScript)
   plugins/                # plug-in protocol and examples
   profiles/               # platform profiles and detection rules, as data files
   targets/                # the imaginary `example` target; the built-in test application in example-app/
   bench/                  # performance suite and budgets
-  docs/                   # user guide, format reference, AGENTS.md
+  docs/                   # the design, the decisions, the research, the plan
+  tools/                  # the documentation audit and its self-test
   xtask/                  # build, release, and code-generation tasks
 ```
+
+Which crates may depend on which is set by the layering table in the [technical reference](../reference/technical-reference.md#crate-layering). The split into a kernel and packs is [section 55](55-kernel-and-packs.md).
 
 **Building blocks.** The MCP SDK and desktop library below were checked in this research round; the other crate names come from general knowledge of the Rust ecosystem and are to be confirmed in phase 0.
 
@@ -79,6 +86,6 @@ A language not listed here may be added when it clearly fits better than Rust fo
 
 - One self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM.
 - Installers: pip, npm, cargo, Homebrew, winget, a Windows service installer, and a container image.
-- **Browser.** By default Web2MCP uses the Chrome or Edge already installed, with its own data directory, so a laptop install downloads nothing. Servers pin an exact Chromium with `web2mcp browser install` for reproducibility.
+- **Browser.** By default Anything2MCP uses the Chrome or Edge already installed, with its own data directory, so a laptop install downloads nothing. Servers pin an exact Chromium with `anything2mcp browser install` for reproducibility.
 - Releases are signed, ship a software bill of materials, and are built reproducibly; dependencies are audited in CI.
-- **License:** Apache-2.0, for its patent grant.
+- **License:** MIT ([decision 0057](../decisions/0057-the-licence-is-mit.md)).

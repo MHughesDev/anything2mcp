@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 /target/
-.web2mcp/
+.anything2mcp/
 .DS_Store
 dist/
 .venv/

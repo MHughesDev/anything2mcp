@@ -4,7 +4,7 @@ Decisions taken in this spec:
 
 | Decision | Chosen | Main alternative | Why |
 | --- | --- | --- | --- |
-| Name | Web2MCP | A unique name | Owner's decision; other projects share it |
+| Name | Anything2MCP | A unique name | Owner's decision; other projects share it |
 | Languages | Rust for the core and by default; another language where it clearly fits better | One language for everything | Speed, memory, single-file install, safety; owner's decision |
 | AI at run time | Never | Agent fallback when replay fails | Determinism and accountable writes |
 | Browser engine | Own Rust engine on the DevTools protocol, Chromium family first | Playwright through a Node sidecar | No extra process; event-driven waits; only a dozen verbs needed |
@@ -21,9 +21,9 @@ Decisions taken in this spec:
 | Stores | SQLite locally, Postgres on servers | An external workflow engine | Small footprint; the ledger is a simple state machine |
 | Plug-ins | Separate processes over a small protocol | In-process dynamic libraries | Any language; isolation |
 | Bot defenses and MFA | Stop and get an allowlist; people complete MFA | Evasion; stored codes | Operates openly |
-| License | Apache-2.0 | MIT | Patent grant |
+| License | MIT | Apache-2.0 | The owner's choice: the shortest and most widely understood terms ([record 0057](../decisions/0057-the-licence-is-mit.md)) |
 | Example targets | None named; an imaginary `example` app only | Named real applications | Owner's decision; keeps the project general |
-| Package names | `web2mcp` on pip and crates.io, `w2mcp` on npm | One name everywhere | `web2mcp` is taken on npm |
+| Package names | `anything2mcp` on pip, crates.io, and npm; `a2m` as the short command and the crate prefix | A shorter name everywhere | `a2m` is another project's package on two registries ([record 0056](../decisions/0056-one-name-everywhere-anything2mcp.md)) |
 | Building interface | Commands and files first, MCP tools second, both generated from one registry | MCP tools only | Context cost; agents are strongest with a shell |
 | Local process model | One engine per user; clients connect over a socket or named pipe | An engine per MCP client | Shared sessions and locks; no open port |
 | pip and npm packages | Ship the binary plus a thin SDK | In-process bindings | Smaller package; no engine logic outside Rust |
@@ -62,7 +62,7 @@ Open questions:
 - [ ] Which MCP revision and features does Copilot Studio support today, and which network bridge will the company use?
 - [ ] Can an Entra app registration be granted delegated permission to any target's API, enabling `per_user_token`?
 - [ ] Who approves write runs, and through which channel?
-- [ ] Are the package names free on crates.io, pip, and npm?
+- [x] Are the package names free on crates.io, pip, and npm? `anything2mcp` was free on all three on 2026-11-17, and is held on none until a release is published ([publishing setup](../plan/publishing-setup.md)).
 - [ ] How long must traces and audit records be kept?
 
 Research still to do before the matching phase: durable-execution patterns for the ledger; session lifetime and device rules under Entra; vault design per operating system; remote sign-in to a hosted browser; selector repair; enterprise approval patterns; prompt-injection defenses; testing against third-party apps; desktop automation on servers; lessons from RPA products.

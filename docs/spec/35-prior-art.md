@@ -1,8 +1,8 @@
 # 35. Prior art
 
-Most existing products use AI to build automations and replay code to run them, but fall back to a live agent when replay fails. Web2MCP keeps the first half and refuses the second, and adds what none of them combine: every mode in one engine, real identity handling, governance, and a server shape.
+Most existing products use AI to build automations and replay code to run them, but fall back to a live agent when replay fails. Anything2MCP keeps the first half and refuses the second, and adds what none of them combine: every mode in one engine, real identity handling, governance, and a server shape.
 
-| Project | What it does | Borrow | Where Web2MCP goes further |
+| Project | What it does | Borrow | Where Anything2MCP goes further |
 | --- | --- | --- | --- |
 | [Pomerado](https://github.com/Pomerado/pomerado) | Builds deterministic MCP integrations for websites, driving Chromium; its core defines an HTTP-only operation form | The HTTP operation idea; reviewing every build; reading the site back before another write | Its local version needs OpenAI models to build, signs in again on each call, and documents macOS and Linux only |
 | [browser-to-mcp](https://github.com/browser-to-mcp/browser-to-mcp) | Turns reviewed YAML workflows into read-only MCP tools | Declared permissions; evidence per version | Writes, sign-in, sessions |
@@ -14,4 +14,4 @@ Most existing products use AI to build automations and replay code to run them, 
 | WebMCP proposal | Sites register their own tools in the browser | Used as the `site_tools` mode | Works on apps whose owners have added nothing |
 | CloudCruise, Kadoa, Apify | Hosted workflow, extraction, and scraping platforms | Vaults, repair loops with human review, asynchronous runs | Self-hosted, write-capable, per-user identity |
 
-Other projects use the name Web2MCP, including a Python project that generates MCP servers from HTTP endpoints without a browser and documents `pip install web2mcp`, although nothing was published under that name when checked. The name is kept by decision; the published package names are fixed in [section 41](41-packaging-and-release.md).
+Other projects use the name Anything2MCP, including a Python project that generates MCP servers from HTTP endpoints without a browser and documents `pip install anything2mcp`, although nothing was published under that name when checked. The name is kept by decision; the published package names are fixed in [section 41](41-packaging-and-release.md).

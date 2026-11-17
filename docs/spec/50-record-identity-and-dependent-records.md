@@ -20,7 +20,7 @@ Every write operation declares how its record is found again. The compiler refus
 | --- | --- | --- |
 | `natural` | By an input that is the application's own key | The caller knows the key: an existing record, or a key the caller chooses |
 | `composite` | By several inputs that are unique together, within a parent | Lines, rows, members of something |
-| `stamped` | By a token Web2MCP writes into a field of the record, such as a reference or external-id field | The application assigns the key and has a spare field that is searchable |
+| `stamped` | By a token Anything2MCP writes into a field of the record, such as a reference or external-id field | The application assigns the key and has a spare field that is searchable |
 | `find` | By a declared lookup on values the write itself sets, which must match exactly one record | The application assigns the key and has no spare field |
 | `none` | It cannot be | Nothing above is possible; the operation is `irreversible` |
 

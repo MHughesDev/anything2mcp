@@ -1,0 +1,11 @@
+[package]
+name = "anything2mcp"
+description = "The Anything2MCP binary and the library facade for embedding the engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

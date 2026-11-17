@@ -21,7 +21,7 @@ The `ui` and `page_http` modes run on a browser engine written in Rust that spea
 - **Supervisor.** Detects page crashes and disconnects, enforces a hard and an idle timeout per run, and kills the whole process tree on failure. A crash during a write becomes `possible_commit`, never an automatic retry.
 - **Fixed environment.** Viewport, locale, time zone, color scheme, and reduced motion are set per target and never vary.
 
-**Bot defenses.** Products such as Cloudflare, Akamai, Imperva, and Azure Front Door judge each request, not the signed-in user, and can block an automated browser even for a licensed user ([Cloudflare](https://developers.cloudflare.com/bots/concepts/bot-detection-engines/), [Azure](https://learn.microsoft.com/en-us/azure/frontdoor/waf-overview)). Web2MCP does not hide that it is automation.
+**Bot defenses.** Products such as Cloudflare, Akamai, Imperva, and Azure Front Door judge each request, not the signed-in user, and can block an automated browser even for a licensed user ([Cloudflare](https://developers.cloudflare.com/bots/concepts/bot-detection-engines/), [Azure](https://learn.microsoft.com/en-us/azure/frontdoor/waf-overview)). Anything2MCP does not hide that it is automation.
 
 - A 403 or 429 from the edge, a `cf-mitigated` header ([Cloudflare](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response)), a challenge page, or an unexpected sign-in redirect is classed `edge_blocked`: stop, keep evidence, alert a person.
 - The supported fix is an allowlist from the app's owner or IT: the runner's outbound address plus a secret header or client certificate.

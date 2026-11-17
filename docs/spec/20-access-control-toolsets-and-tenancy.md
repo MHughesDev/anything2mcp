@@ -2,7 +2,7 @@
 
 Administrators decide which tools exist for whom. Three pieces do this: principals, roles and grants, and toolsets.
 
-**Principals.** Everyone and everything that calls Web2MCP is a principal: a person, a group, an AI agent with its own identity, or an application with an API key. On a company server, people and groups come from the identity provider; nothing is managed twice.
+**Principals.** Everyone and everything that calls Anything2MCP is a principal: a person, a group, an AI agent with its own identity, or an application with an API key. On a company server, people and groups come from the identity provider; nothing is managed twice.
 
 **Roles.**
 

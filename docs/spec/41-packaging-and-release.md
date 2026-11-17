@@ -4,46 +4,50 @@ Every install route delivers the same Rust binary. The pip and npm packages add 
 
 ## Names
 
-| Thing | Name | Status on 2026-11-15 |
-| --- | --- | --- |
-| Project and repository | Web2MCP | Decided |
-| Command | `web2mcp` | Decided |
-| Python package and import | `web2mcp` | Not held yet; a pending trusted publisher is configured, and the first release secures the name |
-| Rust crates | `web2mcp` for the binary and library facade, `w2m-*` for the parts | `web2mcp` is held by a placeholder release; the `w2m-*` names are unchecked |
-| npm package | `w2mcp` | `web2mcp` is taken on npm; `w2mcp` is held by a placeholder release |
-| MCP tool prefix | `w2m_` | Decided |
-| Container image | `web2mcp` under the repository's registry namespace | Decided |
+One name on every route ([decision 0056](../decisions/0056-one-name-everywhere-anything2mcp.md)).
 
-"Found" means that `pip`, `npm`, and `cargo` returned nothing for the name. A registry can still refuse a name that is reserved or too close to an existing one, so the reservation upload is the real test.
+| Thing | Name |
+| --- | --- |
+| Project and repository | Anything2MCP, at `MHughesDev/anything2mcp` |
+| Command | `anything2mcp`, with `a2m` as a short name for the same program |
+| Python package and import | `anything2mcp` |
+| Rust crates | `anything2mcp` for the binary and library facade, `a2m-*` for the kernel's parts, `a2m-pack-*` for the packs |
+| npm package | `anything2mcp` |
+| MCP tool prefix | `a2m_` |
+| Container image | `anything2mcp` under the repository's registry namespace |
 
-**Reserve the names first.** Another project's documentation already tells people to `pip install web2mcp`, although nothing is published under that name. The crates.io and npm names are now held. The PyPI name is not: it can still be lost until a first release is published from the release workflow, which is task A1 of [Phase 0](../plan/phase-0.md). [Publishing setup](../plan/publishing-setup.md) records the state of each registry and how releases authenticate.
+`a2m` is never a package name: it belongs to other projects on two registries.
+
+**A name is held only by a published release.** A registry account, or a publisher configured in advance, reserves nothing. [Publishing setup](../plan/publishing-setup.md) records, registry by registry, whether each name is held and how a release authenticates. Until a row there says held, the name can be lost.
+
+Only the product crate, the pip package, and the npm packages are published. The `a2m-*` crates are parts of one workspace and are published only if embedding the engine as a library ever needs them, by a decision record.
 
 ## The pip package
 
-- **Contents.** One wheel per platform holding the compiled binary and a pure-Python package named `web2mcp`. The build tool, maturin, supports this directly: its `bin` mode packages a Rust binary into a wheel as a script that lands on the user's path ([maturin](https://maturin.rs/bindings)).
+- **Contents.** One wheel per platform holding the compiled binary and a pure-Python package named `anything2mcp`. The build tool, maturin, supports this directly: its `bin` mode packages a Rust binary into a wheel as a script that lands on the user's path ([maturin](https://maturin.rs/bindings)).
 - **No Rust needed to install.** Wheels are prebuilt for Windows, macOS, and Linux on x64 and ARM, including Linux distributions that use musl. A source distribution is published as the fallback and does need a Rust toolchain.
 - **One wheel per platform, not per Python version.** The Python part is pure Python, so the wheel does not depend on the interpreter version.
-- **The browser is not included.** The engine uses the Chrome or Edge already installed, with its own data directory, or a pinned browser fetched by `web2mcp browser install`.
-- **What `pip install web2mcp` gives.** The `web2mcp` command, the engine it starts, and `import web2mcp`.
+- **The browser is not included.** The engine uses the Chrome or Edge already installed, with its own data directory, or a pinned browser fetched by `anything2mcp browser install`.
+- **What `pip install anything2mcp` gives.** The `anything2mcp` command, the engine it starts, and `import anything2mcp`.
 
 ## The Python SDK
 
 The SDK is a thin, typed client. It contains no engine logic and no platform-specific code.
 
 ```python
-import web2mcp
+import anything2mcp
 
-client = web2mcp.connect()                       # local engine, started on demand
+client = anything2mcp.connect()                       # local engine, started on demand
 order = client.call("example_order_get", order_id="A-100")
 
 run = client.run("example_order_sheet_enter", source="sheet.xlsx", order_id="A-100")
 run.wait()                                       # returns when done or when a person is needed
 print(run.status, run.summary)
 
-remote = web2mcp.connect("https://mcp.example.com", toolset="orders")   # a company server
+remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a company server
 ```
 
-- **Two transports.** Local: the SDK starts `web2mcp bridge` and exchanges JSON messages with it; the bridge talks to the engine over the local channel in [section 39](39-local-engine-and-clients.md). Remote: HTTPS to a server's REST API, with OAuth or an API key.
+- **Two transports.** Local: the SDK starts `anything2mcp bridge` and exchanges JSON messages with it; the bridge talks to the engine over the local channel in [section 39](39-local-engine-and-clients.md). Remote: HTTPS to a server's REST API, with OAuth or an API key.
 - **Same calls either way.** Code written against a laptop engine runs unchanged against a company server.
 - **Generated, not hand-written.** Models and methods come from the action registry and the OpenAPI document, so the SDK cannot drift from the engine.
 - **Synchronous and asynchronous clients**, with few or no third-party dependencies.
@@ -53,14 +57,14 @@ remote = web2mcp.connect("https://mcp.example.com", toolset="orders")   # a comp
 
 ## The npm package
 
-- **Layout.** A small launcher package, `w2mcp`, plus one package per platform that holds only the binary. The launcher lists the platform packages as optional dependencies, and each platform package declares its operating system and processor, so the package manager installs only the one that fits. This is the established pattern for native tools on npm ([Sentry's guide](https://blog.sentry.io/publishing-binaries-on-npm/)).
+- **Layout.** A small launcher package, `anything2mcp`, plus one package per platform that holds only the binary. The launcher lists the platform packages as optional dependencies, and each platform package declares its operating system and processor, so the package manager installs only the one that fits. This is the established pattern for native tools on npm ([Sentry's guide](https://blog.sentry.io/publishing-binaries-on-npm/)).
 - **No install script.** Many organizations disable install scripts. If the platform package is missing, for example because optional dependencies were skipped, the launcher explains the fix instead of downloading anything.
-- **What it gives.** The `web2mcp` command and a TypeScript SDK with the same shape as the Python one.
+- **What it gives.** The `anything2mcp` command and a TypeScript SDK with the same shape as the Python one.
 
 ## Rust crates
 
-- `cargo install web2mcp` builds the binary from source.
-- The `w2m-*` crates are published for hosts that embed the engine.
+- `cargo install anything2mcp` builds the binary from source.
+- The `a2m-*` crates are published for hosts that embed the engine.
 - All crates share one version number.
 
 ## Standalone installs
@@ -80,7 +84,7 @@ The `dist` tool, formerly cargo-dist, generates most of these from a tagged rele
 
 ## The release pipeline
 
-1. A version tag starts the pipeline.
+1. A version tag starts the pipeline. So does a manual start of the release workflow that names the version to publish; either way the workflow refuses a version that is not the one on `main`.
 2. Build the binary for every platform; run the full test and benchmark suites on each.
 3. Build wheels, npm packages, installers, and the container image from those same binaries. Nothing is recompiled per package.
 4. Sign every artifact and attach a software bill of materials and build provenance.
@@ -92,7 +96,7 @@ A bad release is yanked from each registry and superseded; published versions ar
 ## Updates
 
 - pip, npm, Homebrew, and winget installs are updated by those tools.
-- Standalone installs update with `web2mcp self update`, which verifies the signature before replacing the binary.
+- Standalone installs update with `anything2mcp self update`, which verifies the signature before replacing the binary.
 - Servers pin a version and upgrade deliberately; see [section 32](32-components-added-by-the-gap-review.md).
 
 ## Nothing phones home

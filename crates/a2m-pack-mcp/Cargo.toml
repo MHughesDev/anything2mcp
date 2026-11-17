@@ -1,0 +1,11 @@
+[package]
+name = "a2m-pack-mcp"
+description = "The MCP pack: the mcp and site_tools drivers, for upstream MCP servers and tools a site publishes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

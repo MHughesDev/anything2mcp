@@ -20,9 +20,10 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Discoverer | The extension point that inspects a target and returns findings. It can never write |
 | Diff hash | A hash of a diff in canonical form; what an approval is bound to |
 | Draft | Target files not yet published; runnable only in the sandbox |
+| Drafter | The kernel code that writes a draft from a finding wherever a pack's drafting rules say how. Its drafts are ordinary drafts |
 | Driver | The code that carries out steps in one mode |
 | Effect class | `read`, `write`, or `irreversible` |
-| Engine | The Web2MCP process. On one machine, one per user |
+| Engine | The Anything2MCP process. On one machine, one per user |
 | Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
 | Environment | A named instance of a target, such as test or production |
 | Evidence | Everything recorded about a run or an observation: events, step trace, artifacts, and what a discoverer saw |
@@ -53,12 +54,12 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
 | Plan | The compiled, hashed form of a target version that the engine runs |
 | Policy set | The versioned rules the policy engine evaluates |
-| Principal | Anyone or anything that calls Web2MCP |
+| Principal | Anyone or anything that calls Anything2MCP |
 | Protected setting | A setting that can be changed on one machine only with a user-presence prompt |
 | Provider | Anything that supplies capabilities to the runtime: a pack, a plug-in, or an upstream MCP server |
 | Probe | For a session: a cheap signed-in read. For a target: the first inspection of an application |
 | Profile | A deployment shape, such as Solo or Company server. Also a browser's data directory; context makes clear which |
-| Project | A folder with a `web2mcp.toml` holding target files |
+| Project | A folder with a `anything2mcp.toml` holding target files |
 | Quarantine | The wait after a lost lease before the run's records may be touched |
 | Read-back | Reading a value from the application after writing it |
 | Reconcile | Reading doubtful records back to learn whether their writes landed |
@@ -67,6 +68,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Run | One call of an operation or pipeline, identified by a `run_id` |
 | Scenario | A short, declared sequence of named steps that exercises one thing in a target. The unit of observation during discovery |
 | Runner | The part that executes steps and holds live sessions |
+| Scout | The fixed pipeline that identifies a target, runs its discoverers, drafts what follows by rule, tries the drafted reads, and reports. It runs no model and never tries a write |
 | Screen model | A named page or window: how to reach it, its fields, and how to know it is ready |
 | Session | The signed-in state of one identity on one target in one environment |
 | Session keeper | The only part that signs in, checks, renews, and ends sessions |

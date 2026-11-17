@@ -1,10 +1,10 @@
 # 9. Performance
 
-Speed is a design metric with budgets, not a hope. The rule: Web2MCP should add almost nothing on top of the time the target application itself takes, and should always take the fastest path that has been proven correct.
+Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target application itself takes, and should always take the fastest path that has been proven correct.
 
 **Budgets.** These are initial targets to be confirmed by benchmark in phase 1, then enforced in CI.
 
-| Path | Budget for Web2MCP's own overhead |
+| Path | Budget for Anything2MCP's own overhead |
 | --- | --- |
 | Process start to ready | Under 100 ms; no browser starts until a `ui` call needs one |
 | Listing tools | Under 5 ms, served from a cache keyed by registry version |
@@ -28,6 +28,6 @@ Speed is a design metric with budgets, not a hope. The rule: Web2MCP should add 
 - **Group-committed ledger.** Intent records from concurrent runs are written to disk together, so durability does not cost one disk sync per record.
 - **Lean results.** Results are concise by default, with large data passed as resource links, which also saves the calling agent's tokens and time.
 
-**Guardrails.** Speed never overrides the first two priorities. A faster binding is used only after shadow verification. Rate budgets per app still apply, so Web2MCP is never faster than the app owner allows.
+**Guardrails.** Speed never overrides the first two priorities. A faster binding is used only after shadow verification. Rate budgets per app still apply, so Anything2MCP is never faster than the app owner allows.
 
-**Measured, always.** A benchmark suite runs in CI against a local test app for every mode. A change that slows a budgeted path by more than 10% fails the build. Each run's trace records time spent in Web2MCP against time spent waiting on the app, so slow tools are visible in production.
+**Measured, always.** A benchmark suite runs in CI against a local test app for every mode. A change that slows a budgeted path by more than 10% fails the build. Each run's trace records time spent in Anything2MCP against time spent waiting on the app, so slow tools are visible in production.

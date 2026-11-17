@@ -1,6 +1,6 @@
 # 52. When the engine itself fails
 
-Earlier sections cover what happens when the application misbehaves, a session ends, or a runner is lost. This section covers Web2MCP's own parts failing: its database, its key store, its browser, its disk. The rule is the same throughout, and each row below is a test.
+Earlier sections cover what happens when the application misbehaves, a session ends, or a runner is lost. This section covers Anything2MCP's own parts failing: its database, its key store, its browser, its disk. The rule is the same throughout, and each row below is a test.
 
 ## Three rules
 
@@ -16,7 +16,7 @@ Earlier sections cover what happens when the application misbehaves, a session e
 | `degraded` | Something needed for writes is impaired | Reads only; writes return `busy` with the reason |
 | `stopped` | Something needed for any call is impaired | None; calls return the reason |
 
-`web2mcp engine status`, the health endpoint on a server, and the admin console show the state and its cause.
+`anything2mcp engine status`, the health endpoint on a server, and the admin console show the state and its cause.
 
 ## Failures and responses
 

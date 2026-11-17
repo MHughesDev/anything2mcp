@@ -1,6 +1,6 @@
 //! The built-in test application: an imaginary order-entry system named `example`.
 //!
-//! Web2MCP is never tested against a real business application. Everything is
+//! Anything2MCP is never tested against a real business application. Everything is
 //! proven against this one, which imitates the hard cases and has a control
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
 //! lists the cases; this crate covers cases 1 to 4.

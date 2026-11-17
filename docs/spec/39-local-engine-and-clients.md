@@ -8,9 +8,9 @@ On one machine, exactly one engine process runs per user, and everything else is
 
 | Client | What it is | How it reaches the engine |
 | --- | --- | --- |
-| `web2mcp` commands | The command line used by people and coding agents | Local channel, directly |
+| `anything2mcp` commands | The command line used by people and coding agents | Local channel, directly |
 | MCP over stdio | What an MCP client starts for a local agent | A small proxy that copies MCP messages between stdio and the engine's MCP endpoint on the local channel |
-| Python and TypeScript SDKs | Libraries for other software | A bridge subprocess, `web2mcp bridge`, that carries JSON messages between the SDK and the local channel |
+| Python and TypeScript SDKs | Libraries for other software | A bridge subprocess, `anything2mcp bridge`, that carries JSON messages between the SDK and the local channel |
 | Tray application, from Phase 7 | Status and prompts on a user-device runner | Local channel, directly |
 | Remote callers | Agents and software on other machines | Not the local channel; they use the network front doors in [section 22](22-front-doors.md) |
 
@@ -31,7 +31,7 @@ The stdio proxy and the SDK bridge are the same binary. Keeping the channel code
 4. **Idle stop.** With no runs, no captures, and no clients for a set time (30 minutes by default), the engine saves session state to the vault and exits. The session keeper holds the engine open for a session that would not survive a restart, up to its keep-alive window ([section 44](44-session-keeper.md)). The next command starts it again and sessions resume from the vault.
 5. **Crash.** Runs in flight are left `running` in the ledger under a lease nobody holds. The next start sets each to `stopped` with the class `possible_commit` and the code `runner_lost`, and reconciles before any resumed write, as in [section 42](42-run-ledger-design.md).
 
-`web2mcp engine status`, `start`, `stop`, and `logs` expose this to people. Nobody needs them in normal use.
+`anything2mcp engine status`, `start`, `stop`, and `logs` expose this to people. Nobody needs them in normal use.
 
 ## How this changes the deployment profiles
 
@@ -67,7 +67,7 @@ A coding agent that runs commands does so as the same operating-system user as t
 2. Where the operating system offers a user-presence check (a fingerprint, face, PIN, or password prompt owned by the operating system), the engine requires it before recording the approval. An agent with a shell cannot answer that prompt.
 3. Where no such check is available, the prompt is a native dialog alone. This stops mistakes and stops an agent that was merely told to approve, but it is not a security boundary.
 
-**The limit.** A process with unrestricted shell access as the user can, in principle, read and change that user's files, including Web2MCP's local store. On a single machine under a single account, Web2MCP's protections guard against mistakes, runaway agents, and ordinary prompt injection. They do not make the machine safe from a hostile program already running as the user.
+**The limit.** A process with unrestricted shell access as the user can, in principle, read and change that user's files, including Anything2MCP's local store. On a single machine under a single account, Anything2MCP's protections guard against mistakes, runaway agents, and ordinary prompt injection. They do not make the machine safe from a hostile program already running as the user.
 
 **When a real boundary is needed.**
 

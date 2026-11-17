@@ -9,18 +9,18 @@ Every tool is generated from published files, so names, descriptions, and result
 **What is listed up front.** Agents choose tools less accurately past roughly 30 to 50 ([Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)), and OpenAI's soft target is under 20 at the start of a turn ([OpenAI](https://developers.openai.com/api/docs/guides/function-calling)). So:
 
 - **Listed:** pipelines and the control tools, kept under 20 in total, configurable per caller.
-- **Found on demand:** single operations, through `w2m_tool_search` and `w2m_tool_call`; each operation's own schema is still enforced.
+- **Found on demand:** single operations, through `a2m_tool_search` and `a2m_tool_call`; each operation's own schema is still enforced.
 - **Full listing:** a setting for clients with built-in tool search.
 
 | Control tool | Purpose |
 | --- | --- |
-| `w2m_tool_search` | Search operations and pipelines by plain words or module; returns names, descriptions, and schemas |
-| `w2m_tool_call` | Run one operation or pipeline by name |
-| `w2m_run_get` | Status, progress, result, and trace link of a run |
-| `w2m_run_resume` | Continue a stopped run from its checkpoint |
-| `w2m_run_cancel` | Stop a running or waiting run |
-| `w2m_session_status` | Whether each target is signed in, without exposing anything |
-| `w2m_session_login` | Ask the person to sign in to a target |
+| `a2m_tool_search` | Search operations and pipelines by plain words or module; returns names, descriptions, and schemas |
+| `a2m_tool_call` | Run one operation or pipeline by name |
+| `a2m_run_get` | Status, progress, result, and trace link of a run |
+| `a2m_run_resume` | Continue a stopped run from its checkpoint |
+| `a2m_run_cancel` | Stop a running or waiting run |
+| `a2m_session_status` | Whether each target is signed in, without exposing anything |
+| `a2m_session_login` | Ask the person to sign in to a target |
 
 **Names.** `{target}_{module}_{object}_{verb}` in lowercase with underscores, at most about 60 characters; pipelines are named for their outcome. The build fails on duplicates or near-duplicates.
 
@@ -40,7 +40,7 @@ Every tool is generated from published files, so names, descriptions, and result
   "summary": "12 line items: 9 to create, 3 to update. Waiting for approval.",
   "mode": "ui",
   "diff": {"create": 9, "update": 3, "unchanged": 0, "detail": "resource://runs/r_8f21/diff"},
-  "next": {"tool": "w2m_run_get", "args": {"run_id": "r_8f21"}, "when": "after the person approves"}
+  "next": {"tool": "a2m_run_get", "args": {"run_id": "r_8f21"}, "when": "after the person approves"}
 }
 ```
 

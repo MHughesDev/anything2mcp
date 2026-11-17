@@ -15,7 +15,7 @@ Everything an operator needs is in the admin console and mirrored in the CLI and
 | Audit | Search and export the audit log; verify its hash chain |
 | Secrets | Rotate service-account credentials, API keys, and encryption keys without downtime |
 
-**Upgrades.** The binary migrates its own database on start and can run against the previous schema during a rolling upgrade. Target files carry a format version; older formats keep loading, and `web2mcp migrate` rewrites them. Control-plane replicas and runners can be upgraded one at a time.
+**Upgrades.** The binary migrates its own database on start and can run against the previous schema during a rolling upgrade. Target files carry a format version; older formats keep loading, and `anything2mcp migrate` rewrites them. Control-plane replicas and runners can be upgraded one at a time.
 
 **Backup and recovery.** The database and trace store are backed up with standard tools; the vault is backed up separately with its keys. After a restore, every run that was in flight is treated as `possible_commit` and reconciled before it continues.
 

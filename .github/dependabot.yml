@@ -1,0 +1,21 @@
+# Proposes dependency updates once a month, grouped so that they arrive as a
+# few pull requests and not many. A proposal is only that: it merges like any
+# other change, after the checks pass and the licence list in deny.toml holds.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      rust:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]

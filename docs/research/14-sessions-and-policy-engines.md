@@ -11,7 +11,7 @@ Feeds spec sections [44](../spec/44-session-keeper.md) and [45](../spec/45-polic
 - App-Bound Encryption, introduced in 2024, is the Windows protection that stops other programs reading Chrome's cookie store; malware has repeatedly found ways around it ([SpyCloud](https://spycloud.com/blog/infostealers-bypass-new-chrome-security-feature/), [Red Canary](https://redcanary.com/blog/threat-intelligence/google-chrome-app-bound-encryption/)).
 - Security research in 2026 still treats enabling the DevTools protocol inside a user's running browser as an attack technique ([SpecterOps](https://specterops.io/blog/2026/08/13/chrome-devtools-protocol-cookie-theft/)).
 
-**Consequence.** An automation tool that drives or reads the user's everyday profile is doing what browser vendors are actively closing off and what security tools look for. Web2MCP uses its own data directory for every identity and never reads another program's cookie store. The earlier claim that the engine can attach to a browser already running on a user's device is withdrawn.
+**Consequence.** An automation tool that drives or reads the user's everyday profile is doing what browser vendors are actively closing off and what security tools look for. Anything2MCP uses its own data directory for every identity and never reads another program's cookie store. The earlier claim that the engine can attach to a browser already running on a user's device is withdrawn.
 
 ## Sessions are becoming bound to devices
 
@@ -41,7 +41,7 @@ Feeds spec sections [44](../spec/44-session-keeper.md) and [45](../spec/45-polic
 - The crate is `cedar-policy`, at version 4.11 or 4.12 in search results ([docs.rs](https://docs.rs/crate/cedar-policy)).
 - A 2026 engineering note from another project describes moving its sandbox policy to Cedar, citing a formal specification with the Rust implementation tested against it ([NVIDIA OpenShell](https://nvidia.github.io/OpenShell-Research/dev-notes/posts/2026-11-09-cedar-policy-language/)).
 
-**Consequence.** Cedar's semantics are exactly the two properties Web2MCP's policy needs, in a Rust crate. The skip-on-error rule could let a broken forbid fail open, so policies are validated before publishing and any evaluation error is treated as a denial. Its license, binary size, and speed were not checked and need a spike.
+**Consequence.** Cedar's semantics are exactly the two properties Anything2MCP's policy needs, in a Rust crate. The skip-on-error rule could let a broken forbid fail open, so policies are validated before publishing and any evaluation error is treated as a denial. Its license, binary size, and speed were not checked and need a spike.
 
 ## Not verified
 

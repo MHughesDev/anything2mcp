@@ -1,4 +1,0 @@
-//! The capability probe, traffic capture, and endpoint inference.
-//!
-//! Nothing is implemented yet. The crates this one may depend on are set by the
-//! layering table in `docs/reference/technical-reference.md`.

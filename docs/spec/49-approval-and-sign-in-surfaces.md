@@ -30,7 +30,7 @@ Where the operating system offers no such prompt, step 3 is a native confirmatio
 - The engine opens a visible window of its own browser, in the profile for that identity, at the application's sign-in page.
 - The person signs in as they always do. Password managers, MFA prompts, and passkeys work as in any browser window.
 - The session keeper watches for the target's signed-in probe to succeed, then closes the window or leaves it for the first run.
-- The window shows which application and which Web2MCP identity it is for. The engine never asks for a password in its own interface.
+- The window shows which application and which Anything2MCP identity it is for. The engine never asks for a password in its own interface.
 
 ## On a server
 
@@ -59,7 +59,7 @@ On a server the identity provider's sign-in is the proof of a person, so no oper
 | Piece | Language | Phase |
 | --- | --- | --- |
 | The diff page, sign-in status page, and decision-point form | TypeScript, in `web/console` | 3 |
-| The short-lived loopback listener | Rust, in `w2m-local` | 3 |
+| The short-lived loopback listener | Rust, in `a2m-local` | 3 |
 | System notifications | Rust, through a cross-platform crate to be chosen | 3 |
 | Operating-system user-presence prompts | Rust, per operating system | 3; needs research brief 27 |
 | The server console's approval pages | TypeScript | 6 |

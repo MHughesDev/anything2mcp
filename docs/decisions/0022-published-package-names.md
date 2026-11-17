@@ -1,6 +1,6 @@
 # 0022. Published package names
 
-**Status:** Accepted. Decided by the project owner. The owner chose the pip name; the crates.io and npm names follow from it.
+**Status:** Superseded by [0056](0056-one-name-everywhere-anything2mcp.md) on 2026-11-17. Was: Accepted. Decided by the project owner. The owner chose the pip name; the crates.io and npm names follow from it.
 
 **Date:** 2026-11-15
 

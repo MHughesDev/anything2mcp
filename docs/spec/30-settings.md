@@ -3,14 +3,14 @@
 Every behavior has a safe default, and every default can be changed at the right level. Settings are layered, with later layers overriding earlier ones:
 
 1. Built-in defaults for the chosen profile.
-2. The system file, `web2mcp.toml`.
-3. Environment variables, prefixed `W2M_`.
+2. The system file, `anything2mcp.toml`.
+3. Environment variables, prefixed `A2M_`.
 4. Command-line flags.
 5. Workspace and toolset settings, set by admins.
 6. Target, operation, and pipeline files.
 7. Per-call options, limited to what policy lets a caller change, such as pinning a mode.
 
-Admins can lock any setting so lower layers cannot override it. `web2mcp config show --effective` prints the final value of every setting and which layer set it.
+Admins can lock any setting so lower layers cannot override it. `anything2mcp config show --effective` prints the final value of every setting and which layer set it.
 
 | Group | What it controls | Examples |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ Admins can lock any setting so lower layers cannot override it. `web2mcp config 
 | `storage` | Data at rest | Database, trace store, vault back end, retention periods, encryption keys |
 | `tools` | The agent-facing surface | Tools listed up front, toolsets, naming prefix, result size cap, concise or detailed results |
 | `telemetry` | Visibility | OpenTelemetry endpoint, log level, redaction rules, trace sampling |
-| `authoring` | Building | Build profile on or off, capture limits, discovery budgets, who may publish |
+| `authoring` | Building | Build profile on or off, capture limits, discovery budgets, when the scout runs and what it may try ([section 67](67-the-scout-and-who-does-what.md)), who may publish |
 | `plugins` | Extensions | Allowed plug-ins, signature requirement, capabilities granted |
 
 A complete Solo configuration is empty, because the defaults are the Solo profile. A minimal company server:
@@ -41,10 +41,10 @@ base_url = "https://mcp.example.com"
 
 [auth.callers]
 issuer = "https://login.microsoftonline.com/<tenant-id>/v2.0"
-audience = "api://web2mcp"
+audience = "api://anything2mcp"
 
 [storage]
-database = "postgres://web2mcp@db.internal/web2mcp"
+database = "postgres://anything2mcp@db.internal/anything2mcp"
 vault = "azure-key-vault"
 
 [policy.write]

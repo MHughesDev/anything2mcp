@@ -7,8 +7,8 @@ members = ["crates/*", "targets/example-app"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-license = "Apache-2.0"
-repository = "https://github.com/MHughesDev/web2mcp"
+license = "MIT"
+repository = "https://github.com/MHughesDev/anything2mcp"
 publish = false
 
 # Outside crates, each verified before it was added; docs/research/09 has the

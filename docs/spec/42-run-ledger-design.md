@@ -1,12 +1,12 @@
 # 42. Run ledger design
 
-The ledger is the part of Web2MCP that makes a write safe to stop, resume, and audit. This section turns [section 10](10-runs-ledger-and-resume.md) into a concrete design: what is stored, the states each thing moves through, the rules that must always hold, and the exact resume procedure. The table definitions are in the [ledger schema reference](../reference/ledger-schema.md).
+The ledger is the part of Anything2MCP that makes a write safe to stop, resume, and audit. This section turns [section 10](10-runs-ledger-and-resume.md) into a concrete design: what is stored, the states each thing moves through, the rules that must always hold, and the exact resume procedure. The table definitions are in the [ledger schema reference](../reference/ledger-schema.md).
 
 ## The problem it solves
 
-No engine can make a write to someone else's system happen exactly once. Durable-execution systems say so themselves: the step that touches the outside world may run more than once, so the effect has to be given an identity before it runs and that identity reused on every retry ([research note 13](../research/13-ledger-leases-and-runner-links.md)). Payment APIs solve this by accepting an idempotency key. The applications Web2MCP wraps usually accept nothing of the kind.
+No engine can make a write to someone else's system happen exactly once. Durable-execution systems say so themselves: the step that touches the outside world may run more than once, so the effect has to be given an identity before it runs and that identity reused on every retry ([research note 13](../research/13-ledger-leases-and-runner-links.md)). Payment APIs solve this by accepting an idempotency key. The applications Anything2MCP wraps usually accept nothing of the kind.
 
-Web2MCP therefore builds the same guarantee from three parts it controls:
+Anything2MCP therefore builds the same guarantee from three parts it controls:
 
 1. **Identity before action.** Each write is tied to a record key and recorded as an intent before anything is sent.
 2. **Read instead of trust.** After a stop, the engine reads the record back from the application to learn whether the write landed.

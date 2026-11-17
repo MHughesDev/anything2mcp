@@ -1,7 +1,7 @@
 //! The ground-truth harness: starts the application for a test and asks it,
 //! through the control interface, what it actually stored.
 //!
-//! A test never proves a write using Web2MCP's own read path alone. It asks here.
+//! A test never proves a write using Anything2MCP's own read path alone. It asks here.
 
 use std::fmt;
 

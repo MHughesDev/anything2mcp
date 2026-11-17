@@ -18,7 +18,7 @@ The system is split in two: a kernel that is the same whatever is being integrat
 
 ## What a pack hands the kernel
 
-A pack is a provider ([section 56](56-the-provider-contract.md)) that lives in this repository. Besides its manifest it registers five things, and nothing reaches into the kernel any other way.
+A pack is a provider ([section 56](56-the-provider-contract.md)) that lives in this repository. Besides its manifest it registers six things, and nothing reaches into the kernel any other way.
 
 | The pack registers | The kernel uses it to |
 | --- | --- |
@@ -27,6 +27,7 @@ A pack is a provider ([section 56](56-the-provider-contract.md)) that lives in t
 | Lint rules, with stable codes | Report problems with the pack's own files |
 | A driver for its modes | Run steps |
 | Discoverers and a describer | Observe a target and show an agent what was seen |
+| Drafting rules, from its kinds of finding to its kinds of file | Write drafts for what follows by rule ([section 67](67-the-scout-and-who-does-what.md)) |
 
 So the compiler stays neutral: it parses, validates against whatever schemas are registered, resolves names, type-checks expressions, counts commit points, lowers through whatever lowerings are registered, and emits. "Knowledge lives in one place" becomes: knowledge about a kind of system lives in its pack.
 
@@ -76,7 +77,7 @@ A pack that cannot bring item 2 for its writes can still be accepted for reads.
 | --- | --- | --- |
 | Lives | In this repository, as Rust crates | Anywhere, as a separate process in any language |
 | Trust | Reviewed with the product | Signed, or off by default; its manifest approved by an administrator |
-| Reaches the kernel | Through the registrations above | Through the plug-in protocol, which carries the same five things |
+| Reaches the kernel | Through the registrations above | Through the plug-in protocol, which carries the same six things |
 | Suits | Kinds of system most people need | Rare, heavy, or proprietary kinds |
 
 The contract is one. A plug-in that proves itself can become a pack without the kernel noticing.

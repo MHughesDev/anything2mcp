@@ -48,9 +48,9 @@ All problems from stages 2 to 8 are reported together, each with a code, a plain
 | Manifests | Per operation: surfaces, uploads, downloads, and destinations it may touch |
 | Tests | Which fixtures and expected results belong to which operation |
 
-The plan's shared types live in `w2m-core`; the compiler lives in `w2m-files`. The engine depends on the first and never on the second.
+The plan's shared types live in `a2m-core`; the compiler lives in `a2m-files`. The engine depends on the first and never on the second.
 
-**Encoding.** A compact binary encoding through Rust's standard serialization framework, inside a small versioned envelope. A zero-copy format is considered only if plan loading misses its budget. `web2mcp plan show` prints any plan as readable text for review and comparison.
+**Encoding.** A compact binary encoding through Rust's standard serialization framework, inside a small versioned envelope. A zero-copy format is considered only if plan loading misses its budget. `anything2mcp plan show` prints any plan as readable text for review and comparison.
 
 ## Lint rules
 
@@ -85,9 +85,9 @@ The source files are always stored beside the plan. A plan can therefore always 
 
 ## Compatibility
 
-- **Plan format.** The engine loads the current and the previous plan format. `web2mcp migrate` recompiles stored sources for a newer engine.
+- **Plan format.** The engine loads the current and the previous plan format. `anything2mcp migrate` recompiles stored sources for a newer engine.
 - **File schema.** Each target states its schema version. A newer compiler reads older versions and can rewrite files forward.
-- **Tool contracts.** `web2mcp diff` compares two versions of a target and classifies each change to a tool: compatible, such as a new optional input, or breaking, such as a removed input, a changed type, or a raised effect class. A breaking change requires a new major number in the tool's name, as the gap review's tool-versioning rule requires ([section 32](32-components-added-by-the-gap-review.md)).
+- **Tool contracts.** `anything2mcp diff` compares two versions of a target and classifies each change to a tool: compatible, such as a new optional input, or breaking, such as a removed input, a changed type, or a raised effect class. A breaking change requires a new major number in the tool's name, as the gap review's tool-versioning rule requires ([section 32](32-components-added-by-the-gap-review.md)).
 
 ## Speed targets
 

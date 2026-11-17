@@ -1,6 +1,6 @@
 # Research notes
 
-What was looked up while designing Web2MCP, what it found, and how far each note can be trusted. Every claim in the spec that came from outside reading traces back to a note here.
+What was looked up while designing Anything2MCP, what it found, and how far each note can be trusted. Every claim in the spec that came from outside reading traces back to a note here.
 
 | File | Topic | Status |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ What was looked up while designing Web2MCP, what it found, and how far each note
 | [07-copilot-studio-and-hosted-agents.md](07-copilot-studio-and-hosted-agents.md) | Connecting Copilot Studio; private networks | Partial; untested |
 | [08-entra-identity.md](08-entra-identity.md) | Acting as a user or a service under Entra ID | Partial |
 | [09-rust-building-blocks.md](09-rust-building-blocks.md) | Crates and engine options | Partial; most crates unverified |
-| [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `web2mcp` | Completed; quick reviews |
+| [10-code-reviews.md](10-code-reviews.md) | browser-to-mcp, Pomerado, the pip `anything2mcp` | Completed; quick reviews |
 | [11-open-research.md](11-open-research.md) | 31 research briefs still to run | To do |
 | [12-packaging-and-agent-interfaces.md](12-packaging-and-agent-interfaces.md) | Package names, pip and npm packaging, commands versus MCP tools | Partial; search results and registry checks |
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |

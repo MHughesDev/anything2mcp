@@ -1,20 +1,20 @@
 # 26. Agent toolkit: how tools get built
 
-Any AI agent builds Web2MCP tools through a set of authoring actions. Each action is available as a command and as an MCP tool, generated from one registry; commands and files are the primary interface and MCP is the second door ([section 40](40-authoring-interface.md)). The table uses the MCP names; the [action catalog](../reference/action-catalog.md) lists every action. Web2MCP supplies evidence and guardrails; the agent supplies the reasoning. No model provider is built in.
+Any AI agent builds Anything2MCP tools through a set of authoring actions. Each action is available as a command and as an MCP tool, generated from one registry; commands and files are the primary interface and MCP is the second door ([section 40](40-authoring-interface.md)). The table uses the MCP names; the [action catalog](../reference/action-catalog.md) lists every action. Anything2MCP supplies evidence and guardrails; the agent supplies the reasoning. No model provider is built in.
 
 | Authoring tool | What it gives the agent |
 | --- | --- |
-| `w2m_target_probe` | Platform, framework, support tier, and surfaces found at a URL or in a running desktop app |
-| `w2m_auth_detect` | The sign-in method, with evidence, and a recommended identity mode |
-| `w2m_screen_snapshot` | A compact accessibility snapshot of the current page or window, with element references |
-| `w2m_capture_start`, `w2m_capture_stop` | A recording of a person or the agent using the app: actions, requests, and responses, with secrets already redacted |
-| `w2m_endpoints_infer` | Endpoint templates, schemas, token and ID dependencies, and a map from typed values to request fields |
-| `w2m_spec_import` | Operations generated from an OpenAPI, GraphQL, or OData description, or from an upstream MCP server's tool list |
-| `w2m_draft_write` | Writes target files after schema validation and linting |
-| `w2m_draft_try` | Runs a draft binding in a sandbox: reads freely, writes only against declared test records |
-| `w2m_test_run` | Runs the publish gates and returns evidence |
-| `w2m_shadow_report` | How often a shadow binding matched the verified one, and where it differed |
-| `w2m_publish_request` | Submits a version for human review |
+| `a2m_target_probe` | Platform, framework, support tier, and surfaces found at a URL or in a running desktop app |
+| `a2m_auth_detect` | The sign-in method, with evidence, and a recommended identity mode |
+| `a2m_screen_snapshot` | A compact accessibility snapshot of the current page or window, with element references |
+| `a2m_capture_start`, `a2m_capture_stop` | A recording of a person or the agent using the app: actions, requests, and responses, with secrets already redacted |
+| `a2m_endpoints_infer` | Endpoint templates, schemas, token and ID dependencies, and a map from typed values to request fields |
+| `a2m_spec_import` | Operations generated from an OpenAPI, GraphQL, or OData description, or from an upstream MCP server's tool list |
+| `a2m_draft_write` | Writes target files after schema validation and linting |
+| `a2m_draft_try` | Runs a draft binding in a sandbox: reads freely, writes only against declared test records |
+| `a2m_test_run` | Runs the publish gates and returns evidence |
+| `a2m_shadow_report` | How often a shadow binding matched the verified one, and where it differed |
+| `a2m_publish_request` | Submits a version for human review |
 
 **The build loop.** Probe, detect auth, sign in, capture, infer, draft, try, test, request publish. A person's only required steps are signing in and approving the publish.
 

@@ -45,6 +45,7 @@ The design is a set of bets. This register lists the ones that matter most: what
 | H-28 | One binary with every first-party pack compiled in stays under the 25 MB wheel target | It does not, and packs must be packaged separately | Stage F: measure the binary and the wheel | The long-term plan, section 4.9 | open |
 | H-29 | Seven interaction archetypes cover every kind of system worth supporting | Real systems turn up that fit none, and each needs its own handling in the engine | Each time a pack is designed, record whether its modes fitted an archetype without bending it; revisit after three packs beyond the first four | Decision 0050, section 54 | open |
 | H-30 | Reading a write back through a different surface of the same target catches errors that reading back through the writing surface misses | The two agree almost always, and the second surface adds cost and little else | In Phase 3, write through the interface in the test application and read back both ways under each fault; count the cases only the second read caught | Section 60 | open |
+| H-31 | Drafts written by rule from findings are right often enough that reading a scout's report is less work than writing the files | Drafted reads fail their first try so often that fixing them costs more than writing them by hand | In Stage E, scout each test stand cold; count the drafted reads that pass five identical runs untouched, and time an agent building the same reads with and without the scout | Decision 0059, section 67 | open |
 
 ## Adding a hypothesis
 

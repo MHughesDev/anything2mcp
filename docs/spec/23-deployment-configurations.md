@@ -18,10 +18,10 @@ In the company profile, every caller reaches one governed endpoint. The control 
 
 **Why this scales cleanly.**
 
-- **Stateless front.** MCP no longer has protocol sessions, and Web2MCP keeps all run state in the store under a `run_id`. Any control-plane replica can answer any request, so no sticky routing is needed.
+- **Stateless front.** MCP no longer has protocol sessions, and Anything2MCP keeps all run state in the store under a `run_id`. Any control-plane replica can answer any request, so no sticky routing is needed.
 - **Runners pull work.** Runners connect outward and take jobs suited to them: by target, by mode, by operating system, and by identity. Adding capacity means starting more runners.
 - **Sessions live with runners, secrets with the vault.** A live browser stays on its runner; its saved state is encrypted in the vault so another runner can take over after a restart.
 
-**Build once, promote anywhere.** Tools are usually built in the Solo profile on someone's laptop, then promoted. `web2mcp bundle` packs a target version into a signed file; the company server's publisher reviews and imports it, or the server pulls it from a Git repository. Nothing is rebuilt, because the files are the same in every profile.
+**Build once, promote anywhere.** Tools are usually built in the Solo profile on someone's laptop, then promoted. `anything2mcp bundle` packs a target version into a signed file; the company server's publisher reviews and imports it, or the server pulls it from a Git repository. Nothing is rebuilt, because the files are the same in every profile.
 
 **Operating systems.** The control plane and server runners run on Linux, Windows, and macOS, natively or in a container. Desktop runners need an interactive session on the operating system of the app they drive. User-device runners install as a small tray application.
