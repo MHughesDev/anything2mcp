@@ -49,6 +49,9 @@ Nothing usable yet. The project is in its foundation phase.
 - A run's events can be followed over REST, as a page or as a stream, at `GET /api/v1/runs/{run_id}/events`, and an MCP caller that asks for progress gets one message for each step the run takes. The result of a call carries the following call as `next` in its structured content.
 - `tool.search` can list tools in full, twenty to a page.
 - A device's serial can be declared for each environment, and a write to a device that has none declared is refused.
+- A call of `tool.call` may carry an idempotency key, and the same call made again with it gives back its run, finished or not, marked `repeated`; the same key with another call is refused (`idempotency_key_reused`) ([decision 0160](docs/decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)).
+- `run.list` lists your own runs, newest first, twenty to a page, and `anything2mcp run list` and `GET /api/v1/runs` serve it.
+- When an answer is lost after a request may have reached the engine, the command line, the bridge, and both client libraries report `answer_lost` and say it is not safe to retry; they used to say to run it again ([decision 0159](docs/decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md), [0158](docs/decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)).
 - The design: a specification of 59 sections in seven parts, 144 decision records, 21 research notes, and a register of 40 hypotheses.
 - The design of configuration: eight layers, twelve scopes, presets, a group of settings for every pack, and the rules that no setting can loosen.
 - The bar: what being the best of its kind means, as twelve things that can be measured, with a scorecard.
@@ -94,6 +97,14 @@ A safety review read each crate against its design and the ten rules, and every 
 - An approval is checked whole when a write begins, the `cautious` and `ci` presets are in force, and an approval's window is at most one day ([decision 0145](docs/decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)).
 - An operation that writes can no longer compile as a read, in any pack ([decision 0154](docs/decisions/0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md), [0155](docs/decisions/0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md)).
 - Telemetry: a trace that was altered is reported as broken and gives no signature, and a log file is private to the user on Linux and macOS.
+- A command that runs the engine itself holds the engine lock, so two engines never share a store; a second command waits up to twenty seconds, then ends `engine_unreachable` ([decision 0158](docs/decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)).
+- Every caller of the local channel is an agent, so a person's act through a running engine is refused (`person_required`) until a page for it is built. A person who needs one stops the engine and acts in one process at a terminal.
+- Approval pages work in a real browser, which sent no usable origin before.
+- Project files that another account can change are ignored or refused (`path_not_allowed`), and a folder is searched for one only where only you or the administrator can write.
+- Terminal output shows control characters as text, such as `\u{1b}`, and does not obey them.
+- Each installation has its own key-store entry, named by its data directory, and the passphrase variable is removed from the engine's own process at start.
+- The npm launcher runs only its own platform package, checks its name and version, and passes `SIGINT`, `SIGTERM`, and `SIGHUP` on to the program ([decision 0159](docs/decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
+- A program started by a pack is never handed a variable of the engine's own (any name starting with `A2M_`) or one named for a credential; a launch that names one is refused (`engine_variable_refused`) and the lint rule is `command.engine_variable`.
 
 ## [0.0.1]
 
