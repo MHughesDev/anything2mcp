@@ -197,7 +197,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `effect` (required) | `read`, `write`, or `irreversible` |
 | `identity` | How the record is found again: `natural`, `composite`, `stamped`, `find`, or `none`, with the inputs, the stamped field, or the lookup it uses ([spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md)); required for `write` |
 | `key` | Short form of `identity`. One input is `natural`. A list of inputs is `composite`, parent first, such as `[order_id, item_code]`. The record key the ledger stores and locks is these inputs' normalized values, in the order declared |
-| `commit_points` | How many times the application saves; default 1; checked by the compiler |
+| `commit_points` | How many times the application saves; default 1 for a write, and at least 1; a read states none; checked by the compiler |
 | `inputs` (required) | Map of name to `type`, `description`, `required`, `default` |
 | `outputs` (required) | Map of name to `type`, a field type, and `list`, true for a list of that type. A reference to a pack's schema is not built yet |
 | `title` | Name shown to people; the operation's name unless given |
@@ -205,7 +205,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `bindings` (required) | One or more bindings (below) |
 | `description` (required) | What it does, when to prefer something else, side effects, limits |
 | `examples` | One to three example inputs, each a map from an input's name to a value of its type |
-| `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use |
+| `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use. A destination is one exact address: a host name or an address, with a port or a scheme where needed, and no wildcard, range, path, or user information. An upload or a download is one name |
 | `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
 
 **Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`.

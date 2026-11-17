@@ -34,7 +34,7 @@ The policy engine's order of evaluation makes this exact. For a call that writes
 6. Validate inputs and the source; apply record limits and quotas.
 7. Preview.
 8. May this write proceed without a person's approval? If not, wait for one, and check that the approver may approve.
-9. Just before the write phase, and again on any resume: repeat steps 1 and 3. Grants can change while a run waits, and a person who loses a grant while their run waits does not get the write.
+9. Just before the write phase, and again on any resume: repeat steps 1 and 3. Grants can change while a run waits, and a person who loses a grant while their run waits does not get the write. A run is resumed only by the person who started it or a caller proved to act for them; the question is asked about whoever resumes, and again, at guard, about the caller that started the run.
 10. When results return: mask fields the caller may not see.
 
 Reads stop after step 6 and go straight to step 10.
@@ -157,7 +157,7 @@ The local engine uses the same policy engine with a built-in policy set: the ope
 
 An approval is a person's decision to allow one exact diff. It is stored server-side as a **single-use record bound to the diff's hash**, together with the tool version, the run, the approver, the channel it arrived by, the user-presence check passed, and an expiry. The diff and its hash are defined in [steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md#diffs).
 
-- **Recording.** An approval is refused unless the approver is a person and not an agent identity, policy allows them to approve this run, the diff hash equals the one stored on the run, and the run is waiting at `needs_approval`. Where policy names an approver, the caller's own confirmation is refused.
+- **Recording.** An approval is refused unless the proof of presence handed in with it is the approver's own and was made within two minutes, the approver is a person and not an agent identity, policy allows them to approve this run, the diff hash equals the one stored on the run, and the run is waiting at `needs_approval`. Where policy names an approver, the caller's own confirmation is refused.
 - **Using.** When the write phase begins, the approval is marked used in the same transaction in which the ledger moves the run to `running`. An expired, used, or revoked approval, or one for another diff, is refused (rule 3 of [section 208](208-runs-the-ledger-and-resume.md)). A resumed run continues under the approval it already used.
 - **Freshness.** If the system's data changes before the write, the run stops at that record as `stale`. The check is made per record, just before each write, when the preview is older than the freshness window.
 - **Silence is a decline.** An approval window that ends is recorded as a decline by nobody, and the run ends `expired`.

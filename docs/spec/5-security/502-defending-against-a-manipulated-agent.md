@@ -21,7 +21,7 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 | Where | Rule |
 | --- | --- |
 | On a server | A caller never passes a path. It uploads content, which becomes a blob, and passes the blob's reference |
-| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make |
+| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make. A project folder is one that holds a project file and is no program's own folder: not the engine's, not the home folder or a hidden folder of it, not a folder the operating system gives programs for their data. A source file is read only from the project's `sources` folder |
 | Everywhere | Size limits; the content must be the type it claims, so a renamed file is refused; a file is read once and stored as a blob, so what was previewed is what is uploaded |
 
 ## Downloads are data

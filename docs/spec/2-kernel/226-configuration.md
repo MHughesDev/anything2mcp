@@ -85,6 +85,8 @@ A setting is how this installation behaves. A target file is what a system is: i
 
 A protected setting is one whose looser value only a person can choose, through a channel an agent cannot reach. On one machine that channel is `config.set` or `provider.enable` with the operating system's user-presence prompt, the same one an approval uses ([section 503](../5-security/503-approval-and-sign-in-surfaces.md)). The loosened value is kept in the store as a record bound to the presence check, and takes the place of the user layer for that key. A file, a variable, or a flag that loosens it is refused. On a server the channel is the installation file, which only the operator's account can write, and the console after an administrator signs in. Tightening a protected setting is never protected.
 
+A protected setting is never reported as in force when it is not. A policy setting is in force only as far as the policy engine decides by it; one set to a value the policy engine cannot yet work by stops the kernel with the setting's name, and `config.show` marks it `in_force: false` ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). Today that holds for every value but the default of `policy.approve_writes`, `policy.max_records_per_run`, `policy.approval_window_minutes`, `policy.agent_effect_ceiling`, `policy.writes_outside_tests`, and `policy.two_person_irreversible`, and so for the presets `cautious` and `ci`, which set some of them.
+
 | Protected setting | Loosening means | Reference |
 | --- | --- | --- |
 | `policy.approve_writes` | Lowering who must approve a write | [Section 212](212-policy-and-approvals.md) |
@@ -141,7 +143,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `store.free_space_floor` | Bytes | A draft: 1 GiB; below it the kernel is `degraded` ([section 224](224-when-the-engine-itself-fails.md)) | I | no |
 | `vault.backend` | `os_keystore`; `passphrase`, which derives the root key from the passphrase the engine is started with, of at least 16 bytes, in the environment variable `A2M_VAULT_PASSPHRASE`; or an external secrets manager by reference | `os_keystore` | I | no |
 | `vault.root_key` | A key reference | The key store's own | I | no |
-| `files.allowed_roots` | Named folders | The project folder | U | yes |
+| `files.allowed_roots` | The word `<project>`, which stands for any folder that holds a project file, and full paths of folders | `<project>` | U | yes |
 | `files.max_upload_bytes` | Bytes | A draft | U | no |
 
 **Policy.** Pre-approval rules, standing approvals, grants, and quotas are in the policy set, not here.

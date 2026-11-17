@@ -10,7 +10,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 | Layer | 7, Actions |
 | May depend on | Layers 1 to 6 |
 | Depends on | Every kernel crate below it except `a2m-expr`, `a2m-sources`, which it reaches through others. Outside: `serde`, `serde_json`, Tokio, and `toml` for settings files. Schemas are checked by `a2m-files`; no outside validator |
-| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles). A second pass, after the crates above it were built, is [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) |
+| Built in | Roadmap packages B5 (the first definitions), 1.4 (`Kernel::open`, the runner loop), 1.5 (generated faces), 3.2 and 3.6 (the policy gate and approvals), E5 (the scout), 5.1 and 5.2 (every authoring action, shortcuts), 6.3 (toolsets and roles). A second pass, after the crates above it were built, is [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md); the safety audit is [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md) |
 | Carries out | Spec sections [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [220](../../spec/2-kernel/220-actions-and-the-authoring-interface.md), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md); the in-process half of [223](../../spec/2-kernel/223-the-runner-protocol.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md); the [action catalog](../../reference/action-catalog.md) |
 
 ## Owns
@@ -32,7 +32,7 @@ It must never: decide whether something may happen (that is `a2m-policy`); sign 
 
 ## Interface
 
-As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md), and [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) for the second pass). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
+As built ([decision 0094](../../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md), [decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md) for the second pass, and [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md) for the safety audit). `ProviderRegistry` stands for the `Registry` of `a2m-provider`.
 
 ```rust
 /// One action. Every face is generated from this and nothing else.
@@ -109,7 +109,9 @@ impl Kernel {
     pub async fn open(prepared: Prepared, providers: ProviderRegistry,
                       problems: Vec<RegistryProblem>, person: Arc<dyn PersonSurface>) -> Kernel;
     pub async fn verify_caller(&self, credential: CallerCredential) -> Result<Principal, Failure>;
-    pub fn status_only_caller(&self) -> Principal;       // for a stopped engine's status
+    pub fn status_only_caller(&self) -> Principal;       // nobody: a principal of no installation
+    /// Behind the `testing` feature: a second person of this workspace, who holds nothing.
+    pub fn second_person(&self, id: [u8; 16]) -> Result<Principal, Failure>;
     pub async fn dispatch(&self, request: Request) -> Response;
     pub fn health(&self) -> Health;                      // state, and every impaired part
     pub async fn recheck(&self) -> Health;
@@ -125,7 +127,8 @@ impl Kernel {
     /// redacted. Only for a run the caller started. Not an action.
     pub async fn events(&self, caller: &Principal, run: RunId, after: u64, limit: u32)
         -> Result<RunEvents, Failure>;
-    /// The same, waiting until an event is appended, the run ends, or `wait` passes.
+    /// The same, waiting until an event is appended, the run ends, the run comes to
+    /// rest while this waits, or `wait` passes.
     pub async fn next_events(&self, caller: &Principal, run: RunId, after: u64, limit: u32,
                              wait: Duration) -> Result<RunEvents, Failure>;
     /// The scheduler's jobs waiting or leased, and the runs resting for a person.
@@ -155,7 +158,20 @@ pub trait PersonSurface: Send + Sync {
     fn ask_sign_in(&self, ask: SignInAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>>;
     fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>>;
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer>;   // the keeper's asks
+    /// What the presence prompt can do here, for `doctor.run`. Raises no prompt.
+    fn presence(&self) -> BoxFuture<'_, PresenceReport> { /* not_available, unknown */ }
     fn return_address(&self) -> Option<String> { None }
+}
+pub struct PresenceReport { pub kind: &'static str, pub reason: &'static str,
+                            pub message: String, pub fix: String }
+/// Proof that a person was present: the kind of check, whose it is, when, and the
+/// prompt that answered. Copy. Whoever uses one checks it.
+impl PresenceProof {
+    pub const fn new(check: PresenceCheck, principal: PrincipalId, at: Timestamp) -> Self;
+    pub const fn naming(self, prompt: &'static str) -> Self;   // a word; another shape is not kept
+    pub const fn check / principal / at / prompt(&self);
+    /// Its person is `person`, and it is at most PRESENCE_WINDOW_MS (120,000) old.
+    pub fn checked(&self, person: PrincipalId, now: Timestamp) -> Result<(), &'static str>;
 }
 pub struct ApprovalDesk { /* not Clone; no public constructor; reached by no action */ }
 impl ApprovalDesk {
@@ -206,7 +222,12 @@ pub fn mcp_tools(registry: &ActionRegistry, toolset: BuiltInToolset) -> Vec<McpT
 pub fn mcp_tool(def: &ActionDef) -> McpToolFace;
 pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace>;
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace>;
-impl McpResultFace { pub fn of(response: &Response) -> McpResultFace; }
+impl McpResultFace {
+    pub fn of(response: &Response) -> McpResultFace;
+    /// For a caller on `toolset`: `next` names `a2m_action_run` where the toolset
+    /// does not list the following action's own tool.
+    pub fn of_in(response: &Response, registry: &ActionRegistry, toolset: BuiltInToolset) -> McpResultFace;
+}
 pub const SHORTCUTS: &[Shortcut];
 impl Shortcut {
     /// The steps to carry out on this engine: those before the first action that is
@@ -228,12 +249,14 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 2. **Validate.** The input against the action's full schema, never the compact one a tool list showed. Malformed input and a valid input that names nothing are different failures (spec section 220): the second is `input` / `not_found`.
 3. **Health.** The action's `needs` against the kernel's state. A write in `degraded`, or anything but a `Nothing` action in `stopped`, returns `busy` / `engine_degraded` with the reason.
 4. **Decide.** One `decide` call to `a2m-policy`, with the action, its effect (for `tool.call`, the published tool's effect class), the caller, and the context the engine supplies. Policy records the decision, allowed or refused, and returns its identifier. The dispatcher refuses to go on without one. The one exception: a `Nothing` action in a `stopped` kernel, which has no store to record a decision in; it reports on the engine and shows no data of any system.
-5. **Person.** For an action with `PersonNeed::Presence`, `confirm_presence` on the role's surface. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt.
-6. **Run.** The handler. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
+5. **Person.** For an action with `PersonNeed::Presence`, and for one with `PresenceWhenLoosening` when the call loosens, `confirm_presence` on the role's surface. Releasing a kill switch loosens; an action that has not said how its loosening is told (`config.set`, `provider.enable`, neither built) is asked for on every call. A caller marked as an agent never satisfies it, and on one machine the proof comes only from the operating system's prompt. The proof that comes back is checked: it must be this caller's, and at most two minutes old by the kernel's clock. A handler is given the proof in `Call::presence` and never asks itself.
+6. **Run.** The handler. It is given the effect class and hazard the decision was made for (`Call::decided`); `tool.call` refuses, with `busy`, `tool_changed`, a tool that has another by the time it looks. A long-running action submits to `a2m-sched` and returns the `run_id` at once.
 7. **Shape.** Pass every outgoing string through `Redact`, the echoed action name included; cut to the result size cap and say which limit cut it; add `next`. Every strict output schema admits `next`, and the MCP rendering of a success puts it into the structured content as `action`, `tool`, `args`, and `when`. Not built: marking text that came from a target as untrusted, and keeping a large result as a blob with its reference.
 
 ### Runs that wait for a person
 
+- **Whose a run is.** `run.get`, `run.resume`, and `run.cancel` answer for a run only to the person who started it, or to a caller proved to act for that person (`Principal::person`). Anyone else is told `input`, `not_found`, whatever role they hold: a run acts under its person's session. `trace.show` is bound to the workspace alone, because reading a run's evidence is what the auditor's role is for and the dispatcher's decision was that the caller holds it. A resume never changes what was kept of the run's caller: the guard asks about the caller that started the run, and `run.resume` first asks the policy engine, and records the answer, whether whoever resumes may use the run's tool.
+- **A run whose call cannot be read.** A run whose row in `actions_run_calls` is missing, or whose caller does not parse, is never run with an empty input and a caller made up for it. It ends as `failed` with `busy`, `run_call_unreadable`, or as `cancelled` where the ledger allows no other end; with a record in doubt it stops, and no reconcile is queued, which would end the same way.
 - **Waiting for a run.** `tool.call` and `run.resume` wait until the run has ended, or rests or has stopped with no job of the scheduler waiting or leased for it. The run's row and its unfinished job are read in one transaction: a job is unfinished from the transaction that queues it to the one that records how it ended, so nothing a runner does between its claim and the end of its work is taken for rest. After an approval, one `run.resume` completes the write.
 - **Telling the person.** Only `tool.call` and `run.resume` tell a run's person that it waits, and once for one diff of one run: the link is kept in memory and given again. `run.get` asks nobody anything; it shows the kept link. A run that a person approved at the desk and nobody has resumed is reported with `approved: true`, no link, and `run.resume` as the next step, and is not marked as needing a person.
 - **A decline.** `ApprovalDesk::decline` records the decline through the policy engine and ends the run as `expired` in the same transaction, with the failure `policy`, `approval_refused`. `run.get` reports it; nobody is asked again; the same call again is a new run.
@@ -242,11 +265,34 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 
 ### The project folder
 
-A local command works in a project folder. The mount of a front door puts a `ProjectFolder`, a type of this crate, on each request, as an extension beside the caller, from what the client end stated; the door hands it to `Request::in_project_folder`. Nothing a caller writes in a path, a query, a body, or a tool's arguments sets it. Before the handler runs, the dispatcher checks it: this engine serves one machine; the path is a full one; it names a folder that exists; and, with symbolic links followed, the folder neither holds nor lies inside the engine's own settings, data, runtime, or cache folders. A folder that fails is not handed on: `Call::project_folder` then answers `input`, `path_not_allowed` with the reason, and an action that needs no project is served all the same. A handler reaches every file through a checked path under the folder, as before.
+A local command works in a project folder. The mount of a front door puts a `ProjectFolder`, a type of this crate, on each request, as an extension beside the caller, from what the client end stated; the door hands it to `Request::in_project_folder`. Nothing a caller writes in a path, a query, a body, or a tool's arguments sets it, so a caller of an MCP tool cannot state one. The client end of the local channel can, and it runs as the person: whoever can run it can state any folder. So before the handler runs the dispatcher takes the folder only when all of this holds, with every link followed:
+
+- this engine serves one machine, the path is a full one, and it names a folder that exists;
+- the folder neither holds nor lies inside the engine's own settings, data, runtime, or cache folders;
+- it is not the home folder or a folder above it, does not lie inside a hidden folder of the home folder, and neither holds nor lies inside a folder the operating system gives programs for their data (the `XDG_*` folders, `Library` on macOS, `APPDATA`, `LOCALAPPDATA`, and `PROGRAMDATA` on Windows). The folder for temporary files is excepted from the last two, because on one operating system it lies inside such a folder and is nobody's own. This is what keeps a browser's profile and a key folder from being a project (rule 5);
+- it holds a project file, `anything2mcp.toml`, that is a file and not a link, is at most 1 MiB, and loads as a settings file by itself;
+- it is inside what the setting `files.allowed_roots` allows. The word `<project>`, the default, allows any folder that passed the checks above: the local engine serves commands run in many projects, so the folder it was started in would be the wrong bound. A full path allows the folders inside it; a list without the word allows only those; an entry that is neither allows nothing.
+
+A folder that fails is not handed on: `Call::project_folder` then answers `input`, `path_not_allowed` with the reason, and an action that needs no project is served all the same. What is handed on is the folder as it was resolved, never the path as it was stated. A handler reaches every file through a checked path under the folder, as before. What remains: a program that runs as the person and writes a project file into a folder of theirs makes that folder a project; such a program can read the folder itself.
 
 ### A source for a pipeline
 
-`tool.call` takes `source_file`, a path inside the project folder of the request, or `source_rows`, a list of records for a small input. The dispatcher resolves the path through a checked root made from the project folder, reads the file once, off the async threads, and stores the bytes as a blob; rows are stored as the bytes of a JSON document, at most 256 KiB. The blob's name is part of the digest that makes a run the same run. The runner hands the stored bytes to every job of the run, so the engine is never given a path and a resume reads the same bytes. A tool that reads a source and is given none, or the other way about, is `input`, `schema_invalid`. Not built: rows for a source that another reader than `json` reads, which needs `a2m-engine` to take rows.
+`tool.call` takes `source_file`, a path inside the project folder of the request, or `source_rows`, a list of records for a small input. A source file is read only from the project's `sources` folder, as in `sources/items.csv`: not from its target files, its project file, another folder, or a path with a hidden part. The dispatcher resolves the path through a checked root made from the project folder, which follows a link only while it stays inside the project; what stands at the name must be a file, not a link, a folder, or a device. It is read once, off the async threads, at most the smaller of `files.max_upload_bytes` and the engine's source limit, and its bytes are stored as a blob; rows are stored as the bytes of a JSON document, at most 256 KiB. The blob's name is part of the digest that makes a run the same run. The runner hands the stored bytes to every job of the run, so the engine is never given a path and a resume reads the same bytes. A tool that reads a source and is given none, or the other way about, is `input`, `schema_invalid`. Not built: rows for a source that another reader than `json` reads, which needs `a2m-engine` to take rows.
+
+### The protected settings and what is in force
+
+Whether something may happen is the policy engine's to decide, so a setting about it is in force only as far as the policy engine decides by it. `Kernel::open` opens the policy engine with the built-in set of the profile, `BuiltIn::local(user, workspace)` or `BuiltIn::server()`, and passes nothing else: `a2m-policy` cannot be opened with other settings, and a set published from the settings at start would stay in force after a setting was taken out. The module `bounds` holds one row for each protected setting:
+
+| Setting | In force through | A value other than the default |
+| --- | --- | --- |
+| `policy.approve_writes`, `policy.max_records_per_run`, `policy.approval_window_minutes` | The settings of the built-in policy set | Stops the kernel |
+| `policy.agent_effect_ceiling` | The highest effect class the built-in set's grants give | Stops the kernel |
+| `policy.writes_outside_tests`, `policy.two_person_irreversible` | Nothing: the policy engine has no rule for either | Stops the kernel |
+| `policy.pre_approval` | The guard: with it off, a write is never begun on a pre-approval, whatever the set in force holds | In force |
+| `policy.preview_freshness_seconds` | The engine's freshness window | In force |
+| `files.allowed_roots` | The dispatcher's check of a stated project folder | In force |
+
+"Stops the kernel" means: the policy part is impaired with `policy`, `setting_not_in_force`, which names the setting, the value it was given, where it was set, and the value in force; the kernel is `stopped`; `engine.status` and `doctor.run` give the reason; and `config.show` marks the setting `in_force: false` with a warning. A limit is never reported that is not kept. The presets `cautious` and `ci` set such values and stop the kernel the same way. The value in force is read from the built-in set itself, so the table cannot drift from the policy crate, and a test holds each default of the schema to it. The question "may this write proceed without a person" carries the run's record count, from the ledger, and the tool's hazard, from the plan.
 
 The `Response` is the same structure for every face: `ok`, `action`, `result`, `error`, `warnings`, `next`, the recorded decision, and an exit class (succeeded, failed, malformed, person needed). A run that failed carries both a result, which names the run, and an error; a run that rests waiting for a person carries a result and the exit class `person_needed`. Each face renders it without branching on its content: the command face as the [output contract](../../reference/technical-reference.md#command-output-contract), the MCP face as structured content, REST as JSON with a status code.
 
@@ -281,7 +327,11 @@ loop {
 }
 ```
 
-Slots are a count given to `start_runner_loop`, offered for every registered mode. The keeper's work does not take a slot in one process: it runs on the keeper's own worker (`InProcessWork` of `a2m-auth`), so a run waiting for a renewal can never hold the slot the renewal needs. In one process the lease is at least 100 seconds, and a job the engine gives back with a full lease left stops with `busy` / `lease_too_short` ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+Slots are a count given to `start_runner_loop`, offered for every registered mode. The keeper's work does not take a slot in one process: it runs on the keeper's own worker (`InProcessWork` of `a2m-auth`), so a run waiting for a renewal can never hold the slot the renewal needs. In one process the lease is at least ten minutes: the engine sends a save only when the lease leaves time for the whole binding, each step at its time limit, and counts a step that states none as thirty seconds, so ten minutes covers a binding of nineteen such steps. A job the engine gives back with a full lease left stops with `busy` / `lease_too_short` ([decision 0095](../../decisions/0095-the-settings-loader-and-the-in-process-runner-as-built.md)). The lease rules of spec section 223 apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. Keeping them on one machine is what lets hypothesis H-21 be measured.
+
+A job of a tool that writes names what it must hold alone: one key for every surface a write of the tool may be made on, of the kind its mode declares, from `Engine::exclusive_needs` and `ResourceKey::held_alone`. The scheduler takes all of a job's keys in the transaction that leases it, or none, so two jobs never wait for each other; a second write on the same surface stays queued until the first job has ended. A read names none. A system job that reaches this loop is ended as stopped with `busy`, `system_job_not_carried`, never as done: in one process the keeper's work, a sign-out and a forget included, is a call on the keeper's own worker that is waited for to its answer, so none is queued and none can be lost on the way.
+
+After a claim the store could not answer, the loop waits for the kernel's wake notice or thirty seconds and tries again. That is an interval between tries and not a wait for a condition: the store gives no notice that it can be asked again.
 
 The list is the spine's, in its order. The engine opens nothing itself: no store, no policy engine, no compiler.
 
@@ -294,7 +344,7 @@ The engine gives up a `Control` call that does not answer in time and drops its 
 | A session lease | The keeper in `a2m-auth` |
 | A record lock | `a2m-ledger`, which owns the lock table and its rules, under the job's lease number; when the lock is held, `a2m-sched` queues the wait |
 | A rate budget | `a2m-sched` |
-| The approval check for a diff hash | `a2m-policy` |
+| The approval check for a diff hash | `a2m-policy`. A refusal of "write without a person", a kill switch or a policy engine that could not decide, stops the run; only a plain denial goes on to a person's approval |
 | Recording an intent, and its token | `a2m-ledger`, in one transaction that also checks the approval policy recorded; the reply is the token the driver's handle requires |
 | Sending events and evidence, including the finished trace and a binding's health | `a2m-ledger`. After every write the kernel's notice that a run changed is given, which wakes whoever waits in `next_events` or for a run to rest. A verified record is marked through `Store::store_verified`, so its event is `verified`. `trace.show` reads the trace signature from the last line of the stored trace |
 
@@ -379,13 +429,19 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | `input` | `action_registry_invalid` | A duplicate action name, or a provider's action outside its name space |
 | `policy` | Any code `decide` returns | Refused by policy, passed through unchanged |
 | `policy` | `person_required` | A person's act was asked for by a caller that cannot give one |
-| `policy` | `approval_refused` | What `run.get` reports for a run a person declined, or whose approval window ended |
+| `policy` | `approval_refused` | What `run.get` reports for a run a person declined, or whose approval window ended; and what the desk answers to a proof of presence that is not the approver's or not of now |
 | `policy` | `kill_switch_on` | A kill switch covers the work a call would start or resume |
 | `policy` | `approval_stale` | The desk was asked to show a stored diff that is not the one the run waits on |
 | `input` | `file_unavailable` | A source file that is missing, unreadable, or larger than a source may be |
 | `policy` | `caller_not_verified` | A credential this engine does not accept |
 | `policy` | `setting_protected` | A layer loosened a protected setting, or set a key it may not |
 | `policy` | `setting_locked` | A higher layer changed a key the installation file locks |
+| `policy` | `setting_not_in_force` | A protected setting is set to a value the policy engine does not work by; the kernel is stopped |
+| `policy` | `presence_required` | A proof of presence that is another person's, or not of now, handed to the dispatcher |
+| `busy` | `run_call_unreadable` | What a run was called with is missing from the store or cannot be read; the run is not carried out |
+| `busy` | `tool_changed` | A tool was published again, with another effect, between the decision about a call and the call |
+| `busy` | `system_job_not_carried` | The in-process runner loop was handed a job that is not a run's |
+| `busy` | `store_unavailable` | A change was made and its audit entry could not be written |
 | `busy` | `engine_degraded` | The health state forbids the action |
 | `busy` | `lease_too_short` | A step may take longer than a job's lease lasts |
 | `busy` | `queue_full` and the scheduler's other codes | Passed through from `a2m-sched` |
@@ -416,6 +472,19 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | A record still `planned` can be recorded as failed | `lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_is_settled` |
 | A stated project folder is checked before any handler sees it | `a_stated_project_folder_is_checked_before_any_handler_sees_it` |
 | The count of work in hand follows a run from queued to its end, and a run that rests for a person | `the_kernel_says_how_much_work_it_has_in_hand` |
+| A run is read, resumed, and cancelled only by its person, and a resume keeps what was kept of its caller | `another_persons_run_is_not_read_resumed_or_cancelled_and_a_resume_keeps_its_caller` |
+| A run whose stored call cannot be read is never run | `a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run`, which asks the test application |
+| The desk and the dispatcher take a proof of presence only of the person it is used for, and of now; an approval's audit entry says what the proof said | `the_desk_takes_a_proof_only_of_the_approver_and_of_now_and_records_what_it_says`, `the_dispatcher_takes_a_proof_of_presence_only_of_its_caller_and_of_now` |
+| A protected setting is in force or the kernel is stopped with its name | `a_protected_setting_that_is_not_in_force_stops_the_kernel_and_is_never_shown_as_in_force`, `the_limits_the_settings_show_are_the_limits_the_policy_engine_keeps`, and the tests of `bounds` |
+| A pre-approved write needs no person only where `policy.pre_approval` allows it | `a_pre_approved_write_needs_no_person_only_where_the_setting_allows_it` |
+| A write the policy engine cannot decide is stopped | `a_write_the_policy_engine_cannot_decide_is_stopped_and_no_approval_carries_it` |
+| A project folder holds a project file, is inside the allowed roots, and is no program's own folder; a source file is read only from `sources` | The tests of `project`; `a_stated_project_folder_is_checked_before_any_handler_sees_it`; `a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes` |
+| An act that is a person's when it loosens is asked for by the dispatcher | `an_act_that_is_a_persons_when_it_loosens_is_asked_for_by_the_dispatcher` |
+| The tool that is run is the one the decision was made for; a debug print of a call shows no value | `a_tool_that_is_not_the_one_the_decision_was_made_for_is_not_run` |
+| A caller made without a credential holds nothing | `the_caller_a_stopped_engine_answers_to_is_nobody_and_holds_nothing` |
+| Two writes on one surface are one at a time | `two_writes_on_one_surface_are_one_at_a_time_by_the_scheduler` |
+| A write binding of six steps at the default limit fits the lease | `a_write_whose_binding_has_six_steps_at_the_default_limit_fits_the_lease` |
+| A follower is woken when its run comes to rest | `a_follower_is_woken_when_its_run_comes_to_rest_and_not_when_it_already_rests` |
 | A `Control` call dropped at a wait leaves nothing half-done | By construction: one transaction a call, and a guard for the notice. Not tested with a dropped call |
 
 ## Build order
@@ -427,6 +496,7 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
 6. Not built: the scout, `discover.run`, `test.run`.
 7. Built, each with a test through the dispatcher: `action.search`, `action.describe`, `action.run`, `docs.get`, `engine.status`, `config.show`, `doctor.run`, `provider.list`, `provider.describe`, `target.add`, `target.list`, `draft.lint`, `version.publish`, `plan.show`, `tool.search`, `tool.describe`, `tool.call`, `run.get`, `run.resume`, `run.cancel`, `trace.show`, `session.status`, `secret.set`, `killswitch.set`, `policy.explain`, `audit.query`. The four `engine.*` process actions and `self.update` are the client's. Every other action of the catalog is defined and not built. Shortcuts are data, and `Shortcut::on` says where one stops on this engine. The recorded catalog has a digest, kept in the store at each start; the generators that read it are not built.
+9. Done (the safety audit, [decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)): whose a run is; the protected settings and what is in force; the bounds of a project folder and of a source file; the checked proof of presence; a run whose call cannot be read; presence when an act loosens; what a job holds alone; the in-process lease; `next_events` at rest; `tool.search` by kind; `McpResultFace::of_in`; `PersonSurface::presence`. Not built: carrying `policy.max_records_per_run`, `policy.approval_window_minutes`, `policy.approve_writes`, `policy.agent_effect_ceiling`, `policy.writes_outside_tests`, and `policy.two_person_irreversible` at any value but the default, which needs `a2m-policy`.
 8. Done (the second pass): a source through `tool.call` and the runner; `tool.search` in full; `Kernel::events` and `next_events`; values shown as themselves. Not built: inline rows for a source that is not read as JSON; a call by a published tool's own name in one dispatch, which the MCP endpoint can have by dispatching `tool.call` and reading `input`, `not_found` with no result as an unknown tool.
 
 ## Open points
@@ -437,9 +507,13 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 - An action a provider adds has no summary, role, or listing of its own: the provider contract gives a name, two schemas, and an effect. Such an action is given the role `Builder` for a read and `Admin` otherwise, and is not listed.
 - `browser.install` is a row of the catalog and so an action of the kernel, which names a kind of program. It belongs to the pack that drives one, as an action that pack adds.
 - A word may be both a noun and a shortcut or process command (`run`, `test`, `docs`, `doctor`, `publish`, `runner`). The command face must take the bare word as the shortcut or process command and the word with a verb as the action.
-- The run's caller at guard is the caller who started or last resumed it, kept by this crate. A reconcile job the scheduler queues by itself is decided as the person who started the run.
+- The run's caller at guard is the caller who started it, kept by this crate when the run was made and never rewritten. A reconcile job the scheduler queues by itself is decided as that caller.
 - That a run was approved and not yet resumed is known to a reader only while the engine that recorded the approval runs. After a restart `run.get` shows the run as waiting, and a resume completes it all the same.
-- `Kernel::events` shows a run only to the caller that started it. A console that follows other people's runs needs a decision of its own.
+- `Kernel::events`, `run.get`, `run.resume`, and `run.cancel` serve a run only to its person. A console that follows other people's runs needs a decision of its own; `trace.show` already serves an auditor.
+- The installation's settings folder is one the user can write when `A2M_HOME` is set, which puts everything under one directory, and on Windows when `PROGRAMDATA` is not set. The installation file may loosen and lock, so on those two layouts whoever can write the user's files sets the bounds the other layers are held to. A real installation sets neither.
+- `policy.explain` explains a decision by its identifier and does not check its workspace: `a2m-policy` gives the explanation no workspace to compare. One installation is one workspace today.
+- A presence proof can be made by any crate, because the crate that raises the prompt is above this one. The desk and the dispatcher check whose it is and when it was made; what it is worth rests on the person surface the product crate mounts.
+- A caller's `is_agent` is what the front door states. In this crate it changes four things: a caller marked as an agent is never asked for presence and is refused a person's act; it is written into the caller's facts of a run and from there into every policy request about the run (`caller_is_agent`), where the policy engine's guardrail on approving and a pre-approval rule's condition read it; and it is part of the decision recorded for each dispatch. `is_agent: false` is never taken as proof of a person: every act that needs one asks the person surface for a proof and checks it.
 - A response to a call refused by a kill switch carries the decision about the action, an allow, and not the policy engine's recorded refusal of the work.
-- The mode each intent was stored for is kept in memory for a later claim's snapshot, and a restart loses it. What was recorded before a commit point is read from the ledger and survives one.
+- The mode each intent was stored for is kept in memory for a later claim's snapshot, for the newest 1,024 runs and until a run ends, and a restart loses it. What was recorded before a commit point is read from the ledger and survives one.
 - A record that reconcile verified has no outputs and no assigned key in the ledger; the engine reads it once more on resume ([decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md), point 18).

@@ -189,8 +189,9 @@ impl Kernel {
     }
 
     /// As [`Kernel::events`], and when there is no event after `after` yet
-    /// it waits for one: until one is appended, the run has ended, or
-    /// `wait` has passed, whichever comes first. A page that comes back
+    /// it waits for one: until one is appended, the run has ended, the run
+    /// comes to rest while this waits, or `wait` has passed, whichever
+    /// comes first. A page that comes back
     /// empty with `ended` false means the wait ran out. A follower goes on
     /// until [`RunEvents::settled`].
     ///
@@ -208,14 +209,22 @@ impl Kernel {
         let mut changed = self.run_watch();
         let give_up = tokio::time::sleep(wait);
         tokio::pin!(give_up);
+        // Whether the run was being worked on when this last looked. A
+        // job's end appends no event, so a run that comes to rest while
+        // this waits is told by that move alone, from working to settled.
+        // A run that already rests when the wait begins is not: the
+        // follower has seen it rest, and would otherwise be handed the
+        // same page for ever.
+        let mut was_working = false;
         loop {
             // Marked seen before the read, so that an event appended
             // between the read and the wait still wakes this.
             changed.borrow_and_update();
             let page = self.events(caller, run, after, limit).await?;
-            if !page.events.is_empty() || page.ended {
+            if !page.events.is_empty() || page.ended || (was_working && page.settled()) {
                 return Ok(page);
             }
+            was_working = !page.settled();
             tokio::select! {
                 alive = changed.changed() => {
                     if alive.is_err() {

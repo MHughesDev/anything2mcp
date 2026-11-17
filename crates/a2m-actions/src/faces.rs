@@ -237,6 +237,25 @@ impl McpResultFace {
     /// and branches on nothing else.
     #[must_use]
     pub fn of(response: &Response) -> Self {
+        Self::rendered(response, true)
+    }
+
+    /// The same rendering for a caller on `toolset`: where the toolset
+    /// does not list the tool of the following action, `next` names
+    /// `a2m_action_run` with the action as its argument, so that a caller
+    /// is never pointed at a tool its list does not hold.
+    #[must_use]
+    pub fn of_in(response: &Response, registry: &ActionRegistry, toolset: BuiltInToolset) -> Self {
+        let listed = response.next.as_ref().is_none_or(|next| {
+            registry
+                .toolset(toolset)
+                .iter()
+                .any(|def| def.name.as_str() == next.action)
+        });
+        Self::rendered(response, listed)
+    }
+
+    fn rendered(response: &Response, next_is_listed: bool) -> Self {
         match (&response.error, &response.result) {
             (Some(error), _) => Self {
                 is_error: true,
@@ -250,7 +269,14 @@ impl McpResultFace {
                 if let (Some(next), Json::Object(map)) = (&response.next, &mut result)
                     && !map.contains_key("next")
                 {
-                    map.insert("next".to_owned(), next.to_result_json());
+                    map.insert(
+                        "next".to_owned(),
+                        if next_is_listed {
+                            next.to_result_json()
+                        } else {
+                            next.through_action_run()
+                        },
+                    );
                 }
                 Self {
                     is_error: false,

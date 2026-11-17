@@ -2160,18 +2160,26 @@ fn fetch_documents() -> FetchEnable<'static> {
 /// Watches the browser itself for windows its pages open, for as long as
 /// the browser's link lasts.
 ///
-/// The browser is told, when it starts, to attach every new page before it
-/// runs. A page with no opener is let run when it is one the engine made,
-/// and never otherwise. A page with an opener is a window some page
-/// opened, also when the page asked for a window with no opener. Before
-/// it runs, every request of it is set to be ended in the browser and
-/// sockets are refused in it; then it is let run, because the page that
-/// opened it waits until it does. The tab that opened it reports it at
-/// once, and again with the address of the first page it asks for. That
-/// request is ended, and only then is the window closed: a window closed
-/// while its first request was on its way let one in eight through
-/// (measured, decision 0143). A window that asks for nothing stays, locked,
-/// until the tab that opened it goes.
+/// The browser is told, when it starts, to attach every new page and hold
+/// it before it runs. A page with no opener is let run when it is one the
+/// engine made, and never otherwise. A page with an opener is a window
+/// some page opened, also when the page asked for a window with no opener.
+/// The tab that opened it reports it at once. What becomes of it follows
+/// the tab's posture, and each way was measured (decision 0143):
+///
+/// - Opened from a tab that only observes, or from nothing the engine
+///   knows: it is closed while it is held, and never runs. It fetches
+///   nothing and gives its opener no window to use. The script that opened
+///   it does not go on; the page still answers.
+/// - Opened from a tab that may act: every request of it is set to be
+///   ended in the browser, and it is let run, so that the page that opened
+///   it goes on. The first page it asks for is reported and ended, and
+///   only then is it closed: a window closed while its first request was
+///   on its way let one in eight through. One that asks for nothing stays,
+///   with that lock on, until the tab that opened it goes.
+///
+/// Only the browser's own side can be set on a window that is held: its
+/// scripts answer nothing until it runs.
 pub(crate) async fn watch_windows(
     browser: Weak<BrowserInner>,
     mut events: mpsc::UnboundedReceiver<Event>,
@@ -2204,12 +2212,17 @@ pub(crate) async fn watch_windows(
                     target_id: &target_info.target_id,
                 };
                 browser.report(&opener, POPUP, "");
-                if client
-                    .call(session, &fetch_everything(), deadline)
-                    .await
-                    .is_err()
-                {
-                    // It cannot be locked, so it is not let run.
+                let may_act = browser
+                    .pages()
+                    .get(&opener)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|page| page.safe.is_none());
+                let locked = may_act
+                    && client
+                        .call(session, &fetch_everything(), deadline)
+                        .await
+                        .is_ok();
+                if !locked {
                     let _ = client.call(None, &close, deadline).await;
                     continue;
                 }
@@ -2221,28 +2234,7 @@ pub(crate) async fn watch_windows(
                         asked: false,
                     },
                 );
-                let refuse = Evaluate {
-                    expression: REFUSE_SOCKETS,
-                    context_id: None,
-                    return_by_value: true,
-                    await_promise: false,
-                };
-                // On every document it would load, and, once it runs, in
-                // the empty one it has now: a window that waits answers no
-                // script (measured).
-                let _ = client.call(session, &PageEnable {}, deadline).await;
-                let _ = client
-                    .call(
-                        session,
-                        &AddScriptOnNewDocument {
-                            source: REFUSE_SOCKETS,
-                            world_name: None,
-                        },
-                        deadline,
-                    )
-                    .await;
                 let _ = client.call(session, &RunIfWaiting {}, deadline).await;
-                let _ = client.call(session, &refuse, deadline).await;
             }
             EventKind::RequestPaused(paused) => {
                 let session = event.session.as_deref();

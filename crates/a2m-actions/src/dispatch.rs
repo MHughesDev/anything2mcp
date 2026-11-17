@@ -301,6 +301,18 @@ impl Next {
         };
         json!({"action": self.action, "tool": tool, "args": self.args, "when": self.when})
     }
+
+    /// `next` for a caller whose tool list does not hold the action's own
+    /// tool: the same step through `action.run`, which every toolset
+    /// lists, with the action as its argument.
+    pub(crate) fn through_action_run(&self) -> Json {
+        json!({
+            "action": "action.run",
+            "tool": format!("{}action_run", crate::faces::TOOL_PREFIX),
+            "args": {"action": self.action, "input": self.args},
+            "when": self.when,
+        })
+    }
 }
 
 /// A failure as a response carries it.
@@ -969,6 +981,25 @@ impl Kernel {
             allowed: decision.allowed(),
             refusal: decision.refusal,
         }
+    }
+
+    /// A caller of this installation's workspace who is not its user: a
+    /// second person, who holds no role and no grant under the built-in
+    /// set. For a test of a crate above this one that must prove that a
+    /// caller who did not start a run cannot follow, read, or resume it.
+    /// Never part of the product: a caller is named by
+    /// [`Kernel::verify_caller`] and by nothing else.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`engine_degraded` when the store is not open.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn second_person(&self, id: [u8; 16]) -> Result<Principal, Failure> {
+        Ok(Principal {
+            principal: PrincipalRef::person(a2m_core::PrincipalId::from_bytes(id)),
+            workspace: self.installation()?.workspace,
+            acting_for: None,
+        })
     }
 
     /// The effect class and hazard a call would have: the action's own, or,

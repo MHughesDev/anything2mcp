@@ -899,3 +899,127 @@ async fn a_write_whose_binding_has_six_steps_at_the_default_limit_fits_the_lease
     assert_eq!(world.app.write_count("A-102", "L-495").await.unwrap(), 1);
     world.kernel.close(CloseReason::Asked).await;
 }
+
+// ---- What the doors asked for (decision 0151) -----------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_follower_is_woken_when_its_run_comes_to_rest_and_not_when_it_already_rests() {
+    let world = World::ready().await;
+    let started = world
+        .call(
+            "tool.call",
+            json!({"tool": ITEM_UPSERT, "input": item("L-500"), "wait_seconds": 0}),
+        )
+        .await;
+    let id: RunId = started.result.unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // A follower reads on until the run is settled. A job's end appends no
+    // event, so the last wait is ended by the run coming to rest alone:
+    // long before the wait it was given runs out.
+    let wait = std::time::Duration::from_secs(120);
+    let began = std::time::Instant::now();
+    let mut after = 0;
+    let last = loop {
+        let page = world
+            .kernel
+            .next_events(&world.caller.principal, id, after, 200, wait)
+            .await
+            .unwrap();
+        after = page.last;
+        if page.settled() {
+            break page;
+        }
+    };
+    assert_eq!(last.state, RunState::NeedsApproval);
+    assert!(began.elapsed() < wait / 2, "{:?}", began.elapsed());
+
+    // A follower that begins on a run that already rests is not handed the
+    // same empty page at once, again and again: it waits its wait out.
+    let short = std::time::Duration::from_millis(300);
+    let began = std::time::Instant::now();
+    let resting = world
+        .kernel
+        .next_events(&world.caller.principal, id, after, 200, short)
+        .await
+        .unwrap();
+    assert!(resting.events.is_empty() && resting.settled());
+    assert!(began.elapsed() >= short, "{:?}", began.elapsed());
+
+    // A second person of the workspace, as a test of a door makes one, can
+    // follow nothing of it.
+    let second = world.kernel.second_person([0x77; 16]).unwrap();
+    assert_eq!(second.workspace(), world.caller.principal.workspace());
+    assert!(world.kernel.events(&second, id, 0, 10).await.is_err());
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tools_are_listed_by_kind_and_a_next_step_names_a_tool_the_toolset_lists() {
+    use a2m_actions::{BuiltInToolset, McpResultFace};
+
+    let world = World::ready().await;
+    let all = world.ok("tool.search", json!({"limit": 200})).await;
+    let kinds = |listed: &Json| -> Vec<String> {
+        listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for kind in ["operation", "pipeline"] {
+        let some = world
+            .ok("tool.search", json!({"kind": kind, "limit": 200}))
+            .await;
+        let found = kinds(&some);
+        assert!(
+            !found.is_empty() && found.iter().all(|one| one == kind),
+            "{some}"
+        );
+        assert_eq!(
+            found.len(),
+            kinds(&all).iter().filter(|one| *one == kind).count()
+        );
+    }
+    let neither = world.call("tool.search", json!({"kind": "screen"})).await;
+    assert_eq!(code_of(&neither).1, "schema_invalid");
+
+    // A run that ended badly points at `trace.show`, which the `use`
+    // toolset does not list: for a caller on it the step is the same one
+    // through `action.run`. A toolset that lists the action is given its
+    // own tool.
+    let (run, id) = world.rest_a_write("L-510").await;
+    world
+        .surface
+        .desk()
+        .decline(id, None, Channel::LocalPrompt)
+        .await
+        .unwrap();
+    let mut ended = world.call("run.get", json!({"run_id": run})).await;
+    ended.error = None;
+    ended.next = Some(crate::dispatch::Next::new(
+        "trace.show",
+        json!({"run_id": run}),
+        "to see what happened",
+    ));
+    let registry = world.kernel.actions();
+    let on_use = McpResultFace::of_in(&ended, registry, BuiltInToolset::Use)
+        .structured
+        .unwrap();
+    assert_eq!(on_use["next"]["tool"], "a2m_action_run", "{on_use}");
+    assert_eq!(on_use["next"]["args"]["action"], "trace.show");
+    assert_eq!(on_use["next"]["args"]["input"]["run_id"], run.as_str());
+    ended.next = Some(crate::dispatch::Next::new(
+        "run.resume",
+        json!({"run_id": run}),
+        "now",
+    ));
+    let listed = McpResultFace::of_in(&ended, registry, BuiltInToolset::Use)
+        .structured
+        .unwrap();
+    assert_eq!(listed["next"]["tool"], "a2m_run_resume", "{listed}");
+    world.kernel.close(CloseReason::Asked).await;
+}

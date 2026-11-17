@@ -73,6 +73,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt_pos("query", TEXT, "Words to look for in names and descriptions. Leave out to list everything.")
             .opt("target", TEXT, TARGET)
             .opt("module", TEXT, "A module of the target.")
+            .opt("kind", FieldType::Word(&["operation", "pipeline"]), "Only operations, or only pipelines. Both when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
             .opt("full", BOOL, "Return each tool in full, as tool.describe gives it: title, hazard, plan hash, input schema, output schema, and annotations. For listing a toolset in one call.")

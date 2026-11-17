@@ -19,10 +19,10 @@ Input is read and validated in full before any surface of the target is touched,
 | --- | --- |
 | Numbers | Decimal arithmetic; places and rounding mode from the field type; display grouping stripped |
 | Measurements | Converted to the field's base unit; fractions snapped to the declared step, such as 1/16 inch |
-| Money | Currency and its decimal places fixed per field |
-| Dates and times | Time-zone rule per field; Excel serial dates converted with the workbook's date system |
-| Text | Unicode NFC; whitespace collapsed; non-breaking and narrow no-break spaces treated as spaces; case rule per field |
-| Choices | Compared by stored code through a code-to-label map, never by display text |
+| Money | Currency and its decimal places fixed per field. A displayed amount may carry the field's currency code or a symbol written for that currency; another currency's code or symbol stops |
+| Dates and times | Time-zone rule per field; Excel serial dates converted with the workbook's date system. A format in which digits follow a part of one or two digits, such as `YYYYMD`, does not compile: reading it would be a guess |
+| Text | Unicode NFC; whitespace collapsed; non-breaking and narrow no-break spaces treated as spaces; case rule per field. Text compared without case is compared by its capital form, so text a system shows in capitals equals the text it was made from |
+| Choices | Compared by stored code through a code-to-label map, never by display text. No text may stand for two choices: a code list in which a code is another choice's label, or two codes or two labels are alike, does not compile, because a value read back could then be the intended choice or the one that was there before |
 | Checkboxes | In the web pack, read from the live checked state, not the HTML attribute |
 
 The result of each comparison keeps both the raw and normalized values, so a mismatch report shows exactly what the system did to the value, for example rounding 32.5625 to 32.56.

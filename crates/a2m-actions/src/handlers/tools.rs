@@ -72,6 +72,9 @@ handler!(
                         "pipeline",
                     ),
                 };
+                if call.text("kind").is_some_and(|wanted| wanted != kind) {
+                    continue;
+                }
                 let mut listed = json!({
                     "name": tool.name.as_str(),
                     "target": target.as_str(),

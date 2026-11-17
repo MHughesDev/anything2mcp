@@ -152,3 +152,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0149 | [The file pack after its safety audit](0149-the-file-pack-after-its-safety-audit.md) | Accepted (design decision) |
 | 0150 | [A take records its message before it acknowledges, and an answer with no rule leaves a write in doubt](0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) | Accepted (design decision) |
 | 0151 | [The doors take up the action registry's second pass](0151-the-doors-take-up-the-action-registrys-second-pass.md) | Accepted (design decision) |
+| 0152 | [The action registry and telemetry after their safety audit](0152-the-action-registry-and-telemetry-after-their-safety-audit.md) | Accepted (design decision) |
+| 0153 | [What the compiler, the plan, and the redactor hold by themselves, after the safety audit](0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md) | Accepted (design decision) |
