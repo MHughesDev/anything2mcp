@@ -918,19 +918,41 @@ async fn a_follower_is_woken_when_its_run_comes_to_rest_and_not_when_it_already_
     // long before the wait it was given runs out.
     let wait = std::time::Duration::from_secs(120);
     let began = std::time::Instant::now();
-    let mut after = 0;
+    let mut seen = a2m_actions::Followed::default();
     let last = loop {
         let page = world
             .kernel
-            .next_events(&world.caller.principal, id, after, 200, wait)
+            .next_events_from(&world.caller.principal, id, seen, 200, wait)
             .await
             .unwrap();
-        after = page.last;
+        seen = page.followed();
         if page.settled() {
             break page;
         }
     };
     assert_eq!(last.state, RunState::NeedsApproval);
+    assert!(began.elapsed() < wait / 2, "{:?}", began.elapsed());
+    let after = last.last;
+
+    // The race between two calls of one follower: its last page showed the
+    // run worked on, and the job ended before it called again. No event
+    // says so; what the follower saw does, and it is told at once.
+    let began = std::time::Instant::now();
+    let told = world
+        .kernel
+        .next_events_from(
+            &world.caller.principal,
+            id,
+            a2m_actions::Followed {
+                after,
+                settled: Some(false),
+            },
+            200,
+            wait,
+        )
+        .await
+        .unwrap();
+    assert!(told.events.is_empty() && told.settled(), "{told:?}");
     assert!(began.elapsed() < wait / 2, "{:?}", began.elapsed());
 
     // A follower that begins on a run that already rests is not handed the

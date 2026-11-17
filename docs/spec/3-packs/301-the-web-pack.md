@@ -455,7 +455,7 @@ The crates are built in the order their designs give: the browser base chosen by
 - How a program built on a browser runtime is started so that the protocol runs on a pipe, as for a browser.
 - Whether the shared parts of `screens/` should become the interface archetype's, in the kernel, once the desktop pack exists (hypothesis H-37).
 - How the `page_http` lowering and the probe are held to the version of the `endpoints/` and `endpoint` finding schemas they were written for, when the HTTP pack changes them.
-- The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is.
+- The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is. [Research note 25](../../research/25-webmcp-standard-status.md) found that such tools can be discovered and called through the browser's debugging protocol in a current browser build, and that the standard is still a community group draft.
 - Whether a validation message is always a declared variant, or a profile can name a generic one.
 - How a GET that a page treats as an action is recognized. A word list is a start, not an answer; it is settled in Phase 4.
 - Whether observing and acting tabs in one browser are safe enough together, or an observing scout should use its own browser. Copying a profile is what decision 0032 avoids.

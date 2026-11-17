@@ -10,7 +10,7 @@ name: pack-http
 
 **Steps.** `request`, `validate`, `extract`, `probe`.
 
-Not built: the `api` mode, TLS (a surface reached over HTTPS is refused with `tls_not_enabled`), the token step, GraphQL and OData rules.
+Not built: the `api` mode, the token step, GraphQL and OData rules. TLS is built behind the feature `tls` and is off by default: without it, a surface reached over HTTPS is refused with `tls_not_enabled`; with it, certificate and handshake failures are named below.
 
 ## An endpoint, from the `example` target
 
@@ -55,4 +55,4 @@ A binding of mode `http` names an `endpoint`, and may give `path_params`, `query
 
 ## Codes
 
-`rejected`: `app_validation_error`. `stale`: `version_conflict`, `version_not_read`. `drift`: `response_schema_mismatch`. `unknown_variant`: `unexpected_status`, `response_too_large`. `transient`: `upstream_unavailable`. `policy`: `surface_not_declared`. `input`: `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large`.
+`rejected`: `app_validation_error`. `stale`: `version_conflict`, `version_not_read`. `drift`: `response_schema_mismatch`. `unknown_variant`: `unexpected_status`, `response_too_large`, `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed`. `transient`: `upstream_unavailable`. `policy`: `surface_not_declared`. `input`: `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large`.

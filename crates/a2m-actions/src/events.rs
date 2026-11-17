@@ -78,6 +78,40 @@ impl RunEvents {
     }
 }
 
+/// What a follower last saw of a run: the number of the last event it was
+/// given, and whether the run was settled on the page that gave it. It is
+/// what [`Kernel::next_events_from`] compares the run with, so that a
+/// change that no event records still ends the wait at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Followed {
+    /// The number of the last event given; 0 before the first.
+    pub after: u64,
+    /// Whether the run was settled when the follower last read it, or
+    /// `None` when it has read no page yet.
+    pub settled: Option<bool>,
+}
+
+impl From<u64> for Followed {
+    /// From an event's number alone, with nothing known of the run.
+    fn from(after: u64) -> Self {
+        Self {
+            after,
+            settled: None,
+        }
+    }
+}
+
+impl RunEvents {
+    /// What a follower has seen once it has this page.
+    #[must_use]
+    pub const fn followed(&self) -> Followed {
+        Followed {
+            after: self.last,
+            settled: Some(self.settled()),
+        }
+    }
+}
+
 /// The work this engine has in hand, for whoever decides whether it may
 /// stop for want of use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -195,6 +229,11 @@ impl Kernel {
     /// empty with `ended` false means the wait ran out. A follower goes on
     /// until [`RunEvents::settled`].
     ///
+    /// This call knows only what it sees itself: a run that came to rest
+    /// between a follower's two calls is waited out here. A follower that
+    /// calls again and again uses [`Kernel::next_events_from`] with what
+    /// its last page showed.
+    ///
     /// # Errors
     ///
     /// As [`Kernel::events`].
@@ -206,25 +245,49 @@ impl Kernel {
         limit: u32,
         wait: Duration,
     ) -> Result<RunEvents, Failure> {
+        self.next_events_from(caller, run, Followed::from(after), limit, wait)
+            .await
+    }
+
+    /// As [`Kernel::next_events`], from what the follower last saw: the
+    /// number of the last event it was given and, when it read a page,
+    /// whether the run was settled then. The page is given at once when
+    /// that has changed since: a run that came to rest, or began to be
+    /// worked on again, between two calls is told to the follower without
+    /// a wait, although no event says so. A job's end appends no event.
+    ///
+    /// # Errors
+    ///
+    /// As [`Kernel::events`].
+    pub async fn next_events_from(
+        &self,
+        caller: &Principal,
+        run: RunId,
+        seen: Followed,
+        limit: u32,
+        wait: Duration,
+    ) -> Result<RunEvents, Failure> {
         let mut changed = self.run_watch();
         let give_up = tokio::time::sleep(wait);
         tokio::pin!(give_up);
-        // Whether the run was being worked on when this last looked. A
-        // job's end appends no event, so a run that comes to rest while
-        // this waits is told by that move alone, from working to settled.
-        // A run that already rests when the wait begins is not: the
-        // follower has seen it rest, and would otherwise be handed the
-        // same page for ever.
-        let mut was_working = false;
+        // Whether the run was settled when the follower, or this, last
+        // looked. A run that already rests when the follower last saw it
+        // is not answered at once: the follower has seen it rest, and
+        // would otherwise be handed the same page for ever. When the
+        // follower says nothing of it, this call's own first look stands
+        // in its place.
+        let mut was_settled = seen.settled;
         loop {
             // Marked seen before the read, so that an event appended
             // between the read and the wait still wakes this.
             changed.borrow_and_update();
-            let page = self.events(caller, run, after, limit).await?;
-            if !page.events.is_empty() || page.ended || (was_working && page.settled()) {
+            let page = self.events(caller, run, seen.after, limit).await?;
+            let settled = page.settled();
+            if !page.events.is_empty() || page.ended || was_settled.is_some_and(|was| was != settled)
+            {
                 return Ok(page);
             }
-            was_working = !page.settled();
+            was_settled = Some(settled);
             tokio::select! {
                 alive = changed.changed() => {
                     if alive.is_err() {

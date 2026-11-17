@@ -124,7 +124,7 @@ Brokers deliver at least once. A publish whose acknowledgement was lost may have
 
 | What the target offers | How a publish is made safe to resume |
 | --- | --- |
-| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
+| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Such a broker may remember a token only within a window; after it, a resume must reconcile by scanning (note 22). Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
 | A `retained` state channel | Identity `natural` by the key. Reconcile reads `latest`: the intended value means it landed; the value seen before means it did not; anything else is `stale` |
 | A `log` with positions | Identity `stamped`. Reconcile scans from the position recorded at intent, on the partitions the key maps to, for the token. Found means it landed. Not found with `complete` coverage of that range means it did not. A look that says more is held and gives no place to go on from, or says that was all while the log's own end lies further on, has not covered the range: it is `unexpected_reply`, never "not found" |
 | Consumers that ignore a repeated token, declared | Recorded and shown at approval; it does not change the class. The runtime cannot see a consumer |
@@ -233,7 +233,7 @@ Stated as needs, each an outside crate to be verified: a client for the chosen b
 
 ## Open points
 
-- Which protocol first. One with a small open specification, retained values per key, and correlation fields in the message is the likely start; a log with positions may need a second protocol. A protocol is one interface inside the pack, and [record 0104](../../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) says what it must offer.
+- Which protocol first. One with a small open specification, retained values per key, and correlation fields in the message is the likely start; a log with positions may need a second protocol. [Research note 22](../../research/22-stream-wire-protocol.md) recommends NATS with JetStream first, through a small client of the pack's own, and MQTT 5 later for retained and topic channels; this is the research's recommendation, not yet a decision. A protocol is one interface inside the pack, and [record 0104](../../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) says what it must offer.
 - Whether waits need their own count in the scheduler's budgets.
 - Whether a transactional publish across several channels is one commit point. Not offered until a target needs it.
 - Triggers: whether a matching message may start a run. Still not designed.

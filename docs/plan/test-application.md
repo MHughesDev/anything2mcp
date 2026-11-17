@@ -101,6 +101,7 @@ As of 2026-11-17 these were added, each without changing anything that was there
 | 30 | An OpenAPI 3.1 document, written by hand; a test calls every operation it names and compares its list with the served routes | The signed-in copies are named in its text, not as paths |
 | 31 | The fault "changed shape" renames one field in a JSON answer | |
 | 32 | The four trap pages, each write counted by name | The WebSocket route refuses the upgrade after counting the handshake, so no socket opens |
+| 32 | The `/leaving/{how}/orders/{order}/items/{item}` pages for the interface driver ([decision 0144](../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)): the line-item form that moves itself to the other loopback name on load (`load`), after Save (`click`), or opens a window on it (`window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at a trap route that counts what arrives | |
 | 33 | The delivery-details page and its JSON routes | No automated test drives the page's script; that waits for the interface driver |
 | 34 | A redirect to the other loopback name on the same port | |
 
@@ -121,6 +122,8 @@ As of 2026-11-17 the stands for the other kinds of system are built too. Each fo
 - **The broker**, `targets/example-broker/`: its [README](../../targets/example-broker/README.md).
 - **The simulated device**, `targets/example-device/`: its [README](../../targets/example-device/README.md).
 - **The MCP stand**, `targets/example-mcp/`: its [README](../../targets/example-mcp/README.md).
+
+The application stand also has a TLS side, behind its feature `tls` ([decision 0157](../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)): it serves the application over TLS and over plain HTTP at once, with one store behind both, so a test asks the plain control address what was stored. A `TestAuthority` made at test time signs a good certificate, one for another name, and one that expired in 2000; a second authority stands for an unknown one. A `TlsFront` puts TLS in front of the MCP stand.
 
 ## What Phase 0 delivers
 

@@ -250,6 +250,7 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
         .await;
     world.engine.kernel().tend().await;
     let left = world.agent(&["run", "get", &run]).await;
+    eprintln!("DEBUG trace {}", world.agent(&["trace", "show", &run]).await.json);
     assert_eq!(left.result()["status"], "stopped", "{:?}", left.finished);
     assert_eq!(left.error()["class"], "possible_commit");
     assert_eq!(left.error()["code"], "runner_lost");

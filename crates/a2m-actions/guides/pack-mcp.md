@@ -2,7 +2,7 @@ name: pack-mcp
 
 # The MCP pack, mode `mcp`
 
-**Latches onto.** An existing MCP server, remote or a local program. Surface kind: `mcp`, with `address`. A local server also names its `program` and `digest`, and may give `environment`. A local server is not built on Windows. Remote: plain HTTP with a bearer token. HTTPS is not built.
+**Latches onto.** An existing MCP server, remote or a local program. Surface kind: `mcp`, with `address`. A local server also names its `program` and `digest`, and may give `environment`. A local server is not built on Windows. Remote: a bearer token over plain HTTP, or over HTTPS in a build with the feature `tls`, which is off by default.
 
 **File kind.** `mappings/`. A mapping names the only tools that can be reached. Nothing is reachable until a person maps it.
 
@@ -54,4 +54,4 @@ Write the whole digest. A binding of mode `mcp` names a `tool` and its `args`.
 
 ## Codes
 
-`drift`: `upstream_tool_changed`, `response_schema_mismatch`. `rejected`: `app_validation_error`. `unknown_variant`: `unexpected_status`. `possible_commit`: `ambiguous_match`. `transient`: `timeout`, `connection_lost`, `upstream_unavailable`. `policy`: `not_granted`. `input`: `arguments_invalid`, `tls_not_enabled`, `not_built`, `payload_unreadable`.
+`drift`: `upstream_tool_changed`, `response_schema_mismatch`. `rejected`: `app_validation_error`. `unknown_variant`: `unexpected_status`, `certificate_untrusted`, `certificate_name_mismatch`, `certificate_expired`, `certificate_not_verified`, `tls_handshake_failed`. `possible_commit`: `ambiguous_match`. `transient`: `timeout`, `connection_lost`, `upstream_unavailable`. `policy`: `not_granted`. `input`: `arguments_invalid`, `tls_not_enabled`, `not_built`, `payload_unreadable`.
