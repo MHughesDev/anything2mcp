@@ -143,7 +143,7 @@ A kind has one owning pack per surface kind, and another pack may declare that i
 [[reads]]
 kind = "endpoints"                       # owned by the HTTP pack
 of = "file_kinds"
-surface_kind = "web_origin"
+surface_kind = "web"
 ```
 
 Checks made when a manifest is read, and when the registry is built, each a named failure:
