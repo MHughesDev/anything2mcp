@@ -177,6 +177,12 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
             "The statement's result holds more text than the limit allows.",
             "Lower the statement's `max_rows`, or raise the pack's `result_bytes` setting.",
         ),
+        Refusal::NotAllowed => failure(
+            FailureClass::Policy,
+            codes::STATEMENT_NOT_ALLOWED,
+            "The connection's own guard refused the statement: it is not one plain read or one keyed write.",
+            "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.",
+        ),
         Refusal::NotGuarded => unexpected(
             "The store did not take the setting that holds the connection to its access.",
         ),

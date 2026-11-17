@@ -101,6 +101,9 @@ pub(crate) enum Refusal {
     Unavailable,
     /// The result holds more text than the limit allows.
     TooLarge,
+    /// The connection's own guard refused the statement: it is not one
+    /// plain read or one keyed write.
+    NotAllowed,
     /// The store did not take the setting that makes the connection safe to
     /// use: read-only for a reader, enforced keys for a writer.
     NotGuarded,

@@ -293,6 +293,20 @@ impl Scene {
         }
     }
 
+    /// Changes one statement of the plan's section: a plan as the compiler
+    /// would never make it, to show what the driver itself refuses.
+    pub(crate) fn alter(&mut self, name: &str, change: impl FnOnce(&mut crate::model::Statement)) {
+        let section = self
+            .plan
+            .packs
+            .iter_mut()
+            .find(|section| section.pack == crate::names::PACK)
+            .unwrap();
+        let mut held: crate::model::Section = section.payload.decode().unwrap();
+        change(held.statements.get_mut(name).unwrap());
+        section.payload = a2m_core::PackPayload::encode(&held).unwrap();
+    }
+
     pub(crate) fn handle(&self) -> DriverHandle {
         self.registry.driver(&mode()).unwrap()
     }

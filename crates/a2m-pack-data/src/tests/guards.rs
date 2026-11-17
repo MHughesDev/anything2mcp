@@ -1,46 +1,312 @@
-//! Temporary probe of the bundled engine, before the fix.
+//! What a statement may not do, whatever a target file says: the guards of
+//! the connection, of the driver, and of the compiler, each on its own.
+//!
+//! Every test asks the stand, or the file system, what was left behind.
 
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
+use a2m_core::{FailureClass, Value, Values};
+use a2m_provider::{Posture, Sent};
 use example_db::harness::TestDb;
+use example_db::schema::Table;
 
-use super::Folder;
+use super::{Folder, Scene, failed, inputs};
 use crate::model::{Access, Isolation};
+use crate::names::codes;
 use crate::sqlite::Sqlite;
-use crate::store::{Bound, Opener, RunLimits};
+use crate::store::{Bound, Conn, Opener, Refusal, RunLimits};
 
-#[test]
-fn probe() {
-    let db = TestDb::start().unwrap();
-    let other = TestDb::start().unwrap();
-    let folder = Folder::new("guards");
-    let limits = RunLimits {
+fn limits() -> RunLimits {
+    RunLimits {
         rows: 10,
         bytes: 1_000_000,
         wait: Duration::from_secs(5),
-    };
-    let path = |p: &Path| Bound::Text(p.to_str().unwrap().to_owned());
-    for in_tx in [false, true] {
-        let mut conn = Sqlite.open(db.path(), Access::ReadOnly).unwrap();
-        if in_tx {
-            conn.begin(Isolation::Serializable, Duration::from_secs(1)).unwrap();
-        }
-        let copy = folder.path().join(format!("copy-{in_tx}.db"));
-        println!("in_tx={in_tx}");
-        println!(" describe attach: {:?}", conn.describe("ATTACH ? AS x"));
-        println!(" run attach: {:?}", conn.run("ATTACH ? AS x", &[path(other.path())], &limits).map(|r| r.rows.len()));
-        println!(" read attached: {:?}", conn.run("SELECT name FROM x.customers", &[], &limits).map(|r| r.rows.len()));
-        println!(" vacuum into (query_only on): {:?} exists={}", conn.run("VACUUM INTO ?", &[path(&copy)], &limits).map(|r| r.rows.len()), copy.exists());
-        let _ = std::fs::remove_file(&copy);
-        println!(" pragma query_only=0: {:?}", conn.run("PRAGMA query_only = 0", &[], &limits).map(|r| r.rows.len()));
-        println!(" vacuum into: {:?} exists={} len={:?}", conn.run("VACUUM INTO ?", &[path(&copy)], &limits).map(|r| r.rows.len()), copy.exists(), std::fs::metadata(&copy).map(|m| m.len()));
-        println!(" load_extension: {:?}", conn.run("SELECT load_extension('x')", &[], &limits).map(|r| r.rows.len()));
-        println!(" dq literal: {:?}", conn.run("SELECT \"no_such_column\" FROM customers", &[], &limits).map(|r| (r.columns, r.rows.len())));
-        println!(" two statements: {:?}", conn.describe("SELECT 1; SELECT 2"));
-        println!(" pragma fn: {:?}", conn.run("SELECT file FROM pragma_database_list", &[], &limits).map(|r| r.rows));
-        println!(" update returning: {:?}", conn.run("UPDATE customers SET name = name RETURNING name", &[], &limits).map(|r| r.rows.len()));
-        println!(" create temp: {:?}", conn.run("CREATE TEMP TABLE t(x)", &[], &limits).map(|r| r.rows.len()));
-        println!(" commit: {:?}", conn.run("COMMIT", &[], &limits).map(|r| r.rows.len()));
     }
+}
+
+fn as_text(path: &Path) -> Bound {
+    Bound::Text(path.to_str().unwrap().to_owned())
+}
+
+/// Runs a statement the way a step would, and says whether the store ran it.
+fn ran(conn: &mut dyn Conn, text: &str, params: &[Bound]) -> bool {
+    conn.describe(text).is_ok() && conn.run(text, params, &limits()).is_ok()
+}
+
+// ---- the connection ----
+
+#[test]
+fn a_connection_opens_no_other_file_and_leaves_none_behind() {
+    let db = TestDb::start().unwrap();
+    let other = TestDb::start().unwrap();
+    let folder = Folder::new("guards");
+    for access in [Access::ReadOnly, Access::ReadWrite] {
+        for in_transaction in [false, true] {
+            let mut conn = Sqlite.open(db.path(), access).unwrap();
+            if in_transaction {
+                conn.begin(Isolation::Serializable, Duration::from_secs(5))
+                    .unwrap();
+            }
+            let conn = conn.as_mut();
+            // A file an input names is not attached, by its path or as an
+            // address that asks for the right to create it.
+            let made = folder.path().join("made.db");
+            let address = format!("file:{}?mode=rwc", made.to_str().unwrap());
+            assert!(!ran(conn, "ATTACH ? AS x", &[as_text(other.path())]));
+            assert!(!ran(conn, "ATTACH ? AS x", &[Bound::Text(address)]));
+            assert!(!ran(conn, "SELECT name FROM x.customers", &[]));
+            assert!(!made.exists());
+            // The settings that hold the connection cannot be changed.
+            assert!(!ran(conn, "PRAGMA query_only = 0", &[]));
+            assert!(!ran(conn, "PRAGMA foreign_keys = 0", &[]));
+            assert!(!ran(conn, "PRAGMA writable_schema = 1", &[]));
+            // No copy of the store is written anywhere, and no empty file.
+            let copy = folder.path().join("copy.db");
+            assert!(!ran(conn, "VACUUM INTO ?", &[as_text(&copy)]));
+            assert!(!copy.exists());
+            // No schema change, in the store or in the connection's own
+            // temporary schema; no extension; no transaction of its own.
+            assert!(!ran(conn, "CREATE TABLE made_here (x)", &[]));
+            assert!(!ran(conn, "CREATE TEMP TABLE made_here (x)", &[]));
+            assert!(!ran(conn, "DROP TABLE customers", &[]));
+            assert!(!ran(conn, "SELECT load_extension(?)", &[as_text(&copy)]));
+            assert!(!ran(conn, "COMMIT", &[]));
+            assert!(!ran(conn, "SAVEPOINT s", &[]));
+            // Where the store's file is, is not a value a statement reads.
+            assert!(!ran(conn, "SELECT file FROM pragma_database_list", &[]));
+            // Several statements are refused as that, not as a changed shape.
+            assert_eq!(
+                conn.describe("SELECT 1; SELECT 2").unwrap_err(),
+                Refusal::NotAllowed
+            );
+            // A quoted name that is no column is an error, never a text.
+            assert_eq!(
+                conn.describe("SELECT \"no_such_column\" FROM customers")
+                    .unwrap_err(),
+                Refusal::Shape
+            );
+            assert_eq!(conn.in_transaction(), in_transaction);
+        }
+    }
+    // The stand: every table is where it was, and nothing was written.
+    assert!(db.writes().unwrap().is_empty());
+    assert_eq!(db.stored_rows(Table::Customers).unwrap().len(), 3);
+}
+
+#[test]
+fn a_reading_connection_runs_only_what_reads_and_returns_columns() {
+    let db = TestDb::start().unwrap();
+    let before = db.data_version().unwrap();
+    let mut conn = Sqlite.open(db.path(), Access::ReadOnly).unwrap();
+    conn.begin(Isolation::Serializable, Duration::from_secs(5))
+        .unwrap();
+    let conn = conn.as_mut();
+    for text in [
+        "UPDATE customers SET name = name RETURNING name",
+        "DELETE FROM customers",
+        "INSERT INTO customers (customer_id, name, credit_limit_cents) VALUES ('C-9', 'x', 0)",
+        "WITH one AS (SELECT 1) DELETE FROM customers",
+    ] {
+        assert!(!ran(conn, text, &[]), "{text}");
+    }
+    // A plain read still runs.
+    let read = conn
+        .run("SELECT customer_id FROM customers", &[], &limits())
+        .unwrap();
+    assert_eq!(read.rows.len(), 3);
+    assert_eq!(db.data_version().unwrap(), before);
+    assert_eq!(db.stored_rows(Table::Customers).unwrap().len(), 3);
+}
+
+#[test]
+fn only_an_absolute_path_is_opened() {
+    // The bundled engine reads a name that begins `file:` as an address
+    // with options, whatever flags it is opened with.
+    for name in ["file:example.db?mode=rwc", "example.db"] {
+        for access in [Access::ReadOnly, Access::ReadWrite] {
+            assert_eq!(
+                Sqlite.open(Path::new(name), access).err(),
+                Some(Refusal::NotGuarded)
+            );
+        }
+    }
+}
+
+// ---- the driver, given a plan the compiler would not make ----
+
+#[tokio::test]
+async fn a_read_that_attaches_a_file_an_input_names_is_refused_unsent() {
+    let other = TestDb::start().unwrap();
+    let mut scene = Scene::new();
+    scene.alter("customer_by_key", |statement| {
+        statement.text = "ATTACH ? AS x".to_owned();
+    });
+    scene.alter("shipment_by_key", |statement| {
+        statement.text =
+            "SELECT name AS carrier FROM x.customers WHERE customer_id <> ?".to_owned();
+    });
+    let mut run = scene.prepare(Posture::Live).await;
+    let attached = run
+        .steps(
+            &scene.binding("example_customer_get").act,
+            &inputs(&[("customer_id", other.path().to_str().unwrap())]),
+            None,
+        )
+        .await;
+    assert_eq!(
+        failed(attached),
+        (
+            FailureClass::Policy,
+            codes::STATEMENT_NOT_ALLOWED,
+            Sent::NotSent
+        )
+    );
+    // The other file was never opened, so nothing of it can be read.
+    let read = run
+        .steps(
+            &scene.binding("example_shipment_get").act,
+            &Values::new().with("shipment_id", 1_i64),
+            None,
+        )
+        .await;
+    assert_eq!(failed(read).0, FailureClass::Drift);
+    run.release().await;
+}
+
+#[tokio::test]
+async fn a_read_that_returns_no_column_or_is_not_one_select_is_refused_unsent() {
+    for text in [
+        "PRAGMA query_only = 0",
+        "COMMIT",
+        "VACUUM INTO ?",
+        "SELECT customer_id FROM customers WHERE customer_id = ?; SELECT 1",
+        "SELECT customer_id FROM pragma_database_list WHERE ? IS NOT NULL",
+        "SELECT load_extension(?) AS customer_id",
+    ] {
+        let mut scene = Scene::new();
+        let folder = Folder::new("guards");
+        let copy = folder.path().join("copy.db");
+        scene.alter("customer_by_key", |statement| {
+            statement.text = text.to_owned();
+            if !text.contains('?') {
+                statement.params.clear();
+            }
+        });
+        let mut run = scene.prepare(Posture::Live).await;
+        let refused = run
+            .steps(
+                &scene.binding("example_customer_get").act,
+                &inputs(&[("customer_id", copy.to_str().unwrap())]),
+                None,
+            )
+            .await;
+        assert_eq!(
+            failed(refused),
+            (
+                FailureClass::Policy,
+                codes::STATEMENT_NOT_ALLOWED,
+                Sent::NotSent
+            ),
+            "{text}"
+        );
+        run.release().await;
+        assert!(!copy.exists(), "{text}");
+    }
+}
+
+// ---- what a write reaches ----
+
+#[tokio::test]
+async fn a_trigger_named_in_another_case_than_its_table_stops_a_write() {
+    let scene = Scene::new();
+    // With the stand's own triggers out of the catalog, `customers` has
+    // none. The store's owner then writes one, naming the table in capitals.
+    scene.db.set_write_log(false).unwrap();
+    scene
+        .db
+        .connect()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER credit_audit AFTER UPDATE ON CUSTOMERS BEGIN
+                 UPDATE customers SET notes = 'changed by a trigger'
+                 WHERE customer_id = 'C-002' AND NEW.customer_id <> 'C-002';
+             END;",
+        )
+        .unwrap();
+    let before = scene
+        .db
+        .stored_row(Table::Customers, &["C-002"])
+        .unwrap()
+        .unwrap();
+    let (mut run, write) = scene.live(&["C-001"]).await;
+    let stopped = run
+        .steps(
+            &scene.binding("example_customer_credit_update").act,
+            &inputs(&[("customer_id", "C-001")]).with("credit_limit_cents", 1_i64),
+            Some(&write),
+        )
+        .await;
+    assert_eq!(
+        failed(stopped),
+        (FailureClass::Drift, codes::SCHEMA_CHANGED, Sent::NotSent)
+    );
+    run.release().await;
+    // The stand: neither the row named nor the row the trigger reaches.
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
+    assert_ne!(stored.integer("credit_limit_cents"), Some(1));
+    let after = scene
+        .db
+        .stored_row(Table::Customers, &["C-002"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.text("notes"), before.text("notes"));
+}
+
+#[tokio::test]
+async fn a_catalog_that_does_not_fit_stops_a_write_that_declares_no_hazard() {
+    let scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    // More tables than one catalog read takes, and after the last of them a
+    // table whose key cascades from `customers`.
+    let mut schema = String::from("BEGIN;");
+    for number in 0..crate::driver::CATALOG_TABLES {
+        write!(schema, "CREATE TABLE zz_filler_{number:04} (x);").unwrap();
+    }
+    schema.push_str(
+        "CREATE TABLE zzz_dependents (customer_id TEXT REFERENCES customers (customer_id)
+             ON UPDATE CASCADE ON DELETE CASCADE);
+         COMMIT;",
+    );
+    scene.db.connect().unwrap().execute_batch(&schema).unwrap();
+    let (mut run, write) = scene.live(&["C-001"]).await;
+    let stopped = run
+        .steps(
+            &scene.binding("example_customer_credit_update").act,
+            &inputs(&[("customer_id", "C-001")]).with("credit_limit_cents", 1_i64),
+            Some(&write),
+        )
+        .await;
+    assert_eq!(
+        failed(stopped),
+        (
+            FailureClass::UnknownVariant,
+            codes::CATALOG_TOO_LARGE,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
+    assert_ne!(stored.integer("credit_limit_cents"), Some(1));
+    assert_eq!(stored.integer("credit_limit_cents"), Some(500_000).or(stored.integer("credit_limit_cents")));
+    let _ = Value::Null;
 }

@@ -179,9 +179,8 @@ impl SessionLease {
             sink,
             vault: &bound.vault,
         };
-        held.provider
-            .inject(&held.material, &mut registering)
-            .map_err(|failure| bound.vault.redactor().redact_failure(&failure))
+        let placed = held.provider.inject(&held.material, &mut registering);
+        placed.map_err(|failure| bound.vault.redactor().redact_failure(&failure))
     }
 
     /// Whether something the driver observed is a sign that the session has
