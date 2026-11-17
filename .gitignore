@@ -5,3 +5,9 @@ __pycache__/
 .DS_Store
 dist/
 .venv/
+# Results of a local benchmark run, and what a spike builds or installs.
+bench-results/
+/spikes/**/target/
+/spikes/**/node_modules/
+/spikes/**/.venv/
+/spikes/**/venv/
