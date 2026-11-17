@@ -141,7 +141,7 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
     // Each case: the changes, as a file, what is replaced, and what replaces
     // it; then the code of the diagnostic and a word its message holds.
     type Case<'a> = (&'a [(&'a str, &'a str, &'a str)], &'a str, &'a str);
-    let cases: [Case<'_>; 12] = [
+    let cases: [Case<'_>; 11] = [
         // An unknown key in a document is the kernel's schema check.
         (
             &[("documents/stock.yaml", "records:", "shape: wide\nrecords:")],
@@ -245,24 +245,7 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
             "file.beneath_application",
             "beneath",
         ),
-        // The same, with an authorization key that names no record.
-        (
-            &[
-                (
-                    "target.yaml",
-                    "stands: alone\n  config_files:",
-                    "stands: {beneath: config_files}\n  config_files:",
-                ),
-                ("target.yaml", "target: example\n", "target: example\nauthorization: \" \"\n"),
-                (
-                    "operations/stock_set.yaml",
-                    "effect: write",
-                    "effect: irreversible",
-                ),
-            ],
-            "file.beneath_application",
-            "beneath",
-        ),
+
     ];
     for (changes, code, says) in cases {
         let changed = Changed::new(changes);
@@ -277,4 +260,39 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
         assert!(found.at.line >= 1 && !found.at.file.as_str().is_empty());
         assert!(!found.fix.is_empty(), "{code} gives no fix");
     }
+}
+
+#[test]
+fn an_authorization_key_that_names_no_record_authorizes_no_write_beneath_an_application() {
+    let registry = registry(Roots::none());
+    // The surface stands beneath an application, one operation that writes
+    // there is irreversible, and `target.yaml` holds an authorization.
+    let refused = |authorization: &str| -> bool {
+        let line = format!("target: example\nauthorization: {authorization}\n");
+        let changed = Changed::new(&[
+            (
+                "target.yaml",
+                "stands: alone\n  config_files:",
+                "stands: {beneath: config_files}\n  config_files:",
+            ),
+            ("target.yaml", "target: example\n", &line),
+            (
+                "operations/stock_set.yaml",
+                "effect: write",
+                "effect: irreversible",
+            ),
+        ]);
+        let problems = match compile(&changed.0, registry.compiler_set()) {
+            Ok(_) => panic!("the other writes beneath the application compiled"),
+            Err(problems) => problems,
+        };
+        problems.iter().any(|found| {
+            found.code.as_str() == "file.beneath_application"
+                && found.at.file.as_str() == "operations/stock_set.yaml"
+        })
+    };
+    // A reference to the record lets the irreversible write through.
+    assert!(!refused("owner-agreement-2026-11"));
+    // A key with nothing in it is no record.
+    assert!(refused("\" \""));
 }

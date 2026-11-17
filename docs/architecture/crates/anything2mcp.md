@@ -261,7 +261,7 @@ Not proven: a pipeline over a sheet; a write through any mode but `http`; the we
 
 - Start on demand. Until `a2m-local` builds it, a command with no engine runs one inside itself, and the bridge needs `serve` to have been started ([decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)).
 - A person's act, such as `version publish`, cannot be done while an engine runs: the served engine asks its presence prompt, this build has none, and `--in-process` is refused. Today a person stops the engine, publishes in one process at a terminal, and starts it again. The operating system's prompt, package 3.6, ends this.
-- The engine lock is released when the channel stops serving, a moment before the kernel has closed. `Channel::serve` would have to hand the lock back for the product to hold it to the end.
+- Settled by [decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md): `Channel::serve` hands the engine lock back, and `LocalEngine::serve` drops it after the kernel has closed.
 - A call that arrives over MCP carries no project folder, so the build toolset's actions on a project's files answer `path_not_allowed` through the bridge. The folder needs a place that both `a2m-api` and `a2m-mcp` can read, which is `a2m-actions`.
 - A run that nobody waits for on a connection does not hold an idle engine open: the kernel offers no count of the runs in hand.
 - The bridge names itself `stdio` on the channel. The MCP client's own name is in the protocol, which the bridge does not read.

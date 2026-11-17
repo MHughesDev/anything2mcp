@@ -774,27 +774,32 @@ async fn a_save_stopped_half_way_leaves_the_old_file_and_resumes_to_the_new_one(
     );
     assert_eq!(last_values(&seen).get("on_hand"), Some(&Value::Int(40)));
 
-    // The same record, tried again: the leftover is replaced, the save
-    // lands, and nothing is left behind.
+    // The same record, tried again: the save lands under a name of its own
+    // and leaves nothing of its own behind. The leftover is not this run's
+    // to prove, so it is neither used nor removed: it is where it was, with
+    // the bytes it had.
+    let leftover = format!("prices/stock.csv.a2m-{token}.tmp");
+    let half = scene.stand.sha256(&leftover).unwrap();
+    assert!(half.is_some());
     let written = write(&scene, &store, 1, "example_stock_set", &values, || {})
         .await
         .unwrap();
+    assert_eq!(scene.stand.sha256(&leftover).unwrap(), half);
+    assert!(scene.stand.strays().unwrap().is_empty());
     let new = scene.stand.sha256(seed::STOCK_CSV).unwrap().unwrap();
     assert_ne!(new, old);
     assert_eq!(
         for_reconcile(&written.act).get("intended_digest"),
         Some(&Value::from(new.clone()))
     );
-    assert_eq!(
-        scene
-            .stand
-            .listing()
-            .unwrap()
-            .iter()
-            .filter(|name| name.contains(".a2m-"))
-            .count(),
-        0
-    );
+    let temporary: Vec<String> = scene
+        .stand
+        .listing()
+        .unwrap()
+        .into_iter()
+        .filter(|name| name.contains(".a2m-"))
+        .collect();
+    assert_eq!(temporary, [leftover]);
 
     // The record of the save is lost and the run resumes: a new driver
     // opens the file and reports the intended digest, so the save landed

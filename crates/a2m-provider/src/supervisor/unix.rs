@@ -25,8 +25,9 @@
 //! macOS has no way to start an open file at all. In those three cases the
 //! program is started by its path, after a last look, under the start lock,
 //! that the path still leads to the very file that was digested, unchanged:
-//! the same device and file number, size, and times of last change. A
-//! replacement in the moment between that look and the start is not seen.
+//! the same device and file number, the same size, and the same time of its
+//! last change. A replacement in the moment between that look and the start
+//! is not seen.
 
 use std::fs::File;
 use std::io;
@@ -132,15 +133,17 @@ fn end_group(pgid: Pid) -> bool {
     }
 }
 
-/// What tells one state of one file from every other: where it is kept,
-/// how long it is, and when its content and its record last changed.
+/// What tells a file from every other, and one state of its content from
+/// the state before: where it is kept, how long it is, and when its content
+/// last changed. The time its record last changed is left out on purpose:
+/// it moves when a second name is given to the file or its mode is set,
+/// which change nothing that runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     device: u64,
     file: u64,
     size: u64,
     modified: (i64, i64),
-    changed: (i64, i64),
 }
 
 impl Stamp {
@@ -150,7 +153,6 @@ impl Stamp {
             file: meta.ino(),
             size: meta.size(),
             modified: (meta.mtime(), meta.mtime_nsec()),
-            changed: (meta.ctime(), meta.ctime_nsec()),
         }
     }
 }

@@ -495,6 +495,18 @@ async fn a_holder_of_the_output_outside_the_group_neither_delays_a_run_nor_spoil
     assert!(again.expect("the second run waited").is_ok());
 }
 
+/// Has a copy of the stand's program, kept somewhere else, report to the
+/// stand: the program looks for the stand beside itself unless it is told.
+fn record_with(stand: &Stand, spec: &mut LaunchSpec) {
+    spec.env.set.push((
+        example_cli::CONTROL_ENV.to_owned(),
+        stand
+            .root()
+            .join(example_cli::CONTROL_FOLDER)
+            .into_os_string(),
+    ));
+}
+
 /// The scoped supervisor of a pack whose manifest is `declares`.
 fn scoped_for(folder: &Folder, declares: String) -> a2m_provider::ScopedSupervisor {
     let pack = TestPack::with_manifest("alpha", declares);
@@ -539,6 +551,7 @@ async fn a_required_program_replaced_after_the_registry_was_built_is_not_started
     let scoped = scoped_for(&folder, declares);
     let mut spec = spec(&stand, &["version"]);
     spec.program.path.clone_from(&required);
+    record_with(&stand, &mut spec);
 
     let finished = scoped.run(spec.clone(), one_shot(60)).await.unwrap();
     assert_eq!(finished.exit, Exit::Code(0));
@@ -607,6 +620,7 @@ async fn a_link_repointed_between_two_starts_does_not_start_another_program() {
         path: link.clone(),
         digest: Some(digest),
     };
+    record_with(&stand, &mut spec);
     let finished = supervisor.run(spec.clone(), one_shot(60)).await.unwrap();
     assert!(finished.verified);
     let before = stand.control().invocations().unwrap().len();
