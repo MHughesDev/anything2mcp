@@ -10,8 +10,9 @@
 //!
 //! It also holds [`LocalSurface`], the person surface on one machine: the
 //! only holder of the approval desk, a page on a short-lived loopback
-//! listener, and the presence prompt. Nothing reached through the channel
-//! can approve.
+//! listener, and the presence prompt: polkit on a Linux desktop, and none
+//! yet on macOS and Windows. Nothing reached through the channel can
+//! approve.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 7.
@@ -31,8 +32,8 @@ pub use channel::{
 pub use connector::{Connector, Link};
 pub use lock::{ENGINE_LOCK_NAME, EngineLock};
 pub use presence::{
-    NoPrompt, PresenceKind, PresencePrompt, PromptAnswer, PromptText, presence_available,
-    system_prompt,
+    Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
+    PromptText, presence_available, system_prompt,
 };
 pub use surface::{LocalSurface, SurfaceParts};
 
@@ -44,6 +45,8 @@ pub use surface::{LocalSurface, SurfaceParts};
 )]
 mod tests {
     mod channel;
+    #[cfg(target_os = "linux")]
+    mod polkit;
     mod surface;
     mod world;
 }

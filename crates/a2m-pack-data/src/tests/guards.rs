@@ -16,7 +16,7 @@ use super::{Folder, Scene, failed, inputs};
 use crate::model::{Access, Isolation};
 use crate::names::codes;
 use crate::sqlite::Sqlite;
-use crate::store::{Bound, Conn, Opener, Refusal, RunLimits};
+use crate::store::{Bound, Conn, Opener, Refusal, RunLimits, Unseen};
 
 fn limits() -> RunLimits {
     RunLimits {
@@ -240,6 +240,18 @@ async fn a_trigger_named_in_another_case_than_its_table_stops_a_write() {
         .stored_row(Table::Customers, &["C-002"])
         .unwrap()
         .unwrap();
+    // Discovery's account of the table names the trigger too.
+    let catalog = Sqlite
+        .open(scene.db.path(), Access::ReadOnly)
+        .unwrap()
+        .catalog(crate::driver::CATALOG_TABLES)
+        .unwrap();
+    let customers = catalog
+        .tables
+        .iter()
+        .find(|table| table.name == "customers")
+        .unwrap();
+    assert_eq!(customers.triggers, ["credit_audit"]);
     let (mut run, write) = scene.live(&["C-001"]).await;
     let stopped = run
         .steps(
@@ -307,6 +319,114 @@ async fn a_catalog_that_does_not_fit_stops_a_write_that_declares_no_hazard() {
         .unwrap()
         .unwrap();
     assert_ne!(stored.integer("credit_limit_cents"), Some(1));
-    assert_eq!(stored.integer("credit_limit_cents"), Some(500_000).or(stored.integer("credit_limit_cents")));
-    let _ = Value::Null;
+}
+
+#[tokio::test]
+async fn a_table_named_in_another_case_than_the_catalogs_is_the_same_table() {
+    // The target writes the table's name in capitals. The stand's own
+    // triggers are on `customers`, and the statement declares no hazard.
+    let mut scene = Scene::new();
+    scene.alter("customer_credit_update", |statement| {
+        statement.table = Some("CUSTOMERS".to_owned());
+    });
+    let (mut run, write) = scene.live(&["C-001"]).await;
+    let stopped = run
+        .steps(
+            &scene.binding("example_customer_credit_update").act,
+            &inputs(&[("customer_id", "C-001")]).with("credit_limit_cents", 1_i64),
+            Some(&write),
+        )
+        .await;
+    assert_eq!(
+        failed(stopped),
+        (FailureClass::Drift, codes::SCHEMA_CHANGED, Sent::NotSent)
+    );
+    run.release().await;
+    assert_eq!(
+        scene.db.write_count(Table::Customers, &["C-001"]).unwrap(),
+        0
+    );
+
+    // A table the catalog does not hold at all is not "no trigger".
+    let catalog = Sqlite
+        .open(scene.db.path(), Access::ReadOnly)
+        .unwrap()
+        .catalog(crate::driver::CATALOG_TABLES)
+        .unwrap();
+    assert_eq!(catalog.reach("no_such_table"), Err(Unseen::NoTable));
+    assert!(matches!(catalog.reach("Customers"), Ok((triggers, _)) if triggers > 0));
+    // A key that cascades is found whatever case its table was written in.
+    assert!(matches!(catalog.reach("ORDERS"), Ok((_, cascades)) if cascades > 0));
+}
+
+// ---- the read of a record by its key ----
+
+#[tokio::test]
+async fn a_read_by_key_that_returns_another_record_is_stopped() {
+    let key = inputs(&[("customer_id", "C-001")]);
+    let quoted = "\"customer_id\", \"name\", \"credit_limit_cents\", \"notes\"";
+
+    // A statement that finds some other record: it is one plain read, the
+    // store runs it, and its answer is not taken for the record asked for.
+    let mut scene = Scene::new();
+    scene.alter("customer_by_key", |statement| {
+        statement.text = format!(
+            "SELECT {quoted} FROM \"customers\" WHERE \"customer_id\" <> ? ORDER BY \"customer_id\" LIMIT 1"
+        );
+    });
+    let mut run = scene.prepare(Posture::Live).await;
+    let other = run
+        .steps(&scene.binding("example_customer_get").act, &key, None)
+        .await;
+    assert_eq!(
+        failed(other),
+        (FailureClass::Drift, codes::READ_NOT_BY_KEY, Sent::Answered)
+    );
+    run.release().await;
+
+    // A statement that does not return the key cannot be held to it, and
+    // is not run.
+    let mut scene = Scene::new();
+    scene.alter("customer_by_key", |statement| {
+        statement.text = "SELECT \"name\", \"credit_limit_cents\", \"notes\" FROM \"customers\" WHERE \"customer_id\" = ?".to_owned();
+    });
+    let mut run = scene.prepare(Posture::Live).await;
+    let keyless = run
+        .steps(&scene.binding("example_customer_get").act, &key, None)
+        .await;
+    assert_eq!(
+        failed(keyless),
+        (FailureClass::Drift, codes::READ_NOT_BY_KEY, Sent::NotSent)
+    );
+    run.release().await;
+
+    // A statement declared for another surface is not run on this one.
+    let mut scene = Scene::new();
+    scene.alter("customer_by_key", |statement| {
+        statement.surface = "another_db".to_owned();
+    });
+    let mut run = scene.prepare(Posture::Live).await;
+    let elsewhere = run
+        .steps(&scene.binding("example_customer_get").act, &key, None)
+        .await;
+    assert_eq!(
+        failed(elsewhere),
+        (
+            FailureClass::UnknownVariant,
+            codes::UNEXPECTED_STATUS,
+            Sent::NotSent
+        )
+    );
+    run.release().await;
+
+    // The pack's own read finds the record, and its key is the one asked.
+    let scene = Scene::new();
+    let mut run = scene.prepare(Posture::Live).await;
+    let found = super::values(
+        run.steps(&scene.binding("example_customer_get").act, &key, None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(found.get("customer_id"), Some(&Value::from("C-001")));
+    run.release().await;
 }

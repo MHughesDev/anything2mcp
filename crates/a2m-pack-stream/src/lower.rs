@@ -545,6 +545,16 @@ impl Work<'_, '_> {
                 "Add `body:` with each field and the expression that gives it.",
             );
         }
+        if let Some(body) = self.binding.field("body")
+            && body.get("message_meta").is_some()
+        {
+            self.wrong(
+                "binding_invalid",
+                body,
+                "`message_meta` is the name under which a result holds what the broker says about a message, and no body may use it.".to_owned(),
+                "Give the field of the body another name.",
+            );
+        }
         let mut args: Vec<StepArg> = key.iter().cloned().collect();
         if let (Some(headers), Some(token)) =
             (self.binding.field("headers"), &self.entry.token_header)

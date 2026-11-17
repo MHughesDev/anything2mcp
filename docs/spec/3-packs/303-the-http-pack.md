@@ -66,17 +66,17 @@ Endpoints live only in the endpoint catalog (rule eight). There is one catalog, 
 | `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
 | `idempotency_header` | The header that carries the record's idempotency token, if the service accepts one |
-| `version` | Where a record's version is read, and how it is sent back as a precondition |
+| `version` | Where a record's version is read, and how it is sent back as a precondition. A write that sends one takes it from the endpoint its binding reads the record back through, which must say where it is read |
 | `volatile` | Request fields to ignore when comparing with a shadow |
 
 The full format is in the [file formats](../../reference/file-formats.md#endpointsyaml).
 
-**Typed templates.** The pack's template is a surface, whose address in the run's environment is the origin, a path of literal segments and holes that each fill one whole segment, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition. A request is built position by position from it. No input can change the origin, the shape of the path, or which header a value goes in ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). A template that would resolve outside the declared surfaces is refused at compile time and checked again before sending.
+**Typed templates.** The pack's template is a surface, whose address in the run's environment is the origin, a path of literal segments and holes that each fill one whole segment, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition. A request is built position by position from it. No input can change the origin, the shape of the path, or which header a value goes in ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). A template that would resolve outside the declared surfaces is refused at compile time and checked again before sending: the driver sends only to an address that reads back as the surface's origin and exactly the path and query that were built.
 
 | Behavior of a service | Built-in handling |
 | --- | --- |
 | Rotating anti-forgery tokens | A declared bootstrap request or page field supplies the token per request, in the `token` step |
-| Optimistic locking (ETag, version numbers) | Read the version first and send it with the write; a conflict is `stale`, `version_conflict`, with both versions shown |
+| Optimistic locking (ETag, version numbers) | Read the version first and send it with the write; a conflict is `stale`, `version_conflict`, with both versions shown. The version is kept until a request may have reached the system, so an attempt that was not sent is tried again with it. A write for a record whose version the pass did not read is refused as `stale`, `version_not_read`, not sent; a record that was looked up and is absent is created with none |
 | GraphQL, including persisted queries | The entry stores the operation name and the query hash |
 | An idempotency header the service honors | The record's token goes in it, and a write the plan marks idempotent may be retried by the engine |
 | Pagination by page or cursor | The `list` verb with a pager per style |
@@ -85,7 +85,7 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 | A declared maintenance answer | `transient`, `upstream_unavailable`, with its retry time |
 | Requests the front end computes or signs | Marked on the endpoint; `http` is refused for it |
 
-**Responses.** A response is accepted when its status is one the endpoint declares and its body fits the response schema. Values are extracted from it as typed values and normalized by their field types on both sides before any comparison ([section 210](../2-kernel/210-sources-and-value-normalization.md)); no number is compared as a float. A status the endpoint does not declare is `unknown_variant`; a body that does not fit is `drift`.
+**Responses.** A response is accepted when its status is one the endpoint declares and its body fits the response schema. A body that is not JSON fits no schema, `any` included; only an empty body is read as nothing. Values are extracted from it as typed values and normalized by their field types on both sides before any comparison ([section 210](../2-kernel/210-sources-and-value-normalization.md)); no number is compared as a float. A status the endpoint does not declare is `unknown_variant`; a body that does not fit is `drift`.
 
 ## Verbs and how they lower
 
@@ -107,8 +107,9 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 | `api` | The same, for the description's server | `call` | The same | The described read operation the binding names |
 
 - **Every failure says whether the request was sent.** A write request sent wholly or in part with no complete answer is `possible_commit`; before any byte of a write was sent, a lost connection is `transient`.
+- **A write that was sent is settled only by the application's verdict.** An answer that is not one, a redirect to another origin or an answer too large to read, leaves the write in doubt as `possible_commit`, and the read-back or reconcile decides. The driver never reports such a write in a class the ledger takes as settled ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
 - **A 404 on a declared lookup is an answer, not a failure:** the record is absent.
-- **A redirect is never followed.** One to the target's identity host is a sign of expiry; one to any other origin stops as `policy`, `surface_not_declared`; one within the surface is a status like any other.
+- **A redirect is never followed.** One to the target's identity host is a sign of expiry; one to any other origin stops a read as `policy`, `surface_not_declared`, and leaves a write in doubt; one within the surface is a status like any other, accepted only when the endpoint declares it. Where a redirect leads is read as a browser reads it, against the address of the request, with a scheme or without one.
 - **TLS is not in the first build.** A surface reached over HTTPS is refused with `input`, `tls_not_enabled`.
 - **Edge answers are recognized by status and header,** never retried, and stop as `edge_blocked`.
 - Overhead stays under 5 ms beyond the system's own time, a budget until measured ([section 225](../2-kernel/225-performance.md)).
@@ -136,7 +137,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 
 | Discoverer | Action | Reads | May send |
 | --- | --- | --- | --- |
-| `http_description` | `spec.import`, `discover.run` | A description given as a file, or fetched from the surface | GET of the description's address. For GraphQL, the one fixed introspection query, which the GraphQL contract makes a read. Nothing else |
+| `http_description` | `spec.import`, `discover.run` | A description given as a file, or fetched from the surface. Either way its text passes the redactor before it is parsed, and reading it is bounded in depth, in steps, and in bytes; past a bound the import is refused as `input`, `description_too_large` | GET of the description's address. For GraphQL, the one fixed introspection query, which the GraphQL contract makes a read. Nothing else |
 | `http_surface` | `target.probe`, `auth.detect` | Whether the base address answers; challenges in `WWW-Authenticate`; a request for a client certificate; links to a description | GET, HEAD, OPTIONS |
 
 **Discovery cannot write.** Discovery runs as a job on a runner, inside the engine's sandbox ([section 218](../2-kernel/218-discovery-and-findings.md)). Within that, a discoverer is given a read client: a type that can build only GET, HEAD, and OPTIONS requests and the fixed introspection request, and that refuses a destination outside the declared surfaces. It cannot send a body of the caller's choosing. The drivers' client is a different type that discoverers are never given.
@@ -180,15 +181,16 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | --- | --- | --- |
 | `rejected` | `app_validation_error` | A refusal in the shape the endpoint declares for validation |
 | `stale` | `version_conflict` | The version precondition failed |
+| `stale` | `version_not_read` | A write that sends a version, for a record whose version the pass did not read. Not sent |
 | `session_expired` | `needs_login` | The declared expiry signal, or a redirect to the identity host. Reported through the lease |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The edge's own answer, recognized by status and header, never retried |
 | `drift` | `response_schema_mismatch` | The body does not fit the schema |
 | `unknown_variant` | `unexpected_status` | A status the endpoint does not declare |
-| `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back |
+| `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back, or what came back is not the application's verdict: a redirect to another origin, or an answer over the limit on its size |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
-| `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or a redirect to another origin |
-| `unknown_variant` | `response_too_large` | An answer over the limit on its size |
-| `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read |
+| `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or, for a read, a redirect to another origin |
+| `unknown_variant` | `response_too_large` | An answer to a read over the limit on its size |
+| `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator; a step the driver cannot carry out as written; an HTTPS surface in a build without TLS; a session scheme whose exchange is not built; a description that cannot be read; a description past the bounds of the import |
 
 ## The test stand
 
@@ -198,6 +200,8 @@ The test application's JSON interface ([test application plan](../../plan/test-a
 | --- | --- |
 | No input can change the origin, the path's shape, or which header a value goes in | The manipulation cases of section 502: a path input holding separators, a host, an encoded newline |
 | A write whose connection drops after sending is `possible_commit`, and the stand shows at most one write after reconcile | Case 17 over `http` |
+| A write that the system made and answered with a redirect to another origin is in doubt, never settled, and the stand shows the write | The stand's fault "redirect after commit" |
+| A write that was not sent is tried again with the version it read, and a write with no version read is not sent | A link in front of the stand that refuses the first connection, with another caller's change in between |
 | No discovery sends a request that could write | The control interface counts writes during `spec.import` and `target.probe` |
 | A drafted read exists only for a method the description marks safe | Drafting tests |
 | A credential never appears in a template, a finding, a trace, or a failure | The planted-secret test, with a token in a response header and body |

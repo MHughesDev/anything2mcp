@@ -174,6 +174,7 @@ pub(crate) fn code(rule: &'static str) -> LintCode {
         "ack_not_owned" => LintCode::fixed("stream.ack_not_owned"),
         "publish_effect" => LintCode::fixed("stream.publish_effect"),
         "consumers_unknown" => LintCode::fixed("stream.consumers_unknown"),
+        "untrusted_unmarked" => LintCode::fixed("stream.untrusted_unmarked"),
         _ => LintCode::fixed("stream.binding_invalid"),
     }
 }

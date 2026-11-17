@@ -77,8 +77,8 @@ impl DraftingRule for TableToStatements {
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
         let table: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
-        let store = opener(&table.store).ok_or_else(unreadable)?;
-        let quoted = |name: &str| store.quote(name).ok_or_else(unreadable);
+        // A finding of a store this build does not speak to is not drafted.
+        opener(&table.store).ok_or_else(unreadable)?;
         let record = plain_name(&table.table, "t_");
         // One field per column, named from the column's own words, with the
         // type the store states or a question where it states none.
@@ -143,45 +143,15 @@ impl DraftingRule for TableToStatements {
         };
         let mut statements = Vec::new();
         if keyed {
-            let columns = table
-                .columns
-                .iter()
-                .map(|column| quoted(&column.name))
-                .collect::<Result<Vec<String>, Failure>>()?;
-            let mut predicate = Vec::new();
-            let mut params = Vec::new();
-            for (_, position) in &key {
-                let (Some(column), Some(name)) =
-                    (table.columns.get(*position), names.get(*position))
-                else {
-                    continue;
-                };
-                predicate.push(format!(
-                    "{} = {}",
-                    quoted(&column.name)?,
-                    store.placeholder()
-                ));
-                params.push(DraftValue::map(vec![
-                    ("name", DraftValue::text(name)),
-                    ("type", type_of(*position)),
-                ]));
-            }
+            // The read of one record by its key is written by the pack when
+            // the file is compiled, from the record above: the draft holds
+            // no statement text, and the read can read a write back.
             statements.push((
                 format!("{record}_by_key"),
                 DraftValue::map(vec![
                     ("effect", DraftValue::text("read")),
+                    ("form", DraftValue::text("table")),
                     ("record", DraftValue::text(&record)),
-                    (
-                        "text",
-                        DraftValue::Text(format!(
-                            "SELECT {} FROM {} WHERE {}",
-                            columns.join(", "),
-                            quoted(&table.table)?,
-                            predicate.join(" AND ")
-                        )),
-                    ),
-                    ("params", DraftValue::List(params)),
-                    ("returns", DraftValue::text("one_or_none")),
                     ("time_limit", DraftValue::text(DRAFT_TIME_LIMIT)),
                 ]),
             ));

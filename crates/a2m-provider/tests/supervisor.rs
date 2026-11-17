@@ -494,3 +494,206 @@ async fn a_holder_of_the_output_outside_the_group_neither_delays_a_run_nor_spoil
     assert_eq!(verdict, (Exit::Code(0), true, true));
     assert!(again.expect("the second run waited").is_ok());
 }
+
+/// The scoped supervisor of a pack whose manifest is `declares`.
+fn scoped_for(folder: &Folder, declares: String) -> a2m_provider::ScopedSupervisor {
+    let pack = TestPack::with_manifest("alpha", declares);
+    let mut builder =
+        RegistryBuilder::new(ProviderSettings::default(), host(folder, Roots::none()));
+    builder.add_pack(&pack);
+    let (_registry, problems) = builder.build();
+    assert!(problems.is_empty(), "{problems:?}");
+    pack.context
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap()
+        .supervisor()
+        .clone()
+}
+
+/// The audit's finding: a requirement's known digests were compared when
+/// the registry was built and never again, so a program replaced at its
+/// path afterwards was started all the same. They are compared at every
+/// start, on the file that is started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_required_program_replaced_after_the_registry_was_built_is_not_started() {
+    let stand = Stand::start().unwrap();
+    let folder = Folder::new("required");
+    // The program the pack requires: a copy of the stand's, at a place of
+    // its own, with the digest a publisher would list.
+    let name = stand.program().file_name().unwrap();
+    let required = folder.path().join(name);
+    std::fs::copy(stand.program(), &required).unwrap();
+    let reviewed = std::fs::read(&required).unwrap();
+    let digest = Digest::of(&reviewed);
+    // TOML literal strings, so that a path of any operating system is taken as written.
+    let declares = manifest(
+        "alpha",
+        "request",
+        &format!(
+            "\n[[requirements]]\nname = \"example-runtime\"\ndetect = {{ paths = ['{}'] }}\nknown_digests = [\"sha256:{digest}\"]\nmissing = \"Install it.\"\n",
+            required.display()
+        ),
+    );
+    let scoped = scoped_for(&folder, declares);
+    let mut spec = spec(&stand, &["version"]);
+    spec.program.path.clone_from(&required);
+
+    let finished = scoped.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0));
+    assert!(finished.verified, "a known digest was declared and found");
+    assert_eq!(finished.program_digest, digest);
+    let before = stand.control().invocations().unwrap().len();
+
+    // The program is replaced, as an update or an attacker would: a new
+    // file takes the name. The registry is not built again.
+    let mut other = reviewed.clone();
+    other.extend_from_slice(b"\nnot the reviewed program\n");
+    let incoming = folder.path().join("incoming");
+    std::fs::write(&incoming, &other).unwrap();
+    std::fs::rename(&incoming, &required).unwrap();
+    let failure = scoped.run(spec.clone(), one_shot(60)).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.class(), failure.failure.code(), failure.ran),
+        (
+            FailureClass::Policy,
+            &codes::EFFECT_NOT_DECLARED,
+            Ran::NotStarted
+        )
+    );
+    // The stand is asked: nothing was started.
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+
+    // Changed in place, with the same length: refused too.
+    let mut same_length = reviewed.clone();
+    let last = same_length.len() - 1;
+    same_length[last] ^= 0xff;
+    std::fs::write(&required, &same_length).unwrap();
+    let failure = scoped.run(spec.clone(), one_shot(60)).await.unwrap_err();
+    assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+
+    // The reviewed program back at its place starts again.
+    std::fs::remove_file(&required).unwrap();
+    std::fs::copy(stand.program(), &required).unwrap();
+    let finished = scoped.run(spec, one_shot(60)).await.unwrap();
+    assert!(finished.verified);
+    assert_eq!(stand.control().invocations().unwrap().len(), before + 1);
+}
+
+/// A declared path that is a link: the link is resolved at every start, the
+/// file it leads to is the one digested, and repointing it to another
+/// program is seen.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_repointed_between_two_starts_does_not_start_another_program() {
+    let stand = Stand::start().unwrap();
+    let folder = Folder::new("repointed");
+    let name = stand.program().file_name().unwrap();
+    let reviewed = folder.path().join(name);
+    std::fs::copy(stand.program(), &reviewed).unwrap();
+    let digest = Digest::of(&std::fs::read(&reviewed).unwrap());
+    let other = folder.path().join("other-program");
+    let mut bytes = std::fs::read(&reviewed).unwrap();
+    bytes.extend_from_slice(b"\nanother program\n");
+    std::fs::write(&other, bytes).unwrap();
+    let link = folder.path().join("current");
+    std::os::unix::fs::symlink(&reviewed, &link).unwrap();
+
+    let supervisor = supervisor();
+    let mut spec = spec(&stand, &["version"]);
+    spec.program = ProgramRef {
+        path: link.clone(),
+        digest: Some(digest),
+    };
+    let finished = supervisor.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert!(finished.verified);
+    let before = stand.control().invocations().unwrap().len();
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    let failure = supervisor.run(spec, one_shot(60)).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.code(), failure.ran),
+        (&codes::EFFECT_NOT_DECLARED, Ran::NotStarted)
+    );
+    assert_eq!(stand.control().invocations().unwrap().len(), before);
+}
+
+/// On Linux a program is started from the very handle it was digested
+/// through. The system names a process after the last part of the path it
+/// was started by, which for an open file is the handle's number; the
+/// program itself still sees the name it was asked for by.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn on_linux_a_program_is_started_from_the_handle_it_was_digested_through() {
+    if !std::path::Path::new("/proc/self/fd").is_dir() {
+        // Without the process file system a program is started by its path.
+        return;
+    }
+    let supervisor = supervisor();
+    let spec = LaunchSpec {
+        program: ProgramRef {
+            path: "/bin/sh".into(),
+            digest: None,
+        },
+        args: vec![
+            "-c".into(),
+            "read started_by < /proc/$$/comm; echo \"$started_by\"; echo \"$0\"".into(),
+        ],
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    let finished = supervisor.run(spec, one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0), "{finished:?}");
+    let stdout = String::from_utf8(finished.stdout).unwrap();
+    let mut lines = stdout.lines();
+    let started_by = lines.next().unwrap();
+    assert!(
+        started_by.parse::<u32>().is_ok(),
+        "the program was started by a path and not from its handle: {started_by:?}"
+    );
+    assert_eq!(lines.next(), Some("/bin/sh"));
+}
+
+/// A file that starts with `#!` is handed to an interpreter by name, so it
+/// cannot be started from a handle. It is digested like any program, and
+/// started by its path after a last look that the path still leads to the
+/// file that was digested.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_script_is_digested_and_started_by_its_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let folder = Folder::new("script");
+    let script = folder.path().join("report");
+    let text = b"#!/bin/sh\necho \"ran as $0\"\n";
+    std::fs::write(&script, text).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let supervisor = supervisor();
+    let mut spec = LaunchSpec {
+        program: ProgramRef {
+            path: script.clone(),
+            digest: Some(Digest::of(text)),
+        },
+        args: Vec::new(),
+        env: EnvAllowlist::default(),
+        cwd: None,
+        kind: SubsystemKind::new("command").unwrap(),
+        place: None,
+    };
+    let finished = supervisor.run(spec.clone(), one_shot(60)).await.unwrap();
+    assert_eq!(finished.exit, Exit::Code(0), "{finished:?}");
+    assert!(finished.verified);
+    assert_eq!(
+        String::from_utf8(finished.stdout).unwrap().trim(),
+        format!("ran as {}", script.display())
+    );
+    // Another digest than the script's: nothing runs.
+    spec.program.digest = Some(Digest::of(b"another script"));
+    let failure = supervisor.run(spec, one_shot(60)).await.unwrap_err();
+    assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
+}

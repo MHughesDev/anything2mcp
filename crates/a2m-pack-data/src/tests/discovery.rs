@@ -187,9 +187,11 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
 
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
+    // The read by key is one the pack writes when the file is compiled: the
+    // draft holds no statement text, and the read can read a write back.
+    assert!(lines.contains("form: \"table\""), "{lines}");
     assert!(
-        lines.contains("WHERE \\\"order_id\\\" = ? AND \\\"item_code\\\" = ?")
-            || lines.contains("WHERE \"order_id\" = ? AND \"item_code\" = ?"),
+        !lines.contains("SELECT") && !lines.contains("text:"),
         "{lines}"
     );
     // No write, and no unit: a length is text until a person says more.

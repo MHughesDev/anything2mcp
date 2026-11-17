@@ -4,8 +4,11 @@
 //!
 //! What it never does: choose a channel from a step argument, keep a
 //! subscription open after its run, acknowledge on a queue the target does
-//! not declare the runtime owns, renew a session, or put what a broker
-//! said into a result before the redactor has seen it.
+//! not declare the runtime owns, acknowledge a message it has not given
+//! out to be recorded, say a message is absent from a log it has not
+//! covered, call a write refused when the answer has no rule, renew a
+//! session, or put what a broker said into a result before the redactor
+//! has seen it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,7 +16,8 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{
-    Failure, FailureClass, FailureCode, PackPayload, RecordKey, Redact, Secret, Step, Value, Values,
+    CanonicalJson, Failure, FailureClass, FailureCode, PackPayload, RecordKey, Redact, Secret,
+    Step, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
@@ -56,28 +60,52 @@ struct SurfaceDetail {
 /// the same protocol, opened with the same session's credentials.
 type PoolKey = (String, String, Option<(String, u64)>);
 
+/// The name `message_meta`: where a result holds what the broker says
+/// about a message. No body may have a field of this name.
+const MESSAGE_META: &str = "message_meta";
+
 /// Where the session's token is put: into the one `hello` that opens a
 /// connection. It is dropped, and so wiped, when that is sent.
+///
+/// A wire protocol is given one token and nothing else. Anything more that
+/// a session's provider places (a second header, a cookie, a client
+/// identity, a user and password) cannot be presented, and a connection
+/// opened without it would not be the session's: the sink remembers that,
+/// and `prepare` stops.
 #[derive(Default)]
-struct TokenSink(Option<Secret>);
+struct TokenSink {
+    token: Option<Secret>,
+    not_carried: bool,
+}
 
 impl CredentialSink for TokenSink {
     fn header(&mut self, _name: &str, value: &Secret) {
-        if self.0.is_none() {
-            self.0 = Some(Secret::new(value.expose()));
+        if self.token.is_none() {
+            self.token = Some(Secret::new(value.expose()));
+        } else {
+            self.not_carried = true;
         }
     }
 
-    fn cookie(&mut self, _origin: &str, _name: &str, _value: &Secret) {}
+    fn cookie(&mut self, _origin: &str, _name: &str, _value: &Secret) {
+        self.not_carried = true;
+    }
 
-    fn tls_identity(&mut self, _certificate: &[u8], _key: &Secret) {}
+    fn tls_identity(&mut self, _certificate: &[u8], _key: &Secret) {
+        self.not_carried = true;
+    }
 
-    fn challenge_credential(&mut self, _scheme: ChallengeScheme, _user: &str, _secret: &Secret) {}
+    fn challenge_credential(&mut self, _scheme: ChallengeScheme, _user: &str, _secret: &Secret) {
+        self.not_carried = true;
+    }
 }
 
 /// A subscription the run opened.
 struct Open {
     handle: String,
+    /// Whether the broker said where in the channel it stands. Only then
+    /// can a wait that saw nothing say what it covered.
+    placed: bool,
 }
 
 /// A message delivered to the run and not yet acknowledged.
@@ -106,6 +134,8 @@ struct Run {
     seen: BTreeSet<String>,
     /// The confirmations of this run's publishes, by the record's token.
     receipts: BTreeMap<String, Receipt>,
+    /// Whether a step of the run failed. Its connection is then not kept.
+    failed: bool,
 }
 
 /// The driver.
@@ -134,9 +164,15 @@ fn read_only(what: &str) -> StepFailure {
     ))
 }
 
+/// What a broker said, for a sentence: redacted first, and only then
+/// cleaned and cut, so that a cut never leaves part of a secret behind.
+fn said(redact: &dyn Redact, error: &WireError) -> String {
+    shown(&redact.redact(&error.detail))
+}
+
 /// The failure of a call on the wire, as the failure table of section 309
 /// names it. `what` says what was being done, for the sentence.
-fn wire_failure(error: &WireError, what: &str) -> StepFailure {
+fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailure {
     let (code, message, next): (FailureCode, String, &str) = match error.kind {
         WireErrorKind::Unreachable => (
             codes::UPSTREAM_UNAVAILABLE,
@@ -175,7 +211,7 @@ fn wire_failure(error: &WireError, what: &str) -> StepFailure {
         ),
         WireErrorKind::Refused => (
             codes::BROKER_REFUSED,
-            format!("The broker refused the message: {}", shown(&error.detail)),
+            format!("The broker refused the message: {}", said(redact, error)),
             "Correct what the broker names, then send the message again.",
         ),
         WireErrorKind::TooLarge => (
@@ -197,7 +233,7 @@ fn wire_failure(error: &WireError, what: &str) -> StepFailure {
             codes::UNEXPECTED_REPLY,
             format!(
                 "The broker answered in a way the driver has no rule for while it tried to {what}: {}.",
-                shown(&error.detail)
+                said(redact, error)
             ),
             "Check that the surface's `protocol` is the one the broker speaks; then report this.",
         ),
@@ -205,18 +241,43 @@ fn wire_failure(error: &WireError, what: &str) -> StepFailure {
     stopped(error.sent, code, message, next)
 }
 
-/// A doubtful write: sent, and nothing says whether it happened.
-fn doubtful(error: &WireError, what: &str) -> StepFailure {
-    if error.sent == Sent::Unknown {
-        stopped(
-            Sent::Unknown,
-            codes::NO_CONFIRMATION,
-            format!("The request to {what} was sent and the broker's confirmation did not arrive."),
-            "Reconcile the record before anything is sent again: the message may have been stored.",
+/// The failure of a publish or an acknowledgement. A write is refused only
+/// when the broker said so in words the protocol defines for it. A lost
+/// answer, an answer that cannot be read, and a refusal with no rule all
+/// leave the write in doubt: nothing says it did not happen.
+fn doubtful(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailure {
+    let refused = match error.kind {
+        WireErrorKind::Unreachable
+        | WireErrorKind::Lost
+        | WireErrorKind::TimedOut
+        | WireErrorKind::NotAuthorized
+        | WireErrorKind::ChannelMissing
+        | WireErrorKind::NotSupported
+        | WireErrorKind::Refused
+        | WireErrorKind::TooLarge => error.sent != Sent::Unknown,
+        // A refusal that belongs to no write, and an answer of no rule.
+        WireErrorKind::SubscriptionMissing
+        | WireErrorKind::SubscriptionInUse
+        | WireErrorKind::PositionOutOfRange
+        | WireErrorKind::Unexpected => error.sent == Sent::NotSent,
+    };
+    if refused {
+        return wire_failure(redact, error, what);
+    }
+    let message = if error.kind == WireErrorKind::Unexpected {
+        format!(
+            "The request to {what} was sent and the broker answered in a way the driver has no rule for ({}), so nothing says whether it happened.",
+            said(redact, error)
         )
     } else {
-        wire_failure(error, what)
-    }
+        format!("The request to {what} was sent and the broker's confirmation did not arrive.")
+    };
+    stopped(
+        Sent::Unknown,
+        codes::NO_CONFIRMATION,
+        message,
+        "Reconcile the record before anything is sent again: the broker may have carried the request out.",
+    )
 }
 
 fn text_arg<'a>(input: &'a StepInput<'_>, name: &str) -> Result<&'a str, StepFailure> {
@@ -303,6 +364,7 @@ impl Run {
     /// what the broker reports.
     async fn check_shape(
         &mut self,
+        redact: &dyn Redact,
         name: &str,
         entry: &ChannelEntry,
         deadline: Deadline,
@@ -314,7 +376,7 @@ impl Run {
             .link()?
             .describe(&entry.address, deadline)
             .await
-            .map_err(|error| wire_failure(&error, "describe the channel"))?;
+            .map_err(|error| wire_failure(redact, &error, "describe the channel"))?;
         let changed = |what: &str| {
             stopped(
                 Sent::Answered,
@@ -337,7 +399,10 @@ impl Run {
 
     /// Checks a message against the channel's schema, and gives it as the
     /// values a caller sees: the body's fields, and `message_meta` with
-    /// what the broker says about the message.
+    /// what the broker says about the message. `message_meta` is always
+    /// the broker's: a body with a field of that name is refused. Of the
+    /// headers, only the one the channel declares for correlation is
+    /// given; what other producers put in headers is not the caller's.
     fn record(&self, entry: &ChannelEntry, message: &Message) -> Result<Values, StepFailure> {
         if let Some(name) = &entry.schema {
             let schema = self
@@ -350,24 +415,32 @@ impl Run {
             Value::Record(fields) => fields,
             other => Values::new().with("body", other),
         };
-        if !values.contains("message_meta") {
-            let headers: Values = message
-                .headers
-                .iter()
-                .map(|(name, value)| (name.clone(), Value::from(value.as_str())))
-                .collect();
-            values.insert(
-                "message_meta",
-                Values::new()
-                    .with("id", message.id.as_str())
-                    .with(
-                        "key",
-                        message.key.as_deref().map_or(Value::Null, Value::from),
-                    )
-                    .with("position", position_value(message.position))
-                    .with("headers", headers),
-            );
+        if values.contains(MESSAGE_META) {
+            return Err(mismatch(
+                "its body has a field named `message_meta`, the name under which a result holds what the broker says about a message",
+            ));
         }
+        let declared = entry
+            .correlation
+            .as_deref()
+            .and_then(|field| field.strip_prefix("headers."));
+        let headers: Values = message
+            .headers
+            .iter()
+            .filter(|(name, _)| Some(name.as_str()) == declared)
+            .map(|(name, value)| (name.clone(), Value::from(value.as_str())))
+            .collect();
+        values.insert(
+            MESSAGE_META,
+            Values::new()
+                .with("id", message.id.as_str())
+                .with(
+                    "key",
+                    message.key.as_deref().map_or(Value::Null, Value::from),
+                )
+                .with("position", position_value(message.position))
+                .with("headers", headers),
+        );
         Ok(values)
     }
 }
@@ -427,12 +500,13 @@ impl StreamDriver {
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
         let key = text_arg(input, ARG_KEY)?;
-        run.check_shape(&name, &entry, input.deadline).await?;
+        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+            .await?;
         let found = run
             .link()?
             .latest(&entry.address, key, input.deadline)
             .await
-            .map_err(|error| wire_failure(&error, "read the latest value"))?;
+            .map_err(|error| wire_failure(&*self.redact, &error, "read the latest value"))?;
         let Some(message) = found else {
             return Ok(StepOutcome::Absent(Observed::default()));
         };
@@ -459,12 +533,13 @@ impl StreamDriver {
         }
         let (name, entry) = run.declared(step)?;
         let from = position_arg(input)?;
-        run.check_shape(&name, &entry, input.deadline).await?;
+        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+            .await?;
         let page = run
             .link()?
             .browse(&entry.address, from, entry.browse_count, input.deadline)
             .await
-            .map_err(|error| wire_failure(&error, "look at the channel"))?;
+            .map_err(|error| wire_failure(&*self.redact, &error, "look at the channel"))?;
         let next = page
             .messages
             .last()
@@ -500,7 +575,7 @@ impl StreamDriver {
             .link()?
             .browse(&address, None, max, input.deadline)
             .await
-            .map_err(|error| wire_failure(&error, "look at the channel"))?;
+            .map_err(|error| wire_failure(&*self.redact, &error, "look at the channel"))?;
         let mut fields: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
         let mut bytes = 0_usize;
         for message in &page.messages {
@@ -558,7 +633,8 @@ impl StreamDriver {
                 "Declare `idempotency.header` in the channel file, and give the operation the `stamped` identity.",
             ));
         };
-        run.check_shape(&name, &entry, input.deadline).await?;
+        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+            .await?;
         // Where this run's own publish was confirmed, read that one place.
         let mut from = run.receipts.get(stamp).and_then(|receipt| receipt.position);
         let known = from.is_some();
@@ -568,7 +644,7 @@ impl StreamDriver {
                 .link()?
                 .browse(&entry.address, from, max, input.deadline)
                 .await
-                .map_err(|error| wire_failure(&error, "scan the log"))?;
+                .map_err(|error| wire_failure(&*self.redact, &error, "scan the log"))?;
             if let Some(found) = page
                 .messages
                 .iter()
@@ -576,15 +652,31 @@ impl StreamDriver {
             {
                 return Ok(self.done(run.record(&entry, found)?));
             }
+            if known {
+                // The one place this run's own publish was confirmed at.
+                return Ok(StepOutcome::Absent(Observed::default()));
+            }
+            // "Absent" is said only of a log that was covered to its end.
+            // Where the look says more is held, the scan goes on from the
+            // place after the last message; a look that gives no such place,
+            // or contradicts itself, is an answer of no rule.
             let next = page
                 .messages
                 .last()
                 .and_then(|last| last.position)
-                .map(|position| position + 1);
-            if known || !page.more || next.is_none() {
+                .map(|position| position + 1)
+                .filter(|next| from.is_none_or(|from| *next > from));
+            if !page.more {
+                let reached = next.or(from).or(page.start).unwrap_or(0);
+                if page.end.is_some_and(|end| reached < end) {
+                    return Err(uncovered(&name));
+                }
                 return Ok(StepOutcome::Absent(Observed::default()));
             }
-            from = next;
+            let Some(next) = next else {
+                return Err(uncovered(&name));
+            };
+            from = Some(next);
         }
         Err(stopped(
             Sent::Answered,
@@ -619,7 +711,8 @@ impl StreamDriver {
             return Ok(self.done(Values::new().with("position", Value::Null)));
         }
         let from = position_arg(input)?;
-        run.check_shape(&name, &entry, input.deadline).await?;
+        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+            .await?;
         let subscription = if detail.take {
             None
         } else {
@@ -629,12 +722,13 @@ impl StreamDriver {
             .link()?
             .subscribe(&entry.address, subscription, from, input.deadline)
             .await
-            .map_err(|error| wire_failure(&error, "open the runtime's subscription"))?;
+            .map_err(|error| wire_failure(&*self.redact, &error, "open the runtime's subscription"))?;
         let position = position_value(opened.position);
         run.open.insert(
             name,
             Open {
                 handle: opened.handle,
+                placed: opened.position.is_some(),
             },
         );
         Ok(self.done(Values::new().with("position", position)))
@@ -652,9 +746,18 @@ impl StreamDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
-        let Some(handle) = run.open.get(&name).map(|open| open.handle.clone()) else {
+        let Some((handle, placed)) = run
+            .open
+            .get(&name)
+            .map(|open| (open.handle.clone(), open.placed))
+        else {
             return Err(wrong_plan("a wait before its subscription was opened"));
         };
+        if detail.take
+            && (entry.shape != Shape::Queue || entry.ownership != Ownership::RuntimeOwned)
+        {
+            return Err(not_owned(&name));
+        }
         let key = if detail.by_key {
             Some(text_arg(input, ARG_KEY)?)
         } else {
@@ -691,7 +794,7 @@ impl StreamDriver {
                 Ok(link) => link
                     .fetch(&handle, 1, wait, input.deadline)
                     .await
-                    .map_err(|error| wire_failure(&error, "wait for a message")),
+                    .map_err(|error| wire_failure(&*self.redact, &error, "wait for a message")),
                 Err(failed) => Err(failed),
             };
             let delivered = match fetched {
@@ -701,6 +804,17 @@ impl StreamDriver {
                     break;
                 }
             };
+            if delivered.len() > 1 {
+                // One was asked for. The others were handed over and would
+                // go unexamined; giving the connection up gives them back.
+                outcome = Err(stopped(
+                    Sent::Unknown,
+                    codes::UNEXPECTED_REPLY,
+                    "The broker handed over more messages than the one the wait asked for.",
+                    "Check that the surface's `protocol` is the one the broker speaks; then report this.",
+                ));
+                break;
+            }
             let Some(delivered) = delivered.into_iter().next() else {
                 continue;
             };
@@ -744,12 +858,21 @@ impl StreamDriver {
                     "Try again when the message is expected, or raise the wait where the channel allows.",
                 ));
             }
+            // Only from a place the broker reported is everything up to
+            // now covered. Elsewhere the wait saw what came after it
+            // subscribed, and says so.
+            let (coverage, limitation) = if placed {
+                ("complete", Value::Null)
+            } else {
+                ("partial", Value::from("starts_at_subscription"))
+            };
             return Ok(self.done(
                 Values::new()
                     .with("arrived", false)
                     .with("waited_ms", i64::from(detail.wait_ms))
                     .with("examined", examined)
-                    .with("coverage", "complete"),
+                    .with("coverage", coverage)
+                    .with("limitation", limitation),
             ));
         };
         let record = match run.record(&entry, &message) {
@@ -764,19 +887,39 @@ impl StreamDriver {
                 return Err(failed);
             }
         };
-        let values = Values::new()
-            .with("arrived", true)
-            .with("examined", examined)
-            .with("message", record);
-        let mut observed = Observed {
-            values: self.redact.redact_values(&values),
-            ..Observed::default()
-        };
+        let record = self.redact.redact_values(&record);
+        let mut observed = Observed::default();
         if let (true, Some(delivery)) = (detail.take, delivery_held) {
-            // Record, then acknowledge: the engine stores these before the
-            // acknowledging step is sent.
+            // Record, then acknowledge. The engine stores what a step
+            // gives for reconcile, durably, before it sends the step that
+            // commits; so the whole message goes there, and the
+            // acknowledgement is sent only for a message given out this
+            // way. One too large to be recorded is given back.
+            let for_reconcile = Values::new()
+                .with("message_id", message.id.as_str())
+                .with("message", record.clone());
+            let size = CanonicalJson::encode(&for_reconcile)
+                .map(|stored| stored.as_bytes().len())
+                .ok();
+            let limit = usize::try_from(entry.message_bytes).unwrap_or(usize::MAX);
+            if size.is_none_or(|size| size > limit) {
+                if let Ok(link) = run.link() {
+                    let _ = link
+                        .release(&handle, &delivery, Deadline::after(RELEASE_LIMIT))
+                        .await;
+                }
+                return Err(stopped(
+                    Sent::Answered,
+                    codes::TAKE_TOO_LARGE,
+                    format!(
+                        "A message taken from the channel `{name}` is larger than the {} bytes that may be recorded before it is acknowledged. It was given back and not acknowledged.",
+                        entry.message_bytes
+                    ),
+                    "Raise `limits.message_bytes` in the channel file, or have the message removed from the queue by hand.",
+                ));
+            }
             observed.assigned_key = RecordKey::new(vec![Value::from(message.id.as_str())]).ok();
-            observed.for_reconcile = Values::new().with("message_id", message.id.as_str());
+            observed.for_reconcile = for_reconcile;
             run.held = Some(Held {
                 channel: name,
                 handle,
@@ -784,6 +927,10 @@ impl StreamDriver {
                 message_id: message.id,
             });
         }
+        observed.values = Values::new()
+            .with("arrived", true)
+            .with("examined", examined)
+            .with("message", record);
         Ok(StepOutcome::Done(observed))
     }
 
@@ -806,7 +953,7 @@ impl StreamDriver {
         run.link()?
             .acknowledge(&held.handle, &held.delivery, input.deadline)
             .await
-            .map_err(|error| doubtful(&error, "acknowledge the message"))?;
+            .map_err(|error| doubtful(&*self.redact, &error, "acknowledge the message"))?;
         Ok(self.done(
             Values::new()
                 .with("acknowledged", true)
@@ -836,6 +983,11 @@ impl StreamDriver {
         let mut headers = BTreeMap::new();
         for (arg, value) in input.args.iter() {
             if let Some(field) = arg.strip_prefix(ARG_BODY) {
+                if field == MESSAGE_META {
+                    return Err(unsendable(
+                        "`message_meta` is the name under which a result holds what the broker says about a message, and no body may use it",
+                    ));
+                }
                 body.insert(
                     field.to_owned(),
                     Json::from_value(value).map_err(unsendable)?,
@@ -888,7 +1040,8 @@ impl StreamDriver {
                 "Shorten the message; nothing was sent.",
             ));
         }
-        run.check_shape(&name, &entry, input.deadline).await?;
+        run.check_shape(&*self.redact, &name, &entry, input.deadline)
+            .await?;
         let outgoing = Outgoing {
             address: entry.address.clone(),
             key,
@@ -899,7 +1052,7 @@ impl StreamDriver {
             .link()?
             .publish(&outgoing, input.deadline)
             .await
-            .map_err(|error| doubtful(&error, "publish the message"))?;
+            .map_err(|error| doubtful(&*self.redact, &error, "publish the message"))?;
         let values = Values::new()
             .with("message_id", receipt.id.as_str())
             .with("position", position_value(receipt.position))
@@ -927,20 +1080,33 @@ impl StreamDriver {
                 .link()?
                 .describe(&address, input.deadline)
                 .await
-                .map_err(|error| wire_failure(&error, "describe the channel"))?;
+                .map_err(|error| wire_failure(&*self.redact, &error, "describe the channel"))?;
             return Ok(self.done(facts_values(&facts)));
         }
         let listed = run
             .link()?
             .channels(input.deadline)
             .await
-            .map_err(|error| wire_failure(&error, "list the broker's channels"))?;
+            .map_err(|error| wire_failure(&*self.redact, &error, "list the broker's channels"))?;
         let channels: Vec<Value> = listed
             .iter()
             .map(|facts| Value::Record(facts_values(facts)))
             .collect();
         Ok(self.done(Values::new().with("channels", channels)))
     }
+}
+
+/// A look at a log that does not say how far it reached. The scan cannot
+/// say the record's message is absent, and it does not guess.
+fn uncovered(name: &str) -> StepFailure {
+    stopped(
+        Sent::Answered,
+        codes::UNEXPECTED_REPLY,
+        format!(
+            "A look at the log `{name}` did not say how far it reached, so the driver cannot say that the record's message is not there."
+        ),
+        "Look at the log by hand before anything is sent again; then report this.",
+    )
 }
 
 fn not_owned(name: &str) -> StepFailure {
@@ -1067,13 +1233,27 @@ impl Driver for StreamDriver {
                 }
                 None => None,
             };
+            if sink.not_carried {
+                // A connection opened without part of the session's
+                // credentials would not be the session's connection.
+                return Err(stopped(
+                    Sent::NotSent,
+                    codes::CREDENTIAL_NOT_CARRIED,
+                    format!(
+                        "The session of the surface `{}` holds a credential the wire protocol `{}` cannot present: it carries one token and nothing else.",
+                        surface.name,
+                        protocol.name()
+                    ),
+                    "Sign in to the target with a provider that gives one token, or use a protocol that carries this credential.",
+                ));
+            }
             let key: PoolKey = (surface.address.clone(), protocol.name().to_owned(), session);
             let link = match self.take_idle(&key) {
                 Some(link) => link,
                 None => protocol
-                    .connect(&surface.address, sink.0.as_ref(), cx.deadline)
+                    .connect(&surface.address, sink.token.as_ref(), cx.deadline)
                     .await
-                    .map_err(|error| wire_failure(&error, "open a connection"))?,
+                    .map_err(|error| wire_failure(&*self.redact, &error, "open a connection"))?,
             };
             Ok(Prepared::new(Run {
                 link: Some(link),
@@ -1086,6 +1266,7 @@ impl Driver for StreamDriver {
                 held: None,
                 seen: BTreeSet::new(),
                 receipts: BTreeMap::new(),
+                failed: false,
             }))
         })
     }
@@ -1126,13 +1307,16 @@ impl Driver for StreamDriver {
             } else {
                 Err(wrong_plan("a step of a kind the driver does not carry out"))
             };
-            if let Err(failed) = &result
-                && failed.sent == Sent::Unknown
-            {
-                // The connection cannot be trusted to pair answers with
-                // requests any more. Dropping it also gives back whatever
-                // the run held unacknowledged.
-                run.link = None;
+            if let Err(failed) = &result {
+                // After any failure the connection is not kept for the
+                // session's next run.
+                run.failed = true;
+                if failed.sent == Sent::Unknown {
+                    // The connection cannot be trusted to pair answers with
+                    // requests any more. Dropping it also gives back
+                    // whatever the run held unacknowledged.
+                    run.link = None;
+                }
             }
             result
         })
@@ -1152,11 +1336,15 @@ impl Driver for StreamDriver {
                 return Cleanup::complete();
             };
             let Run {
-                link, key, open, ..
+                link,
+                key,
+                open,
+                failed,
+                ..
             } = *run;
             // A connection that is dropped takes its subscriptions with it,
             // and the broker takes back what they held.
-            let Some(mut link) = link.filter(|_| !poisoned) else {
+            let Some(mut link) = link.filter(|_| !poisoned && !failed) else {
                 return Cleanup::complete();
             };
             for subscription in open.values() {
@@ -1173,5 +1361,35 @@ impl Driver for StreamDriver {
             }
             Cleanup::complete()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_credential_the_protocol_cannot_present_is_remembered_and_never_dropped_silently() {
+        let secret = Secret::new("secret-for-tests-one");
+        let mut token = TokenSink::default();
+        token.header("authorization", &secret);
+        assert!(token.token.is_some() && !token.not_carried);
+
+        let mut second = TokenSink::default();
+        second.header("authorization", &secret);
+        second.header("x-other", &secret);
+        assert!(second.not_carried);
+
+        let mut password = TokenSink::default();
+        password.challenge_credential(ChallengeScheme::Digest, "example-user", &secret);
+        assert!(password.not_carried && password.token.is_none());
+
+        let mut identity = TokenSink::default();
+        identity.tls_identity(b"certificate", &secret);
+        assert!(identity.not_carried);
+
+        let mut cookie = TokenSink::default();
+        cookie.cookie("broker.example.test", "session", &secret);
+        assert!(cookie.not_carried);
     }
 }

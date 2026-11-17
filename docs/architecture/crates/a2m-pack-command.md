@@ -21,7 +21,7 @@ The command pack: the `cli` driver over declared programs. A program is started 
 - Building the element list a program is started with, checking a program's file before it is started, reading its exit status, and parsing its output.
 - The `command` finding kind and the shape of its `found`; the discoverer `help`; the drafting rule from `command` findings to `commands/` drafts.
 
-It must never: start a program except through the supervisor it is handed; build a command line; let a value become an option, a program, or a path; start a shell, an interpreter, or a script; start a command where nothing may be written; retry; parse standard error for values; give a program a variable its file does not list; put a secret in an argument.
+It must never: start a program except through the supervisor it is handed; build a command line; let a value become an option, a program, a path, or the name of a file of arguments; start a shell, an interpreter, a script, or a program whose work is to start another; start a command where nothing may be written; start a command that writes from a step that is no commit point; retry; parse standard error for values; give a program a variable its file does not list; put a secret in an argument; cut, join, or decode text a program printed and show the result without the redactor having seen it.
 
 ## What it registers
 
@@ -50,8 +50,9 @@ It must never: start a program except through the supervisor it is handed; build
 | `command.pattern_invalid`, `command.pattern_not_anchored` | A pattern compiles and is anchored: at both ends for a param, an output, and the version; at its start for a prompt. The version pattern has a group named `version`; an output pattern names at least one group |
 | `command.text_param_open` | A text param has an anchored pattern, or its field type is a `choice` |
 | `command.param_type_unsupported` | A param is text, a whole number, an exact number, a truth value, or a date |
-| `command.code_argument`, `command.code_flag` | No param is marked as code, and no flag that runs its value (`-c`, `-e`, `--eval`, `--exec`, and the like) carries a param |
-| `command.arg_malformed`, `command.param_unknown`, `command.param_unused` | An argument entry is one of the forms of section 306, names a declared param, and every declared param is carried |
+| `command.code_argument`, `command.code_flag` | No param is marked as code, and no flag that runs its value (`-c`, `-e`, `--eval`, `--exec`, and the like) carries a value in any form: `{flag, param}` with or without `join`, `{flag, each}`, `{flag, stamp: true}`, the flag written as an element of its own before `{param}`, the joining character written into the flag, or a help form with `{command}` after the flag. A flag is read without its dashes and up to a `=` or `:`; a one-letter flag is matched as written, a longer one without regard to case |
+| `command.secret_variable`, `command.secret_literal`, `command.secret_argument` | No variable named for a credential is set or copied; no variable's value and no element looks like a credential; no flag named for a credential carries a value, as a literal or as a param. A name is one for a credential by its last word (`TOKEN`, `PASSWORD`, `SECRET`, and the like) or its last two (`API_KEY`) |
+| `command.arg_malformed`, `command.param_unknown`, `command.param_unused` | An argument entry is one of the forms of section 306, holds no NUL character, names a declared param, and every declared param is carried |
 | `command.exit_malformed`, `command.exit_changed`, `command.no_ok_exit` | An exit status is a whole number with a meaning; a command adds statuses and changes none; one status means `ok` |
 | `command.output_malformed` | One output form, with its columns or fields named once |
 | `command.assigns_unknown` | `assigns` names one declared field of the output |
@@ -95,7 +96,13 @@ Everything else is private. The driver is reached through `Registry::driver`, th
 
 A step's time limit is its command's. A lookup's `parse` must find exactly one record: none is absent, more is `possible_commit`/`ambiguous_match`.
 
-**What `act` returns.** `spawn`: two captures, `stdout` and `stderr`, redacted. `expect`: nothing, or absent for a lookup whose exit status means `absent`. `parse`: the values of the declared output form, and the assigned key when the command declares `assigns`. Rows come back as the value `rows`, a list of records. A JSON field is typed by its declared kind; a table cell and a pattern group are text, for the engine to normalize by field type.
+**What the driver checks again.** The lowering marks the `spawn` of a command that writes as the commit point, and no other step. The driver does not take its word: `spawn` starts a command that writes only when its step is marked `commits` and belongs to a record of the ledger, and a command that reads only when its step is not. The handle lets a `commits` step through only with the ledger's token, so the two checks together are "a write is started only with the ledger's token" ([decision 0140](../../decisions/0140-the-command-pack-after-its-safety-audit.md)).
+
+**Who can replace the program.** `prepare` walks the declared path name by name, as the system does at a start: every folder entered, every link, the folder each link is in, and the way to where each link leads. A folder must belong to the engine's user or the administrator and be writable by nobody else, whatever the group; where the sticky mark stands in for that, the entry itself must be theirs. The program is then started by its declared path, so it sees the name it was declared by: with the whole chain closed, nobody else can change what that path names between the check and a start. Access lists beyond the mode are not read.
+
+**Text a program printed.** The redactor sees a stream whole before anything is cut from it, and sees the result again after anything is joined or decoded: the message a failure quotes from standard error is redacted, cleaned of control characters, redacted again, and only then cut; values are redacted after a form is read as well as before, because a JSON escape is not the secret until it is decoded; a stream the supervisor cut is never shown. The redactor matches a secret as the program printed it; a program that prints one in pieces that are never joined is beyond it.
+
+**What `act` returns.** `spawn`: two captures, `stdout` and `stderr`, redacted whole. `expect`: nothing, or absent for a lookup whose exit status means `absent`. `parse`: the values of the declared output form, and the assigned key when the command declares `assigns`. Rows come back as the value `rows`, a list of records. A JSON field is typed by its declared kind; a table cell and a pattern group are text, for the engine to normalize by field type.
 
 **What a `command` finding holds.** Canonical JSON: `name`, `about`, `usage`, `platform`, `digest`, `version`. The finding is at `discovered` with the limitation `not_exercised`: the help listing the command is what was observed. What the usage line's parts mean is read from it by the drafting rule and is not observed.
 
@@ -111,7 +118,7 @@ It uses the supervisor it is handed in `PrepareContext` for every start; the roo
 
 ## State
 
-A `Session` behind `Prepared`, for one run on one surface: the decoded section, the program's path and the digest it had when it was checked, the scoped supervisor, the posture, the run's folder, and how the last start ended, kept between `spawn`, `expect`, and `parse`. Nothing is kept between runs. The run's folder is made in `prepare` and removed in `release`.
+A `Session` behind `Prepared`, for one run on one surface: the decoded section, the program's path and the digest it had when it was checked, the scoped supervisor, the posture, the run's folder, and how the last start ended, kept between `spawn`, `expect`, and `parse`. Every `spawn` forgets the start before it first, so a step never reads an earlier start. Nothing is kept between runs. The run's folder is made in `prepare` under a name that was not there, is seen to hold nothing, and is removed in `release`; a folder of that name left by an earlier engine is never used, emptied, or removed.
 
 ## Failures
 
@@ -120,19 +127,22 @@ A `Session` behind `Prepared`, for one run on one surface: the decoded section, 
 | `drift` | `program_missing` | The path is missing, is not a file, or cannot be run | Not sent |
 | `drift` | `program_digest_changed` | The file's digest is not listed for this platform, or changed after it was checked | Not sent |
 | `drift` | `program_version_unsupported` | The version command did not report a supported version in the declared form | Answered |
-| `policy` | `program_path_unsafe` | The path is not absolute; it is a shell, an interpreter, or a script; the file or a folder above it can be written by another user | Not sent |
+| `policy` | `program_path_unsafe` | The path is not absolute; it is a shell, an interpreter, a script, or a program that starts another; the file, a folder on the way to it, or a link on the way can be written or replaced by another user | Not sent |
 | `policy` | `read_only_posture` | A command where only help and version forms may run: discovery, or the sandbox outside an environment of kind `test` | Not sent |
-| `input` | `argument_unsafe` | A value holds a NUL character, or would be read as an option | Not sent |
+| `input` | `argument_unsafe` | A value holds a NUL character; or, as an element of its own, begins with `-` before any `--`, with `@`, or on Windows with `/` | Not sent |
+| `input` | `step_not_usable` | A step the plan wrote in a way the driver cannot carry out: a command that writes on a step that is no commit point or belongs to no record, a command that reads on a commit point, a command of another surface, or an `expect` or `parse` whose program was not started first | Not sent |
+| `input` | `file_unavailable` | No empty folder could be made for the run | Not sent |
 | `input` | `schema_invalid` | A value breaks its param's pattern, list, or kind, or is missing; or an exit declared `input` | Not sent; answered |
 | `rejected` | `app_validation_error` | An exit declared `rejected`. The program's message is in the failure, marked as untrusted | Answered |
 | `stale` | `version_conflict`, `record_absent` | An exit declared `stale`; an exit declared `absent` on a step that is no lookup | Answered |
 | `busy` | `program_busy` | An exit declared `busy`, or another start holds the surface | Answered; not sent |
+| `busy` | `cleanup_incomplete` | A read, or a help or version form: the program ended and its process group could not be ended | Answered |
 | `transient` | `upstream_unavailable`, `timeout` | An exit declared `transient`; a read's time limit | Answered; unknown |
 | `session_expired` | `needs_login` | An exit declared `session_expired` | Answered |
 | `unknown_variant` | `unexpected_exit_status`, `unexpected_prompt` | A read: an undeclared status or an end by signal; a declared prompt in either stream | Answered |
 | `drift` | `output_unparsed` | A read: output that is not of its declared form, or not UTF-8 | Answered |
 | `policy` | `limit_exceeded` | A read: a stream wrote more than its ceiling. The message names the setting | Answered |
-| `possible_commit` | `no_confirmation` | A write: the time limit, an undeclared status, a signal, a prompt, output that does not parse, or a ceiling passed, after the program started | Unknown |
+| `possible_commit` | `no_confirmation` | A write: the time limit, an undeclared status, a signal, a prompt, output that does not parse, a ceiling passed, or a process group that could not be ended, after the program started; and an `expect` or `parse` that cannot be done as written when the last start was of a command that writes | Unknown |
 | `possible_commit` | `ambiguous_match` | A lookup found more than one record | Answered |
 
 The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shutting_down`, `start_failed`) pass through unsent.
@@ -144,18 +154,24 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 | The registry builds with only this pack, its digest is stable, and the manifest declares exactly the codes the driver raises | `tests/files.rs` |
 | The `example` files compile twice, and from disk, to the same bytes; the plan declares the program of every environment | `tests/files.rs` |
 | A file that breaks a rule is refused with its file, a line, and a fix: twenty-two cases | `tests/files.rs` |
-| Each argument entry becomes exactly its elements; a value cannot become an option, hold a NUL character, or break its param; a refusal never quotes the value | `src/args.rs`; `tests/driver.rs` against the stand's record of what it was started with |
+| No form of argument hands a value to a flag that runs it: seven forms; a flag that takes a folder compiles | `tests/files.rs`, `src/kind.rs` |
+| A credential is never written in a `commands/` file or carried as an argument: seven cases | `tests/files.rs`, `src/kind.rs` |
+| Each argument entry becomes exactly its elements; a value cannot become an option or the name of a file of arguments, hold a NUL character, or break its param; a refusal never quotes the value | `src/args.rs`; `tests/driver.rs` against the stand's record of what it was started with |
 | Each output form is read; any line, field, or column the form does not cover is a failure | `src/output.rs`, `src/json.rs`; `tests/driver.rs` with the stand's drift fault |
 | A program is given only the declared variables and a fresh folder that is removed afterwards | `tests/driver.rs` |
 | Five runs of one read give one signature | `tests/driver.rs` |
 | A write is started once, only with the ledger's token, and the stand stored what was intended | `tests/driver.rs`, asking the stand's data file |
+| A command that writes is not started by a step that is no commit point, whatever the plan says; the stand shows no start and no write. A step never reads an earlier start | `tests/driver.rs` |
+| A program that ended while its process group could not be ended has not finished: a write is `possible_commit` | `src/driver.rs` |
+| A run's folder is one that was not there: what an earlier engine left under the same name is not used or touched | `tests/driver.rs` |
 | A write killed at its time limit after it committed, killed before it committed, ended with an undeclared status, with changed output, or with a question is `possible_commit`, and is not started again | `tests/driver.rs` |
 | A created record's assigned key is taken at once; it is found by its stamp; two records with one stamp are ambiguous | `tests/driver.rs` |
-| A secret the program prints reaches no capture, value, or failure | `tests/driver.rs` |
+| A secret the program prints reaches no capture, value, or failure: on either stream, where the cut of a quoted message would divide it, where cleaning the message would join it, and where decoding JSON would put it together | `tests/driver.rs` with the stand's `Say` fault; `src/output.rs` |
 | Another version, another build, and a missing file are refused before a command runs; a build changed after `prepare` is not started | `tests/driver.rs` |
 | A time limit ends the program and what it started; a ceiling is named | `tests/driver.rs` |
 | Discovery starts only declared help and version forms, with a bare environment, and changes nothing; a command is refused in discovery, and in the sandbox outside a test environment; the drafts state no effect, no exit beyond `0`, no output form, and no read-back | `tests/driver.rs` |
-| A shell, a script, and a file another user can write are refused | `src/safety.rs`, on Linux and macOS |
+| A shell, a script, a program that starts another, and a file another user can write are refused | `src/safety.rs`, `src/kind.rs`, on Linux and macOS |
+| A link in a folder another user can write is refused, as is a folder a group can write, whatever the group; a chain of links nobody else can write is followed | `src/safety.rs`, on Linux and macOS |
 
 ## Build order
 
@@ -167,7 +183,7 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 6. Not built: `upsert`, `upload`, `download`, and the `collect` step.
 7. Not built: secrets. No credential reaches a program yet: standard input is always closed, and the lease is not applied. `{session.state_dir}` does not compile.
 8. Not built: `stdin` from a param or a blob; a working folder other than a fresh one; an encoding other than UTF-8; a table split at fixed positions; the fixed pair of an interpreter and a script; reading a manual page or a completion file; a grace period before a forced stop; more than one start at a time on a surface.
-9. Not built: on Windows, the check that nobody else can write the program's file or a folder above it.
+9. Not built: on Windows, the check that nobody else can write the program's file, a folder on the way to it, or a link on the way. On every system, access lists beyond the mode are not read.
 10. Not proven here: Windows and macOS. The crate's tree compiles SQLite, so it cannot be checked for those systems from Linux; the tests are written to run there and have not.
 
 ## Open points
@@ -178,3 +194,9 @@ The supervisor's own refusals (`effect_not_declared`, `cleanup_incomplete`, `shu
 - The version is asked once in every `prepare`, not once for a lease.
 - The folder of a run is removed file by file and then as an empty folder; a folder a program made inside it is left, and reported as an incomplete cleanup.
 - What the kernel could not give the pack is listed in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
+- The list of shells, interpreters, and programs that start another is a net for a mistake and is not complete: many programs can be told to run another through an option of their own. The same holds for the names of flags that run their value; a cluster of one-letter flags, such as `-xc`, is not recognised. The review of a target's files is what holds beyond the lists.
+- A value joined to its flag is not checked for a leading `@`: whether a flag reads its value as the name of a file is the program's own, and the param's pattern is what guards it.
+- A literal that looks like a credential is found by its look, a long run of letters and digits; a key written with other characters passes.
+- A run's folder left by an engine that ended before `release` stays until a person removes it. The folder is made by looking and then making, because the checked path has no call that makes a folder only when it is not there; [decision 0140](../../decisions/0140-the-command-pack-after-its-safety-audit.md) asks for one.
+- The driver redacts with the pack's redactor. The redactor of `PrepareContext` is a borrow that ends with `prepare`, so it cannot be used in `act`; if the two ever differ, the provider contract must hand a step its redactor.
+- A program started by a path whose every folder and link is closed to other users can still be changed by the engine's own user between the supervisor's digest and the start. Starting the opened, checked file is the supervisor's to do, and is the open point of section 306.

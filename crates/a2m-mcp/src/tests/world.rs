@@ -84,7 +84,9 @@ pub struct World {
     pub app: TestApp,
     pub kernel: Kernel,
     pub surface: Arc<Surface>,
-    _folder: Folder,
+    /// The engine's home. A folder beside the engine's own, under it, is a
+    /// project folder a test may state.
+    pub folder: Folder,
 }
 
 impl World {
@@ -139,7 +141,7 @@ impl World {
             app,
             kernel,
             surface,
-            _folder: folder,
+            folder,
         }
     }
 
@@ -155,6 +157,35 @@ impl World {
             settings,
         )
         .unwrap()
+    }
+
+    /// The person approves the run at the desk, the diff the desk shows:
+    /// what no front door can do.
+    pub async fn approve(&self, run: &str) {
+        let run: a2m_core::RunId = run.parse().unwrap();
+        let desk = Arc::clone(self.surface.desk.lock().unwrap().as_ref().unwrap());
+        let waiting = desk.waiting(run).await.unwrap();
+        let person = self
+            .kernel
+            .verify_caller(CallerCredential::LocalUser(USER.to_owned()))
+            .await
+            .unwrap()
+            .principal()
+            .clone();
+        let proof = PresenceProof::new(
+            PresenceCheck::OsPrompt,
+            person.id,
+            Timestamp::from_unix_millis(START),
+        );
+        desk.approve(
+            run,
+            waiting.diff_hash,
+            person,
+            a2m_policy::Channel::LocalPrompt,
+            proof,
+        )
+        .await
+        .unwrap();
     }
 
     /// One dispatch straight at the kernel, as the local user: how a test

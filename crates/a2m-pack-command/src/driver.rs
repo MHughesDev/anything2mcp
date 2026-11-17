@@ -1010,3 +1010,78 @@ impl Driver for CliDriver {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Digest, FailureClass};
+    use a2m_provider::{Cleanup, Exit, Finished, Leftover, Sent};
+
+    use super::{left_running, reported_version, stdout_cut};
+    use crate::codes::{CLEANUP_INCOMPLETE, NO_CONFIRMATION};
+    use crate::model::VersionCheck;
+
+    fn finished(stdout: &str, wrote: u64, left: bool) -> Finished {
+        Finished {
+            exit: Exit::Code(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+            stdout_bytes: wrote,
+            stderr_bytes: 0,
+            program_digest: Digest::of(b"example"),
+            verified: true,
+            cleanup: if left {
+                Cleanup::incomplete(vec![Leftover {
+                    kind: None,
+                    what: "a process group that could not be ended".to_owned(),
+                }])
+            } else {
+                Cleanup::complete()
+            },
+        }
+    }
+
+    #[test]
+    fn a_program_that_left_something_running_has_not_finished() {
+        assert!(left_running(&finished("", 0, false), true).is_none());
+        // A write that ended with `ok` while what it started still runs is
+        // not confirmed: the record is read back before anything else.
+        let write = left_running(&finished("", 0, true), true).unwrap();
+        assert_eq!(
+            (write.failure.class(), write.failure.code(), write.sent),
+            (
+                FailureClass::PossibleCommit,
+                &NO_CONFIRMATION,
+                Sent::Unknown
+            )
+        );
+        let read = left_running(&finished("", 0, true), false).unwrap();
+        assert_eq!(
+            (read.failure.class(), read.failure.code(), read.sent),
+            (FailureClass::Busy, &CLEANUP_INCOMPLETE, Sent::Answered)
+        );
+    }
+
+    #[test]
+    fn a_version_is_read_only_from_whole_output_the_redactor_has_seen() {
+        let check = VersionCheck {
+            args: vec!["--version".to_owned()],
+            exits: vec![0],
+            stdout: r"^example-tool (?<version>\S+)$".to_owned(),
+            supported: Vec::new(),
+        };
+        let whole = finished("example-tool 2.4\n", 17, false);
+        assert_eq!(
+            reported_version(&check, &whole, "example-tool 2.4\n").as_deref(),
+            Some("2.4")
+        );
+        // The text is the redacted one: a version is a piece of it.
+        assert_eq!(
+            reported_version(&check, &whole, "example-tool [redacted]\n").as_deref(),
+            Some("[redacted]")
+        );
+        // Output the supervisor cut is never read.
+        let cut = finished("example-tool 2.4\n", 4096, false);
+        assert!(stdout_cut(&cut));
+        assert_eq!(reported_version(&check, &cut, "example-tool 2.4\n"), None);
+    }
+}

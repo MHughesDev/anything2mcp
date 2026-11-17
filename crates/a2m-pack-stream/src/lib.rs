@@ -97,6 +97,7 @@ impl Pack for StreamPack {
                 )))
                 .lint_rule(Arc::new(lint::UnknownSchema))
                 .lint_rule(Arc::new(lint::ConsumersUnknown))
+                .lint_rule(Arc::new(lint::UntrustedUnmarked))
                 .drafting_rule(Arc::new(draft::ChannelDraft::new(names.clone())))
                 .drafting_rule(Arc::new(draft::SchemaDraft::new(names.clone())))
                 .drafting_rule(Arc::new(draft::ReadDraft::new(names.clone()))),

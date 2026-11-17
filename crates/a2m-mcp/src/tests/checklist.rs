@@ -409,7 +409,8 @@ async fn checklist(world: &World, wire: &mut Wire) {
                 .map(String::as_str)
                 .collect();
             keys.retain(|key| *key != "_meta");
-            assert_eq!(keys, ["progress", "progressToken", "total"], "{note}");
+            assert_eq!(keys, ["message", "progress", "progressToken"], "{note}");
+            assert!(!note["params"]["message"].as_str().unwrap().is_empty());
         }
     }
 }
@@ -473,10 +474,21 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
             "{control}: {listed:?}"
         );
     }
-    assert_eq!(
-        listed.last().map(String::as_str),
-        Some(ORDER_FILL),
+    // The control tools come first, then the pipelines: whatever else the
+    // shared plan publishes, this pipeline is listed after every built-in
+    // tool, and this operation is not listed.
+    let builtin = listed
+        .iter()
+        .take_while(|name| name.starts_with("a2m_"))
+        .count();
+    assert!(
+        listed[builtin..].iter().any(|name| name == ORDER_FILL),
         "{listed:?}"
+    );
+    assert!(
+        !listed[builtin..]
+            .iter()
+            .any(|name| name.starts_with("a2m_"))
     );
     assert!(!listed.iter().any(|name| name == ORDER_GET));
     assert!(listed.len() <= 19);
@@ -505,14 +517,30 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
             .all(|tool| tool.get("outputSchema").is_none())
     );
 
-    // With no room past the control tools, the pipeline moves to search.
-    let builtin = listed.len() - 1;
-    let narrow = McpSettings {
-        listed_max: builtin,
-        ..McpSettings::local()
-    };
-    let narrowed = name_list(&names(world.service("use", narrow)).await);
-    assert_eq!(narrowed, listed[..builtin]);
+    // With no room past the control tools, the pipelines move to search;
+    // with room for one, the first is listed.
+    for room in [0, 1] {
+        let narrow = McpSettings {
+            listed_max: builtin + room,
+            ..McpSettings::local()
+        };
+        let narrowed = name_list(&names(world.service("use", narrow)).await);
+        assert_eq!(narrowed, listed[..builtin + room]);
+    }
+
+    // A list costs one dispatch for each page of published tools, and not
+    // one for each tool: here, one.
+    for listing in [crate::Listing::Default, crate::Listing::Full] {
+        let service = world.service(
+            "use",
+            McpSettings {
+                listing,
+                ..McpSettings::local()
+            },
+        );
+        names(service.clone()).await;
+        assert_eq!(service.dispatched(), 1, "{listing:?}");
+    }
 
     // A full listing holds every operation as well.
     let full = McpSettings {

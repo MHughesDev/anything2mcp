@@ -90,7 +90,8 @@ fn after_quoted(bytes: &[u8], at: usize, close: u8) -> Option<usize> {
 
 /// The statement's tokens. Quoted text and comments give none.
 fn tokens(text: &str) -> Result<Vec<Token<'_>>, Wrong> {
-    const OPEN: Wrong = Wrong::Form("The statement holds a quote or a comment that is never closed.");
+    const OPEN: Wrong =
+        Wrong::Form("The statement holds a quote or a comment that is never closed.");
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut at = 0;
@@ -106,10 +107,7 @@ fn tokens(text: &str) -> Result<Vec<Token<'_>>, Wrong> {
             }
             b'/' if next == Some(b'*') => {
                 let rest = bytes.get(at + 2..).ok_or(OPEN)?;
-                let close = rest
-                    .windows(2)
-                    .position(|pair| pair == b"*/")
-                    .ok_or(OPEN)?;
+                let close = rest.windows(2).position(|pair| pair == b"*/").ok_or(OPEN)?;
                 at += 2 + close + 2;
             }
             b'\'' | b'"' | b'`' => at = after_quoted(bytes, at, byte).ok_or(OPEN)?,
@@ -123,9 +121,9 @@ fn tokens(text: &str) -> Result<Vec<Token<'_>>, Wrong> {
                 at += 1;
             }
             _ if word_start(byte) => {
-                let length = bytes
-                    .get(at..)
-                    .map_or(0, |rest| rest.iter().take_while(|byte| word_part(**byte)).count());
+                let length = bytes.get(at..).map_or(0, |rest| {
+                    rest.iter().take_while(|byte| word_part(**byte)).count()
+                });
                 // A word begins and ends at a letter, a digit, `_`, `$`, or
                 // a whole character beyond ASCII, so the cut is a valid one.
                 let word = text.get(at..at + length).ok_or(OPEN)?;
@@ -224,9 +222,18 @@ mod tests {
         ] {
             assert_eq!(check(text, Does::Read), Ok(()), "{text}");
         }
-        assert_eq!(check("INSERT INTO \"t\" (\"a\") VALUES (?)", Does::Insert), Ok(()));
-        assert_eq!(check("UPDATE \"t\" SET \"a\" = ? WHERE \"k\" = ?", Does::Update), Ok(()));
-        assert_eq!(check("DELETE FROM \"t\" WHERE \"k\" = ?", Does::Delete), Ok(()));
+        assert_eq!(
+            check("INSERT INTO \"t\" (\"a\") VALUES (?)", Does::Insert),
+            Ok(())
+        );
+        assert_eq!(
+            check("UPDATE \"t\" SET \"a\" = ? WHERE \"k\" = ?", Does::Update),
+            Ok(())
+        );
+        assert_eq!(
+            check("DELETE FROM \"t\" WHERE \"k\" = ?", Does::Delete),
+            Ok(())
+        );
     }
 
     #[test]

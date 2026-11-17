@@ -29,12 +29,17 @@ codes! {
     MESSAGE_TOO_LARGE = Input, "message_too_large";
     /// The surface names a wire protocol this build does not speak.
     PROTOCOL_UNKNOWN = Input, "protocol_unknown";
+    /// The session holds a credential the wire protocol cannot present.
+    CREDENTIAL_NOT_CARRIED = Input, "credential_not_carried";
     /// An acknowledgement was asked for on a queue the runtime does not own.
     ACK_NOT_OWNED = Policy, "ack_not_owned";
     /// The broker's address is not one the run may reach.
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared";
     /// A log holds more than a scan may read, so the scan cannot say "absent".
     SCAN_LIMIT = Policy, "scan_limit";
+    /// A message taken is larger than may be recorded before it is
+    /// acknowledged; it was given back.
+    TAKE_TOO_LARGE = Policy, "take_too_large";
     /// The broker refused the credentials.
     NEEDS_LOGIN = SessionExpired, "needs_login";
     /// The broker refused the message, with its reason.
@@ -72,8 +77,9 @@ pub const CONTRACT_CODES: &[&str] = &[
     "needs_login",
 ];
 
-/// Text that came from a broker, cut and cleaned before it is put in a
-/// message. The handle redacts the whole failure afterwards.
+/// Text that came from a broker, cleaned and cut for a message. The
+/// caller redacts the text first: a cut made before that could leave part
+/// of a secret, which no redactor would then know.
 pub(crate) fn shown(text: &str) -> String {
     const SHOWN: usize = 120;
     let clean: String = text

@@ -364,6 +364,119 @@ fn once_of(body: &Bytes) -> Option<&str> {
         .find_map(|field| field.strip_prefix("once="))
 }
 
+/// A waiting change as the page shows it: what the desk read back from
+/// the stored diff, and nothing rebuilt.
+struct Change {
+    /// The first reading: the tool, the target, the counts.
+    head: ApprovalPreview,
+    /// The records, in the order the run would write them.
+    records: Vec<PreviewRecord>,
+    /// Whether these are all the records of the change.
+    whole: bool,
+}
+
+/// Reads the change `run` waits with, record by record, and only if it is
+/// the change with `diff_hash`, the one the page was opened for. `None`
+/// when the run no longer waits with that change.
+async fn read_change(desk: &ApprovalDesk, run: RunId, diff_hash: Digest) -> Option<Change> {
+    let mut head = desk.preview(run, 0).await.ok()?;
+    if head.diff_hash != diff_hash {
+        return None;
+    }
+    let mut records = std::mem::take(&mut head.records);
+    let mut whole = records.len() >= head.total;
+    while !whole && records.len() < RECORDS_SHOWN {
+        let next = desk.preview(run, records.len()).await.ok()?;
+        if next.diff_hash != diff_hash || next.records.is_empty() {
+            return None;
+        }
+        whole = next.complete();
+        records.extend(next.records);
+    }
+    Some(Change {
+        head,
+        records,
+        whole,
+    })
+}
+
+/// The change as markup. Every value in it comes from a system or a
+/// caller, and is placed as text.
+fn change_html(change: &Change) -> String {
+    use std::fmt::Write as _;
+    let head = &change.head;
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "<p>Target <code>{}</code>, environment <code>{}</code>. {} to create, {} to change, {} already as intended: {} records in all.</p>",
+        escape(&head.target),
+        escape(&head.environment),
+        head.create,
+        head.update,
+        head.unchanged,
+        head.total,
+    );
+    if !change.whole {
+        let _ = write!(
+            out,
+            "<p><strong>This page shows the first {} records only.</strong> A change that cannot be read in full here cannot be approved here.</p>",
+            change.records.len(),
+        );
+    }
+    for (index, record) in change.records.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<section><h3>{}. <code>{}</code> {}: {}</h3><table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>",
+            index + 1,
+            escape(&record.operation),
+            escape(&record.key),
+            escape(record.action),
+        );
+        for field in &record.fields {
+            let now = field.current.as_ref().map_or_else(
+                || "<em>does not exist</em>".to_owned(),
+                |current| escape(current),
+            );
+            let _ = write!(
+                out,
+                "<tr><th scope=\"row\">{}</th><td>{}</td><td>{}</td><td>{}{}</td></tr>",
+                escape(&field.name),
+                now,
+                escape(&field.proposed),
+                if field.changes { "yes" } else { "no" },
+                if field.cut {
+                    "; a value is cut short here"
+                } else {
+                    ""
+                },
+            );
+        }
+        out.push_str("</tbody></table></section>");
+    }
+    out
+}
+
+/// What the page says about the presence prompt of this machine.
+fn presence_html(presence: &Availability) -> String {
+    if presence.proves_presence() {
+        format!("<p>{}</p>", escape(&presence.message))
+    } else {
+        format!(
+            "<p><strong>No presence prompt is available on this machine, so nothing here can approve this write.</strong> {} {} You can still decline it.</p>",
+            escape(&presence.message),
+            escape(&presence.remedy),
+        )
+    }
+}
+
+fn gone() -> Response {
+    answer(
+        StatusCode::CONFLICT,
+        "Nothing to approve here",
+        "The change this page was opened for no longer waits for an approval. Look at the run again for where it stands.",
+    )
+}
+
 async fn show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Response {
     let once = match inner.code() {
         Ok(once) => once,
@@ -375,24 +488,49 @@ async fn show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Resp
             );
         }
     };
+    let asked = inner
+        .state()
+        .pages
+        .get(&code)
+        .map(|found| (found.run, found.diff_hash));
+    let Some((run, diff_hash)) = asked else {
+        return nothing_here();
+    };
+    let Some(desk) = inner.desk.get() else {
+        return gone();
+    };
+    // The page shows the stored change, and only the one it was opened
+    // for: the desk reads the diff back and computes its hash again.
+    let Some(change) = read_change(desk, run, diff_hash).await else {
+        return gone();
+    };
+    let presence = inner.prompt.available().await;
     let mut state = inner.state();
     let Some(found) = state.pages.get_mut(&code) else {
         return nothing_here();
     };
     // Only the page served last can press.
     found.once = Some(once.clone());
+    found.whole = change.whole;
     let minutes = inner.window.as_secs().div_ceil(60).max(1);
     page(
         StatusCode::OK,
-        APPROVAL_PAGE
-            .replace("{{summary}}", &escape(&found.summary))
-            .replace("{{tool}}", &escape(&found.tool))
-            .replace("{{run}}", &escape(&found.run.to_string()))
-            .replace("{{started_by}}", &escape(&found.started_by.to_string()))
-            .replace("{{diff_hash}}", &escape(&found.diff_hash.to_string()))
-            .replace("{{minutes}}", &minutes.to_string())
-            .replace("{{code}}", &escape(&code))
-            .replace("{{once}}", &escape(&once)),
+        fill(
+            APPROVAL_PAGE,
+            &[
+                ("summary", &escape(&found.summary)),
+                ("tool", &escape(&found.tool)),
+                ("run", &escape(&found.run.to_string())),
+                ("started_by", &escape(&found.started_by.to_string())),
+                ("diff_hash", &escape(&found.diff_hash.to_string())),
+                ("short_hash", &escape(&short(found.diff_hash))),
+                ("change", &change_html(&change)),
+                ("presence", &presence_html(&presence)),
+                ("minutes", &minutes.to_string()),
+                ("code", &escape(&code)),
+                ("once", &escape(&once)),
+            ],
+        ),
     )
 }
 
@@ -402,6 +540,8 @@ struct Pressed {
     tool: String,
     diff_hash: Digest,
     started_by: PrincipalId,
+    whole: bool,
+    deadline: Instant,
 }
 
 /// Takes the page's one-time value and marks the page as pressed. A press
@@ -437,6 +577,8 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Respons
         tool: found.tool.clone(),
         diff_hash: found.diff_hash,
         started_by: found.started_by,
+        whole: found.whole,
+        deadline: found.deadline,
     })
 }
 
@@ -472,6 +614,15 @@ async fn finish(inner: &Inner, code: &str, outcome: Outcome) {
     }
 }
 
+/// What a press answers when the task that carried it out did not end.
+fn not_carried_out() -> Response {
+    answer(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Nothing was recorded",
+        "The engine could not carry out the press. Nothing is written unless a person approves; open the link again.",
+    )
+}
+
 async fn approve(
     State(inner): State<Arc<Inner>>,
     Path(code): Path<String>,
@@ -481,23 +632,38 @@ async fn approve(
         Ok(pressed) => pressed,
         Err(response) => return *response,
     };
-    let (outcome, response) = approve_pressed(&inner, &pressed).await;
-    finish(&inner, &code, outcome).await;
-    response
+    // The press is carried out in a task of its own: a prompt waits for a
+    // person, and a browser that goes away meanwhile must not leave the
+    // page marked as pressed for ever.
+    let carried = tokio::spawn(async move {
+        let (outcome, response) = approve_pressed(&inner, &pressed).await;
+        finish(&inner, &code, outcome).await;
+        response
+    });
+    carried.await.unwrap_or_else(|_| not_carried_out())
+}
+
+fn nothing_approved(status: StatusCode, detail: &str) -> (Outcome, Response) {
+    (
+        Outcome::Open,
+        answer(status, "Nothing was approved", detail),
+    )
 }
 
 /// Carries out a press of Approve, and says how it ended.
 async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response) {
     let Some(desk) = inner.desk.get() else {
-        return (
-            Outcome::Open,
-            answer(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Nothing was approved",
-                "The engine cannot record an approval now. Run `anything2mcp doctor run` for the reason.",
-            ),
+        return nothing_approved(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The engine cannot record an approval now. Run `anything2mcp doctor run` for the reason.",
         );
     };
+    if !pressed.whole {
+        return nothing_approved(
+            StatusCode::CONFLICT,
+            "This change has more records than its page can show, and a change that was not shown in full is not approved here. You can decline it from the page.",
+        );
+    }
     // The desk is asked again at the press: the approval is for the change
     // this page showed, and only while that change is the one that waits.
     let still_waits = match desk.waiting(pressed.run).await {
@@ -514,33 +680,50 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             ),
         );
     }
+    // One prompt at a time. A second press is told so and raises nothing.
+    let Ok(_up) = inner.prompting.try_lock() else {
+        return nothing_approved(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
+        );
+    };
     let asked = inner
         .prompt
-        .ask(PromptText {
-            title: format!("Approve a write by `{}`", pressed.tool),
-            detail: format!("Run {}, change {}", pressed.run, pressed.diff_hash),
-        })
+        .ask(
+            PromptText {
+                title: format!("Approve a write by `{}`", pressed.tool),
+                detail: format!("Change {}", short(pressed.diff_hash)),
+            },
+            pressed.deadline,
+        )
         .await;
-    let check = match asked {
-        PromptAnswer::Present => PresenceCheck::OsPrompt,
-        PromptAnswer::Confirmed => PresenceCheck::NotAvailable,
+    let (check, how) = match asked {
+        PromptAnswer::Present(prompt) => (
+            recorded_check(prompt),
+            format!("the presence prompt was passed ({})", prompt.as_str()),
+        ),
+        PromptAnswer::Confirmed => (
+            PresenceCheck::NotAvailable,
+            "a confirmation dialog was answered, which proves no person".to_owned(),
+        ),
         PromptAnswer::Dismissed => {
-            return (
-                Outcome::Open,
-                answer(
-                    StatusCode::FORBIDDEN,
-                    "Nothing was approved",
-                    "The prompt on this machine was dismissed or not passed. Open the link again to answer once more.",
-                ),
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
             );
         }
-        PromptAnswer::NotAvailable => {
-            return (
-                Outcome::Open,
-                answer(
-                    StatusCode::FORBIDDEN,
-                    "Nothing was approved",
-                    "This machine has no way yet to ask for proof that a person is present, so it records no approval. You can decline the write from the page.",
+        PromptAnswer::Denied => {
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
+            );
+        }
+        PromptAnswer::NotAvailable(why) => {
+            return nothing_approved(
+                StatusCode::FORBIDDEN,
+                &format!(
+                    "No presence prompt is available on this machine, so no approval is recorded. {} {} You can decline the write from the page.",
+                    why.message, why.remedy
                 ),
             );
         }
@@ -561,18 +744,13 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             answer(
                 StatusCode::OK,
                 "Approved",
-                "The approval is recorded for the change this page showed. The program that started the run can resume it. You can close this page.",
+                &format!(
+                    "The approval is recorded for the change this page showed: {how}. The program that started the run can resume it. You can close this page."
+                ),
             ),
         ),
         // The policy engine's refusal is the engine's own words.
-        Err(failure) => (
-            Outcome::Open,
-            answer(
-                StatusCode::FORBIDDEN,
-                "Nothing was approved",
-                failure.message(),
-            ),
-        ),
+        Err(failure) => nothing_approved(StatusCode::FORBIDDEN, failure.message()),
     }
 }
 
@@ -585,35 +763,39 @@ async fn decline(
         Ok(pressed) => pressed,
         Err(response) => return *response,
     };
-    let recorded = match inner.desk.get() {
-        Some(desk) => desk
-            .decline(
-                pressed.run,
-                Some(PrincipalRef::person(pressed.started_by)),
-                ApprovalChannel::LocalPrompt,
-            )
-            .await
-            .is_ok(),
-        None => false,
-    };
-    let outcome = if recorded {
-        Outcome::Settled(Answered::Declined)
-    } else {
-        Outcome::Open
-    };
-    finish(&inner, &code, outcome).await;
-    if recorded {
-        answer(
+    // In a task of its own, as a press of Approve is.
+    let carried = tokio::spawn(async move {
+        let recorded = match inner.desk.get() {
+            Some(desk) => desk
+                .decline(
+                    pressed.run,
+                    Some(PrincipalRef::person(pressed.started_by)),
+                    ApprovalChannel::LocalPrompt,
+                )
+                .await
+                .is_ok(),
+            None => false,
+        };
+        let outcome = if recorded {
+            Outcome::Settled(Answered::Declined)
+        } else {
+            Outcome::Open
+        };
+        finish(&inner, &code, outcome).await;
+        recorded
+    });
+    match carried.await {
+        Ok(true) => answer(
             StatusCode::OK,
             "Declined",
             "The write was declined and nothing was written. You can close this page.",
-        )
-    } else {
-        answer(
+        ),
+        Ok(false) => answer(
             StatusCode::CONFLICT,
             "Nothing was recorded",
             "The engine could not record the decline. Nothing is written unless a person approves; the page closes at the end of its time.",
-        )
+        ),
+        Err(_) => not_carried_out(),
     }
 }
 
@@ -631,14 +813,15 @@ impl LocalSurface {
                 window: parts.window,
                 state: Mutex::new(Waiting::default()),
                 waiting,
+                prompting: tokio::sync::Mutex::new(()),
             }),
         }
     }
 
-    /// Which kind of presence check this surface asks with.
-    #[must_use]
-    pub fn presence(&self) -> PresenceKind {
-        self.inner.prompt.kind()
+    /// What this surface's presence prompt can do on this machine now:
+    /// the kind, the reason, and the remedy. `doctor.run` reports it.
+    pub async fn presence(&self) -> Availability {
+        self.inner.prompt.available().await
     }
 
     /// How many pages wait for a person. An engine with a page waiting is
@@ -781,12 +964,12 @@ impl PersonSurface for LocalSurface {
                     return Err(failure);
                 }
             };
+            let deadline = Instant::now() + inner.window;
             let timer = tokio::spawn({
-                let window = inner.window;
                 let inner: Weak<Inner> = Arc::downgrade(inner);
                 let code = code.clone();
                 async move {
-                    tokio::time::sleep(window).await;
+                    tokio::time::sleep_until(deadline).await;
                     if let Some(inner) = inner.upgrade() {
                         inner.end_of_window(&code).await;
                     }
@@ -803,6 +986,8 @@ impl PersonSurface for LocalSurface {
                     once: None,
                     pressed: false,
                     ended: false,
+                    whole: false,
+                    deadline,
                     timer,
                 },
             );
@@ -825,30 +1010,58 @@ impl PersonSurface for LocalSurface {
 
     fn confirm_presence(&self, ask: PresenceAsk) -> BoxFuture<'_, Result<PresenceProof, Failure>> {
         Box::pin(async move {
+            let refused = |message: &str, next: &str| {
+                Err(codes::policy(codes::PRESENCE_FAILED, message, next))
+            };
+            // One prompt at a time, as for an approval.
+            let Ok(_up) = self.inner.prompting.try_lock() else {
+                return Err(codes::busy(
+                    codes::PROMPT_BUSY,
+                    "Another presence prompt is up on this machine.",
+                    "Answer or close that prompt, then run the command again.",
+                ));
+            };
             let answer = self
                 .inner
                 .prompt
-                .ask(PromptText {
-                    title: format!("Confirm `{}`", ask.action),
-                    detail: ask.summary,
-                })
+                .ask(
+                    PromptText {
+                        title: format!("Confirm `{}`", ask.action),
+                        detail: ask.summary,
+                    },
+                    // A prompt nobody answers ends as an approval's does.
+                    Instant::now() + self.inner.window,
+                )
                 .await;
             match answer {
-                PromptAnswer::Present => Ok(PresenceProof::new(
-                    PresenceCheck::OsPrompt,
+                PromptAnswer::Present(prompt) => Ok(PresenceProof::new(
+                    recorded_check(prompt),
                     ask.principal,
                     self.inner.clock.now(),
                 )),
-                PromptAnswer::Dismissed => Err(codes::policy(
-                    codes::PRESENCE_FAILED,
-                    "The prompt on this machine was dismissed or not passed.",
+                PromptAnswer::Dismissed => refused(
+                    "The prompt on this machine was closed, or its time ended.",
                     "Run the command again and answer the prompt yourself.",
-                )),
-                PromptAnswer::Confirmed | PromptAnswer::NotAvailable => Err(codes::policy(
-                    codes::PRESENCE_FAILED,
-                    "This machine has no way to prove that a person is present, so this cannot be done here.",
+                ),
+                PromptAnswer::Denied => refused(
+                    "The prompt on this machine was answered and not passed.",
+                    "Run the command again and answer the prompt yourself.",
+                ),
+                PromptAnswer::Confirmed => refused(
+                    "A confirmation dialog proves no person, so this cannot be done here.",
                     "Make the change in the installation's settings file, or on a machine whose operating system offers a presence prompt.",
-                )),
+                ),
+                PromptAnswer::NotAvailable(why) => refused(
+                    &format!(
+                        "No presence prompt is available on this machine, so this cannot be done here. {}",
+                        why.message
+                    ),
+                    &if why.remedy.is_empty() {
+                        "Make the change in the installation's settings file, or on a machine whose operating system offers a presence prompt.".to_owned()
+                    } else {
+                        why.remedy
+                    },
+                ),
             }
         })
     }

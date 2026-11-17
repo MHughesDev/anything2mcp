@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use a2m_core::{
     Digest, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, LimitationCode, PackPayload,
-    ProducedBy, Source, Step, Subject, Value, Values,
+    ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -268,7 +268,7 @@ impl HelpDiscoverer {
                     Some(VersionSeen {
                         args,
                         pattern: values.get("pattern")?.as_text()?.to_owned(),
-                        version: values.get("version")?.as_text()?.to_owned(),
+                        version: scope.redact.redact(values.get("version")?.as_text()?),
                     })
                 });
             let mut overview = None;
@@ -290,7 +290,11 @@ impl HelpDiscoverer {
             let Ok(digest) = text(&overview, "digest").parse::<Digest>() else {
                 continue;
             };
-            let (commands, dropped) = listed_commands(text(&overview, "stdout"));
+            // The driver redacted what the program printed; the scope's own
+            // redactor sees the whole text too, before any line of it is
+            // cut out.
+            let help = scope.redact.redact(text(&overview, "stdout"));
+            let (commands, dropped) = listed_commands(&help);
             report.dropped += dropped;
             for (name, about) in commands {
                 if scope.deadline.passed() {
@@ -311,7 +315,8 @@ impl HelpDiscoverer {
                     if let Some(values) = run(port, scope, program, probe).await?
                         && succeeded(&values)
                     {
-                        usage = usage_of(text(&values, "stdout"), &name);
+                        let own = scope.redact.redact(text(&values, "stdout"));
+                        usage = usage_of(&own, &name);
                         break;
                     }
                 }
@@ -382,7 +387,11 @@ impl Discoverer for HelpDiscoverer {
 }
 
 /// Puts `command` findings so that an agent can read them.
-pub(crate) struct HelpDescriber;
+pub(crate) struct HelpDescriber {
+    /// A line is put together from parts of a finding, and is redacted as
+    /// a whole after that: parts that hold no secret can make one.
+    pub redact: Arc<dyn Redact>,
+}
 
 impl Describer for HelpDescriber {
     fn describe(&self, findings: &[Finding], form: DescribeForm) -> Description {
@@ -392,12 +401,13 @@ impl Describer for HelpDescriber {
             .collect();
         let mut untrusted = Vec::new();
         for found in &read {
-            untrusted.push(match (form, &found.usage) {
+            let line = match (form, &found.usage) {
                 (DescribeForm::Full, Some(usage)) => {
                     format!("{} {} — {}", found.name, usage, found.about)
                 }
                 _ => found.name.clone(),
-            });
+            };
+            untrusted.push(self.redact.redact(&line));
         }
         Description {
             text: format!(

@@ -19,7 +19,7 @@ inputs:
   order_id: {type: identifier, description: "Order number"}
   task: {type: text, description: "What is to be done"}
 outputs:
-  message_id: {type: text}
+  message_id: {type: broker_text}
 bindings:
   - mode: stream
     verb: publish
@@ -51,7 +51,7 @@ inputs:
   order_id: {type: identifier, description: "Order number"}
   text: {type: text, description: "The notice"}
 outputs:
-  message_id: {type: text}
+  message_id: {type: broker_text}
 bindings:
   - mode: stream
     verb: publish

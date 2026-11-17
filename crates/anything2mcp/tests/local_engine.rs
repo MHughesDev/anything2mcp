@@ -24,7 +24,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
-use a2m_local::{EngineLock, PresenceKind, PresencePrompt, PromptAnswer, PromptText, StopReason};
+use a2m_local::{
+    Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptName, PromptText,
+    StopReason,
+};
 use anything2mcp::cli::{Finished, Host, READY_LINE, run_with};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
 use common::{Machine, Surface};
@@ -108,6 +111,16 @@ impl Served {
                 }
             }
         }
+        // Before it is ready, `serve` says what approvals on this machine
+        // need: the kind of presence check, and the reason.
+        let presence = heard
+            .iter()
+            .find(|line| line.starts_with(anything2mcp::PRESENCE_LINE))
+            .unwrap_or_else(|| panic!("`serve` did not say what approvals need: {heard:?}"));
+        assert!(
+            presence.contains(" os_prompt, ready") || presence.contains(" not_available, "),
+            "{presence}"
+        );
         Self {
             child: Some(child),
             _said: said,
@@ -439,14 +452,18 @@ async fn a_bridge_answers_with_the_failure_until_an_engine_runs_and_then_reads_i
 struct Passed(AtomicU32);
 
 impl PresencePrompt for Passed {
-    fn kind(&self) -> PresenceKind {
-        PresenceKind::OsPrompt
+    fn available(&self) -> BoxFuture<'_, Availability> {
+        Box::pin(async { Availability::ready(PromptName::Polkit, "The prompt of a test.") })
     }
 
-    fn ask(&self, _text: PromptText) -> BoxFuture<'_, PromptAnswer> {
+    fn ask(
+        &self,
+        _text: PromptText,
+        _deadline: tokio::time::Instant,
+    ) -> BoxFuture<'_, PromptAnswer> {
         Box::pin(async move {
             self.0.fetch_add(1, Ordering::SeqCst);
-            PromptAnswer::Present
+            PromptAnswer::Present(PromptName::Polkit)
         })
     }
 }
@@ -514,6 +531,9 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert_eq!(page.status().as_u16(), 200);
     let text = page.text().await.unwrap();
     assert!(text.contains(UPSERT) && text.contains(&run), "{text}");
+    // The page shows the change itself, and the prompt this machine has.
+    assert!(text.contains("<th scope=\"row\">quantity</th>"), "{text}");
+    assert!(text.contains("The prompt of a test."), "{text}");
     let marker = "name=\"once\" value=\"";
     let from = text.find(marker).unwrap() + marker.len();
     let once = &text[from..from + text[from..].find('"').unwrap()];
@@ -557,6 +577,80 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
 
     // Asked to stop through the channel, the engine stops serving and
     // closes, and the lock is free.
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    assert!(!EngineLock::held(&Paths::under(machine.home.path())).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its_page_says_why() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+
+    // The local engine as `serve` runs it on an operating system whose
+    // presence prompt this build does not have.
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::new(NoPrompt))
+        .await
+        .unwrap();
+    // What `serve` says before it is ready: the kind, the reason, and
+    // what to do.
+    let line = local.presence_line().await;
+    let none = local.surface().presence().await;
+    assert!(
+        line.starts_with("anything2mcp: approvals on this machine: not_available, not_built. "),
+        "{line}"
+    );
+    assert!(line.contains(&none.message) && line.contains(&none.remedy), "{line}");
+    let serving = tokio::spawn(local.serve());
+
+    // The write rests, with a link to its page.
+    let (rested, response) =
+        command(&machine, &["tool", "call", UPSERT, "--input", WRITE_INPUT]).await;
+    assert_eq!(rested.code, 3, "{rested:?}");
+    let result = &response["result"];
+    assert_eq!(result["status"], "needs_approval", "{response}");
+    let run = result["run_id"].as_str().unwrap().to_owned();
+    let link = result["link"].as_str().unwrap().to_owned();
+
+    // The page says plainly that no presence prompt is available on this
+    // machine, and why, before anything is pressed.
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    assert!(
+        text.contains("No presence prompt is available on this machine"),
+        "{text}"
+    );
+    assert!(text.contains(&none.message), "{text}");
+
+    // A press of Approve says the same and approves nothing.
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/approve/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/approve"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pressed.status().as_u16(), 403);
+    let said = pressed.text().await.unwrap();
+    assert!(said.contains("Nothing was approved"), "{said}");
+    assert!(said.contains(&none.message), "{said}");
+    let (still, response) = command(&machine, &["run", "resume", &run]).await;
+    assert_eq!(still.code, 3, "{still:?}");
+    assert_eq!(response["result"]["status"], "needs_approval");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 0);
+
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(stop.code, 0, "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);

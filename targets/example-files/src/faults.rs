@@ -112,6 +112,43 @@ pub enum Fault {
         /// The second name below the root.
         at: String,
     },
+    /// Act: a link appears below the root that points at another name below
+    /// the root. Nothing need be at that other name. Unix, and Windows where
+    /// the user may make links.
+    LinkInside {
+        /// The link's name below the root. Nothing is there before.
+        at: String,
+        /// The name below the root the link points at.
+        to: String,
+    },
+    /// Act: a file or a folder is moved to another name below the root, and a
+    /// link that points at it is left under its old name. Unix, and Windows
+    /// where the user may make links.
+    MovedBehindLink {
+        /// The name below the root of what is moved, and then of the link.
+        name: String,
+        /// The name below the root it is moved to.
+        to: String,
+    },
+    /// Act: the file is given to another owner and another group. Unix only,
+    /// and only when the tests run as the superuser, who alone may give a
+    /// file away.
+    OwnedByAnother {
+        /// The file's name below the root.
+        file: String,
+    },
+    /// Standing: the file has exactly these permission bits. With bits that
+    /// leave this user no right to write the file, the stand tries to open it
+    /// for writing itself, and calls the fault unsupported if it can: the
+    /// superuser is not held by the bits. Unix only.
+    FileMode {
+        /// The file's name below the root.
+        file: String,
+        /// The permission bits, such as `0o640`.
+        mode: u32,
+        /// Whether the bits are meant to stop this user writing the file.
+        denies_this_user: bool,
+    },
 }
 
 impl Fault {
@@ -156,6 +193,7 @@ impl Fault {
                 | Self::HeldWithoutSharing { .. }
                 | Self::ReadOnlyFile { .. }
                 | Self::ReadOnlyFolder { .. }
+                | Self::FileMode { .. }
         )
     }
 
@@ -166,8 +204,13 @@ impl Fault {
     pub fn exists_here(&self) -> bool {
         match self {
             Self::HeldWithoutSharing { .. } => cfg!(windows),
-            Self::ReadOnlyFolder { .. } => cfg!(unix),
-            Self::LinkOut { .. } | Self::FolderLinkOut { .. } => cfg!(any(unix, windows)),
+            Self::ReadOnlyFolder { .. } | Self::OwnedByAnother { .. } | Self::FileMode { .. } => {
+                cfg!(unix)
+            }
+            Self::LinkOut { .. }
+            | Self::FolderLinkOut { .. }
+            | Self::LinkInside { .. }
+            | Self::MovedBehindLink { .. } => cfg!(any(unix, windows)),
             _ => true,
         }
     }

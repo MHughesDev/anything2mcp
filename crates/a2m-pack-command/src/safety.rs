@@ -274,7 +274,10 @@ mod tests {
                 std::process::id()
             ));
             let _ = std::fs::remove_dir_all(&root);
-            let place = Self(root);
+            std::fs::create_dir_all(&root).unwrap();
+            // As the system names it, so that a refusal's path can be
+            // compared: the temporary folder is behind a link on macOS.
+            let place = Self(std::fs::canonicalize(&root).unwrap());
             place.folder("", 0o755);
             place.folder("real", 0o755);
             let program = place.0.join("real").join("example-tool");

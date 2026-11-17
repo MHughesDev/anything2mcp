@@ -374,6 +374,88 @@ async fn a_delete_removes_one_row_and_its_read_back_finds_it_absent() {
 }
 
 #[tokio::test]
+async fn a_write_that_matches_more_rows_than_one_is_rolled_back() {
+    // The record declares a key that three rows of the stand share.
+    let scene = Scene::new();
+    let binding = scene.binding("example_order_lines_describe");
+    let wanted = inputs(&[("order_id", "A-100"), ("description", "All the same")]);
+    let (mut run, write) = scene.live(&["A-100"]).await;
+    let several = run.steps(&binding.act, &wanted, Some(&write)).await;
+    assert_eq!(
+        failed(several),
+        (FailureClass::Drift, codes::KEY_NOT_UNIQUE, Sent::Answered)
+    );
+    // Its read-back is a failure too, never a pick among the rows.
+    let read = run.steps(&binding.read_back, &wanted, None).await;
+    assert_eq!(
+        failed(read),
+        (FailureClass::Drift, codes::KEY_NOT_UNIQUE, Sent::Answered)
+    );
+    run.release().await;
+    // The stand: no row was written, and each holds what it held.
+    assert!(scene.db.writes().unwrap().is_empty());
+    for row in scene.db.stored_rows(Table::OrderLines).unwrap() {
+        assert_ne!(row.text("description"), Some("All the same"));
+    }
+}
+
+#[tokio::test]
+async fn nothing_is_committed_but_one_statement_whose_one_row_was_counted() {
+    let scene = Scene::new();
+    let binding = scene.binding("example_line_item_update");
+    let wanted = update("151.25", "13.10", 1);
+    let (mut run, write) = scene.live(&LINE).await;
+    let out_of_order = (
+        FailureClass::UnknownVariant,
+        codes::UNEXPECTED_STATUS,
+        Sent::NotSent,
+    );
+
+    // A commit with the ledger's token and no count checked.
+    run.step(&binding.act[0], &wanted).await.unwrap();
+    run.step(&binding.act[1], &wanted).await.unwrap();
+    let uncounted = run
+        .step_with(&binding.act[3], &Values::new(), Some(&write))
+        .await;
+    assert_eq!(failed(uncounted), out_of_order);
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
+
+    // A second statement in a transaction that takes one: the count checked
+    // afterwards would be the count of the second alone.
+    run.step(&binding.act[0], &wanted).await.unwrap();
+    run.step(&binding.act[1], &wanted).await.unwrap();
+    let second = run.step(&binding.act[1], &wanted).await;
+    assert_eq!(failed(second), out_of_order);
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
+
+    // A plan that asks for a count other than one row.
+    let mut many = binding.act[2].clone();
+    many.payload = a2m_core::PackPayload::encode(&crate::model::StepDetail {
+        rows: Some(0),
+        ..crate::model::StepDetail::default()
+    })
+    .unwrap();
+    run.step(&binding.act[0], &wanted).await.unwrap();
+    run.step(&binding.act[1], &wanted.clone().with("row_version", 99_i64))
+        .await
+        .unwrap();
+    assert_eq!(failed(run.step(&many, &wanted).await), out_of_order);
+    let unchecked = run
+        .step_with(&binding.act[3], &Values::new(), Some(&write))
+        .await;
+    assert_eq!(failed(unchecked), out_of_order);
+
+    // Each refusal rolled back: the stand holds the seed, and the same
+    // prepared driver then writes the row once.
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
+    run.steps(&binding.act, &wanted, Some(&write))
+        .await
+        .unwrap();
+    run.release().await;
+    assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 1);
+}
+
+#[tokio::test]
 async fn a_key_the_store_assigns_is_known_before_the_commit() {
     let scene = Scene::new();
     let binding = scene.binding("example_shipment_create");

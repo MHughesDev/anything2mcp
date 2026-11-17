@@ -15,7 +15,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::channel::Shape;
-use crate::codes::shown;
 use crate::json::Json;
 use crate::wire::{
     ChannelFacts, Delivered, Link, Message, Opened, Outgoing, Page, Protocol, Receipt, Wire,
@@ -227,7 +226,8 @@ impl ExampleLink {
     }
 }
 
-/// The broker's refusal, as this pack names it.
+/// The broker's refusal, as this pack names it. The broker's words are
+/// passed on whole: the driver redacts them before it cleans and cuts them.
 fn refusal(reply: &Json) -> WireError {
     let code = reply
         .get("error")
@@ -246,15 +246,17 @@ fn refusal(reply: &Json) -> WireError {
         "subscription_missing" => WireErrorKind::SubscriptionMissing,
         "subscription_in_use" => WireErrorKind::SubscriptionInUse,
         "position_out_of_range" => WireErrorKind::PositionOutOfRange,
+        // A refusal under a code the protocol does not have says nothing
+        // about whether the request was carried out.
         _ => {
             return error(
                 WireErrorKind::Unexpected,
-                Sent::Answered,
-                format!("the broker refused with `{}`", shown(code)),
+                Sent::Unknown,
+                format!("the broker refused with the code `{code}`"),
             );
         }
     };
-    error(kind, Sent::Answered, shown(said))
+    error(kind, Sent::Answered, said)
 }
 
 fn text_of(value: Option<&Json>) -> Option<String> {
@@ -405,7 +407,12 @@ impl Link for ExampleLink {
                     .iter()
                     .map(message_of)
                     .collect::<Result<_, _>>()?,
-                more: reply.get("more").and_then(Json::as_bool).unwrap_or(false),
+                // Whether more is held is what a scan's "absent" rests on:
+                // a look that does not say is no answer of this protocol.
+                more: reply
+                    .get("more")
+                    .and_then(Json::as_bool)
+                    .ok_or_else(|| unexpected("a look does not say whether more is held"))?,
                 start: number_of(&reply, "start")?,
                 end: number_of(&reply, "end")?,
             })
@@ -548,5 +555,59 @@ impl Link for ExampleLink {
                 duplicate,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "a test stops when its helper cannot work")]
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    /// A broker of one connection that answers each request with the next
+    /// of `answers`, after the request's own `re`.
+    async fn answering(answers: Vec<&'static str>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for (number, answer) in answers.into_iter().enumerate() {
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                let reply = format!("{{\"re\":{},{answer}}}\n", number + 1);
+                stream.get_mut().write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        address
+    }
+
+    #[tokio::test]
+    async fn an_answer_with_no_rule_has_an_unknown_fate() {
+        let address = answering(vec![
+            r#""ok":true,"protocol":"example-broker/1""#,
+            // A look that does not say whether more is held.
+            r#""ok":true,"messages":[]"#,
+            // A refusal under a code the protocol does not have.
+            r#""ok":false,"error":"replica_timeout","message":"later""#,
+        ])
+        .await;
+        let deadline = Deadline::after(Duration::from_secs(10));
+        let mut link = ExampleProtocol
+            .connect(&address, None, deadline)
+            .await
+            .unwrap();
+        let look = link
+            .browse("example.orders.events", None, 5, deadline)
+            .await
+            .unwrap_err();
+        assert_eq!((look.kind, look.sent), (WireErrorKind::Unexpected, Sent::Unknown));
+        let refused = link.acknowledge("s-1", "d-1", deadline).await.unwrap_err();
+        assert_eq!(
+            (refused.kind, refused.sent),
+            (WireErrorKind::Unexpected, Sent::Unknown)
+        );
     }
 }

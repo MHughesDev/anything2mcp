@@ -10,7 +10,9 @@
 //! - a look ([`Link::latest`], [`Link::browse`], [`Link::describe`],
 //!   [`Link::channels`]) takes nothing from anyone;
 //! - every failure says whether the request was not sent, was answered, or
-//!   has an unknown fate;
+//!   has an unknown fate; an answer the protocol has no rule for, a refusal
+//!   under an unknown code included, has an unknown fate;
+//! - a look says whether the channel holds more than it returned;
 //! - a publish carries its headers unchanged, so the record's token reaches
 //!   the broker in the header the channel declares.
 
@@ -59,8 +61,9 @@ pub(crate) struct WireError {
     pub kind: WireErrorKind,
     /// Whether the request left, and whether its fate is known.
     pub sent: Sent,
-    /// The broker's own words where it gave some, cleaned and cut; else a
-    /// fixed phrase. Never a credential the pack sent.
+    /// The broker's own words where it gave some, whole and as it said
+    /// them; else a fixed phrase. Never a credential the pack sent. The
+    /// driver redacts this before it cleans and cuts it for a message.
     pub detail: String,
 }
 

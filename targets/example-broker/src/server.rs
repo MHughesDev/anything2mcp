@@ -14,7 +14,7 @@ use tokio::time::{Instant, timeout_at};
 
 use crate::faults::FaultKind;
 use crate::model::Op;
-use crate::state::{PublishEnd, PublishRequest, Refusal};
+use crate::state::{AckEnd, PublishEnd, PublishRequest, Refusal};
 use crate::{MAX_BATCH, MAX_LINE_BYTES, MAX_WAIT_MS, Shared};
 
 /// What the connection does after one request.
@@ -243,6 +243,19 @@ async fn request(
             Some(result) => result,
             None => return Step::Close,
         },
+        Op::Ack => {
+            let named = text(&request, "subscription")
+                .and_then(|handle| Ok((handle, text(&request, "delivery")?)));
+            match named {
+                Ok((handle, delivery)) => {
+                    match shared.change(|s| s.ack(connection, handle, delivery)) {
+                        AckEnd::Answer(result) => result,
+                        AckEnd::Drop => return Step::Close,
+                    }
+                }
+                Err(refusal) => Err(refusal),
+            }
+        }
         _ => shared.change(|s| simple(s, connection, op, &request)),
     };
     answer(&id, result)
@@ -276,18 +289,13 @@ fn simple(
             optional_number(request, "from")?,
             optional_flag(request, "with_retained")?.unwrap_or(true),
         ),
-        Op::Ack => state.ack(
-            connection,
-            text(request, "subscription")?,
-            text(request, "delivery")?,
-        ),
         Op::Release => state.release(
             connection,
             text(request, "subscription")?,
             text(request, "delivery")?,
         ),
         Op::Unsubscribe => state.unsubscribe(connection, text(request, "subscription")?),
-        Op::Publish | Op::Fetch => Err(bad_request("This request is handled elsewhere.")),
+        Op::Publish | Op::Fetch | Op::Ack => Err(bad_request("This request is handled elsewhere.")),
     }
 }
 

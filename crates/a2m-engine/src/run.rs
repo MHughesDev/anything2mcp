@@ -54,6 +54,9 @@ struct Held {
     handle: DriverHandle,
     prepared: Prepared,
     lease: Option<SessionLease>,
+    /// The posture the context was prepared in. A context is used again
+    /// only for the posture it was prepared in.
+    posture: Posture,
     poisoned: bool,
 }
 
@@ -82,6 +85,10 @@ pub(crate) struct StepCx<'s> {
     pub record: Option<RecordCx<'s>>,
     pub token: Option<&'s IntentToken>,
     pub fields: &'s [Field],
+    /// For a step that commits: the time the steps after it may take. The
+    /// step is sent again, after a failure that allows it, only while the
+    /// lease covers its own time limit and this.
+    pub then: Duration,
 }
 
 /// What is known of a pass until its first step is traced.
@@ -414,17 +421,38 @@ impl<'a> Run<'a> {
         .await;
     }
 
+    /// The posture a context is prepared in. In the sandbox every context
+    /// is prepared so that the driver's own read-only guard is on and the
+    /// handle refuses every step that commits; the one exception is the
+    /// context in which a declared test record is written, and the caller
+    /// has checked the record's key before it asks for that one.
+    fn posture_for(&self, writes: bool) -> Posture {
+        match (self.posture, writes) {
+            (Posture::Sandbox { .. }, writes) => Posture::Sandbox {
+                test_records: writes,
+            },
+            (posture, _) => posture,
+        }
+    }
+
     /// Prepare: the session lease, then the driver's context. A context
-    /// already held for the same mode and surface is used again.
+    /// already held for the same mode and surface, in the same posture, is
+    /// used again. `writes` says the context is for writing a record; it
+    /// changes the posture only in the sandbox.
     pub async fn hold(
         &mut self,
         operation: &OperationName,
         binding: &BindingPlan,
         candidate: &Candidate,
         again: bool,
+        writes: bool,
     ) -> Result<usize, Failure> {
+        let posture = self.posture_for(writes);
         if let Some(position) = self.held.iter().position(|held| {
-            held.mode == binding.mode && held.surface == binding.surface && !held.poisoned
+            held.mode == binding.mode
+                && held.surface == binding.surface
+                && held.posture == posture
+                && !held.poisoned
         }) {
             self.begin_pass(operation, candidate.reason, Duration::ZERO, Duration::ZERO);
             return Ok(position);
@@ -457,7 +485,7 @@ impl<'a> Run<'a> {
             epoch: self.job.epoch,
             surface: &surface_ref,
             plan: &self.loaded.plan,
-            posture: self.posture,
+            posture,
             deadline,
             redact: self.engine.deps.redact.as_ref(),
             destinations: &self.destinations,
@@ -496,6 +524,7 @@ impl<'a> Run<'a> {
             handle: candidate.handle.clone(),
             prepared,
             lease,
+            posture,
             poisoned: false,
         });
         Ok(self.held.len() - 1)
@@ -516,6 +545,21 @@ impl<'a> Run<'a> {
             queue,
             prepare,
         });
+    }
+
+    /// The time limit of a step: its own, or the settings' when the plan
+    /// states none.
+    pub fn limit_of(&self, step: &Step) -> Duration {
+        if step.timeout_ms == 0 {
+            self.engine.deps.settings.step_timeout
+        } else {
+            Duration::from_millis(u64::from(step.timeout_ms))
+        }
+    }
+
+    /// The time a list of steps may take, each at its time limit.
+    pub fn time_of<'s>(&self, steps: impl IntoIterator<Item = &'s Step>) -> Duration {
+        steps.into_iter().map(|step| self.limit_of(step)).sum()
     }
 
     /// Asks for a rate budget for the steps of a pass, when the surface
@@ -583,11 +627,7 @@ impl<'a> Run<'a> {
                     .map_err(StepFailure::not_sent)?;
                 args.insert(arg.name.clone(), value);
             }
-            let limit = if cx.step.timeout_ms == 0 {
-                self.engine.deps.settings.step_timeout
-            } else {
-                Duration::from_millis(u64::from(cx.step.timeout_ms))
-            };
+            let limit = self.limit_of(cx.step);
             let deadline = Deadline::after(limit);
             let input = StepInput {
                 args: &args,
@@ -661,8 +701,11 @@ impl<'a> Run<'a> {
                     if failure.failure.class() == FailureClass::Transient
                         && tries < self.engine.deps.settings.transient_retries
                         && (!cx.step.commits
-                            || failure.sent == Sent::NotSent
-                            || (cx.step.idempotent && failure.sent == Sent::Answered)) =>
+                            || ((failure.sent == Sent::NotSent
+                                || (cx.step.idempotent && failure.sent == Sent::Answered))
+                                // A save is sent again only while the lease
+                                // covers it.
+                                && self.job.lease.leaves(limit + cx.then))) =>
                 {
                     tries += 1;
                 }
@@ -766,6 +809,7 @@ impl<'a> Run<'a> {
                     record,
                     token: None,
                     fields,
+                    then: Duration::ZERO,
                 })
                 .await?;
             match outcome {
@@ -835,7 +879,10 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
     if observed.assigned_key.is_some() {
         all.assigned_key = observed.assigned_key;
     }
-    all.captures.extend(observed.captures);
+    // A step's captures are not kept: nothing of them is stored, shown, or
+    // held beyond the step. Keeping one needs a place in the trace for it,
+    // which the provider contract does not give yet.
+    drop(observed.captures);
 }
 
 /// The failure of a step, or of preparing, in which a provider's code

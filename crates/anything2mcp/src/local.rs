@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_actions::{
-    BuiltInToolset, Caller, CloseReason, ErrorBody, ExitClass, FrontDoor, Kernel, PersonSurface,
+    BoxFuture, BuiltInToolset, Caller, CloseReason, ErrorBody, ExitClass, FrontDoor, Kernel, PersonSurface,
     REST_PREFIX, Request, Response, Settings, codes,
 };
 use a2m_api::{ApiSettings, EXIT_CLASS_HEADER, ProjectFolder};
@@ -47,6 +47,10 @@ const STOP_ACTION: &str = "engine.stop";
 /// The most a request to stop may send.
 const STOP_BODY_LIMIT: usize = 64 * 1024;
 
+/// How the line begins that `serve` writes to standard error about the
+/// presence check of this machine, before the line that says it is ready.
+pub const PRESENCE_LINE: &str = "anything2mcp: approvals on this machine:";
+
 /// The version of this program, as the hello of the local channel states
 /// it.
 pub(crate) fn program_version() -> Result<Version, Failure> {
@@ -54,13 +58,27 @@ pub(crate) fn program_version() -> Result<Version, Failure> {
 }
 
 /// What keeps an engine with no connection from stopping: a page that
-/// waits for a person. The kernel offers no count of the runs in hand
-/// yet, so a run is held open only by the connection that waits for it.
-struct Holds(LocalSurface);
+/// waits for a person, and a run in hand, whether a runner works on it or
+/// it rests for a person. A run whose caller has gone is thus not lost
+/// with an idle engine.
+struct Holds {
+    surface: LocalSurface,
+    kernel: Kernel,
+}
 
 impl IdleHolds for Holds {
-    fn busy(&self) -> bool {
-        self.0.waiting() > 0
+    fn busy(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            if self.surface.waiting() > 0 {
+                return true;
+            }
+            // A store that cannot say what is in hand is no reason to
+            // stop under it: the engine stays, and its health says why.
+            self.kernel
+                .runs_in_hand()
+                .await
+                .map_or(true, |runs| runs.any())
+        })
     }
 }
 
@@ -278,11 +296,18 @@ impl LocalEngine {
                 .unwrap_or(Duration::from_secs(15 * 60)),
         });
         options.person = Arc::new(surface.clone()) as Arc<dyn PersonSurface>;
-        let idle = match minutes(&settings, "engine.idle_stop_minutes") {
-            Some(after) => IdlePolicy::after(after, Arc::new(Holds(surface.clone()))),
+        let idle_after = minutes(&settings, "engine.idle_stop_minutes");
+        let engine = Engine::open_loaded(options, settings).await;
+        let idle = match idle_after {
+            Some(after) => IdlePolicy::after(
+                after,
+                Arc::new(Holds {
+                    surface: surface.clone(),
+                    kernel: engine.kernel().clone(),
+                }),
+            ),
             None => IdlePolicy::never(),
         };
-        let engine = Engine::open_loaded(options, settings).await;
         let service = match service(engine.kernel(), channel.control()) {
             Ok(service) => service,
             Err(failure) => {
@@ -311,6 +336,24 @@ impl LocalEngine {
         &self.surface
     }
 
+    /// What approvals on this machine need, as one line for a person:
+    /// the kind of presence check, the reason, and what to do where
+    /// nothing can be raised. `serve` says it before it serves. It asks
+    /// the prompt what it can do and raises nothing.
+    pub async fn presence_line(&self) -> String {
+        let presence = self.surface.presence().await;
+        let prompt = presence
+            .prompt
+            .map_or_else(String::new, |prompt| format!(" ({})", prompt.as_str()));
+        let said = format!("{} {}", presence.message, presence.remedy);
+        format!(
+            "{PRESENCE_LINE} {}, {}{prompt}. {}",
+            presence.kind.as_str(),
+            presence.reason.as_str(),
+            said.trim_end()
+        )
+    }
+
     /// The handle that stops the engine once it serves.
     #[must_use]
     pub fn control(&self) -> ChannelControl {
@@ -320,15 +363,17 @@ impl LocalEngine {
     /// Serves the channel until the engine is asked to stop or has been
     /// idle for `engine.idle_stop_minutes`, then closes the kernel. A page
     /// that still waits for a person is lost with the engine, which is a
-    /// decline.
+    /// decline. The engine lock is held until the kernel has closed, so
+    /// that no second engine opens the store while this one still writes.
     pub async fn serve(self) -> StopReason {
-        let stopped = self.channel.serve(self.service, self.idle).await;
+        let (stopped, lock) = self.channel.serve(self.service, self.idle).await;
         let why = match stopped {
             StopReason::Idle => CloseReason::Idle,
             StopReason::Restart => CloseReason::Restart,
             StopReason::Asked | StopReason::Failed => CloseReason::Asked,
         };
         self.engine.close_because(why).await;
+        drop(lock);
         stopped
     }
 }

@@ -112,6 +112,11 @@ code = "stream.consumers_unknown"
 level = "warning"
 summary = "A channel that is published to says who reads it."
 
+[[lint_rules]]
+code = "stream.untrusted_unmarked"
+level = "error"
+summary = "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
+
 [[drafting_rules]]
 finding_kind = "channel"
 file_kind = "channel"
@@ -140,6 +145,10 @@ code = "message_too_large"
 class = "input"
 code = "protocol_unknown"
 
+[[failure_codes]]
+class = "input"
+code = "credential_not_carried"
+
 # A plan compiled by another build of the pack: `a2m-core`'s own code.
 [[failure_codes]]
 class = "input"
@@ -156,6 +165,10 @@ code = "surface_not_declared"
 [[failure_codes]]
 class = "policy"
 code = "scan_limit"
+
+[[failure_codes]]
+class = "policy"
+code = "take_too_large"
 
 [[failure_codes]]
 class = "rejected"

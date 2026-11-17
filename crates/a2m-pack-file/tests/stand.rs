@@ -12,8 +12,10 @@ mod common;
 
 use a2m_core::{Decimal, Digest, FailureClass, Value, Values};
 use a2m_ledger::Store;
-use a2m_provider::{Access, Posture, Sent, StepFailure, StepOutcome};
-use common::{Scene, for_reconcile, granted, last_values, store};
+use a2m_core::BindingPlan;
+use a2m_provider::{Access, DriverHandle, Posture, Prepared, Sent, StepFailure, StepOutcome};
+use common::{Granted, Scene, for_reconcile, granted, last_values, store};
+use example_files::control::EntryKind;
 use example_files::faults::{Change, Fault};
 use example_files::reader::JsonStep;
 use example_files::seed;
@@ -94,6 +96,94 @@ async fn write(
         .await?;
     assert!(handle.release(prepared, false).await.complete);
     Ok(Written { act, read_back })
+}
+
+/// One write, begun: prepared, and every step before the commit point done.
+/// The test decides what happens before the save, and before the confirm.
+struct Begun<'a> {
+    scene: &'a Scene,
+    binding: &'a BindingPlan,
+    handle: DriverHandle,
+    prepared: Prepared,
+    grant: Granted,
+    values: Values,
+}
+
+async fn begin<'a>(
+    scene: &'a Scene,
+    store: &Store,
+    caller: u8,
+    operation: &str,
+    values: &Values,
+) -> Begun<'a> {
+    let (binding, surface) = scene.binding(operation);
+    let grant = granted(store, caller, operation).await;
+    let (handle, mut prepared) = scene
+        .prepared(&surface, Some(grant.fence), Posture::Live)
+        .await;
+    let commit = binding.act.iter().position(|step| step.commits).unwrap();
+    scene
+        .write(
+            &handle,
+            &mut prepared,
+            &binding.act[..commit],
+            values,
+            &grant,
+        )
+        .await
+        .unwrap();
+    Begun {
+        scene,
+        binding,
+        handle,
+        prepared,
+        grant,
+        values: values.clone(),
+    }
+}
+
+impl Begun<'_> {
+    async fn save(&mut self) -> Result<Vec<StepOutcome>, StepFailure> {
+        let commit = self
+            .binding
+            .act
+            .iter()
+            .position(|step| step.commits)
+            .unwrap();
+        self.scene
+            .write(
+                &self.handle,
+                &mut self.prepared,
+                &self.binding.act[commit..],
+                &self.values,
+                &self.grant,
+            )
+            .await
+    }
+
+    async fn confirm(&mut self) -> Result<Vec<StepOutcome>, StepFailure> {
+        self.scene
+            .read(
+                &self.handle,
+                &mut self.prepared,
+                &self.binding.confirm,
+                &self.values,
+            )
+            .await
+    }
+
+    async fn end(self, poisoned: bool) {
+        assert!(self.handle.release(self.prepared, poisoned).await.complete);
+    }
+}
+
+/// Sets a fault, and says whether it could be shown here.
+fn shown(scene: &Scene, fault: Fault) -> bool {
+    match scene.stand.set_fault(fault) {
+        Ok(()) => true,
+        Err(unsupported) if unsupported.is_unsupported() => false,
+        Err(other) => panic!("{other}"),
+    }
 }
 
 fn refused(result: Result<Written, StepFailure>) -> StepFailure {
@@ -815,6 +905,325 @@ async fn a_locked_or_protected_file_is_not_written() {
         );
         untouched(&scene);
     }
+}
+
+// ---- the audit of decision 0149 ----
+
+#[tokio::test]
+async fn a_link_planted_at_a_temporary_files_name_costs_no_other_file() {
+    let scene = Scene::new();
+    let store = store().await;
+    // The name a save's temporary file had when it was made from the record's
+    // token alone, planted as a link to another file inside the root.
+    let stamp = "stamp-1-example_stock_set";
+    let token: String = Digest::of(stamp.as_bytes())
+        .to_string()
+        .chars()
+        .take(16)
+        .collect();
+    let planted = format!("prices/stock.csv.a2m-{token}.tmp");
+    if !shown(
+        &scene,
+        Fault::LinkInside {
+            at: planted.clone(),
+            to: seed::PRICE_LIST_CSV.to_owned(),
+        },
+    ) {
+        return;
+    }
+    let victim = scene.stand.sha256(seed::PRICE_LIST_CSV).unwrap();
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    write(&scene, &store, 1, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    // The write landed in its own file.
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["38"]
+    );
+    // The other file is the file it was: not removed, not replaced, not
+    // written through the link.
+    assert_eq!(scene.stand.sha256(seed::PRICE_LIST_CSV).unwrap(), victim);
+    let count = scene.stand.write_count(seed::PRICE_LIST_CSV).unwrap();
+    assert_eq!((count.content_changes, count.disappearances), (0, 0));
+    assert!(count.replacements.is_none_or(|replaced| replaced == 0));
+    // What the pack did not make is where it was, and nothing is left behind.
+    assert_eq!(scene.stand.inspect(&planted).unwrap().kind, EntryKind::Link);
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_document_whose_file_is_a_link_is_refused_and_a_write_follows_no_link() {
+    let scene = Scene::new();
+    let store = store().await;
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    // The document's file is moved to another surface's folder, and a link
+    // is left under its name: the link stays inside the root.
+    if !shown(
+        &scene,
+        Fault::MovedBehindLink {
+            name: seed::STOCK_CSV.to_owned(),
+            to: "config/app-data.csv".to_owned(),
+        },
+    ) {
+        return;
+    }
+    let read = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&read),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    // Nothing anywhere below the root changed, and nothing was left behind.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // The link appears after the file was read: the save refuses it too.
+    scene.stand.reset().unwrap();
+    let result = write(&scene, &store, 2, "example_stock_set", &values, || {
+        scene
+            .stand
+            .set_fault(Fault::MovedBehindLink {
+                name: seed::STOCK_CSV.to_owned(),
+                to: "config/app-data.csv".to_owned(),
+            })
+            .unwrap();
+    })
+    .await;
+    let failure = refused(result);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+
+    // A link in the way to the surface's folder: the roots' check follows it
+    // while it stays inside the root, so a read goes through. A write does
+    // not: it would land in a folder the surface does not name.
+    scene.stand.reset().unwrap();
+    scene
+        .stand
+        .set_fault(Fault::MovedBehindLink {
+            name: "prices".to_owned(),
+            to: "moved-prices".to_owned(),
+        })
+        .unwrap();
+    let found = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
+    assert_eq!(last_values(&found).get("on_hand"), Some(&Value::Int(40)));
+    let failure = refused(write(&scene, &store, 3, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Input, "path_not_allowed")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert!(scene.stand.observe().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_lock_signal_that_is_a_link_to_nothing_is_a_lock_signal() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    // Some programs show that they hold a file by a link that points at
+    // nothing. It is there, so the file is held.
+    let signal = || Fault::LinkInside {
+        at: format!("{}.lock", seed::STOCK_CSV),
+        to: "prices/held-by-nobody-here".to_owned(),
+    };
+    if !shown(&scene, signal()) {
+        return;
+    }
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+
+    // It appears after the file was read: busy at the save, nothing written.
+    scene.stand.reset().unwrap();
+    let result = write(&scene, &store, 2, "example_stock_set", &values, || {
+        scene.stand.set_fault(signal()).unwrap();
+    })
+    .await;
+    let failure = refused(result);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn of_two_runs_on_one_file_the_second_to_save_is_stale() {
+    let scene = Scene::new();
+    let store = store().await;
+    // Two runs read the same file and build their changes from it.
+    let first = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let second = inputs(&[("item_code", text("EX-1001")), ("on_hand", Value::Int(7))]);
+    let mut one = begin(&scene, &store, 1, "example_stock_set", &first).await;
+    let mut two = begin(&scene, &store, 2, "example_stock_set", &second).await;
+
+    // The first saves, and its confirm sees its own file.
+    one.save().await.unwrap();
+    one.confirm().await.unwrap();
+    // The second was built from the file as it was. It is not saved: saving
+    // it would undo the first run's change.
+    let failure = two.save().await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Stale, "changed_since_preview")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    one.end(false).await;
+    two.end(true).await;
+
+    let cell = |key: &str| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", key, "on_hand")
+            .unwrap()
+    };
+    assert_eq!(
+        (cell("EX-1002"), cell("EX-1001")),
+        (vec!["38".to_owned()], vec!["12".to_owned()])
+    );
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        1
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_confirm_that_finds_another_file_is_stale_and_answered() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let mut run = begin(&scene, &store, 1, "example_stock_set", &values).await;
+    run.save().await.unwrap();
+    // Another writer saves the file between the replace and the confirm.
+    scene
+        .stand
+        .set_fault(Fault::changed(seed::STOCK_CSV, Change::Elsewhere))
+        .unwrap();
+    let failure = run.confirm().await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Stale, "changed_since_preview")
+    );
+    // The replace was called and answered: this is not a write that was
+    // never sent.
+    assert_eq!(failure.sent, Sent::Answered);
+    run.end(true).await;
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_file_is_replaced_only_by_one_who_may_write_it_and_keeps_its_owner_and_mode() {
+    let scene = Scene::new();
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let stored = |scene: &Scene| {
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap()
+    };
+
+    // Bits that give this user no right to write the file, in a folder the
+    // user may write: the file is not replaced. The superuser is held by no
+    // bits, so the stand cannot show this to it.
+    if shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o464,
+            denies_this_user: true,
+        },
+    ) {
+        let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+        assert_eq!(
+            class_and_code(&failure),
+            (FailureClass::Policy, "file_protected")
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+        assert_eq!(stored(&scene), ["40"]);
+        assert!(scene.stand.strays().unwrap().is_empty());
+        scene.stand.clear_faults().unwrap();
+    }
+
+    // The new file has the old file's permission bits.
+    if !shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o640,
+            denies_this_user: false,
+        },
+    ) {
+        // Not Unix: a file has no owner, group, or bits the stand can show.
+        return;
+    }
+    write(&scene, &store, 2, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(stored(&scene), ["38"]);
+    assert_eq!(
+        scene.stand.inspect(seed::STOCK_CSV).unwrap().mode,
+        Some(0o640)
+    );
+    scene.stand.clear_faults().unwrap();
+
+    // A file of another owner and group, which only the superuser can make
+    // and only the superuser may then write: the new file is still theirs.
+    scene.stand.reset().unwrap();
+    if shown(
+        &scene,
+        Fault::OwnedByAnother {
+            file: seed::STOCK_CSV.to_owned(),
+        },
+    ) {
+        let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+        write(&scene, &store, 3, "example_stock_set", &values, || {})
+            .await
+            .unwrap();
+        let after = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+        assert_eq!(stored(&scene), ["38"]);
+        assert_eq!((after.owner, after.mode), (before.owner, before.mode));
+        assert_ne!(after.identity, before.identity);
+    }
+    assert!(scene.stand.strays().unwrap().is_empty());
 }
 
 #[tokio::test]

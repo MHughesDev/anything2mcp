@@ -2,13 +2,12 @@
 //! named places of a record kind in the parsed form, each with where its
 //! value lies in the bytes.
 //!
-//! Nothing here builds a path: a file is reached through the `CheckedPath`
-//! it is given. Nothing here calculates a formula or opens a macro.
-
-use std::io::Read as _;
+//! Nothing here builds a path: a file is reached by its own name in the
+//! surface's checked folder, through `place`. Nothing here calculates a
+//! formula or opens a macro.
 
 use a2m_core::{Digest, Failure, FailureClass, FailureCode, Value};
-use a2m_provider::{CheckedPath, StepFailure};
+use a2m_provider::StepFailure;
 use a2m_sources::json::{JsonNode, JsonValue, parse_document};
 use a2m_sources::{
     ByteSpan, Cell, CellContext, CellRange, CellRef, FieldTyper, Limits, Parsed, ParsedPart,
@@ -17,6 +16,7 @@ use a2m_sources::{
 
 use crate::codes::{self, stop, unsupported};
 use crate::model::{DocumentSpec, FieldSpec, Format, Layout, PlaceSpec, RecordSpec};
+use crate::place::Named;
 
 /// The byte-order mark of UTF-8.
 const UTF8_MARK: &[u8] = &[0xEF, 0xBB, 0xBF];
@@ -63,7 +63,7 @@ pub(crate) fn unavailable(what: &str) -> Failure {
     )
 }
 
-fn missing() -> StepFailure {
+pub(crate) fn missing() -> StepFailure {
     stop(
         codes::FILE_MISSING,
         "The file is not at the place its document declares.",
@@ -71,82 +71,16 @@ fn missing() -> StepFailure {
     )
 }
 
-/// How many names a file has. Only Unix says; elsewhere it is not known.
-#[cfg(unix)]
-fn link_count(metadata: &std::fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt as _;
-    Some(metadata.nlink())
-}
-
-#[cfg(not(unix))]
-fn link_count(_metadata: &std::fs::Metadata) -> Option<u64> {
-    None
-}
-
-/// Refuses anything that is not a regular file with one name, and gives
-/// its metadata. The path was resolved by the check that made it.
-pub(crate) fn regular_file(path: &CheckedPath) -> Result<std::fs::Metadata, StepFailure> {
-    // `size` looks again that the path is inside its root, and fails for a
-    // file that is not there.
-    if let Err(failure) = path.size() {
-        return Err(
-            if failure.code() == &a2m_provider::codes::PATH_NOT_ALLOWED {
-                StepFailure::not_sent(failure)
-            } else {
-                missing()
-            },
-        );
-    }
-    let metadata = std::fs::symlink_metadata(path.as_path()).map_err(|_| missing())?;
-    if !metadata.file_type().is_file() {
-        return Err(StepFailure::not_sent(not_allowed(
-            "it is not a regular file",
-        )));
-    }
-    if link_count(&metadata).is_some_and(|links| links != 1) {
-        return Err(StepFailure::not_sent(not_allowed(
-            "it has more than one name, so replacing it would leave the other name on the old file",
-        )));
-    }
-    Ok(metadata)
-}
-
-/// The whole file, read once and never changed. Blocking.
-pub(crate) fn read_file(path: &CheckedPath, max_bytes: u64) -> Result<Vec<u8>, StepFailure> {
-    let metadata = regular_file(path)?;
-    let too_large = || {
+/// The whole file, read once and never changed. Blocking. The file is the
+/// regular file under its own name, with one name: see [`Named::open`].
+pub(crate) fn read_file(file: &Named, max_bytes: u64) -> Result<Vec<u8>, StepFailure> {
+    file.read(max_bytes)?.ok_or_else(|| {
         stop(
             codes::FILE_TOO_LARGE,
             format!("The file has more than {max_bytes} bytes, the most the file pack reads."),
             "Raise `packs.file.max_bytes`, or point the document at a smaller file.",
         )
-    };
-    if metadata.len() > max_bytes {
-        return Err(too_large());
-    }
-    let file = std::fs::File::open(path.as_path()).map_err(|error| {
-        if held_by_another(&error) {
-            StepFailure::not_sent(locked())
-        } else if error.kind() == std::io::ErrorKind::NotFound {
-            missing()
-        } else {
-            StepFailure::not_sent(unavailable("cannot be opened for reading"))
-        }
-    })?;
-    let mut bytes = Vec::new();
-    file.take(max_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            StepFailure::not_sent(if held_by_another(&error) {
-                locked()
-            } else {
-                unavailable("cannot be read")
-            })
-        })?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(too_large());
-    }
-    Ok(bytes)
+    })
 }
 
 /// A file as parsed.

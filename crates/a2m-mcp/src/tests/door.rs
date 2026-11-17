@@ -97,6 +97,7 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
     let nobody = Http {
         service: service.clone(),
         peer: None,
+        project: None,
     };
     let reply = nobody.send(ping.as_bytes(), &[]).await;
     assert_eq!(reply.status, 401);
@@ -118,6 +119,7 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
             user: "sam".to_owned(),
             label: String::new(),
         }),
+        project: None,
     };
     let reply = stranger.send(ping.as_bytes(), &[]).await;
     assert_eq!(reply.status, 403);
@@ -431,11 +433,14 @@ async fn a_write_rests_with_a_link_and_the_next_call_and_the_door_offers_no_way_
             .unwrap()
             .contains(run["run_id"].as_str().unwrap())
     );
-    // The following call is named beside the result, as a tool of this
-    // toolset.
-    let next = &result["_meta"]["anything2mcp/next"];
+    // The following call is named inside the result, as spec section 221
+    // shows it, where every client reads it; and in no second place.
+    let next = &run["next"];
     assert_eq!(next["tool"], "a2m_run_resume", "{result}");
+    assert_eq!(next["action"], "run.resume");
     assert_eq!(next["args"]["run_id"], run["run_id"]);
+    assert!(next["when"].is_string());
+    assert!(result["_meta"].get("anything2mcp/next").is_none());
     // The test application was asked to store nothing.
     assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
     assert_eq!(
@@ -510,8 +515,10 @@ async fn a_refused_call_carries_the_failure_and_nothing_else() {
         let keys: Vec<&String> = result.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["content", "isError"], "{result}");
         let failure = text_of(reply.only());
-        assert_eq!(failure["class"], "busy", "{failure}");
-        assert_eq!(failure["code"], "on_hold", "{failure}");
+        // A kill switch is the policy engine's, wherever it is met (spec
+        // section 212).
+        assert_eq!(failure["class"], "policy", "{failure}");
+        assert_eq!(failure["code"], "kill_switch_on", "{failure}");
         let keys: Vec<&String> = failure.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["class", "code", "fix", "message", "retry_safe"]);
         for key in ["code", "message", "fix"] {
@@ -576,6 +583,7 @@ async fn a_planted_secret_appears_in_nothing_the_door_sends() {
     let nobody = Http {
         service,
         peer: None,
+        project: None,
     };
     let reply = nobody
         .send(
@@ -661,4 +669,223 @@ async fn the_router_nests_and_serves_a_call_with_progress_over_a_real_socket() {
     assert!(progress < result, "{text}");
     assert!(text.contains("Example Customer One"), "{text}");
     server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_published_tool_called_by_its_own_name_is_one_dispatch_and_an_unpublished_name_is_no_tool()
+ {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service.clone());
+
+    let reply = http
+        .post(&call(1, ORDER_GET, json!({"order_id": "A-100"})))
+        .await;
+    let run = &reply.only()["result"]["structuredContent"];
+    assert_eq!(run["status"], "completed", "{:?}", reply.messages);
+    assert_eq!(service.dispatched(), 1);
+
+    // A name nobody published: the dispatcher says so, once, and the
+    // protocol's answer is its unknown-tool error, with the dispatcher's
+    // own words as its data.
+    let reply = http.post(&call(2, "example_nope_get", json!({}))).await;
+    assert_eq!(code(reply.only()), -32602);
+    let data = &reply.only()["error"]["data"];
+    assert_eq!(data["class"], "input", "{data}");
+    assert_eq!(data["code"], "not_found", "{data}");
+    assert!(!data["fix"].as_str().unwrap().is_empty());
+    assert_eq!(service.dispatched(), 2);
+
+    // A published tool whose record is not there is a call that failed:
+    // a result, never an unknown tool.
+    let reply = http
+        .post(&call(3, ORDER_GET, json!({"order_id": "A-999"})))
+        .await;
+    let result = &reply.only()["result"];
+    assert_eq!(result["isError"], true, "{:?}", reply.messages);
+    assert_eq!(service.dispatched(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_project_folder_is_what_the_mount_stated_and_nothing_a_caller_writes() {
+    let world = World::ready().await;
+    let project = world.folder.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let lint = call(1, "a2m_draft_lint", json!({"target": "example"}));
+
+    // Stated by the mount, beside the caller: the action looks in the
+    // folder, and finds no such target there.
+    let mut http = Http::new(world.service("build", McpSettings::local()));
+    http.project = Some(a2m_actions::ProjectFolder::new(&project));
+    let reply = http.post(&lint).await;
+    let result = &reply.only()["result"];
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(
+        result["structuredContent"]["problems"][0]["code"], "kernel.file_missing",
+        "{result}"
+    );
+
+    // Not stated: the action says that it needs one. An argument that
+    // names a folder is not an input the action takes, and sets nothing.
+    http.project = None;
+    let failure = text_of(http.post(&lint).await.only());
+    assert_eq!(failure["code"], "path_not_allowed", "{failure}");
+    let smuggled = call(
+        2,
+        "a2m_draft_lint",
+        json!({"target": "example", "project": project.display().to_string()}),
+    );
+    let failure = text_of(http.post(&smuggled).await.only());
+    assert_eq!(failure["code"], "schema_invalid", "{failure}");
+}
+
+/// The progress notes of an answer, and its response.
+fn notes_of(mut messages: Vec<Json>, token: &Json) -> (Vec<String>, Json) {
+    let answer = messages.pop().expect("a response");
+    let mut last = 0;
+    let notes = messages
+        .iter()
+        .map(|note| {
+            assert_eq!(note["method"], "notifications/progress", "{note}");
+            assert_eq!(&note["params"]["progressToken"], token, "{note}");
+            let count = note["params"]["progress"].as_u64().unwrap();
+            assert!(count > last, "{messages:?}");
+            last = count;
+            note["params"]["message"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    (notes, answer)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_resume() {
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let http = Http::new(service.clone());
+    let with_token = |id: i64, name: &str, arguments: Json| {
+        m(
+            id,
+            "tools/call",
+            json!({"name": name, "arguments": arguments, "_meta": {"progressToken": "p"}}),
+        )
+    };
+    let token = json!("p");
+
+    // A read: the run is followed to its end, and the answer is the run
+    // as `run.get` gives it, which is what the call without progress
+    // answers.
+    let reply = http
+        .post(&with_token(1, ORDER_GET, json!({"order_id": "A-100"})))
+        .await;
+    let (notes, answer) = notes_of(reply.messages, &token);
+    assert_eq!(notes[0], "The call was handed to the engine.");
+    let run = &answer["result"]["structuredContent"];
+    assert_eq!(run["status"], "completed", "{answer}");
+    let stored = world.app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(run["result"]["customer"], stored.customer.as_str());
+    assert!(
+        notes
+            .iter()
+            .any(|note| note == "The run is now `completed`."),
+        "{notes:?}"
+    );
+    // Started without a wait, then read: two dispatches.
+    assert_eq!(service.dispatched(), 2);
+
+    // A write: it comes to rest for a person. The person is told, once,
+    // and the answer carries the link and the call to make next, as the
+    // call without progress does. Nothing was written.
+    let input = json!({
+        "order_id": "A-102",
+        "item_code": "L-300",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    });
+    let reply = http.post(&with_token(2, ITEM_UPSERT, input.clone())).await;
+    let (notes, answer) = notes_of(reply.messages, &token);
+    let run = answer["result"]["structuredContent"].clone();
+    assert_eq!(run["status"], "needs_approval", "{answer}");
+    assert!(
+        notes
+            .iter()
+            .any(|note| note == "The run is now `needs_approval`."),
+        "{notes:?}"
+    );
+    let run_id = run["run_id"].as_str().unwrap();
+    assert!(run["link"].as_str().unwrap().contains(run_id), "{run}");
+    assert_eq!(run["next"]["tool"], "a2m_run_resume");
+    let asked = || {
+        world
+            .surface
+            .approvals
+            .load(std::sync::atomic::Ordering::SeqCst)
+    };
+    assert_eq!(asked(), 1);
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+    // The same call again is the same run, and the person is not asked
+    // again.
+    let reply = http.post(&with_token(3, ITEM_UPSERT, input)).await;
+    let (_, answer) = notes_of(reply.messages, &token);
+    assert_eq!(answer["result"]["structuredContent"]["run_id"], run_id);
+    assert_eq!(asked(), 1);
+
+    // The person approves at the desk, which no door reaches. The resume
+    // is dispatched as it was written, and followed meanwhile: its notes
+    // are about what the run does from here on.
+    world.approve(run_id).await;
+    let reply = http
+        .post(&with_token(4, "a2m_run_resume", json!({"run_id": run_id})))
+        .await;
+    let (notes, answer) = notes_of(reply.messages, &token);
+    let done = &answer["result"]["structuredContent"];
+    assert_eq!(done["status"], "completed", "{answer}");
+    assert_eq!(notes[0], "The call was handed to the engine.");
+    assert!(
+        !notes.iter().any(|note| note.contains("needs_approval")),
+        "{notes:?}"
+    );
+    // The test application holds the item, written once.
+    let item = world
+        .app
+        .stored_item("A-102", "L-300")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(item.quantity, 3);
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
+
+    // No note is anything a system said: each is one of this server's own
+    // sentences.
+    let reply = http
+        .post(&with_token(5, ORDER_GET, json!({"order_id": "A-101"})))
+        .await;
+    let (notes, _) = notes_of(reply.messages, &token);
+    let stored = world.app.stored_order("A-101").await.unwrap().unwrap();
+    for note in &notes {
+        assert!(!note.contains(stored.customer.as_str()), "{note}");
+        assert!(
+            note.starts_with("The ")
+                || note.starts_with("Step ")
+                || note
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_digit()),
+            "{note}"
+        );
+    }
+
+    // A call that asks for no wait is dispatched as it is written.
+    let before = service.dispatched();
+    let reply = http
+        .post(&with_token(
+            6,
+            "a2m_tool_call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "wait_seconds": 0}),
+        ))
+        .await;
+    let (notes, answer) = notes_of(reply.messages, &token);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(answer["result"]["structuredContent"]["run_id"].is_string());
+    assert_eq!(service.dispatched(), before + 1);
 }

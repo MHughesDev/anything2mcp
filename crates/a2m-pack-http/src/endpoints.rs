@@ -403,7 +403,8 @@ pub(crate) fn template_of(
             refuse(
                 "version_invalid",
                 &version_doc.map_or_else(|| doc.at.clone(), |v| v.at.clone()),
-                "A version rule's header is not a header's name, or is one the connection sets.".to_owned(),
+                "A version rule's header is not a header's name, or is one the connection sets."
+                    .to_owned(),
                 "Write the header's name, such as `if-match`.",
             );
         }
@@ -417,7 +418,8 @@ pub(crate) fn template_of(
             refuse(
                 "header_invalid",
                 &written.at,
-                "The idempotency header is not a header's name, or is one the connection sets.".to_owned(),
+                "The idempotency header is not a header's name, or is one the connection sets."
+                    .to_owned(),
                 "Write the header's name, such as `Idempotency-Key`.",
             );
             None

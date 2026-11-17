@@ -172,7 +172,7 @@ Brought by the HTTP pack. The web pack's `page_http` mode reads it.
 | `max_response_bytes` | The most bytes of an answer that are read |
 | `effect` (required) | `read` or `write` |
 | `idempotency_header` | Header that carries the record's idempotency token, if the application accepts one |
-| `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}` |
+| `version` | Where a record's version is read, `read: {field: ...}` or `read: {header: ...}`, and how it is sent back as a precondition, `send: {body: ...}` or `send: {header: ...}`. A binding on an endpoint that sends a version names a `read_back` endpoint that reads one |
 | `volatile` | Request fields to ignore when comparing with a shadow |
 
 ## Kinds the other packs bring

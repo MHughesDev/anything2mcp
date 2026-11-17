@@ -6,16 +6,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, ExprIndex, Failure, FailureClass, IdentityStrategy, InputPlan,
-    OperationIndex, OperationName, OperationPlan, RecordKey, RecordState, RunState, StepArg,
-    ToolRuns, Value, Values,
+    BindingPlan, Digest, DigestPurpose, ExprIndex, Failure, FailureClass, IdentityStrategy,
+    InputPlan, OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RecordState,
+    RunState, StepArg, ToolRuns, Value, Values,
 };
 use a2m_expr::names;
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, PlannedRecord, ReadBack, Reconciled, RecordIntent,
     RecordRef, RetentionClass, Settled,
 };
-use a2m_provider::{Observed, Posture, StepFailure, StepOutcome};
+use a2m_provider::{Observed, Posture, Sent, StepFailure, StepOutcome};
 use a2m_sources::{LoadedSource, OPERATION_READER, Sources};
 use a2m_telemetry::Phase;
 
@@ -92,6 +92,10 @@ struct Planned {
     /// True while an input that is part of the record's key waits for a
     /// record written earlier in the run.
     pending: bool,
+    /// True when a value the ledger holds of the record came back masked
+    /// by the redactor. Such a value names nothing in the system: it is
+    /// never used as an argument, a key, or an output.
+    masked: bool,
 }
 
 /// The inputs of one call of a step.
@@ -118,15 +122,166 @@ fn stale(what: &str) -> Failure {
     )
 }
 
-fn step_time(binding: &BindingPlan) -> Duration {
-    let millis: u64 = binding
+/// The classes that settle a record as not written: the ledger releases
+/// its lock, the run ends `failed`, and nothing reads the record again.
+/// They are right only while nothing was sent, or when the system itself
+/// refused the write.
+const SETTLES: [FailureClass; 3] = [
+    FailureClass::Policy,
+    FailureClass::Stale,
+    FailureClass::Input,
+];
+
+fn settles(class: FailureClass) -> bool {
+    SETTLES.contains(&class)
+}
+
+/// The failure of a record whose write was sent and which could not be
+/// verified: the write is in doubt, whatever failed afterwards. The class
+/// and code it stands in for are named, and stay in the step trace.
+fn in_doubt(what: &str, replaced: &Failure) -> Failure {
+    codes::fail(
+        FailureClass::PossibleCommit,
+        codes::NO_CONFIRMATION,
+        format!(
+            "A write was sent, and {what} failed before the record was verified (`{}/{}`).",
+            replaced.class(),
+            replaced.code()
+        ),
+        "Reconcile the run: read the record back before anything is written again.",
+    )
+}
+
+/// What the failure of the committing step itself becomes, and whether the
+/// record is in doubt after it.
+///
+/// Nothing sent: the failure stands. Fate unknown: in doubt. Answered: the
+/// system's own refusal of the write stands, and it is told by its class,
+/// `rejected` for the input and `stale` for the version sent with the
+/// write. An answered failure of a class that would settle the record and
+/// is not such a refusal (`policy`, `input`) says only that the answer was
+/// not accepted, so the write is in doubt. Every other class leaves the
+/// record in doubt at the ledger as it is.
+fn commit_failure(failure: StepFailure) -> Failure {
+    let StepFailure { failure, sent } = failure;
+    let class = failure.class();
+    match sent {
+        Sent::NotSent => failure,
+        Sent::Unknown if class == FailureClass::PossibleCommit => failure,
+        Sent::Unknown => in_doubt("the step that saves the record", &failure),
+        Sent::Answered if matches!(class, FailureClass::Policy | FailureClass::Input) => {
+            in_doubt("reading the answer to the step that saves the record", &failure)
+        }
+        Sent::Answered => failure,
+    }
+}
+
+/// What the failure of a provider's step becomes once the record's write
+/// was sent: the write is in doubt. Two classes stand, because each keeps
+/// the record in doubt and says more: `possible_commit` itself, and
+/// `session_expired`, which rests the run until a person signs in.
+fn after_send(failure: Failure, what: &str) -> Failure {
+    match failure.class() {
+        FailureClass::PossibleCommit | FailureClass::SessionExpired => failure,
+        _ => in_doubt(what, &failure),
+    }
+}
+
+/// What the failure of a confirm step becomes. The system's own answer
+/// that it refused the write stands: a failure the system answered with,
+/// of the class `rejected`. It does not settle the record: the lock is
+/// kept, and a resume reads the record before anything is written.
+fn confirm_failure(failure: StepFailure) -> Failure {
+    if failure.sent == Sent::Answered && failure.failure.class() == FailureClass::Rejected {
+        failure.failure
+    } else {
+        after_send(failure.failure, "the confirmation")
+    }
+}
+
+/// Whether a value read back from the store was masked by the redactor.
+fn masked(value: &Value) -> bool {
+    match value {
+        Value::Text(text) => text.contains(REDACTED),
+        Value::List(items) => items.iter().any(masked),
+        Value::Record(values) => values.iter().any(|(_, value)| masked(value)),
+        _ => false,
+    }
+}
+
+/// A value as it is stored or shown: itself when it holds no registered
+/// secret. A value that holds one is replaced whole, by the redaction mark
+/// and the workspace's keyed digest of the value, so that two stored values
+/// are equal exactly when the values were and nothing of the secret is
+/// kept.
+fn kept_value(run: &Run<'_>, value: &Value) -> Value {
+    let redacted = run.engine.deps.redact.redact_value(value);
+    if redacted == *value {
+        return redacted;
+    }
+    let digest = run.engine.deps.keyed.keyed_digest(
+        &run.job.workspace,
+        DigestPurpose::RestrictedValue,
+        &value.canonical_bytes(),
+    );
+    Value::Text(format!("{REDACTED} {digest}"))
+}
+
+/// Values as they are stored or shown. Every value the engine hands to
+/// `Control`, as evidence, in the diff, or as a result, passes through
+/// here; a name is redacted too, because a system chooses the names it
+/// returns.
+fn kept(run: &Run<'_>, values: &Values) -> Values {
+    values
+        .iter()
+        .map(|(name, value)| {
+            (
+                run.engine.deps.redact.redact(name),
+                kept_value(run, value),
+            )
+        })
+        .collect()
+}
+
+/// The steps of a binding in the order a write runs them.
+fn steps_of(binding: &BindingPlan) -> impl Iterator<Item = &a2m_core::Step> {
+    binding
         .act
         .iter()
         .chain(&binding.confirm)
         .chain(&binding.read_back)
-        .map(|step| u64::from(step.timeout_ms))
-        .sum();
-    Duration::from_millis(millis)
+}
+
+/// A binding saves once in one call: this engine carries out one commit
+/// point per call. Checked for the binding that is about to write, before
+/// anything is sent.
+fn one_save(operation: &OperationPlan, binding: Option<&BindingPlan>) -> Result<(), Failure> {
+    let commits = binding.map_or(0, |binding| {
+        binding.act.iter().filter(|step| step.commits).count()
+    });
+    if commits == 1 {
+        return Ok(());
+    }
+    Err(codes::fail(
+        FailureClass::Busy,
+        codes::JOB_KIND_NOT_BUILT,
+        format!(
+            "The binding of `{}` saves {commits} times in one call, and this engine carries out one save per call.",
+            operation.name
+        ),
+        "Split the operation into one operation for each save.",
+    ))
+}
+
+/// The refusal of a write in the sandbox to a record that is not a
+/// declared test record.
+fn not_a_test_record() -> Failure {
+    codes::fail(
+        FailureClass::Policy,
+        codes::SANDBOX_READ_ONLY,
+        "The sandbox writes only to the test records the environment declares, and this record is not one.",
+        "Declare the record under the environment's test records, or try a read.",
+    )
 }
 
 /// The record's key: its identity inputs, or, for an operation that names
@@ -402,7 +557,16 @@ impl Tool<'_> {
 
 /// Reads the source of a pipeline through `a2m-sources`, and gives its rows
 /// as the value expressions read under `source`.
-fn read_source(run: &Run<'_>, loaded: &Loaded, runs: ToolRuns) -> Result<(Value, u32), Failure> {
+///
+/// Parsing a source of the size the limits allow takes long enough to hold
+/// up everything else on its thread, so it runs on a thread of its own. A
+/// reader is a provider's code: a panic in it ends the read and not the
+/// engine.
+async fn read_source(
+    run: &Run<'_>,
+    loaded: &Loaded,
+    runs: ToolRuns,
+) -> Result<(Value, u32), Failure> {
     let ToolRuns::Pipeline(index) = runs else {
         return Ok((Value::Null, 0));
     };
@@ -439,9 +603,21 @@ fn read_source(run: &Run<'_>, loaded: &Loaded, runs: ToolRuns) -> Result<(Value,
     } else {
         Sources::new(run.engine.deps.registry.source_readers())?
     };
-    let records = sources
-        .read(&definition, bytes, &run.engine.deps.settings.source_limits)
-        .map_err(Failure::from)?;
+    let bytes = Arc::clone(bytes);
+    let limits = run.engine.deps.settings.source_limits;
+    let reading =
+        tokio::task::spawn_blocking(move || sources.read(&definition, &bytes, &limits)).await;
+    let records = match reading {
+        Ok(read) => read.map_err(Failure::from)?,
+        Err(_) => {
+            return Err(codes::fail(
+                FailureClass::UnknownVariant,
+                codes::DRIVER_PANICKED,
+                "The reader of the tool's source panicked.",
+                "Report this to the reader's author; nothing was sent to the system.",
+            ));
+        }
+    };
     let count = u32::try_from(records.rows.len()).unwrap_or(u32::MAX);
     let rows = records
         .rows
@@ -496,7 +672,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         run.moved(RunState::Validating).await?;
     }
     let inputs = loaded.inputs(declared, &run.job.input)?;
-    let (source, rows) = read_source(run, &loaded, tool.runs)?;
+    let (source, rows) = read_source(run, &loaded, tool.runs).await?;
     if let Some(most) = limits.max_records
         && rows > most
     {
@@ -538,7 +714,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         let all = tool.steps.len();
         read_steps_of(run, &loaded, &mut tool, 0, all).await?;
         run.control
-            .send(EngineEvent::Result(tool.last.clone()))
+            .send(EngineEvent::Result(kept(run, &tool.last)))
             .await?;
         Ok(Done::Completed)
     }
@@ -690,7 +866,7 @@ async fn read_pass(
     again: bool,
 ) -> Result<Values, (Failure, Option<usize>)> {
     let held = run
-        .hold(&found.name, binding, candidate, again)
+        .hold(&found.name, binding, candidate, again, false)
         .await
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
@@ -836,9 +1012,15 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                     let found = operation(loaded, record.operation)?;
                     let settled =
                         matches!(record.state, RecordState::Unchanged | RecordState::Verified);
-                    if settled && record.outputs.is_empty() && !found.outputs.is_empty() {
+                    // A record one of whose stored values came back masked
+                    // is not read by them.
+                    if settled
+                        && record.outputs.is_empty()
+                        && !found.outputs.is_empty()
+                        && !record.masked
+                    {
                         run.checkpoint(Duration::ZERO)?;
-                        let held = hold_for(run, found, record, None).await?;
+                        let held = hold_for(run, found, record, None, false).await?;
                         if let Some(raw) = read_record(run, found, record, held, false).await? {
                             record.outputs = outputs_of(loaded, found, &raw, false)?;
                         }
@@ -912,7 +1094,7 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
     // The read steps after the first write step run only now.
     read_steps_of(run, loaded, tool, first_write, all).await?;
     run.control
-        .send(EngineEvent::Result(tool.last.clone()))
+        .send(EngineEvent::Result(kept(run, &tool.last)))
         .await?;
     Ok(Done::Completed)
 }
@@ -985,30 +1167,12 @@ fn derive_step(
             let (candidates, _) = run.candidates(found, &scope)?;
             candidates.first().map_or(0, |candidate| candidate.binding)
         };
-        let commits = found.bindings.get(binding).map_or(0, |binding| {
-            binding.act.iter().filter(|step| step.commits).count()
-        });
-        if commits != 1 {
-            return Err(Stop::Fail(codes::fail(
-                FailureClass::Busy,
-                codes::JOB_KIND_NOT_BUILT,
-                format!(
-                    "The binding of `{}` saves {commits} times in one call, and this engine carries out one save per call.",
-                    found.name
-                ),
-                "Split the operation into one operation for each save.",
-            )));
-        }
+        one_save(found, found.bindings.get(binding))?;
         if run.posture != Posture::Live {
             // The sandbox writes only to declared test records.
             let environment = &loaded.plan.environments[run.env_position];
             if !environment.test_records.contains(&key) {
-                return Err(Stop::Fail(codes::fail(
-                    FailureClass::Policy,
-                    codes::SANDBOX_READ_ONLY,
-                    "The sandbox writes only to the test records the environment declares, and this record is not one.",
-                    "Declare the record under the environment's test records, or try a read.",
-                )));
+                return Err(Stop::Fail(not_a_test_record()));
             }
         }
         planned.push(Planned {
@@ -1030,6 +1194,7 @@ fn derive_step(
             assigned: None,
             recorded: false,
             pending: call.pending,
+            masked: false,
         });
     }
     Ok(())
@@ -1134,14 +1299,32 @@ fn adopt(
             // inputs.
             continue;
         }
-        let mut known = held.before_commit.clone().unwrap_or_default();
-        if let Some(outputs) = &held.outputs {
-            for (name, value) in outputs.iter() {
+        // What the ledger holds was stored through the redactor. A value it
+        // masked is not what the system holds: it is left out, so that it
+        // is never sent back to the system as an argument or a key, and the
+        // record is marked.
+        let mut known = Values::new();
+        let stored = held
+            .before_commit
+            .iter()
+            .chain(held.outputs.iter())
+            .flat_map(|values| values.iter());
+        for (name, value) in stored {
+            if masked(value) {
+                record.masked = true;
+            } else {
                 known.insert(name.to_owned(), value.clone());
             }
         }
+        let assigned = held
+            .assigned_key
+            .as_deref()
+            .filter(|text| !text.contains(REDACTED));
+        if assigned.is_none() && held.assigned_key.is_some() {
+            record.masked = true;
+        }
         record.recorded = held.before_commit.is_some();
-        record.assigned = held.assigned_key.as_deref().and_then(parse_key);
+        record.assigned = assigned.and_then(parse_key);
         record.known = known;
         if held.state == RecordState::Verified {
             record.outputs = outputs_of(loaded, found, &record.known, false)?;
@@ -1150,12 +1333,15 @@ fn adopt(
     Ok(())
 }
 
-/// Chooses and prepares the binding that writes or reads a record.
+/// Chooses and prepares the binding that writes or reads a record. With
+/// `writes`, the context is the one the record is written in, which differs
+/// from the one it is read in only in the sandbox.
 async fn hold_for(
     run: &mut Run<'_>,
     found: &OperationPlan,
     record: &mut Planned,
     mode: Option<&a2m_core::Mode>,
+    writes: bool,
 ) -> Result<usize, Stop> {
     let scope = run.base.with_input(&record.inputs);
     let (candidates, passed_over) = run.candidates(found, &scope)?;
@@ -1184,7 +1370,9 @@ async fn hold_for(
     record.binding = candidate.binding;
     run.chosen(&found.name, candidate, &passed_over).await;
     let binding = &found.bindings[candidate.binding];
-    let held = run.hold(&found.name, binding, candidate, false).await?;
+    let held = run
+        .hold(&found.name, binding, candidate, false, writes)
+        .await?;
     Ok(held)
 }
 
@@ -1206,7 +1394,7 @@ async fn read_record(
     record: &mut Planned,
     held: usize,
     settles: bool,
-) -> Result<Option<Values>, Failure> {
+) -> Result<Option<Values>, Stop> {
     let binding = &found.bindings[record.binding];
     let searches = matches!(
         found.identity.strategy,
@@ -1220,7 +1408,7 @@ async fn read_record(
         &binding.read_back
     };
     if steps.is_empty() {
-        return Err(codes::fail(
+        return Err(Stop::Fail(codes::fail(
             FailureClass::UnknownVariant,
             codes::NO_READ_BACK,
             format!(
@@ -1228,7 +1416,7 @@ async fn read_record(
                 found.name
             ),
             "Give the binding a read-back and publish the target again.",
-        ));
+        )));
     }
     let key = record
         .assigned
@@ -1270,9 +1458,16 @@ async fn read_record(
             Ok(None) => {
                 if searches && settles && !waited && binding.settle_ms > 0 {
                     // Inside the settle time, nothing found means not
-                    // known yet.
+                    // known yet. The wait is the one the binding declares
+                    // for its lookup, and it is made only when the lease
+                    // covers it and the second look; otherwise the job
+                    // ends with the record still in doubt.
                     waited = true;
-                    tokio::time::sleep(Duration::from_millis(u64::from(binding.settle_ms))).await;
+                    let settle = Duration::from_millis(u64::from(binding.settle_ms));
+                    if !run.job.lease.leaves(settle + run.time_of(steps)) {
+                        return Err(Stop::LeaseEnding);
+                    }
+                    tokio::time::sleep(settle).await;
                     continue;
                 }
                 return Ok(None);
@@ -1283,7 +1478,7 @@ async fn read_record(
                 } else {
                     run.poison(held);
                 }
-                return Err(failure.failure);
+                return Err(Stop::Fail(failure.failure));
             }
         }
     }
@@ -1332,12 +1527,14 @@ async fn read_evidence(
                 .collect()
         })
         .unwrap_or_default();
-    let shown = run.engine.deps.redact.redact_values(&shown);
     let evidence = Values::new()
         .with("exists", raw.is_some())
-        .with("raw", shown)
-        .with("normalized", seen.cloned().unwrap_or_default())
-        .with("intended", record.intended.clone());
+        .with("raw", kept(run, &shown))
+        .with(
+            "normalized",
+            seen.map(|seen| kept(run, seen)).unwrap_or_default(),
+        )
+        .with("intended", kept(run, &record.intended));
     store(run, BlobKind::Values, encode_values(&evidence)?).await
 }
 
@@ -1363,7 +1560,7 @@ async fn preview_record(
             }
         };
     let raw = if looked_up {
-        let held = hold_for(run, found, record, None).await?;
+        let held = hold_for(run, found, record, None, false).await?;
         read_record(run, found, record, held, false).await?
     } else {
         None
@@ -1377,36 +1574,45 @@ async fn preview_record(
         Some(seen) if *seen == record.intended => DiffAction::Unchanged,
         Some(_) => DiffAction::Update,
     };
+    // The diff is stored, and shown to the person who approves it: every
+    // value in it passes the redactor. Whether a field changes is worked
+    // out on the values themselves.
     let fields = record
         .fields
         .iter()
         .filter_map(|field| {
-            let proposed = record.intended.get(&field.name)?.clone();
-            let current = seen
-                .as_ref()
-                .and_then(|seen| seen.get(&field.name))
-                .cloned();
+            let proposed = record.intended.get(&field.name)?;
+            let current = seen.as_ref().and_then(|seen| seen.get(&field.name));
             let restricted = field.sensitivity == a2m_core::Sensitivity::Restricted;
             let current_raw = raw
                 .as_ref()
                 .and_then(|raw| raw.get(&field.name))
                 .filter(|_| !restricted)
-                .map(|value| run.engine.deps.redact.redact_value(value));
+                .map(|value| kept_value(run, value));
             Some(DiffField {
-                changes: current.as_ref() != Some(&proposed),
+                changes: current != Some(proposed),
                 name: field.name.clone(),
-                current,
+                current: current.map(|value| kept_value(run, value)),
                 current_raw,
-                proposed,
+                proposed: kept_value(run, proposed),
             })
         })
         .collect();
-    let intended_values = store(run, BlobKind::Values, encode_values(&record.intended)?).await?;
-    let before = match &seen {
+    let intended_values = store(
+        run,
+        BlobKind::Values,
+        encode_values(&kept(run, &record.intended))?,
+    )
+    .await?;
+    // The values seen before the write are held as they are stored, here
+    // and on resume, and every later read is compared with them in that
+    // form.
+    let seen_kept = seen.as_ref().map(|seen| kept(run, seen));
+    let before = match &seen_kept {
         Some(seen) => Some(store(run, BlobKind::Values, encode_values(seen)?).await?),
         None => None,
     };
-    record.before = seen;
+    record.before = seen_kept;
     record.current = raw;
     record.seen_at = Some(run.engine.deps.clock.elapsed());
     if action == DiffAction::Unchanged {
@@ -1445,19 +1651,27 @@ async fn reconcile(
     planned: &mut [Planned],
     snapshot: &[RecordSnapshot],
 ) -> Result<(), Stop> {
-    let settled_classes = [
-        FailureClass::Policy,
-        FailureClass::Stale,
-        FailureClass::Input,
-    ];
     let mut doubtful: Vec<usize> = Vec::new();
     for (position, record) in planned.iter_mut().enumerate() {
         let held = snapshot.iter().find(|held| held.record == record.record);
         match (record.state, held.and_then(|held| held.failure.as_ref())) {
             (RecordState::Intent | RecordState::Acted, _) => doubtful.push(position),
-            (RecordState::Failed, Some((_, code))) if *code == codes::BLOCKED_BY_PARENT => {
+            (RecordState::Failed, Some((FailureClass::Busy, code)))
+                if *code == codes::BLOCKED_BY_PARENT
+                    && held.is_some_and(|held| {
+                        held.mode.is_none()
+                            && held.outputs.is_none()
+                            && held.assigned_key.is_none()
+                            && held.before_commit.is_none()
+                    }) =>
+            {
                 // Nothing was ever sent for a record that waited for its
-                // parent: it goes back to `planned` without a read.
+                // parent: it goes back to `planned` without a read. The
+                // code alone does not say so, because a provider may use
+                // the same name: the record must also never have had an
+                // intent, and nothing of it may be known. Any other record
+                // that failed with this code is read like every record in
+                // doubt.
                 run.control.lock(record.record).await?;
                 match run
                     .control
@@ -1475,7 +1689,7 @@ async fn reconcile(
                     }
                 }
             }
-            (RecordState::Failed, Some((class, code))) if settled_classes.contains(class) => {
+            (RecordState::Failed, Some((class, code))) if settles(*class) => {
                 // Nothing is in doubt and nothing can go on: the record
                 // was read, and it is not what was approved.
                 return Err(Stop::Fail(Failure::new(
@@ -1505,27 +1719,47 @@ async fn reconcile(
                 "Look at the system, then cancel the run or settle the record by hand.",
             )));
         }
+        if record.masked {
+            // What would find the record again was masked when it was
+            // stored. Reading with the mask would find nothing, and nothing
+            // found would be taken for a write that did not land.
+            return Err(Stop::Fail(codes::fail(
+                FailureClass::PossibleCommit,
+                codes::CANNOT_RECONCILE,
+                format!(
+                    "A record of `{}` may have been written, and what would find it again holds a registered secret and was not stored.",
+                    found.name
+                ),
+                "Look at the system, then cancel the run or settle the record by hand.",
+            )));
+        }
         run.checkpoint(Duration::ZERO)?;
         // Take or confirm the lock under this lease, then read.
         run.control.lock(record.record).await?;
         let mode = held.and_then(|held| held.mode.clone());
-        let context = hold_for(run, found, record, mode.as_ref()).await?;
+        let context = hold_for(run, found, record, mode.as_ref(), false).await?;
         let raw = read_record(run, found, record, context, true).await?;
         let seen = raw
             .as_ref()
             .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
             .transpose()?;
         let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
+        let seen_kept = seen.as_ref().map(|seen| kept(run, seen));
         let reconciled = match &seen {
             Some(seen) if *seen == record.intended => {
-                let after = store(run, BlobKind::Values, encode_values(seen)?).await?;
+                let after = store(
+                    run,
+                    BlobKind::Values,
+                    encode_values(&seen_kept.clone().unwrap_or_default())?,
+                )
+                .await?;
                 Reconciled::Landed(ReadBack {
                     digest: seen.digest(),
                     after: Some(after),
                     evidence,
                 })
             }
-            seen if *seen == record.before => Reconciled::NotLanded,
+            _ if seen_kept == record.before => Reconciled::NotLanded,
             _ => Reconciled::Neither { evidence },
         };
         match run.control.settle(record.record, reconciled).await? {
@@ -1573,7 +1807,7 @@ async fn verify_again(
             continue;
         }
         run.checkpoint(Duration::ZERO)?;
-        let held = hold_for(run, found, record, None).await?;
+        let held = hold_for(run, found, record, None, false).await?;
         let raw = read_record(run, found, record, held, false).await?;
         let seen = raw
             .as_ref()
@@ -1599,19 +1833,51 @@ async fn fail_record(run: &Run<'_>, record: &Planned, why: &Failure, evidence: O
 
 /// The write path for one record: lock, freshness, intent, act, confirm,
 /// read back, record.
+///
+/// One rule is held here, whatever a step or the control plane reports:
+/// from the moment the committing step was sent until the record is
+/// verified, no failure settles the record as not written. A failure of a
+/// class that would is the write in doubt: the ledger keeps the lock, the
+/// run stops, and reconcile reads the record before anything is written
+/// again.
 async fn write_record(
     run: &mut Run<'_>,
     loaded: &Loaded,
     record: &mut Planned,
 ) -> Result<(), Stop> {
+    let mut sent = false;
+    match commit_point(run, loaded, record, &mut sent).await {
+        Err(Stop::Fail(failure)) if sent && settles(failure.class()) => {
+            Err(Stop::Fail(in_doubt("what followed", &failure)))
+        }
+        ended => ended,
+    }
+}
+
+/// One commit point. `sent` is set once the committing step was sent and
+/// the system did not refuse it.
+async fn commit_point(
+    run: &mut Run<'_>,
+    loaded: &Loaded,
+    record: &mut Planned,
+    sent: &mut bool,
+) -> Result<(), Stop> {
     let found = operation(loaded, record.operation)?;
-    // Before the commit point: the directive, and whether the lease leaves
-    // time for the steps.
-    run.checkpoint(step_time(&found.bindings[record.binding]))?;
-    let held = hold_for(run, found, record, None).await?;
+    if run.posture != Posture::Live {
+        // The sandbox writes only to a declared test record. The key is
+        // checked here once more, where the write is made, and not only
+        // where the records were worked out.
+        let environment = &loaded.plan.environments[run.env_position];
+        if !environment.test_records.contains(&record.key) {
+            return Err(Stop::Fail(not_a_test_record()));
+        }
+    }
+    run.checkpoint(Duration::ZERO)?;
+    let reads = hold_for(run, found, record, None, false).await?;
     let binding = &found.bindings[record.binding];
-    let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
-    run.budget(held, steps).await?;
+    // The binding chosen now may not be the one the records were worked
+    // out with: it is checked for its one save before anything is sent.
+    one_save(found, Some(binding))?;
     if !binding.prefer_response && binding.read_back.is_empty() {
         return Err(Stop::Fail(codes::fail(
             FailureClass::UnknownVariant,
@@ -1623,6 +1889,13 @@ async fn write_record(
             "Give the binding a read-back and publish the target again.",
         )));
     }
+    // Whether the lease leaves time for the record's steps, each counted at
+    // its real time limit. Asked before the waits, so that a job that
+    // cannot finish the record does not queue for it.
+    let whole = run.time_of(steps_of(binding));
+    run.checkpoint(whole)?;
+    let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
+    run.budget(reads, steps).await?;
 
     // Intend: the lock, the freshness check, then the intent.
     run.control.lock(record.record).await?;
@@ -1633,12 +1906,12 @@ async fn write_record(
             .seen_at
             .is_some_and(|at| now.saturating_sub(at) <= settings.freshness_window);
     if !fresh && found.identity.strategy != IdentityStrategy::None {
-        let raw = read_record(run, found, record, held, false).await?;
+        let raw = read_record(run, found, record, reads, false).await?;
         let seen = raw
             .as_ref()
             .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
             .transpose()?;
-        if seen != record.before {
+        if seen.as_ref().map(|seen| kept(run, seen)) != record.before {
             let failure = stale("A record no longer holds what the preview saw.");
             let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref())
                 .await
@@ -1649,6 +1922,17 @@ async fn write_record(
         record.current = raw;
         record.seen_at = Some(run.engine.deps.clock.elapsed());
     }
+    // The context the record is written in. Live it is the one it was read
+    // in. In the sandbox it is prepared for this write alone: everything
+    // before this line ran with the driver's own read-only guard on.
+    let held = if run.posture == Posture::Live {
+        reads
+    } else {
+        hold_for(run, found, record, None, true).await?
+    };
+    // The waits are over, and they may have used the lease up: the
+    // directive and the lease are checked again before the intent.
+    run.checkpoint(whole)?;
     // No ledger, no write: when the intent cannot be stored, nothing is
     // sent.
     let mut tokens = run
@@ -1685,22 +1969,44 @@ async fn write_record(
     let mut token = Some(token);
     let mut acted: Option<ActedToken> = None;
     for (position, step) in binding.act.iter().enumerate() {
-        if step.commits && !all.for_reconcile.is_empty() {
-            // What reconcile will need is durable before the write is sent.
-            let sent = async {
-                let outputs =
-                    store(run, BlobKind::Values, encode_values(&all.for_reconcile)?).await?;
-                run.control
-                    .send(EngineEvent::BeforeCommit {
-                        record: record.record,
-                        outputs,
-                    })
-                    .await
+        // What the steps after this one may take, each at its time limit.
+        let then = run.time_of(
+            binding.act[position + 1..]
+                .iter()
+                .chain(&binding.confirm)
+                .chain(&binding.read_back),
+        );
+        if step.commits {
+            // The commit point. The lease is checked immediately before
+            // the save is sent, against the save's own time limit and the
+            // steps that verify it: a save is not sent unless the lease
+            // covers it. The record stays in `intent` with nothing sent,
+            // which the next lease reads first.
+            if !run.job.lease.leaves(run.limit_of(step) + then) {
+                return Err(Stop::LeaseEnding);
             }
-            .await;
-            if let Err(failure) = sent {
-                fail_record(run, record, &failure, None).await;
-                return Err(Stop::Fail(failure));
+            if !all.for_reconcile.is_empty() {
+                // What reconcile will need is durable before the write is
+                // sent.
+                let stored = async {
+                    let outputs = store(
+                        run,
+                        BlobKind::Values,
+                        encode_values(&kept(run, &all.for_reconcile))?,
+                    )
+                    .await?;
+                    run.control
+                        .send(EngineEvent::BeforeCommit {
+                            record: record.record,
+                            outputs,
+                        })
+                        .await
+                }
+                .await;
+                if let Err(failure) = stored {
+                    fail_record(run, record, &failure, None).await;
+                    return Err(Stop::Fail(failure));
+                }
             }
         }
         let outcome = run
@@ -1713,6 +2019,7 @@ async fn write_record(
                 record: Some(cx),
                 token: if step.commits { token.as_ref() } else { None },
                 fields: &record.fields,
+                then,
             })
             .await;
         let observed = match outcome {
@@ -1728,39 +2035,71 @@ async fn write_record(
             }
             Ok(None) => continue,
             Ok(Some(StepOutcome::Done(observed) | StepOutcome::Absent(observed))) => observed,
-            Err(StepFailure { failure, .. }) => {
-                if failure.class() == FailureClass::SessionExpired {
+            Err(failure) => {
+                if failure.failure.class() == FailureClass::SessionExpired {
                     run.report_expiry(held).await;
                 } else {
                     run.poison(held);
                 }
+                let failure = if *sent {
+                    // A step after the save.
+                    after_send(failure.failure, "a step after the save")
+                } else if step.commits {
+                    commit_failure(failure)
+                } else {
+                    // A step before the save: nothing was sent.
+                    failure.failure
+                };
                 fail_record(run, record, &failure, None).await;
                 return Err(Stop::Fail(failure));
             }
         };
         if step.commits {
-            // The write was sent and answered: mark `acted` at once, with
-            // any key the system assigned, before or with the save, and
+            // The write was sent and answered: from here until the record
+            // is verified it is in doubt. Mark `acted` at once, with any
+            // key the system assigned, before or with the save, and
             // everything the record's steps have observed so far.
+            *sent = true;
+            let Some(spent) = token.take() else {
+                // A second save in one call is refused before anything is
+                // sent; if one is met all the same, it is not sent.
+                let failure = in_doubt(
+                    "a second step that saves",
+                    &codes::fail(
+                        FailureClass::Busy,
+                        codes::JOB_KIND_NOT_BUILT,
+                        "The binding saves more than once in one call.",
+                        "Split the operation into one operation for each save.",
+                    ),
+                );
+                fail_record(run, record, &failure, None).await;
+                return Err(Stop::Fail(failure));
+            };
             let assigned_key = observed
                 .assigned_key
                 .as_ref()
                 .or(all.assigned_key.as_ref())
-                .map(key_text);
-            let mut kept = all.values.clone();
+                .map(|key| run.engine.deps.redact.redact(&key_text(key)));
+            let mut observed_so_far = all.values.clone();
             for (name, value) in all.for_reconcile.iter().chain(observed.values.iter()) {
-                kept.insert(name.to_owned(), value.clone());
+                observed_so_far.insert(name.to_owned(), value.clone());
             }
-            let outputs = if kept.is_empty() {
-                None
+            // The record's outputs are stored with its `acted` mark, and
+            // the ledger holds them from there only. When they cannot be
+            // stored the record is still marked, so that the ledger says a
+            // write was sent, and the job stops: nothing is dropped
+            // silently, and a resume reads the record again.
+            let stored = if observed_so_far.is_empty() {
+                Ok(None)
             } else {
-                let kept = run.engine.deps.redact.redact_values(&kept);
-                store(run, BlobKind::Values, encode_values(&kept)?)
-                    .await
-                    .ok()
+                match encode_values(&kept(run, &observed_so_far)) {
+                    Ok(bytes) => store(run, BlobKind::Values, bytes).await.map(Some),
+                    Err(failure) => Err(failure),
+                }
             };
-            let Some(spent) = token.take() else {
-                continue;
+            let (outputs, not_stored) = match stored {
+                Ok(outputs) => (outputs, None),
+                Err(failure) => (None, Some(failure)),
             };
             match run
                 .control
@@ -1786,6 +2125,9 @@ async fn write_record(
                         "Reconcile the run: read the record back before anything is written again.",
                     )));
                 }
+            }
+            if let Some(failure) = not_stored {
+                return Err(Stop::Fail(failure));
             }
         }
         merge(&mut scope, &mut all, observed);
@@ -1838,16 +2180,21 @@ async fn write_record(
             return Err(Stop::Fail(failure));
         }
         Err(failure) => {
-            run.poison(held);
-            fail_record(run, record, &failure.failure, None).await;
-            return Err(Stop::Fail(failure.failure));
+            if failure.failure.class() == FailureClass::SessionExpired {
+                run.report_expiry(held).await;
+            } else {
+                run.poison(held);
+            }
+            let failure = confirm_failure(failure);
+            fail_record(run, record, &failure, None).await;
+            return Err(Stop::Fail(failure));
         }
     }
 
     // Read back, normalize, compare; one re-read before a mismatch.
-    let mut reads = 0;
+    let mut reads_made = 0;
     let (raw, seen) = loop {
-        let from_response = reads == 0
+        let from_response = reads_made == 0
             && binding.prefer_response
             && record
                 .fields
@@ -1859,10 +2206,14 @@ async fn write_record(
         } else {
             match read_record(run, found, record, held, false).await {
                 Ok(raw) => raw,
-                Err(failure) => {
+                Err(Stop::Fail(failure)) => {
+                    // The record was written and could not be read: it is
+                    // in doubt, whatever the read failed with.
+                    let failure = after_send(failure, "the read-back");
                     fail_record(run, record, &failure, None).await;
                     return Err(Stop::Fail(failure));
                 }
+                Err(stop) => return Err(stop),
             }
         };
         let seen = match raw
@@ -1879,8 +2230,8 @@ async fn write_record(
         if seen.as_ref() == Some(&record.intended) {
             break (raw, seen);
         }
-        reads += 1;
-        if reads > 1 {
+        reads_made += 1;
+        if reads_made > 1 {
             let differing = match &seen {
                 Some(seen) => match compare::compare(&record.fields, &record.intended, seen) {
                     compare::Comparison::Differs(names) => names.join(", "),
@@ -1906,7 +2257,7 @@ async fn write_record(
     // cannot be stored stays unverified.
     let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
     let seen = seen.unwrap_or_default();
-    let after = store(run, BlobKind::Values, encode_values(&seen)?).await?;
+    let after = store(run, BlobKind::Values, encode_values(&kept(run, &seen))?).await?;
     run.control
         .verified(
             &acted,

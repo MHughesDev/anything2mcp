@@ -133,7 +133,10 @@ pub(crate) mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
         );
         assert_ne!(odd, lock_file_for("root", "another installation"));
-        assert_eq!(odd, lock_file_for("root", "an installation / with: odd * characters"));
+        assert_eq!(
+            odd,
+            lock_file_for("root", "an installation / with: odd * characters")
+        );
         let beside = lock_file_beside(&PathBuf::from("data").join("vault.salt"));
         assert_eq!(beside, PathBuf::from("data").join("vault.salt.lock"));
     }

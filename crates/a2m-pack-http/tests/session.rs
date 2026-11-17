@@ -717,7 +717,9 @@ async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_ma
     std::fs::write(folder.path().join("openapi.json"), planted).unwrap();
     let root = RootName::new("import").unwrap();
     let mut roots = Roots::none();
-    roots.add(root.clone(), folder.path(), Access::Read).unwrap();
+    roots
+        .add(root.clone(), folder.path(), Access::Read)
+        .unwrap();
     let mut paths = CheckedPaths::none();
     paths.insert(
         a2m_pack_http::DESCRIPTION_FILE,

@@ -22,7 +22,7 @@ mod person;
 mod wire;
 
 pub use engine::{Engine, EngineOptions, PASSPHRASE_VARIABLE, action_registry};
-pub use local::LocalEngine;
+pub use local::{LocalEngine, PRESENCE_LINE};
 pub use person::{ProcessTerminal, Terminal, TerminalSurface};
 
 /// The version of this build of Anything2MCP.

@@ -181,6 +181,7 @@ async fn serve(
             problem.next_step()
         ));
     }
+    say(&local.presence_line().await);
     say(READY_LINE);
     let reason = local.serve().await;
     signals.abort();

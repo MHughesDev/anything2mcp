@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use a2m_core::LintCode;
+use a2m_core::{LintCode, ValueType};
 use a2m_files::{CompileMode, Diagnostic, Level, LintRule, Located, ResolvedView, Stage};
 
 use crate::channel::{code, problem};
@@ -97,5 +97,101 @@ impl LintRule for ConsumersUnknown {
                 )
             })
             .collect()
+    }
+}
+
+/// Whether a value of this type is, or holds, text.
+fn holds_text(ty: &ValueType) -> bool {
+    match ty {
+        ValueType::Text => true,
+        ValueType::List(of) => holds_text(of),
+        ValueType::Record(fields) => fields.iter().any(|field| holds_text(&field.ty)),
+        _ => false,
+    }
+}
+
+/// Text a broker returns reaches a caller only as untrusted text.
+///
+/// Every value of the mode is a broker's: a message another producer
+/// wrote, or the broker's own words about one. So every output of an
+/// operation bound through the mode that is or holds text must be of a
+/// field type marked untrusted. One kind of text is not free: a field the
+/// channel's schema holds to an `enum`, because the driver refuses a
+/// message whose field holds anything else.
+pub(crate) struct UntrustedUnmarked;
+
+impl LintRule for UntrustedUnmarked {
+    fn code(&self) -> LintCode {
+        code("untrusted_unmarked")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let channels = view.entries(&CHANNEL, &BROKER);
+        let schemas = view.entries(&MESSAGE_SCHEMA, &BROKER);
+        // Whether the schema of a channel holds a field to listed texts.
+        let listed = |channel: &str, field: &str| {
+            channels
+                .iter()
+                .find(|doc| doc.text("channel") == Some(channel))
+                .and_then(|doc| doc.text("schema"))
+                .and_then(|name| schemas.iter().find(|doc| doc.text("schema") == Some(name)))
+                .and_then(|doc| doc.get("properties"))
+                .and_then(|properties| properties.get(field))
+                .and_then(|rule| rule.get("enum"))
+                .is_some_and(|texts| !texts.items().is_empty())
+        };
+        let mut found = Vec::new();
+        for operation in view.operations() {
+            let bound: Vec<&str> = operation
+                .doc()
+                .get("bindings")
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .filter(|binding| binding.text("mode") == Some(PACK))
+                .map(|binding| binding.text("channel").unwrap_or_default())
+                .collect();
+            if bound.is_empty() {
+                continue;
+            }
+            for output in operation
+                .doc()
+                .get("outputs")
+                .map(Located::entries)
+                .unwrap_or_default()
+            {
+                let name = output.key.value.as_str();
+                let text = operation
+                    .outputs()
+                    .iter()
+                    .find(|plan| plan.name == name)
+                    .is_some_and(|plan| holds_text(&plan.ty));
+                let marked = output
+                    .value
+                    .text("type")
+                    .and_then(|field_type| view.target().field_type(field_type))
+                    .is_some_and(|field_type| field_type.plan.untrusted);
+                if text && !marked && !bound.iter().all(|channel| listed(channel, name)) {
+                    found.push(problem(
+                        "untrusted_unmarked",
+                        Stage::Lint,
+                        &output.key.at,
+                        format!(
+                            "The output `{name}` is text, and text a broker returns is untrusted: its field type is not marked untrusted, and the channel's schema does not hold the field to an `enum`."
+                        ),
+                        "Give the output a field type with `untrusted: true`, or list the texts the field may hold under `enum` in the channel's schema.",
+                    ));
+                }
+            }
+        }
+        found
     }
 }

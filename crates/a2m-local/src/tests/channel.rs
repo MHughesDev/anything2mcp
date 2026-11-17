@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use a2m_actions::{Caller, CloseReason, FrontDoor, Kernel, Paths, Request as ActionRequest};
+use a2m_actions::{
+    BoxFuture, Caller, CloseReason, FrontDoor, Kernel, Paths, Request as ActionRequest,
+};
 use a2m_core::{Failure, FailureClass};
 use axum::body::{Body, Bytes};
 use axum::extract::Path;
@@ -47,7 +49,7 @@ fn who(hits: Arc<AtomicU32>, instance: u32) -> Router {
 struct Engine {
     control: ChannelControl,
     hits: Arc<AtomicU32>,
-    serving: JoinHandle<StopReason>,
+    serving: JoinHandle<(StopReason, EngineLock)>,
 }
 
 impl Engine {

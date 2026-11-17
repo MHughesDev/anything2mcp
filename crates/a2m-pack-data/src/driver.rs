@@ -5,6 +5,11 @@
 //! checked before `commit`, and any other count rolls back. The driver
 //! never retries, and it says for every failure whether anything was sent.
 //!
+//! The driver trusts no plan to be the compiler's. Before a statement is
+//! first used it is held to the form of one plain read or one keyed write,
+//! as the compiler held it; a writing transaction takes one statement and
+//! one row; and the read of a record by its key must return that key.
+//!
 //! Every call into the store blocks, so each runs on a blocking thread; the
 //! connection moves there and back. A step that is dropped while it waits
 //! leaves its connection behind, which closes it, and the store rolls back.
@@ -24,13 +29,14 @@ use a2m_provider::{
 use a2m_telemetry::{Acting, Detail};
 
 use crate::model::{
-    Access, Column, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,
+    Access, Column, Does, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,
 };
 use crate::names::{
     BEGIN, CATALOG, COMMIT, DATABASE, EXECUTE, EXPECT_ROWS, FETCH, PACK, STATEMENT, codes,
 };
+use crate::shape::{self, Wrong};
 use crate::store::{
-    Bound, Catalog, Cell, CommitFailed, Conn, Interrupter, Opener, Ran, Refusal, RunLimits,
+    Bound, Catalog, Cell, CommitFailed, Conn, Interrupter, Opener, Ran, Refusal, RunLimits, Unseen,
 };
 
 /// The root an embedded store's file is in when its surface names none.
@@ -68,6 +74,8 @@ impl SqlDriver {
 
 /// What `prepare` acquired, and where the binding's transaction stands.
 pub(crate) struct Session {
+    /// The name of the surface the session was prepared for.
+    surface: String,
     file: std::path::PathBuf,
     opener: Arc<dyn Opener>,
     may_write: bool,
@@ -81,6 +89,13 @@ pub(crate) struct Session {
     ran: Option<Ran>,
     /// Whether `expect_rows` passed for what the open transaction changed.
     counted: bool,
+    /// Whether a statement that writes ran in the open transaction. A
+    /// transaction takes one, so that the one count checked is the count of
+    /// everything it commits.
+    wrote: bool,
+    /// The key the last read by key asked for: each key column with the
+    /// value bound to it, until `fetch` holds the record to it.
+    asked: Option<Vec<(String, Bound)>>,
     /// The statements whose shape was compared with the plan.
     described: BTreeSet<String>,
     /// The tables whose triggers and cascading keys were looked at.
@@ -124,8 +139,54 @@ fn lost() -> Failure {
         FailureClass::Transient,
         codes::CONNECTION_LOST,
         "The connection to the store ended before the step was sent.",
-        "Start the run again; nothing was written.",
+        "Start the run again; this step sent nothing.",
     )
+}
+
+/// A statement of the plan that is not one plain read or one keyed write.
+fn not_allowed(message: &str) -> Failure {
+    failure(
+        FailureClass::Policy,
+        codes::STATEMENT_NOT_ALLOWED,
+        message,
+        "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.",
+    )
+}
+
+/// A statement declared a read that would change data.
+fn read_wrote() -> Failure {
+    failure(
+        FailureClass::Policy,
+        codes::READ_STATEMENT_WROTE,
+        "A statement declared as a read tried to change data, and it was refused.",
+        "Correct the statement or declare it `effect: write`; do not use the binding as a read.",
+    )
+}
+
+fn not_by_key(message: &str) -> Failure {
+    failure(
+        FailureClass::Drift,
+        codes::READ_NOT_BY_KEY,
+        message,
+        "Compare the record's key and columns in the statements file with the store's catalog, and publish a corrected version.",
+    )
+}
+
+/// Why a statement did not run, or what the store said when it did.
+enum Stopped {
+    /// Found before the statement was sent.
+    Unsent(Failure),
+    /// The store's own answer.
+    Store(Refusal),
+}
+
+/// Whether the store returned the value that was bound, exactly.
+fn same_value(bound: &Bound, cell: &Cell) -> bool {
+    match (bound, cell) {
+        (Bound::Whole(asked), Cell::Whole(found)) => asked == found,
+        (Bound::Text(asked), Cell::Text(found)) => asked == found,
+        _ => false,
+    }
 }
 
 /// What a store's refusal is as a failure. `access` is that of the
@@ -150,12 +211,7 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
             format!("A constraint of the store refused the write (kind: {kind})."),
             "Correct the values so that they satisfy the store's constraints; nothing was written.",
         ),
-        Refusal::ReadOnly if access == Access::ReadOnly => failure(
-            FailureClass::Policy,
-            codes::READ_STATEMENT_WROTE,
-            "A statement declared as a read tried to change data, and the store refused it.",
-            "Correct the statement or declare it `effect: write`; do not use the binding as a read.",
-        ),
+        Refusal::ReadOnly if access == Access::ReadOnly => read_wrote(),
         Refusal::ReadOnly | Refusal::Denied => failure(
             FailureClass::Policy,
             codes::DENIED_BY_STORE,
@@ -184,7 +240,7 @@ fn refused(refusal: Refusal, access: Access) -> Failure {
             "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.",
         ),
         Refusal::NotGuarded => unexpected(
-            "The store did not take the setting that holds the connection to its access.",
+            "The store did not take a setting that holds the connection to its access and to its one file.",
         ),
         Refusal::Other(code) => failure(
             FailureClass::UnknownVariant,
@@ -273,11 +329,14 @@ impl Session {
             (Some(reference.section.get()) == self.section_index)
                 .then(|| self.section.statements.get(&reference.entry))
                 .flatten()
+                // A statement runs only against the store it was declared
+                // for: the one this session opened.
+                .filter(|statement| statement.surface == self.surface)
                 .map(|statement| (reference.entry.clone(), statement.clone()))
         });
         found.ok_or_else(|| {
             StepFailure::not_sent(unexpected(
-                "The step refers to a statement the plan's section does not hold.",
+                "The step refers to a statement the plan's section does not hold for this surface.",
             ))
         })
     }
@@ -287,6 +346,8 @@ impl Session {
     async fn roll_back(&mut self) {
         self.ran = None;
         self.counted = false;
+        self.wrote = false;
+        self.asked = None;
         let Some(access) = self.open.take() else {
             return;
         };
@@ -399,15 +460,20 @@ impl Session {
                 None => {
                     let opener = Arc::clone(&self.opener);
                     let file = self.file.clone();
-                    let opened =
-                        tokio::task::spawn_blocking(move || opener.open(&file, Access::ReadWrite))
-                            .await;
-                    match opened {
-                        Ok(Ok(conn)) => Some(conn),
-                        Ok(Err(refusal)) => {
+                    let opening =
+                        tokio::task::spawn_blocking(move || opener.open(&file, Access::ReadWrite));
+                    // Held to the step's time, as the reader's opening is
+                    // held to `prepare`'s. A connection that opens later is
+                    // closed where it was opened.
+                    match tokio::time::timeout_at(deadline.at(), opening).await {
+                        Ok(Ok(Ok(conn))) => Some(conn),
+                        Ok(Ok(Err(refusal))) => {
                             return Err(StepFailure::not_sent(refused(refusal, access)));
                         }
-                        Err(_) => None,
+                        Ok(Err(_)) => None,
+                        Err(_) => {
+                            return Err(StepFailure::not_sent(refused(Refusal::TimedOut, access)));
+                        }
                     }
                 }
             },
@@ -451,6 +517,45 @@ impl Session {
         }
     }
 
+    /// What the driver itself refuses of a statement, before the store is
+    /// asked anything: the refusals the compiler made, made again where the
+    /// harm would be done.
+    fn held(statement: &Statement) -> Result<(), Failure> {
+        let reads = statement.does == Does::Read;
+        if reads != (statement.access == Access::ReadOnly) {
+            return Err(not_allowed(
+                "The statement's access is not the one its effect states.",
+            ));
+        }
+        shape::check(&statement.text, statement.does).map_err(|wrong| match wrong {
+            Wrong::Writes => read_wrote(),
+            Wrong::Form(message) => not_allowed(message),
+        })
+    }
+
+    /// The key a read by key asks for: each key column of the record, with
+    /// the value bound to the parameter of that field.
+    fn key_asked(statement: &Statement, params: &[Bound]) -> Option<Vec<(String, Bound)>> {
+        let mut key: Vec<&Column> = statement
+            .columns
+            .iter()
+            .filter(|column| column.key_position > 0)
+            .collect();
+        key.sort_by_key(|column| column.key_position);
+        if key.is_empty() || key.len() != statement.params.len() {
+            return None;
+        }
+        key.into_iter()
+            .map(|column| {
+                let position = statement
+                    .params
+                    .iter()
+                    .position(|param| param.key && param.name == column.field)?;
+                Some((column.column.clone(), params.get(position)?.clone()))
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_lines)] // one check after another, each a few lines; splitting hides the order
     async fn execute(
         &mut self,
@@ -463,6 +568,19 @@ impl Session {
             return Err(self
                 .not_sent(unexpected(
                     "The statement's access is not that of the open transaction.",
+                ))
+                .await);
+        }
+        let needs_shape = !self.described.contains(&name);
+        if needs_shape && let Err(found) = Self::held(&statement) {
+            return Err(self.not_sent(found).await);
+        }
+        if statement.access == Access::ReadWrite && self.wrote {
+            // The one count that `expect_rows` checks must be the count of
+            // everything the transaction commits.
+            return Err(self
+                .not_sent(unexpected(
+                    "A second statement was to write in a transaction that takes one.",
                 ))
                 .await);
         }
@@ -483,7 +601,18 @@ impl Session {
             };
             params.push(value);
         }
-        let needs_shape = !self.described.contains(&name);
+        let asked = if statement.by_key {
+            let Some(asked) = Self::key_asked(&statement, &params) else {
+                return Err(self
+                    .not_sent(not_by_key(
+                        "A read by key does not take exactly the fields of its record's key.",
+                    ))
+                    .await);
+            };
+            Some(asked)
+        } else {
+            None
+        };
         let table = statement
             .table
             .clone()
@@ -505,33 +634,78 @@ impl Session {
             .iter()
             .map(|column| column.column.clone())
             .collect();
+        let key_columns: Vec<String> = asked
+            .iter()
+            .flatten()
+            .map(|(column, _)| column.clone())
+            .collect();
         let table_to_check = table.clone();
-        let work = move |conn: &mut dyn Conn| -> Result<Ran, Result<Refusal, &'static str>> {
+        let work = move |conn: &mut dyn Conn| -> Result<Ran, Stopped> {
             if needs_shape {
                 // The store describes the statement without running it; the
                 // plan is held to that description.
-                let shape = conn.describe(&text).map_err(Ok)?;
+                let shape = conn.describe(&text).map_err(Stopped::Store)?;
                 if shape.params != expected_params {
-                    return Err(Err(
+                    return Err(Stopped::Unsent(drift(
                         "The statement takes another number of parameters than the target declares.",
-                    ));
+                    )));
                 }
                 if shape.columns.iter().any(|column| !known.contains(column)) {
-                    return Err(Err(
+                    return Err(Stopped::Unsent(drift(
                         "The statement returns a column that the target's record does not declare.",
-                    ));
+                    )));
+                }
+                if access == Access::ReadOnly {
+                    // The store's own answer, before anything runs.
+                    if !shape.reads_only {
+                        return Err(Stopped::Unsent(read_wrote()));
+                    }
+                    // A statement that returns nothing is not a read, and
+                    // what else it is, is not known.
+                    if shape.columns.is_empty() {
+                        return Err(Stopped::Unsent(not_allowed(
+                            "A statement declared as a read returns no column, so it is not a read.",
+                        )));
+                    }
+                }
+                if key_columns
+                    .iter()
+                    .any(|column| !shape.columns.contains(column))
+                {
+                    return Err(Stopped::Unsent(not_by_key(
+                        "A read by key does not return the columns of its record's key, so the record it finds cannot be held to the key asked for.",
+                    )));
                 }
             }
             if let Some(table) = &table_to_check {
-                let catalog: Catalog = conn.catalog(CATALOG_TABLES).map_err(Ok)?;
-                let (triggers, cascades) = catalog.reach(table);
-                if triggers + cascades > 0 {
-                    return Err(Err(
-                        "The table has a trigger or a cascading key, and the statement declares no hazard: the write would reach data beyond the rows it names.",
-                    ));
+                let catalog: Catalog = conn.catalog(CATALOG_TABLES).map_err(Stopped::Store)?;
+                match catalog.reach(table) {
+                    Ok((0, 0)) => {}
+                    Ok(_) => {
+                        return Err(Stopped::Unsent(drift(
+                            "The table has a trigger or a cascading key, and the statement declares no hazard: the write would reach data beyond the rows it names.",
+                        )));
+                    }
+                    // Unknown means stop: a catalog that was cut off does
+                    // not show that the write reaches nothing else.
+                    Err(Unseen::Truncated) => {
+                        return Err(Stopped::Unsent(failure(
+                            FailureClass::UnknownVariant,
+                            codes::CATALOG_TOO_LARGE,
+                            format!(
+                                "The store holds more than {CATALOG_TABLES} tables and views, so its catalog cannot show that the write reaches no data beyond the rows it names."
+                            ),
+                            "Declare `hazard: data_elsewhere` on the statement and on its operation, so that a person agrees to each write; or keep the tables in a smaller store.",
+                        )));
+                    }
+                    Err(Unseen::NoTable) => {
+                        return Err(Stopped::Unsent(drift(
+                            "The table the statement writes is not in the store's catalog, so what the write reaches cannot be shown.",
+                        )));
+                    }
                 }
             }
-            conn.run(&text, &params, &limits).map_err(Ok)
+            conn.run(&text, &params, &limits).map_err(Stopped::Store)
         };
         let Some((conn, ran)) = on_store(conn, until(step, input), true, work).await else {
             self.lost = true;
@@ -556,11 +730,13 @@ impl Session {
                 );
                 self.ran = Some(ran);
                 self.counted = false;
+                self.wrote = access == Access::ReadWrite;
+                self.asked = asked;
                 Ok(Observed::default())
             }
             // Found before the statement ran.
-            Err(Err(message)) => Err(self.not_sent(drift(message)).await),
-            Err(Ok(refusal)) => Err(self.answered(refused(refusal, access)).await),
+            Err(Stopped::Unsent(found)) => Err(self.not_sent(found).await),
+            Err(Stopped::Store(refusal)) => Err(self.answered(refused(refusal, access)).await),
         }
     }
 
@@ -575,6 +751,16 @@ impl Session {
                 ))
                 .await);
         };
+        // A keyed write changes one row. The plan states the count, and the
+        // driver takes no other: a plan that asked for more would commit
+        // more rows than the one record the ledger holds an intent for.
+        if expected != 1 || self.open != Some(Access::ReadWrite) || !self.wrote {
+            return Err(self
+                .not_sent(unexpected(
+                    "A count of rows other than one was to be checked, or outside a transaction that wrote.",
+                ))
+                .await);
+        }
         if changed == expected {
             self.counted = true;
             self.note(
@@ -646,6 +832,37 @@ impl Session {
         Ok(values)
     }
 
+    /// Holds the record a read by key returned to the key it was asked for.
+    /// A statement that finds some other record, by whatever predicate, is
+    /// stopped here: its answer is never taken for the record that was
+    /// written.
+    fn is_asked(
+        statement: &Statement,
+        asked: Option<&[(String, Bound)]>,
+        columns: &[String],
+        row: &[Cell],
+    ) -> Result<(), Failure> {
+        if !statement.by_key {
+            return Ok(());
+        }
+        let same = asked.is_some_and(|asked| {
+            asked.iter().all(|(column, bound)| {
+                columns
+                    .iter()
+                    .position(|name| name == column)
+                    .and_then(|position| row.get(position))
+                    .is_some_and(|cell| same_value(bound, cell))
+            })
+        });
+        if same {
+            Ok(())
+        } else {
+            Err(not_by_key(
+                "A read by key returned a record whose key is not the one asked for.",
+            ))
+        }
+    }
+
     async fn fetch(
         &mut self,
         step: &Step,
@@ -659,6 +876,7 @@ impl Session {
                 ))
                 .await);
         };
+        let asked = self.asked.take();
         let rows = ran.rows.len();
         let outcome = match statement.returns {
             Returns::OneOrNone if ran.more => Err(failure(
@@ -669,12 +887,19 @@ impl Session {
             )),
             Returns::OneOrNone => match ran.rows.into_iter().next() {
                 None => Ok(StepOutcome::Absent(Observed::default())),
-                Some(row) => Self::record(&statement, &ran.columns, row).map(|values| {
-                    StepOutcome::Done(Observed {
-                        values: redact.redact_values(&values),
-                        ..Observed::default()
-                    })
-                }),
+                Some(row) => {
+                    // A value stored another way than declared is named as
+                    // that first; then the record is held to its key.
+                    let held = Self::is_asked(&statement, asked.as_deref(), &ran.columns, &row);
+                    Self::record(&statement, &ran.columns, row)
+                        .and_then(|values| held.map(|()| values))
+                        .map(|values| {
+                            StepOutcome::Done(Observed {
+                                values: redact.redact_values(&values),
+                                ..Observed::default()
+                            })
+                        })
+                }
             },
             Returns::Many => ran
                 .rows
@@ -770,6 +995,7 @@ impl Session {
                 self.open = None;
                 self.ran = None;
                 self.counted = false;
+                self.wrote = false;
                 self.note(step, Vec::new(), Vec::new());
                 Ok(Observed::default())
             }
@@ -929,6 +1155,7 @@ impl Driver for SqlDriver {
                 }
             };
             Ok(Prepared::new(Session {
+                surface: surface.name.as_str().to_owned(),
                 file,
                 opener,
                 may_write: matches!(
@@ -942,6 +1169,8 @@ impl Driver for SqlDriver {
                 open: None,
                 ran: None,
                 counted: false,
+                wrote: false,
+                asked: None,
                 described: BTreeSet::new(),
                 looked_at: BTreeSet::new(),
                 lost: false,

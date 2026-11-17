@@ -85,8 +85,19 @@ impl Loaded {
     }
 
     /// Whether an expression that gives true or false holds.
+    ///
+    /// A condition that gives anything else, a text or a null from an
+    /// answer that changed, is no rule the engine can follow: it stops,
+    /// and never takes the value for false.
     pub fn holds(&self, index: ExprIndex, scope: &Scope) -> Result<bool, Failure> {
-        Ok(self.eval(index, scope)?.as_bool().unwrap_or(false))
+        self.eval(index, scope)?.as_bool().ok_or_else(|| {
+            codes::fail(
+                FailureClass::UnknownVariant,
+                codes::CONDITION_NOT_BOOLEAN,
+                "A condition of the plan gave a value that is neither true nor false.",
+                "Compare the condition in the target files with what the system returns.",
+            )
+        })
     }
 
     pub fn sensitivity(&self, field_type: Option<FieldTypeIndex>) -> Sensitivity {

@@ -130,11 +130,13 @@ pub fn elements(command: &Command, given: &Given<'_>) -> Result<Vec<String>, Ste
     let mut out: Vec<String> = Vec::new();
     let mut options_ended = false;
     // A value that is an element of its own may not look like an option.
-    let own_element = |name: &str, text: String, options_ended: bool| {
-        match not_its_own_element(&text, options_ended, cfg!(windows)) {
-            Some(why) => Err(unsafe_value(name, why)),
-            None => Ok(text),
-        }
+    let own_element = |name: &str, text: String, options_ended: bool| match not_its_own_element(
+        &text,
+        options_ended,
+        cfg!(windows),
+    ) {
+        Some(why) => Err(unsafe_value(name, why)),
+        None => Ok(text),
     };
     let declared = |name: &str| {
         command

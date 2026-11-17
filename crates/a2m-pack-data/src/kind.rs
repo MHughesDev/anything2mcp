@@ -626,7 +626,11 @@ impl StatementKind {
             };
             // One plain read, by its words. The store proves that it only
             // reads; this refuses what a read-only connection does not stop.
-            held_to_its_form(text, Does::Read, body.get("text").map_or(&body.at, |text| &text.at))?;
+            held_to_its_form(
+                text,
+                Does::Read,
+                body.get("text").map_or(&body.at, |text| &text.at),
+            )?;
             let mut declared: Vec<Param> = Vec::new();
             for param in params.items() {
                 let param_name = param.text("name").unwrap_or_default();

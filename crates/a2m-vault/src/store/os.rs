@@ -5,13 +5,19 @@
 //! Keys are wrapped in memory under that root. The outside crates that reach
 //! each store are synchronous, so every call to them runs on a blocking
 //! thread.
+//!
+//! None of these stores can write an entry only when there is none, so the
+//! root is made under the creation lock (see `creation.rs`), and a key is
+//! always wrapped under the root the store holds at that moment.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use a2m_core::Failure;
 use keyring_core::{CredentialStore, Entry, Error};
 use zeroize::Zeroizing;
 
+use super::creation::{self, CreationLock};
 use super::{BoxFuture, KeyStore, LocalRoot, StoreDescription, StoreHealth, StoreStrength};
 use crate::failure;
 use crate::material::{KeyMaterial, OsRandom, RandomSource, Wrapped};
@@ -26,6 +32,8 @@ pub struct OsKeyStore {
     entry: Arc<Entry>,
     root: Mutex<Option<Arc<LocalRoot>>>,
     random: Arc<dyn RandomSource>,
+    /// The file two engines lock, one at a time, to make the root.
+    creation_lock: PathBuf,
 }
 
 impl OsKeyStore {
@@ -39,7 +47,8 @@ impl OsKeyStore {
     /// answer.
     pub async fn open(installation: &InstallationName) -> Result<Self, Failure> {
         let (name, store) = blocking(platform_store).await??;
-        Self::over(name, store, installation, Arc::new(OsRandom)).await
+        let lock = creation::lock_file_for("root", installation.as_str());
+        Self::over(name, store, installation, Arc::new(OsRandom), lock).await
     }
 
     /// The same back end over any credential store of the outside crate
@@ -49,6 +58,7 @@ impl OsKeyStore {
         store: Arc<CredentialStore>,
         installation: &InstallationName,
         random: Arc<dyn RandomSource>,
+        creation_lock: PathBuf,
     ) -> Result<Self, Failure> {
         let user = installation.as_str().to_owned();
         let entry = blocking(move || store.build(SERVICE, &user, None))
@@ -59,6 +69,7 @@ impl OsKeyStore {
             entry: Arc::new(entry),
             root: Mutex::new(None),
             random,
+            creation_lock,
         })
     }
 
@@ -98,21 +109,44 @@ impl OsKeyStore {
         Ok(self.read().await?.map(|root| self.cache(root)))
     }
 
-    /// The root, made and written to the store when the store has none.
+    /// The root to wrap a key under: the one the store holds now, made and
+    /// written when the store holds none.
+    ///
+    /// The store is read each time, and the root in memory is not trusted
+    /// here: a key wrapped under a root that is no longer the store's would
+    /// open until this process ends and never again. Keys are wrapped
+    /// rarely, once for each workspace and once for the digest key.
+    ///
+    /// A new root is made under the creation lock. The engine that holds it
+    /// reads the store again and writes only when it is still empty, so two
+    /// engines that start at the same moment end with one root: the second
+    /// reads what the first wrote.
     async fn root_or_new(&self) -> Result<Arc<LocalRoot>, Failure> {
-        if let Some(root) = self.root().await? {
-            return Ok(root);
+        if let Some(root) = self.read().await? {
+            return Ok(self.cache(root));
         }
-        let made = LocalRoot::generate(self.random.as_ref())?;
-        let bytes = made.to_entry();
-        let entry = Arc::clone(&self.entry);
-        blocking(move || entry.set_secret(&bytes))
+        let lock = self.creation_lock.clone();
+        let held = blocking(move || CreationLock::take(&lock))
             .await?
-            .map_err(|error| store_failure(&error))?;
-        // Use what the store now holds, so that two engines started at the
-        // same moment end with one root between them.
-        let stored = self.read().await?.ok_or_else(failure::entry_missing)?;
-        Ok(self.cache(stored))
+            .map_err(|_| {
+                failure::unreachable("the lock that guards making its root key could not be taken")
+            })?;
+        let root = match self.read().await? {
+            Some(root) => root,
+            None => {
+                let made = LocalRoot::generate(self.random.as_ref())?;
+                let bytes = made.to_entry();
+                let entry = Arc::clone(&self.entry);
+                blocking(move || entry.set_secret(&bytes))
+                    .await?
+                    .map_err(|error| store_failure(&error))?;
+                // What the store now holds is the root, whatever was just
+                // written: every engine goes by the store.
+                self.read().await?.ok_or_else(failure::entry_missing)?
+            }
+        };
+        drop(held);
+        Ok(self.cache(root))
     }
 
     /// Removes the installation's entry from the store.
@@ -219,6 +253,7 @@ fn platform_store() -> Result<(&'static str, Arc<CredentialStore>), Failure> {
 mod tests {
     use super::*;
     use crate::names::{Generation, KeyId, Layer};
+    use crate::store::creation::tests::Folder;
 
     fn binding() -> Binding {
         Binding {
@@ -228,12 +263,15 @@ mod tests {
         }
     }
 
-    async fn over(store: &Arc<CredentialStore>, installation: &str) -> OsKeyStore {
+    /// A back end over `store`, whose creation lock is a file in `folder`
+    /// named for the installation, as the real one is.
+    async fn over(store: &Arc<CredentialStore>, folder: &Folder, installation: &str) -> OsKeyStore {
         OsKeyStore::over(
             "test store",
             Arc::clone(store),
             &InstallationName::new(installation).unwrap(),
             Arc::new(OsRandom),
+            folder.0.join(format!("{installation}.lock")),
         )
         .await
         .unwrap()
@@ -244,9 +282,10 @@ mod tests {
     #[tokio::test]
     async fn the_root_lives_in_the_store_and_survives_a_restart() {
         let store: Arc<CredentialStore> = keyring_core::mock::Store::new().unwrap();
+        let folder = Folder::new();
         let key = KeyMaterial::generate(&OsRandom).unwrap();
 
-        let first = over(&store, "example-installation").await;
+        let first = over(&store, &folder, "example-installation").await;
         assert_eq!(first.health().await, StoreHealth::EntryMissing);
         let missing = first
             .unwrap(&Wrapped::from_bytes(vec![1; 90]), &binding())
@@ -261,12 +300,12 @@ mod tests {
         drop(first);
 
         // A new process: the same entry, read back from the store.
-        let second = over(&store, "example-installation").await;
+        let second = over(&store, &folder, "example-installation").await;
         let unwrapped = second.unwrap(&wrapped, &binding()).await.unwrap();
         assert_eq!(unwrapped.expose(), key.expose());
 
         // Another installation has another entry and another root.
-        let other = over(&store, "other-installation").await;
+        let other = over(&store, &folder, "other-installation").await;
         other.wrap(&key, &binding()).await.unwrap();
         let foreign = other.unwrap(&wrapped, &binding()).await.unwrap_err();
         assert_eq!(foreign.code(), &failure::KEY_STORE_ENTRY_MISSING);
@@ -409,11 +448,12 @@ mod tests {
     /// both, now and after a restart.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn two_engines_that_start_at_once_end_with_one_root() {
+        let folder = Folder::new();
         for round in 0..8 {
             let store = OneEntry::store(2);
-            let installation = format!("example-race-{}-{round}", std::process::id());
-            let first = Arc::new(over(&store, &installation).await);
-            let second = Arc::new(over(&store, &installation).await);
+            let installation = format!("example-race-{round}");
+            let first = Arc::new(over(&store, &folder, &installation).await);
+            let second = Arc::new(over(&store, &folder, &installation).await);
             let wrap = |engine: &Arc<OsKeyStore>| {
                 let engine = Arc::clone(engine);
                 tokio::spawn(async move {
@@ -427,13 +467,12 @@ mod tests {
 
             // Each engine opens what the other wrapped, and so does an
             // engine started afterwards, which reads the store afresh.
-            let later = Arc::new(over(&store, &installation).await);
+            let later = Arc::new(over(&store, &folder, &installation).await);
             for engine in [&first, &second, &later] {
                 for (key, wrapped) in [&one, &two] {
                     let unwrapped = engine.unwrap(wrapped, &binding()).await;
-                    assert_eq!(
-                        unwrapped.map(|key| key.expose().to_vec()).ok(),
-                        Some(key.expose().to_vec()),
+                    assert!(
+                        unwrapped.is_ok_and(|opened| opened.expose() == key.expose()),
                         "round {round}"
                     );
                 }

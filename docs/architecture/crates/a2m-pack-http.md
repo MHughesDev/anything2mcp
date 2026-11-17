@@ -22,7 +22,7 @@ The HTTP pack: the `http` driver, the endpoint catalog as a file kind, and the i
 - Recognizing, in an answer, a refusal, a version conflict, a declared "not now", a status nothing declares, and the signs of expiry. It reports them; it acts on none.
 - Reading an OpenAPI description into findings, and the drafting rule that turns those findings into endpoint drafts.
 
-It must never: put a secret into a template, a finding, a trace, or a failure; send to an address the run may not reach; follow a redirect; use a proxy; retry; renew a token, even when the answer says it expired; send an endpoint that writes from a step that is not a commit point; draft an endpoint as a read for a method its description does not mark safe.
+It must never: put a secret into a template, a finding, a trace, or a failure; send to an address the run may not reach; follow a redirect; use a proxy; retry; renew a token, even when the answer says it expired; send an endpoint that writes from a step that is not a commit point; report a write that was sent as settled when the answer is not the application's verdict; send a write that declares a version precondition without knowing the record's version; read a description without bound; draft an endpoint as a read for a method its description does not mark safe.
 
 ## What it registers
 
@@ -54,7 +54,7 @@ A lint code is the pack's name, a dot, and the rule.
 | `http.effect_method` | Warning | An endpoint marked `read` whose method is not one HTTP marks safe |
 | `http.signed_endpoint` | Error | An `http` binding on an endpoint marked `signed`, whose requests the front end computes or signs ([section 301](../../spec/3-packs/301-the-web-pack.md)) |
 
-The file kind and the lowering refuse, as errors under the pack's own codes: `http.path_invalid`, `http.shape_invalid`, `http.header_invalid`, `http.responses_invalid`, `http.version_invalid`, `http.not_built`, `http.unknown_endpoint`, `http.placeholder_unbound`, `http.placeholder_unknown`, `http.position_type`, `http.body_undeclared`, `http.body_field_missing`, `http.extract_unknown`, `http.output_type`, `http.effect_mismatch`, and `http.read_back_never_absent`. Not built: the GraphQL rule and the two rules of the `api` mode.
+The file kind and the lowering refuse, as errors under the pack's own codes: `http.path_invalid`, `http.shape_invalid`, `http.header_invalid` (which includes a header the connection sets, `host`, `content-length`, `transfer-encoding`, or `connection`, as an endpoint's header or its idempotency header), `http.responses_invalid`, `http.version_invalid` (which includes an endpoint that sends a version, bound with no `read_back` endpoint that reads one), `http.not_built`, `http.unknown_endpoint`, `http.placeholder_unbound`, `http.placeholder_unknown`, `http.position_type`, `http.body_undeclared`, `http.body_field_missing`, `http.extract_unknown`, `http.output_type`, `http.effect_mismatch`, and `http.read_back_never_absent`. Not built: the GraphQL rule and the two rules of the `api` mode.
 
 ### Drafting rules
 
@@ -68,8 +68,10 @@ Not built: the read operation drafted for each safe method, the OData key, and t
 
 | Discoverer | Reads | May send |
 | --- | --- | --- |
-| `http_description` | An OpenAPI 3.0 or 3.1 description, as JSON or YAML, given as a checked path named `description` or fetched from the path the focus names under `description_path`, `/openapi.json` unless given. A reference inside the document is followed; one to another file is not | One GET |
+| `http_description` | An OpenAPI 3.0 or 3.1 description, as JSON or YAML, given as a checked path named `description` or fetched from the path the focus names under `description_path`, `/openapi.json` unless given. A reference inside the document is followed; one to another file is not. The text passes the redactor before it is parsed, whichever way it arrived, and reading it is bounded (below) | One GET |
 | `http_surface` | Whether the base address answers, with which status, which methods it allows, and the names of the schemes it challenges with | One GET and one OPTIONS of the root |
+
+**A description is read within bounds.** It is the system's own text, and a few kilobytes of it can name a schema that is millions of parts once its references are followed. The import follows a schema at most 32 levels deep, takes at most 20,000,000 steps (a schema part visited, a byte of a reference compared, an entry passed over while a reference is looked up), and writes at most 16,000,000 bytes of shapes, counted as 64 for each part plus the names and words copied into it. Past any of the three, or past the bytes the discovery may read, the whole import is refused as `input`, `description_too_large`: a part of a description is never read as if it were all of it. Each reference is looked up once. A schema that holds itself is found at once, by the references that are open, and has no shape in this pack's words: its body is left as an open question and the other operations are read. The JSON and YAML readers bound nesting at 64 levels, and the YAML reader refuses anchors and aliases, so a document cannot grow as it is parsed. The work is small enough, at these bounds, to be done where the discoverer runs.
 
 **Discovery cannot write.** A discoverer is handed only the sandbox port. Within that it uses a `ReadClient`, a type that can build only a `probe` step: a GET, HEAD, or OPTIONS request to a literal path of the surface, with no body and no credential. The driver refuses a `probe` of any other method, and refuses an endpoint that writes from any step that is not a commit point, which the port never lets through.
 
@@ -98,13 +100,14 @@ What the kernel gives this crate, and what it does not:
 - **Packs share data shapes, never code.** There is no kernel request-template type. This crate's template is a surface's name, a method, a path of literal segments and whole-segment holes, literal query entries and headers, the request and response shapes, the declared answers, the idempotency header, and the version rule. It holds no scheme, host, or port: the origin is the surface's address in the run's environment, taken apart once when the driver prepares.
 - The engine reaches the driver through a handle that refuses a committing step without the ledger's intent token. Every failure says whether the request was not sent, was answered, or is unknown.
 - **The lease is given to `prepare` only** ([decision 0097](../../decisions/0097-what-the-provider-contract-could-not-give-the-http-driver-and-what-the-pack-does-instead.md)). The driver applies it there into its own sink. The credentials are held by the prepared client, in the core's secret wrapper, for one pass; they go into a request only for an endpoint whose `auth` is `session` or `token`, and are wiped at release.
+- **The address is checked where it is sent.** The driver puts the surface's origin, the path its address ends in, and the path and query that were built into one address, and sends it only when the URL type reads back that origin and exactly that path and query, and the path built starts at a `/`. A dot segment that would be folded away, plain or encoded, a separator that would start a query, a fragment, or a host, and a byte that would be encoded again all change what is read back, so a plan that held one, whatever the compiler said, is refused as `policy`, `surface_not_declared`, not sent. A header the connection sets is refused the same way when the request is built.
 - A step's result has no place for what the driver did. The `request` step returns it as two captures: `acting`, in the form of the telemetry crate's `Acting`, and `exchange`, the request and the answer with headers passed through the allowlist.
 
 ### The steps
 
 | Step | Arguments | Does | Fails as |
 | --- | --- | --- | --- |
-| `request` | `path.<placeholder>`, `query.<name>`, `body.<field>`; its payload lists the query names and the body fields with their JSON types | Builds one request from the endpoint the step names and sends it to the surface's address. Holds the answer. On a lookup, a status the endpoint declares as `absent` is the record being absent | `input` before sending; `transient` or `possible_commit` when no complete answer came; `session_expired`; `policy` for a redirect that leaves the surface; `unknown_variant`, `response_too_large` |
+| `request` | `path.<placeholder>`, `query.<name>`, `body.<field>`; its payload lists the query names and the body fields with their JSON types and, for a write whose endpoint sends a version, the endpoint whose read supplies it | Builds one request from the endpoint the step names and sends it to the surface's address. Holds the answer. On a lookup, a status the endpoint declares as `absent` is the record being absent | `input` or `stale`, `version_not_read`, before sending; `transient` when nothing was sent or a read lost its answer; `possible_commit` for a write that was sent and has no answer that is the application's verdict; `session_expired`; for a read, `policy` for a redirect that leaves the surface and `unknown_variant`, `response_too_large` |
 | `validate` | None | Judges the held answer: an `ok` status whose body fits the response shape passes; otherwise the declared answer it matches names the failure | `drift`, `rejected`, `stale`, `transient`, `unknown_variant` |
 | `extract` | None; its payload lists each output, its path in the body, and its type | Takes one typed value for each output, exactly; remembers the record's version when the endpoint says where it is read | `drift` |
 | `probe` | None; its payload is a safe method and a literal path | One request with no body and no credential; returns the status, the content type, the allowed methods, the names of the challenge schemes, and a successful body as text | As `request` |
@@ -115,6 +118,30 @@ What the kernel gives this crate, and what it does not:
 | --- | --- | --- | --- |
 | `read`, `list`, `search` | `request`, `validate`, `extract` | | |
 | The write verbs | `request`, marked as the commit point, and as idempotent when the endpoint names an idempotency header | `validate`; and `extract` of the save's own answer with `prefer: response` | `request`, `validate`, `extract` on the endpoint `read_back` names, each a lookup |
+
+### A write that was sent
+
+After the commit step's request may have reached the system, the driver returns a class the ledger takes as settled (`policy`, `input`, `stale`) only for the application's own verdict: `stale`, `version_conflict`, for an answer the endpoint declares as a conflict. Everything else leaves the record in doubt, and the read-back or reconcile decides ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
+
+| What came back | The driver reports | Sent |
+| --- | --- | --- |
+| No complete answer, or the time ran out | `possible_commit`, `no_confirmation` | Unknown |
+| A redirect to another origin, however it is written: with a scheme, as `//host/path`, or with backslashes. It is not followed, and the address is not quoted | `possible_commit`, `no_confirmation` | Unknown |
+| An answer over the limit on its size, which was not read | `possible_commit`, `no_confirmation` | Unknown |
+| A redirect within the surface | A status like any other: accepted when the endpoint declares it under `ok`, and the read-back proves the write; otherwise `unknown_variant`, `unexpected_status`, from `validate` | Answered |
+| A sign the session ended: the declared status, the provider's status, or a redirect to the sign-in host | `session_expired`, `needs_login`. The keeper is told, and the ledger keeps the record in doubt | Answered |
+| A `validate` or `extract` step that cannot be carried out as the plan wrote it, while a write's answer is held | `possible_commit`, `no_confirmation`: the verdict was never read | Unknown |
+
+For a read, a redirect that leaves the surface stays `policy`, `surface_not_declared`, and an answer over the limit stays `unknown_variant`, `response_too_large`. Where a redirect leads is read as a browser reads it, against the address of the request.
+
+### The version precondition
+
+An endpoint that declares `version: {send: ...}` writes with the record's version as a precondition. What a pass knows of a record's version is kept by the endpoint that read the record and the record's key, as one of two things: the version, or that the record was looked up and does not exist. The write's step names the endpoint whose read supplies the version, which is the one its binding reads the record back through; the lowering refuses a binding where that endpoint reads no version.
+
+- The version stays until a request may have reached the system. An attempt that could not connect was not sent and leaves it, so the engine's retry of that attempt carries the same precondition.
+- A record this pass looked up and found absent is written with no version: the write creates it. A precondition that the record still does not exist (`If-None-Match: *`) is not built.
+- A write for a record of which the pass knows nothing is refused as `stale`, `version_not_read`, not sent: no read in this pass, a read whose answer held no version, a step for no record, or a version read through another endpoint. A version is never kept or taken under no key.
+- A version that went out with a request is used up. The read-back after the write reads the new one.
 
 A `request` step has the target's time limit for a request, 30 seconds unless the target says otherwise. A `validate` or `extract` step judges an answer already held, sends nothing, and has a limit of one second: the engine sums a binding's step limits before a commit point, and five request limits would pass the lease of the in-process runner ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md)).
 
@@ -146,7 +173,7 @@ A `request` step has the target's time limit for a request, 30 seconds unless th
 | State | Where |
 | --- | --- |
 | Warm clients, by session and origin, at most 64 | Memory; one is dropped when its pass ends poisoned |
-| One pass's credentials, its held answer, and the versions it read | The prepared client; dropped at release |
+| One pass's credentials, its held answer, and what it knows of each record's version, by the endpoint that read it and the record's key | The prepared client; dropped at release |
 | Cookies and tokens beyond one pass | Never here. The keeper holds them |
 
 ## Failures
@@ -155,13 +182,14 @@ A `request` step has the target's time limit for a request, 30 seconds unless th
 | --- | --- | --- | --- |
 | `rejected` | `app_validation_error` | An answer the endpoint declares under `refused` | Answered |
 | `stale` | `version_conflict` | An answer the endpoint declares under `conflict`, with the version sent and the version the system now reports | Answered |
+| `stale` | `version_not_read` | A write whose endpoint sends a version, for a record of which this pass read no version | Not sent |
 | `session_expired` | `needs_login` | A status the session's provider takes for a refusal and the endpoint does not declare; a status and path the target declares; a redirect to a host the target declares. Also an endpoint that takes a credential in a run with no session, which is not sent | Answered, or not sent |
-| `drift` | `response_schema_mismatch` | The body of an accepted answer is not JSON or does not fit the shape. The message names the place and never the value | Answered |
-| `unknown_variant` | `unexpected_status`, `response_too_large` | A status, or a body, that nothing declared matches; an answer over the limit | Answered |
-| `possible_commit` | `no_confirmation` | A write was sent, or may have been, and no complete answer came back | Unknown |
+| `drift` | `response_schema_mismatch` | The body of an accepted answer is not JSON, whatever shape the endpoint declares, `any` included, or does not fit the shape. Only an empty body is read as nothing. The message names the place and never the value | Answered |
+| `unknown_variant` | `unexpected_status`, `response_too_large` | A status, or a body, that nothing declared matches, a redirect within the surface included; an answer to a read over the limit | Answered |
+| `possible_commit` | `no_confirmation` | A write was sent, or may have been, and what came back is not the application's verdict: no complete answer, a redirect to another origin, an answer over the limit, or a judging step that cannot be carried out | Unknown |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | A read that timed out or lost its connection; a connection that could not be made, for a read or a write; an answer declared under `unavailable` | Unknown, not sent, answered |
-| `policy` | `surface_not_declared` | A surface address the run may not reach, refused when the driver prepares; a redirect to another origin | Not sent, answered |
-| `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable` | A path value that is empty, a dot segment, or holds a separator or a control character; a step the driver cannot carry out as written; an HTTPS surface; a session whose scheme needs an exchange that is not built; a description that is not OpenAPI 3.0 or 3.1 | Not sent |
+| `policy` | `surface_not_declared` | A surface address the run may not reach, refused when the driver prepares; an address built that is not the surface's origin and exactly the path built; for a read, a redirect to another origin | Not sent, answered |
+| `input` | `path_value_refused`, `step_not_usable`, `tls_not_enabled`, `auth_scheme_not_built`, `description_unreadable`, `description_too_large` | A path value that is empty, a dot segment, or holds a separator or a control character; a step the driver cannot carry out as written, a header the connection sets included; an HTTPS surface; a session whose scheme needs an exchange that is not built; a description that is not OpenAPI 3.0 or 3.1; a description past the bounds of the import | Not sent |
 
 The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and `forbidden_by_edge` are not declared, and such an answer stops as `unexpected_status`.
 
@@ -169,12 +197,17 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 
 | Must always hold | Proven by |
 | --- | --- |
-| No input can change the origin or the path's shape | `no_input_changes_where_a_request_goes`, against the test application; `no_value_can_change_the_shape_of_the_path` |
+| No input can change the origin or the path's shape, and no plan can make the driver send anywhere but the surface's origin and the path built | `no_input_changes_where_a_request_goes`, against the test application; `no_value_can_change_the_shape_of_the_path`; `the_address_sent_to_is_the_surfaces_origin_and_exactly_the_path_that_was_built`; `a_header_the_connection_sets_is_refused_where_it_would_be_sent` |
 | A write whose answer is lost is `possible_commit`, and the test application shows exactly one write | `a_write_whose_answer_is_lost_is_a_possible_commit_and_is_not_sent_again` |
+| A write that was sent is never reported in a settled class unless the application gave its verdict, and the test application shows the write stored once | `a_write_whose_answer_is_not_the_applications_verdict_is_in_doubt_and_never_settled`, with the fault "redirect after commit" |
+| A write's version precondition survives an attempt that was not sent, and a write with no version read is not sent | `a_write_that_was_not_sent_keeps_its_version_and_one_with_no_version_read_is_refused`, with the other caller's change still stored |
+| Reading a description is bounded, and past the bounds it is refused by name | `a_description_that_grows_past_the_bounds_is_refused_by_name_and_not_expanded` |
 | A write reaches the system only with the ledger's token | `a_write_without_the_ledgers_token_never_reaches_the_application` |
 | No discovery sends a request that could write | `discovery_observes_and_cannot_write`, with the control interface counting writes |
 | A drafted read exists only for a method the description marks safe | `a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a_safe_method` |
 | A credential never appears in a value, a capture, or a failure, and reaches only an endpoint that takes it | `a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_else`, with the token planted in a response header and body |
+| A registered secret in a description reaches no finding, whether the description was fetched or given as a file | `a_description_given_as_a_file_passes_the_redactor_before_anything_is_made_of_it` |
+| A held answer prints no header and no body | `a_held_answer_prints_no_header_and_no_body` |
 | The same target compiles to the same bytes | `the_fixture_targets_compile_twice_to_the_same_bytes` |
 | Overhead stays under 5 ms beyond the application's time | Not measured yet |
 
@@ -186,6 +219,7 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 4. Not built: the anti-forgery bootstrap and the `token` step, case 5; the edge's answers, case 23; cases 16 and 18 to 22 and 24, which the test application does not serve yet.
 5. Not built: the `api` mode; the read operation drafted for each safe method; GraphQL and OData; the drafting rule for endpoints seen in capture, package E4.
 6. Not built: uploads and downloads, pagers, long-running jobs, identity by a stamp or a search, the digest and integrated Windows exchanges, a client certificate, TLS.
+7. Done: the eight findings of the safety review, and three more found on the way ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): a write that was sent is never settled by an answer that is not the application's verdict; the version precondition; the bounds on reading a description; the address checked where it is sent.
 
 ## Open points
 
@@ -194,6 +228,9 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 - The `endpoint` finding's `found` is what `http_surface` wrote first: a method, a path, a status, a content type, the allowed methods, and the challenge schemes. The probe of the web pack needs template tiers in it, and will widen it.
 - Whether the lease should reach `act`, so that a credential is placed for each request and the provider is asked about each sign as it is seen (decision 0097).
 - The read-back of a `delete`, where absent is the expected answer, is the engine's to judge; the pack reports it as absent.
+- A pass that is replaced between the read of a record and its write knows no version, and the write is refused as `stale`, `version_not_read`. The engine takes a record as fresh by time alone; it should read the record again when the pass that read it is gone.
+- A record that was absent is created with no precondition. `If-None-Match: *`, or the system's own form of "only if it does not exist", is not designed.
+- A sign that the session ended, on a write that was sent, is left as `session_expired`, so that the keeper is told. That is safe only while the ledger does not take `session_expired` as settled; a test in the ledger should hold that.
 - gRPC reflection, which spec section 201 lists under `api`. Not in the first release; it needs its own stand.
 - The TLS stack, verified on three operating systems with a licence on the list in `deny.toml`.
 - Whether the `api` mode needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`. The import built here drafts ordinary endpoint entries, which is evidence for the second.

@@ -64,11 +64,52 @@ impl SandboxPort for Sandbox {
     }
 }
 
-struct Collected(Vec<Finding>);
+/// The most findings one discoverer may hand over in one job, whatever
+/// their size.
+const MOST_FINDINGS: usize = 10_000;
+
+/// Where a discoverer's findings go. It keeps them up to the size its
+/// manifest declares and up to a fixed count; what comes after is counted
+/// and not kept, so a discoverer that floods cannot grow the engine's
+/// memory without bound.
+struct Collected {
+    kept: Vec<Finding>,
+    /// The bytes the kept findings take, as they are stored.
+    bytes: u64,
+    /// The most bytes that are kept.
+    most_bytes: u64,
+    /// How many findings came after the bound and were not kept.
+    over: u64,
+}
+
+impl Collected {
+    fn new(most_bytes: u64) -> Self {
+        Self {
+            kept: Vec::new(),
+            bytes: 0,
+            most_bytes,
+            over: 0,
+        }
+    }
+}
 
 impl FindingSink for Collected {
     fn found(&mut self, finding: Finding) -> Result<(), Failure> {
-        self.0.push(finding);
+        // A finding whose size cannot be told is counted as too large.
+        let size = serde_json::to_vec(&finding).map_or(u64::MAX, |bytes| {
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+        });
+        let fits = self.kept.len() < MOST_FINDINGS
+            && self
+                .bytes
+                .checked_add(size)
+                .is_some_and(|total| total <= self.most_bytes);
+        if fits {
+            self.bytes += size;
+            self.kept.push(finding);
+        } else {
+            self.over = self.over.saturating_add(1);
+        }
         Ok(())
     }
 }
@@ -158,7 +199,7 @@ impl Engine {
                 reason: ChoiceReason::FirstInOrder,
                 handle: handle.clone(),
             };
-            let held = run.hold(&tool, binding, &candidate, false).await?;
+            let held = run.hold(&tool, binding, &candidate, false, false).await?;
             port.inner = Some(ReadOnlyPort::new(handle, run.take(held)));
         }
         let description = SurfaceDescription {
@@ -171,15 +212,22 @@ impl Engine {
         let mut outcome = Ok(());
         for discoverer in registry.discoverers_for(&description) {
             let declared = discoverer.declared();
+            // The time a discoverer may take is the time its manifest
+            // declares, and never more than the job's lease has left.
+            let declared_time = Duration::from_secs(u64::from(declared.bounds.seconds));
+            let time = job
+                .lease
+                .remaining()
+                .map_or(declared_time, |left| left.min(declared_time));
             let scope = DiscoveryScope {
                 surface: &surface_ref,
                 bounds: declared.bounds,
-                deadline: Deadline::after(Duration::from_secs(u64::from(declared.bounds.seconds))),
+                deadline: Deadline::after(time),
                 paths: &paths,
                 redact: self.deps.redact.as_ref(),
                 focus: &job.input,
             };
-            let mut sink = Collected(Vec::new());
+            let mut sink = Collected::new(declared.bounds.bytes);
             // A discoverer is a provider's code: it is held to the time its
             // manifest declares, and a panic in it ends it and not the job.
             // Every step it asks for only reads, so its future may be
@@ -203,12 +251,22 @@ impl Engine {
                     "Narrow what is observed, or raise the discoverer's bound.",
                 )),
             };
+            // The bound the sink held is reported with the discoverer's own.
+            let report = report.map(|mut report| {
+                if sink.over > 0 {
+                    if !report.bounds_hit.iter().any(|bound| bound == "bytes") {
+                        report.bounds_hit.push("bytes".to_owned());
+                    }
+                    report.dropped = report.dropped.saturating_add(sink.over);
+                }
+                report
+            });
             let sent = control
                 .send(EngineEvent::Discovered {
                     surface: name.clone(),
                     provider: discoverer.provider().to_string(),
                     discoverer: declared.name.to_string(),
-                    findings: sink.0,
+                    findings: sink.kept,
                     report,
                 })
                 .await;

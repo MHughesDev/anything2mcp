@@ -19,6 +19,14 @@ records:
       name: {column: name, type: note}
       credit_limit_cents: {column: credit_limit_cents, type: integer}
       notes: {column: notes, type: note}
+  # The same table under a key that does not identify one row: what a
+  # record declared with too small a key does.
+  order_line_loose:
+    table: order_lines
+    key: [order_id]
+    fields:
+      order_id: {column: order_id, type: identifier}
+      description: {column: description, type: note}
   shipment:
     table: shipments
     key: [shipment_id]
@@ -30,12 +38,8 @@ records:
 statements:
   line_item_by_key:
     effect: read
+    form: table
     record: line_item
-    text: |
-      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
-      FROM order_lines WHERE order_id = ? AND item_code = ?
-    params: [{name: order_id, type: identifier}, {name: item_code, type: identifier}]
-    returns: one_or_none
     isolation: read_committed
     time_limit: 2s
   lines_of_order:
@@ -65,15 +69,6 @@ statements:
       SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
       FROM order_lines WHERE order_id = ?
     params: [{name: order_id, type: identifier}]
-    returns: one_or_none
-    time_limit: 2s
-  line_item_touch:
-    effect: read
-    record: line_item
-    text: |
-      UPDATE order_lines SET quantity = quantity + 1
-      WHERE order_id = ? AND item_code = ? RETURNING order_id, item_code, quantity
-    params: [{name: order_id, type: identifier}, {name: item_code, type: identifier}]
     returns: one_or_none
     time_limit: 2s
   line_item_update:
@@ -113,12 +108,8 @@ statements:
     time_limit: 5s
   customer_by_key:
     effect: read
+    form: table
     record: customer
-    text: |
-      SELECT customer_id, name, credit_limit_cents, notes
-      FROM customers WHERE customer_id = ?
-    params: [{name: customer_id, type: identifier}]
-    returns: one_or_none
     time_limit: 2s
   customer_credit_update:
     effect: write
@@ -143,5 +134,19 @@ statements:
     record: shipment
     verb: insert
     set: [order_id, carrier, external_ref]
+    hazard: data_elsewhere
+    time_limit: 5s
+  order_line_loose_by_key:
+    effect: read
+    form: table
+    record: order_line_loose
+    time_limit: 2s
+  order_line_loose_describe:
+    effect: write
+    form: table
+    record: order_line_loose
+    verb: update
+    set: [description]
+    guard: none
     hazard: data_elsewhere
     time_limit: 5s

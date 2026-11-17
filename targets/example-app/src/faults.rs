@@ -163,7 +163,9 @@ pub(crate) async fn apply(State(state): State<AppState>, request: Request, next:
             // The request is carried out first: what it wrote is stored.
             drop(next.run(request).await);
             match HeaderValue::from_str(&location) {
-                Ok(location) => (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response(),
+                Ok(location) => {
+                    (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response()
+                }
                 Err(_) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({

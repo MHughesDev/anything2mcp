@@ -339,3 +339,47 @@ fn the_settings_ceiling_bounds_every_wait() {
     let found = problems.find("stream.channel_invalid").unwrap();
     assert!(found.message.contains("ceiling"), "{found}");
 }
+
+#[test]
+fn text_a_broker_returns_is_an_output_only_as_untrusted_text() {
+    let read = |outputs: &str, channel: &str| {
+        format!(
+            "operation: example_extra\neffect: read\ninputs: {{}}\noutputs: {outputs}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: list\n    channel: {channel}\n"
+        )
+    };
+    // The queue names no schema: a task is whatever a producer wrote.
+    let found = refused(
+        "operations/extra.yaml",
+        &read("{task: {type: text}}", "orders.work"),
+        "stream.untrusted_unmarked",
+    );
+    assert!(found.message.contains("`task`"), "{found}");
+    // A field the schema does not hold to listed texts is free text too.
+    refused(
+        "operations/extra.yaml",
+        &read("{order_id: {type: text}}", "orders.status"),
+        "stream.untrusted_unmarked",
+    );
+    // Marked untrusted, or held to an `enum` by the channel's schema, the
+    // same outputs compile.
+    for (outputs, channel) in [
+        ("{task: {type: broker_text}}", "orders.work"),
+        ("{status: {type: text}}", "orders.status"),
+    ] {
+        let folder = Folder::new("marked");
+        let registry = registry(&folder);
+        let root = edited(&folder, "operations/extra.yaml", &read(outputs, channel));
+        if let Err(problems) = compile(&registry, &root) {
+            panic!("{outputs} on {channel} does not compile:\n{problems}");
+        }
+    }
+}
+
+#[test]
+fn a_body_may_not_use_the_name_of_the_brokers_own_facts() {
+    refused(
+        "operations/extra.yaml",
+        "operation: example_extra\neffect: irreversible\nhazard: sends_outside\ninputs: {}\noutputs: {}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: publish\n    channel: orders.notices\n    body: {message_meta: '\"mine\"'}\n",
+        "stream.binding_invalid",
+    );
+}

@@ -240,8 +240,12 @@ impl Engine {
             Err(failure) => return give_up(claimed, failure),
         };
         let posture = if job.kind == JobKind::Try {
+            // Every driver of a try is prepared with its own read-only
+            // guard on. The context in which a declared test record is
+            // written is the one exception, and it is prepared for that
+            // record's write alone (`Run::hold`).
             Posture::Sandbox {
-                test_records: !loaded.plan.environments[position].test_records.is_empty(),
+                test_records: false,
             }
         } else {
             Posture::Live

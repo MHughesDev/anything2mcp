@@ -1,8 +1,10 @@
 //! The supervisor: the only way anything starts a process.
 //!
-//! A program is named by its path, digested before it starts, given only
-//! the environment its caller lists, placed in a group the supervisor can
-//! end as one, bounded in time and output, and never left behind. A pack
+//! A program is named by its path, opened once and digested through that
+//! handle at every start, started from that same handle where the operating
+//! system can, given only the environment its caller lists, placed in a
+//! group the supervisor can end as one, bounded in time and output, and
+//! never left behind. A pack
 //! reaches it only through a [`ScopedSupervisor`], which starts nothing the
 //! pack's manifest, or the published plan, does not declare.
 //!
@@ -351,20 +353,246 @@ fn not_started(failure: Failure) -> ConnFailure {
     }
 }
 
-/// The digest of a file, read in pieces.
-pub(crate) fn digest_of(path: &Path) -> std::io::Result<Digest> {
-    use std::io::Read as _;
-    let mut file = std::fs::File::open(path)?;
+/// The digest of what a reader gives, read in pieces, and whether it starts
+/// with the two bytes that hand a file to an interpreter.
+fn digest_read(from: &mut impl std::io::Read) -> std::io::Result<(Digest, bool)> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 64 * 1024];
+    let mut start: Vec<u8> = Vec::with_capacity(2);
     loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
+        let read = match from.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if start.len() < 2 {
+            let more = 2 - start.len();
+            start.extend(buffer[..read].iter().take(more));
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(Digest::from_bytes(hasher.finalize().into()))
+    Ok((Digest::from_bytes(hasher.finalize().into()), start == b"#!"))
+}
+
+/// The digest of the file at a path, for the availability check, which
+/// starts nothing. A start never uses this: it digests the handle it starts
+/// from.
+pub(crate) fn digest_of(path: &Path) -> std::io::Result<Digest> {
+    let mut file = std::fs::File::open(path)?;
+    digest_read(&mut file).map(|(digest, _)| digest)
+}
+
+/// A program a scope may start, and the digests it may have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Allowed {
+    /// Where it is. Only an absolute path is ever matched.
+    pub(crate) path: PathBuf,
+    /// The digests it may have. Empty: any, and the start is marked
+    /// unverified.
+    pub(crate) digests: Vec<Digest>,
+}
+
+impl From<ProgramRef> for Allowed {
+    fn from(program: ProgramRef) -> Self {
+        Self {
+            path: program.path,
+            digests: program.digest.into_iter().collect(),
+        }
+    }
+}
+
+/// What one provider may start.
+#[derive(Clone)]
+struct Scope {
+    provider: ProviderName,
+    declared: Arc<Vec<Allowed>>,
+    plan: Arc<Vec<Allowed>>,
+}
+
+/// Why the operating-system half of a start did not start the program.
+pub(crate) enum StartError {
+    /// The file at the program's path is no longer the file that was
+    /// digested.
+    Changed,
+    /// The operating system refused.
+    Failed(std::io::Error),
+}
+
+impl From<std::io::Error> for StartError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+/// A program opened and identified: the handle it will be started from, its
+/// digest, and whether that digest is a declared one.
+struct Identified {
+    program: os::Program,
+    digest: Digest,
+    verified: bool,
+}
+
+fn not_the_declared_program(path: &Path) -> Failure {
+    codes::policy(
+        codes::EFFECT_NOT_DECLARED,
+        format!(
+            "The program `{}` is not the one that was declared: its digest is different.",
+            codes::shown(&path.display().to_string())
+        ),
+        "Review the program that is installed now, and declare its digest.",
+    )
+}
+
+/// Identifies a program immediately before it is started: resolves its
+/// path once, checks it against what the scope declares, opens it once, and
+/// digests it through that handle. Every digest declared for it, by the
+/// caller, a manifest's `processes`, a requirement's `known_digests`, or a
+/// published plan, must be the digest found. Blocking.
+fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, Failure> {
+    let not_found = || {
+        codes::input(
+            codes::PROGRAM_NOT_FOUND,
+            format!(
+                "The program `{}` is not there, or cannot be read.",
+                codes::shown(&program.path.display().to_string())
+            ),
+            "Install the program at the path that is declared, or correct the declaration.",
+        )
+    };
+    // Every link in the path is resolved here, once.
+    let real = std::fs::canonicalize(&program.path).ok();
+    let mut known: Vec<&[Digest]> = Vec::new();
+    if let Some(scope) = scope {
+        let mut declared = false;
+        for allowed in scope.declared.iter().chain(scope.plan.iter()) {
+            // A path that is not absolute here would be resolved against
+            // the engine's own working folder, and is never matched.
+            let same = real.is_some()
+                && allowed.path.is_absolute()
+                && std::fs::canonicalize(&allowed.path).ok() == real;
+            if same {
+                declared = true;
+                if !allowed.digests.is_empty() {
+                    known.push(&allowed.digests);
+                }
+            }
+        }
+        if !declared {
+            return Err(codes::policy(
+                codes::EFFECT_NOT_DECLARED,
+                format!(
+                    "The provider `{}` asked to start a program that neither its manifest nor the published plan declares.",
+                    scope.provider
+                ),
+                "Declare the program under `effects.processes` in the provider's manifest, or name it in the target's files and publish.",
+            ));
+        }
+    }
+    let real = real.ok_or_else(not_found)?;
+    let mut opened = os::Program::open(&program.path, &real).map_err(|_| not_found())?;
+    let digest = opened.digest().map_err(|_| not_found())?;
+    let as_asked = program.digest.is_none_or(|asked| asked == digest);
+    if !as_asked || !known.iter().all(|digests| digests.contains(&digest)) {
+        return Err(not_the_declared_program(&program.path));
+    }
+    Ok(Identified {
+        program: opened,
+        digest,
+        verified: program.digest.is_some() || !known.is_empty(),
+    })
+}
+
+/// The command for a program, with nothing of the engine's environment but
+/// what is listed.
+fn command_for(start: &Path, spec: &LaunchSpec, link: &LinkKind, mark: &str) -> Command {
+    let mut command = Command::new(start);
+    command.args(&spec.args);
+    // Nothing is inherited from the engine's environment unless listed.
+    command.env_clear();
+    for name in &spec.env.pass {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    for (name, value) in &spec.env.set {
+        command.env(name, value);
+    }
+    command.env(OWNER_MARK_VARIABLE, mark);
+    match &spec.cwd {
+        Some(folder) => command.current_dir(folder.as_path()),
+        None => command.current_dir(std::env::temp_dir()),
+    };
+    match link {
+        LinkKind::OneShot(one_shot) => {
+            command
+                .stdin(if one_shot.stdin.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+        }
+        LinkKind::Foreign(_) => {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+    }
+    command
+}
+
+/// What a start gave: the group, the pipes of a foreign link, the digest of
+/// the program that runs, and whether that digest was declared.
+type Started = (os::Group, Option<os::Pipes>, Digest, bool);
+
+/// Identifies the program and starts it, in one piece of blocking work:
+/// nothing waits between the check and the start but the lock every start
+/// holds.
+fn identify_and_start(
+    spec: &LaunchSpec,
+    scope: Option<&Scope>,
+    link: &LinkKind,
+    mark: &str,
+) -> Result<Started, Failure> {
+    let Identified {
+        program,
+        digest,
+        verified,
+    } = identify(&spec.program, scope)?;
+    let foreign = match link {
+        LinkKind::Foreign(pipe) => Some(pipe),
+        LinkKind::OneShot(_) => None,
+    };
+    let started = os::spawn(
+        &program,
+        |start| command_for(start, spec, link, mark),
+        foreign,
+    );
+    // The handle the program was digested through is held to here.
+    drop(program);
+    match started {
+        Ok((group, pipes)) => Ok((group, pipes, digest, verified)),
+        Err(StartError::Changed) => Err(codes::policy(
+            codes::EFFECT_NOT_DECLARED,
+            format!(
+                "The program `{}` was replaced between its check and its start, and was not started.",
+                codes::shown(&spec.program.path.display().to_string())
+            ),
+            "Review the program that is installed now, then try again.",
+        )),
+        Err(StartError::Failed(error)) => Err(codes::busy(
+            codes::START_FAILED,
+            format!(
+                "The operating system did not start `{}`: {}.",
+                codes::shown(&spec.program.path.display().to_string()),
+                error.kind()
+            ),
+            "Check that the program can be run on this machine.",
+        )),
+    }
 }
 
 /// A fresh owner mark: 128 random bits, as text.
@@ -538,7 +766,7 @@ impl Supervisor {
     async fn launch(
         &self,
         spec: &LaunchSpec,
-        for_whom: Option<&ProviderName>,
+        scope: Option<&Scope>,
         link: &LinkKind,
     ) -> Result<(u64, Arc<os::Group>, Option<os::Pipes>, Digest, bool), Failure> {
         self.admit(spec)?;
@@ -549,93 +777,30 @@ impl Supervisor {
                 "Name the program's absolute path where it is declared.",
             ));
         }
-        // Identify before starting.
-        let path = spec.program.path.clone();
-        let digest = tokio::task::spawn_blocking(move || digest_of(&path))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .ok_or_else(|| {
-                codes::input(
-                    codes::PROGRAM_NOT_FOUND,
-                    format!(
-                        "The program `{}` is not there, or cannot be read.",
-                        codes::shown(&spec.program.path.display().to_string())
-                    ),
-                    "Install the program at the path that is declared, or correct the declaration.",
-                )
-            })?;
-        let verified = match spec.program.digest {
-            None => false,
-            Some(declared) if declared == digest => true,
-            Some(_) => {
-                return Err(codes::policy(
-                    codes::EFFECT_NOT_DECLARED,
-                    format!(
-                        "The program `{}` is not the one that was declared: its digest is different.",
-                        codes::shown(&spec.program.path.display().to_string())
-                    ),
-                    "Review the program that is installed now, and declare its digest.",
-                ));
-            }
+        let mark = owner_mark()?;
+        let for_whom = scope.map(|scope| scope.provider.clone());
+        // Resolving, reading, and starting all block, so they run off the
+        // async threads. If this future is dropped meanwhile, what was
+        // started is dropped with the result, which ends its group.
+        let work = {
+            let (spec, scope, link) = (spec.clone(), scope.cloned(), link.clone());
+            tokio::task::spawn_blocking(move || {
+                identify_and_start(&spec, scope.as_ref(), &link, &mark)
+            })
         };
-
-        let mut command = Command::new(&spec.program.path);
-        command.args(&spec.args);
-        // Nothing is inherited from the engine's environment unless listed.
-        command.env_clear();
-        for name in &spec.env.pass {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        for (name, value) in &spec.env.set {
-            command.env(name, value);
-        }
-        command.env(OWNER_MARK_VARIABLE, owner_mark()?);
-        match &spec.cwd {
-            Some(folder) => command.current_dir(folder.as_path()),
-            None => command.current_dir(std::env::temp_dir()),
-        };
-        match link {
-            LinkKind::OneShot(one_shot) => {
-                command
-                    .stdin(if one_shot.stdin.is_some() {
-                        Stdio::piped()
-                    } else {
-                        Stdio::null()
-                    })
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-            }
-            LinkKind::Foreign(_) => {
-                command
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null());
-            }
-        }
-        let foreign = match link {
-            LinkKind::Foreign(pipe) => Some(pipe),
-            LinkKind::OneShot(_) => None,
-        };
-        let (group, pipes) = os::spawn(command, foreign).map_err(|error| {
+        let (group, pipes, digest, verified) = work.await.map_err(|_| {
             codes::busy(
                 codes::START_FAILED,
-                format!(
-                    "The operating system did not start `{}`: {}.",
-                    codes::shown(&spec.program.path.display().to_string()),
-                    error.kind()
-                ),
-                "Check that the program can be run on this machine.",
+                "The start of a program was interrupted.",
+                "Try again; if it persists, restart the engine.",
             )
-        })?;
+        })??;
         let group = Arc::new(group);
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let entry = Entry {
             kind: spec.kind.clone(),
             place: spec.place.clone(),
-            for_whom: for_whom.cloned(),
+            for_whom,
             link: match link {
                 LinkKind::OneShot(_) => "one_shot",
                 LinkKind::Foreign(_) => "foreign",
@@ -671,8 +836,9 @@ impl Supervisor {
     /// # Errors
     ///
     /// With [`Ran::NotStarted`]: `input`/`program_not_found`,
-    /// `policy`/`effect_not_declared` for a digest other than the one
-    /// declared, `busy`/`subsystem_limit`, `busy`/`cleanup_incomplete`,
+    /// `policy`/`effect_not_declared` for a digest other than one that was
+    /// declared, or a program replaced between its check and its start,
+    /// `busy`/`subsystem_limit`, `busy`/`cleanup_incomplete`,
     /// `busy`/`shutting_down`, `busy`/`start_failed`. With [`Ran::Unknown`]:
     /// `transient`/`timeout` when the time limit passed; the caller of a
     /// committing run treats that as a write whose fate is unknown.
@@ -680,16 +846,16 @@ impl Supervisor {
         self.run_for(spec, link, None).await
     }
 
-    pub(crate) async fn run_for(
+    async fn run_for(
         &self,
         spec: LaunchSpec,
         link: OneShot,
-        for_whom: Option<&ProviderName>,
+        scope: Option<&Scope>,
     ) -> Result<Finished, ConnFailure> {
         let kind = spec.kind.clone();
         let link_kind = LinkKind::OneShot(link);
         let (id, group, _, program_digest, verified) = self
-            .launch(&spec, for_whom, &link_kind)
+            .launch(&spec, scope, &link_kind)
             .await
             .map_err(not_started)?;
         let LinkKind::OneShot(link) = link_kind else {
@@ -830,14 +996,14 @@ impl Supervisor {
         self.start_foreign_for(spec, pipe, None).await
     }
 
-    pub(crate) async fn start_foreign_for(
+    async fn start_foreign_for(
         &self,
         spec: LaunchSpec,
         pipe: ForeignPipe,
-        for_whom: Option<&ProviderName>,
+        scope: Option<&Scope>,
     ) -> Result<ForeignLink, Failure> {
         let (id, group, pipes, program_digest, verified) = self
-            .launch(&spec, for_whom, &LinkKind::Foreign(pipe))
+            .launch(&spec, scope, &LinkKind::Foreign(pipe))
             .await?;
         let Some((to_child, from_child)) = pipes else {
             self.forget(id);
@@ -979,21 +1145,21 @@ impl Supervisor {
 /// What a pack gets: a supervisor that starts only the programs the pack's
 /// manifest declares, and, where the manifest says `plan_programs`, those a
 /// published plan names. Anything else is `policy`/`effect_not_declared`.
+/// A digest declared for a program, in the manifest's `processes`, in a
+/// requirement's `known_digests`, or in the plan, is checked at every start.
 #[derive(Clone)]
 pub struct ScopedSupervisor {
     supervisor: Supervisor,
-    provider: ProviderName,
-    declared: Arc<Vec<ProgramRef>>,
+    scope: Scope,
     plan_allowed: bool,
-    plan: Arc<Vec<ProgramRef>>,
 }
 
 impl fmt::Debug for ScopedSupervisor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ScopedSupervisor")
-            .field("provider", &self.provider)
-            .field("declared", &self.declared.len())
-            .field("plan", &self.plan.len())
+            .field("provider", &self.scope.provider)
+            .field("declared", &self.scope.declared.len())
+            .field("plan", &self.scope.plan.len())
             .finish()
     }
 }
@@ -1002,15 +1168,17 @@ impl ScopedSupervisor {
     pub(crate) fn new(
         supervisor: Supervisor,
         provider: ProviderName,
-        declared: Vec<ProgramRef>,
+        declared: Vec<Allowed>,
         plan_allowed: bool,
     ) -> Self {
         Self {
             supervisor,
-            provider,
-            declared: Arc::new(declared),
+            scope: Scope {
+                provider,
+                declared: Arc::new(declared),
+                plan: Arc::new(Vec::new()),
+            },
             plan_allowed,
-            plan: Arc::new(Vec::new()),
         }
     }
 
@@ -1018,39 +1186,12 @@ impl ScopedSupervisor {
     /// manifest allows plan programs at all.
     pub(crate) fn with_plan_programs(&self, programs: Vec<ProgramRef>) -> Self {
         let mut scoped = self.clone();
-        scoped.plan = Arc::new(if self.plan_allowed {
-            programs
+        scoped.scope.plan = Arc::new(if self.plan_allowed {
+            programs.into_iter().map(Allowed::from).collect()
         } else {
             Vec::new()
         });
         scoped
-    }
-
-    /// Checks the program against what is declared and gives the spec to
-    /// start, with the declared digest filled in.
-    fn allowed(&self, mut spec: LaunchSpec) -> Result<LaunchSpec, Failure> {
-        let asked = std::fs::canonicalize(&spec.program.path).ok();
-        let found = self
-            .declared
-            .iter()
-            .chain(self.plan.iter())
-            .find(|declared| {
-                asked.is_some() && std::fs::canonicalize(&declared.path).ok() == asked
-            });
-        let Some(found) = found else {
-            return Err(codes::policy(
-                codes::EFFECT_NOT_DECLARED,
-                format!(
-                    "The provider `{}` asked to start a program that neither its manifest nor the published plan declares.",
-                    self.provider
-                ),
-                "Declare the program under `effects.processes` in the provider's manifest, or name it in the target's files and publish.",
-            ));
-        };
-        if found.digest.is_some() {
-            spec.program.digest = found.digest;
-        }
-        Ok(spec)
     }
 
     /// As [`Supervisor::run`], for a declared program.
@@ -1058,12 +1199,10 @@ impl ScopedSupervisor {
     /// # Errors
     ///
     /// `policy`/`effect_not_declared` for a program that is not declared,
-    /// or whose digest is not the declared one; then as
-    /// [`Supervisor::run`].
+    /// or whose digest is not a declared one; then as [`Supervisor::run`].
     pub async fn run(&self, spec: LaunchSpec, link: OneShot) -> Result<Finished, ConnFailure> {
-        let spec = self.allowed(spec).map_err(not_started)?;
         self.supervisor
-            .run_for(spec, link, Some(&self.provider))
+            .run_for(spec, link, Some(&self.scope))
             .await
     }
 
@@ -1078,15 +1217,16 @@ impl ScopedSupervisor {
         spec: LaunchSpec,
         pipe: ForeignPipe,
     ) -> Result<ForeignLink, Failure> {
-        let spec = self.allowed(spec)?;
         self.supervisor
-            .start_foreign_for(spec, pipe, Some(&self.provider))
+            .start_foreign_for(spec, pipe, Some(&self.scope))
             .await
     }
 
     /// Stops a subsystem this provider started. Another provider's is left
     /// alone.
     pub async fn stop(&self, id: SubsystemId) -> Cleanup {
-        self.supervisor.stop_for(id, Some(&self.provider)).await
+        self.supervisor
+            .stop_for(id, Some(&self.scope.provider))
+            .await
     }
 }

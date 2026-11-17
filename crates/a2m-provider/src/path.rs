@@ -8,6 +8,7 @@
 //! machine cannot reach outside its root on another.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,8 @@ use a2m_core::Failure;
 use crate::codes::{self, shown};
 use crate::name::RootName;
 
+mod place;
+
 /// What a path is wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Access {
@@ -24,6 +27,24 @@ pub enum Access {
     Read,
     /// Reading and writing.
     Write,
+}
+
+/// What stands at a path's final name, as it is now. A link there is
+/// reported and never followed, so a caller can tell a file from a link to
+/// one, which [`CheckedPath::as_path`] and the reading methods cannot: they
+/// hold the path with every link already resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EntryKind {
+    /// Nothing is there, or a folder on the way to it is not there.
+    Absent,
+    /// A regular file.
+    File,
+    /// A folder.
+    Folder,
+    /// A link, whatever it leads to and whether or not it leads anywhere.
+    Link,
+    /// Something else: a device, a pipe, a socket.
+    Other,
 }
 
 /// The longest relative path, in bytes.
@@ -260,6 +281,7 @@ impl Roots {
             base: found.path.clone(),
             relative: String::new(),
             full: found.path.clone(),
+            named: found.path.clone(),
             access,
         })
     }
@@ -296,18 +318,21 @@ fn resolve(
 ) -> Result<CheckedPath, Failure> {
     let parts = parts(relative)?;
     let mut full = base.to_path_buf();
+    // The same path with the link at its final name, if one stands there,
+    // not followed: the folders above it resolved, and the name as written.
+    let mut named = base.to_path_buf();
     let mut missing = false;
     for part in &parts {
+        named = full.join(part);
         if missing {
             full.push(part);
             continue;
         }
-        let next = full.join(part);
-        match fs::symlink_metadata(&next) {
+        match fs::symlink_metadata(&named) {
             Ok(_) => {
                 // It exists: resolve it, link or not, and stay inside.
-                let real =
-                    canonical(&next).map_err(|_| refuse(relative, "a link in it leads nowhere"))?;
+                let real = canonical(&named)
+                    .map_err(|_| refuse(relative, "a link in it leads nowhere"))?;
                 if !real.starts_with(base) {
                     return Err(refuse(relative, "a link in it leads outside the root"));
                 }
@@ -324,6 +349,7 @@ fn resolve(
         base: base.to_path_buf(),
         relative: parts.join("/"),
         full,
+        named,
         access,
     })
 }
@@ -331,15 +357,35 @@ fn resolve(
 /// A path inside a named root, proven to be inside it when it was made.
 ///
 /// There is no public constructor: only [`Roots::check`], [`Roots::folder`],
-/// and [`CheckedPath::join`] make one. Every method that opens the file
-/// looks once more that the path still resolves inside the root, so a link
-/// planted after the check is refused too.
+/// and [`CheckedPath::join`] make one.
+///
+/// What it holds about links. When it is made, every link in the path that
+/// exists is followed, a link at the final name too, as long as each leads
+/// to a place inside the root; one that leads outside, or nowhere, is
+/// refused. [`CheckedPath::as_path`] and the methods that read use that
+/// resolved path. A caller that must not act through a link asks
+/// [`CheckedPath::entry_kind`], which reports what stands at the final name
+/// and follows nothing.
+///
+/// What it does at the moment of use. [`CheckedPath::write`] and
+/// [`CheckedPath::remove_file`] act on the final name in its folder and
+/// never through a link: where a link stands at the name, they refuse. On
+/// Linux and macOS they, [`CheckedPath::open`], and
+/// [`CheckedPath::entry_kind`] reach the folder by opening each folder from
+/// the root down without following a link, so a link put on the way after
+/// the check is refused and never followed, whenever it is put there. The
+/// other methods, and every method on Windows, look once more that the path
+/// still resolves inside the root and then use it by name; a link swapped in
+/// between those two moments is followed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CheckedPath {
     root: RootName,
     base: PathBuf,
     relative: String,
+    /// Every link resolved, the one at the final name too.
     full: PathBuf,
+    /// The folders above the final name resolved, and that name as written.
+    named: PathBuf,
     access: Access,
 }
 
@@ -417,11 +463,7 @@ impl CheckedPath {
         if real.starts_with(&self.base) && (deepest != self.full || real == self.full) {
             Ok(())
         } else {
-            Err(codes::input(
-                codes::PATH_NOT_ALLOWED,
-                format!("The path `{self}` no longer resolves inside its root."),
-                "Remove the link that was placed in the folder, then try again.",
-            ))
+            Err(self.outside())
         }
     }
 
@@ -461,6 +503,68 @@ impl CheckedPath {
             .map_err(|_| self.unavailable("cannot be read"))
     }
 
+    /// The path is no longer inside its root.
+    fn outside(&self) -> Failure {
+        codes::input(
+            codes::PATH_NOT_ALLOWED,
+            format!("The path `{self}` no longer resolves inside its root."),
+            "Remove the link that was placed in the folder, then try again.",
+        )
+    }
+
+    /// A link stands where a file is to be written or removed.
+    fn through_a_link(&self) -> Failure {
+        codes::input(
+            codes::PATH_NOT_ALLOWED,
+            format!(
+                "The path `{self}` is a link, and a file is never written or removed through a link."
+            ),
+            "Name the file the link leads to, or remove the link, then try again.",
+        )
+    }
+
+    /// The folder that holds the final name, as written, and that name.
+    fn place(&self) -> Result<(&Path, &OsStr), Failure> {
+        match (self.named.parent(), self.named.file_name()) {
+            (Some(folder), Some(name)) if !self.relative.is_empty() => Ok((folder, name)),
+            _ => Err(self.unavailable("is a root and not a file")),
+        }
+    }
+
+    /// Reaches `folder` now, from the root down. `None` when it is not there.
+    fn folder_now(&self, folder: &Path) -> Result<Option<place::Folder>, Failure> {
+        match place::Folder::reach(&self.base, folder) {
+            Ok(folder) => Ok(Some(folder)),
+            Err(place::Unreached::Absent) => Ok(None),
+            Err(place::Unreached::Outside) => Err(self.outside()),
+            Err(place::Unreached::Other) => Err(self.unavailable("cannot be reached")),
+        }
+    }
+
+    /// What stands at the final name now. A link there is reported as a
+    /// link and is not followed; a link on the way to it that was not there
+    /// when the path was checked is refused on Linux and macOS, and on
+    /// Windows when it leads outside the root.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed` when the folder that holds the name is no
+    /// longer inside the root; `input`/`file_unavailable` when it cannot be
+    /// looked at.
+    pub fn entry_kind(&self) -> Result<EntryKind, Failure> {
+        if self.relative.is_empty() {
+            self.still_inside()?;
+            return Ok(EntryKind::Folder);
+        }
+        let (folder, name) = self.place()?;
+        match self.folder_now(folder)? {
+            None => Ok(EntryKind::Absent),
+            Some(folder) => folder
+                .kind(name)
+                .map_err(|_| self.unavailable("cannot be looked at")),
+        }
+    }
+
     /// Opens the file for reading.
     ///
     /// # Errors
@@ -468,6 +572,22 @@ impl CheckedPath {
     /// `input`/`file_unavailable`; `input`/`path_not_allowed`.
     pub fn open(&self) -> Result<fs::File, Failure> {
         self.still_inside()?;
+        #[cfg(unix)]
+        if let (Some(folder), Some(name)) = (self.full.parent(), self.full.file_name())
+            && !self.relative.is_empty()
+        {
+            // The resolved path holds no link, so none is followed on the
+            // way down or at the name: one put there since is refused.
+            let folder = self
+                .folder_now(folder)?
+                .ok_or_else(|| self.unavailable("cannot be opened"))?;
+            return match folder.kind(name) {
+                Ok(EntryKind::Link) => Err(self.outside()),
+                _ => folder
+                    .open(name)
+                    .map_err(|_| self.unavailable("cannot be opened")),
+            };
+        }
         fs::File::open(&self.full).map_err(|_| self.unavailable("cannot be opened"))
     }
 
@@ -491,28 +611,57 @@ impl CheckedPath {
     }
 
     /// Writes the whole file, replacing what was there: the bytes go to a
-    /// new file beside it, which then takes its name.
+    /// new file in the same folder, which then takes the name. The new file
+    /// has a name drawn from the operating system's random source, is made
+    /// only if nothing stands at that name, and is never opened through a
+    /// link; the folder is reached, and proven inside the root, at that
+    /// moment. Taking the name replaces only what stands at the name.
     ///
     /// # Errors
     ///
     /// `policy`/`effect_not_declared` for a path checked for reading;
-    /// `input`/`file_unavailable`; `input`/`path_not_allowed`.
+    /// `input`/`file_unavailable`; `input`/`path_not_allowed`, also when a
+    /// link stands at the name.
     pub fn write(&self, bytes: &[u8]) -> Result<(), Failure> {
         self.writable()?;
-        self.still_inside()?;
-        let name = self
-            .full
-            .file_name()
-            .ok_or_else(|| self.unavailable("is a root and not a file"))?;
-        let mut beside = name.to_os_string();
-        beside.push(".a2m-new");
-        let temporary = self.full.with_file_name(beside);
-        fs::write(&temporary, bytes).map_err(|_| self.unavailable("cannot be written"))?;
-        fs::rename(&temporary, &self.full).map_err(|_| {
-            // Nothing is left behind when the new file cannot take the name.
-            let _ = fs::remove_file(&temporary);
-            self.unavailable("cannot be replaced")
-        })
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            self.unavailable(
+                "cannot be written: the operating system gave no random name for its new file",
+            )
+        })?;
+        let mut temporary = String::from(".a2m-new-");
+        for byte in random {
+            temporary.push_str(&format!("{byte:02x}"));
+        }
+        self.write_through(bytes, OsStr::new(&temporary))
+    }
+
+    /// Writes the file by way of a new file of the name `temporary` in the
+    /// same folder.
+    fn write_through(&self, bytes: &[u8], temporary: &OsStr) -> Result<(), Failure> {
+        use std::io::Write as _;
+        let (folder, name) = self.place()?;
+        let folder = self
+            .folder_now(folder)?
+            .ok_or_else(|| self.unavailable("cannot be written: its folder is not there"))?;
+        if matches!(folder.kind(name), Ok(EntryKind::Link)) {
+            return Err(self.through_a_link());
+        }
+        // Made new, or not at all: what already stands at the name, a link
+        // or a file, is left as it is and nothing is written.
+        let mut file = folder
+            .create_new(temporary)
+            .map_err(|_| self.unavailable("cannot be written"))?;
+        let written = file.write_all(bytes).and_then(|()| file.flush());
+        drop(file);
+        written
+            .and_then(|()| folder.rename(temporary, name))
+            .map_err(|_| {
+                // Nothing is left behind when the new file cannot take the name.
+                let _ = folder.remove(temporary);
+                self.unavailable("cannot be replaced")
+            })
     }
 
     /// Makes the folder and every folder above it inside the root.
@@ -527,15 +676,24 @@ impl CheckedPath {
         self.still_inside()
     }
 
-    /// Removes the file.
+    /// Removes the file. A link at the name is not removed and not
+    /// followed: it is refused.
     ///
     /// # Errors
     ///
     /// As [`CheckedPath::write`].
     pub fn remove_file(&self) -> Result<(), Failure> {
         self.writable()?;
-        self.still_inside()?;
-        fs::remove_file(&self.full).map_err(|_| self.unavailable("cannot be removed"))
+        let (folder, name) = self.place()?;
+        let folder = self
+            .folder_now(folder)?
+            .ok_or_else(|| self.unavailable("cannot be removed"))?;
+        if matches!(folder.kind(name), Ok(EntryKind::Link)) {
+            return Err(self.through_a_link());
+        }
+        folder
+            .remove(name)
+            .map_err(|_| self.unavailable("cannot be removed"))
     }
 
     /// The entries of the folder, in order of name, each checked. An entry
@@ -597,5 +755,90 @@ impl CheckedPaths {
     /// Every name and path, in order of name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &CheckedPath)> {
         self.paths.iter().map(|(name, path)| (name.as_str(), path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a helper that cannot do its work stops the test"
+    )]
+
+    use std::ffi::OsStr;
+
+    use super::{Access, RootName, Roots};
+    use crate::codes;
+
+    /// Makes a link to a file. `None` where this machine does not let the
+    /// test make one, as Windows does without the privilege.
+    fn link_file(target: &std::path::Path, link: &std::path::Path) -> Option<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link).ok();
+        #[cfg(windows)]
+        return std::os::windows::fs::symlink_file(target, link).ok();
+    }
+
+    /// The name of a write's temporary file cannot be guessed. This test
+    /// stands for the one who guessed it all the same: the name is chosen
+    /// here, and a link is planted at it. The file is made new or not at
+    /// all, so the write is refused, the link is not followed, and it is
+    /// neither moved nor removed.
+    #[test]
+    fn a_link_planted_at_the_very_name_of_the_temporary_file_is_not_followed() {
+        let folder =
+            std::env::temp_dir().join(format!("a2m-provider-guessed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let project = folder.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let outside = folder.join("outside.txt");
+        std::fs::write(&outside, b"secret").unwrap();
+        let guessed = OsStr::new(".a2m-new-guessed");
+        let mut roots = Roots::none();
+        let name = RootName::new("project").unwrap();
+        roots.add(name.clone(), &project, Access::Write).unwrap();
+        let report = roots.check(&name, "report.csv", Access::Write).unwrap();
+
+        // A file at the name is left as it is.
+        std::fs::write(project.join(guessed), b"someone else's").unwrap();
+        assert_eq!(
+            report.write_through(b"new", guessed).unwrap_err().code(),
+            &codes::FILE_UNAVAILABLE
+        );
+        assert_eq!(
+            std::fs::read(project.join(guessed)).unwrap(),
+            b"someone else's"
+        );
+        assert!(!project.join("report.csv").exists());
+        std::fs::remove_file(project.join(guessed)).unwrap();
+
+        // A link at the name, to a file outside the root and to nothing.
+        let nowhere = folder.join("not-there.txt");
+        for target in [&outside, &nowhere] {
+            if link_file(target, &project.join(guessed)).is_none() {
+                // Without the right to make a link there is nothing to plant.
+                break;
+            }
+            assert_eq!(
+                report.write_through(b"new", guessed).unwrap_err().code(),
+                &codes::FILE_UNAVAILABLE
+            );
+            assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+            assert!(!nowhere.exists(), "the write made the file a link names");
+            assert!(!project.join("report.csv").exists());
+            assert!(
+                std::fs::symlink_metadata(project.join(guessed))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            std::fs::remove_file(project.join(guessed)).unwrap();
+        }
+
+        // With nothing in the way the same call writes the file.
+        report.write_through(b"new", guessed).unwrap();
+        assert_eq!(std::fs::read(project.join("report.csv")).unwrap(), b"new");
+        assert!(!project.join(guessed).exists());
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::control::{
-    EntryKind, FileTruth, Ledger, Observation, Seen, WriteCount, identity_and_links, sha256_hex,
+    EntryKind, FileTruth, Ledger, Observation, Seen, WriteCount, identity_and_links,
+    owner_and_mode, sha256_hex,
 };
 use crate::faults::{Change, Fault, SaveStyle};
 use crate::package::{self, PackagePart};
@@ -551,12 +552,15 @@ impl FileStand {
             read_only: false,
             identity: None,
             links: None,
+            owner: None,
+            mode: None,
         };
         let Some(metadata) = metadata_of(&path)? else {
             return Ok(absent);
         };
         let kind = kind_of(&metadata);
         let (identity, links) = identity_and_links(&metadata);
+        let (owner, mode) = owner_and_mode(&metadata);
         let sha256 = match kind {
             EntryKind::File => self.read(state, name)?.map(|bytes| sha256_hex(&bytes)),
             _ => None,
@@ -572,6 +576,8 @@ impl FileStand {
             read_only: metadata.permissions().readonly(),
             identity,
             links,
+            owner,
+            mode,
             ..absent
         })
     }
@@ -703,6 +709,38 @@ impl FileStand {
                     fs::hard_link(&original, &path),
                 )?;
                 state.planted.insert(at.clone());
+                Ok(())
+            }
+            Fault::LinkInside { at, to } => {
+                let path = self.path(at)?;
+                make_link(&self.path(to)?, &path, false)?;
+                state.planted.insert(at.clone());
+                Ok(())
+            }
+            Fault::MovedBehindLink { name, to } => {
+                let path = self.path(name)?;
+                let moved = self.path(to)?;
+                let is_folder =
+                    metadata_of(&path)?.is_some_and(|found| kind_of(&found) == EntryKind::Folder);
+                io_at("move an entry", &path, fs::rename(&path, &moved))?;
+                if let Err(refused) = make_link(&moved, &path, is_folder) {
+                    // No link can be made here: the entry goes back to its name.
+                    io_at("move an entry back", &moved, fs::rename(&moved, &path))?;
+                    return Err(refused);
+                }
+                state.planted.insert(name.clone());
+                state.planted.insert(to.clone());
+                Ok(())
+            }
+            Fault::OwnedByAnother { file } => give_away(&self.path(file)?),
+            Fault::FileMode {
+                file,
+                mode,
+                denies_this_user,
+            } => {
+                let path = self.path(file)?;
+                let saved = set_mode(&path, *mode, *denies_this_user)?;
+                state.restore.push((path, saved));
                 Ok(())
             }
         }
@@ -978,6 +1016,62 @@ fn deny_writes_in_folder(path: &Path) -> Result<Permissions, StandError> {
 fn deny_writes_in_folder(_path: &Path) -> Result<Permissions, StandError> {
     Err(StandError::Unsupported(
         "only on Unix does a mark on a folder stop files being made in it",
+    ))
+}
+
+/// Gives a file to another owner and another group. Only the superuser may.
+#[cfg(unix)]
+fn give_away(path: &Path) -> Result<(), StandError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = io_at("look at an entry", path, fs::metadata(path))?;
+    // A number no test account has: the one many systems keep for nobody.
+    let other = |number: u32| if number == 65_534 { 65_533 } else { 65_534 };
+    let (owner, group) = (other(metadata.uid()), other(metadata.gid()));
+    match std::os::unix::fs::chown(path, Some(owner), Some(group)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Err(StandError::Unsupported(
+            "only the superuser may give a file to another owner",
+        )),
+        Err(e) => io_at("give a file away", path, Err(e)),
+    }
+}
+
+#[cfg(not(unix))]
+fn give_away(_path: &Path) -> Result<(), StandError> {
+    Err(StandError::Unsupported(
+        "only on Unix has a file an owner and a group the stand can change",
+    ))
+}
+
+/// Gives a file exactly these permission bits and returns what its
+/// permissions were. Where the bits are meant to stop this user writing the
+/// file, the stand tries to, and calls the fault unsupported if it can.
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32, denies_this_user: bool) -> Result<Permissions, StandError> {
+    use std::os::unix::fs::PermissionsExt;
+    let saved = io_at("look at an entry", path, fs::metadata(path))?.permissions();
+    io_at(
+        "set an entry's permissions",
+        path,
+        fs::set_permissions(path, Permissions::from_mode(mode)),
+    )?;
+    if denies_this_user && fs::OpenOptions::new().write(true).open(path).is_ok() {
+        io_at(
+            "end a fault",
+            path,
+            fs::set_permissions(path, saved.clone()),
+        )?;
+        return Err(StandError::Unsupported(
+            "this user may write a file whose permissions give it no right to",
+        ));
+    }
+    Ok(saved)
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32, _denies_this_user: bool) -> Result<Permissions, StandError> {
+    Err(StandError::Unsupported(
+        "only on Unix has a file permission bits the stand can set",
     ))
 }
 

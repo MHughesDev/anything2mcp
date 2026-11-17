@@ -62,6 +62,10 @@ pub struct FileTruth {
     pub identity: Option<FileIdentity>,
     /// How many names the file has. `None` everywhere but Unix.
     pub links: Option<u64>,
+    /// The numbers of the entry's owner and group. `None` everywhere but Unix.
+    pub owner: Option<(u32, u32)>,
+    /// The entry's permission bits, such as `0o644`. `None` everywhere but Unix.
+    pub mode: Option<u32>,
 }
 
 impl FileTruth {
@@ -84,6 +88,20 @@ pub(crate) fn identity_and_links(metadata: &Metadata) -> (Option<FileIdentity>, 
 
 #[cfg(not(unix))]
 pub(crate) fn identity_and_links(_metadata: &Metadata) -> (Option<FileIdentity>, Option<u64>) {
+    (None, None)
+}
+
+#[cfg(unix)]
+pub(crate) fn owner_and_mode(metadata: &Metadata) -> (Option<(u32, u32)>, Option<u32>) {
+    use std::os::unix::fs::MetadataExt;
+    (
+        Some((metadata.uid(), metadata.gid())),
+        Some(metadata.mode() & 0o7777),
+    )
+}
+
+#[cfg(not(unix))]
+pub(crate) fn owner_and_mode(_metadata: &Metadata) -> (Option<(u32, u32)>, Option<u32>) {
     (None, None)
 }
 

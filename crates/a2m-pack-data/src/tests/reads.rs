@@ -7,7 +7,7 @@ use a2m_core::{FailureClass, Secret, Value};
 use a2m_provider::{Posture, Sent, StepOutcome};
 use a2m_vault::Redactor;
 use example_db::faults::Fault;
-use example_db::schema::Table;
+use example_db::schema::{READ_THAT_WRITES, Table};
 
 use super::{Scene, failed, inputs, values};
 use crate::names::codes;
@@ -177,23 +177,47 @@ async fn five_runs_of_one_read_do_the_same_thing() {
 }
 
 #[tokio::test]
-async fn a_statement_declared_a_read_that_writes_is_refused_by_the_store() {
-    let scene = Scene::new();
+async fn a_statement_declared_a_read_that_writes_is_refused_and_nothing_is_written() {
+    // The compiler refuses it: stand case 2, a statement that returns rows
+    // as a read does and changes one.
+    let problems = super::compile::errors_after(
+        &["statements", "orders.yaml"],
+        "      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version\n      FROM order_lines WHERE order_id = ?\n    params: [{name: order_id, type: identifier}]\n    returns: one_or_none\n",
+        &format!(
+            "      {READ_THAT_WRITES}\n    params: [{{name: order_id, type: identifier}}, {{name: item_code, type: identifier}}]\n    returns: one_or_none\n"
+        ),
+    );
+    let problem = problems
+        .find("data.statement_invalid")
+        .expect("a read that writes");
+    assert_eq!(problem.at.file.as_str(), "statements/orders.yaml");
+    assert!(problem.message.contains("changes data"), "{problem}");
+
+    // The driver refuses it again, in a plan the compiler did not make,
+    // before anything is sent.
+    let mut scene = Scene::new();
+    scene.alter("line_of_order", |statement| {
+        statement.text = READ_THAT_WRITES.to_owned();
+        statement.params.push(crate::model::Param {
+            name: "item_code".to_owned(),
+            field_type: None,
+            key: true,
+        });
+    });
     let before = scene.db.data_version().unwrap();
     let mut run = scene.prepare(Posture::Live).await;
-    let touched = run
-        .steps(
-            &scene.binding("example_line_item_touch").act,
-            &inputs(&[("order_id", "A-100"), ("item_code", "L-101")]),
-            None,
-        )
-        .await;
+    let act = &scene.binding("example_order_line_get").act;
+    let key = a2m_core::Values::new()
+        .with("order_id", "A-100")
+        .with("item_code", "L-101");
+    run.step(&act[0], &a2m_core::Values::new()).await.unwrap();
+    let touched = run.step_with(&act[1], &key, None).await;
     assert_eq!(
         failed(touched),
         (
             FailureClass::Policy,
             codes::READ_STATEMENT_WROTE,
-            Sent::Answered
+            Sent::NotSent
         )
     );
     // The connection is still good for a real read.

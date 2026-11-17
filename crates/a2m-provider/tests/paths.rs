@@ -11,7 +11,9 @@
 mod common;
 
 use a2m_core::FailureClass;
-use a2m_provider::{Access, ProviderSettings, RegistryBuilder, RootName, Roots, codes};
+use a2m_provider::{
+    Access, EntryKind, ProviderSettings, RegistryBuilder, RootName, Roots, codes,
+};
 use common::{Folder, TestPack, host};
 
 fn root(name: &str) -> RootName {
@@ -263,5 +265,181 @@ fn a_link_that_leaves_the_root_is_refused_and_one_that_stays_inside_is_followed(
     assert!(
         !outside.join("file.txt").exists(),
         "a file was written outside the root"
+    );
+}
+
+/// Makes a link to a file. `None` where this machine does not let the test
+/// make one, as Windows does without the privilege.
+fn link_file(target: &std::path::Path, link: &std::path::Path) -> Option<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).ok();
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, link).ok();
+}
+
+/// The audit's finding: a link planted at the name the temporary file used
+/// to take, `<name>.a2m-new`, led a write to a file outside the root. The
+/// temporary file now has a name nobody can plant a link at, and is made
+/// new, so the planted link is neither followed nor moved.
+#[test]
+fn a_write_does_not_go_through_a_link_planted_where_its_temporary_file_used_to_be() {
+    let (folder, roots) = scene();
+    let project = folder.path().join("project");
+    let secret = folder.path().join("outside").join("secret.txt");
+    let planted = project.join("orders").join("report.csv.a2m-new");
+    if link_file(&secret, &planted).is_none() {
+        // Without the right to make a link there is nothing to plant.
+        return;
+    }
+    let report = roots
+        .check(&root("project"), "orders/report.csv", Access::Write)
+        .unwrap();
+    report.write(b"quantity,12\n").unwrap();
+
+    assert_eq!(
+        std::fs::read(&secret).unwrap(),
+        b"secret",
+        "a write inside the root changed a file outside it"
+    );
+    // The stand is asked what it stored, not the path's own read.
+    assert_eq!(
+        std::fs::read(project.join("orders").join("report.csv")).unwrap(),
+        b"quantity,12\n"
+    );
+    assert!(
+        std::fs::symlink_metadata(project.join("orders").join("report.csv"))
+            .unwrap()
+            .is_file(),
+        "the planted link took the file's name"
+    );
+    // The planted link is where it was, and nothing else was left behind.
+    assert!(
+        std::fs::symlink_metadata(&planted)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let mut names: Vec<String> = std::fs::read_dir(project.join("orders"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["one.txt", "report.csv", "report.csv.a2m-new"]);
+}
+
+/// What `join` and `check` promise about links, and what a caller can ask
+/// without following one. A link at the final name that stays inside the
+/// root is followed for reading; `entry_kind` says it is a link; a write
+/// and a removal never go through it.
+#[test]
+fn a_link_at_the_final_name_is_reported_and_never_written_or_removed_through() {
+    let (folder, roots) = scene();
+    let project = folder.path().join("project");
+    std::fs::write(project.join("other.txt"), b"other").unwrap();
+    if link_file(&project.join("other.txt"), &project.join("orders").join("alias.txt")).is_none() {
+        // Without the right to make a link there is nothing to plant.
+        return;
+    }
+    let orders = roots
+        .check(&root("project"), "orders", Access::Write)
+        .unwrap();
+    assert_eq!(orders.entry_kind().unwrap(), EntryKind::Folder);
+    assert_eq!(
+        orders.join("one.txt").unwrap().entry_kind().unwrap(),
+        EntryKind::File
+    );
+    assert_eq!(
+        orders.join("none.txt").unwrap().entry_kind().unwrap(),
+        EntryKind::Absent
+    );
+    assert_eq!(
+        orders.join("none/deeper.txt").unwrap().entry_kind().unwrap(),
+        EntryKind::Absent
+    );
+    assert_eq!(
+        roots
+            .folder(&root("project"), Access::Read)
+            .unwrap()
+            .entry_kind()
+            .unwrap(),
+        EntryKind::Folder
+    );
+
+    // Followed for reading, because it stays inside the root.
+    let alias = orders.join("alias.txt").unwrap();
+    assert_eq!(alias.read(16).unwrap(), b"other");
+    assert_eq!(alias.entry_kind().unwrap(), EntryKind::Link);
+    // Never written through, and never removed through.
+    for failure in [
+        alias.write(b"changed").unwrap_err(),
+        alias.remove_file().unwrap_err(),
+    ] {
+        assert_eq!(
+            (failure.class(), failure.code()),
+            (FailureClass::Input, &codes::PATH_NOT_ALLOWED)
+        );
+    }
+    assert_eq!(std::fs::read(project.join("other.txt")).unwrap(), b"other");
+    assert!(
+        std::fs::symlink_metadata(project.join("orders").join("alias.txt"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    // A link put at the name after the check: the path was made for a file
+    // that was not there yet.
+    let later = orders.join("later.txt").unwrap();
+    assert_eq!(later.entry_kind().unwrap(), EntryKind::Absent);
+    link_file(&project.join("other.txt"), &project.join("orders").join("later.txt")).unwrap();
+    assert_eq!(later.entry_kind().unwrap(), EntryKind::Link);
+    assert_eq!(
+        later.write(b"changed").unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED
+    );
+    assert_eq!(
+        later.remove_file().unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED
+    );
+    assert_eq!(std::fs::read(project.join("other.txt")).unwrap(), b"other");
+}
+
+/// A file that was a file when it was checked and is a link when it is
+/// opened: on Linux and macOS the link is not followed, wherever it leads.
+#[cfg(unix)]
+#[test]
+fn a_file_swapped_for_a_link_after_the_check_is_not_opened() {
+    let (folder, roots) = scene();
+    let project = folder.path().join("project");
+    std::fs::write(project.join("other.txt"), b"other").unwrap();
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    assert_eq!(one.read(16).unwrap(), b"one");
+    std::fs::remove_file(project.join("orders").join("one.txt")).unwrap();
+    // First to a file inside the root, then to one outside it.
+    for target in [
+        project.join("other.txt"),
+        folder.path().join("outside").join("secret.txt"),
+    ] {
+        link_file(&target, &project.join("orders").join("one.txt")).unwrap();
+        assert_eq!(one.read(16).unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+        assert_eq!(one.write(b"x").unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+        std::fs::remove_file(project.join("orders").join("one.txt")).unwrap();
+    }
+    // A folder on the way swapped for a link to a folder inside the root.
+    std::fs::create_dir_all(project.join("elsewhere")).unwrap();
+    std::fs::write(project.join("elsewhere").join("one.txt"), b"elsewhere").unwrap();
+    std::fs::rename(project.join("orders"), project.join("orders-moved")).unwrap();
+    link_folder(&project.join("elsewhere"), &project.join("orders")).unwrap();
+    assert_eq!(one.read(16).unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+    assert_eq!(one.write(b"x").unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+    assert_eq!(
+        std::fs::read(project.join("elsewhere").join("one.txt")).unwrap(),
+        b"elsewhere"
+    );
+    assert_eq!(
+        std::fs::read(folder.path().join("outside").join("secret.txt")).unwrap(),
+        b"secret"
     );
 }

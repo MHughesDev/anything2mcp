@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::task::{Context, Poll, ready};
 
-use a2m_actions::{BuiltInToolset, Caller, CallerCredential, FrontDoor, Kernel};
+use a2m_actions::{BuiltInToolset, Caller, CallerCredential, FrontDoor, Kernel, ProjectFolder};
 use a2m_core::{Failure, Redact, Secret};
 use a2m_policy::ToolsetName;
 use axum::body::{Body, Bytes};
@@ -28,7 +28,7 @@ use serde_json::{Value as Json, json};
 use tokio::sync::mpsc;
 
 use crate::settings::{McpSettings, Revision};
-use crate::tools::Core;
+use crate::tools::{Asker, Core};
 use crate::{clean, codes, protocol};
 
 /// An HTTP request, as the endpoint takes it.
@@ -56,7 +56,9 @@ pub fn mcp_path(toolset: &ToolsetName) -> String {
 /// Who the local channel saw connect. Whoever mounts the endpoint puts one
 /// in each request's extensions, or a `Caller` the kernel already checked;
 /// the endpoint has the kernel check a peer and trusts nothing else about
-/// the caller.
+/// the caller. Beside it the mount may put an `a2m_actions::ProjectFolder`,
+/// the folder the client end works in, which the endpoint hands on with
+/// every dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpPeer {
     /// The operating-system user at the other end of the channel.
@@ -304,7 +306,12 @@ impl McpService {
                 "A tool call names its tool as text and gives its arguments as an object.",
             );
         }
-        protocol::serve(&self.core, caller, &message, method, id, stateless).await
+        // The project folder the client end works in, as the mount stated
+        // it beside the caller. Nothing in the message can set it, and the
+        // dispatcher checks it before any handler sees it.
+        let project = parts.extensions.get::<ProjectFolder>().cloned();
+        let asker = Asker { caller, project };
+        protocol::serve(&self.core, asker, &message, method, id, stateless).await
     }
 
     /// The caller of a request: one the mount already had checked, the

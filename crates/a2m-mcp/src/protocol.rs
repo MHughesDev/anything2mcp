@@ -9,23 +9,24 @@
 //! A result of the stateless revision says its type and names the server
 //! in its `_meta`; a result of the handshake revision carries neither. A
 //! tool call whose caller asked for progress is answered as a stream: its
-//! progress, then its response. Any other request is answered with one
-//! message.
+//! progress, then its response. The progress of a call that starts or
+//! continues a run is what the run does, read from the run's events. Any
+//! other request is answered with one message.
 //!
 //! This layer is this crate's own (decision 0130). It names no outside
 //! protocol library.
 
 use std::sync::Arc;
 
-use a2m_actions::Caller;
 use axum::http::StatusCode;
 use serde_json::{Map, Value as Json, json};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::codes;
 use crate::http::{Answer, error_message, rpc_error};
 use crate::settings::Revision;
-use crate::tools::{Called, Core, Rendered, ToolEntry};
+use crate::tools::{Asker, Called, Core, Following, Follows, Rendered, Route, ToolEntry};
 
 /// The name the server gives itself.
 const SERVER_NAME: &str = "anything2mcp";
@@ -34,9 +35,6 @@ const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
 /// How long a client may keep what discovery or a tool list said, in
 /// milliseconds.
 const TTL_MS: u64 = 60_000;
-/// The steps a call's progress counts: handed to the dispatcher, answered.
-const PROGRESS_STEPS: u64 = 2;
-
 fn server_info() -> Json {
     json!({"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")})
 }
@@ -48,7 +46,7 @@ fn capabilities() -> Json {
 
 fn instructions(core: &Core) -> String {
     format!(
-        "The `{}` toolset of Anything2MCP. Every tool is deterministic: the same input does the same thing. A failed call answers with one JSON object as text: class, code, message, fix, and retry_safe; do what `fix` says. A write waits for a person's approval and says so in its result.",
+        "The `{}` toolset of Anything2MCP. Every tool is deterministic: the same input does the same thing. A failed call answers with one JSON object as text: class, code, message, fix, and retry_safe; do what `fix` says. A write waits for a person's approval and says so in its result. A result's `next` names the call to make next: its `tool` with its `args`, or, when no tool of that name is listed here, `a2m_action_run` with its `action` and `args`. A tool that is not listed is found with `a2m_tool_search` and called with `a2m_tool_call`.",
         core.toolset
     )
 }
@@ -90,7 +88,7 @@ pub(crate) fn unknown_method(id: &Json) -> Answer {
 /// Serves one checked request.
 pub(crate) async fn serve(
     core: &Arc<Core>,
-    caller: Caller,
+    asker: Asker,
     message: &Json,
     method: &str,
     id: &Json,
@@ -102,8 +100,8 @@ pub(crate) async fn serve(
         // Gone from the stateless revision.
         ("ping", false) => Answer::Message(StatusCode::OK, response(id, json!({}))),
         ("server/discover", true) => Answer::Message(StatusCode::OK, response(id, discover(core))),
-        ("tools/list", _) => list(core, &caller, params, id, stateless).await,
-        ("tools/call", _) => call(core, caller, params, id, stateless).await,
+        ("tools/list", _) => list(core, &asker, params, id, stateless).await,
+        ("tools/call", _) => call(core, asker, params, id, stateless).await,
         _ => unknown_method(id),
     }
 }
@@ -148,7 +146,7 @@ fn tool(entry: ToolEntry) -> Json {
     })
 }
 
-async fn list(core: &Core, caller: &Caller, params: &Json, id: &Json, stateless: bool) -> Answer {
+async fn list(core: &Core, asker: &Asker, params: &Json, id: &Json, stateless: bool) -> Answer {
     // A list is one page, so no cursor was ever issued.
     if params.get("cursor").is_some_and(|cursor| !cursor.is_null()) {
         return rpc_error(
@@ -159,7 +157,7 @@ async fn list(core: &Core, caller: &Caller, params: &Json, id: &Json, stateless:
             None,
         );
     }
-    let listed = match core.list(caller).await {
+    let listed = match core.list(asker).await {
         Ok(listed) => listed,
         Err(error) => {
             return rpc_error(
@@ -203,12 +201,12 @@ impl Drop for Waiting<'_> {
 fn called(id: &Json, name: &str, outcome: Option<Called>, stateless: bool) -> Json {
     let rendered = match outcome {
         Some(Called::Answered(rendered)) => rendered,
-        Some(Called::Unknown) => {
+        Some(Called::Unknown(said)) => {
             return error_message(
                 id,
                 codes::INVALID_PARAMS,
                 &format!("Unknown tool: {name}"),
-                None,
+                said.map(|error| error.to_json()),
             );
         }
         None => {
@@ -235,13 +233,7 @@ fn called(id: &Json, name: &str, outcome: Option<Called>, stateless: bool) -> Js
     response(id, result(stateless, body, meta))
 }
 
-async fn call(
-    core: &Arc<Core>,
-    caller: Caller,
-    params: &Json,
-    id: &Json,
-    stateless: bool,
-) -> Answer {
+async fn call(core: &Arc<Core>, asker: Asker, params: &Json, id: &Json, stateless: bool) -> Answer {
     // The shape of the name and the arguments was checked before the
     // request came here.
     let name = params["name"].as_str().unwrap_or_default().to_owned();
@@ -259,15 +251,16 @@ async fn call(
             );
         }
     };
-    // The dispatch runs on its own task, to its end, whether or not the
-    // caller waits for it: a closed stream never tears a dispatch in the
-    // middle. The run it started is stopped with `a2m_run_cancel`.
-    let work = {
-        let (core, name) = (Arc::clone(core), name.clone());
-        tokio::spawn(async move { core.call(&name, arguments, &caller).await })
+    let Some(route) = core.route(&name, arguments) else {
+        // No dispatch: the name can be no tool of this endpoint.
+        return Answer::Message(
+            StatusCode::OK,
+            called(id, &name, Some(Called::Unknown(None)), stateless),
+        );
     };
     let Some(token) = token else {
         // No progress was asked for: one message, when the call is done.
+        let work = whole(core, route, asker);
         let mut waiting = Waiting {
             core,
             answered: false,
@@ -277,33 +270,131 @@ async fn call(
         return Answer::Message(StatusCode::OK, called(id, &name, outcome, stateless));
     };
     let (messages, stream) = mpsc::channel(4);
+    let progress = Progress {
+        messages,
+        token,
+        sent: 0,
+    };
     let (core, id) = (Arc::clone(core), id.clone());
     tokio::spawn(async move {
-        // Progress says nothing the result does not: a rising count.
-        let progress = |step: u64| {
-            json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/progress",
-                "params": {"progressToken": token, "progress": step, "total": PROGRESS_STEPS},
-            })
-        };
-        if messages.send(progress(1)).await.is_err() {
-            core.cancelled.send_modify(|count| *count += 1);
-            return;
-        }
-        let outcome = tokio::select! {
-            // The caller cancelled, or closed the stream: stop waiting,
-            // and send nothing more for this request.
-            () = messages.closed() => {
-                core.cancelled.send_modify(|count| *count += 1);
-                return;
+        let mut progress = progress;
+        match with_progress(&core, route, &asker, &mut progress).await {
+            Some(outcome) => {
+                let message = called(&id, &name, outcome, stateless);
+                let _ = progress.messages.send(message).await;
             }
-            joined = work => joined.ok(),
-        };
-        if matches!(outcome, Some(Called::Answered(_))) {
-            let _ = messages.send(progress(PROGRESS_STEPS)).await;
+            // The caller cancelled, or closed the stream: nothing more is
+            // sent for this request.
+            None => core.cancelled.send_modify(|count| *count += 1),
         }
-        let _ = messages.send(called(&id, &name, outcome, stateless)).await;
     });
     Answer::Stream(stream)
+}
+
+/// One dispatch on a task of its own, to its end, whether or not the
+/// caller waits for it: a closed stream never tears a dispatch in the
+/// middle. The run it started is stopped with `a2m_run_cancel`.
+fn whole(core: &Arc<Core>, route: Route, asker: Asker) -> JoinHandle<Called> {
+    let core = Arc::clone(core);
+    tokio::spawn(async move { core.call(route, &asker).await })
+}
+
+/// The progress of one call, as it is sent: a rising count, and a sentence
+/// of this server's own.
+struct Progress {
+    messages: mpsc::Sender<Json>,
+    token: Json,
+    sent: u64,
+}
+
+impl Progress {
+    /// Sends one note. `false` when the caller has gone.
+    async fn tell(&mut self, text: &str) -> bool {
+        self.sent += 1;
+        let note = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/progress",
+            "params": {"progressToken": self.token, "progress": self.sent, "message": text},
+        });
+        self.messages.send(note).await.is_ok()
+    }
+
+    async fn tell_all(&mut self, notes: Vec<String>) -> bool {
+        for note in notes {
+            if !self.tell(&note).await {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Makes a call for a caller that asked for progress, and says what the
+/// call's run does while it is waited for. `None` when the caller went
+/// away: it is then sent nothing more. A dispatch is never cut off; only
+/// the waiting between dispatches is.
+async fn with_progress(
+    core: &Arc<Core>,
+    route: Route,
+    asker: &Asker,
+    progress: &mut Progress,
+) -> Option<Option<Called>> {
+    if !progress.tell("The call was handed to the engine.").await {
+        return None;
+    }
+    if let Follows::Started(wait) = route.follows {
+        // The call starts a run. It is started without the wait, and the
+        // run's events are followed until it rests, ends, or the caller's
+        // wait is over.
+        let mut following = match core.start(&route, wait, asker).await {
+            Ok(following) => following,
+            Err(answer) => return Some(Some(answer)),
+        };
+        while following.open() {
+            let notes = tokio::select! {
+                () = progress.messages.closed() => return None,
+                notes = core.follow(&mut following, asker) => notes,
+            };
+            if !progress.tell_all(notes).await {
+                return None;
+            }
+        }
+        return Some(Some(core.finish(route, following, asker).await));
+    }
+    // Any other call is dispatched as it was written. One that continues a
+    // run the caller names is followed while it is waited for.
+    let mut following = match route.follows {
+        Follows::Continued(run) => core.resume_from(run, asker).await,
+        _ => None,
+    };
+    let mut work = whole(core, route, asker.clone());
+    let outcome = loop {
+        let notes = tokio::select! {
+            () = progress.messages.closed() => return None,
+            joined = &mut work => break joined.ok(),
+            notes = followed(core, &mut following, asker) => notes,
+        };
+        if !progress.tell_all(notes).await {
+            return None;
+        }
+        // A run that has ended says nothing more.
+        if following.as_ref().is_some_and(Following::over) {
+            following = None;
+        }
+    };
+    if matches!(outcome, Some(Called::Answered(_)))
+        && !progress.tell("The call was answered.").await
+    {
+        return None;
+    }
+    Some(outcome)
+}
+
+/// The next notes of a followed run, or a wait without end when no run is
+/// followed.
+async fn followed(core: &Core, following: &mut Option<Following>, asker: &Asker) -> Vec<String> {
+    match following {
+        Some(following) => core.follow(following, asker).await,
+        None => std::future::pending().await,
+    }
 }

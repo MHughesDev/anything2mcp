@@ -20,6 +20,9 @@ pub const PEER_NOT_ALLOWED: FailureCode = FailureCode::fixed("peer_not_allowed")
 /// The person dismissed or failed the presence prompt, or this machine has
 /// none. Class `policy`.
 pub const PRESENCE_FAILED: FailureCode = FailureCode::fixed("presence_failed");
+/// A presence prompt is already up on this machine, and one is raised at
+/// a time. Class `busy`.
+pub const PROMPT_BUSY: FailureCode = FailureCode::fixed("prompt_busy");
 /// A connection's first request was not a well-formed hello. Class `input`.
 pub const HELLO_INVALID: FailureCode = FailureCode::fixed("hello_invalid");
 /// The client and the engine speak different versions of the local API.

@@ -16,7 +16,8 @@ The command pack lets a target be a program: something started with arguments, w
 | A shell, a command interpreter, or any route through one, including the Windows command interpreter behind batch and command-script files | It reads a line as code; nothing typed can survive that |
 | A program whose argument is evaluated as code: an interpreter given inline code, a tool's "execute this" or "run this expression" flag, a template the program expands | A tool that accepts free text and runs it cannot be verified |
 | Finding the program on the search path, or a path that comes from an input | Rule seven, and section 502: no input changes what runs |
-| A program, or a directory above it, that a user other than the engine's can write to | Anyone who can replace the file can choose what runs |
+| A program, a directory on the way to it, or a link on the way, that a user other than the engine's can write to or replace. A file or directory a group can write is refused whatever the group | Anyone who can replace the file, or change where its path leads, can choose what runs |
+| A program whose work is to start the program its arguments name: one that sets a priority, a time limit, a root, or another user for it | Its argument is a program, so a value in it chooses what runs |
 | A terminal. The program never gets one | A screen of text belongs to the terminal kind of [section 106](../1-product/106-what-it-latches-onto.md), not here |
 | Attaching to a program already running, or reading its memory | Section 106 refuses both |
 
@@ -138,7 +139,7 @@ commands:
 | `{flag: --ref, stamp: true}` | The flag and the record's stamp ("Identity") |
 | `--` | The end-of-options marker, as written |
 
-**Rules on values.** A value never contains a NUL character. A value given as its own element may not begin with `-` unless it comes after a `--` element, so an input cannot become an option. A text param must have an anchored `pattern` of its own, or a field type with a closed list of values; free text without one does not compile.
+**Rules on values.** A value never contains a NUL character. A value given as its own element may not begin with `-` unless it comes after a `--` element, so an input cannot become an option. A `--` is not required before a positional value: the driver refuses the value that would need it, when the value is known. A value given as its own element may not begin with `@` anywhere, because many programs read such an element as the name of a file of more arguments before they read any option; on Windows it may not begin with `/`, which programs there read as an option. A value joined to its flag is one element that begins with the flag; what the flag makes of its value is guarded by the param's pattern. A text param must have an anchored `pattern` of its own, or a field type with a closed list of values; free text without one does not compile.
 
 **Output.** One declared form per command, parsed into typed values the engine normalizes with field types as for any mode. Standard error is kept as evidence and is never parsed for values.
 
@@ -173,9 +174,9 @@ The pack adds the four step kinds that section 201 lists for the command archety
 
 ## The driver
 
-**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
+**Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
 
-**Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the plan's declared programs and owns the process from then on.
+**Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the plan's declared programs and owns the process from then on. A command that writes is started only by the step the plan marks as its commit point, for a record the ledger holds an intent for; the driver checks this itself and does not rely on the compiler.
 
 | | POSIX systems | Windows |
 | --- | --- | --- |
@@ -192,7 +193,7 @@ On Windows a program that parses its command line by another rule would see diff
 
 **Confirm.** The `expect` step checks the exit status against `exits` and looks for `prompts` in both streams; then `parse`. **Read back** runs the read command as a step of its own, parsed the same way, and the engine compares. **No retries inside:** the driver starts each program once per step, and whether anything is tried again is the failure class's to decide, in the engine.
 
-**What a run's state is after a stop.** For a read, a timeout is `transient` and the class rule allows a retry. For a write, any stop after the process was started, other than an exit status declared to mean nothing changed, is `possible_commit`: the run stops, and on resume the engine reconciles through the read command before anything else.
+**What a run's state is after a stop.** For a read, a timeout is `transient` and the class rule allows a retry. For a write, any stop after the process was started, other than an exit status declared to mean nothing changed, is `possible_commit`: the run stops, and on resume the engine reconciles through the read command before anything else. A program that ended while something it started could not be ended has not finished: for a write that too is `possible_commit`.
 
 ## Read-back
 
@@ -221,11 +222,11 @@ A key the program prints when it creates a record is taken from `assigns` and st
 
 The program does whatever the operating system lets it. Until confinement is researched (section 213), what a command touches beyond its arguments is the developer's declaration, shown in the review summary, and the listing says `declared` in those words. A command that `reaches` outside the target is `sends_outside` unless the developer shows otherwise; a command that removes more than the record it names is `data_elsewhere`. Both make it `irreversible`.
 
-The lint refuses, by rule: a program on the pack's list of shells and interpreters unless it is the fixed pair above; an argument the developer marks as code; a flag value in a position the program's help marks as an expression to run. The last two depend on the developer and the help, so they are shown first in the review summary.
+The lint refuses, by rule: a program on the pack's list of shells, interpreters, and programs that start another, unless it is the fixed pair above; an argument the developer marks as code; a flag value in a position the program's help marks as an expression to run. The last two depend on the developer and the help, so they are shown first in the review summary. A flag on the pack's list of flags that run their value carries no value in any form: not a param, a list, or the stamp, joined or not, and not a positional value written after the flag. Both lists are nets for a mistake, and neither is complete.
 
 ## Secrets
 
-A credential reaches a program only through `inject` ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)), for one step, and never as an argument, since other programs on the machine can read a process's arguments.
+A credential reaches a program only through `inject` ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)), for one step, and never as an argument, since other programs on the machine can read a process's arguments. A `commands/` file does not compile when it sets or copies a variable named for a credential, holds a literal that looks like one, or gives a value to a flag named for one.
 
 | Channel | When |
 | --- | --- |
@@ -233,7 +234,7 @@ A credential reaches a program only through `inject` ([section 215](../2-kernel/
 | An inherited handle | The program reads from a descriptor number it is given |
 | An environment variable | The program accepts nothing else. Other processes of the same user can read it, and the listing says so |
 
-A program that keeps its own sign-in is given `{session.state_dir}`, a folder the engine owns for that session, exactly as a browser is given an engine-owned profile. Its everyday folder is never used. Every injected value is registered with the redactor before the program starts, and both streams pass the redactor before anything is stored or returned. Output is untrusted text (section 213).
+A program that keeps its own sign-in is given `{session.state_dir}`, a folder the engine owns for that session, exactly as a browser is given an engine-owned profile. Its everyday folder is never used. Every injected value is registered with the redactor before the program starts, and both streams pass the redactor before anything is stored or returned. The redactor sees a stream whole before anything is cut from it, and sees the result again after anything is joined or decoded, so that no part of a secret is left by a cut and no secret is put together after the redactor looked. Output is untrusted text (section 213).
 
 Of this section, only the redaction of both streams is built; no credential reaches a program yet. The [crate's design](../../architecture/crates/a2m-pack-command.md) says what remains.
 
@@ -251,7 +252,8 @@ Of this section, only the redaction of both streams is built; no credential reac
 | The file's digest is not listed for this platform | `drift` | `program_digest_changed` |
 | The version is absent or not supported | `drift` | `program_version_unsupported` |
 | The file or a folder above it is writable by another user | `policy` | `program_path_unsafe` |
-| A value is NUL-bearing, or would become an option | `input` | `argument_unsafe` |
+| A value is NUL-bearing, or would become an option or the name of a file of arguments | `input` | `argument_unsafe` |
+| A step the driver cannot carry out as the plan wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first | `input` | `step_not_usable` |
 | A value breaks its field type | `input` | `schema_invalid` |
 | An exit declared `rejected`; standard error is the untrusted message | `rejected` | `app_validation_error` |
 | An exit declared `stale` | `stale` | `version_conflict` |
@@ -264,7 +266,7 @@ Of this section, only the redaction of both streams is built; no credential reac
 | A read: output that does not parse | `drift` | `output_unparsed` |
 | A read: a stream passed its ceiling | `policy` | `limit_exceeded`, naming the setting |
 | A read: the time limit passed | `transient` | `timeout` |
-| A write: any of the four rows above, after the program started | `possible_commit` | `no_confirmation` |
+| A write: any of the four rows above, after the program started; or its process group could not be ended; or the step that confirms it cannot be done as written | `possible_commit` | `no_confirmation` |
 | A `find` read-back matched more than one record | `possible_commit` | `ambiguous_match` |
 | The read-back differs | `mismatch` | `read_back_differs` |
 | A stopped program's cleanup could not be confirmed; new starts on the surface wait | `busy` | `cleanup_incomplete` |

@@ -1,8 +1,9 @@
 //! The person surface on one machine, with the real kernel: a write rests,
-//! its page is the only way to the approval desk, a press needs the page's
-//! one-time value, a press is not an approval, an approval is for the
-//! change the page showed, silence is a decline, and the listener is open
-//! only while a page waits.
+//! its page shows the stored change and is the only way to the approval
+//! desk, a press needs the page's one-time value, a press is not an
+//! approval, an approval is for the change the page showed, one prompt is
+//! up at a time and ends with the window, silence is a decline, and the
+//! listener is open only while a page waits.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,8 +19,11 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value as Json, json};
 
 use super::world::engine::ITEM_UPSERT;
-use super::world::{TestPrompt, World};
-use crate::{PresenceKind, PromptAnswer, codes, presence_available, system_prompt};
+use super::world::{PASSED, TestPrompt, World, within};
+use crate::{
+    Availability, NoPrompt, PresenceKind, PresenceReason, PromptAnswer, PromptName, codes,
+    presence_available,
+};
 
 const LONG: Duration = Duration::from_secs(900);
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -28,11 +32,15 @@ fn http() -> Client {
     Client::builder().no_proxy().build().unwrap()
 }
 
+/// The description the write carries: text from a system, with markup in
+/// it. The page must show it as text.
+const DESCRIPTION: &str = "<script>alert(1)</script> New <b>rail</b> & \"more\" {{once}}";
+
 fn item() -> Json {
     json!({
         "order_id": "A-102",
         "item_code": "L-300",
-        "description": "New rail",
+        "description": DESCRIPTION,
         "quantity": 3,
         "length_in": "150.5",
     })
@@ -47,8 +55,12 @@ struct Rested {
 }
 
 async fn rest(world: &World) -> Rested {
+    rest_with(world, item()).await
+}
+
+async fn rest_with(world: &World, input: Json) -> Rested {
     let rested = world
-        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": item()}))
+        .call("tool.call", json!({"tool": ITEM_UPSERT, "input": input}))
         .await;
     let result = rested.result.clone().unwrap();
     assert_eq!(result["status"], "needs_approval", "{rested:?}");
@@ -68,20 +80,9 @@ async fn status(world: &World, run: &str) -> String {
     got.result.unwrap()["status"].as_str().unwrap().to_owned()
 }
 
-/// Resumes an approved run, as the result's next step says. The kernel's
-/// `run.resume` now and then answers in the moment between the runner's
-/// claim of the job and its work on it, with the run still at rest; a
-/// caller then resumes again, and so does this.
+/// Resumes an approved run, as the result's next step says.
 async fn resume_approved(world: &World, run: &str) -> Response {
-    let mut tries = 0;
-    loop {
-        let resumed = world.call("run.resume", json!({"run_id": run})).await;
-        let rests = resumed.result.as_ref().unwrap()["status"] == "needs_approval";
-        tries += 1;
-        if !rests || tries == 5 {
-            return resumed;
-        }
-    }
+    world.call("run.resume", json!({"run_id": run})).await
 }
 
 async fn written(world: &World) -> usize {
@@ -137,7 +138,30 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     for shown in [ITEM_UPSERT, rested.run.as_str(), rested.diff_hash.as_str()] {
         assert!(text.contains(shown), "{shown} in {text}");
     }
-    assert!(!text.contains("<script") && !text.contains("src=") && !text.contains("href="));
+    // It shows the stored change: where the write goes, how many records,
+    // and each field of each record, from what to what. The first twelve
+    // characters of the hash stand beside Approve.
+    for shown in [
+        "Target <code>example</code>",
+        "1 to create, 0 to change, 0 already as intended: 1 records in all.",
+        "<th scope=\"row\">description</th><td><em>does not exist</em></td>",
+        "<th scope=\"row\">quantity</th><td><em>does not exist</em></td><td>3</td><td>yes</td>",
+        &format!("Change <code>{}</code>", &rested.diff_hash[..12]),
+        // The prompt this machine has, in the prompt's own words.
+        "The prompt of a test.",
+    ] {
+        assert!(text.contains(shown), "{shown} in {text}");
+    }
+    // A value from a system is text on the page, never markup, and never
+    // a place of the page to fill.
+    assert!(
+        text.contains(
+            "&lt;script&gt;alert(1)&lt;/script&gt; New &lt;b&gt;rail&lt;/b&gt; &amp; &quot;more&quot; {{once}}"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("<script") && !text.contains("<b>"), "{text}");
+    assert!(!text.contains("src=") && !text.contains("href="));
 
     // The listener answers its page and its two presses. Every other path
     // and method, a front door's included, answers nothing.
@@ -225,11 +249,17 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
 
     // The person passes the prompt: the approval is recorded, for the
     // change the page showed.
-    prompt.set(PromptAnswer::Present);
+    prompt.set(PASSED);
     let (_, once) = open(&http, &rested.link).await;
     let (answered, said) = press(&http, &rested, "approve", &once).await;
     assert_eq!(answered, StatusCode::OK, "{said}");
     assert_eq!(prompt.asked(), 2);
+    // The answer names the prompt that was passed.
+    assert!(said.contains("(polkit)"), "{said}");
+    // Each prompt was given the end of the page's window as its deadline.
+    let deadlines = prompt.deadlines();
+    assert_eq!(deadlines[0], deadlines[1]);
+    assert!(deadlines[0] <= tokio::time::Instant::now() + LONG);
 
     // Nothing waits any more, so nothing listens: the port is closed. A
     // look at the run before it is resumed opens no second page.
@@ -253,7 +283,7 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.description, "New rail");
+    assert_eq!(stored.description, DESCRIPTION);
     assert_eq!(stored.quantity, 3);
     // The ledger tells it as a person's approval through the local prompt.
     let trace = world
@@ -269,7 +299,7 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_approval_is_only_for_the_change_the_page_showed() {
-    let prompt = TestPrompt::answering(PromptAnswer::Present);
+    let prompt = TestPrompt::answering(PASSED);
     let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
     let http = http();
     let rested = rest(&world).await;
@@ -300,20 +330,143 @@ async fn an_approval_is_only_for_the_change_the_page_showed() {
         http.get(&rested.link).send().await.unwrap().status(),
         StatusCode::NOT_FOUND
     );
-    let (text, once) = open(&http, &forged.link).await;
-    assert!(text.contains(&other.to_string()));
 
-    // The person is present and presses Approve. Nothing is recorded: the
-    // change this page showed is not the one that waits. The prompt is not
-    // even raised.
-    let (answered, said) = press(&http, &forged, "approve", &once).await;
-    assert_eq!(answered, StatusCode::CONFLICT, "{said}");
+    // The page shows the stored change or nothing. The desk reads the
+    // diff back and the hash is not the one this page was opened for, so
+    // the page shows nothing, gives no one-time value, and cannot press.
+    let shown = http.get(&forged.link).send().await.unwrap();
+    assert_eq!(shown.status(), StatusCode::CONFLICT);
+    let text = shown.text().await.unwrap();
+    assert!(!text.contains("name=\"once\""), "{text}");
+    let (answered, said) = press(&http, &forged, "approve", "0").await;
+    assert_eq!(answered, StatusCode::FORBIDDEN, "{said}");
     assert_eq!(prompt.asked(), 0);
-    world.surface.settled().await;
     let still = world
         .call("run.resume", json!({"run_id": rested.run}))
         .await;
     assert_eq!(still.result.unwrap()["status"], "needs_approval");
+    assert_eq!(written(&world).await, 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_press_for_a_change_that_no_longer_waits_raises_no_prompt() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let rested = rest(&world).await;
+    // The person has the page open, with its one-time value.
+    let (_, once) = open(&http, &rested.link).await;
+    // Meanwhile the run is cancelled by the program that started it.
+    let cancelled = world
+        .call("run.cancel", json!({"run_id": rested.run}))
+        .await;
+    assert!(cancelled.ok, "{cancelled:?}");
+
+    // The person is present and presses Approve. Nothing is recorded: the
+    // change this page showed no longer waits. The prompt is not even
+    // raised, and the page goes.
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::CONFLICT, "{said}");
+    assert_eq!(prompt.asked(), 0);
+    world.surface.settled().await;
+    assert_eq!(world.surface.waiting(), 0);
+    assert_eq!(written(&world).await, 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_prompt_is_up_at_a_time_and_a_second_press_is_told_busy() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let first = rest(&world).await;
+    let second = rest_with(
+        &world,
+        json!({
+            "order_id": "A-102",
+            "item_code": "L-301",
+            "description": "Another rail",
+            "quantity": 1,
+            "length_in": "20",
+        }),
+    )
+    .await;
+    assert_eq!(world.surface.waiting(), 2);
+
+    // The person presses Approve on the first page, and its prompt is up:
+    // nobody has answered it yet.
+    prompt.hold();
+    let (_, once) = open(&http, &first.link).await;
+    let pressing = tokio::spawn({
+        let http = http.clone();
+        let first = rest_like(&first);
+        async move { press(&http, &first, "approve", &once).await }
+    });
+    prompt.raised(1).await;
+
+    // A press on the other page raises no second prompt and records
+    // nothing: a person never answers a prompt meant for another change.
+    let (_, once) = open(&http, &second.link).await;
+    let (answered, said) = press(&http, &second, "approve", &once).await;
+    assert_eq!(answered, StatusCode::SERVICE_UNAVAILABLE, "{said}");
+    assert!(said.contains("Another presence prompt is up"), "{said}");
+    // Nor does a protected setting get a prompt of its own meanwhile.
+    let person = world.caller.principal.principal().id;
+    let busy = world
+        .surface
+        .confirm_presence(PresenceAsk {
+            principal: person,
+            action: "config.set".parse().unwrap(),
+            effect: EffectClass::Write,
+            summary: "Loosen a protected setting.".to_owned(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(busy.class(), FailureClass::Busy);
+    assert_eq!(*busy.code(), codes::PROMPT_BUSY);
+    assert_eq!(prompt.asked(), 1);
+    assert_eq!(status(&world, &second.run).await, "needs_approval");
+
+    // The person passes the prompt: the first change is approved, and
+    // only that one. The second page still waits and can now be answered.
+    prompt.release();
+    let (answered, said) = within("the first press", pressing).await.unwrap();
+    assert_eq!(answered, StatusCode::OK, "{said}");
+    assert_eq!(world.surface.waiting(), 1);
+    let (_, once) = open(&http, &second.link).await;
+    let (answered, said) = press(&http, &second, "decline", &once).await;
+    assert_eq!(answered, StatusCode::OK, "{said}");
+    world.surface.settled().await;
+    let done = resume_approved(&world, &first.run).await;
+    assert_eq!(done.result.as_ref().unwrap()["status"], "completed");
+    assert_eq!(written(&world).await, 1);
+    assert_eq!(world.app.write_count("A-102", "L-301").await.unwrap(), 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompt_nobody_answers_ends_with_the_window_as_a_decline() {
+    // The person would pass the prompt, and leaves it up.
+    let prompt = TestPrompt::answering(PASSED);
+    prompt.hold();
+    let world = World::ready(Arc::clone(&prompt) as _, Duration::from_secs(4)).await;
+    let http = http();
+    let rested = rest(&world).await;
+    let (_, once) = open(&http, &rested.link).await;
+
+    // The press waits for the prompt, and the prompt ends at the end of
+    // the page's window, dismissed. Nothing is approved.
+    let (answered, said) = press(&http, &rested, "approve", &once).await;
+    assert_eq!(answered, StatusCode::FORBIDDEN, "{said}");
+    assert!(said.contains("its time ended"), "{said}");
+    assert_eq!(prompt.asked(), 1);
+    // The window ended, which is a decline: the page is gone, the run has
+    // ended, and nothing is written, even if the person answers now.
+    prompt.release();
+    within("the page's end", world.surface.settled()).await;
+    assert!(http.get(&rested.link).send().await.is_err());
+    assert_eq!(status(&world, &rested.run).await, "expired");
     assert_eq!(written(&world).await, 0);
     world.kernel.close(CloseReason::Asked).await;
 }
@@ -330,7 +483,7 @@ fn rest_like(rested: &Rested) -> Rested {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn silence_is_a_decline_and_the_listener_closes() {
     // The person would pass the prompt, and never comes.
-    let prompt = TestPrompt::answering(PromptAnswer::Present);
+    let prompt = TestPrompt::answering(PASSED);
     let world = World::ready(Arc::clone(&prompt) as _, Duration::from_millis(50)).await;
     let http = http();
     let rested = rest(&world).await;
@@ -363,17 +516,38 @@ async fn silence_is_a_decline_and_the_listener_closes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works() {
-    // The prompt this build ships: none, on every operating system.
-    assert_eq!(presence_available(), PresenceKind::NotAvailable);
-    let world = World::ready(system_prompt(), LONG).await;
-    assert_eq!(world.surface.presence(), PresenceKind::NotAvailable);
+    // The prompt of an operating system whose own is not built. The
+    // system's prompt is not used here: on a prepared desktop it would
+    // raise a real dialog.
+    let world = World::ready(Arc::new(NoPrompt), LONG).await;
+    let none = world.surface.presence().await;
+    assert_eq!(none.kind, PresenceKind::NotAvailable);
+    assert_eq!(none.prompt, None);
+    assert_eq!(none.reason, PresenceReason::NotBuilt);
+    assert_eq!(none.reason.as_str(), "not_built");
+    assert!(!none.proves_presence());
+    // What this machine's own prompt says of itself raises nothing, and
+    // is ready only as a prompt of the operating system.
+    let own = presence_available().await;
+    assert_eq!(own.proves_presence(), own.reason == PresenceReason::Ready);
+    assert_eq!(own.prompt.is_some(), own.kind == PresenceKind::OsPrompt);
+    #[cfg(not(target_os = "linux"))]
+    assert_eq!(own, none);
     let http = http();
     let rested = rest(&world).await;
 
-    let (_, once) = open(&http, &rested.link).await;
+    // The page says that no prompt is available, and why, before
+    // anything is pressed; a press says the same and records nothing.
+    let (text, once) = open(&http, &rested.link).await;
+    assert!(
+        text.contains("No presence prompt is available on this machine"),
+        "{text}"
+    );
+    assert!(text.contains(&none.message), "{text}");
     let (answered, said) = press(&http, &rested, "approve", &once).await;
     assert_eq!(answered, StatusCode::FORBIDDEN);
     assert!(said.contains("Nothing was approved"), "{said}");
+    assert!(said.contains(&none.message), "{said}");
     assert_eq!(status(&world, &rested.run).await, "needs_approval");
 
     // A protected setting cannot be loosened here: no proof is given.
@@ -441,7 +615,7 @@ async fn with_no_presence_prompt_nothing_is_approved_and_a_decline_still_works()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proof_of_presence_comes_only_from_a_passed_prompt() {
-    let prompt = TestPrompt::answering(PromptAnswer::Present);
+    let prompt = TestPrompt::answering(PASSED);
     let world = World::ready(Arc::clone(&prompt) as _, LONG).await;
     let person = world.caller.principal.principal().id;
     let ask = || PresenceAsk {
@@ -453,13 +627,31 @@ async fn proof_of_presence_comes_only_from_a_passed_prompt() {
     let proof = world.surface.confirm_presence(ask()).await.unwrap();
     assert_eq!(proof.check(), PresenceCheck::OsPrompt);
     assert_eq!(proof.principal(), person);
-    // A dialog that proves no person, and a dismissed prompt, give none.
-    for answer in [PromptAnswer::Confirmed, PromptAnswer::Dismissed] {
-        prompt.set(answer);
+    // A dialog that proves no person, a prompt that was closed, one that
+    // was not passed, and one that could not be raised give none.
+    let no_agent = Availability::not_available(
+        PresenceReason::NoAgent,
+        "Nothing can show the prompt.",
+        "Start the agent.",
+    );
+    for answer in [
+        PromptAnswer::Confirmed,
+        PromptAnswer::Dismissed,
+        PromptAnswer::Denied,
+        PromptAnswer::NotAvailable(no_agent),
+    ] {
+        prompt.set(answer.clone());
         let refused = world.surface.confirm_presence(ask()).await.unwrap_err();
+        assert_eq!(refused.class(), FailureClass::Policy, "{answer:?}");
         assert_eq!(*refused.code(), codes::PRESENCE_FAILED, "{answer:?}");
     }
-    assert_eq!(prompt.asked(), 3);
+    assert_eq!(prompt.asked(), 5);
+    assert_eq!(PromptName::Polkit.as_str(), "polkit");
+    assert_eq!(
+        PromptName::LocalAuthentication.as_str(),
+        "local_authentication"
+    );
+    assert_eq!(PromptName::WindowsHello.as_str(), "windows_hello");
     // Nothing waited, so nothing ever listened.
     assert_eq!(world.surface.waiting(), 0);
     world.kernel.close(CloseReason::Asked).await;

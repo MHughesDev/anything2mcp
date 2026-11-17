@@ -126,36 +126,35 @@ fn installing() -> String {
 
 /// What a fault means for a person who wants to approve.
 pub(crate) fn unavailable(fault: &Fault) -> Availability {
-    let none = Availability::not_available;
     match fault {
-        Fault::NoSystemBus => none(
+        Fault::NoSystemBus => Availability::not_available(
             PresenceReason::NoSystemBus,
             "No system bus answers on this machine, so polkit cannot be asked for a presence prompt.",
             "Nothing on this machine can approve: it is a container, or it has no desktop. Approve at a desktop, with the engine started inside your own session.",
         ),
-        Fault::NoPolkit => none(
+        Fault::NoPolkit => Availability::not_available(
             PresenceReason::NoPolkit,
             "The system bus of this machine has no polkit on it, so there is no presence prompt.",
             "Install polkit, and use a desktop session that runs a polkit authentication agent.",
         ),
-        Fault::NotRegistered => none(
+        Fault::NotRegistered => Availability::not_available(
             PresenceReason::PolicyNotInstalled,
             format!(
                 "The policy file that declares the engine's polkit action `{ACTION_ID}` is not installed, so polkit cannot ask for it."
             ),
             installing(),
         ),
-        Fault::Refused => none(
+        Fault::Refused => Availability::not_available(
             PresenceReason::CheckFailed,
             "polkit refused to check the engine's own process.",
             "Run `anything2mcp doctor run` again. If it stays, polkit's log on this machine says why.",
         ),
-        Fault::Cancelled => none(
+        Fault::Cancelled => Availability::not_available(
             PresenceReason::CheckFailed,
             "The check with polkit was cancelled before it answered.",
             "Open the approval page again and press once more.",
         ),
-        Fault::Other(name) => none(
+        Fault::Other(name) => Availability::not_available(
             PresenceReason::CheckFailed,
             format!("The check with polkit failed ({name})."),
             "Run `anything2mcp doctor run` again. If it stays, the system bus and polkit's log on this machine say why.",
@@ -356,10 +355,11 @@ impl Bus for SystemBus {
         Box::pin(async move {
             let connection = match &self.address {
                 None => zbus::Connection::system().await,
-                Some(address) => match zbus::connection::Builder::address(address.as_str()) {
-                    Ok(builder) => builder.build().await,
-                    Err(error) => Err(error),
-                },
+                Some(address) => {
+                    zbus::connection::Builder::address(address.as_str())
+                        .build()
+                        .await
+                }
             }
             .map_err(|_| Fault::NoSystemBus)?;
             let proxy = AuthorityProxy::builder(&connection)

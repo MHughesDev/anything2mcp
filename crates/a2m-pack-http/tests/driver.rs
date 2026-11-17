@@ -282,10 +282,12 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     let inputs = item("A-102", "L-900", "Corner post", 0, "150.5");
-    write
-        .run(&scene, &handle, &mut prepared, "act", &inputs)
-        .await
-        .unwrap();
+    for list in ["read_back", "act"] {
+        write
+            .run(&scene, &handle, &mut prepared, list, &inputs)
+            .await
+            .unwrap();
+    }
     let refused = write
         .run(&scene, &handle, &mut prepared, "confirm", &inputs)
         .await
@@ -348,10 +350,12 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     let inputs = item("A-101", "L-201", "Base plate", 2, "24");
-    write
-        .run(&scene, &handle, &mut prepared, "act", &inputs)
-        .await
-        .unwrap();
+    for list in ["read_back", "act"] {
+        write
+            .run(&scene, &handle, &mut prepared, list, &inputs)
+            .await
+            .unwrap();
+    }
     let closed = write
         .run(&scene, &handle, &mut prepared, "confirm", &inputs)
         .await
@@ -551,27 +555,9 @@ async fn a_write_whose_answer_is_lost_is_a_possible_commit_and_is_not_sent_again
     assert_eq!(found.values.get("quantity"), Some(&Value::Int(3)));
     assert_eq!(app.write_count("A-102", "L-900").await.unwrap(), 1);
     handle.release(prepared, true).await;
-
-    // A connection that cannot be made at all is not a possible commit:
-    // nothing was sent.
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let closed = format!("http://{}", listener.local_addr().unwrap());
-    drop(listener);
-    let nowhere = Scene::new("example", &closed);
-    let write = write_of("A-102", "L-901").await;
-    let (handle, mut prepared) = nowhere
-        .try_prepare(None, Some(write.fence), Posture::Live)
-        .await
-        .unwrap();
-    let unsent = write
-        .run(&nowhere, &handle, &mut prepared, "act", &inputs)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        class_and_code(&unsent),
-        (FailureClass::Transient, "connection_lost")
-    );
-    assert_eq!(unsent.sent, Sent::NotSent);
+    // A connection that cannot be made at all is not a possible commit;
+    // `a_write_that_was_not_sent_keeps_its_version_and_one_with_no_version_read_is_refused`
+    // shows that case.
 }
 
 #[tokio::test]
@@ -613,7 +599,8 @@ async fn no_input_changes_where_a_request_goes() {
             .unwrap();
         assert!(read.absent, "{odd}");
     }
-    // The same holds for a write: refused before the ledger's token is used.
+    // The same holds for a write: its record is read first, and that read
+    // is refused before anything is sent.
     let write = write_of("A-102", "x/../../L-1").await;
     let inputs = item("A-102", "x/../../L-1", "Corner post", 3, "150.5");
     let (writer, mut writing) = scene
@@ -621,13 +608,19 @@ async fn no_input_changes_where_a_request_goes() {
         .await
         .unwrap();
     let refused = write
-        .run(&scene, &writer, &mut writing, "act", &inputs)
+        .run(&scene, &writer, &mut writing, "read_back", &inputs)
         .await
         .unwrap_err();
     assert_eq!(
         class_and_code(&refused),
         (FailureClass::Input, "path_value_refused")
     );
+    assert_eq!(refused.sent, Sent::NotSent);
+    // The record could not be read, so its write is not sent either.
+    let refused = write
+        .run(&scene, &writer, &mut writing, "act", &inputs)
+        .await
+        .unwrap_err();
     assert_eq!(refused.sent, Sent::NotSent);
     assert!(app.writes().await.unwrap().is_empty());
 
@@ -797,7 +790,9 @@ async fn a_write_whose_answer_is_not_the_applications_verdict_is_in_doubt_and_ne
     }
     let binding = scene.binding("example_line_item_upsert");
     let mut bent = binding.confirm.clone();
-    bent[0].refers_to.clone_from(&binding.read_back[0].refers_to);
+    bent[0]
+        .refers_to
+        .clone_from(&binding.read_back[0].refers_to);
     let record = Some((&write.token, record(&write.fence, 0), &write.key));
     let unread = scene
         .run(&handle, &mut prepared, &bent, &inputs, record, LONG)
@@ -829,6 +824,19 @@ async fn a_write_that_was_not_sent_keeps_its_version_and_one_with_no_version_rea
         .unwrap();
     assert!(!before.absent);
 
+    // Someone else changes the record after it was read.
+    let other = serde_json::json!(
+        {"description": "Right rail", "quantity": 7, "length_in": "150.5", "version": 1}
+    );
+    let changed = app
+        .http()
+        .put(app.url("/api/orders/A-100/items/L-102"))
+        .json(&other)
+        .send()
+        .await
+        .unwrap();
+    assert!(changed.status().is_success());
+
     // The system cannot be reached: the first attempt of the write is not
     // sent, which is what the engine tries again.
     up.abort();
@@ -842,19 +850,6 @@ async fn a_write_that_was_not_sent_keeps_its_version_and_one_with_no_version_rea
         (FailureClass::Transient, "connection_lost")
     );
     assert_eq!(unsent.sent, Sent::NotSent);
-
-    // Meanwhile someone else changes the record.
-    let other = serde_json::json!(
-        {"description": "Right rail", "quantity": 7, "length_in": "150.5", "version": 1}
-    );
-    let changed = app
-        .http()
-        .put(app.url("/api/orders/A-100/items/L-102"))
-        .json(&other)
-        .send()
-        .await
-        .unwrap();
-    assert!(changed.status().is_success());
 
     // The system is back, and the write is tried again. It still carries
     // the version that was read, so the application refuses it, and the

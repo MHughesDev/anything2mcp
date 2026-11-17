@@ -28,7 +28,7 @@ use crate::manifest::{KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
 use crate::name::{ActionName, ProviderName};
 use crate::pack::{Collected, Pack, PackContext, Registrar};
 use crate::path::Roots;
-use crate::supervisor::{ProgramRef, ScopedSupervisor, Supervisor};
+use crate::supervisor::{Allowed, ScopedSupervisor, Supervisor};
 
 /// What the product crate gives the registry to hand on to packs.
 #[derive(Clone)]
@@ -169,11 +169,14 @@ fn availability(manifest: &Manifest) -> (Availability, String) {
         );
     }
     for needed in &manifest.requirements {
+        // A place written for another operating system is not an absolute
+        // path here; it would be looked for in the engine's own working
+        // folder, and is passed over.
         let found = needed
             .paths
             .iter()
             .map(Path::new)
-            .find(|path| path.is_file());
+            .find(|path| path.is_absolute() && path.is_file());
         let Some(found) = found else {
             return (Availability::ComponentMissing, needed.missing.clone());
         };
@@ -271,20 +274,21 @@ impl RegistryBuilder {
         (pending.availability, pending.fix) = availability(&manifest);
 
         // What the pack may start: the programs its manifest names, and the
-        // places it looks for the programs it requires.
-        let mut declared: Vec<ProgramRef> = manifest
+        // places it looks for the programs it requires, each with the
+        // digests declared for it. They are checked at every start.
+        let mut declared: Vec<Allowed> = manifest
             .effects
             .processes
             .iter()
-            .map(|program| ProgramRef {
+            .map(|program| Allowed {
                 path: PathBuf::from(&program.path),
-                digest: program.digest,
+                digests: program.digest.into_iter().collect(),
             })
             .collect();
         for needed in &manifest.requirements {
-            declared.extend(needed.paths.iter().map(|path| ProgramRef {
+            declared.extend(needed.paths.iter().map(|path| Allowed {
                 path: PathBuf::from(path),
-                digest: None,
+                digests: needed.known_digests.clone(),
             }));
         }
         let supervisor = ScopedSupervisor::new(

@@ -110,7 +110,6 @@ pub(crate) const SHELLS_AND_INTERPRETERS: &[&str] = &[
     "wsl",
     "rundll32",
     "forfiles",
-    "start",
 ];
 
 /// One-letter flags that hand their value to something that runs it,
@@ -1337,7 +1336,9 @@ fn compile_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_shell_or_interpreter, looks_like_credential, names_a_credential, runs_its_value};
+    use super::{
+        is_shell_or_interpreter, looks_like_credential, names_a_credential, runs_its_value,
+    };
 
     #[test]
     fn shells_interpreters_and_programs_that_start_another_are_known_by_name() {
@@ -1357,7 +1358,11 @@ mod tests {
         ] {
             assert!(is_shell_or_interpreter(refused), "{refused}");
         }
-        for allowed in ["/opt/example/bin/example-tool", "/usr/bin/finder", "/opt/timeouts"] {
+        for allowed in [
+            "/opt/example/bin/example-tool",
+            "/usr/bin/finder",
+            "/opt/timeouts",
+        ] {
             assert!(!is_shell_or_interpreter(allowed), "{allowed}");
         }
     }
@@ -1365,7 +1370,15 @@ mod tests {
     #[test]
     fn a_flag_that_runs_its_value_is_known_in_each_spelling() {
         for runs in [
-            "-c", "-e", "--eval", "--Eval", "-exec", "--exec=", "--command:", "/c", "-okdir",
+            "-c",
+            "-e",
+            "--eval",
+            "--Eval",
+            "-exec",
+            "--exec=",
+            "--command:",
+            "/c",
+            "-okdir",
             "--rsh",
         ] {
             assert!(runs_its_value(runs), "{runs}");
@@ -1387,7 +1400,14 @@ mod tests {
         ] {
             assert!(names_a_credential(named), "{named}");
         }
-        for plain in ["TOKEN_FILE", "--key", "--name", "TZ", "--password-stdin", "KEYBOARD"] {
+        for plain in [
+            "TOKEN_FILE",
+            "--key",
+            "--name",
+            "TZ",
+            "--password-stdin",
+            "KEYBOARD",
+        ] {
             assert!(!names_a_credential(plain), "{plain}");
         }
         for key in [

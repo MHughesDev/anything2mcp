@@ -564,10 +564,7 @@ pub(crate) fn build(
 
     // The compiler refuses a header the connection sets; a plan that holds
     // one all the same is refused here, where it would be sent.
-    if let Some((name, _)) = headers
-        .iter()
-        .find(|(name, _)| is_connection_header(name))
-    {
+    if let Some((name, _)) = headers.iter().find(|(name, _)| is_connection_header(name)) {
         return Err(unusable(format!(
             "the header `{}` is set by the connection, and no endpoint may write it",
             codes::shown(name)

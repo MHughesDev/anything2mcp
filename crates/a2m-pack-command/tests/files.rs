@@ -334,12 +334,12 @@ fn no_form_of_argument_hands_a_value_to_a_flag_that_runs_it() {
         "{flag: -exec, param: quantity}",
     );
     // The record's stamp is a value too.
-    code_flag("{flag: --ref, stamp: true}", "{flag: --command, stamp: true}");
-    // A help form puts a word the program printed after its flag.
     code_flag(
-        "[\"help\", \"{command}\"]]",
-        "[\"-c\", \"{command}\"]]",
+        "{flag: --ref, stamp: true}",
+        "{flag: --command, stamp: true}",
     );
+    // A help form puts a word the program printed after its flag.
+    code_flag("[\"help\", \"{command}\"]]", "[\"-c\", \"{command}\"]]");
     // A flag that takes a folder is not one that runs its value.
     let folder = Folder::new("allowed");
     let registry = registry(&folder, Arc::new(NoSecrets));

@@ -15,9 +15,24 @@
 //! close-on-exec in two steps, so a child started by another thread in
 //! between would inherit the pipe; every start therefore holds one lock,
 //! as on Windows.
+//!
+//! A program is opened once, without following a link at its name, and
+//! digested through that handle. On Linux it is then started from the same
+//! handle, by the name the system gives an open file, so the file that runs
+//! is the file that was digested, whatever is done to its path meanwhile.
+//! That needs the process file system, and cannot be done for a file that
+//! starts with `#!`, which the system hands to an interpreter by name; and
+//! macOS has no way to start an open file at all. In those three cases the
+//! program is started by its path, after a last look, under the start lock,
+//! that the path still leads to the very file that was digested, unchanged:
+//! the same device and file number, size, and times of last change. A
+//! replacement in the moment between that look and the start is not seen.
 
+use std::fs::File;
 use std::io;
 use std::os::fd::AsFd;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::Mutex;
 
@@ -27,7 +42,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::unix::pipe;
 use tokio::process::{Child, Command};
 
-use super::ForeignPipe;
+use super::{ForeignPipe, StartError};
 
 /// The two ends of a foreign link that stay with the engine.
 pub(crate) type Pipes = (
@@ -117,15 +132,145 @@ fn end_group(pgid: Pid) -> bool {
     }
 }
 
-/// Starts `command` as the leader of a new process group. With `foreign`,
-/// the child receives the two pipe ends on the descriptors it names.
+/// What tells one state of one file from every other: where it is kept,
+/// how long it is, and when its content and its record last changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    device: u64,
+    file: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl Stamp {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        Self {
+            device: meta.dev(),
+            file: meta.ino(),
+            size: meta.size(),
+            modified: (meta.mtime(), meta.mtime_nsec()),
+            changed: (meta.ctime(), meta.ctime_nsec()),
+        }
+    }
+}
+
+/// A program opened once, to be digested and then started.
+pub(crate) struct Program {
+    /// The path it was asked for by.
+    named: PathBuf,
+    file: File,
+    stamp: Stamp,
+    /// Whether it starts with `#!`. Known once it has been digested.
+    script: bool,
+}
+
+/// What to start, and what must stay open until the child exists.
+struct Start {
+    path: PathBuf,
+    _held: Option<std::os::fd::OwnedFd>,
+}
+
+impl Program {
+    /// Opens the file at `real`, the resolved form of `named`. A link at
+    /// the name is not followed, and only a regular file is taken.
+    pub(crate) fn open(named: &Path, real: &Path) -> io::Result<Self> {
+        use rustix::fs::{Mode, OFlags};
+        // Not blocking, so that a pipe put at the name cannot hold the
+        // start; reading a regular file is not changed by it.
+        let handle = rustix::fs::open(
+            real,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?;
+        let file = File::from(handle);
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(other("a program is a regular file"));
+        }
+        Ok(Self {
+            named: named.to_path_buf(),
+            file,
+            stamp: Stamp::of(&meta),
+            script: false,
+        })
+    }
+
+    /// The digest of the open file. An error when the file changed while
+    /// it was read.
+    pub(crate) fn digest(&mut self) -> io::Result<a2m_core::Digest> {
+        let (digest, script) = super::digest_read(&mut self.file)?;
+        if Stamp::of(&self.file.metadata()?) != self.stamp {
+            return Err(other("the program changed while it was read"));
+        }
+        self.script = script;
+        Ok(digest)
+    }
+
+    /// The open file under the name the system gives it, where a child can
+    /// be started from that name. The copy of the handle is numbered above
+    /// `clear_of`, the numbers the child's own pipes will take.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn by_handle(&self, clear_of: i32) -> Option<Start> {
+        use std::os::fd::AsRawFd;
+        if self.script {
+            return None;
+        }
+        let held = rustix::io::fcntl_dupfd_cloexec(&self.file, clear_of.max(2) + 1).ok()?;
+        let path = PathBuf::from(format!("/proc/self/fd/{}", held.as_raw_fd()));
+        // Without the process file system there is no such name.
+        path.exists().then_some(Start {
+            path,
+            _held: Some(held),
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn by_handle(&self, _clear_of: i32) -> Option<Start> {
+        None
+    }
+
+    /// What to start. Call it under the start lock, immediately before the
+    /// start.
+    fn start(&self, clear_of: i32) -> Result<Start, StartError> {
+        if let Some(start) = self.by_handle(clear_of) {
+            return Ok(start);
+        }
+        // By its path: only while the path leads to the file that was
+        // digested, and that file has not been changed since.
+        let unchanged = std::fs::metadata(&self.named)
+            .is_ok_and(|now| Stamp::of(&now) == self.stamp)
+            && self
+                .file
+                .metadata()
+                .is_ok_and(|now| Stamp::of(&now) == self.stamp);
+        if unchanged {
+            Ok(Start {
+                path: self.named.clone(),
+                _held: None,
+            })
+        } else {
+            Err(StartError::Changed)
+        }
+    }
+}
+
+/// Starts `program` as the leader of a new process group, with the command
+/// `command` builds for the path it is given. With `foreign`, the child
+/// receives the two pipe ends on the descriptors it names.
 pub(crate) fn spawn(
-    mut command: Command,
+    program: &Program,
+    command: impl FnOnce(&Path) -> Command,
     foreign: Option<&ForeignPipe>,
-) -> io::Result<(Group, Option<Pipes>)> {
+) -> Result<(Group, Option<Pipes>), StartError> {
     let _one_start = START
         .lock()
         .map_err(|_| other("the start lock is broken"))?;
+    let clear_of = foreign.map_or(2, |pipe| pipe.child_reads_fd.max(pipe.child_writes_fd));
+    let start = program.start(clear_of)?;
+    let mut command = command(&start.path);
+    // The program sees the name it was asked for by, however it is started.
+    command.arg0(&program.named);
     command.process_group(0);
     let pipes = match foreign {
         None => None,
@@ -153,6 +298,9 @@ pub(crate) fn spawn(
     // The command holds this process's copies of the child's pipe ends.
     // Until it is dropped a dead child would not show as the end of the pipe.
     drop(command);
+    // The child exists: the copy of the program's handle it was started
+    // from is no longer needed.
+    drop(start);
     let pgid = child
         .id()
         .and_then(|id| i32::try_from(id).ok())

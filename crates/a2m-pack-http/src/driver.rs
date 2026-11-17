@@ -410,21 +410,23 @@ impl HttpDriver {
     }
 }
 
-/// The endpoint a step names.
-fn endpoint<'a>(
-    session: &'a Session,
-    step: &Step,
-) -> Result<(&'a str, &'a EndpointTemplate), StepFailure> {
-    let named = step
-        .refers_to
-        .as_ref()
-        .ok_or_else(|| codes::not_usable("it names no endpoint"))?;
+/// The endpoint a step names, or why it names none.
+fn endpoint(session: &Session, step: &Step) -> Result<(String, EndpointTemplate), &'static str> {
+    let named = step.refers_to.as_ref().ok_or("it names no endpoint")?;
     session
         .sections
         .get(&named.section.get())
         .and_then(|section| section.get_key_value(&named.entry))
-        .map(|(name, template)| (name.as_str(), template))
-        .ok_or_else(|| codes::not_usable("the endpoint it names is not in the plan"))
+        .map(|(name, template)| (name.clone(), template.clone()))
+        .ok_or("the endpoint it names is not in the plan")
+}
+
+/// The endpoint a step that judges a held answer names.
+fn judged_endpoint(
+    session: &Session,
+    step: &Step,
+) -> Result<(String, EndpointTemplate), StepFailure> {
+    endpoint(session, step).map_err(|why| cannot_judge(session.answer.as_ref(), why.to_owned()))
 }
 
 /// When a step must be done: the earlier of its own timeout and the
@@ -514,11 +516,12 @@ impl Session {
     /// The address of a built request: the surface's origin, the path its
     /// address ends in, and the path and the query that were built.
     ///
-    /// Checked again before sending: what the URL type reads back is the
-    /// surface's origin and exactly the path and the query that were
-    /// built. A dot segment that would be folded away, a separator that
-    /// would start a query, a fragment, or a host, and a byte that would be
-    /// encoded again all change what is read back, and are refused.
+    /// Checked again before sending: the path built starts at a `/`, and
+    /// what the URL type reads back is the surface's origin and exactly
+    /// the path and the query that were built. A dot segment that would be
+    /// folded away, a separator that would start a query, a fragment, or a
+    /// host, and a byte that would be encoded again all change what is
+    /// read back, and are refused.
     fn address(&self, built: &Built) -> Result<reqwest::Url, Failure> {
         let path = format!("{}{}", self.origin.prefix, built.path);
         let mut address = format!("{}{path}", self.origin.text);
@@ -530,7 +533,8 @@ impl Session {
         reqwest::Url::parse(&address)
             .ok()
             .filter(|url| {
-                url.origin().ascii_serialization() == self.origin.text
+                built.path.starts_with('/')
+                    && url.origin().ascii_serialization() == self.origin.text
                     && url.username().is_empty()
                     && url.password().is_none()
                     && url.path() == path
@@ -806,8 +810,7 @@ impl HttpDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         session.answer = None;
-        let (name, template) = endpoint(session, step)?;
-        let (name, template) = (name.to_owned(), template.clone());
+        let (name, template) = endpoint(session, step).map_err(codes::not_usable)?;
         if template.surface != session.surface {
             return Err(StepFailure::not_sent(codes::surface_not_declared(
                 &format!("The surface of the endpoint `{name}`"),
@@ -979,12 +982,13 @@ fn held_answer<'a>(
             format!("no answer of the endpoint `{name}` is held; a `request` step comes first"),
         ));
     }
-    answer.as_mut().ok_or_else(|| codes::not_usable("no answer is held"))
+    answer
+        .as_mut()
+        .ok_or_else(|| codes::not_usable("no answer is held"))
 }
 
 fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailure> {
-    let (name, template) = endpoint(session, step)?;
-    let (name, template) = (name.to_owned(), template.clone());
+    let (name, template) = judged_endpoint(session, step)?;
     let answer = held_answer(&mut session.answer, &name)?;
     let answered = StepFailure::answered;
     if answer.absent && step.lookup {
@@ -1141,8 +1145,7 @@ impl HttpDriver {
         step: &Step,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
-        let (name, template) = endpoint(session, step)?;
-        let (name, template) = (name.to_owned(), template.clone());
+        let (name, template) = judged_endpoint(session, step)?;
         let answer = held_answer(&mut session.answer, &name)?;
         if answer.absent && step.lookup {
             return Ok(StepOutcome::Absent(Observed::default()));
@@ -1155,9 +1158,10 @@ impl HttpDriver {
                 ),
             ));
         };
-        let payload: ExtractStep = step.payload.decode().map_err(|_| {
-            cannot_judge(Some(answer), "its payload does not decode".to_owned())
-        })?;
+        let payload: ExtractStep = step
+            .payload
+            .decode()
+            .map_err(|_| cannot_judge(Some(answer), "its payload does not decode".to_owned()))?;
         let mut values = Values::new();
         for wanted in &payload.values {
             let value = taken(json, &wanted.path, wanted.take).ok_or_else(|| {
@@ -1310,10 +1314,10 @@ impl Driver for HttpDriver {
             } else if step.kind == PROBE {
                 self.probe(session, step, input).await
             } else {
-                Err(codes::not_usable(format!(
-                    "the `http` mode has no step of the kind `{}`",
-                    step.kind
-                )))
+                Err(cannot_judge(
+                    session.answer.as_ref(),
+                    format!("the `http` mode has no step of the kind `{}`", step.kind),
+                ))
             }
         })
     }
@@ -1406,6 +1410,7 @@ mod tests {
 
     #[test]
     fn the_address_sent_to_is_the_surfaces_origin_and_exactly_the_path_that_was_built() {
+        let bare = session("http://app.example.test");
         let session = session("http://app.example.test/v2");
         let url = session
             .address(&built("/orders/A%2F1/items", "q=a%26b"))
@@ -1441,9 +1446,22 @@ mod tests {
             let failure = session.address(&built("/orders", query)).unwrap_err();
             assert_eq!(failure.code(), &codes::SURFACE_NOT_DECLARED, "{query}");
         }
+        // With no path of its own, a surface's origin is followed directly
+        // by what was built: it starts at a `/`, or it is not sent.
+        for path in [
+            "@other.example.test/x",
+            ".other.example.test/x",
+            ":81/x",
+            "",
+        ] {
+            let failure = bare.address(&built(path, "")).unwrap_err();
+            assert_eq!(failure.code(), &codes::SURFACE_NOT_DECLARED, "{path}");
+        }
         // A second `//` after the origin stays a path on the surface's own
         // host, and is sent as written.
-        let url = session.address(&built("//other.example.test/x", "")).unwrap();
+        let url = session
+            .address(&built("//other.example.test/x", ""))
+            .unwrap();
         assert_eq!(url.host_str(), Some("app.example.test"));
         assert_eq!(url.path(), "/v2//other.example.test/x");
     }

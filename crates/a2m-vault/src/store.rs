@@ -5,6 +5,7 @@
 //! operating system's store and wraps in memory; a key service wraps remotely
 //! and never releases the root.
 
+mod creation;
 mod memory;
 mod os;
 mod passphrase;
