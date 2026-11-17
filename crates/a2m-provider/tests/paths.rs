@@ -720,3 +720,102 @@ fn a_temporary_file_is_private_keeps_the_targets_mode_and_removes_only_itself() 
     std::fs::remove_file(&name).unwrap();
     assert!(temporaries().is_empty());
 }
+
+/// Decision 0193: a root that stands for each request's project folder
+/// resolves in the project of the run at hand. One set of roots, two
+/// projects: each check reads its own project's file and never reaches the
+/// other's, and every escape is refused as for any root.
+#[test]
+fn a_root_of_each_requests_project_resolves_in_that_project_and_never_another() {
+    let folder = Folder::new("project-roots");
+    let mut paths = Vec::new();
+    for name in ["alpha", "beta"] {
+        let project = folder.path().join(name);
+        std::fs::create_dir_all(project.join("stock")).unwrap();
+        std::fs::write(project.join("stock").join("count.csv"), name.as_bytes()).unwrap();
+        // The kernel's checked project folder of a run of that project.
+        let mut own = Roots::none();
+        own.add(root("project"), &project, Access::Read).unwrap();
+        let checked = own.folder(&root("project"), Access::Read).unwrap();
+        paths.push(a2m_provider::CheckedPaths::none().with_project(checked));
+    }
+    let mut roots = Roots::none();
+    roots.add_project(root("files"), Access::Write).unwrap();
+    assert!(roots.add_project(root("files"), Access::Read).is_err());
+    assert!(roots.is_project(&root("files")));
+    assert!(roots.holds(&root("files"), Access::Write));
+    assert!(!roots.holds(&root("elsewhere"), Access::Read));
+    assert_eq!(roots.names().collect::<Vec<_>>(), [&root("files")]);
+
+    for (paths, name) in paths.iter().zip(["alpha", "beta"]) {
+        let file = roots
+            .check_in(&root("files"), "stock/count.csv", Access::Read, paths)
+            .unwrap();
+        assert_eq!(file.read(16).unwrap(), name.as_bytes());
+        let whole = roots
+            .folder_in(&root("files"), Access::Read, paths)
+            .unwrap();
+        assert_eq!(
+            whole.join("stock/count.csv").unwrap().read(16).unwrap(),
+            name.as_bytes()
+        );
+        for escape in [
+            "../alpha/stock/count.csv",
+            "../beta/stock/count.csv",
+            "/etc/hosts",
+            "C:/Windows/win.ini",
+            "stock/../../beta/stock/count.csv",
+        ] {
+            let failure = roots
+                .check_in(&root("files"), escape, Access::Read, paths)
+                .unwrap_err();
+            assert_eq!(failure.code(), &codes::PATH_NOT_ALLOWED, "{escape}");
+        }
+    }
+    // A link in one project that leads to the other is refused.
+    let link = folder.path().join("alpha").join("theirs");
+    if link_folder(&folder.path().join("beta").join("stock"), &link).is_some() {
+        let failure = roots
+            .check_in(&root("files"), "theirs/count.csv", Access::Read, &paths[0])
+            .unwrap_err();
+        assert_eq!(failure.code(), &codes::PATH_NOT_ALLOWED);
+    }
+
+    // Without a project folder the run stops by name; the plain check of
+    // such a root is refused the same way and resolves nothing.
+    let none = a2m_provider::CheckedPaths::none();
+    for failure in [
+        roots
+            .check_in(&root("files"), "stock/count.csv", Access::Read, &none)
+            .unwrap_err(),
+        roots
+            .check(&root("files"), "stock/count.csv", Access::Read)
+            .unwrap_err(),
+        roots.folder(&root("files"), Access::Read).unwrap_err(),
+    ] {
+        assert_eq!(failure.code(), &codes::PROJECT_FOLDER_MISSING);
+    }
+    // A provider's subset keeps it as a root of each request's project.
+    let narrowed = roots.narrowed(&[root("files")], &[]).unwrap();
+    assert!(narrowed.is_project(&root("files")));
+    assert!(!narrowed.holds(&root("files"), Access::Write));
+    assert_eq!(
+        narrowed
+            .check_in(&root("files"), "stock/count.csv", Access::Read, &paths[1])
+            .unwrap()
+            .read(16)
+            .unwrap(),
+        b"beta"
+    );
+    // Another root keeps its own folder, whatever the run's project.
+    let (_scene, mut fixed) = scene();
+    fixed.add_project(root("files"), Access::Read).unwrap();
+    assert_eq!(
+        fixed
+            .check_in(&root("project"), "orders/one.txt", Access::Read, &paths[0])
+            .unwrap()
+            .read(16)
+            .unwrap(),
+        b"one"
+    );
+}

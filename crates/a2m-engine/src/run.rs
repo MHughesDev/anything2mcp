@@ -551,8 +551,7 @@ impl<'a> Run<'a> {
         let waited = self.engine.deps.clock.elapsed();
         let surface_ref = self.surface_ref(surface)?;
         // A replay uses no session: nothing reaches the system.
-        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(surface).is_some()
-        {
+        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(surface).is_some() {
             let want = SessionWant {
                 surface: surface_ref.surface.name.clone(),
                 headroom: None,

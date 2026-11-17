@@ -189,7 +189,7 @@ impl a2m_provider::Driver for Postured {
             Some("order_flaky") => {
                 let made = self.more.flaky.fetch_add(1, Ordering::SeqCst) + 1;
                 Box::pin(async move {
-                    if made % 3 == 0 {
+                    if made.is_multiple_of(3) {
                         return Err(a2m_provider::StepFailure::not_sent(Failure::new(
                             a2m_core::FailureClass::UnknownVariant,
                             a2m_core::FailureCode::fixed("stand_unexpected"),
@@ -420,22 +420,41 @@ impl a2m_files::DraftingRule for OperationFromCall {
         }
         Ok(vec![a2m_files::DraftDoc {
             path: a2m_files::RelPath::new(&format!("operations/{name}.yaml"))?,
-            body: DraftValue::map(body.into_iter().chain(vec![
-                ("inputs", DraftValue::Map(inputs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())),
-                ("outputs", DraftValue::Map(outputs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())),
-                (
-                    "bindings",
-                    DraftValue::List(vec![DraftValue::map(vec![
-                        ("mode", DraftValue::text("stand")),
-                        ("status", DraftValue::text("verified")),
-                        ("call", DraftValue::text(name)),
-                    ])]),
-                ),
-                (
-                    "description",
-                    DraftValue::text(&format!("Reads what the call `{name}` answers; drafted from a finding.")),
-                ),
-            ]).collect()),
+            body: DraftValue::map(
+                body.into_iter()
+                    .chain(vec![
+                        (
+                            "inputs",
+                            DraftValue::Map(
+                                inputs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect(),
+                            ),
+                        ),
+                        (
+                            "outputs",
+                            DraftValue::Map(
+                                outputs
+                                    .into_iter()
+                                    .map(|(k, v)| (k.to_owned(), v))
+                                    .collect(),
+                            ),
+                        ),
+                        (
+                            "bindings",
+                            DraftValue::List(vec![DraftValue::map(vec![
+                                ("mode", DraftValue::text("stand")),
+                                ("status", DraftValue::text("verified")),
+                                ("call", DraftValue::text(name)),
+                            ])]),
+                        ),
+                        (
+                            "description",
+                            DraftValue::text(&format!(
+                                "Reads what the call `{name}` answers; drafted from a finding."
+                            )),
+                        ),
+                    ])
+                    .collect(),
+            ),
         }])
     }
 }
@@ -685,7 +704,13 @@ impl World {
     }
 
     /// The same, made in another project folder.
-    async fn call_in(&self, caller: &Caller, action: &str, input: Json, project: &Path) -> Response {
+    async fn call_in(
+        &self,
+        caller: &Caller,
+        action: &str,
+        input: Json,
+        project: &Path,
+    ) -> Response {
         self.kernel
             .dispatch(Request::new(action, input, caller.clone()).in_project(project))
             .await
@@ -1814,7 +1839,10 @@ fn texts_under(folder: &Path) -> Vec<(PathBuf, String)> {
         if path.is_dir() {
             found.extend(texts_under(&path));
         } else {
-            found.push((path.clone(), std::fs::read_to_string(&path).unwrap_or_default()));
+            found.push((
+                path.clone(),
+                std::fs::read_to_string(&path).unwrap_or_default(),
+            ));
         }
     }
     found
@@ -1917,7 +1945,10 @@ async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() 
     // after it.
     let flaky = of("example_order_flaky");
     assert_eq!(flaky["state"], "failed", "{flaky}");
-    assert_eq!((flaky["tries"].clone(), flaky["completed"].clone()), (json!(3), json!(2)));
+    assert_eq!(
+        (flaky["tries"].clone(), flaky["completed"].clone()),
+        (json!(3), json!(2))
+    );
     assert_eq!(flaky["failure"]["code"], "stand_unexpected", "{flaky}");
     // Each trial was submitted once, whatever call made it.
     for (tool, count) in [
@@ -2076,7 +2107,15 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
     assert_eq!(asked.exit, ExitClass::PersonNeeded, "{:?}", asked.error);
     assert_eq!(asked.result.unwrap()["state"], "needs_person");
     assert_eq!(
-        world.surface.acts.lock().unwrap().last().unwrap().action.as_str(),
+        world
+            .surface
+            .acts
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .action
+            .as_str(),
         "binding.promote"
     );
     assert!(
@@ -2104,7 +2143,7 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
         }
     };
     assert_eq!(refused("target.yaml").await, "path_not_allowed");
-    assert_eq!(refused("../anything2mcp.toml").await, "schema_invalid");
+    assert_eq!(refused("../anything2mcp.toml").await, "path_not_allowed");
     std::fs::create_dir_all(target_dir.join("notes")).unwrap();
     std::fs::write(target_dir.join("notes").join("readme.txt"), "kept").unwrap();
     assert_eq!(refused("notes/readme.txt").await, "path_not_allowed");
@@ -2119,6 +2158,7 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
     }
     assert!(target_dir.join("target.yaml").is_file());
     assert!(target_dir.join("notes").join("readme.txt").is_file());
+    std::fs::remove_dir_all(target_dir.join("notes")).unwrap();
     let removed = world
         .call(
             &agent,
@@ -2150,7 +2190,7 @@ async fn a_first_binding_is_promoted_on_its_evidence_and_a_draft_is_removed_by_i
         .error
         .unwrap();
     assert_eq!(publish.code, "publish_gates_not_passed");
-    assert!(publish.next_step.contains("draft.delete"), "{}", publish.next_step);
+    assert!(publish.fix.contains("draft.delete"), "{}", publish.fix);
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -2166,6 +2206,10 @@ async fn a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person() {
     for project in [world.project.path(), other.path()] {
         std::fs::remove_file(project.join("targets").join("example").join("auth.yaml")).unwrap();
     }
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
     let here = world
         .call(
             &agent,
@@ -2178,7 +2222,12 @@ async fn a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person() {
     assert_eq!(here["state"], "working", "{here}");
     // In the other project, the same target's name: a scout of its own.
     let there = world
-        .call_in(&agent, "scout.run", json!({"target": "example"}), other.path())
+        .call_in(
+            &agent,
+            "scout.run",
+            json!({"target": "example"}),
+            other.path(),
+        )
         .await
         .result
         .unwrap();
@@ -2206,6 +2255,10 @@ async fn a_scout_is_kept_by_its_project_and_records_no_consent_for_a_person() {
             "why": report["content"]["consent"]["why"],
         })
     );
-    assert!(!report.to_string().contains("The person who added the target"));
+    assert!(
+        !report
+            .to_string()
+            .contains("The person who added the target")
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

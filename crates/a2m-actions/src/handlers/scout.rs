@@ -1048,9 +1048,11 @@ async fn trial_of(
         .await?;
     match earlier {
         Some(run) => Ok((run, false)),
-        None => super::tools::submit_trial_as(kernel, call, found, input, environment.clone(), hash)
-            .await
-            .map(|run| (run, true)),
+        None => {
+            super::tools::submit_trial_as(kernel, call, found, input, environment.clone(), hash)
+                .await
+                .map(|run| (run, true))
+        }
     }
 }
 
@@ -1084,17 +1086,16 @@ async fn trial_rests(kernel: &Kernel, run: RunId) -> Result<Option<a2m_ledger::R
 /// that output, in the list's own order, is text or a whole number.
 /// Anything else is not tried, with its reason (rule 7: no guessing by
 /// resemblance).
-fn key_from_list(
-    operation: &a2m_core::OperationPlan,
-    proven: &[Proven],
-) -> TryInput {
+fn key_from_list(operation: &a2m_core::OperationPlan, proven: &[Proven]) -> TryInput {
     let [key] = operation.identity.key.as_slice() else {
         return TryInput::None(
             "It takes an input it states no example of, and its key is not one input; the scout has no value for it.",
         );
     };
     let Some(key) = operation.inputs.get(key.get()) else {
-        return TryInput::None("It takes an input it states no example of; the scout has no value for it.");
+        return TryInput::None(
+            "It takes an input it states no example of; the scout has no value for it.",
+        );
     };
     if operation
         .inputs
@@ -1116,7 +1117,12 @@ fn key_from_list(
                 && read.result.get(&key.name).is_some_and(Json::is_array)
         })
         .collect();
-    let [Proven { tool: list, result, .. }] = lists.as_slice() else {
+    let [
+        Proven {
+            tool: list, result, ..
+        },
+    ] = lists.as_slice()
+    else {
         return TryInput::None(if lists.is_empty() {
             "It takes a key it states no example of, and no list read of the same surface proven in this scout answers an output of the key's name."
         } else {
@@ -1303,8 +1309,16 @@ async fn try_reads(
                     complete: false,
                 });
             }
-            let (run, new) =
-                trial_of(kernel, call, scout, &found, &input, try_number, &environment).await?;
+            let (run, new) = trial_of(
+                kernel,
+                call,
+                scout,
+                &found,
+                &input,
+                try_number,
+                &environment,
+            )
+            .await?;
             // A trial made before and found again does not count: the call
             // moves the stage on by one new trial at least.
             waited |= new;
@@ -1712,8 +1726,16 @@ handler!(
                     mut result,
                     runs,
                     complete,
-                } = try_reads(kernel, &call, id, &target, folder.clone(), &tools, held_back)
-                    .await?;
+                } = try_reads(
+                    kernel,
+                    &call,
+                    id,
+                    &target,
+                    folder.clone(),
+                    &tools,
+                    held_back,
+                )
+                .await?;
                 if !complete {
                     return Ok(stopped(
                         &target,
@@ -1796,10 +1818,8 @@ mod tests {
     use super::{COPY_MOST_FILES, copy_target};
 
     fn folder(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "a2m-scout-copy-{name}-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("a2m-scout-copy-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(path.join("project").join("t").join("operations")).unwrap();
         path
@@ -1825,7 +1845,10 @@ mod tests {
             .unwrap();
         let to = root.join("copy");
         copy_target(&from, &to, &mut (0, 0)).unwrap();
-        assert_eq!(std::fs::read_to_string(to.join("target.yaml")).unwrap(), "kept");
+        assert_eq!(
+            std::fs::read_to_string(to.join("target.yaml")).unwrap(),
+            "kept"
+        );
         assert!(!to.join("operations").join("swapped.yaml").exists());
         let _ = std::fs::remove_dir_all(&root);
     }

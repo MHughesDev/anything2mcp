@@ -63,7 +63,11 @@ fn with_status_verified(text: &str, binding: &Located<Doc>) -> Option<String> {
             .find(|entry| entry.key.value == "mode")?;
         let at = usize::try_from(mode.key.at.line).ok()?.checked_sub(1)?;
         let indent = " ".repeat(usize::try_from(mode.key.at.column).ok()?.checked_sub(1)?);
-        let ending = if lines.get(at)?.ends_with('\r') { "\r" } else { "" };
+        let ending = if lines.get(at)?.ends_with('\r') {
+            "\r"
+        } else {
+            ""
+        };
         lines.insert(at + 1, format!("{indent}status: \"verified\"{ending}"));
     }
     Some(lines.join("\n"))
@@ -127,7 +131,9 @@ fn locate(
         }
         _ => {
             return Err(not_promotable(
-                format!("The operation `{tool}` has more than one binding of the mode `{mode}`, and nothing says which is meant."),
+                format!(
+                    "The operation `{tool}` has more than one binding of the mode `{mode}`, and nothing says which is meant."
+                ),
                 "Promote it by writing its status in the operation's file.",
             ));
         }
@@ -138,13 +144,17 @@ fn locate(
         BindingStatus::Shadow => {
             return Err(codes::input(
                 codes::ACTION_NOT_BUILT,
-                format!("The binding of `{mode}` of `{tool}` is `shadow`: it is promoted on its exact matches against the verified binding, and that comparison is not built."),
+                format!(
+                    "The binding of `{mode}` of `{tool}` is `shadow`: it is promoted on its exact matches against the verified binding, and that comparison is not built."
+                ),
                 "Keep it in shadow; `shadow.report` and its promotion come with the shadow comparison.",
             ));
         }
         BindingStatus::Retired => {
             return Err(not_promotable(
-                format!("The binding of `{mode}` of `{tool}` is `retired`, and a retired binding never acts again."),
+                format!(
+                    "The binding of `{mode}` of `{tool}` is `retired`, and a retired binding never acts again."
+                ),
                 "Write a new binding.",
             ));
         }
@@ -156,7 +166,9 @@ fn locate(
             .any(|binding| binding.status == BindingStatus::Verified)
     {
         return Err(not_promotable(
-            format!("The operation `{tool}` already has a verified binding: a binding beside it is promoted from shadow, on its exact matches, not as a first binding."),
+            format!(
+                "The operation `{tool}` already has a verified binding: a binding beside it is promoted from shadow, on its exact matches, not as a first binding."
+            ),
             "Set the binding's status to `shadow` and let it be compared.",
         ));
     }
@@ -182,7 +194,9 @@ fn locate(
             "Promote it by writing its status in the operation's file.",
         ));
     };
-    let bytes = folder.join(path.as_str())?.read(a2m_files::LARGEST_TARGET_FILE as u64)?;
+    let bytes = folder
+        .join(path.as_str())?
+        .read(a2m_files::LARGEST_TARGET_FILE as u64)?;
     let text = String::from_utf8(bytes).map_err(|_| {
         not_promotable(
             format!("`{path}` is not UTF-8 text."),
@@ -191,7 +205,9 @@ fn locate(
     })?;
     let cannot = || {
         not_promotable(
-            format!("The status of the binding of `{mode}` of `{tool}` cannot be rewritten by rule in `{path}`: the file writes it in a form the rewrite does not keep."),
+            format!(
+                "The status of the binding of `{mode}` of `{tool}` cannot be rewritten by rule in `{path}`: the file writes it in a form the rewrite does not keep."
+            ),
             "Write `status: verified` in the binding yourself, with `draft.write`.",
         )
     };
@@ -272,7 +288,9 @@ async fn offline_evidence(
     if tests.is_empty() {
         return Err(codes::input(
             codes::PROMOTION_UNPROVEN,
-            format!("The operation `{tool}` has no offline test, so nothing shows its binding gives what it should."),
+            format!(
+                "The operation `{tool}` has no offline test, so nothing shows its binding gives what it should."
+            ),
             "Write an offline test with a fixture of synthetic values (`draft.write`), run `test.run`, and promote again.",
         ));
     }
@@ -313,7 +331,9 @@ async fn trial_evidence(
         let unproven = || {
             codes::input(
                 codes::PROMOTION_UNPROVEN,
-                format!("The run named is not a completed trial of `{tool}` of `{target}` by this caller's person."),
+                format!(
+                    "The run named is not a completed trial of `{tool}` of `{target}` by this caller's person."
+                ),
                 "Name the run a `draft.try` of the read gave, or scout the target again.",
             )
         };
@@ -441,10 +461,7 @@ handler!(
             })
             .await?;
         }
-        let detail = format!(
-            "{target} {tool} {mode}: draft to verified, on {}",
-            evidence
-        );
+        let detail = format!("{target} {tool} {mode}: draft to verified, on {}", evidence);
         kernel
             .audit(
                 &call.caller.principal.principal.id.to_string(),
@@ -453,10 +470,12 @@ handler!(
                 &detail,
             )
             .await?;
-        Ok(Output::ok(shown(true, "verified", evidence)).then(Next::new(
-            "publish.request",
-            json!({"target": target.as_str()}),
-            "to have a person publish the version in which the binding first acts",
-        )))
+        Ok(
+            Output::ok(shown(true, "verified", evidence)).then(Next::new(
+                "publish.request",
+                json!({"target": target.as_str()}),
+                "to have a person publish the version in which the binding first acts",
+            )),
+        )
     }
 );

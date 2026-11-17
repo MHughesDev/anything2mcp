@@ -4,6 +4,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 
 | Term | Meaning |
 | --- | --- |
+| Absence steps | The step kinds a mode lists as authoritative lookups. Only a lookup made of them may prove that a write of a record with no key did not land, and only when it answers "absent" twice, a settle time apart ([decision 0185](../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)) |
 | Acknowledged | The weakest proof a write can end on: the system answered the committing step and nothing could be read back. The record is `acted`, never verified, and only an operation declared `irreversible` may offer it ([decision 0172](../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)) |
 | Action | An authoring or administration function defined once in the action registry and exposed as a command, an MCP tool, a REST route, and an SDK method |
 | Application's verdict | The system's own answer to a write that was sent: it saved, or it refused or found the record changed. Only a verdict settles a sent write; an answer that is not one, such as a redirect, a reply too large to read, or a refusal made before the system looked, leaves the write in doubt until it is verified |
@@ -42,6 +43,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Failure class | The category of a stop, which alone decides what happens next |
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
 | Fixture | Scrubbed recorded evidence used for offline tests |
+| Gate evidence | What each publish gate returned when a version was published, stored with the version, with the gates that did not run named as such ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Generation | Which version of a key: 1 for the first, one more after each rotation |
 | Grant | A rule giving a principal access to a scope up to an effect class |
 | Guardrail | A product rule that is compiled in and that no setting, profile, or preset can loosen |
@@ -66,6 +68,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Lock ticket | What a run takes from the scheduler before it asks the ledger for a record lock. A wait that starts from it returns at once if the lock was freed since, so no release is missed |
 | Managed component | An outside program a provider needs, detected and identified by digest, never bundled and never fetched during a run |
 | Manifest | A provider's declaration of what it supplies, reaches, needs, and may do |
+| Matched screen | One screen found from several pages whose paths differ in one segment and whose snapshots agree; its address holds a placeholder for that segment ([decision 0187](../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) |
 | Mapping file | The file that names which tools of an upstream MCP server may be reached, and as what. No other tool of that server is reachable |
 | Mode | One concrete way of reaching a system, brought by a pack and belonging to one archetype: `ui`, `http`, and `mcp` are three. The kernel holds no list of modes; a provider registers each one it brings |
 | Open question | The marker the drafter leaves in a draft where a value is needed that the system did not state, such as a unit or a key. The compiler refuses it in every mode, and the question goes to the unknowns ledger |
@@ -73,6 +76,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Owner | The person a user session belongs to |
 | Owner mark | A value the supervisor places in a child process's environment so that it can prove the process is its own before stopping it |
 | Pack | The crates that know one kind of system. Compiled into the binary; enabled by a setting |
+| Page request | A request a web page makes by itself, which the observing tab records as names and kinds and which a `page_http` read may repeat from inside the page, with GET alone ([decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
 | Part | One of the seven divisions of the specification; the first digit of a section's number |
 | Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
@@ -87,6 +91,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Probe | For a session: a cheap signed-in read. For a target: the first inspection of a system's surfaces |
 | Profile | A deployment shape, such as Solo or Company server. Also a browser's data directory; context makes clear which |
 | Project | A folder with a `anything2mcp.toml` holding target files |
+| Publish gate | A check a version must pass before it is published. Two of the twelve in section 403 are built, the schema and lint check and the offline replay ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Quarantine | The wait after a lost lease before the run's records may be touched |
 | Quarantined | Said of a record lock that is kept, not released, because its record is in doubt. Only its own run, under a new lease, can confirm it |
 | Read-back | Reading a value from the system after writing it |
@@ -115,6 +120,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Target | One system being wrapped: an application, a service, a program, a data store, a device |
 | Template version | One version of a source's template that a source definition knows, with the fingerprint of its structure. An input that matches no template version is refused |
 | Test stand | The piece of test equipment that imitates one kind of system and reports ground truth through a control interface. The test application is the first |
+| Throwaway store | An in-memory ledger made for one offline test, with the same migrations and rules as every store, gone when the test ends; only it takes the offline-test clearance ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Tool | An operation or pipeline as an agent sees it |
 | Toolset | A named, versioned selection of tools with its own endpoint, members, and policy |
 | Trace signature | A hash of the parts of a step trace that should not vary between identical runs |

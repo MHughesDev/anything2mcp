@@ -59,8 +59,9 @@ const DEVICE_NAMES: &[&str] = &[
 
 #[derive(Debug, Clone)]
 struct Root {
-    /// The root, resolved once when it was added.
-    path: PathBuf,
+    /// The root, resolved once when it was added; `None` for a root that
+    /// stands for the project folder of each request ([`Roots::add_project`]).
+    path: Option<PathBuf>,
     write: bool,
 }
 
@@ -200,11 +201,54 @@ impl Roots {
         self.roots.insert(
             name,
             Root {
-                path,
+                path: Some(path),
                 write: access == Access::Write,
             },
         );
         Ok(())
+    }
+
+    /// Adds a root bound to no folder now: it stands for the project folder
+    /// of each request, which a run's [`CheckedPaths::project_folder`]
+    /// gives, so that one engine that serves many projects resolves it in
+    /// the project of the request at hand and never in the one that started
+    /// it. A path under it is made by [`Roots::check_in`] and
+    /// [`Roots::folder_in`]; [`Roots::check`] and [`Roots::folder`] refuse it
+    /// (decision 0193).
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed` when the name is taken.
+    pub fn add_project(&mut self, name: RootName, access: Access) -> Result<(), Failure> {
+        if self.roots.contains_key(&name) {
+            return Err(codes::input(
+                codes::PATH_NOT_ALLOWED,
+                format!("The root `{name}` cannot be used: a root of that name exists."),
+                "Name an existing folder by its absolute path in the settings.",
+            ));
+        }
+        self.roots.insert(
+            name,
+            Root {
+                path: None,
+                write: access == Access::Write,
+            },
+        );
+        Ok(())
+    }
+
+    /// Whether this set holds the root, for `access`, without resolving
+    /// anything: for a driver's health, which a root that stands for each
+    /// request's project folder passes with no folder at hand.
+    #[must_use]
+    pub fn holds(&self, name: &RootName, access: Access) -> bool {
+        self.root(name, access).is_ok()
+    }
+
+    /// Whether the root stands for the project folder of each request.
+    #[must_use]
+    pub fn is_project(&self, name: &RootName) -> bool {
+        self.roots.get(name).is_some_and(|root| root.path.is_none())
     }
 
     /// The roots' names, in order.
@@ -275,15 +319,52 @@ impl Roots {
     /// `policy`/`effect_not_declared` when the root is not in this set, or
     /// is read only and `access` is `Write`.
     pub fn folder(&self, root: &RootName, access: Access) -> Result<CheckedPath, Failure> {
+        let found = bound(root, self.root(root, access)?)?;
+        Ok(folder_path(root, found, access))
+    }
+
+    /// The root folder itself, where the root stands for the request's
+    /// project folder: that folder, from the run's checked paths. Any other
+    /// root as [`Roots::folder`] gives it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Roots::folder`]; `input`/`project_folder_missing` for a root of
+    /// the request's project when the run has no project folder.
+    pub fn folder_in(
+        &self,
+        root: &RootName,
+        access: Access,
+        paths: &CheckedPaths,
+    ) -> Result<CheckedPath, Failure> {
         let found = self.root(root, access)?;
-        Ok(CheckedPath {
-            root: root.clone(),
-            base: found.path.clone(),
-            relative: String::new(),
-            full: found.path.clone(),
-            named: found.path.clone(),
-            access,
-        })
+        match &found.path {
+            Some(path) => Ok(folder_path(root, path, access)),
+            None => Ok(folder_path(root, paths.project_folder()?.as_path(), access)),
+        }
+    }
+
+    /// As [`Roots::check`], where a root that stands for the request's
+    /// project folder is resolved in the run's checked project folder: the
+    /// same refusals, a link that leads out of that folder included, so a
+    /// request's path never reaches another project's files.
+    ///
+    /// # Errors
+    ///
+    /// As [`Roots::check`]; `input`/`project_folder_missing` for a root of
+    /// the request's project when the run has no project folder.
+    pub fn check_in(
+        &self,
+        root: &RootName,
+        relative: &str,
+        access: Access,
+        paths: &CheckedPaths,
+    ) -> Result<CheckedPath, Failure> {
+        let found = self.root(root, access)?;
+        match &found.path {
+            Some(path) => resolve(root, path, relative, access),
+            None => resolve(root, paths.project_folder()?.as_path(), relative, access),
+        }
     }
 
     /// The one way a path is made: a named root and a relative path with
@@ -303,8 +384,31 @@ impl Roots {
         relative: &str,
         access: Access,
     ) -> Result<CheckedPath, Failure> {
-        let found = self.root(root, access)?;
-        resolve(root, &found.path, relative, access)
+        let found = bound(root, self.root(root, access)?)?;
+        resolve(root, found, relative, access)
+    }
+}
+
+/// The folder a root was bound to; a root of each request's project has
+/// none, and is checked with the run's paths.
+fn bound<'a>(name: &RootName, root: &'a Root) -> Result<&'a Path, Failure> {
+    root.path.as_deref().ok_or_else(|| {
+        codes::input(
+            codes::PROJECT_FOLDER_MISSING,
+            format!("The root `{name}` stands for the project folder of each request, and none was given here."),
+            "Check the path with the run's checked paths, which hold the request's project folder.",
+        )
+    })
+}
+
+fn folder_path(root: &RootName, path: &Path, access: Access) -> CheckedPath {
+    CheckedPath {
+        root: root.clone(),
+        base: path.to_path_buf(),
+        relative: String::new(),
+        full: path.to_path_buf(),
+        named: path.to_path_buf(),
+        access,
     }
 }
 
