@@ -1,12 +1,12 @@
 # 50. Record identity and dependent records
 
-The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 42 assumed the caller supplies a key. Many applications do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines.
+The ledger's guarantees rest on being able to find a record again: to see whether a write landed, and to avoid making it twice. Section 42 assumed the caller supplies a key. Many systems do not work that way: they assign the identifier themselves when a record is created, and other records then depend on it. This section extends the design to cover those cases, which include the most common pipeline of all, a header followed by its lines.
 
 ## The problem
 
 | Case | Example | Why section 42 alone is not enough |
 | --- | --- | --- |
-| The application assigns the identifier | Creating an order returns order number 4471 | Before the create there is no key to reconcile by |
+| The system assigns the identifier | Creating an order returns order number 4471 | Before the create there is no key to reconcile by |
 | A record is identified by several values together | A line is unique by order and line code | One input is not a key |
 | Later records need an earlier record's identifier | Lines need the new order's number | A resumed run must not create the order again to learn it |
 
@@ -18,13 +18,15 @@ Every write operation declares how its record is found again. The compiler refus
 
 | Strategy | How the record is found | Use when |
 | --- | --- | --- |
-| `natural` | By an input that is the application's own key | The caller knows the key: an existing record, or a key the caller chooses |
+| `natural` | By an input that is the system's own key | The caller knows the key: an existing record, or a key the caller chooses |
 | `composite` | By several inputs that are unique together, within a parent | Lines, rows, members of something |
-| `stamped` | By a token Anything2MCP writes into a field of the record, such as a reference or external-id field | The application assigns the key and has a spare field that is searchable |
-| `find` | By a declared lookup on values the write itself sets, which must match exactly one record | The application assigns the key and has no spare field |
+| `stamped` | By a token Anything2MCP writes into a field of the record, such as a reference or external-id field | The system assigns the key and has a spare field that is searchable |
+| `find` | By a declared lookup on values the write itself sets, which must match exactly one record | The system assigns the key and has no spare field |
 | `none` | It cannot be | Nothing above is possible; the operation is `irreversible` |
 
-**Capturing the assigned key.** When the application returns the new identifier in its response, the engine stores it in the ledger at once, with the `acted` mark. From then on the record is found by that identifier. `stamped` and `find` exist for the gap before that: a stop after the write was sent and before its response was recorded.
+**Capturing the assigned key.** When the system returns the new identifier in its response, the engine stores it in the ledger at once, with the `acted` mark. From then on the record is found by that identifier. `stamped` and `find` exist for the gap before that: a stop after the write was sent and before its response was recorded.
+
+**Values known before the commit point.** Some systems hand out the identifier before the write commits: a data store returns the assigned key inside an open transaction, and some report a transaction's identifier before it ends. A step's outcome may carry such values, and the engine records them in the ledger before the step that commits is acted. A lost answer to the commit is then reconciled by the captured value ([section 69](69-the-data-pack.md)).
 
 **Rules for `find`.**
 
@@ -36,7 +38,8 @@ Every write operation declares how its record is found again. The compiler refus
 **Rules for `stamped`.**
 
 - The token is the record's idempotency token from the ledger, in a short form.
-- The stamped field must be present in every binding of the operation, which the compiler checks.
+- What carries the stamp is whatever the system offers for a reference: a field of a form in the web pack, a column the target declares in the data pack, an argument the program takes in the command pack ([section 68](68-the-command-pack.md)). Each pack's binding marks the element that carries it, and a declared read must be able to find the record by it.
+- The stamp must be carried in every binding of the operation, which the compiler checks.
 - The stamp stays in the record. Where that is unwelcome, use `find`.
 
 ## Create or update is decided by reading
@@ -62,14 +65,14 @@ steps:
 
 ## One save that carries many records
 
-Some applications save a header and its lines in a single commit: one form with a grid, or one request with a nested list. That is one commit point and one ledger row. Read-back compares the nested lines by their own identity strategy, so a line the application dropped or reordered is caught as a `mismatch`.
+Some systems save a header and its lines in a single commit: one form with a grid, or one request with a nested list. That is one commit point and one ledger row. Read-back compares the nested lines by their own identity strategy, so a line the system dropped or reordered is caught as a `mismatch`.
 
 ## What this adds elsewhere
 
 | Where | Addition |
 | --- | --- |
 | Operation files | An `identity` field naming the strategy and its fields or lookup |
-| Ledger | For each record: the assigned key, once known, and its stored outputs |
+| Ledger | For each record: the assigned key, once known, values known before the commit point, and its stored outputs |
 | Compiler | Checks the strategy exists, is possible in every binding, and that dependencies have no cycle |
 | Failure codes | `ambiguous_match` under `possible_commit`; `blocked_by_parent` as a skip reason |
 | Publish gates | Create the same record twice and find one; stop between sending a create and recording it, resume, and find one |
@@ -77,6 +80,6 @@ Some applications save a header and its lines in a single commit: one form with 
 
 ## What it does not solve
 
-- An application with no spare field and no values unique enough to search on. Creates there stay `irreversible`, approved one run at a time and never resumed automatically.
+- A system with no spare field and no values unique enough to search on. Creates there stay `irreversible`, approved one run at a time and never resumed automatically.
 - A lookup that is slow or eventually consistent, so a record just written does not appear yet. The binding declares a settle time for its lookup; within it, zero matches means "not known yet" and the run waits.
 - Changing a record's key. That is a different record to the ledger; an operation that renames keys is `irreversible`.

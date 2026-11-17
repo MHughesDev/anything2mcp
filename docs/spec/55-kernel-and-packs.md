@@ -4,17 +4,21 @@ The system is split in two: a kernel that is the same whatever is being integrat
 
 ## The line
 
-**A kernel crate never depends on a pack crate. A pack depends only on the kernel. The product crate wires them together.** The audit script enforces this the way it already enforces the crate layering.
+**A kernel crate never depends on a pack crate. A pack depends only on the kernel, and sees only its first five layers. The product crate wires them together.** The audit script enforces this the way it already enforces the crate layering.
+
+The crates fall in eleven layers ([decision 0061](../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md); the binding table is in the [technical reference](../reference/technical-reference.md#crate-layering)). The kernel is layers 1 to 8: types, foundations, stores, services, the contract, the engine, actions, and roles. A pack's base crate is layer 9 and its other crates layer 10; a pack sees layers 1 to 5, up to the contract in `a2m-provider`, and the base of its own pack, and cannot call the engine, the scheduler, the action registry, or a front door. The product crate, `anything2mcp`, is layer 11 and the only code that names a pack.
 
 | In the kernel | In a pack |
 | --- | --- |
 | Core types; target files, their loader, and the compiler; expressions and field types | The file kinds only that pack understands, with their schemas and lint rules |
 | The engine loop, the ledger, identity strategies, reconcile | The driver: how each step of its archetype is carried out |
 | The policy engine, approvals, limits | How its verbs lower into steps |
-| The session keeper and the vault | Its auth providers: how a session of its kind is made and renewed |
+| The session keeper and the vault; the auth providers that only hold or exchange a credential | Its auth providers that need a surface of its kind: how a session of its kind is made and renewed |
 | Sources; the action registry; the local engine; the front doors | Its widget drivers or their equivalent |
 | Traces and the evidence store | Its discoverers: how a system of its kind is observed |
 | The provider registry, the supervisor, the plug-in host | Its test stand: the piece of the test application family that imitates its kind |
+
+**Where an auth provider lives.** In `a2m-auth` when it only holds or exchanges a credential; in a pack when it needs a surface of the system. Sign-in forms and single sign-on are in the web pack, authorization to an upstream MCP server is in the MCP pack, and a pack whose credential is bound to its own kind of connection brings its own, as the data pack does for a database password. A provider outside the web pack that needs a person's consent in a browser gives the person a link, and nothing drives that browser. The table is in the [technical reference](../reference/technical-reference.md#auth-provider-interface).
 
 ## What a pack hands the kernel
 
@@ -29,16 +33,23 @@ A pack is a provider ([section 56](56-the-provider-contract.md)) that lives in t
 | Discoverers and a describer | Observe a target and show an agent what was seen |
 | Drafting rules, from its kinds of finding to its kinds of file | Write drafts for what follows by rule ([section 67](67-the-scout-and-who-does-what.md)) |
 
+Its manifest also declares the file kinds and finding kinds it reads from other packs. Packs share data shapes and never code: a kind has one owning pack, and a pack that reads it receives the validated entries from the compiler as data ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
+
+**A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and telemetry. It starts a process only through that supervisor and opens a file only by a checked path ([section 57](57-supervising-subsystems.md)). The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
+
 So the compiler stays neutral: it parses, validates against whatever schemas are registered, resolves names, type-checks expressions, counts commit points, lowers through whatever lowerings are registered, and emits. "Knowledge lives in one place" becomes: knowledge about a kind of system lives in its pack.
 
 ## Where today's files go
 
-| File kind | Owner |
-| --- | --- |
-| `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, `fixtures/` | Kernel |
-| `screens/` | The interface packs: web and desktop |
-| `endpoints/` | The request packs: HTTP |
-| New kinds, such as `commands/` for the command pack | The pack that brings them |
+Every file kind has one owner, and every word that arrives with a pack, a file kind among them, is a registered name. Registration is keyed by the file kind and the surface kind, so two packs can each own `screens/` for their own surfaces. A pack that needs another pack's kind declares it reads the kind, and the compiler hands it the entries as data. If the owning pack is not enabled, a binding that needs its kind does not compile.
+
+| File kind | Owner | Read by |
+| --- | --- | --- |
+| `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, `fixtures/` | Kernel | Every pack, through the compiler |
+| `screens/`, for web surfaces | The web pack | None |
+| `screens/`, for desktop surfaces | The desktop pack | None |
+| `endpoints/` | The HTTP pack | The web pack, for its `page_http` mode |
+| New kinds, such as `commands/` for the command pack | The pack that brings them | Whichever packs declare they read them |
 
 An operation file is the kernel's, and each of its bindings is checked by the pack whose mode it names.
 
@@ -46,11 +57,17 @@ An operation file is the kernel's, and each of its bindings is checked by the pa
 
 | Pack | Modes | State |
 | --- | --- | --- |
-| Web | `ui`, `page_http`, `site_tools` | Designed in sections 13, 14, 17, 26; first to be built |
-| HTTP | `http`, `api` | Designed; Phase 4 |
-| MCP | `mcp` | Designed; Phase 4 |
-| Desktop | `desktop` | A catalog; Phase 8 |
-| Command | `cli` | Proposed as the second pack, to test the boundary. [Section 62](62-catalog-of-surface-kinds.md) |
+| Web | `ui`, `page_http`, `site_tools` | Designed in sections 13, 14, 17, 26 and the designs of `a2m-pack-web-browser`, `a2m-pack-web-ui`, and `a2m-pack-web-probe`; first to be built |
+| HTTP | `http`, `api` | Designed in `a2m-pack-http`; Phase 4 |
+| MCP | `mcp` | Designed in `a2m-pack-mcp`; Phase 4 |
+| Desktop | `desktop` | Designed in `a2m-pack-desktop`; Phase 8 |
+| Command | `cli`, proposed | Designed in [section 68](68-the-command-pack.md); the second pack to be built, to test the boundary (Stage D) |
+| Data | `sql`, proposed | Designed in [section 69](69-the-data-pack.md) |
+| File | `file`, proposed | Designed in [section 70](70-the-file-pack.md) |
+| Stream | `stream`, proposed | Designed in [section 71](71-the-stream-pack.md) |
+| Device | `device`, proposed | Designed in [section 72](72-the-device-pack.md) |
+
+A proposed mode becomes real by its own decision record when its pack is built. The crate designs are in [the architecture](../architecture/README.md); [section 62](62-catalog-of-surface-kinds.md) catalogs the kinds of system still without a pack.
 
 First-party packs are compiled into the one binary and switched on by a setting ([section 65](65-python-first-packaging.md)).
 
@@ -84,6 +101,5 @@ The contract is one. A plug-in that proves itself can become a pack without the 
 
 ## Open points
 
-- Whether the browser-specific auth providers move from the neutral session keeper's crate into the web pack. Package A7 of the long-term plan.
 - How a plug-in registers schemas and lint rules across a process boundary: as data at start-up, most likely.
 - Whether the neutral part of the capability probe belongs in the kernel.

@@ -16,12 +16,12 @@ Operation inputs are filled into request templates. A crafted input must not be 
 
 ## Inputs cannot make Anything2MCP read arbitrary files
 
-Sources and uploads take files. A manipulated agent must not be able to name any file on the machine and have it sent to an application.
+Sources and uploads take files. A manipulated agent must not be able to name any file on the machine and have it sent to a system.
 
 | Where | Rule |
 | --- | --- |
 | On a server | A caller never passes a path. It uploads content, which becomes a blob, and passes the blob's reference |
-| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check |
+| On one machine | A file is read only from allowed roots: the project folder and folders the person has added. Links are resolved before the check. A pack never resolves a path: it receives a checked path, which only this check, in `a2m-provider`, can make |
 | Everywhere | Size limits; the content must be the type it claims, so a renamed file is refused; a file is read once and stored as a blob, so what was previewed is what is uploaded |
 
 ## Downloads are data
@@ -29,18 +29,18 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 - A downloaded file goes to a scoped store and comes back as a resource link, never inline.
 - Its name is sanitized, its size is limited, and nothing opens or runs it.
 
-## Nothing from the application becomes an instruction
+## Nothing from the system becomes an instruction
 
-- Tool names and descriptions are written by the target's author and reviewed by a person. Text captured from the application never flows into them unreviewed.
-- Results are structured. Free text from the application sits only in fields marked untrusted, limited in length and stripped of markup.
-- A validation message from the application, returned with a `rejected` result, is such a field.
-- Snapshots and captures given to a building agent mark application text the same way.
+- Tool names and descriptions are written by the target's author and reviewed by a person. Text captured from the system never flows into them unreviewed.
+- Results are structured. Free text from the system sits only in fields marked untrusted, limited in length and stripped of markup.
+- A validation message from the system, returned with a `rejected` result, is such a field.
+- Snapshots and captures given to a building agent mark the system's text the same way.
 
 ## A manipulated building agent
 
-The agent that builds a target reads the application more than anyone. If it is steered, the thing it can do is write target files that do something other than they claim. Four barriers stand in the way.
+The agent that builds a target reads the system more than anyone. If it is steered, the thing it can do is write target files that do something other than they claim. Four barriers stand in the way.
 
-1. **Exploration cannot write, and drafts can touch only test records.** Enforced in the engine, as section 26 describes.
+1. **Exploration cannot write, and drafts can touch only test records.** Enforced in the engine's sandbox, as section 26 describes, with what "cannot write" means stated per archetype by each pack ([section 58](58-discovery-and-findings.md)).
 2. **A draft cannot widen a target's reach by itself.** Adding a surface or a destination outside the origins a person registered for the target needs that person's confirmation.
 3. **Publishing needs a person, and the person is shown what matters first.** The compiler produces a review summary ordered by risk, above the ordinary file differences:
 

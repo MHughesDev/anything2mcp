@@ -18,8 +18,8 @@ Admins can lock any setting so lower layers cannot override it. `anything2mcp co
 | `server` | Front doors | Listeners, TLS, enabled front doors, base URL, proxy headers, protocol versions served |
 | `auth.callers` | Who may connect | Identity provider, accepted audiences, client registration modes, API keys on or off |
 | `identity` | Who targets see | Default identity mode per target, allowed modes, service accounts, session lifetime and renewal |
-| `modes` | How work is carried out | Enabled drivers, preferred order, shadow match threshold for promotion, whether direct HTTP writes are allowed |
-| `browser` | The browser engine | Installed or pinned browser, headless or visible, viewport, locale, time zone, recycle limits |
+| `modes` | How work is carried out | Enabled packs and drivers, which provider carries out a mode where two could, shadow match threshold for promotion, whether direct HTTP writes are allowed |
+| `browser` | The web pack's browser engine | Installed or pinned browser, headless or visible, viewport, locale, time zone, recycle limits |
 | `scheduler` | Concurrency | Parallel reads and writes per session, global context cap, queue length, priorities, quotas |
 | `policy` | Safety | Approval rules per effect class, pre-approval rules, record limits, two-person rule, kill switches |
 | `network` | Reach | Egress allowlist, outbound proxy, private certificate authorities, rate budgets per surface |

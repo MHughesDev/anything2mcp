@@ -1,6 +1,6 @@
 # 7. Files and formats
 
-Everything the system knows about a target is a folder of YAML files, each checked against a published JSON Schema before it loads. The files are compiled into a plan before anything runs ([section 46](46-target-compiler-and-plan.md)). Every field of every file is listed in the [file format reference](../reference/file-formats.md). Names and fields below are placeholders for an imaginary application called `example`; they describe no real product.
+Everything the system knows about a target is a folder of YAML files, each checked against a published JSON Schema before it loads. The files are compiled into a plan before anything runs ([section 46](46-target-compiler-and-plan.md)). Every field of every file is listed in the [file format reference](../reference/file-formats.md). Names and fields below are placeholders for an imaginary system called `example`, here a web application with an HTTP interface beside it; they describe no real product.
 
 ```text
 targets/example/
@@ -16,7 +16,19 @@ targets/example/
   tests/             # expected results per operation and pipeline
 ```
 
-**Target.** Declares the surfaces and how they relate, so a large app with several services is one target.
+Some of these file kinds are the kernel's and the rest arrive with packs ([section 55](55-kernel-and-packs.md)). Each kind has one owner, and registration is keyed by the file kind and the surface kind; a pack that needs another pack's kind declares that it reads it, and receives the entries as data.
+
+| File kind | Owner | Read by |
+| --- | --- | --- |
+| `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, `fixtures/` | Kernel | Every pack, through the compiler |
+| `screens/`, for web surfaces | The web pack | None |
+| `screens/`, for desktop surfaces | The desktop pack | None |
+| `endpoints/` | The HTTP pack | The web pack, for its `page_http` mode |
+| New kinds, such as `commands/` for the command pack | The pack that brings them | Whichever packs declare they read them |
+
+A surface's `kind` is a surface kind its pack registers; a binding's `mode` is a mode its pack registers. A name nobody registered does not compile.
+
+**Target.** Declares the surfaces and how they relate, so a large system with several services is one target.
 
 ```yaml
 schema_version: 1
@@ -56,7 +68,7 @@ description: >
   Creates or updates one line item on an order. Prefer example_order_sheet_enter for whole sheets.
 ```
 
-**Screen model** (UI and desktop drivers) holds ordered locators and a fingerprint per field. **Endpoint** (HTTP drivers) holds the method, path template, headers the session keeper supplies, and request and response schemas.
+**Screen model** (the web pack's `ui` driver and the desktop pack's driver) holds ordered locators and a fingerprint per field. **Endpoint** (the HTTP pack's drivers, and the web pack's `page_http`) holds the method, path template, headers the session keeper supplies, and request and response schemas.
 
 ```yaml
 screen: order.line_item_form

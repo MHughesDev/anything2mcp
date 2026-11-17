@@ -18,13 +18,15 @@ Encryption is layered, so that most keys never need to leave the machine and rot
 | Layer | One per | Protects | Kept |
 | --- | --- | --- | --- |
 | Root key | Installation | Workspace keys | In the operating system's key store, or in an external key service that never releases it |
-| Workspace key | Workspace | Owner keys | Wrapped by the root key, in the database |
+| Workspace key | Workspace | Owner keys | Wrapped by the root key, in the store |
 | Owner key | Person or service identity | That owner's data keys | Wrapped by the workspace key |
 | Data key | Session, credential, or blob | The data itself | Wrapped by the owner key, beside the data |
 
 - Data is encrypted with a standard authenticated cipher from a vetted Rust library. Anything2MCP writes no cryptography of its own.
 - Each ciphertext is bound to what it is: its identifier, owner, and kind are authenticated with it, so one encrypted item cannot be swapped for another.
 - The specific library and cipher are chosen in Phase 2 and recorded as a decision.
+
+**The vault seals and opens, and stores nothing itself.** Sealing returns a sealed item, and the caller keeps it: the ledger keeps blobs and ledger values, and the session keeper keeps saved session state and credentials through the ledger. The data key travels inside the sealed item, wrapped. The wrapped workspace and owner keys must persist, and the vault sits below the store, so the vault defines a small interface for keeping them, `KeyRecords`, which the store implements over a table of its own ([`a2m-vault`](../architecture/crates/a2m-vault.md)). A key record is inserted once and replaced only by rotation, never overwritten by accident.
 
 ## Where the root key lives
 
@@ -54,6 +56,10 @@ A session signed in as a person may be used only by that person or an agent acti
 - `anything2mcp secret set` reads the value from a prompt or standard input, never from a command-line argument, so it does not land in shell history or an agent's context.
 - No action reads a secret back. There is no `secret get`.
 
+## Naming without revealing
+
+Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The key is per workspace and is kept by the vault. The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and telemetry can ask for one without depending on each other or on the vault.
+
 ## Rotation
 
 | What | How | Cost |
@@ -62,12 +68,12 @@ A session signed in as a person may be used only by that person or an agent acti
 | An owner or workspace key | Re-wrap the keys beneath it | Small; no data is re-encrypted |
 | The root key | By the key service, or `anything2mcp vault rotate` locally | Re-wrap the workspace keys |
 
-If a key is suspected of being exposed, rotating it is not enough: the sessions it protected must be revoked, because a copied session stays valid until the application ends it.
+If a key is suspected of being exposed, rotating it is not enough: the sessions it protected must be revoked, because a copied session stays valid until the system ends it.
 
 ## Backup and loss
 
 - Backups contain ciphertext only. Restoring on another machine also needs the root key or access to the key service.
-- On a personal machine, losing the credential-store entry means saved sessions and stored evidence cannot be read. People sign in again; nothing in the application is lost.
+- On a personal machine, losing the credential-store entry means saved sessions and stored evidence cannot be read. People sign in again; nothing in the system is lost.
 - On a server, the key service's own backup and recovery apply.
 
 ## Interface
@@ -86,3 +92,4 @@ Both are worth doing for high-assurance deployments and neither blocks the first
 - The cipher and library, and whether locking secret memory is practical on each operating system.
 - How the Windows credential store behaves for a service running under its own account.
 - Research brief 5 covers these.
+- Whether the keyed digest is part of the redactor's interface in `a2m-core` or a second interface beside it.

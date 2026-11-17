@@ -7,7 +7,7 @@ Two moments need a person in front of a screen: approving a write, and signing i
 | Moment | The person needs | The engine needs |
 | --- | --- | --- |
 | Approve a write | To read the diff properly: every changed record, current beside proposed | Proof that a person, not the calling agent, said yes to this exact diff |
-| Sign in | A real browser window, so the application's own sign-in and MFA work unchanged | To know when sign-in finished, without seeing the credentials |
+| Sign in | Where the system's sign-in is a web page, a real browser window, so the system's own sign-in and MFA work unchanged | To know when sign-in finished, without seeing the credentials |
 | Answer a decision point | The question and its options | The answer, recorded with who gave it |
 
 ## On one machine
@@ -27,10 +27,12 @@ Where the operating system offers no such prompt, step 3 is a native confirmatio
 
 ## Signing in on one machine
 
-- The engine opens a visible window of its own browser, in the profile for that identity, at the application's sign-in page.
+Signing in through a page is the web pack's: its auth providers drive a browser the engine owns. A sign-in provider outside the web pack that needs a person's consent in a browser gives the person a link to open in their own, and nothing drives that browser ([section 55](55-kernel-and-packs.md)).
+
+- The engine opens a visible window of its own browser, in the profile for that identity, at the system's sign-in page.
 - The person signs in as they always do. Password managers, MFA prompts, and passkeys work as in any browser window.
 - The session keeper watches for the target's signed-in probe to succeed, then closes the window or leaves it for the first run.
-- The window shows which application and which Anything2MCP identity it is for. The engine never asks for a password in its own interface.
+- The window shows which system and which Anything2MCP identity it is for. The engine never asks for a password in its own interface.
 
 ## On a server
 
@@ -39,7 +41,7 @@ Where the operating system offers no such prompt, step 3 is a native confirmatio
 | Approval page | The same diff page, served by the server's console, reachable only after the approver signs in to the organization's identity provider | 6 |
 | Chat card | A card in the organization's chat tool with the counts and a link to the approval page; approving happens on the page | 6 |
 | URL-mode elicitation | The MCP client is sent the approval page's address, which the person opens in their own browser | 6 |
-| Hosted sign-in | A page that shows the server runner's browser to the person so they can sign in to the application there | 7; needs research brief 17 |
+| Hosted sign-in | A page that shows the server runner's browser to the person so they can sign in to the system there | 7; needs research brief 17 |
 
 On a server the identity provider's sign-in is the proof of a person, so no operating-system prompt is involved.
 

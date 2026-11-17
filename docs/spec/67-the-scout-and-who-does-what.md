@@ -24,7 +24,7 @@ The scout is the mechanical half of the overlay method ([section 60](60-overlayi
 | # | Stage | What happens | Built from |
 | --- | --- | --- | --- |
 | 1 | Identify | Each declared surface is probed: what kind it is, which pack serves it, how sign-in works. Surfaces the target did not declare and plainly offers, such as a published API description, are reported as candidates and are not entered | `target.probe`, `auth.detect` |
-| 2 | Discover | Every enabled discoverer that suits a surface runs, within its bounds | `discover.run` |
+| 2 | Discover | Every enabled discoverer that suits a surface runs, within its bounds, as a discovery job on a runner inside the engine's sandbox ([section 58](58-discovery-and-findings.md)) | `discover.run` |
 | 3 | Compare | What the system says about itself is set against what was seen. Each difference becomes a finding or an open question | [Section 58](58-discovery-and-findings.md) |
 | 4 | Draft | The drafter writes draft files wherever a finding maps to a file by rule | `draft.write` |
 | 5 | Check | The drafts are linted and compiled. A draft that fails is kept, with its findings, and marked | `draft.lint` |
@@ -46,10 +46,11 @@ The drafter is kernel code. Each pack registers the drafting rules for its own f
 | A published API description | Endpoint entries, field types taken from the schema, and one read operation for each method the description marks safe | Which of them become tools, and their names in the language of the work |
 | Captured exchanges, with no description | Endpoint entries with two-tier path templates ([section 60](60-overlaying-tools-on-an-existing-system.md)), marked `inferred` | Confirming every template; all operations |
 | An upstream MCP server's tool list | A pass-through binding for each tool the server marks read-only | Tools not marked read-only; whether the server's marking is believed for writes |
-| A program's own help and version output | Command definitions with typed arguments | Which commands read and which write. Help text does not say, so no operation is drafted |
+| A program's own help and version output, from only the help and version forms the target declares | Command definitions with typed arguments | Which commands read and which write. Help text does not say, so no operation is drafted |
 | An observed interface | Screen models: fields with their roles, names, and locators | Every action on a screen; what a field means |
 | A database's schema | Record kinds, field types, and a read by key for each table with a declared key | Joins, business names, and every write |
-| The structure of a real file | A source definition and a template fingerprint | The mapping from columns to fields |
+| The structure of a real file a target names | A document draft for the file pack: the fingerprint, and a record kind for each defined table or plainly headed sheet ([section 70](70-the-file-pack.md)) | The key, unless the file states one; units; names |
+| The structure of a real file a pipeline reads | A source draft: a source definition and a template fingerprint | The mapping from columns to fields |
 | A device's own description of itself | A map of its readable objects and a read for each | Units the device does not state; every write |
 
 Every draft made this way:
@@ -64,10 +65,10 @@ The scout tries a read only when one of two things is true.
 
 | The read is safe because | Examples |
 | --- | --- |
-| The engine enforces it | A database read inside a read-only transaction; a file opened for reading; an interface snapshot that follows plain links and never submits a form or presses a button |
+| The engine enforces it | A database read inside a read-only transaction; a file opened for reading; in the web pack, an interface snapshot that follows plain links and never submits a form or presses a button |
 | The system's own contract says so | A request with a method the service's own description marks safe; a device object the device lists as readable |
 
-Everything else is left untried: a command with unknown effect, a tool not marked read-only, a request with no description behind it. The scout never tries a write, on any system, under any setting. A read that passes five identical runs moves to `executed`. It goes no higher by the scout's hand: `behavior_verified` needs the publish gates, and `approved` needs a person.
+Everything else is left untried: a command with unknown effect, a tool not marked read-only, a request with no description behind it. For a program, the scout runs nothing but the help and version forms the target declares. The scout never tries a write, on any system, under any setting. A read that passes five identical runs moves to `executed`. It goes no higher by the scout's hand: `behavior_verified` needs the publish gates, and `approved` needs a person.
 
 ## What stays with the developer
 
@@ -132,6 +133,6 @@ No setting lets the scout write, try a write, or skip consent.
 
 - The exact drafting rules for each pack. They are written when the pack is, and each is a small table from finding kind to file kind.
 - How mechanical names are made so that they are stable across two scouts of the same system.
-- Whether following plain links in an interface is always a read. Some applications change state on a plain request; the web pack's discoverer must refuse a link whose address looks like an action, and what "looks like" means is to be settled in Phase 4.
+- Whether following plain links in an interface is always a read. Some web applications change state on a plain request; the web pack's discoverer must refuse a link whose address looks like an action, and what "looks like" means is to be settled in Phase 4.
 - Whether stage 6 should compare across sessions as well as across runs.
 - The size of the default budget. It is a target until the first scout of the test application is measured.

@@ -7,6 +7,8 @@ Runners do the work; the control plane decides, records, and hands work out. Thi
 - **Runners dial out.** Every connection is opened by the runner, to one path on the control plane. A laptop or a locked-down network segment needs no inbound rule.
 - **Plain HTTPS.** Requests and long polls over mutually authenticated TLS. This passes through corporate proxies that break long-lived streams, and any control-plane replica can answer any request, which keeps the front stateless.
 - **One interface, two carriers.** Inside a single process the same interface is an in-memory channel. Split deployments use HTTPS. The same test suite runs against both, so the single-process profiles exercise the protocol every day.
+- **The engine is the same on both sides.** It reaches everything outside its loop through one interface, `Control`. On a runner on another machine, `a2m-runner` implements `Control` over the link: the plan by its hash, the policy decision at guard, session material, a record lock, a rate budget, and the approval check are each a `need`; recording an intent is journaled and sent at once in an `events` call of its own, whose reply carries the ledger's token; other events and evidence go in the next batch. The engine on a runner opens no store, no policy engine, and no compiler.
+- **One process runs the same loop.** In a single process, the runner is a loop inside `a2m-actions`: it claims a job from the scheduler, calls the engine with an in-process `Control` that answers by calling the scheduler, the keeper, policy, and the store directly, and completes the lease. The lease rules below apply unchanged: the lease is counted on a steady clock, heartbeats are sent by a task per held job, and the engine stops acting before the lease runs out. One conformance suite runs against both implementations of `Control` ([`a2m-runner`](../architecture/crates/a2m-runner.md), [`a2m-actions`](../architecture/crates/a2m-actions.md)).
 - **At-least-once delivery.** Any request may be repeated. Every message carries the job's lease number and a sequence number, so repeats are recognized and stale ones refused.
 
 Waiting for work by long poll is how established workflow systems connect their workers, and the same systems use heartbeats to notice a dead worker faster than a job timeout would ([research note 13](../research/13-ledger-leases-and-runner-links.md)).
@@ -70,16 +72,16 @@ A lost lease means the control plane does not know whether the last write was se
 4. If policy allows, the run then resumes on its own; otherwise it waits for a person.
 5. If the lost runner returns, it uploads what it journaled locally as late evidence. Late evidence is stored and shown, but changes no state.
 
-**The gap that cannot be closed.** The lease number protects the ledger, because the ledger can check it. The target application cannot: it has no idea Anything2MCP's leases exist. A runner that froze just after deciding to click Save, and thawed after its lease was lost, can still send that write. This is a known limit of any lease protecting a resource that cannot check it. What Anything2MCP does about it:
+**The gap that cannot be closed.** The lease number protects the ledger, because the ledger can check it. The target system cannot: it has no idea Anything2MCP's leases exist. A runner that froze just after deciding to commit a write, such as clicking Save in the web pack, and thawed after its lease was lost, can still send that write. This is a known limit of any lease protecting a resource that cannot check it. What Anything2MCP does about it:
 
 - The runner stops acting before its lease ends and re-checks the deadline immediately before every commit point.
 - Steps are short, so the moment between the check and the write is small.
 - The quarantine outlasts any step that was in flight.
 - A late duplicate inside one run is harmless: the values are the ones already approved, written to the same key.
-- Where the application offers a record version, the binding sends it, and a stale write is refused by the application itself.
+- Where the system offers a record version, the binding sends it, and a stale write is refused by the system itself.
 - After a lost lease, a `verify_after_loss` job re-reads the records once more, later, and alerts if any differ from what the ledger says was verified.
 
-What remains is a runner frozen for longer than the quarantine that then overwrites a record a different run has since changed, in an application with no version check. It is unlikely and it is detected afterwards, not prevented. The design records this instead of claiming otherwise.
+What remains is a runner frozen for longer than the quarantine that then overwrites a record a different run has since changed, in a system with no version check. It is unlikely and it is detected afterwards, not prevented. The design records this instead of claiming otherwise.
 
 ## The local journal
 
@@ -111,7 +113,7 @@ A user-device runner on a laptop will lose its connection often. Closing the lid
 
 ## Rate budgets
 
-The control plane owns each surface's request budget. A runner asks for a grant, such as 20 requests over 5 seconds, and spends it locally, so respecting an application's limit does not cost a round trip per request.
+The control plane owns each surface's request budget. A runner asks for a grant, such as 20 requests over 5 seconds, and spends it locally, so respecting a system's limit does not cost a round trip per request.
 
 ## Speed targets
 

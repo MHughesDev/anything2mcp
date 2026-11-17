@@ -34,6 +34,8 @@ The first two belong to findings ([section 58](58-discovery-and-findings.md)). T
 | A fixture is found to be stale | `schema_verified` is withdrawn for what depended on it |
 | A provider's component no longer matches its recorded digest | Findings that came through it are marked as from an unverified component; nothing built on them is raised further until re-observed |
 
+A device is stricter. A device whose firmware version is outside its map stops every run on it with `unknown_variant`, reads included, at prepare and before any frame but identification, because a register's meaning may change with firmware. It does not keep running until a canary fails ([section 63](63-devices-and-firmware.md), [section 72](72-the-device-pack.md)).
+
 ## How this meets what is already designed
 
 | Already designed | Relation |

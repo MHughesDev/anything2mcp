@@ -1,0 +1,226 @@
+# 303. The HTTP pack
+
+The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request archetype: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads.
+
+The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no other pack. Its [design](../../architecture/crates/a2m-pack-http.md) is the exact statement of how the code is arranged; this section says what the pack does and why.
+
+## What it reaches, and what it refuses
+
+| Reaches | How |
+| --- | --- |
+| An HTTP interface on a surface the target declares | A client in code, on a warm connection per session and origin, with credentials injected through the session's lease |
+| A service with a published description: OpenAPI, a GraphQL schema, or OData metadata | Imported as findings, pinned with its digest, and called through `api` |
+| A service with no description | Endpoint entries drafted from captured traffic ([section 301](301-the-web-pack.md)), at `inferred` until proven |
+| Hosted services, object storage, search indexes, and devices with a management protocol over HTTP | Their HTTP interface, through this pack ([section 106](../1-product/106-what-it-latches-onto.md)) |
+
+| Refused | Why |
+| --- | --- |
+| Sending to an origin the plan did not resolve, or following a redirect to another origin | Section [502](../5-security/502-defending-against-a-manipulated-agent.md): no input changes where a request goes |
+| A secret in a template, a finding, or a trace | Rule four. Credentials reach a request only through injection |
+| Holding a credential beyond one request, or renewing a token, even when a response says it expired | Only the session keeper renews. The driver reports the sign and stops |
+| Retrying inside a step | The engine decides what is tried again |
+| Drafting an operation for a method its description does not mark safe | A drafted read must be a read |
+| An `http` binding on an endpoint whose requests the front end computes or signs | It would skip logic only the page carries out. Such an endpoint is `page_http` or `ui` only |
+| Imitating another application's client to obtain a token | Rule five. Where a direct token is wanted, the route is a registration that IT approves, with delegated permission, so tokens carry the user's own rights and appear in sign-in logs |
+| Getting past an edge's bot defenses | Rule five. The supported fix is an allowlist from the system's owner: the runner's outbound address, with a secret header or a client certificate |
+
+## Modes
+
+| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| --- | --- | --- | --- | --- | --- |
+| `http` | Request | Requests sent directly from code, with no browser at run time | A session cookie or token from the session keeper | Bulk and high-volume work; servers without a browser | Undocumented endpoints change; bot defenses |
+| `api` | Request | Calls generated from a published description | A token or key | Systems with an official interface | Coverage gaps |
+
+Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md). Their ranks in the pack's manifest put them ahead of `page_http` and `ui` in the default order of bindings, so the cheapest verified binding is tried first ([section 201](../2-kernel/201-archetypes-and-modes.md)). gRPC reflection, once listed under `api`, is not in the first release; it needs its own stand.
+
+## What it registers
+
+| Registration | Content |
+| --- | --- |
+| Surface kinds | `http` |
+| Modes | `http` and `api`, archetype request |
+| Step kinds | `token`, `request`, `validate`, `extract` for `http`; `call` for `api`. Checked names within each mode |
+| Drivers | One per mode |
+| File kinds | Owns `endpoints/`, for `http` surfaces and, for requests made from inside a page, `web` surfaces. The web pack declares that it reads the kind and is handed the validated entries as data. Owns a pinned copy of an imported description, with its digest, which an `api` binding names |
+| Binding fields | `http`: `endpoint`, `path_params`, `query`, `body`. `api`: `operation_id`, `args` |
+| Finding kinds | `endpoint`, with the schema of its `found`, which the web pack's probe produces and this pack's drafting rule reads; `described_operation`, from descriptions |
+| Discoverers | `http_description`, `http_surface` (below) |
+| Describer | `http_describer`: endpoints as method, template, and shapes |
+| Auth providers | None. Every provider for this pack's surfaces is in `a2m-auth` (below) |
+
+## The endpoint catalog
+
+Endpoints live only in the endpoint catalog (rule eight). There is one catalog, owned by this pack and read by two: the `http` mode and the web pack's `page_http`. Each compiles the entries it uses into its own step payload; there is no kernel type for a request ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
+
+| Field | Meaning |
+| --- | --- |
+| `endpoint` (required) | Its name |
+| `surface` (required) | An `http` surface, or a `web` surface for requests made from inside the page |
+| `method`, `path` (required) | The method and a path template |
+| `query`, `headers` | Templates; no secrets |
+| `auth` | `session`, `token`, or `none`; supplied by the session keeper |
+| `anti_forgery` | Where the token comes from (`cookie`, `meta`, or another endpoint) and the header it goes in |
+| `request_schema`, `response_schema` (response required) | JSON Schema files |
+| `effect` (required) | `read` or `write` |
+| `idempotency_header` | The header that carries the record's idempotency token, if the service accepts one |
+| `version` | Where a record's version is read, and how it is sent back as a precondition |
+| `volatile` | Request fields to ignore when comparing with a shadow |
+
+The full format is in the [file formats](../../reference/file-formats.md#endpointsyaml).
+
+**Typed templates.** The pack's template is a resolved origin, a path of literal segments and typed holes, query, header, and body templates, the response schema, the anti-forgery source, the idempotency header, and the version precondition. A request is built position by position from it. No input can change the origin, the shape of the path, or which header a value goes in ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). A template that would resolve outside the declared surfaces is refused at compile time and checked again before sending.
+
+| Behavior of a service | Built-in handling |
+| --- | --- |
+| Rotating anti-forgery tokens | A declared bootstrap request or page field supplies the token per request, in the `token` step |
+| Optimistic locking (ETag, version numbers) | Read the version first and send it with the write; a conflict is `stale`, `version_conflict`, with both versions shown |
+| GraphQL, including persisted queries | The entry stores the operation name and the query hash |
+| An idempotency header the service honors | The record's token goes in it, and a write the plan marks idempotent may be retried by the engine |
+| Pagination by page or cursor | The `list` verb with a pager per style |
+| Long-running jobs | `call`, then poll a declared status until done or a time limit |
+| Uploads and downloads | Declared on the step, through a staging folder given as a checked path |
+| A declared maintenance answer | `transient`, `upstream_unavailable`, with its retry time |
+| Requests the front end computes or signs | Marked on the endpoint; `http` is refused for it |
+
+**Responses.** A response is accepted when its status is one the endpoint declares and its body fits the response schema. Values are extracted from it as typed values and normalized by their field types on both sides before any comparison ([section 210](../2-kernel/210-sources-and-value-normalization.md)); no number is compared as a float. A status the endpoint does not declare is `unknown_variant`; a body that does not fit is `drift`.
+
+## Verbs and how they lower
+
+| Verb | `http` | `api` |
+| --- | --- | --- |
+| `open` | No | No |
+| `read`, `list`, `search` | Yes | Yes |
+| `create`, `update`, `upsert`, `delete` | Yes | Yes |
+| `upload`, `download` | Yes | Yes |
+| `submit`, `call` | Yes | Yes |
+
+`http` lowers each verb into `token`, `request`, `validate`, and `extract`. `api` lowers into `call`: the described operation, with `args` typed by its schema, compiled into the same templates. Each write request is marked as a commit point and each declared lookup as a lookup.
+
+## The driver, part by part
+
+| Mode | Prepare | Act | Confirm | Read back |
+| --- | --- | --- | --- | --- |
+| `http` | A warm connection to the surface; the anti-forgery bootstrap if declared | `token`, then `request` from the template | `validate`: the status is one the endpoint declares and the body fits its schema | The endpoint the binding names; or the save response with `prefer: response` |
+| `api` | The same, for the description's server | `call` | The same | The described read operation the binding names |
+
+- **Every failure says whether the request was sent.** A write request sent wholly or in part with no complete answer is `possible_commit`; before any byte of a write was sent, a lost connection is `transient`.
+- **A 404 on a declared lookup is an answer, not a failure:** the record is absent.
+- **A redirect is never followed across origins.** A redirect to the target's identity host is a sign of expiry.
+- **Edge answers are recognized by status and header,** never retried, and stop as `edge_blocked`.
+- Overhead stays under 5 ms beyond the system's own time, a budget until measured ([section 225](../2-kernel/225-performance.md)).
+
+## Sessions and sign-in
+
+The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)). The division of work here is exact: **the auth provider in `a2m-auth` holds and injects the credential; the HTTP driver carries out the scheme's round trips on the connection.**
+
+| Provider, in `a2m-auth` | Covers | The driver's part |
+| --- | --- | --- |
+| `http_basic`, `http_digest` | Simple intranet systems | Answering the challenge, for digest the exchange of nonces |
+| `windows_integrated` | NTLM and Kerberos | The negotiation on the connection |
+| `client_certificate` | Mutual TLS | Presenting the certificate the lease injects |
+| `api_key`, `bearer_static` | Interfaces with fixed keys | Placing the key in the declared header |
+| `oauth_client_credentials`, `oauth_authorization_code` | Interfaces with OAuth | Sending the bearer token the lease injects |
+| `obo_token` | An on-behalf-of exchange from the caller's token | The same |
+| `os_broker` | A token from the operating system's sign-in broker, on user devices | The same |
+
+- `SessionLease::inject` places a token or the session's cookies into one outgoing request without returning them. Warm connections are kept by session and origin; cookies and tokens are never held by the pack.
+- The keeper hands the driver short-lived tokens in memory only.
+- A status and path matching the target's declared expiry signal, or a redirect to its identity host, is reported through the lease as `needs_login`. The driver never renews.
+- Where an authorization-code response arrives on a server, when no loopback address reaches the person's browser, is open.
+
+## Discovery and drafting
+
+| Discoverer | Action | Reads | May send |
+| --- | --- | --- | --- |
+| `http_description` | `spec.import`, `discover.run` | A description given as a file, or fetched from the surface | GET of the description's address. For GraphQL, the one fixed introspection query, which the GraphQL contract makes a read. Nothing else |
+| `http_surface` | `target.probe`, `auth.detect` | Whether the base address answers; challenges in `WWW-Authenticate`; a request for a client certificate; links to a description | GET, HEAD, OPTIONS |
+
+**Discovery cannot write.** Discovery runs as a job on a runner, inside the engine's sandbox ([section 218](../2-kernel/218-discovery-and-findings.md)). Within that, a discoverer is given a read client: a type that can build only GET, HEAD, and OPTIONS requests and the fixed introspection request, and that refuses a destination outside the declared surfaces. It cannot send a body of the caller's choosing. The drivers' client is a different type that discoverers are never given.
+
+A description that says an endpoint exists is a claim, at `inferred` with source `published_description`. The endpoint answering is an observation, at `discovered`. They are never shown as the same, and comparing them lists what is described and unexercised and what was seen and is nowhere described.
+
+| From a finding about | The drafter writes | Left to the developer |
+| --- | --- | --- |
+| A published description | Endpoint entries with field types from its schema; one read operation for each method the description marks safe: GET and HEAD in OpenAPI, a query in GraphQL, a read of an entity set in OData | Which become tools, and their names in the language of the work; every write |
+| An entity set with a declared key, in OData | The key as the operation's `natural` identity | Nothing more about identity |
+| An endpoint seen in capture, with no description | An endpoint entry with its template tiers marked, at `inferred` | Confirming every template; all operations |
+
+**From capture to a verified binding.** Endpoints inferred from a web application's traffic, with two-tier path templates, come from the web pack's probe ([section 301](301-the-web-pack.md)); the `endpoint` finding kind and its schema are this pack's, and the sink validates every one against it. A drafted `http` binding starts in `shadow` beside the verified `ui` binding of the same operation, predicts what it would send without acting, and is promoted by a person after a set number of exact matches (`shadow.report`, `binding.promote`). Reads are promoted quickly; writes need more evidence. An endpoint the probe marked as computed or signed in the browser is drafted for `page_http` only, and an `http` binding on it does not compile.
+
+## Lint rules
+
+| Code | Level | Rule |
+| --- | --- | --- |
+| `http_secret_literal` | Error | A header, query, or body template holds a literal that looks like a credential |
+| `http_no_response_schema` | Error | An endpoint without a response schema |
+| `http_effect_method` | Warning | An endpoint marked `read` whose method is not one its description, or HTTP itself, marks safe |
+| `http_signed_endpoint` | Error | An `http` binding on an endpoint marked as computed or signed in the browser |
+| `http_placeholder_unbound` | Error | A path placeholder with no input and no `path_params` entry |
+| `http_graphql_unpinned` | Error | A GraphQL endpoint without an operation name and a query hash |
+| `api_operation_missing` | Error | An `operation_id` not in the pinned description |
+| `api_description_changed` | Error | The pinned description's digest differs from the one the binding was written against |
+
+## Effects and hazards
+
+| Effect | Declared as |
+| --- | --- |
+| Uses the network | The declared `http` and `api` surfaces only. `enforced`, because the plan resolves every origin and the client refuses any other |
+| Holds a session | For those surfaces |
+| Reads and writes files | A staging folder for uploads and one for downloads, each a checked path from the pack's context |
+
+Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-consent.md)). A request that sends something out of the system, such as a message or a payment, is declared by its operation with the hazard `sends_outside`.
+
+## Failures
+
+| Class | Codes | When |
+| --- | --- | --- |
+| `rejected` | `app_validation_error` | A refusal in the shape the endpoint declares for validation |
+| `stale` | `version_conflict` | The version precondition failed |
+| `session_expired` | `needs_login` | The declared expiry signal, or a redirect to the identity host. Reported through the lease |
+| `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` | The edge's own answer, recognized by status and header, never retried |
+| `drift` | `response_schema_mismatch` | The body does not fit the schema |
+| `unknown_variant` | `unexpected_status` | A status the endpoint does not declare |
+| `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back |
+| `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; a declared maintenance answer, with its retry time |
+| `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces |
+
+## The test stand
+
+The test application's JSON interface ([test application plan](../../plan/test-application.md)), with its control interface for ground truth: cases 1 to 5 and 16 to 24. A published OpenAPI description of it is to be added. GraphQL and OData stands are small additions when package 4.4 needs them.
+
+| Must always hold | Proven by |
+| --- | --- |
+| No input can change the origin, the path's shape, or which header a value goes in | The manipulation cases of section 502: a path input holding separators, a host, an encoded newline |
+| A write whose connection drops after sending is `possible_commit`, and the stand shows at most one write after reconcile | Case 17 over `http` |
+| No discovery sends a request that could write | The control interface counts writes during `spec.import` and `target.probe` |
+| A drafted read exists only for a method the description marks safe | Drafting tests |
+| A credential never appears in a template, a finding, a trace, or a failure | The planted-secret test, with a token in a response header and body |
+
+## The entry bar
+
+The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
+
+| # | Item | The HTTP pack's answer |
+| --- | --- | --- |
+| 1 | A driver, no retries inside | One per mode. A redirect is not followed across origins |
+| 2 | Read-back for every write | The named read endpoint or operation. A write without one is `irreversible` |
+| 3 | Each identity strategy | `natural`: a GET by key. `composite`: a nested path, parent first. `stamped`: the record's spare field, or the `idempotency_header` where the service honors one, then a list request filtered on it. `find`: a search endpoint with `settle`. `none`: `irreversible` |
+| 4 | A test stand | The test application's JSON interface, as above |
+| 5 | A discoverer | `http_description` and `http_surface` |
+| 6 | Failures mapped | The table above |
+| 7 | Effects and hazards | The table above; hazards come from operations |
+| 8 | A record per new mode | None needed: decision 0005 |
+
+## Build order
+
+Package 4.1: the `endpoints/` schema and its compilation, `http` reads against case 1, then writes with read-back, cases 2, 3, and 16 to 21; then the anti-forgery bootstrap, case 5, and edge answers, case 23. Package 4.4: OpenAPI import, the `api` mode, and its drafting rules; then GraphQL and OData. Package E4: the drafting rule for endpoint findings from capture. Package 2.6 touches the pack for sign-in signals on HTTP surfaces.
+
+## Open points
+
+- How the schemas of `endpoints/` and of the `endpoint` finding are versioned, so that the web pack is held by a test to the version it reads or writes.
+- Two packs compile the same entries into two payloads. A test that both build the same request from the same entry would catch drift between them.
+- gRPC reflection, and its stand.
+- Which OpenAPI versions are accepted, and what happens to a description that references files outside itself.
+- The HTTP client and its TLS stack, verified on three operating systems with a licence on the closed list.
+- Whether `api` needs to be a mode at all, or is `http` with a different source of templates. Hypothesis H-19 asks the same of `page_http`.
+- Where an authorization-code response arrives on a server.

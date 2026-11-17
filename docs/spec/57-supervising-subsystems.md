@@ -11,13 +11,22 @@ The runtime starts, talks to, and stops many things it did not write: browsers, 
 | Time limits, cancellation, and cleanup | Report cleanup as done when it could not be confirmed |
 | How many of each may run | Fetch a program. It starts what is installed |
 
+It is the only way anything starts a process. A pack's driver, and the plug-in host, are each given a supervisor scoped to what they may start: the programs the provider's manifest declares, each with its digest, and, where the manifest allows it, the programs a published plan names with their digests. A request to start anything else is refused as `effect_not_declared`, and no caller's input can choose a program ([section 61](61-effects-hazards-and-consent.md)).
+
 ## Starting something
 
 1. **Identify it.** The program is found at a declared place and its digest is taken. A digest that matches no known release is not refused; it is recorded as unverified, and everything that passes through the subsystem carries that mark ([section 59](59-the-evidence-ladder.md)).
-2. **Give the launch an identity.** A random run identifier and a random token, new for each launch.
+2. **Give the launch an identity.** A random run identifier, a random token, and a random owner mark, new for each launch. The token proves the subsystem at the handshake; the owner mark proves at stopping that a process belongs to this launch.
 3. **Hand them over privately.** Through a pipe the child inherits, or a file only the user can read that is deleted once read. Never on a command line, where other programs can see it.
 4. **Start it in a group the runtime can end as a whole.** A process group on POSIX systems; a job object on Windows, set to end with its owner.
 5. **Shake hands before any work.** The subsystem must return the run identifier, its own version, the limits it will honor, and, where it is attached to something, the identity of that thing. A subsystem attached to a different file, page, or document than expected is refused.
+
+Steps 1 to 4 hold for everything started. Step 5 holds for a subsystem that speaks the shared framing: a plug-in or a bridge. Two kinds of link cannot shake hands.
+
+| Link | Identified and owned by | What the supervisor still does |
+| --- | --- | --- |
+| A protocol someone else fixed, such as a browser's debugging pipe | The program's digest, the version it reports through its own protocol, and the owner mark. It cannot return the run identifier | Starts, counts, bounds, and stops it. The pack frames the bytes, and a frame the pack cannot parse still closes the link |
+| A one-shot child that performs no handshake: a command run to completion | The program's digest and the owner mark | Arguments as a list, never a shell line; the environment allowlist; a checked working directory; output cut at its bound and counted; the deadline; the whole group ended at exit or deadline. A deadline passed on a committing run is reported as unknown, so the write is `possible_commit` |
 
 ## Talking to it
 
@@ -54,7 +63,7 @@ These are not sessions. A session is a signed-in state and belongs to the sessio
 
 ## Stopping something
 
-- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's token. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete.
+- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's owner mark. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete.
 - Incomplete cleanup is a state, not a log line. It names what remains, it blocks new starts of that kind until it is retried, and `doctor.run` shows it.
 - The process list comes from the operating system through fixed system paths, so that nothing on a caller's search path can hide or replace it.
 - On shutdown every caller that asks joins the same cleanup. Anything that failed to stop stays owned and is retried.
@@ -86,4 +95,5 @@ For each provider and each subsystem it needs: `healthy`, `component_missing`, `
 
 - The shared framing: newline-delimited JSON with a byte ceiling is the likely choice, the same as the plug-in protocol.
 - Which operating-system mechanisms confine a plug-in process on each platform. Research is needed before promising more than the manifest check.
+- An action that lists what is open: the rule "named and listed" above needs one, and the [action catalog](../reference/action-catalog.md) has none yet.
 - Whether leftovers from an engine that crashed can be recognized and cleaned at the next start. REA writes an ownership record for this and its reader was not found; we need the reader.

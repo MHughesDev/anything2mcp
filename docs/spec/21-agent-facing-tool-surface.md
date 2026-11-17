@@ -1,6 +1,8 @@
 # 21. Agent-facing tool surface
 
-Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the app.
+Every tool is generated from published files, so names, descriptions, and results are consistent across targets, and an agent needs no prior knowledge of the system.
+
+**No client is special.** Any client that speaks the protocol is served alike, whoever made it, a home-built runtime included. Nothing in the kernel knows which make of agent is calling, and conformance is tested against the protocol with at least two unrelated clients. A client's quirk, where one must be handled, is data in a profile ([decision 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). The guidance on list sizes below is cited from client makers' published advice and applies to every client.
 
 **Two built-in toolsets.** `use` holds the control tools for everyday agents; `build` adds the authoring tools. A caller sees only what its role allows. Every built-in tool is an action in the [action catalog](../reference/action-catalog.md).
 
@@ -10,7 +12,7 @@ Every tool is generated from published files, so names, descriptions, and result
 
 - **Listed:** pipelines and the control tools, kept under 20 in total, configurable per caller.
 - **Found on demand:** single operations, through `a2m_tool_search` and `a2m_tool_call`; each operation's own schema is still enforced.
-- **Full listing:** a setting for clients with built-in tool search.
+- **Full listing:** a setting, or a client profile, for clients with built-in tool search.
 
 | Control tool | Purpose |
 | --- | --- |

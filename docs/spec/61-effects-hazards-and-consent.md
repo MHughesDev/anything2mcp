@@ -16,8 +16,8 @@ REA declares ten effects for each of its tools and derives every hint from them,
 
 | Effect | Declared with | Checked by |
 | --- | --- | --- |
-| Starts a process | Which programs, by path and digest | The supervisor: nothing else can be started |
-| Reads files | Which roots | The kernel's file access, for packs; the allowed roots of section 51 |
+| Starts a process | Which programs, by path and digest; and whether programs a published plan names may be started | The supervisor, scoped to what the manifest and the published plan declare: nothing else can be started ([section 57](57-supervising-subsystems.md)) |
+| Reads files | Which roots | The kernel's file access, for packs: the checked path in `a2m-provider`, which only the check against the allowed roots of section 51 can make. A pack receives checked paths and never resolves one |
 | Writes files | Which roots | The same |
 | Uses the network | Which destinations | The surfaces a target declares; the kernel's clients |
 | Holds a session | For which kind of surface | The session keeper |
@@ -45,7 +45,7 @@ The effect class says what kind of change an operation makes to the record it na
 | Hazard | Meaning | Example |
 | --- | --- | --- |
 | `none` | Nothing beyond the named record | Updating a line item |
-| `data_elsewhere` | Data beyond the named record could be lost | A command that clears a table; a save that replaces a whole file |
+| `data_elsewhere` | Data beyond the named record could be lost | A command that clears a table; a save that rewrites a whole file and cannot show that the rest is unchanged |
 | `sends_outside` | Something leaves the system and cannot be recalled | A mail, a payment, a message to a queue others read |
 | `device_function` | A device could be left unable to work | A firmware update; a network setting on the link we are using |
 | `physical` | Something in the world moves, heats, opens, or stops | A valve, a motor, a lock |
@@ -58,7 +58,7 @@ The effect class says what kind of change an operation makes to the record it na
 | `device_function` | A person, every run; no standing approval; no pre-approval by policy | A precondition check must pass first, and a recovery route must be declared |
 | `physical` | A person, every run; no standing approval; no pre-approval; a second person where policy asks | A declared safe state, a stop that is always reachable, and a rate limit |
 
-An operation with any hazard other than `none` is `irreversible` unless its pack can show otherwise. A pipeline's hazard is the worst of its operations', as its effect class already is.
+An operation with any hazard other than `none` is `irreversible` unless its pack can show otherwise. A pack that can show nothing else changed may declare `none`: in the file pack, a patch save that passes the untouched check carries hazard `none` ([section 70](70-the-file-pack.md)). A pipeline's hazard is the worst of its operations', as its effect class already is.
 
 ## Commands are not a shell
 

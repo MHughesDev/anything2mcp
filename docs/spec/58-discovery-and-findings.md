@@ -4,9 +4,11 @@ Discovery is how the runtime learns what a system can do. This section defines w
 
 ## Three rules first
 
-1. **Discovery cannot write.** The engine enforces it for every discoverer, whoever supplied it. A discoverer that needs a system to change in order to observe it is not a discoverer.
+1. **Discovery cannot write.** Discovery runs as a job: a runner calls the discoverer inside the engine's sandbox, which gives it only what the sandbox's port offers, and writing is not among it. What "cannot write" means differs by kind of system, so each pack states it for its archetype and its conformance test proves it: for the web pack, a request that is not a read is never sent; for a program, it is started only in the help and version forms the target declares; for a database, every read runs in a transaction the store holds read-only; for a queue, nothing is consumed. A discoverer that needs a system to change in order to observe it is not a discoverer.
 2. **Discovery returns findings, and a finding cannot run.** Only a compiled plan runs. A finding becomes something that can run only as target files that pass the compiler and the gates, whoever or whatever wrote them: a person, an agent, or the drafter of [section 67](67-the-scout-and-who-does-what.md).
 3. **A finding claims the least it can.** Where a field is not given, it takes the weakest value, never the strongest.
+
+**Capturing a person's own use is not exploring.** When a discoverer explores, a write is impossible, by rule 1. When it captures a person using the system in a tab or window they drive, such as the web pack's watch tab, the person may save, because the writes are theirs: the capture only records what passes, redacted, and sends nothing of its own. The findings of a capture are `discovered` for what was seen and say nothing of what was not used.
 
 ## A finding
 
@@ -14,7 +16,7 @@ Discovery is how the runtime learns what a system can do. This section defines w
 | --- | --- |
 | `id` | A digest of the finding's content: subject, kind, what was found, source, level, coverage, limitations. Display names and local paths are left out, so the same observation has the same identifier everywhere |
 | `subject` | What the finding is about, as one tagged identity (below) |
-| `kind` | A surface, a screen, a field, an action, an endpoint, a command, a function, a schema, a kind of record, a sign-in method, an event, a register |
+| `kind` | A registered name, such as a surface, a screen, a field, an action, an endpoint, a command, a function, a schema, a kind of record, a sign-in method, an event, a register. Each kind has one owning pack, which registers its shape; another pack may read findings of the kind as data ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)) |
 | `found` | The thing itself, in the form its pack defines |
 | `level` | `discovered` or `inferred`. Nothing higher; the rest of the ladder belongs to drafts ([section 59](59-the-evidence-ladder.md)) |
 | `source` | Who vouches for it (below) |
@@ -119,8 +121,8 @@ An unknown that a tool depends on is shown in the review summary before publishi
 | Archetype | Observed on the live system | Read as description or artifact |
 | --- | --- | --- |
 | Interface | The accessibility tree as a snapshot; which screen models match | Nothing by default |
-| Request | Captured exchanges while the system is used; a listing the service computes, such as an MCP server's tools | A published schema or contract; the application's own code, through an optional provider |
-| Command | The program's own help and version output | Its manual; completion data |
+| Request | Captured exchanges while a person uses the system; a listing the service computes, such as an MCP server's tools | A published schema or contract; the system's own code, through an optional provider |
+| Command | The program's own help and version output, in the forms the target declares | Its manual; completion data |
 | Bridge | The functions the host lists | A type library, a dictionary, headers |
 | Artifact | The structure of a real file: sheets, named ranges, keys | A format's published schema |
 | Stream | Topics the broker lists; a bounded sample of messages | Registered schemas |
@@ -138,6 +140,6 @@ Findings are stored with a format number. When the format changes, old findings 
 
 ## Open points
 
-- The closed lists: kinds of finding, limitation codes, and reasons for an unknown subject. Fixed when the first discoverer is built.
+- The closed lists: limitation codes and reasons for an unknown subject. Fixed when the first discoverer is built. Kinds of finding are registered names, and the first discoverer registers the first.
 - Whether a help listing counts as the live system observing itself or as a description. It is the running program's answer, so `discovered` for "this command is listed", and `not_exercised` until it is run.
 - How long a finding stays valid; see section 59.

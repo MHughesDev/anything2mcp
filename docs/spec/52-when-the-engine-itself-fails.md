@@ -1,6 +1,6 @@
 # 52. When the engine itself fails
 
-Earlier sections cover what happens when the application misbehaves, a session ends, or a runner is lost. This section covers Anything2MCP's own parts failing: its database, its key store, its browser, its disk. The rule is the same throughout, and each row below is a test.
+Earlier sections cover what happens when the target system misbehaves, a session ends, or a runner is lost. This section covers Anything2MCP's own parts failing: its database, its key store, its disk, and the subsystems its packs start, such as the web pack's browser. The rule is the same throughout, and each row below is a test.
 
 ## Three rules
 
@@ -25,9 +25,9 @@ Earlier sections cover what happens when the application misbehaves, a session e
 | The database cannot commit: full disk, lost connection | A write stops before its next intent. If a write was sent and cannot be recorded, the runner journals it locally and stops; the run is `possible_commit` | `stopped` | When the database returns, journals are uploaded and doubtful records reconciled |
 | The evidence store is full | Writes stop, because a record cannot be marked verified without its evidence | `degraded`; reads continue at the lowest capture level | Free space or retention; nothing is lost |
 | The key store or key service is unreachable | Sessions already in memory keep working | No session can be restored or saved; calls needing one wait, then fail | Automatic when it returns |
-| The browser crashes | Reads retry on a new browser. A write that had been sent is `possible_commit` | Continue | The browser is relaunched from the same profile, so the sign-in usually survives |
-| A tab hangs | The step times out with its declared class | Continue | The tab is closed; the browser is recycled after repeated hangs |
-| Memory runs short | No new browser work is started; queued runs wait | `busy` with a retry time | The browser is recycled between runs once past a memory limit |
+| In the web pack, the browser crashes | Reads retry on a new browser. A write that had been sent is `possible_commit` | Continue | The browser is relaunched from the same profile, so the sign-in usually survives |
+| In the web pack, a tab hangs | The step times out with its declared class | Continue | The tab is closed; the browser is recycled after repeated hangs |
+| Memory runs short | No new browser work, or other memory-heavy subsystem work, is started; queued runs wait | `busy` with a retry time | In the web pack, the browser is recycled between runs once past a memory limit |
 | The engine process dies | Runs in flight are interrupted | The next client starts a new engine | Reconcile, then resume, as in section 42 |
 | The machine's clock jumps | Leases are unaffected; they are measured on a steady clock | Approvals and tokens are judged by the database's or issuer's clock, with a small tolerance | None needed |
 | A plan fails its hash check | The tool is not run | That tool is unavailable; others are unaffected | Republish from stored sources |
@@ -38,7 +38,7 @@ Earlier sections cover what happens when the application misbehaves, a session e
 
 ## Limits that prevent failures
 
-- A browser is recycled after a set number of runs or past a memory limit, always between runs.
+- In the web pack, a browser is recycled after a set number of runs or past a memory limit, always between runs.
 - Queues have a length; a full queue answers `busy` at once instead of growing.
 - Evidence has retention classes and a size budget per run.
 - Disk space is checked before a pipeline starts, and a pipeline that could not store its evidence is not started.
@@ -56,4 +56,4 @@ A toolset always names the exact version it uses, so two toolsets can be on diff
 
 ## Proving it
 
-Each row of the failure table is a fault-injection test: the fault is induced against the built-in test application, and the test asserts the health state, what callers were told, and that the application's stored data shows no duplicate and no unverified record. The tests for the database, the browser, and process death arrive with Phase 3; the rest with Phase 9.
+Each row of the failure table is a fault-injection test: the fault is induced against the built-in test application, and the test asserts the health state, what callers were told, and that the test application's stored data shows no duplicate and no unverified record. The tests for the database, the browser, and process death arrive with Phase 3; the rest with Phase 9.

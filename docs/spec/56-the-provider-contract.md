@@ -8,7 +8,7 @@ A provider is anything that supplies capabilities to the runtime. This section i
 | --- | --- | --- |
 | A first-party pack | Rust crates in this repository ([section 55](55-kernel-and-packs.md)) | Reviewed with the product |
 | A plug-in | A separate process in any language, speaking the plug-in protocol | Signed, or off by default. An administrator approves its manifest |
-| An upstream MCP server | An existing MCP server reached through the `mcp` mode | Only tools named in a mapping file are reachable. Policy, approval, and audit wrap every call |
+| An upstream MCP server | An existing MCP server reached through the MCP pack's `mcp` mode | Only tools named in its mapping file are reachable, each pinned by the digest of its definition; the mapping file is its manifest, and its effects are `declared`, because the server runs code this runtime cannot see. Policy, approval, and audit wrap every call |
 
 ## Extension points
 
@@ -16,13 +16,18 @@ A provider fills one or more of a fixed list. It cannot add to the list.
 
 | Extension point | Supplies | Defined in |
 | --- | --- | --- |
-| Driver | How the steps of one or more modes are carried out | The technical reference |
-| Auth provider | How a session of one kind is made, checked, renewed, and ended | The technical reference; section 44 |
-| Source reader | How one kind of input becomes validated records | Section 12 |
+| Driver | How the steps of one or more modes are carried out | `a2m-provider`; the technical reference |
+| Auth provider | How a session of one kind is made, checked, renewed, and ended | `a2m-auth`; the technical reference; section 44 |
+| Source reader | How one kind of input becomes validated records | `a2m-sources`; section 12 |
 | Widget driver | How one kind of control is set and read | The technical reference |
-| Discoverer | How a target is observed, returning findings | [Section 58](58-discovery-and-findings.md) |
+| Discoverer | How a target is observed, returning findings | `a2m-provider`; [section 58](58-discovery-and-findings.md) |
+| Compiler registrations | File kinds, the lowering of each verb of its modes, lint rules, and drafting rules | `a2m-files`; [section 46](46-target-compiler-and-plan.md) |
 
-A provider may also contribute actions to the registry, under its own name space. They are defined once, like every action, and their four faces are generated. A provider never adds a command or a tool by hand.
+A provider may also add actions to the registry, under its own name space. They are defined once, like every action, and their four faces are generated. Only the dispatcher in `a2m-actions` calls one, after the caller's credential is checked and policy has decided, and it is given checked paths and the registry, never the store. A provider never adds a command or a tool by hand.
+
+**Registered names.** A mode with its archetype, a surface kind with its archetype and whether a session is held on it, a step kind within its mode, a file kind, a lint code, a finding kind, and a control name are names a provider registers, each checked for shape in `a2m-core` ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)). The registry is the only list of them. A target that names one nobody registered does not compile. Two providers that register one mode or surface kind must agree on its archetype.
+
+**The registry is an immutable snapshot.** It is built once at start, one call per enabled pack and then the plug-ins found on the machine, and replaced whole when a provider is enabled or disabled. Its digest is recorded in every trace, and registration order never changes it or any choice made from it.
 
 ## What a provider can never do
 
@@ -35,16 +40,20 @@ A provider may also contribute actions to the registry, under its own name space
 
 ## The manifest
 
-One declaration per provider. It is data: the runtime can read it without loading or starting the provider.
+One declaration per provider. It is data: the runtime can read it without loading or starting the provider. It is a TOML file, `anything2mcp-provider.toml`, checked against a JSON Schema; a first-party pack embeds its own, so packs and plug-ins pass one parser and one schema. The full format, with an example and the checks made when it is read, is in the [`a2m-provider` design](../architecture/crates/a2m-provider.md#the-manifest). Its fields:
 
 | Field | Meaning |
 | --- | --- |
-| Identity | Name, version, publisher, and the digest of what will run |
-| Contract version | Which version of this contract it was written for |
+| Identity | Name, version, publisher, kind (pack or plug-in), the digest of what will run, and a plug-in's signature |
+| Contract version | Which version of this contract it was written for, beside the manifest's own format number |
+| Run | For a plug-in: its program, fixed arguments, the environment names passed through, the plug-in protocol versions it speaks, its frame size, and how many requests it serves at once and queues |
 | Extension points | Which it fills |
-| Modes and verbs | For a driver: the modes it serves and the verbs of each |
-| File kinds | The target-file kinds and binding fields it defines, with their schemas |
-| Actions | The actions it contributes |
+| Modes and verbs | For a driver: the modes it serves, each with its archetype, verbs, and step kinds; its rank, the default place in binding order when an operation states none; the intents stored ahead of acting; the parallel reads and writes per session; and what one write holds alone |
+| Surface kinds | The surface kinds it registers, each with its archetype and whether a session is held on it |
+| Discoverers | Each with its archetype, the finding kinds it may return, the sources it uses, the highest level it may claim, and its bounds |
+| File kinds | The target-file kinds and binding fields it defines, with their schemas; its lint rules, with codes and levels; its drafting rules, from finding kind to file kind |
+| Reads | The file kinds and finding kinds of other packs it reads as data |
+| Actions | The actions it adds, each with its effect |
 | Effects | What it may do: start which programs, read and write which file roots, reach which network destinations, hold a session, change a device. [Section 61](61-effects-hazards-and-consent.md) |
 | Requirements | Outside programs and runtimes it needs: how each is detected, which digests are known, and what to tell a person who lacks one |
 | Platforms | The operating systems and architectures it supports |
@@ -81,7 +90,7 @@ More than one provider may be able to fill the same place: two browser engines f
 - **There is no priority order and no silent fallback.** If two are ready and no setting names one, the answer is a failure that lists each candidate and why it was or was not usable.
 - The choice and its reason are recorded in the trace, as the choice of binding already is.
 
-This is separate from choosing a binding. An operation's bindings are tried in a declared order, by decision 0006; that order is written in the target's files and reviewed. Which program carries out a mode is a property of the installation, and must never change by accident.
+This is separate from choosing a binding. An operation's bindings are tried in a declared order, by decision 0006; that order is written in the target's files and reviewed, or, where an operation states none, set by the compiler from each mode's rank in its manifest. Which program carries out a mode is a property of the installation, and must never change by accident.
 
 ## Lifecycle
 
@@ -111,6 +120,5 @@ A provider that does something its manifest did not declare is stopped, and the 
 
 ## Open points
 
-- The manifest's file format and schema. The long-term plan's package B3.
-- How schemas and lint rules cross a process boundary for plug-ins.
-- Whether an upstream MCP server needs a manifest of its own or the mapping file is its manifest. The second, most likely.
+- How schemas and lint rules cross a process boundary for plug-ins. The `a2m-provider` design proposes that schemas cross as the files the manifest names and that lowerings and lint rules are calls made at compile time, with the plug-in's digest recorded in the plan; the compiler's design still leaves it open.
+- The manifest example in the `a2m-provider` design has no field yet for the kinds a provider reads from other packs.
