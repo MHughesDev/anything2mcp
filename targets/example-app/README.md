@@ -44,7 +44,7 @@ Everything about signing in is under `/secure`, so nothing outside it changes. T
 | `GET /secure/orders` | A page that needs the session. Without one it redirects (303) to `/secure/sign-in?next=/secure/orders`, with `&reason=session_expired` or `&reason=session_revoked` when the session was ended |
 | `/secure/api/...` | The whole JSON interface again, for a session cookie. Without a usable session it answers 401 with `error` set to `needs_login`, `session_expired`, or `session_revoked`, and does nothing |
 | `/secure/bearer/api/...` | The same, for `Authorization: Bearer` with `BEARER_TOKEN`. Missing: 401 with `WWW-Authenticate: Bearer realm="example"`. Wrong or revoked: 401 with `error="invalid_token"` added |
-| `/secure/key/api/...` | The same, for `BEARER_TOKEN`'s counterpart `API_KEY` in the `x-api-key` header. Missing, wrong, or revoked: 401 with `WWW-Authenticate: ApiKey realm="example", header="X-Api-Key"` |
+| `/secure/key/api/...` | The same, for `API_KEY` in the `x-api-key` header. Missing, wrong, or revoked: 401 with `WWW-Authenticate: ApiKey realm="example", header="X-Api-Key"` |
 
 The harness signs in as a person would with `TestApp::session_cookie()`, which returns the value for a `Cookie` header, passing the code step when it is on.
 
