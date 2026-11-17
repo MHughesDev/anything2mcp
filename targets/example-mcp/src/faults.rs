@@ -168,8 +168,11 @@ pub struct Settings {
     /// Answer an `initialize` for a revision the stand does not serve with an
     /// error, in place of offering the revision it does serve.
     pub refuse_unknown_revision: bool,
-    /// Made-up bearer tokens the stand accepts, each with the name of the
-    /// principal it stands for. Empty means no credential is asked for.
+    /// Whether a credential is asked for: a bearer token over HTTP, and the
+    /// token the program was started with over stdio.
+    pub credential_required: bool,
+    /// Made-up tokens the stand accepts, each with the name of the principal
+    /// it stands for.
     pub tokens: BTreeMap<String, String>,
     /// The faults switched on, in the order they were set.
     pub faults: Vec<Fault>,
@@ -186,6 +189,7 @@ impl Default for Settings {
             page_size: DEFAULT_PAGE_SIZE,
             server_version: DEFAULT_SERVER_VERSION.to_owned(),
             refuse_unknown_revision: false,
+            credential_required: false,
             tokens: BTreeMap::new(),
             faults: Vec::new(),
             drift: Vec::new(),

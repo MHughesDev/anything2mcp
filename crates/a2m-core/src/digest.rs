@@ -25,6 +25,12 @@ impl Digest {
         hasher.finish()
     }
 
+    /// A digest from its bytes, as a store holds it.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+        Self(bytes)
+    }
+
     /// The digest's bytes.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {

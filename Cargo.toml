@@ -45,14 +45,13 @@ unicode-normalization = { version = "0.1.26", default-features = false }
 # subscriber itself (decision 0077). No attribute macros, so no proc-macro tree.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 # The vault's outside crates, each verified in decision 0074: the cipher, the
-# passphrase derivation, operating-system randomness, the keyed digest, the
-# redactor's matcher, memory wiping, and the three desktop key stores.
+# passphrase derivation, operating-system randomness, the redactor's matcher,
+# memory wiping, and the three desktop key stores.
 aho-corasick = "1.1.5"
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 getrandom = "0.4.3"
-hmac = "0.13.0"
 keyring-core = "1.0.1"
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }

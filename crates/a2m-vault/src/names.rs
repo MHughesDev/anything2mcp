@@ -4,7 +4,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use a2m_core::{Digest, Failure};
+use a2m_core::{Digest, Failure, Identity, WorkspaceId};
 
 use crate::cipher::BoundTo;
 use crate::failure;
@@ -51,11 +51,6 @@ macro_rules! name {
             }
         }
     };
-}
-
-name! {
-    /// Which workspace an item belongs to. Each workspace has its own key.
-    WorkspaceId, "workspace identifier"
 }
 
 name! {
@@ -118,6 +113,17 @@ impl OwnerRef {
     /// `input`/`schema_invalid` when `name` is not a name this crate accepts.
     pub fn service(name: impl Into<String>) -> Result<Self, Failure> {
         Self::new(OwnerKind::Service, name)
+    }
+
+    /// The owner of what belongs to an identity a system sees: the person,
+    /// or the dedicated account as a service identity.
+    #[must_use]
+    pub fn of(identity: &Identity) -> Self {
+        let (kind, id) = match identity {
+            Identity::Person(person) => (OwnerKind::Person, person.to_string()),
+            Identity::Account(account) => (OwnerKind::Service, format!("account:{account}")),
+        };
+        Self { kind, id }
     }
 
     fn new(kind: OwnerKind, id: impl Into<String>) -> Result<Self, Failure> {
@@ -196,7 +202,7 @@ impl SealContext {
     /// The context's fields, added to bytes that will be authenticated.
     pub(crate) fn bind(&self, bound: BoundTo) -> BoundTo {
         bound
-            .field("workspace", self.workspace.as_str().as_bytes())
+            .field("workspace", self.workspace.as_bytes())
             .field("owner_kind", self.owner.kind().as_str().as_bytes())
             .field("owner", self.owner.id().as_bytes())
             .field("kind", self.kind.as_str().as_bytes())
@@ -213,7 +219,8 @@ pub enum Layer {
     Workspace,
     /// An owner's key, wrapped by the workspace's key.
     Owner,
-    /// A workspace's key for keyed digests, wrapped by the workspace's key.
+    /// The installation's key for keyed digests, wrapped by the root. Each
+    /// workspace's digest key is derived from it and never stored.
     Digest,
     /// An item's data key, wrapped by its owner's key and kept in the
     /// envelope; never in a key record.
@@ -316,7 +323,7 @@ impl KeyId {
     pub fn workspace(workspace: &WorkspaceId) -> Self {
         Self::of(
             BoundTo::new("a2m-vault/key-id/workspace")
-                .field("workspace", workspace.as_str().as_bytes()),
+                .field("workspace", workspace.as_bytes()),
         )
     }
 
@@ -325,23 +332,25 @@ impl KeyId {
     pub fn owner(workspace: &WorkspaceId, owner: &OwnerRef) -> Self {
         Self::of(
             BoundTo::new("a2m-vault/key-id/owner")
-                .field("workspace", workspace.as_str().as_bytes())
+                .field("workspace", workspace.as_bytes())
                 .field("owner_kind", owner.kind().as_str().as_bytes())
                 .field("owner", owner.id().as_bytes()),
         )
     }
 
-    /// A workspace's key for keyed digests.
+    /// The installation's key for keyed digests.
     #[must_use]
-    pub fn digest(workspace: &WorkspaceId) -> Self {
-        Self::of(
-            BoundTo::new("a2m-vault/key-id/digest")
-                .field("workspace", workspace.as_str().as_bytes()),
-        )
+    pub fn digest() -> Self {
+        Self::of(BoundTo::new("a2m-vault/key-id/digest"))
     }
 
     fn of(what: BoundTo) -> Self {
         Self(Digest::of(what.as_bytes()))
+    }
+
+    /// An identifier read back from an envelope.
+    pub(crate) fn from_bytes(bytes: [u8; Digest::LENGTH]) -> Self {
+        Self(Digest::from_bytes(bytes))
     }
 
     /// The identifier's bytes.
@@ -411,7 +420,6 @@ mod tests {
 
     #[test]
     fn a_name_is_text_without_control_characters() {
-        assert!(WorkspaceId::new("main").is_ok());
         assert!(OwnerRef::person("ana@example.test").is_ok());
         assert!(ItemId::new("x".repeat(255)).is_ok());
         for bad in [String::new(), "x".repeat(256), "a\nb".to_owned()] {
@@ -422,15 +430,15 @@ mod tests {
 
     #[test]
     fn a_key_identifier_is_stable_and_differs_by_what_it_is_for() {
-        let main = WorkspaceId::new("main").unwrap();
-        let other = WorkspaceId::new("other").unwrap();
+        let main = WorkspaceId::from_bytes([1; 16]);
+        let other = WorkspaceId::from_bytes([2; 16]);
         let ana = OwnerRef::person("ana").unwrap();
         let ana_service = OwnerRef::service("ana").unwrap();
         let ids = [
             KeyId::root(),
             KeyId::workspace(&main),
             KeyId::workspace(&other),
-            KeyId::digest(&main),
+            KeyId::digest(),
             KeyId::owner(&main, &ana),
             KeyId::owner(&main, &ana_service),
             KeyId::owner(&other, &ana),

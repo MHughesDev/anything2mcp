@@ -1,0 +1,26 @@
+== handshake era: initialize (expect 200 and no Mcp-Session-Id)
+HTTP/1.1 200 OK
+content-type: application/json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"a2m-spike-mcp","version":"0.0.0"},"instructions":"Spike server. One read tool over the imaginary example target."}}
+== handshake era: tools/call with no session, version header only
+HTTP/1.1 200 OK
+content-type: application/json
+{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"Order A-1001: open, total 118.40 EUR."}],"structuredContent":{"currency":"EUR","lines":3,"order_id":"A-1001","status":"open","total":"118.40"},"isError":false}}
+== modern era: server/discover
+HTTP/1.1 200 OK
+content-type: application/json
+{"jsonrpc":"2.0","id":3,"result":{"resultType":"complete","supportedVersions":["2025-11-25","2026-07-28"],"capabilities":{"tools":{"listChanged":true}},"instructions":"Spike server. One read tool over the imaginary example target.","ttlMs":0,"cacheScope":"private","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"a2m-spike-mcp","version":"0.0.0"}}}}
+== modern era: tools/call with the standard headers
+HTTP/1.1 200 OK
+content-type: application/json
+{"jsonrpc":"2.0","id":4,"result":{"resultType":"complete","content":[{"type":"text","text":"Order A-1001: open, total 118.40 EUR."}],"structuredContent":{"currency":"EUR","lines":3,"order_id":"A-1001","status":"open","total":"118.40"},"isError":false}}
+== modern era: header and body disagree (expect 400 and -32020)
+HTTP/1.1 400 Bad Request
+content-type: application/json
+{"jsonrpc":"2.0","id":5,"error":{"code":-32020,"message":"Mcp-Name header `example_other_tool` does not match body value `example_orders_order_get`"}}
+== modern era: unserved version (expect 400 and -32022)
+HTTP/1.1 400 Bad Request
+content-type: application/json
+{"jsonrpc":"2.0","id":6,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":"1900-01-01","supported":["2025-11-25","2026-07-28"]}}}
+== a foreign Host header (expect a refusal: DNS rebinding guard)
+HTTP/1.1 403 Forbidden

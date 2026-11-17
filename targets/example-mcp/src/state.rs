@@ -178,7 +178,7 @@ impl Credential {
 
 impl State {
     pub(crate) fn credential(&self, token: Option<&str>) -> Credential {
-        if self.settings.tokens.is_empty() {
+        if !self.settings.credential_required {
             return Credential::NotAsked;
         }
         match token {

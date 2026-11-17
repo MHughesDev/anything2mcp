@@ -199,15 +199,15 @@ impl Control {
     /// the named principal. Call it once for each identity a test needs.
     pub fn accept_token(&self, token: &str, principal: &str) -> Result<(), HarnessError> {
         self.set(|settings| {
+            settings.credential_required = true;
             settings
                 .tokens
                 .insert(token.to_owned(), principal.to_owned());
         })
     }
 
-    /// Stops accepting a token. If it was the last one, no credential is
-    /// asked for any more; use [`Control::accept_token`] with another to keep
-    /// the stand asking.
+    /// Stops accepting a token. The stand goes on asking for a credential,
+    /// so a request that still carries this one is refused.
     pub fn revoke_token(&self, token: &str) -> Result<(), HarnessError> {
         self.set(|settings| {
             settings.tokens.remove(token);

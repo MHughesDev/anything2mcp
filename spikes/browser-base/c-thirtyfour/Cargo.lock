@@ -831,6 +831,7 @@ dependencies = [
  "http",
  "indexmap",
  "pastey",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_repr",

@@ -376,8 +376,11 @@ impl Stand {
 
 impl Drop for Stand {
     fn drop(&mut self) {
-        // Best effort: a child that still runs ends within a moment of this.
+        // Best effort. A child that still runs is told to end, and is given
+        // a moment to, because a running program's file cannot be removed on
+        // every system.
         let _ = self.control.stop_children();
+        let _ = self.control.wait_until_no_children(Duration::from_secs(5));
         let _ = fs::remove_dir_all(&self.root);
     }
 }

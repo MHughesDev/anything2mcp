@@ -243,9 +243,9 @@ A `many` read that finds more than `max_rows` is not a failure: the result says 
 
 ## The test stand
 
-As real as is cheap ([the test application](../../plan/test-application.md)). The cheap and real stand is **the embedded SQL engine the store already uses on one machine** ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)): a real database engine, no server, the same on three operating systems. It lives under `targets/`, proposed as `targets/example-db/`, with seed tables for the `example` target's orders and line items.
+As real as is cheap ([the test application](../../plan/test-application.md)). The cheap and real stand is **the embedded SQL engine the store already uses on one machine** ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)): a real database engine, no server, the same on three operating systems. It lives in `targets/example-db/`, with seed tables for the `example` target's orders and line items; its [README](../../../targets/example-db/README.md) lists the schema, the faults, and how each case below is shown.
 
-**The control interface** reaches the database by its own handle, never through the pack. Reset restores the seed. Inspect returns a row exactly as stored. Count writes reads a log kept by the stand's own triggers, which the pack's statements never name. Set a fault holds a row lock from another connection, slows a statement, or changes the schema.
+**The control interface** reaches the database by its own handle, never through the pack. Reset restores the seed. Inspect returns a row exactly as stored. Count writes reads a log kept by the stand's own triggers, which the pack's statements never name. Set a fault holds the engine's lock from another connection, changes how a written value is stored, refuses a write, changes the schema, or marks the file read-only. The embedded engine locks the whole database and not a row, and gives the stand no way to slow another connection's statement; a row lock and a slow statement are left to the server stand.
 
 | # | The stand does this | Risk it exercises |
 | --- | --- | --- |

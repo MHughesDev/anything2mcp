@@ -444,14 +444,14 @@ impl TestDb {
         if inner.faults.contains(&fault) {
             return Ok(());
         }
+        if matches!(fault, Fault::WritersLocked | Fault::Locked) {
+            // One lock at a time: the engine has one.
+            inner.release_lock()?;
+        }
         let mut next = inner.faults.clone();
         next.insert(fault);
         match fault {
             Fault::WritersLocked | Fault::Locked => {
-                // One lock at a time: the engine has one.
-                inner.release_lock()?;
-                next = inner.faults.clone();
-                next.insert(fault);
                 inner.conn.execute_batch(if fault == Fault::Locked {
                     "BEGIN EXCLUSIVE"
                 } else {
@@ -592,13 +592,16 @@ impl Inner {
 
     /// Gives the file back the permissions it had before it was marked read-only.
     fn restore_permissions(&mut self, path: &Path) -> Result<(), StandError> {
-        if let Some(before) = self.writable.take() {
-            if let Err(e) = fs::set_permissions(path, before.clone()) {
-                self.writable = Some(before);
-                return Err(StandError::Io(e));
-            }
+        match self.writable.take() {
+            None => Ok(()),
+            Some(before) => match fs::set_permissions(path, before.clone()) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    self.writable = Some(before);
+                    Err(StandError::Io(e))
+                }
+            },
         }
-        Ok(())
     }
 
     /// Changes the schema and brings the stand's triggers in line with the faults

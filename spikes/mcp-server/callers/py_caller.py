@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Caller built on the reference client library for Python (the `mcp` package on PyPI).
 
-Usage: py_caller.py <mode> <report.json> <server command...>
+Usage: py_caller.py <mode> <report.json> <server command... | http URL>
   mode: auto | legacy | 2026-07-28
 """
 import asyncio
@@ -30,7 +30,8 @@ async def main():
         except Exception as e:  # the report must say what the library raised
             steps[name] = {"ok": False, "error": {"type": type(e).__name__, "message": str(e)[:300]}}
 
-    params = StdioServerParameters(command=command[0], args=command[1:])
+    # A server command, or the URL of a Streamable HTTP endpoint that is already running.
+    params = command[0] if command[0].startswith("http") else StdioServerParameters(command=command[0], args=command[1:])
     try:
         async with Client(params, mode=mode, read_timeout_seconds=10) as client:
             report["negotiated"] = client.protocol_version

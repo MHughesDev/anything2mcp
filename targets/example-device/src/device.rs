@@ -484,13 +484,16 @@ impl Device {
             return Err(Exception::IllegalDataValue);
         };
         let count = usize::from(*count);
-        let fits = self.staged.len() + count <= usize::from(self.image_length);
-        if count == 0 || count > MAX_BLOCK_BYTES || data.len() != count.div_ceil(2) || !fits {
+        if count == 0 || count > MAX_BLOCK_BYTES || data.len() != count.div_ceil(2) {
             self.update_error = UpdateError::BlockLength;
             return Err(Exception::IllegalDataValue);
         }
         if *number != self.next_block {
             return Err(self.refuse(UpdateError::BlockOutOfOrder));
+        }
+        if self.staged.len() + count > usize::from(self.image_length) {
+            self.update_error = UpdateError::BlockLength;
+            return Err(Exception::IllegalDataValue);
         }
         let mut bytes: Vec<u8> = data.iter().flat_map(|w| w.to_be_bytes()).collect();
         bytes.truncate(count);

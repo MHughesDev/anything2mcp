@@ -177,7 +177,16 @@ impl Store {
 /// process that holds it ends, however it ends.
 #[derive(Debug)]
 pub struct HomeLock {
-    _file: File,
+    file: File,
+}
+
+impl Drop for HomeLock {
+    fn drop(&mut self) {
+        // Closing the file is not enough in a process with several threads:
+        // a process another thread is starting holds a copy of the open file
+        // for a moment, and the lock would live until that copy is closed.
+        let _ = self.file.unlock();
+    }
 }
 
 impl HomeLock {
@@ -193,7 +202,7 @@ impl HomeLock {
             .write(true)
             .open(home.join(LOCK_FILE))?;
         match file.try_lock() {
-            Ok(()) => Ok(Some(Self { _file: file })),
+            Ok(()) => Ok(Some(Self { file })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(e)) => Err(e),
         }

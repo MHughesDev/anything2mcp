@@ -67,6 +67,16 @@ pub struct Invocation {
     pub hung: bool,
 }
 
+/// The folder's lock, released when dropped.
+struct Locked(File);
+
+impl Drop for Locked {
+    fn drop(&mut self) {
+        // Unlocked by name, for the reason given at `HomeLock`.
+        let _ = self.0.unlock();
+    }
+}
+
 /// One control folder. Both the program and the harness go through this type,
 /// so the layout is written down once.
 #[derive(Clone, Debug)]
@@ -88,15 +98,15 @@ impl ControlDir {
         fs::create_dir_all(self.path.join(STARTS_FOLDER))
     }
 
-    /// Waits for the folder's lock. It is released when the file is dropped.
-    fn lock(&self) -> io::Result<File> {
+    /// Waits for the folder's lock.
+    fn lock(&self) -> io::Result<Locked> {
         let file = File::options()
             .create(true)
             .truncate(false)
             .write(true)
             .open(self.path.join(LOCK_FILE))?;
         file.lock()?;
-        Ok(file)
+        Ok(Locked(file))
     }
 
     fn start_file(&self, start: u64, extension: &str) -> PathBuf {
@@ -225,7 +235,8 @@ impl ControlDir {
                 .write(true)
                 .open(self.start_file(start, "child"))?;
             match file.try_lock() {
-                Ok(()) => {}
+                // Nobody holds it: the child is gone. Give the lock back at once.
+                Ok(()) => drop(Locked(file)),
                 Err(fs::TryLockError::WouldBlock) => living.push(start),
                 Err(fs::TryLockError::Error(e)) => return Err(e),
             }
