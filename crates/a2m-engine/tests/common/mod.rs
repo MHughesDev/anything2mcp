@@ -2003,6 +2003,7 @@ pub fn acknowledged_upsert(plan: &mut Plan) {
             operation.effect = EffectClass::Irreversible;
             for binding in &mut operation.bindings {
                 binding.evidence = a2m_core::WriteEvidence::Acknowledged;
+                binding.read_back.clear();
             }
         }
     }

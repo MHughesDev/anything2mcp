@@ -558,6 +558,7 @@ async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_c
         let mut second = operation.bindings[0].clone();
         second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
         second.evidence = a2m_core::WriteEvidence::Acknowledged;
+        second.read_back.clear();
         operation.bindings.push(second);
         for pipeline in &mut plan.pipelines {
             pipeline.effect = a2m_core::EffectClass::Irreversible;

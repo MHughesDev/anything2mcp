@@ -239,6 +239,7 @@ fn acknowledged(plan: &mut a2m_core::Plan) {
             operation.effect = EffectClass::Irreversible;
             for binding in &mut operation.bindings {
                 binding.evidence = WriteEvidence::Acknowledged;
+                binding.read_back.clear();
             }
         }
     }
@@ -321,6 +322,7 @@ async fn an_acknowledgement_is_refused_as_evidence_for_an_operation_that_is_not_
                 operation.effect = EffectClass::Irreversible;
                 for binding in &mut operation.bindings {
                     binding.evidence = WriteEvidence::Acknowledged;
+                    binding.read_back.clear();
                 }
             }
         }

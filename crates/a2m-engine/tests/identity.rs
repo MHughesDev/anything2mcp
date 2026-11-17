@@ -699,6 +699,7 @@ async fn the_outputs_of_a_record_ended_on_an_acknowledgement_are_handed_back_on_
         header.effect = a2m_core::EffectClass::Irreversible;
         for binding in &mut header.bindings {
             binding.evidence = a2m_core::WriteEvidence::Acknowledged;
+            binding.read_back.clear();
         }
         for pipeline in &mut plan.pipelines {
             pipeline.effect = a2m_core::EffectClass::Irreversible;
