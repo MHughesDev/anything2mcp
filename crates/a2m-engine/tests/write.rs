@@ -4,6 +4,12 @@
 //! Every test asks the test application what it stored; none proves a write
 //! by the engine's own read path alone.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "this file holds only tests; clippy.toml allows unwrap in tests, which it tells by the #[test] attribute, and the helpers the tests share do not carry it"
+)]
+
 mod common;
 
 use std::sync::atomic::Ordering;

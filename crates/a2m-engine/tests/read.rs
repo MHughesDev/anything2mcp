@@ -4,6 +4,12 @@
 //! Every test runs against the built-in test application, through a driver
 //! registered by a test pack as a real pack registers one.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "this file holds only tests; clippy.toml allows unwrap in tests, which it tells by the #[test] attribute, and the helpers the tests share do not carry it"
+)]
+
 mod common;
 
 use std::sync::atomic::Ordering;
