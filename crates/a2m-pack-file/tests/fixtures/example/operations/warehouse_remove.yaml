@@ -1,6 +1,6 @@
 operation: example_warehouse_remove
 title: Remove a warehouse
-effect: write
+effect: irreversible
 key: code
 commit_points: 1
 inputs:

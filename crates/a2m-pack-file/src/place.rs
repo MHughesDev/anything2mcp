@@ -202,7 +202,6 @@ impl Folder {
             ))),
         }
     }
-
 }
 
 fn gone(error: &std::io::Error) -> bool {

@@ -293,12 +293,17 @@ impl Lowering for FileLowering {
         }
     }
 
-    /// By the verb: `update`, `create`, and `delete` replace the file with
-    /// one that holds the change, and write. (A row removed is written by
-    /// the same replace; the old file stays only until it is replaced.)
+    /// By the verb: `update` and `create` replace the file with one that
+    /// holds the change, and write. A `delete` is `irreversible`: the row
+    /// removed is gone with the old file once the replace is made, and no
+    /// binding of this pack can declare how it is restored, because the pack
+    /// keeps no copy of the old file and a row written back would be a new
+    /// record, not the old one (decision 0161, point 10).
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
         let verb = binding.verb;
-        if *verb == VERB_UPDATE || *verb == VERB_CREATE || *verb == VERB_DELETE {
+        if *verb == VERB_DELETE {
+            EffectClass::Irreversible
+        } else if *verb == VERB_UPDATE || *verb == VERB_CREATE {
             EffectClass::Write
         } else {
             EffectClass::Read

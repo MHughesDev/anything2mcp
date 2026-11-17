@@ -58,13 +58,13 @@ pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
     RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,
     ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
-    sdk_methods, tool_name,
+    said_line, sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, Paths};
 pub use person::{
-    ApprovalAsk, ApprovalDesk, ApprovalPreview, PRESENCE_WINDOW_MS, PREVIEW_RECORDS,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, NOT_READ_BACK, PRESENCE_WINDOW_MS, PREVIEW_RECORDS,
     PREVIEW_VALUE_CHARS, PersonSurface, PresenceAsk, PresenceProof, PresenceReport, PreviewField,
     PreviewRecord, SessionAsk, SignInAsk, SurfaceLink, WaitingApproval,
 };
@@ -88,6 +88,7 @@ mod tests {
     mod authoring;
     mod kernel;
     mod keys;
+    mod pass_two;
     mod runs;
     mod second;
 }

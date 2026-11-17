@@ -589,7 +589,7 @@ handler!(
             input: Some(stored),
             retention: RetentionClass::Long,
         };
-        let facts = CallerFacts::of(&call.caller, call.decision);
+        let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
         let kept = run.clone();
         let to_hold = keyed.clone();
         store
@@ -1137,6 +1137,18 @@ pub(crate) enum Tell {
     Nobody,
 }
 
+/// What the system itself said, as a failure carries it, in a field of its
+/// own and marked as the system's words: never joined into the sentence or
+/// the next step, and never an instruction (decision 0162, point 4).
+pub(crate) fn said_json(failure: &Failure) -> Option<Json> {
+    failure
+        .said()
+        .map(|said| json!({"by": SAID_BY, "text": said}))
+}
+
+/// Who `said` is the words of.
+pub(crate) const SAID_BY: &str = "system";
+
 /// The run as `tool.call`, `run.get`, and `run.resume` return it, with the
 /// next step for the state it is in.
 pub(crate) async fn run_output(
@@ -1150,14 +1162,6 @@ pub(crate) async fn run_output(
     let events = store
         .read(move |tx| tx.ledger().events(run, 0, 10_000))
         .await?;
-    // The sentence and the next step of the failure that ended or rested
-    // the run are in the event that changed its state.
-    let said = events.iter().rev().find_map(|event| {
-        let payload: Json = serde_json::from_str(&event.payload).ok()?;
-        let message = payload.get("message")?.as_str()?.to_owned();
-        let next_step = payload.get("next_step")?.as_str()?.to_owned();
-        Some((message, next_step))
-    });
     let mode = events.iter().rev().find_map(|event| {
         let payload: Json = serde_json::from_str(&event.payload).ok()?;
         payload
@@ -1166,14 +1170,24 @@ pub(crate) async fn run_output(
             .and_then(Json::as_str)
             .map(str::to_owned)
     });
+    // The failure that ended or rested the run, whole, as the ledger kept
+    // it: its sentence, its next step, and what the system said, apart
+    // (decision 0172). How its records ended, counted.
+    let (stored, tally) = store
+        .read(move |tx| {
+            let mut ledger = tx.ledger();
+            Ok((ledger.run_failure(run)?, ledger.tally(run)?))
+        })
+        .await?;
     let failure = row.failure.as_ref().map(|(class, code)| {
-        let (message, next_step) = said.clone().unwrap_or_else(|| {
-            (
+        stored.unwrap_or_else(|| {
+            Failure::new(
+                *class,
+                code.clone(),
                 format!("The run ended as `{}`.", row.state),
-                "Call `trace.show` with the run's identifier to see what happened.".to_owned(),
+                "Call `trace.show` with the run's identifier to see what happened.",
             )
-        });
-        Failure::new(*class, code.clone(), message, next_step)
+        })
     });
 
     let mut out = serde_json::Map::new();
@@ -1201,16 +1215,22 @@ pub(crate) async fn run_output(
     if let Some(trace) = row.trace {
         out.insert("trace".to_owned(), json!(format!("blob:{trace}")));
     }
+    if tally.acknowledged > 0 {
+        // Accepted by the system and never read back: never counted as
+        // verified (decision 0172).
+        out.insert("not_read_back".to_owned(), json!(tally.acknowledged));
+    }
     if let Some(failure) = &failure {
-        out.insert(
-            "failure".to_owned(),
-            json!({
-                "class": failure.class().to_string(),
-                "code": failure.code().to_string(),
-                "message": failure.message(),
-                "fix": failure.next_step(),
-            }),
-        );
+        let mut shown = json!({
+            "class": failure.class().to_string(),
+            "code": failure.code().to_string(),
+            "message": failure.message(),
+            "fix": failure.next_step(),
+        });
+        if let Some(said) = said_json(failure) {
+            shown["said"] = said;
+        }
+        out.insert("failure".to_owned(), shown);
     }
 
     let again = json!({"run_id": row.id.to_string()});
@@ -1705,7 +1725,7 @@ pub(crate) async fn submit_trial(
         input: Some(stored),
         retention: RetentionClass::Long,
     };
-    let facts = CallerFacts::of(&call.caller, call.decision);
+    let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
     let kept = run.clone();
     store
         .write(Durability::Synced, move |tx| {
@@ -1842,7 +1862,7 @@ pub(crate) async fn submit_discovery(
         input: Some(stored),
         retention: RetentionClass::Long,
     };
-    let facts = CallerFacts::of(&call.caller, call.decision);
+    let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
     let kept = run.clone();
     store
         .write(Durability::Synced, move |tx| {

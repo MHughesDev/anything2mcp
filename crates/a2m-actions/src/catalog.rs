@@ -62,6 +62,7 @@ fn run_output() -> JsonSchema {
         .optional("approved", JsonSchema::bool())
         .optional("events", JsonSchema::int())
         .optional("repeated", JsonSchema::bool())
+        .optional("not_read_back", JsonSchema::int())
 }
 
 /// A published version, as `version.publish` returns it.

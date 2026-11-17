@@ -1733,13 +1733,8 @@ async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_i
         let mut last = None;
         for step in binding.act[..commit].iter().chain([&save]) {
             let args = scene.args(step, &values);
-            let input = StepInput {
-                args: &args,
-                record: Some(grant.record),
-                key: Some(&grant.key),
-                stamp: Some(&grant.stamp),
-                deadline: Deadline::after(std::time::Duration::from_secs(30)),
-            };
+            let input = StepInput::new(&args, Deadline::after(std::time::Duration::from_secs(30)))
+                .for_record(grant.record, Some(&grant.key), Some(&grant.stamp));
             last = Some(driver.act(&mut prepared, step, &input).await);
         }
         let refused = last.unwrap().unwrap_err();
@@ -1753,4 +1748,115 @@ async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_i
         assert_eq!(scene.stand.inspect(seed::STOCK_CSV).unwrap(), before);
         assert!(scene.stand.strays().unwrap().is_empty());
     }
+}
+
+// ---- the kernel's second pass (decision 0173) ----
+
+#[tokio::test]
+async fn a_project_document_is_read_from_the_project_folder_of_the_run() {
+    // The surfaces are in the root `project`. The pack's own root of that
+    // name is the folder the engine was started in, where no document's
+    // file is; the run's project folder is the stand's root.
+    let scene = Scene::with_access(Access::Read);
+    // A second project folder, whose stock file says another quantity.
+    let other = example_files::harness::FileStand::start().unwrap();
+    let stock = other.path(seed::STOCK_CSV).unwrap();
+    let bytes = std::fs::read(&stock).unwrap();
+    let changed = String::from_utf8(bytes)
+        .unwrap()
+        .replacen(",40,", ",41,", 1);
+    std::fs::write(&stock, &changed).unwrap();
+
+    let (binding, surface) = scene.binding("example_stock_get");
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut seen = Vec::new();
+    for paths in [
+        scene.paths.clone(),
+        common::project_paths(other.root()),
+        scene.paths.clone(),
+    ] {
+        let (handle, mut prepared) = scene
+            .prepared_in(&surface, None, Posture::Live, &paths)
+            .await
+            .unwrap();
+        let found = scene
+            .read(&handle, &mut prepared, &binding.act, &item)
+            .await
+            .unwrap();
+        seen.push(last_values(&found).get("on_hand").cloned());
+        handle.release(prepared, false).await;
+    }
+    assert_eq!(
+        seen,
+        [
+            Some(Value::Int(40)),
+            Some(Value::Int(41)),
+            Some(Value::Int(40))
+        ]
+    );
+
+    // A run whose request came with no project folder stops by name, and
+    // never falls back to the folder the engine was started in.
+    let stopped = scene
+        .prepared_in(
+            &surface,
+            None,
+            Posture::Live,
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+        .expect_err("a run with no project folder");
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Input, "project_folder_missing")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+    // Reads: the folder the engine was started in is untouched, and each
+    // project's file holds what it held.
+    assert!(scene.stand.outside_untouched().unwrap());
+    assert_eq!(
+        other.bytes(seed::STOCK_CSV).unwrap().unwrap(),
+        changed.as_bytes()
+    );
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+}
+
+#[tokio::test]
+async fn five_reads_say_the_same_of_how_each_step_was_done() {
+    let scene = Scene::new();
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut all = Vec::new();
+    for _ in 0..5 {
+        let found = scene
+            .read_operation("example_stock_get", &item)
+            .await
+            .unwrap();
+        let means: Vec<Vec<(String, String)>> = found
+            .iter()
+            .map(|outcome| {
+                let (StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = outcome;
+                observed
+                    .acting()
+                    .expect("how the step was done")
+                    .means
+                    .into_iter()
+                    .map(|detail| (detail.name, detail.value))
+                    .collect()
+            })
+            .collect();
+        all.push(means);
+    }
+    assert!(all.windows(2).all(|pair| pair[0] == pair[1]));
+    let first: Vec<(&str, &str)> = all[0][0]
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    assert_eq!(first, [("format", "delimited"), ("open_for", "read")]);
 }

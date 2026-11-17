@@ -25,9 +25,10 @@ use a2m_core::{
     Values,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
-    encode_values,
+    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
+    SessionWant, encode_values,
 };
+use a2m_telemetry::Phase;
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, Durability, EventKind, Fence, IntentToken, LockHeld,
     NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
@@ -562,6 +563,62 @@ impl Control for InProcessControl {
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
+    }
+
+    fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
+        Box::pin(async move {
+            // A step's capture is evidence of the run, of the short class:
+            // a blob in the evidence space, sealed for the run's person,
+            // kept as long as traces are (`evidence.trace_retention_days`).
+            // Its bytes passed the redactor and the run's capture level in
+            // the engine; the name is redacted again here, as everything
+            // stored is.
+            let kind = if capture.media_type.starts_with("image/") {
+                BlobKind::Screenshot
+            } else {
+                BlobKind::Exchange
+            };
+            let redact = self.kernel.redact();
+            let blob = self
+                .evidence(Evidence {
+                    kind,
+                    class: RetentionClass::Short,
+                    bytes: capture.bytes,
+                })
+                .await?;
+            // What ties it to the run: an event of the run, durable before
+            // this call returns, so that a capture taken before a
+            // committing step is in the store before that step is sent.
+            let payload = json!({
+                "capture": redact.redact(&capture.name),
+                "media_type": redact.redact(&capture.media_type),
+                "pass": capture.pass,
+                "phase": match capture.phase {
+                    Phase::Act => "act",
+                    Phase::Confirm => "confirm",
+                    Phase::ReadBack => "read_back",
+                },
+                "position": capture.step,
+                "step": capture.record.map(|record| record.step_seq),
+                "record": capture.record.map(|record| record.record_seq),
+                "digest": blob.digest().to_string(),
+            });
+            let fence = self.fence;
+            self.kernel
+                .store()?
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger()
+                        .append_event(&fence, EventKind::Need, &payload, Some(blob))
+                        .map(|_| ())
+                })
+                .await
+                .map_err(|failure| self.redacted(failure))?;
+            Ok(blob)
+        })
+    }
+
+    fn project_folder(&self) -> Option<std::path::PathBuf> {
+        self.caller.project.clone()
     }
 
     fn acknowledged<'a>(

@@ -20,6 +20,7 @@ use a2m_provider::{
     PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
+use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, plan_unreadable, stop, unsupported};
@@ -127,6 +128,40 @@ struct State {
     current: Option<Current>,
     /// Temporary files this driver made and may not have removed.
     temporary: Vec<Made>,
+}
+
+/// How a step is done, for its trace record: the format of the file and
+/// the part of the work the step is, never a value.
+fn means_of(spec: &StepSpec, format: Option<Format>) -> Vec<Detail> {
+    let mut means = vec![Detail::new(
+        "format",
+        format.map_or("unknown", Format::as_str),
+    )];
+    let (name, value) = match spec {
+        StepSpec::Open { for_write } => ("open_for", if *for_write { "write" } else { "read" }),
+        StepSpec::Locate { expect, .. } => (
+            "expect",
+            match expect {
+                Expect::Present => "present",
+                Expect::Absent => "absent",
+                Expect::All => "all",
+            },
+        ),
+        StepSpec::Set { change, .. } => (
+            "change",
+            match change {
+                Change::Update => "update",
+                Change::Create => "create",
+                Change::Delete => "delete",
+            },
+        ),
+        StepSpec::Save => ("save", "temporary_file_then_rename"),
+        StepSpec::Confirm => ("confirm", "digest"),
+        StepSpec::One { .. } => ("read", "one"),
+        StepSpec::List { .. } => ("read", "list"),
+    };
+    means.push(Detail::new(name, value));
+    means
 }
 
 /// The root whose folder is the caller's project folder.
@@ -981,8 +1016,15 @@ impl Driver for FileDriver {
                 .as_ref()
                 .map(|refers| refers.entry.as_str())
                 .ok_or_else(|| plan_unreadable("a step names no document"))?;
+            let means = means_of(
+                &spec,
+                state
+                    .documents
+                    .get(document)
+                    .map(|loaded| loaded.spec.format),
+            );
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
-            match spec {
+            let result = match spec {
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
                 StepSpec::Save => done(self.save(state, document, step, input).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
@@ -1011,7 +1053,27 @@ impl Driver for FileDriver {
                         }
                     }
                 }
-            }
+            };
+            // How the step was done goes to its trace record: the means,
+            // which the signature covers, and what was measured, which it
+            // does not.
+            let measured = state
+                .current
+                .as_ref()
+                .filter(|current| current.document == document)
+                .map(|current| vec![Detail::new("bytes", current.open.bytes.len().to_string())])
+                .unwrap_or_default();
+            let acting = Capture::acting(&Acting { means, measured });
+            result.map(|outcome| match outcome {
+                StepOutcome::Done(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Done(observed)
+                }
+                StepOutcome::Absent(mut observed) => {
+                    observed.captures.push(acting);
+                    StepOutcome::Absent(observed)
+                }
+            })
         })
     }
 

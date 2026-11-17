@@ -271,6 +271,9 @@ pub struct Hooks {
     pub prepared_with: Mutex<Vec<(Option<PathBuf>, Vec<String>)>>,
     /// How many orders were read, for what a read measures.
     pub reads: AtomicU64,
+    /// A step of this kind returns, beside what it observed, a capture
+    /// named `screen`, of `text/plain`, that holds this text.
+    pub captures_with: Mutex<Option<(String, String)>>,
 }
 
 /// What one step was given.
@@ -891,7 +894,17 @@ impl Driver for AppDriver {
         input: &'a StepInput<'a>,
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
-            let done = self.act_inner(prepared, step, input).await;
+            let mut done = self.act_inner(prepared, step, input).await;
+            let planted = self.hooks.captures_with.lock().unwrap().clone();
+            if let (Ok(StepOutcome::Done(observed)), Some((kind, text))) = (&mut done, planted)
+                && kind == step.kind.as_str()
+            {
+                observed.captures.push(a2m_provider::Capture {
+                    name: "screen".to_owned(),
+                    media_type: "text/plain".to_owned(),
+                    bytes: text.into_bytes(),
+                });
+            }
             // What the system says with a failure it answered with.
             match (done, self.hooks.says.lock().unwrap().clone()) {
                 (Err(failure), Some(said)) if failure.sent == a2m_provider::Sent::Answered => {
@@ -1822,6 +1835,27 @@ pub fn plan(address: &str) -> Plan {
         ToolRuns::Pipeline(PipelineIndex::new(2)),
     ));
     plan
+}
+
+/// The plan changed so that the upsert is irreversible and its only
+/// evidence is the system's acknowledgement (`acknowledged`): nothing is
+/// read back after its save. Every pipeline, which enters line items
+/// through it, becomes irreversible too, and no tool is read only.
+pub fn acknowledged_upsert(plan: &mut Plan) {
+    for operation in &mut plan.operations {
+        if operation.name.as_str() == ITEM_UPSERT {
+            operation.effect = EffectClass::Irreversible;
+            for binding in &mut operation.bindings {
+                binding.evidence = a2m_core::WriteEvidence::Acknowledged;
+            }
+        }
+    }
+    for pipeline in &mut plan.pipelines {
+        pipeline.effect = EffectClass::Irreversible;
+    }
+    for tool in &mut plan.tools {
+        tool.annotations.read_only = false;
+    }
 }
 
 // ---- the control plane: a real store behind `Control` ----

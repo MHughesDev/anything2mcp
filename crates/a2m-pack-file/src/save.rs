@@ -257,15 +257,19 @@ fn held(job: &SaveJob) -> Result<(), StepFailure> {
 /// Whether the temporary file holds, from its start, exactly the bytes the
 /// save built: read back through the handle it was written with, so no
 /// other file can stand in for it.
-fn holds_what_was_built(file: &mut File, job: &SaveJob) -> Result<(), StepFailure> {
+fn holds_what_was_built(
+    file: &mut File,
+    intended: Digest,
+    max_bytes: u64,
+) -> Result<(), StepFailure> {
     let unreadable =
         || StepFailure::not_sent(unavailable("could not be read back beside the old one"));
     file.seek(SeekFrom::Start(0)).map_err(|_| unreadable())?;
     let mut back = Vec::new();
-    file.take(job.max_bytes.saturating_add(1))
+    file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut back)
         .map_err(|_| unreadable())?;
-    if Digest::of(&back) == job.intended {
+    if Digest::of(&back) == intended {
         Ok(())
     } else {
         Err(StepFailure::not_sent(unavailable(
@@ -372,7 +376,7 @@ fn replace(
             })
             // What the temporary file holds is read back through its own
             // handle and must be, byte for byte, what was built.
-            .and_then(|()| holds_what_was_built(&mut file, job)),
+            .and_then(|()| holds_what_was_built(&mut file, job.intended, job.max_bytes)),
         Ok(false) | Err(_) => Err(not_kept()),
     };
     let made = Made::of(&file, path);
@@ -581,6 +585,72 @@ mod tests {
         fs::rename(&aside, &path).unwrap();
         made.remove();
         assert!(fs::symlink_metadata(&path).is_err());
+    }
+
+    #[test]
+    fn the_contracts_codes_come_back_as_the_packs_own() {
+        use a2m_core::FailureClass;
+        let mapped = |class, code| {
+            let failure = from_contract(Failure::new(class, code, "a message", "a next step"));
+            (
+                failure.failure.class(),
+                failure.failure.code().clone(),
+                failure.sent,
+            )
+        };
+        let provider = |text: &str| a2m_core::FailureCode::new(text).unwrap();
+        for (contract, class, code) in [
+            (
+                a2m_provider::codes::PATH_MISSING,
+                FailureClass::Drift,
+                codes::FILE_MISSING,
+            ),
+            (
+                a2m_provider::codes::PATH_DENIED,
+                FailureClass::Policy,
+                codes::FILE_PROTECTED,
+            ),
+            (
+                a2m_provider::codes::PATH_LOCKED,
+                FailureClass::Busy,
+                codes::FILE_LOCKED,
+            ),
+            (
+                a2m_provider::codes::DISK_FULL,
+                FailureClass::Busy,
+                codes::STORAGE_FULL,
+            ),
+        ] {
+            assert_eq!(
+                mapped(FailureClass::Input, contract),
+                (class, code, Sent::NotSent)
+            );
+        }
+        // The contract's words that are the pack's own too pass as they are.
+        assert_eq!(
+            mapped(FailureClass::Input, a2m_provider::codes::PATH_NOT_ALLOWED),
+            (
+                FailureClass::Input,
+                provider("path_not_allowed"),
+                Sent::NotSent
+            )
+        );
+    }
+
+    #[test]
+    fn a_temporary_file_is_used_only_when_it_holds_what_was_built() {
+        let scratch = Scratch::new();
+        let mut random = names(&["one"]);
+        let (mut file, path) =
+            create_temporary(&scratch.folder, "stock.csv", "token", &mut random).unwrap();
+        file.write_all(b"the new bytes").unwrap();
+        assert!(holds_what_was_built(&mut file, Digest::of(b"the new bytes"), 1024).is_ok());
+        let other = holds_what_was_built(&mut file, Digest::of(b"other bytes"), 1024).unwrap_err();
+        assert_eq!(other.sent, Sent::NotSent);
+        // More than may be read back is not what was built.
+        assert!(holds_what_was_built(&mut file, Digest::of(b"the new bytes"), 4).is_err());
+        drop(file);
+        Made::of(&File::open(&path).unwrap(), path.clone()).remove();
     }
 
     #[test]

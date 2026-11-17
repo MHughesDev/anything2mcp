@@ -312,43 +312,50 @@ impl a2m_files::DraftingRule for DraftsAWrite {
     fn draft(
         &self,
         _finding: &a2m_core::Finding,
-        _cx: &a2m_files::DraftContext<'_>,
+        cx: &a2m_files::DraftContext<'_>,
     ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
         use a2m_files::DraftValue;
-        let document =
-            |file: &str, writable: bool| -> Result<a2m_files::DraftDoc, a2m_core::Failure> {
-                let mut field = vec![
-                    ("header", DraftValue::text("price")),
-                    ("type", DraftValue::text("price")),
-                ];
-                if writable {
-                    field.push(("writable", DraftValue::Bool(true)));
-                }
-                Ok(a2m_files::DraftDoc {
-                    path: a2m_files::RelPath::new(&format!("documents/{file}.yaml"))?,
-                    body: DraftValue::map(vec![
-                        ("surface", DraftValue::text("files")),
-                        ("file", DraftValue::text("prices.csv")),
-                        ("format", DraftValue::text("delimited")),
-                        (
-                            "records",
-                            DraftValue::map(vec![(
-                                "price",
-                                DraftValue::map(vec![
-                                    ("rows", DraftValue::text("all")),
-                                    (
-                                        "fields",
-                                        DraftValue::map(vec![("price", DraftValue::map(field))]),
-                                    ),
-                                ]),
-                            )]),
-                        ),
-                    ]),
-                })
-            };
+        let document = |file: &str,
+                        writable: Option<DraftValue>|
+         -> Result<a2m_files::DraftDoc, a2m_core::Failure> {
+            let mut field = vec![
+                ("header", DraftValue::text("price")),
+                ("type", DraftValue::text("price")),
+            ];
+            if let Some(writable) = writable {
+                field.push(("writable", writable));
+            }
+            Ok(a2m_files::DraftDoc {
+                path: a2m_files::RelPath::new(&format!("documents/{file}.yaml"))?,
+                body: DraftValue::map(vec![
+                    ("surface", DraftValue::text("files")),
+                    ("file", DraftValue::text("prices.csv")),
+                    ("format", DraftValue::text("delimited")),
+                    (
+                        "records",
+                        DraftValue::map(vec![(
+                            "price",
+                            DraftValue::map(vec![
+                                ("rows", DraftValue::text("all")),
+                                (
+                                    "fields",
+                                    DraftValue::map(vec![("price", DraftValue::map(field))]),
+                                ),
+                            ]),
+                        )]),
+                    ),
+                ]),
+            })
+        };
         Ok(vec![
-            document("tries_a_write", true)?,
-            document("only_reads", false)?,
+            document("tries_a_write", Some(DraftValue::Bool(true)))?,
+            document("only_reads", None)?,
+            // Whether a field may be written, left as a question, counts as
+            // a write (decision 0161, point 10).
+            document(
+                "asks_whether_it_writes",
+                Some(cx.open_question("May a caller write the price?")),
+            )?,
         ])
     }
 }
@@ -401,7 +408,13 @@ fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
         .iter()
         .map(a2m_files::RelPath::as_str)
         .collect();
-    assert_eq!(refused, ["documents/tries_a_write.yaml"]);
+    assert_eq!(
+        refused,
+        [
+            "documents/tries_a_write.yaml",
+            "documents/asks_whether_it_writes.yaml"
+        ]
+    );
     assert_eq!(written, ["documents/only_reads.yaml"]);
     let exists = root.join("documents").join("tries_a_write.yaml").exists();
     let _ = std::fs::remove_dir_all(&root);
@@ -421,6 +434,39 @@ fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
         problems
             .iter()
             .any(|found| found.code.as_str() == "kernel.effect_lower_than_derived"),
+        "{problems}"
+    );
+}
+
+#[test]
+fn a_delete_is_irreversible_because_nothing_restores_the_row() {
+    // The fixtures declare it so, and they compile.
+    let registry = registry(Roots::none());
+    let plan = compile(&fixtures(), registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems}"))
+        .plan;
+    for name in ["example_stock_remove", "example_warehouse_remove"] {
+        let operation = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap();
+        assert_eq!(operation.effect, a2m_core::EffectClass::Irreversible);
+        // It is still read back: the row must be gone.
+        assert!(!operation.bindings[0].read_back.is_empty());
+    }
+    // Declared as an ordinary write, it does not compile.
+    let changed = Changed::new(&[(
+        "operations/stock_remove.yaml",
+        "effect: irreversible",
+        "effect: write",
+    )]);
+    let problems = compile(&changed.0, registry.compiler_set()).expect_err("a delete as a write");
+    assert!(
+        problems.iter().any(|found| {
+            found.code.as_str() == "kernel.effect_lower_than_derived"
+                && found.at.file.as_str() == "operations/stock_remove.yaml"
+        }),
         "{problems}"
     );
 }

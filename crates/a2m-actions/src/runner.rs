@@ -59,6 +59,12 @@ pub(crate) struct CallerFacts {
     pub(crate) toolset: Option<ToolsetName>,
     /// The decision that let the call in.
     pub(crate) decision: DecisionId,
+    /// The project folder of the request that started the run, as the
+    /// dispatcher checked it: kept with the run's stored call, so that every
+    /// lease of the run, a resume's too, hands the engine the same folder
+    /// (decision 0176). `None` when the request stated none, or one whose
+    /// path is not text and so cannot be kept.
+    pub(crate) project: Option<std::path::PathBuf>,
 }
 
 impl CallerFacts {
@@ -69,7 +75,14 @@ impl CallerFacts {
             acting_for: caller.principal.acting_for.clone(),
             toolset: caller.toolset.clone(),
             decision,
+            project: None,
         }
+    }
+
+    /// The same facts, with the request's checked project folder.
+    pub(crate) fn with_project(mut self, project: Option<std::path::PathBuf>) -> Self {
+        self.project = project;
+        self
     }
 
     /// The person the run acts for: the caller themself, or the person the
@@ -98,6 +111,7 @@ impl CallerFacts {
             "acting_for": person,
             "toolset": self.toolset.as_ref().map(ToolsetName::as_str),
             "decision": self.decision.to_string(),
+            "project": self.project.as_deref().and_then(std::path::Path::to_str),
         })
     }
 
@@ -128,6 +142,7 @@ impl CallerFacts {
                 .as_str()
                 .and_then(|name| ToolsetName::new(name).ok()),
             decision: json["decision"].as_str()?.parse().ok()?,
+            project: json["project"].as_str().map(std::path::PathBuf::from),
         })
     }
 }

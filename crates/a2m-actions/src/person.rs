@@ -415,7 +415,17 @@ pub struct PreviewRecord {
     pub action: &'static str,
     /// Its fields, in the record's declared order.
     pub fields: Vec<PreviewField>,
+    /// What will stand as the evidence that the write landed. `None` when
+    /// it is read back, as most writes are. `Some` with the words the page
+    /// shows beside the record before a person approves it, for a write
+    /// whose only evidence is the system's own acknowledgement: "accepted
+    /// by the system, not read back" (decision 0176).
+    pub not_read_back: Option<&'static str>,
 }
+
+/// What the approval page shows beside a record whose write is accepted by
+/// the system and never read back.
+pub const NOT_READ_BACK: &str = "accepted by the system, not read back";
 
 /// One field of one record of a preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -637,6 +647,7 @@ impl ApprovalDesk {
                         }
                     })
                     .collect(),
+                not_read_back: record.not_read_back().then_some(NOT_READ_BACK),
             })
             .collect();
         Ok(ApprovalPreview {
