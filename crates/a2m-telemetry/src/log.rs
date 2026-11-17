@@ -306,17 +306,16 @@ impl LogCore {
                 None
             }
         };
-        if let Some(error) = failed {
-            if matches!(&*sink, Sink::File(_)) {
-                // The engine keeps running and logs to standard error. The
-                // line was redacted before it reached here.
-                *self.degraded() = Some(storage_full(error.kind()));
-                *sink = Sink::Writer(Box::new(io::stderr()));
-                if let Sink::Writer(writer) = &mut *sink {
-                    // Nothing more can be done if standard error is closed.
-                    let _ = writer.write_all(line.as_bytes());
-                }
-            }
+        if let Some(error) = failed
+            && matches!(&*sink, Sink::File(_))
+        {
+            // The engine keeps running and logs to standard error. The line
+            // was redacted before it reached here.
+            *self.degraded() = Some(storage_full(error.kind()));
+            let mut fallback = io::stderr();
+            // Nothing more can be done if standard error is closed.
+            let _ = fallback.write_all(line.as_bytes());
+            *sink = Sink::Writer(Box::new(fallback));
         }
     }
 }
@@ -442,17 +441,16 @@ impl Subscriber for LogSubscriber {
         // A span made with the macros is given an id and otherwise ignored:
         // its fields are free text, which a kept span may not carry. It is
         // said once, at debug level, so that the gap is not silent.
-        if !self.warned_about_spans.swap(true, Ordering::SeqCst) {
-            if let Some(core) = self.core() {
-                if core.enabled(LogLevel::Debug) {
-                    core.write(
-                        LogLevel::Debug,
-                        env!("CARGO_PKG_NAME"),
-                        "spans made with the tracing macros are not kept; make spans through Telemetry",
-                        &[],
-                    );
-                }
-            }
+        if !self.warned_about_spans.swap(true, Ordering::SeqCst)
+            && let Some(core) = self.core()
+            && core.enabled(LogLevel::Debug)
+        {
+            core.write(
+                LogLevel::Debug,
+                env!("CARGO_PKG_NAME"),
+                "spans made with the tracing macros are not kept; make spans through Telemetry",
+                &[],
+            );
         }
         let next = self.next_span.fetch_add(1, Ordering::SeqCst);
         // An id is never zero. The counter starts at one and would take

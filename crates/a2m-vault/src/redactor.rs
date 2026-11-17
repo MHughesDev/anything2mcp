@@ -41,10 +41,14 @@ pub struct Redactor {
 
 #[derive(Default)]
 struct State {
-    /// Digests of the secrets registered, so that registering one again
-    /// costs a lookup.
+    /// Digests of the secrets registered and of their forms, so that
+    /// registering one again costs a lookup.
     known: BTreeSet<Digest>,
+    registered: usize,
     short: usize,
+    patterns: Vec<Arc<Pattern>>,
+    /// Built from `patterns` by the first search after a registration, so
+    /// that registering many secrets at once builds it once.
     matcher: Option<Arc<Matcher>>,
 }
 
@@ -110,20 +114,18 @@ impl Redactor {
         if !state.known.insert(name) {
             return;
         }
+        state.registered += 1;
         if value.len() < Self::SHORT {
             state.short += 1;
         }
-        let mut patterns = state
-            .matcher
-            .as_ref()
-            .map(|matcher| matcher.patterns.clone())
-            .unwrap_or_default();
         for form in forms(value) {
-            if !patterns.iter().any(|known| known.bytes == form.bytes) {
-                patterns.push(Arc::new(form));
+            // The secret itself is always new here; a form of it may equal a
+            // form registered before.
+            if state.patterns.is_empty() || state.known.insert(form.name()) {
+                state.patterns.push(Arc::new(form));
             }
         }
-        state.matcher = Some(Arc::new(Matcher::new(patterns)));
+        state.matcher = None;
     }
 
     /// The registered set against its bound.
@@ -131,18 +133,30 @@ impl Redactor {
     pub fn health(&self) -> RedactorHealth {
         let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
         RedactorHealth {
-            registered: state.known.len(),
+            registered: state.registered,
             short: state.short,
             bound: Self::BOUND,
         }
     }
 
+    /// The matcher over everything registered, or `None` when nothing is.
     fn matcher(&self) -> Option<Arc<Matcher>> {
-        self.state
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .matcher
-            .clone()
+        {
+            let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
+            if state.patterns.is_empty() {
+                return None;
+            }
+            if let Some(matcher) = &state.matcher {
+                return Some(Arc::clone(matcher));
+            }
+        }
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(matcher) = &state.matcher {
+            return Some(Arc::clone(matcher));
+        }
+        let matcher = Arc::new(Matcher::new(state.patterns.clone()));
+        state.matcher = Some(Arc::clone(&matcher));
+        Some(matcher)
     }
 }
 
@@ -193,6 +207,17 @@ struct Pattern {
     /// A base64 form: the character on each side of a match holds bits of
     /// the secret too, so the mask takes them with it.
     widen: bool,
+}
+
+impl Pattern {
+    /// A name for this form that is not the name of the secret it came from:
+    /// the two are kept in one set.
+    fn name(&self) -> Digest {
+        let mut named = Zeroizing::new(Vec::with_capacity(self.bytes.len() + 1));
+        named.push(0);
+        named.extend_from_slice(&self.bytes);
+        Digest::of(&named)
+    }
 }
 
 /// The forms a secret is searched for in: itself, itself with each space
