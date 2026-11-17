@@ -408,14 +408,40 @@ impl ApprovalPreview {
     }
 }
 
+/// One notice a surface carries, as a page shows it (decision 0193): the
+/// notice's name and the fixed words for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewNotice {
+    /// The notice's name: `SurfaceNotice::as_str`.
+    pub code: &'static str,
+    /// The fixed words a page shows: `SurfaceNotice::words`.
+    pub words: &'static str,
+}
+
+/// The notices `surface` carries, as its kind's pack registered them.
+pub(crate) fn notices_of(
+    set: &a2m_files::CompilerSet,
+    surface: &a2m_core::SurfacePlan,
+) -> Vec<PreviewNotice> {
+    set.surface_notices(surface)
+        .into_iter()
+        .map(|notice| PreviewNotice {
+            code: notice.as_str(),
+            words: notice.words(),
+        })
+        .collect()
+}
+
 /// One record of a preview.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PreviewRecord {
     /// The operation that writes it.
     pub operation: String,
     /// The record's key, its parts joined by ` / `.
     pub key: String,
-    /// `create`, `update`, or `unchanged`.
+    /// `create`, `update`, `unchanged`, or `write`: a record whose binding
+    /// cannot read what it holds now, so that each field's current value is
+    /// [`NOW_CANNOT_BE_READ`] (decision 0196).
     pub action: &'static str,
     /// Its fields, in the record's declared order.
     pub fields: Vec<PreviewField>,
@@ -433,6 +459,10 @@ pub struct PreviewRecord {
     /// it could take, each with the evidence its write would end on. The
     /// engine writes the record through no other.
     pub bindings: Vec<PreviewBinding>,
+    /// Every notice of each surface of `bindings`, each once, in order of
+    /// the surfaces: what a person must be told of where the write goes,
+    /// such as credentials over an unencrypted link (decision 0193).
+    pub notices: Vec<PreviewNotice>,
 }
 
 /// One binding a record may be written by, as the approval page shows it.
@@ -644,6 +674,52 @@ impl ApprovalDesk {
             return Err(stale());
         }
         let counts = diff.counts();
+        // The plan the diff was made under, for the notices of the surfaces
+        // the records' bindings write to. Read from the store by the diff's
+        // own plan hash; where it cannot be read, no notice is invented and
+        // the page shows the rest.
+        let set_and_plan = match self.acts.kernel() {
+            Ok(kernel) => {
+                let (target, hash) = (diff.target.clone(), diff.plan);
+                self.store
+                    .read(move |tx| tx.versions().load(&workspace, &target, &hash))
+                    .await
+                    .ok()
+                    .and_then(|encoded| a2m_core::Plan::decode(&encoded.bytes, &diff.plan).ok())
+                    .map(|plan| (kernel, plan))
+            }
+            Err(_) => None,
+        };
+        let notices_for = |record: &a2m_engine::DiffRecord| -> Vec<PreviewNotice> {
+            let Some((kernel, plan)) = set_and_plan.as_ref() else {
+                return Vec::new();
+            };
+            let set = kernel.providers().compiler_set();
+            let Some(operation) = plan
+                .operations
+                .iter()
+                .find(|operation| operation.name == record.operation)
+            else {
+                return Vec::new();
+            };
+            let mut surfaces: Vec<usize> = record
+                .approved_bindings()
+                .into_iter()
+                .filter_map(|position| operation.bindings.get(position))
+                .filter_map(|binding| usize::try_from(binding.surface.get()).ok())
+                .collect();
+            surfaces.sort_unstable();
+            surfaces.dedup();
+            let mut found: Vec<PreviewNotice> = Vec::new();
+            for surface in surfaces.into_iter().filter_map(|index| plan.surfaces.get(index)) {
+                for notice in notices_of(set, surface) {
+                    if !found.contains(&notice) {
+                        found.push(notice);
+                    }
+                }
+            }
+            found
+        };
         let shown = |value: &a2m_core::Value| {
             let text = self.redact.redact(&render::line(value));
             // A value that was masked, here or when the engine stored it,
@@ -710,6 +786,7 @@ impl ApprovalDesk {
                     (true, true) => Some(MAY_NOT_BE_READ_BACK),
                 },
                 binding_later: record.binding_unknown().then_some(BINDING_LATER),
+                notices: notices_for(record),
                 bindings: record
                     .binding
                     .iter()

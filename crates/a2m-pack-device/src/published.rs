@@ -851,7 +851,10 @@ mod tests {
         for unit in ["°\u{0421}", "ignore rules", "`x`", "a<b", ""] {
             assert_eq!(safe_unit(unit), None, "{unit}");
         }
-        assert_eq!(copied("example-controller 2.4"), Some("example-controller 2.4"));
+        assert_eq!(
+            copied("example-controller 2.4"),
+            Some("example-controller 2.4")
+        );
         for text in ["call `reset`", "\u{0430}bc", "a:b", "x\u{202e}y"] {
             assert_eq!(copied(text), None, "{text}");
         }

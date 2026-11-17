@@ -458,15 +458,20 @@ Top,input,4294967295,u32,,
     .unwrap();
     let mut drafted = String::new();
     for written in &report.written {
-        drafted.push_str(
-            &std::fs::read_to_string(folder.path().join(written.as_str())).unwrap(),
-        );
+        drafted.push_str(&std::fs::read_to_string(folder.path().join(written.as_str())).unwrap());
     }
-    // Nothing of another script, no backtick of the file's, no row past the
-    // protocol's range.
-    assert!(!drafted.contains('\u{0421}'), "{drafted}");
+    // Outside a question, which quotes them apart, nothing of the file's
+    // other script or of its backticks; and no row past the protocol's
+    // range.
+    for line in drafted
+        .lines()
+        .filter(|line| !line.contains("open_question"))
+    {
+        assert!(!line.contains('\u{0421}'), "{line}");
+        assert!(!line.contains("call reset"), "{line}");
+    }
     assert!(!drafted.contains("`call reset`"), "{drafted}");
-    assert!(!drafted.contains("top"), "{drafted}");
+    assert!(!drafted.contains("top:"), "{drafted}");
     // The register's name is the closed form of the file's words, and the
     // description sets it apart as the map's.
     assert!(

@@ -90,44 +90,41 @@ pub struct ShownField {
 
 /// One surface of a version a person is asked to publish, as the page shows
 /// it: where it leads, and what its pack says a person must be told of it
-/// (audit finding AC-1). Every text came from a target file, and passes the
+/// (audit finding AC-1). Every text came from a target file and passes the
 /// redactor; a page places each as text, never as markup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishedSurface {
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ActSurface {
     /// The surface's name.
     pub name: String,
     /// Its kind, which a pack registered.
     pub kind: String,
-    /// Where it leads, in the form its kind's pack defines: by environment,
-    /// in the order the plan declares them, each `(environment, address)`.
+    /// Where it leads in the target's default environment, in the form its
+    /// kind's pack defines.
+    pub address: String,
+    /// Where it leads in each environment, in the order the plan declares
+    /// them, each `(environment, address)`.
     pub addresses: Vec<(String, String)>,
-    /// The notices its pack registers for what its own fields state, each
-    /// `(notice, words)`: the notice's name and the fixed words a page
-    /// shows for it (decision 0193).
-    pub notices: Vec<(&'static str, &'static str)>,
+    /// The notices its pack registers for what its own fields state
+    /// (decision 0193).
+    pub notices: Vec<crate::PreviewNotice>,
 }
 
 /// One warning the compiler gave for a version a person is asked to
-/// publish (audit finding AC-1): what the page shows beside the gates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishWarning {
+/// publish (audit finding AC-1).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ActWarning {
     /// Its code, such as `kernel.unencrypted_credentials_accepted`.
     pub code: String,
-    /// The file it is about.
-    pub file: String,
-    /// Its message, from the compiler; it may quote a target file.
+    /// Its message, from the compiler, with the file it is about; it may
+    /// quote a target file.
     pub message: String,
 }
 
-/// What a person who is asked to publish reads beside the tools: every
-/// surface of the version with where it leads and its notices, and every
-/// warning the compiler gave. Empty for every other act.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PublishShown {
-    /// The surfaces, in the order the plan declares them.
-    pub surfaces: Vec<PublishedSurface>,
-    /// The warnings, in the compiler's order.
-    pub warnings: Vec<PublishWarning>,
+/// What a publish shows beside the tools, before it is redacted.
+#[derive(Default)]
+struct PublishShown {
+    surfaces: Vec<ActSurface>,
+    warnings: Vec<ActWarning>,
 }
 
 /// A person's act that an agent asked for, as the person surface is given
@@ -152,10 +149,13 @@ pub struct PersonActAsk {
     /// as text: for a publish, what each tool may do, the most dangerous
     /// first.
     pub details: Vec<String>,
-    /// For a publish: each surface with where it leads and its notices,
-    /// and every warning of the compile. The same facts are among
-    /// `details` as lines, for a page that prints only those.
-    pub publish: PublishShown,
+    /// For a publish, every surface of the version, with where it leads
+    /// and its notices; empty for every other act. The same facts are
+    /// among `details` as lines, for a page that prints only those.
+    pub surfaces: Vec<ActSurface>,
+    /// For a publish, every warning the compiler gave for the version;
+    /// empty for every other act. Also among `details` as lines.
+    pub warnings: Vec<ActWarning>,
     /// Through which door and client the act was asked for.
     pub asked_through: String,
     /// When the act stops waiting, by the kernel's clock. No answer by
@@ -478,33 +478,31 @@ impl Kernel {
             summary: def.summary.clone(),
             input: fields,
             details: details.iter().map(|line| redact.redact(line)).collect(),
-            publish: PublishShown {
-                surfaces: publish
-                    .surfaces
-                    .into_iter()
-                    .map(|surface| PublishedSurface {
-                        name: redact.redact(&surface.name),
-                        kind: redact.redact(&surface.kind),
-                        addresses: surface
-                            .addresses
-                            .into_iter()
-                            .map(|(environment, address)| {
-                                (redact.redact(&environment), redact.redact(&address))
-                            })
-                            .collect(),
-                        notices: surface.notices,
-                    })
-                    .collect(),
-                warnings: publish
-                    .warnings
-                    .into_iter()
-                    .map(|warning| PublishWarning {
-                        code: redact.redact(&warning.code),
-                        file: redact.redact(&warning.file),
-                        message: redact.redact(&warning.message),
-                    })
-                    .collect(),
-            },
+            surfaces: publish
+                .surfaces
+                .into_iter()
+                .map(|surface| ActSurface {
+                    name: redact.redact(&surface.name),
+                    kind: redact.redact(&surface.kind),
+                    address: redact.redact(&surface.address),
+                    addresses: surface
+                        .addresses
+                        .into_iter()
+                        .map(|(environment, address)| {
+                            (redact.redact(&environment), redact.redact(&address))
+                        })
+                        .collect(),
+                    notices: surface.notices,
+                })
+                .collect(),
+            warnings: publish
+                .warnings
+                .into_iter()
+                .map(|warning| ActWarning {
+                    code: redact.redact(&warning.code),
+                    message: redact.redact(&warning.message),
+                })
+                .collect(),
             asked_through: redact.redact(&format!(
                 "{} ({})",
                 caller.door.as_str(),
@@ -898,48 +896,51 @@ pub(crate) struct Performed(
 fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShown {
     let plan = &compiled.plan;
     let set = kernel.providers().compiler_set();
+    let default = plan.default_environment().map(|environment| environment.name.clone());
     let surfaces = plan
         .surfaces
         .iter()
         .enumerate()
         .map(|(index, surface)| {
-            let addresses = plan
+            let at = |environment: &a2m_core::EnvironmentPlan| {
+                environment
+                    .addresses
+                    .iter()
+                    .find(|given| usize::try_from(given.surface.get()).ok() == Some(index))
+                    .map_or(surface.address.clone(), |given| given.address.clone())
+            };
+            let addresses: Vec<(String, String)> = plan
                 .environments
                 .iter()
-                .map(|environment| {
-                    let address = environment
-                        .addresses
-                        .iter()
-                        .find(|given| given.surface.get() == index)
-                        .map_or(surface.address.as_str(), |given| given.address.as_str());
-                    (environment.name.to_string(), address.to_owned())
-                })
+                .map(|environment| (environment.name.to_string(), at(environment)))
                 .collect();
-            PublishedSurface {
+            let address = plan
+                .environments
+                .iter()
+                .find(|environment| Some(&environment.name) == default.as_ref())
+                .map_or(surface.address.clone(), at);
+            ActSurface {
                 name: surface.name.to_string(),
                 kind: surface.kind.to_string(),
+                address,
                 addresses,
-                notices: set
-                    .surface_notices(surface)
-                    .into_iter()
-                    .map(|notice| (notice.as_str(), notice.words()))
-                    .collect(),
+                notices: crate::person::notices_of(set, surface),
             }
         })
         .collect();
     let warnings = compiled
         .warnings
         .iter()
-        .map(|warning| PublishWarning {
+        .map(|warning| ActWarning {
             code: warning.code.to_string(),
-            file: warning.at.file.as_str().to_owned(),
-            message: warning.message.clone(),
+            message: format!("{}: {}", warning.at.file.as_str(), warning.message),
         })
         .collect();
     PublishShown { surfaces, warnings }
 }
 
-/// The lines of [`PublishShown`], for a page that prints `details` alone.
+/// The lines of what a publish shows, for a page that prints `details`
+/// alone.
 fn shown_lines(shown: &PublishShown) -> Vec<String> {
     let mut lines = Vec::new();
     for surface in &shown.surfaces {
@@ -954,15 +955,15 @@ fn shown_lines(shown: &PublishShown) -> Vec<String> {
             surface.kind,
             at.join("; ")
         ));
-        for (notice, words) in &surface.notices {
-            lines.push(format!("Notice for surface {} ({notice}): {words}", surface.name));
+        for notice in &surface.notices {
+            lines.push(format!(
+                "Notice for surface {} ({}): {}",
+                surface.name, notice.code, notice.words
+            ));
         }
     }
     for warning in &shown.warnings {
-        lines.push(format!(
-            "Warning {} in {}: {}",
-            warning.code, warning.file, warning.message
-        ));
+        lines.push(format!("Warning {}: {}", warning.code, warning.message));
     }
     lines
 }
