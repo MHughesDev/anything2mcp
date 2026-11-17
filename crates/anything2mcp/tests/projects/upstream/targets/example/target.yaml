@@ -1,0 +1,17 @@
+# The imaginary order-entry system `example`, reached through the MCP server
+# it provides. It describes no real product. The address is a placeholder:
+# a test puts the test stand's own address in its place.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  orders:
+    kind: mcp
+    address: "http://127.0.0.1:9/mcp"
+environments:
+  test:
+    kind: test
+    test_records: ["A-100"]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

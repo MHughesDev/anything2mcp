@@ -1,0 +1,20 @@
+operation: example_item_get
+title: Get an item
+effect: read
+key: sku
+inputs:
+  sku: {type: identifier, description: "Item code, such as SK-1001"}
+outputs:
+  name: {type: item_name}
+  quantity: {type: integer}
+  location: {type: location_code}
+examples:
+  - {sku: "SK-1001"}
+bindings:
+  - mode: cli
+    verb: read
+    status: verified
+    command: item_show
+description: >
+  Reads the name, the quantity, and the location of one item of the inventory.
+  Prefer example_item_list to see every item at a location.

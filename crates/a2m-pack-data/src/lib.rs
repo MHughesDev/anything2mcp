@@ -100,6 +100,7 @@ impl Pack for DataPack {
                 Arc::clone(cx.redact()),
                 result_bytes,
                 Arc::clone(&self.openers),
+                cx.roots().clone(),
             )),
         )?;
         to.compiler(

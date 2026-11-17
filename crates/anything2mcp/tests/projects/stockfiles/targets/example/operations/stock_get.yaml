@@ -1,0 +1,20 @@
+operation: example_stock_get
+title: Get the stock of an item
+effect: read
+key: item_code
+inputs:
+  item_code: {type: identifier, description: "Item code, such as EX-1002"}
+outputs:
+  description: {type: text}
+  on_hand: {type: integer}
+  note: {type: note}
+bindings:
+  - mode: file
+    verb: read
+    status: verified
+    document: stock
+    record: stock
+    key: {item_code: input.item_code}
+description: >
+  Reads the description, the quantity on hand, and the note of one item
+  from the stock file.

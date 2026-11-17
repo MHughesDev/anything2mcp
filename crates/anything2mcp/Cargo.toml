@@ -7,5 +7,32 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+a2m-actions = { path = "../a2m-actions" }
+a2m-auth = { path = "../a2m-auth" }
+a2m-core = { path = "../a2m-core" }
+a2m-pack-command = { path = "../a2m-pack-command" }
+a2m-pack-data = { path = "../a2m-pack-data" }
+a2m-pack-device = { path = "../a2m-pack-device" }
+a2m-pack-file = { path = "../a2m-pack-file" }
+a2m-pack-http = { path = "../a2m-pack-http" }
+a2m-pack-mcp = { path = "../a2m-pack-mcp" }
+a2m-pack-stream = { path = "../a2m-pack-stream" }
+a2m-policy = { path = "../a2m-policy" }
+a2m-provider = { path = "../a2m-provider" }
+a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-vault = { path = "../a2m-vault" }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+example-app = { path = "../../targets/example-app" }
+example-broker = { path = "../../targets/example-broker" }
+example-cli = { path = "../../targets/example-cli" }
+example-db = { path = "../../targets/example-db" }
+example-device = { path = "../../targets/example-device" }
+example-files = { path = "../../targets/example-files" }
+example-mcp = { path = "../../targets/example-mcp" }
+
 [lints]
 workspace = true

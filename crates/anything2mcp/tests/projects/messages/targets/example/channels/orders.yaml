@@ -1,0 +1,12 @@
+channel: orders.status
+address: example.orders.status
+shape: retained
+role: state
+schema: order_status
+key: {field: order_id, type: identifier}
+correlation: {field: headers.correlation_id}
+read_through: [browse, own_subscription]
+subscription: example.runtime
+consumers: none
+wait: {default: 2s, max: 10s}
+limits: {browse_count: 100, message_bytes: 65536}

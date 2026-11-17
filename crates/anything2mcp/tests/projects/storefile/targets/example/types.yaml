@@ -1,0 +1,5 @@
+types:
+  note:
+    base: text
+    untrusted: true
+    sensitivity: internal

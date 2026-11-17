@@ -1,0 +1,20 @@
+surface: orders_db
+records:
+  customer:
+    table: customers
+    key: [customer_id]
+    fields:
+      customer_id: {column: customer_id, type: identifier}
+      name: {column: name, type: note}
+      credit_limit_cents: {column: credit_limit_cents, type: integer}
+      notes: {column: notes, type: note}
+statements:
+  customer_by_key:
+    effect: read
+    record: customer
+    text: |
+      SELECT customer_id, name, credit_limit_cents, notes
+      FROM customers WHERE customer_id = ?
+    params: [{name: customer_id, type: identifier}]
+    returns: one_or_none
+    time_limit: 2s

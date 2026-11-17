@@ -19,7 +19,7 @@ use a2m_core::{
 };
 use a2m_provider::{
     BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
 
@@ -46,14 +46,22 @@ pub(crate) struct SqlDriver {
     redact: Arc<dyn Redact>,
     result_bytes: u64,
     openers: Openers,
+    /// The pack's own roots, as its manifest declares them.
+    roots: Roots,
 }
 
 impl SqlDriver {
-    pub(crate) fn new(redact: Arc<dyn Redact>, result_bytes: u64, openers: Openers) -> Self {
+    pub(crate) fn new(
+        redact: Arc<dyn Redact>,
+        result_bytes: u64,
+        openers: Openers,
+        roots: Roots,
+    ) -> Self {
         Self {
             redact,
             result_bytes,
             openers,
+            roots,
         }
     }
 }
@@ -850,10 +858,27 @@ impl Driver for SqlDriver {
             // surface's name. The driver resolves no path itself, and takes
             // only the file the target declares.
             let root = fields.root.as_deref().unwrap_or(DEFAULT_ROOT);
-            let path = cx
+            let given = cx
                 .paths
                 .get(surface.name.as_str())
-                .filter(|path| path.root().as_str() == root && path.relative() == surface.address);
+                .filter(|path| path.root().as_str() == root && path.relative() == surface.address)
+                .cloned();
+            // A run that was handed no path for the surface gets the same
+            // file through the one check that makes a path: the surface's
+            // root, among the roots the pack's manifest declares, and the
+            // surface's address below it. Nothing in a plan yet tells the
+            // engine that a surface's address is a file, so the engine
+            // hands none over.
+            let path = given.or_else(|| {
+                let name = RootName::new(root).ok()?;
+                self.roots
+                    .check(&name, &surface.address, a2m_provider::Access::Write)
+                    .or_else(|_| {
+                        self.roots
+                            .check(&name, &surface.address, a2m_provider::Access::Read)
+                    })
+                    .ok()
+            });
             let Some(path) = path else {
                 return Err(StepFailure::not_sent(failure(
                     FailureClass::Input,

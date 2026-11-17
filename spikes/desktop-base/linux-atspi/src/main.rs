@@ -8,8 +8,10 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use atspi::connection::AccessibilityConnection;
-use atspi::events::object::{PropertyChangeEvent, StateChangedEvent, TextChangedEvent};
+use atspi_connection::AccessibilityConnection;
+use atspi::events::object::{
+    ChildrenChangedEvent, PropertyChangeEvent, StateChangedEvent, TextChangedEvent,
+};
 use atspi::events::window::CreateEvent;
 use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
 use atspi::proxy::collection::CollectionProxy;
@@ -35,6 +37,13 @@ struct Seen {
 #[tokio::main]
 async fn main() -> R<()> {
     let store = std::env::args().nth(1).ok_or("usage: <store-file>")?;
+    // Toolkits that build their tree only when an assistive client is present
+    // read this session-wide switch. The spike sets it; the pack would not (see
+    // research note 19).
+    if std::env::var_os("SPIKE_ENABLE").is_some() {
+        atspi_connection::set_session_accessibility(true).await?;
+        println!("session accessibility switched on");
+    }
     let t0 = Instant::now();
     let a11y = AccessibilityConnection::new().await?;
     println!("connect_ms {}", t0.elapsed().as_millis());
@@ -45,6 +54,7 @@ async fn main() -> R<()> {
     a11y.register_event::<PropertyChangeEvent>().await?;
     a11y.register_event::<StateChangedEvent>().await?;
     a11y.register_event::<CreateEvent>().await?;
+    a11y.register_event::<ChildrenChangedEvent>().await?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Seen>();
     let stream = a11y.event_stream();
     tokio::spawn(async move {
@@ -57,12 +67,21 @@ async fn main() -> R<()> {
                     e.item.clone(),
                     format!("{:?} {} {:?}", e.operation, e.start_pos, e.text),
                 ),
-                Event::Object(ObjectEvents::PropertyChange(e)) => {
-                    ("property-change", e.item.clone(), format!("{} {:?}", e.property, e.value))
-                }
-                Event::Object(ObjectEvents::StateChanged(e)) => {
-                    ("state-changed", e.item.clone(), format!("{:?} {}", e.state, e.enabled))
-                }
+                Event::Object(ObjectEvents::PropertyChange(e)) => (
+                    "property-change",
+                    e.item.clone(),
+                    format!("{} {:?}", e.property, e.value),
+                ),
+                Event::Object(ObjectEvents::ChildrenChanged(e)) => (
+                    "children-changed",
+                    e.item.clone(),
+                    format!("{:?}", e.operation),
+                ),
+                Event::Object(ObjectEvents::StateChanged(e)) => (
+                    "state-changed",
+                    e.item.clone(),
+                    format!("{:?} {}", e.state, e.enabled),
+                ),
                 _ => continue,
             };
             let _ = tx.send(Seen {
@@ -78,16 +97,27 @@ async fn main() -> R<()> {
     // The application, by its name on the bus, then its process by the bus daemon.
     let root = a11y.root_accessible_on_registry().await?;
     let mut app = None;
-    for child in root.get_children().await? {
-        let p = child.clone().into_accessible_proxy(&conn).await?;
-        let n = p.name().await?;
-        if std::env::var_os("SPIKE_DUMP").is_some() {
-            println!("  app {n:?}");
+    let t_app = Instant::now();
+    loop {
+        for child in root.get_children().await? {
+            let p = child.clone().into_accessible_proxy(&conn).await?;
+            // An application that has registered but not yet exported its
+            // root answers UnknownInterface; it is not ready, so skip it.
+            let Ok(n) = p.name().await else { continue };
+            if std::env::var_os("SPIKE_DUMP").is_some() {
+                println!("  app {n:?}");
+            }
+            if n == APP || n == "spike-desktop-stand-egui" {
+                app = Some(child);
+            }
         }
-        if n == APP {
-            app = Some(child);
+        if app.is_some() {
+            break;
         }
+        // Not there yet: wait for the registry to say its children changed.
+        wait_for(&mut rx, |s| s.kind == "children-changed").await?;
     }
+    println!("app_found_ms {}", t_app.elapsed().as_millis());
     let app = app.ok_or("the test window's application is not on the accessibility bus")?;
     let sender = app.name_as_str().ok_or("no bus name")?.to_string();
     let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
@@ -99,11 +129,25 @@ async fn main() -> R<()> {
     // The window, by title, among the application's children.
     let app_p = app.clone().into_accessible_proxy(&conn).await?;
     let mut window = None;
-    for w in app_p.get_children().await? {
-        let p = w.clone().into_accessible_proxy(&conn).await?;
-        if p.name().await? == WINDOW && p.get_role().await? == Role::Frame {
-            window = Some(w);
+    loop {
+        for w in app_p.get_children().await? {
+            let p = w.clone().into_accessible_proxy(&conn).await?;
+            let (wn, wr) = (p.name().await?, p.get_role().await?);
+            if std::env::var_os("SPIKE_DUMP").is_some() {
+                println!("  window {wr:?} {wn:?}");
+            }
+            if (wn == WINDOW || (wn.is_empty() && std::env::var_os("SPIKE_UNTITLED").is_some()))
+                && matches!(wr, Role::Frame | Role::Window)
+            {
+                window = Some(w);
+            }
         }
+        if window.is_some() {
+            break;
+        }
+        wait_for(&mut rx, |s| s.kind == "children-changed")
+            .await
+            .map_err(|_| "window not found")?;
     }
     let window = window.ok_or("window not found")?;
 
@@ -125,7 +169,10 @@ async fn main() -> R<()> {
     let rule = ObjectMatchRule::builder()
         .roles(&[Role::Text, Role::Entry], MatchType::Any)
         .build();
-    let matches = coll.get_matches(rule, SortOrder::Canonical, 100, true).await?;
+    let matches = coll
+        .get_matches(rule, SortOrder::Canonical, 100, true)
+        .await
+        .unwrap_or_default(); // AccessKit does not implement Collection
     let mut named = Vec::new();
     for m in &matches {
         let p = m.clone().into_accessible_proxy(&conn).await?;
@@ -158,7 +205,11 @@ async fn main() -> R<()> {
     println!("before {:?}", text.get_text(0, -1).await?);
     drain(&mut rx);
     let t = Instant::now();
-    let ok = px.editable_text().await?.set_text_contents("Hinge, steel").await?;
+    let ok = px
+        .editable_text()
+        .await?
+        .set_text_contents("Hinge, steel")
+        .await?;
     let ev = wait_for(&mut rx, |s| {
         s.kind == "text-changed" && s.path == field.path_as_str() && s.detail.contains("Insert")
     })
@@ -270,10 +321,7 @@ fn drain(rx: &mut mpsc::UnboundedReceiver<Seen>) {
     while rx.try_recv().is_ok() {}
 }
 
-async fn wait_for(
-    rx: &mut mpsc::UnboundedReceiver<Seen>,
-    want: impl Fn(&Seen) -> bool,
-) -> R<Seen> {
+async fn wait_for(rx: &mut mpsc::UnboundedReceiver<Seen>, want: impl Fn(&Seen) -> bool) -> R<Seen> {
     let deadline = tokio::time::Instant::now() + DEADLINE;
     loop {
         match tokio::time::timeout_at(deadline, rx.recv()).await {

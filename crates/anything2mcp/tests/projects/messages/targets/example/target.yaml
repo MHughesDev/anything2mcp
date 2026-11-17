@@ -1,0 +1,17 @@
+# The imaginary order messages of `example`, as the stream pack's tests use
+# them. It describes no real system. The address is replaced by the test
+# broker's own when a test runs.
+schema_version: 1
+target: example
+title: Example order messages
+surfaces:
+  broker:
+    kind: broker
+    address: "broker.example.test:7001"
+    protocol: example-broker/1
+    rate: {requests: 50, per_ms: 1000}
+environments:
+  test:
+    kind: test
+    test_records: ["A-100"]
+default_environment: test
