@@ -20,8 +20,8 @@ use a2m_core::{
     Step, Value, Values,
 };
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture,
-    PrepareContext, Prepared, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
+    Prepared, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
@@ -293,9 +293,7 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
     let failed = stopped(error.sent, code, message, next);
     // What the broker said is its own, kept apart from the sentence.
     match error.kind {
-        WireErrorKind::Refused | WireErrorKind::Unexpected => {
-            failed.with_said(said(redact, error))
-        }
+        WireErrorKind::Refused | WireErrorKind::Unexpected => failed.with_said(said(redact, error)),
         _ => failed,
     }
 }
@@ -442,7 +440,9 @@ impl Run {
 
     /// A count the step measured, which the signature does not cover.
     fn measure(&mut self, name: &str, count: usize) {
-        self.acting.measured.push(Detail::new(name, count.to_string()));
+        self.acting
+            .measured
+            .push(Detail::new(name, count.to_string()));
     }
 
     /// Compares, once per run, the channel's declared shape and key with
@@ -1332,7 +1332,9 @@ impl StreamDriver {
                     .await
                     .map_err(|error| wire_failure(&*self.redact, &error, "look at the queue"))?;
                 run.measure("messages", page.messages.len());
-                page.messages.first().is_some_and(|message| message.id == id)
+                page.messages
+                    .first()
+                    .is_some_and(|message| message.id == id)
             }
         } else {
             run.mean("look", "whole_queue");

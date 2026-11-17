@@ -382,7 +382,15 @@ fn written(frame: &[u8]) -> Option<Request> {
             offset: u16::from_be_bytes([*high, *low]),
             words: vec![u16::from_be_bytes([*first, *second])],
         }),
-        [WRITE_MULTIPLE_REGISTERS, high, low, count_high, count_low, bytes, data @ ..] => {
+        [
+            WRITE_MULTIPLE_REGISTERS,
+            high,
+            low,
+            count_high,
+            count_low,
+            bytes,
+            data @ ..,
+        ] => {
             let count = usize::from(u16::from_be_bytes([*count_high, *count_low]));
             if count < 2 || usize::from(*bytes) != count * 2 || data.len() != count * 2 {
                 return None;

@@ -173,3 +173,6 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0167 | [The stream pack speaks NATS with JetStream, through a client of its own](0167-the-stream-pack-speaks-nats-with-jetstream-through-a-client-of-its-own.md) | Accepted (design decision) |
 | 0168 | [The data pack reaches a server database with the guarantees of an embedded file](0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md) | Accepted (design decision) |
 | 0169 | [The first release is for one machine](0169-the-first-release-is-for-one-machine.md) | Accepted (owner decision) |
+| 0170 | [The scout identifies each surface with one discovery job and stores each stage](0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md) | Accepted (design decision) |
+| 0171 | [The scout's report is hashed data, with the system's words kept apart](0171-the-scouts-report-is-hashed-data-with-the-systems-words-kept-apart.md) | Accepted (design decision) |
+| 0172 | [The ledger ends a record on an acknowledgement, and keeps what the system said](0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md) | Accepted (design decision) |

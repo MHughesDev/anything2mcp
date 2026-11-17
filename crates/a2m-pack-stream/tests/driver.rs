@@ -84,7 +84,10 @@ async fn a_retained_key_reads_the_same_five_times_and_takes_nothing() {
     }
     assert!(plain.windows(2).all(|pair| pair[0] == pair[1]));
     assert!(acted.windows(2).all(|pair| pair[0] == pair[1]));
-    assert_ne!(plain[0], acted[0], "the signature covers how the step was done");
+    assert_ne!(
+        plain[0], acted[0],
+        "the signature covers how the step was done"
+    );
     assert!(means.windows(2).all(|pair| pair[0] == pair[1]));
     let said: Vec<(&str, &str)> = means[0]
         .iter()
@@ -1929,8 +1932,11 @@ async fn a_publish_in_doubt_is_found_by_a_scan_from_where_the_log_ended_before_i
     for n in 0..4 {
         outside
             .publish(
-                &Publish::new(EVENTS, json!({"order_id": "A-102", "event": format!("e{n}")}))
-                    .key("A-102"),
+                &Publish::new(
+                    EVENTS,
+                    json!({"order_id": "A-102", "event": format!("e{n}")}),
+                )
+                .key("A-102"),
             )
             .await
             .unwrap();
