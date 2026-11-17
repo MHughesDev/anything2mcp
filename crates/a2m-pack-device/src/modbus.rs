@@ -351,14 +351,117 @@ impl Link for ModbusTcp {
         let sent = pdu(request)?;
         interpret(request, &sent, reply)
     }
+
+    fn written(&self, frame: &[u8]) -> Option<Request> {
+        written(frame)
+    }
+}
+
+/// The write a whole frame carries: the header is checked, and then the
+/// PDU, in the three forms of write this module builds. Anything else is
+/// not read.
+fn written(frame: &[u8]) -> Option<Request> {
+    let (header, pdu) = frame.split_at_checked(HEADER)?;
+    let length = u16::from_be_bytes([header[4], header[5]]);
+    if header[2..4] != [0, 0] || usize::from(length) != pdu.len() + 1 {
+        return None;
+    }
+    match pdu {
+        [WRITE_SINGLE_COIL, high, low, state @ ..] => {
+            let on = match state {
+                [0xFF, 0x00] => true,
+                [0x00, 0x00] => false,
+                _ => return None,
+            };
+            Some(Request::WriteBit {
+                offset: u16::from_be_bytes([*high, *low]),
+                on,
+            })
+        }
+        [WRITE_SINGLE_REGISTER, high, low, first, second] => Some(Request::WriteWords {
+            offset: u16::from_be_bytes([*high, *low]),
+            words: vec![u16::from_be_bytes([*first, *second])],
+        }),
+        [WRITE_MULTIPLE_REGISTERS, high, low, count_high, count_low, bytes, data @ ..] => {
+            let count = usize::from(u16::from_be_bytes([*count_high, *count_low]));
+            if count < 2 || usize::from(*bytes) != count * 2 || data.len() != count * 2 {
+                return None;
+            }
+            Some(Request::WriteWords {
+                offset: u16::from_be_bytes([*high, *low]),
+                words: data
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_be_bytes(*pair))
+                    .collect(),
+            })
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Refusal, Reply, Request, Table, frame, interpret, pdu};
+    use super::{Refusal, Reply, Request, Table, frame, interpret, pdu, written};
 
     fn answer(request: &Request, reply: &[u8]) -> Option<Reply> {
         interpret(request, &pdu(request).unwrap(), reply)
+    }
+
+    #[test]
+    fn a_frame_that_was_built_for_a_write_reads_back_into_the_same_write() {
+        for request in [
+            Request::WriteBit {
+                offset: 4,
+                on: true,
+            },
+            Request::WriteBit {
+                offset: 4,
+                on: false,
+            },
+            Request::WriteWords {
+                offset: 100,
+                words: vec![0xFFDD],
+            },
+            Request::WriteWords {
+                offset: 104,
+                words: vec![0x4240, 0x000F],
+            },
+        ] {
+            let bytes = frame(9, 7, &pdu(&request).unwrap()).unwrap();
+            assert_eq!(written(&bytes), Some(request));
+        }
+        // A read is no write, and bytes that are cut, padded, or of another
+        // protocol are not read.
+        let read = frame(
+            1,
+            7,
+            &pdu(&Request::ReadWords {
+                table: Table::Holding,
+                offset: 100,
+                count: 1,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(written(&read), None);
+        let mut bytes = frame(
+            1,
+            7,
+            &pdu(&Request::WriteWords {
+                offset: 100,
+                words: vec![1],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(written(&bytes).is_some());
+        bytes.push(0);
+        assert_eq!(written(&bytes), None);
+        bytes.truncate(8);
+        assert_eq!(written(&bytes), None);
+        assert_eq!(written(&[]), None);
     }
 
     #[test]
