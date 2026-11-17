@@ -1350,6 +1350,7 @@ fn adopt(
             )));
         }
         record.state = held.state;
+        record.acknowledged = held.acknowledged;
         record.before.clone_from(&held.before);
         record.stamp = Some(held.idempotency_token.clone());
         if held.state == RecordState::Planned || held.state == RecordState::Unchanged {
@@ -1730,6 +1731,8 @@ async fn reconcile(
     for (position, record) in planned.iter_mut().enumerate() {
         let held = snapshot.iter().find(|held| held.record == record.record);
         match (record.state, held.and_then(|held| held.failure.as_ref())) {
+            // Ended on the system's acknowledgement: settled, never read.
+            (RecordState::Acted, _) if record.acknowledged => {}
             (RecordState::Intent | RecordState::Acted, _) => doubtful.push(position),
             (RecordState::Failed, Some((FailureClass::Busy, code)))
                 if *code == codes::BLOCKED_BY_PARENT
