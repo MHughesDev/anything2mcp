@@ -10,7 +10,7 @@ A name is held only when a release is published under it. An account on a regist
 | --- | --- | --- | --- |
 | PyPI | `anything2mcp` | **Not held.** The registry shows no project of this name. The owner reports the registration done; the first publish from the release workflow is the test | Start the release workflow for version 0.0.1; see "Publishing a release" below. It publishes the real pre-alpha wheels and the source distribution, not a placeholder |
 | crates.io | `anything2mcp` | **Not held.** The registry shows no crate of this name | A first publish. crates.io offers trusted publishing only to a crate that already exists, so the first publish needs the owner's account once. It is also blocked by `publish = false` in the workspace and by the `a2m-*` crates it depends on, which are not published; whether to publish them needs a decision ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)) |
-| npm | `anything2mcp` | **Not held.** The registry shows no package of this name | An npm organization named `anything2mcp`, then a first publish by the owner's account once of each of the nine packages (the launcher and the eight `@anything2mcp/<os>-<cpu>` packages); trusted publishing can be configured after it. The workflow has no npm job yet ([research note 21](../research/21-wheel-and-npm-packaging.md)) |
+| npm | `anything2mcp` | **Not held.** The registry shows no package of this name | An npm organization named `anything2mcp`, then a first publish by the owner's account once of each of the nine packages (the launcher and the eight `@anything2mcp/<os>-<cpu>` packages); trusted publishing can be configured after it. The workflow now builds, checks, and publishes the nine packages ([decision 0186](../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)); it has never run |
 
 The status column is what each registry's public index answered on that date from the build session. It cannot see a private or pending registration.
 
@@ -31,21 +31,40 @@ The design calls for short-lived credentials issued to the release pipeline, nev
 | --- | --- | --- |
 | PyPI | Trusted publishing from GitHub Actions | A pending publisher for the project `anything2mcp`: owner `MHughesDev`, repository `anything2mcp`, workflow `release.yml`, environment `pypi`. A publisher set up before the repository was renamed names the old repository and must be replaced |
 | crates.io | Trusted publishing from GitHub Actions, once the crate exists | After the first publish: add the publisher in the crate's settings, naming the same repository and workflow |
-| npm | Trusted publishing from GitHub Actions, once the package exists | After the first publish: add the publisher in the package's settings, naming the same repository and workflow |
+| npm | Trusted publishing from GitHub Actions, once the package exists; the workflow's job asks for it and provenance, and holds no token | The steps under "Before the first npm publish" below |
 
 **Constraints this places on the build.**
 
 - The release workflow must be the file `.github/workflows/release.yml`. PyPI will refuse a publish from any other file name.
 - The publish job runs in a GitHub environment named `pypi`. Adding required reviewers to it, in the repository's settings, makes GitHub ask a person before every publish.
-- When the crates.io and npm publishers are added, they name the same workflow file.
+- The npm publish job runs in a GitHub environment named `npm`, and has `id-token: write` on that job alone. Required reviewers on it make GitHub ask a person before every npm publish.
+- When the crates.io publisher is added, it names the same workflow file.
+
+## Before the first npm publish
+
+The owner makes each of these; the workflow cannot, and an agent does not hold a token.
+
+1. **Create the npm organization `anything2mcp`** on npmjs.com (it holds the eight `@anything2mcp/<os>-<cpu>` names).
+2. **Publish each of the nine names once from the owner's account** (the eight platform packages, then the launcher), because npm offers trusted publishing only to a package that exists. Get the files from a rehearsal run of the release workflow (started by hand with no version): the artifacts `npm-package-*` hold the nine packed files. Publish with `npm publish <file> --access public`, two-factor authentication on, and no token saved to a file. The workflow's own first publish then skips these versions, so the next version is the first it publishes.
+3. **On each of the nine packages, add a trusted publisher** (package settings on npmjs.com, or `npm trust`): repository `MHughesDev/anything2mcp`, workflow file `release.yml`, environment `npm`. A publisher expires if it is not used within 2 days of being made, so add it just before the first release the workflow publishes. The repository URL in each `package.json` must match the repository exactly (it does).
+4. **Allow `npm publish` on each publisher.** Publishers made after 2026-09-03 allow only `npm stage publish` unless `npm publish` is also allowed; the job uses `npm publish`. (Choosing staged publishing instead means changing the job and the setting together.)
+5. **Create the GitHub environment `npm`** in the repository's settings, and add required reviewers to it if a person should approve each publish. As with `pypi`, a job naming an environment that does not exist creates it without protection.
+6. Once a release has published by this route, **set "disallow tokens"** on each package so that nothing but the workflow can publish it.
+
+## Not built yet
+
+- **crates.io.** No job. Blocked by `publish = false` and the unpublished `a2m-*` crates; needs a decision first.
+- **Signing.** No artifact is signed, and the binaries have no build provenance attestation (`actions/attest-build-provenance`). npm's provenance covers the npm packages and PyPI's attestations the wheels, which is registry-side only. Signing of standalone binaries, and the installers they need, are in spec section 605 and are not built.
+- **The release page and standalone installs:** no archives, checksums, or installers are made.
+- **Bill of materials.** A list of the Rust crates in each binary, per target, with licences, is written by the workflow. Licence texts and an exchange format (SPDX or CycloneDX) need a tool the repository does not use yet; which tool is open ([decision 0186](../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)).
 
 ## Publishing a release
 
 [RELEASING.md](../../RELEASING.md) has the steps. In short:
 
 - `bindings/python/` holds the pip package: the real pre-alpha software, one maturin wheel for each of eight platforms and a source distribution. It is no longer a placeholder ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)).
-- `.github/workflows/release.yml` builds the eight wheels and the source distribution on every pull request that touches the package, and checks them together (it expects eight wheels and one source distribution). It has never run yet.
-- It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own.
+- `.github/workflows/release.yml` builds the eight wheels and the source distribution, and the nine npm packages from the wheels' binaries, on every pull request that touches either package, and checks each set together (eight wheels and one source distribution; the launcher and eight platform packages). It has never run yet.
+- It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own. It then publishes to PyPI and to npm in two separate jobs, each behind its own environment.
 - **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the name to be held as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)); a publish now sends the real pre-alpha wheels, not a placeholder.
 - After a publish, check `pip install anything2mcp` in a clean environment and mark the name as held in the table above.
 

@@ -1155,6 +1155,51 @@ async fn a_confirm_that_finds_another_file_is_stale_and_answered() {
 }
 
 #[tokio::test]
+async fn a_file_whose_bits_cannot_be_kept_is_not_replaced() {
+    // A set-group bit is never copied onto a file the engine wrote, so the
+    // contract's temporary file cannot be given the old file's bits: the
+    // save stops by name before a byte is written, and nothing is left. On
+    // Windows a file has no such bits, and the stand cannot set them.
+    let scene = Scene::new();
+    let store = store().await;
+    if !shown(
+        &scene,
+        Fault::FileMode {
+            file: seed::STOCK_CSV.to_owned(),
+            mode: 0o2640,
+            denies_this_user: false,
+        },
+    ) {
+        return;
+    }
+    let before = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    if before.mode != Some(0o2640) {
+        // The system took the bit off as it was set: nothing to show.
+        return;
+    }
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::UnknownVariant, "metadata_not_kept")
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    let after = scene.stand.inspect(seed::STOCK_CSV).unwrap();
+    assert_eq!(
+        (after.identity, after.mode, after.owner),
+        (before.identity, before.mode, before.owner)
+    );
+    assert_eq!(
+        scene
+            .stand
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["40"]
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_file_is_replaced_only_by_one_who_may_write_it_and_keeps_its_owner_and_mode() {
     let scene = Scene::new();
     let store = store().await;

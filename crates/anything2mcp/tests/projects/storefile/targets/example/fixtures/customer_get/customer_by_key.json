@@ -1,1 +1,1 @@
-[{"customer_id":"C-100","name":"Example Customer One","credit_limit_cents":500000,"notes":""}]
+[{"customer_id": "C-100", "name": "Example Customer One", "credit_limit_cents": 500000, "notes": ""}, {"customer_id": "C-100", "name": "Example Customer One", "credit_limit_cents": 500000, "notes": ""}, {"customer_id": "C-100", "name": "Example Customer One", "credit_limit_cents": 500000, "notes": ""}]

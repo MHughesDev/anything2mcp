@@ -21,8 +21,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind, LimitationCode, NoSecrets,
-    Plan, ProducedBy, Source, Subject, Timestamp, Value, Values,
+    Address, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind, LimitationCode,
+    NoSecrets, Plan, ProducedBy, Source, Subject, Timestamp, Value, Values,
 };
 use a2m_files::{
     CompileMode, Diagnostics, DraftContext, DraftDoc, DraftReport, DraftValue, Drafter,
@@ -229,12 +229,27 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
     let scene = Scene::over(stand, plan.clone(), &origin);
     let ran = look(&scene, READ).await.unwrap();
     let column = |of: &dyn Fn(&example_app::store::StoredItem) -> String| {
-        Value::List(stored.items.values().map(|item| Value::from(of(item))).collect())
+        Value::List(
+            stored
+                .items
+                .values()
+                .map(|item| Value::from(of(item)))
+                .collect(),
+        )
     };
     assert_eq!(stored.items.len(), 3);
-    assert_eq!(ran.values.get("item_code"), Some(&column(&|item| item.item_code.clone())));
-    assert_eq!(ran.values.get("description"), Some(&column(&|item| item.description.clone())));
-    assert_eq!(ran.values.get("quantity"), Some(&column(&|item| item.quantity.to_string())));
+    assert_eq!(
+        ran.values.get("item_code"),
+        Some(&column(&|item| item.item_code.clone()))
+    );
+    assert_eq!(
+        ran.values.get("description"),
+        Some(&column(&|item| item.description.clone()))
+    );
+    assert_eq!(
+        ran.values.get("quantity"),
+        Some(&column(&|item| item.quantity.to_string()))
+    );
     assert_eq!(
         ran.values.get("length_in"),
         Some(&column(&|item| format_length_in(item.length_sixteenths)))
@@ -344,11 +359,21 @@ fn a_form_is_never_drafted_and_a_table_that_cannot_be_told_apart_is_a_question()
     // whose heading another shares is left out.
     let screen = std::fs::read_to_string(folder.path().join("screens/form_lines.yaml")).unwrap();
     assert!(!screen.contains("fields") && !screen.contains("actions") && !screen.contains("Save"));
-    assert!(screen.contains("note:") && !screen.contains("code:"), "{screen}");
+    assert!(
+        screen.contains("note:") && !screen.contains("code:"),
+        "{screen}"
+    );
     // The two tables of one name are one question, and no read.
     assert_eq!(report.open_questions.len(), 1, "{report:?}");
-    assert_eq!(report.open_questions[0].file.as_str(), "screens/twice_lines.yaml");
-    assert!(report.open_questions[0].question.contains("more than one table"));
+    assert_eq!(
+        report.open_questions[0].file.as_str(),
+        "screens/twice_lines.yaml"
+    );
+    assert!(
+        report.open_questions[0]
+            .question
+            .contains("more than one table")
+    );
     // What leaves the questions out compiles.
     compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
@@ -415,15 +440,24 @@ impl DraftingRule for WithAnAction {
             path: RelPath::new("screens/form_save.yaml")?,
             body: DraftValue::map(vec![
                 ("screen", DraftValue::text("form_save")),
-                ("reach", DraftValue::map(vec![("url", DraftValue::text("/form"))])),
-                ("ready", DraftValue::map(vec![("visible", locator("form", ""))])),
+                (
+                    "reach",
+                    DraftValue::map(vec![("url", DraftValue::text("/form"))]),
+                ),
+                (
+                    "ready",
+                    DraftValue::map(vec![("visible", locator("form", ""))]),
+                ),
                 (
                     "actions",
                     DraftValue::map(vec![(
                         "save",
                         DraftValue::map(vec![
                             ("locate", DraftValue::List(vec![locator("button", "Save")])),
-                            ("confirm", DraftValue::map(vec![("visible", locator("status", ""))])),
+                            (
+                                "confirm",
+                                DraftValue::map(vec![("visible", locator("status", ""))]),
+                            ),
                         ]),
                     )]),
                 ),

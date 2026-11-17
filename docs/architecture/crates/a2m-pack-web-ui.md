@@ -2,7 +2,7 @@
 
 The web pack's drivers and the knowledge they carry: the `ui`, `page_http`, and `site_tools` drivers, the widget drivers, platform profiles, screen models as a file kind, the auth providers that need a browser, and the drafting rules for observed interfaces. It is built on `a2m-pack-web-browser` and is called back by the engine and the session keeper.
 
-Built so far: the `ui` driver for reads and verified writes, the `screens/` file kind, and the `ui` lowering. Everything else on this page is the design of what follows, and the build order says which is which.
+Built so far: the `ui` driver for reads and verified writes, with an observing tab for a run that may only look, the `screens/` file kind, the `ui` lowering, and the drafting rules from a snapshot's tables ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)). Everything else on this page is the design of what follows, and the build order says which is which.
 
 ## Facts
 
@@ -45,7 +45,8 @@ As built. The manifest is `src/anything2mcp-provider.toml`; what is not built is
 | Lint rules | Below |
 | Settings | `packs.web.max_read_chars` and `packs.web.max_snapshot_elements` |
 | Effects | Writes the root `profiles`; network to surfaces; sessions for `web` surfaces; a requirement that lists every path of the browser engine's `KNOWN_PLACES` |
-| Drafting rules, discoverers, auth providers | None yet |
+| Drafting rules | From a `screen` finding to `screen` files, and from a `screen` finding to `operation` files, below |
+| Discoverers, auth providers | None yet |
 
 ### Lint rules
 
@@ -67,14 +68,16 @@ The file kind and the lowering refuse, under the same prefix: `locator_invalid`,
 
 ### Drafting rules
 
-Not built. As designed:
+As built ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)). The finding is the probe's, read as data: this crate does not name `a2m-pack-web-probe`, and does not declare the kind under `reads`, so that a registry with only this pack has no missing owner.
 
-| From a finding of kind | The drafter writes | Left as an open question |
+| From a finding of kind | The drafter writes | Left out, or as an open question |
 | --- | --- | --- |
-| `screen`, from a snapshot | A screen model: `reach` from the observed address with identifier segments as placeholders, `ready` from the profile's rule or a visible heading | What the screen is for; its name beyond the mechanical one |
-| `field`, from a snapshot | A field: `control` from the role by a fixed table (textbox to `text`, combobox to `combobox`, checkbox to `checkbox`); `locate` as role and name, then label; `fingerprint` from the nearest heading or section | Its field type. A field type is meaning, so the draft does not compile until it is settled |
-| `action`, from a snapshot | Nothing | Every action, and whether it commits |
-| A tool a page registers, marked read-only by the page | A `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
+| `screen`, from a snapshot | For each table the page names, readable row by row, inside a part of the page the snapshot names once: `screens/{page}_{table}.yaml`, with `reach` the observed path, `ready` the table showing, `rows` located by the table's role and name, the part of the page as the fingerprint, every heading, and one column of type `untrusted_text` for each heading | A table with no name; a column whose heading another shares; a page cut short, of another origin than one `web` surface, or with a path no address can hold as written. Two tables with one name: an open question in place of the locator |
+| `screen`, from a snapshot | For each such screen that holds no question: `operations/{page}_{table}_list.yaml`, `{target}_{page}_{table}_list`, `effect: read`, `verb: list`, no input, one list output of type `untrusted_text` for each column | An example, a test, a key |
+| `field`, `action`, a form, a button | Nothing | Every field and action, and what a field means. A drafted screen with an action is refused by the drafter |
+| A tool a page registers, marked read-only by the page | Not built: a `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
+
+Not built: screen matching, which would join the snapshots of one screen into one `reach` with placeholders and a key; until then each page drafts its own screen, named from its whole path. Labelled values outside a table: the probe keeps a term of a description list as a type only, and no role names the value beside it.
 
 ## Interface
 
@@ -139,7 +142,7 @@ What the kernel gives this crate:
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
-| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `wait`, `set` through the control's rule, `invoke` | The action's declared `confirm`, inside the committing `invoke`; the confirm list is empty | The fields again after the screen is reached afresh. `prefer: response` is not built |
+| `ui` | A new acting tab in the session's browser, with the target's fixed environment; in discovery, and in the sandbox with no test record to write, an observing tab, in which the browser fails every request of the page that could change the system | `goto`, `wait`, `set` through the control's rule, `invoke` | The action's declared `confirm`, inside the committing `invoke`; the confirm list is empty | The fields again after the screen is reached afresh. `prefer: response` is not built |
 | `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` with `fetch` from inside the page | Status and response schema | The endpoint the binding names |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
@@ -229,6 +232,8 @@ Not built: `edge_blocked` and its codes, `session_expired` through the lease, `s
 | A variant, or the confirmation, the page showed before the click is never taken for its answer: the click is not made, and nothing is stored | `tests/driver.rs`, `a_state_the_page_showed_before_the_click_is_never_taken_for_its_answer` |
 | A binding is held to the least effect of what it does | `tests/compile.rs` |
 | No driver calls an auth provider or renews | The driver holds none; a lease is used for its profile only |
+| A drafted read of a snapshot's table compiles, reads what the application holds, writes nothing, and drafts the same bytes twice; a drafted screen the page no longer matches stops; a table two of the page share is a question, a form drafts nothing, and a drafted screen with an action is refused | `tests/draft.rs`, against the snapshot the probe's test holds equal to discovery |
+| A run that may only look has a tab that cannot write: a page that writes when it loads stops the read, and the write never reaches the application | `tests/draft.rs`, `a_run_that_may_only_look_has_a_tab_that_cannot_write` |
 | An undeclared dialog stops the run | The mapping is built; no test, because the test application opens no dialog |
 | `ui` steps stay under 50 ms of overhead on a warm tab | Not measured |
 
@@ -239,7 +244,8 @@ Not built: `edge_blocked` and its codes, `session_expired` through the lease, `s
 3. Done in part: reads of text, value, checked state, and table rows; variants `absent` and `stop`. Not built: frames, `open` and `search`, a row by its key, attribute reads, the conditions `value`, `url`, `response`, and `profile_ready`.
 4. Done: `set` for text, select, and check box; `invoke` with the commit point, the confirmation inside it, and `possible_commit`; snapshots at the two checkpoints of a write; read-back from the page afresh.
 5. Not built, package 2.3 and 2.6: the auth providers. The base has no visible window and no export of a session's state yet, and the test application has no sign-in page, so neither the sign-in window nor `form_login` can be proven. Signs of expiry are not detected. A lease is used for the name of its profile; a provider that hands over a credential to place is refused.
-6. Not built: `PageHttpDriver` (package 4.2): when it is built, its lowering takes the HTTP pack's rules for the `endpoints/` kind it shares ([decision 0154](../../decisions/0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md)): its request step is `AsDeclared` and every other kind `Never`, a version precondition needs a read-back endpoint that reads a version ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)), and its driver refuses an endpoint that writes from a step not marked `commits`. Also not built: `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, the drafting rules and screen matching.
+6. Not built: `PageHttpDriver` (package 4.2): when it is built, its lowering takes the HTTP pack's rules for the `endpoints/` kind it shares ([decision 0154](../../decisions/0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md)): its request step is `AsDeclared` and every other kind `Never`, a version precondition needs a read-back endpoint that reads a version ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)), and its driver refuses an endpoint that writes from a step not marked `commits`. Also not built: `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, screen matching, and drafting fields, keys, and `site_tools` reads.
+7. Done: the drafting rules from a snapshot's tables, and the observing tab for a run that may only look ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)).
 
 ## Open points
 

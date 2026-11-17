@@ -83,7 +83,7 @@ If the HTTP pack is not enabled, a `page_http` binding does not compile, and the
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
-| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
+| `ui` | A new acting tab in the session's browser, with the target's fixed environment; an observing tab for a run that may only look | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
 | `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` sent from inside the page | Status and response schema | The endpoint the binding names |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
@@ -362,12 +362,12 @@ Codes are stable once released.
 
 | From a finding of kind | The drafter writes | Left as an open question |
 | --- | --- | --- |
-| `screen`, from a snapshot | A screen model: `reach` from the observed address with identifier segments as placeholders, `ready` from the profile's rule or a visible heading | What the screen is for; its name beyond the mechanical one |
+| `screen`, from a snapshot | For each table the page names and the snapshot can tell apart: a screen model with `reach` the observed path, `ready` the table showing, and `rows` located by the table's role and name and read by its headings, each column `untrusted_text`; and a `list` read over it. Placeholders in `reach` wait for screen matching | What the screen is for; its name beyond the mechanical one; two tables of one name |
 | `field`, from a snapshot | A field: `control` from the role by a fixed table (textbox to `text`, combobox to `combobox`, checkbox to `checkbox`); `locate` as role and name, then label; `fingerprint` from the nearest heading or section | Its field type. A field type is meaning, so the draft does not compile until it is settled |
 | `action`, from a snapshot | Nothing | Every action, and whether it commits |
 | A tool a page registers, marked read-only by the page | A `site_tools` binding for one read operation | Tools not marked read-only; whether the page's marking is believed |
 
-Endpoint findings are drafted by the HTTP pack's rule. Whether drafts by rule save work is hypothesis H-31.
+As built, only the `screen` row is drafted, and only for tables; fields, actions, and registered tools are not ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)). Endpoint findings are drafted by the HTTP pack's rule. Whether drafts by rule save work is hypothesis H-31.
 
 ## Effects and hazards
 

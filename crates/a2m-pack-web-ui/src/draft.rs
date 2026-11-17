@@ -130,26 +130,28 @@ fn tables(elements: &[Element]) -> Vec<Table> {
     let mut above: Vec<usize> = Vec::new();
     for (at, one) in elements.iter().enumerate() {
         above.retain(|parent| elements[*parent].depth < one.depth);
-        if one.role == "table" {
-            if let Some(name) = one.name.clone().filter(|name| !name.trim().is_empty()) {
-                let section = above
-                    .iter()
-                    .rev()
-                    .map(|parent| &elements[*parent])
-                    .find(|parent| {
-                        SECTION_ROLES.contains(&parent.role.as_str())
-                            && named(&parent.role, parent.name.as_deref().unwrap_or("")) == 1
-                    })
-                    .map(|parent| (parent.role.clone(), parent.name.clone().unwrap_or_default()));
-                let (headers, regular) = inside(elements, at);
-                out.push(Table {
-                    shared: named("table", &name) > 1,
-                    name,
-                    headers,
-                    section,
-                    regular,
-                });
-            }
+        let name = (one.role == "table")
+            .then(|| one.name.clone())
+            .flatten()
+            .filter(|name| !name.trim().is_empty());
+        if let Some(name) = name {
+            let section = above
+                .iter()
+                .rev()
+                .map(|parent| &elements[*parent])
+                .find(|parent| {
+                    SECTION_ROLES.contains(&parent.role.as_str())
+                        && named(&parent.role, parent.name.as_deref().unwrap_or("")) == 1
+                })
+                .map(|parent| (parent.role.clone(), parent.name.clone().unwrap_or_default()));
+            let (headers, regular) = inside(elements, at);
+            out.push(Table {
+                shared: named("table", &name) > 1,
+                name,
+                headers,
+                section,
+                regular,
+            });
         }
         above.push(at);
     }
@@ -198,9 +200,8 @@ fn inside(elements: &[Element], at: usize) -> (Vec<String>, bool) {
             _ => {}
         }
     }
-    let regular = regular
-        && heading_rows == 1
-        && cells_in_rows.iter().all(|count| *count == headers.len());
+    let regular =
+        regular && heading_rows == 1 && cells_in_rows.iter().all(|count| *count == headers.len());
     (headers, regular)
 }
 
@@ -324,7 +325,12 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         let mut columns = Vec::new();
         for heading in &table.headers {
             let column = snake(heading);
-            let alone = table.headers.iter().filter(|other| *other == heading).count() == 1
+            let alone = table
+                .headers
+                .iter()
+                .filter(|other| *other == heading)
+                .count()
+                == 1
                 && table
                     .headers
                     .iter()
@@ -348,7 +354,10 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         let screen = DraftValue::map(vec![
             ("screen", DraftValue::text(&name)),
             ("surface", DraftValue::text(&surface)),
-            ("reach", DraftValue::map(vec![("url", DraftValue::text(path))])),
+            (
+                "reach",
+                DraftValue::map(vec![("url", DraftValue::text(path))]),
+            ),
             (
                 "ready",
                 DraftValue::map(vec![("visible", locator("table", &table.name))]),

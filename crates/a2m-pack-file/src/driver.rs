@@ -32,7 +32,7 @@ use crate::model::{
 };
 use crate::open::{self, Content, OpenFile, RowAt, Table};
 use crate::place::{Folder, Named};
-use crate::save::{self, Made, SaveJob};
+use crate::save::{self, SaveJob};
 
 /// What the pack may read: the limits of `packs.file`.
 #[derive(Debug, Clone, Copy)]
@@ -122,12 +122,9 @@ struct Current {
 struct State {
     folder: Folder,
     documents: BTreeMap<String, Loaded>,
-    run: String,
     /// What the run may do: a save is refused where nothing may be written.
     posture: Posture,
     current: Option<Current>,
-    /// Temporary files this driver made and may not have removed.
-    temporary: Vec<Made>,
 }
 
 /// How a step is done, for its trace record: the format of the file and
@@ -332,18 +329,6 @@ fn delimiter_of(spec: &DocumentSpec) -> u8 {
         .as_deref()
         .and_then(|text| text.bytes().next())
         .unwrap_or(b',')
-}
-
-/// The token in a temporary file's name: sixteen characters from the
-/// digest of the record's idempotency token, so that the name says which
-/// record it was for and holds nothing a path could misread. The name is
-/// not made of the token alone: see `save`.
-fn token(stamp: &str) -> String {
-    Digest::of(stamp.as_bytes())
-        .to_string()
-        .chars()
-        .take(16)
-        .collect()
 }
 
 impl FileDriver {
@@ -884,7 +869,6 @@ impl FileDriver {
         state: &mut State,
         document: &str,
         step: &Step,
-        input: &StepInput<'_>,
     ) -> Result<Observed, StepFailure> {
         // The driver's own guard. Live, the step the plan marks `commits`.
         // In a sandbox with test records, that one step alone: the engine
@@ -923,11 +907,8 @@ impl FileDriver {
                 "Put the file in a root named `files` that the settings make writable.",
             )));
         }
-        let stamp = input.stamp.unwrap_or(&state.run);
         let job = SaveJob {
             target: current.path.clone(),
-            name: loaded.spec.file.clone(),
-            token: token(stamp),
             lock_signal: loaded.spec.lock_sibling.clone(),
             bytes,
             before: current.open.digest,
@@ -936,15 +917,13 @@ impl FileDriver {
         };
         // The replace is never left half asked: the work runs to its end on
         // its own thread, and a lost answer is a write whose fate is unknown.
-        let saved = tokio::task::spawn_blocking(move || save::save(&job))
+        tokio::task::spawn_blocking(move || save::save(&job))
             .await
             .map_err(|_| {
                 StepFailure::unknown(open::unavailable(
                     "was being replaced when the work stopped",
                 ))
-            })?;
-        state.temporary.extend(saved.left);
-        saved.outcome?;
+            })??;
         current.saved = true;
         Ok(Observed::default())
     }
@@ -1005,10 +984,8 @@ impl Driver for FileDriver {
             Ok(Prepared::new(State {
                 folder,
                 documents,
-                run: cx.run.to_string(),
                 posture: cx.posture,
                 current: None,
-                temporary: Vec::new(),
             }))
         })
     }
@@ -1045,7 +1022,7 @@ impl Driver for FileDriver {
             let done = |observed: Observed| Ok(StepOutcome::Done(observed));
             let result = match spec {
                 StepSpec::Open { for_write } => done(self.open(state, document, for_write).await?),
-                StepSpec::Save => done(self.save(state, document, step, input).await?),
+                StepSpec::Save => done(self.save(state, document, step).await?),
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
                 other => {
                     let loaded = state.documents.get(document).ok_or_else(|| {
@@ -1107,17 +1084,10 @@ impl Driver for FileDriver {
 
     fn release<'a>(&'a self, prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
         Box::pin(async move {
-            // Only what this driver made: a temporary file is removed when
-            // what is at its name is still, by its identity, the file a
-            // save of this driver made.
-            if let Ok(state) = prepared.into_state::<State>() {
-                let _ = tokio::task::spawn_blocking(move || {
-                    for temporary in &state.temporary {
-                        temporary.remove();
-                    }
-                })
-                .await;
-            }
+            // A save's temporary file is the contract's, and is removed by
+            // the save itself, while its name still holds the file it made:
+            // nothing is left for release to remove.
+            drop(prepared);
             Cleanup::complete()
         })
     }

@@ -36,7 +36,7 @@ It is a provider of its own, named `web_probe`, because a pack is handed its con
 | Finding kinds | Built: `surface`, `sign_in_method`, `screen`, `exchange`, each a checked name. It produces `endpoint` findings and does not own that kind: its manifest reads it. Not built: `declared_tool`. `field` and `action` are not kinds: one `screen` finding holds its fields and actions |
 | Discoverers | Built: `web_probe`, `web_snapshot`, `web_capture`. Not built: `web_auth`, `web_endpoints`, `web_declared` |
 | Describer | `web_describer`, for each discoverer |
-| Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, endpoints by `a2m-pack-http` |
+| Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, which drafts a read of each table a snapshot names, and endpoints by `a2m-pack-http` |
 | Effects | The root `profiles` for writing, the network of the target's surfaces, and a requirement that lists every place of the base's `KNOWN_PLACES`; a test holds the two lists equal |
 | Settings | `max_pages`, the page budget of one discovery, 20 unless set |
 
@@ -190,6 +190,7 @@ Hitting a bound is not a failure. The report names the bound, `pages` or `second
 | An address that looks like an action is never visited, whatever named it; a redirect to another origin is a sign-in by redirect | `an_address_that_looks_like_an_action_is_never_visited_whatever_names_it`: two focus paths, by path and by query, for both discoverers that take a focus, and a surface whose own address is one; the control interface counts no write |
 | A failure message holds no page text | `a_page_that_cannot_be_read_puts_none_of_its_text_in_the_message` |
 | A platform the profiles do not know is reported unknown, never guessed | The probe of the test application: `unknown_platform`, tier `unsupported` |
+| A page that shows an order gives the snapshot the web pack's drafting rules are proven against, the same twice | `a_page_that_shows_an_order_gives_the_screen_the_web_pack_drafts_from_the_same_twice`: the finding equals the one `a2m-pack-web-ui` keeps in `tests/fixtures/findings/` ([decision 0183](../../decisions/0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md)) |
 | A registry with only this pack builds, and its digest is stable | Two registries |
 
 Run on Linux only. The crate has no code that differs by operating system.

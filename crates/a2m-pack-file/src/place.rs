@@ -15,7 +15,7 @@
 
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{ErrorKind, Read as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use a2m_core::Digest;
 use a2m_provider::{Access, CheckedPath, EntryKind, StepFailure};
@@ -222,12 +222,6 @@ impl Named {
     /// The folder the file is in.
     pub(crate) fn folder(&self) -> &Folder {
         &self.folder
-    }
-
-    /// The path of the name itself, for a call that follows no link at the
-    /// last part: a look at the name, and a rename onto it.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
     }
 
     /// The same name, as the roots' check gave it, for the provider

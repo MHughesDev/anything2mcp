@@ -39,7 +39,8 @@ fn a_registry_with_only_the_file_pack_builds_and_its_digest_is_stable() {
         ["create", "delete", "list", "read", "update"]
     );
     assert_eq!(set.file_kinds().count(), 1);
-    assert_eq!(set.drafting_rules().count(), 1);
+    // A document from a layout, and the reads over it.
+    assert_eq!(set.drafting_rules().count(), 2);
 }
 
 #[test]

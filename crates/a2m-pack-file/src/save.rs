@@ -7,47 +7,29 @@
 //! was called. Where the operating system's answer leaves it in doubt, the
 //! file is read once more and its digest decides.
 //!
-//! The save removes nothing it did not make. A temporary file gets a name
-//! nobody can know beforehand and is made only if nothing has that name;
-//! whatever has it is left exactly as it is. What the save made is known by
-//! its identity, and only a file with that identity is ever removed.
-//!
-//! The provider contract has a save in steps of its own,
-//! `CheckedPath::create_temporary` and `Temporary`. The pack takes from the
-//! contract what keeps every guarantee here: whether the engine's user may
-//! write the file (`CheckedPath::may_write`), and the flush of the folder
-//! after the replace (`CheckedPath::flush_folder`), with the contract's
-//! codes mapped to the pack's own. It keeps its own temporary file, write,
-//! and replace, because the contract's `Temporary` hands out no handle: the
-//! new file could not be given the old file's owner, group, and permission
-//! bits before a byte is written, it is made readable by more than the
-//! engine's user, and it is removed by its name rather than its identity
-//! (decision 0173).
-
-use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
-use std::path::PathBuf;
+//! The temporary file is the provider contract's `Temporary`, made by
+//! `CheckedPath::create_temporary` (decisions 0162, 0176, and 0182): under
+//! a name of 128 random bits, only where nothing stands and never through a
+//! link, readable and writable by the engine's user alone when it is made,
+//! given the old file's owner, group, and permission bits through its own
+//! handle before a byte is written (`keep_owner_and_mode`), read back
+//! through that handle, put in place by a rename that replaces only what
+//! stands at the name and refuses a link there, and removed, when the save
+//! does not finish, only while its name still holds the file it made. The
+//! folder is flushed after the replace (`CheckedPath::flush_folder`). The
+//! contract's codes are mapped to the pack's own.
 
 use a2m_core::{Digest, Failure};
-use a2m_provider::StepFailure;
+use a2m_provider::{StepFailure, Temporary};
 
 use crate::codes::{self, stop};
-use crate::open::{held_by_another, locked, missing, not_allowed, unavailable};
-use crate::place::{Folder, Identity, Named, not_writable};
-
-/// How many names are tried for a temporary file before the save stops.
-const NAMES_TRIED: usize = 4;
+use crate::open::{locked, missing, not_allowed, unavailable};
+use crate::place::{Named, not_writable};
 
 /// What one save needs.
 pub(crate) struct SaveJob {
     /// The file to replace, by its own name.
     pub target: Named,
-    /// The file's name, which a temporary file's name starts with.
-    pub name: String,
-    /// Sixteen characters from the digest of the record's idempotency
-    /// token: they say, to a person who finds a temporary file left by a
-    /// save that was killed, which record it was for.
-    pub token: String,
     /// The sibling whose presence shows an application holds the file.
     pub lock_signal: Option<String>,
     /// The bytes to save.
@@ -58,53 +40,6 @@ pub(crate) struct SaveJob {
     pub intended: Digest,
     /// The most bytes read when the file is digested again.
     pub max_bytes: u64,
-}
-
-/// A temporary file this driver made: where, and which file it is.
-#[derive(Debug)]
-pub(crate) struct Made {
-    path: PathBuf,
-    identity: Option<Identity>,
-}
-
-impl Made {
-    fn of(file: &File, path: PathBuf) -> Self {
-        Self {
-            path,
-            identity: file
-                .metadata()
-                .ok()
-                .and_then(|metadata| Identity::of(&metadata)),
-        }
-    }
-
-    /// Removes the temporary file, when what is at its name is still the
-    /// file this driver made. A link, a folder, another file that took the
-    /// name, and a file whose identity the system does not give are left.
-    pub(crate) fn remove(&self) {
-        let Some(identity) = self.identity else {
-            return;
-        };
-        if let Ok(found) = fs::symlink_metadata(&self.path)
-            && found.file_type().is_file()
-            && Identity::of(&found) == Some(identity)
-        {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// How one save ended.
-pub(crate) struct Saved {
-    /// Whether the file was replaced.
-    pub outcome: Result<(), StepFailure>,
-    /// A temporary file that may still be there: only when the fate of the
-    /// replace is unknown. `release` removes it, by its identity.
-    pub left: Option<Made>,
-}
-
-fn full(kind: ErrorKind) -> bool {
-    matches!(kind, ErrorKind::StorageFull | ErrorKind::QuotaExceeded)
 }
 
 fn storage_full() -> StepFailure {
@@ -137,94 +72,39 @@ pub(crate) fn from_contract(failure: Failure) -> StepFailure {
     }
 }
 
-/// Sixteen characters nobody can know beforehand, from the operating
-/// system's randomness.
-fn random_part() -> Result<String, StepFailure> {
-    let mut bytes = [0_u8; 8];
-    getrandom::fill(&mut bytes).map_err(|_| {
-        StepFailure::not_sent(unavailable(
-            "cannot be saved, because the operating system gave no randomness for a temporary file's name",
-        ))
-    })?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-/// Makes the temporary file: a new name each try, and a file only where
-/// nothing has the name. The call that makes it follows no link at the
-/// name, and what is found there is never removed, opened, or written. The
-/// new file can be read and written by the engine's user alone until it is
-/// given the old file's permissions.
-fn create_temporary(
-    folder: &Folder,
-    name: &str,
-    token: &str,
-    random: &mut dyn FnMut() -> Result<String, StepFailure>,
-) -> Result<(File, PathBuf), StepFailure> {
-    for _ in 0..NAMES_TRIED {
-        let path = folder.beside(&format!("{name}.a2m-{token}-{}.tmp", random()?))?;
-        let mut options = OpenOptions::new();
-        // Read too: what was written is read back through the same handle.
-        options.read(true).write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        match options.open(&path) {
-            Ok(file) => return Ok((file, path)),
-            // Something has the name. It is not this save's: try another.
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-            Err(error) if full(error.kind()) => return Err(storage_full()),
-            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
-                return Err(StepFailure::not_sent(not_allowed(
-                    "its folder cannot be written to",
-                )));
-            }
-            Err(_) => {
-                return Err(StepFailure::not_sent(unavailable(
-                    "cannot get a temporary file beside it",
-                )));
-            }
-        }
+/// The temporary file could not be made: a folder the engine's user may
+/// not write is the folder's, not the file's.
+fn not_made(failure: Failure) -> StepFailure {
+    if *failure.code() == a2m_provider::codes::PATH_DENIED {
+        StepFailure::not_sent(not_allowed("its folder cannot be written to"))
+    } else {
+        gone_is_changed(from_contract(failure))
     }
-    Err(StepFailure::not_sent(unavailable(
-        "cannot get a temporary file beside it: every name tried was taken, and the file pack removes nothing it did not make",
-    )))
 }
 
-/// Gives the new file the old file's owner, group, and permission bits,
-/// through its open handle, and then looks that it has them.
-#[cfg(unix)]
-fn carry(new: &File, old: &Metadata) -> std::io::Result<bool> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-    const BITS: u32 = 0o7777;
-    let made = new.metadata()?;
-    let owner = (made.uid() != old.uid()).then_some(old.uid());
-    let group = (made.gid() != old.gid()).then_some(old.gid());
-    if owner.is_some() || group.is_some() {
-        // Only one who may give the file to that owner and group can.
-        std::os::unix::fs::fchown(new, owner, group)?;
+/// Gives the temporary file the old file's owner, group, and permission
+/// bits, through its own handle, and looks that it has them.
+///
+/// On Unix a `false` stops the save by name: the old file carries a
+/// set-user, set-group, or sticky bit, which is never copied onto a file
+/// the engine wrote, or the system refuses the owner or the group to the
+/// engine's user. On Windows the answer is always `false`: only the
+/// read-only mark is kept, and the new file takes the access list its
+/// folder passes down, as the pack's design states. A file marked
+/// read-only is never replaced, so the save goes on there.
+fn keep(temporary: &mut Temporary) -> Result<(), StepFailure> {
+    match temporary.keep_owner_and_mode() {
+        Ok(true) => Ok(()),
+        Ok(false) if cfg!(windows) => Ok(()),
+        Ok(false) | Err(_) => Err(not_kept()),
     }
-    new.set_permissions(fs::Permissions::from_mode(old.mode() & BITS))?;
-    let kept = new.metadata()?;
-    Ok(kept.uid() == old.uid()
-        && kept.gid() == old.gid()
-        && kept.mode() & BITS == old.mode() & BITS)
-}
-
-/// Gives the new file the old file's permissions. Outside Unix that is the
-/// read-only mark alone, and a file that has it is never replaced.
-#[cfg(not(unix))]
-fn carry(new: &File, old: &Metadata) -> std::io::Result<bool> {
-    new.set_permissions(old.permissions())?;
-    Ok(true)
 }
 
 fn not_kept() -> StepFailure {
     stop(
         codes::METADATA_NOT_KEPT,
         "The old file's owner, group, or permissions cannot be carried to the new file. Nothing was written.",
-        "Check who owns the folder and the file, and whether the engine's user may give a file to that owner and group.",
+        "Check who owns the folder and the file, whether the engine's user may give a file to that owner and group, and whether the file carries a set-user, set-group, or sticky bit.",
     )
 }
 
@@ -258,17 +138,13 @@ fn held(job: &SaveJob) -> Result<(), StepFailure> {
 /// save built: read back through the handle it was written with, so no
 /// other file can stand in for it.
 fn holds_what_was_built(
-    file: &mut File,
+    temporary: &mut Temporary,
     intended: Digest,
     max_bytes: u64,
 ) -> Result<(), StepFailure> {
-    let unreadable =
-        || StepFailure::not_sent(unavailable("could not be read back beside the old one"));
-    file.seek(SeekFrom::Start(0)).map_err(|_| unreadable())?;
-    let mut back = Vec::new();
-    file.take(max_bytes.saturating_add(1))
-        .read_to_end(&mut back)
-        .map_err(|_| unreadable())?;
+    let back = temporary.read_back(max_bytes).map_err(|_| {
+        StepFailure::not_sent(unavailable("could not be read back beside the old one"))
+    })?;
     if Digest::of(&back) == intended {
         Ok(())
     } else {
@@ -312,18 +188,33 @@ fn after_refusal(now: Option<Digest>, before: Digest, intended: Digest) -> Refus
     }
 }
 
-/// Replaces the file. Blocking; never retried.
-pub(crate) fn save(job: &SaveJob) -> Saved {
-    let mut left = None;
-    let outcome = replace(job, &mut random_part, &mut left);
-    Saved { outcome, left }
+/// What a refused replace that left the old file in place is told as, by
+/// the contract's code for the refusal.
+fn refusal(failure: Failure) -> Failure {
+    let code = failure.code();
+    if *code == a2m_provider::codes::PATH_LOCKED
+        || (*code == a2m_provider::codes::PATH_DENIED && cfg!(windows))
+    {
+        // Windows refuses a replace as a denial too while another program
+        // holds the file.
+        locked()
+    } else if *code == a2m_provider::codes::PATH_DENIED {
+        not_allowed("its folder cannot be written to")
+    } else if *code == a2m_provider::codes::DISK_FULL {
+        codes::failure(
+            codes::STORAGE_FULL,
+            "The disk or the folder is full, so the file could not be replaced. The old file is untouched.",
+            "Free space in the folder, then try again.",
+        )
+    } else if *code == a2m_provider::codes::PATH_NOT_ALLOWED {
+        failure
+    } else {
+        unavailable("could not be replaced; the old file is untouched")
+    }
 }
 
-fn replace(
-    job: &SaveJob,
-    random: &mut dyn FnMut() -> Result<String, StepFailure>,
-    left: &mut Option<Made>,
-) -> Result<(), StepFailure> {
+/// Replaces the file. Blocking; never retried.
+pub(crate) fn save(job: &SaveJob) -> Result<(), StepFailure> {
     let folder = job.target.folder();
     // The file is looked at again, as the name itself: a regular file with
     // one name, in a folder no link leads to, that its owner did not mark
@@ -347,91 +238,41 @@ fn replace(
     }
     held(job)?;
 
-    let (mut file, path) = create_temporary(folder, &job.name, &job.token, random)?;
+    // Dropped on any way out below before the replace, the temporary file
+    // is removed, while its name still holds the file it made.
+    let mut temporary = job.target.checked().create_temporary().map_err(not_made)?;
     // Owner, group, and permissions first, while the file is empty: the new
     // bytes are never readable by anyone the old file was not readable by.
-    let prepared = match carry(&file, &old) {
-        Ok(true) => file
-            .write_all(&job.bytes)
-            .map_err(|error| {
-                if full(error.kind()) {
-                    storage_full()
-                } else {
-                    StepFailure::not_sent(unavailable("could not be written beside the old one"))
-                }
-            })
-            // Writing can take bits off a file. They are set again, and the
-            // file is looked at once more, before it is flushed.
-            .and_then(|()| match carry(&file, &old) {
-                Ok(true) => file.sync_all().map_err(|error| {
-                    if full(error.kind()) {
-                        storage_full()
-                    } else {
-                        StepFailure::not_sent(unavailable(
-                            "could not be flushed to disk beside the old one",
-                        ))
-                    }
-                }),
-                Ok(false) | Err(_) => Err(not_kept()),
-            })
-            // What the temporary file holds is read back through its own
-            // handle and must be, byte for byte, what was built.
-            .and_then(|()| holds_what_was_built(&mut file, job.intended, job.max_bytes)),
-        Ok(false) | Err(_) => Err(not_kept()),
-    };
-    let made = Made::of(&file, path);
-    drop(file);
-    if let Err(failure) = prepared {
-        made.remove();
-        return Err(failure);
-    }
+    keep(&mut temporary)?;
+    temporary.write(&job.bytes).map_err(from_contract)?;
+    // Writing can take bits off a file. They are set again, and the file is
+    // looked at once more, before it is flushed.
+    keep(&mut temporary)?;
+    temporary.flush().map_err(from_contract)?;
+    // What the temporary file holds is read back through its own handle
+    // and must be, byte for byte, what was built.
+    holds_what_was_built(&mut temporary, job.intended, job.max_bytes)?;
 
     // Everything is ready. What follows is the last look at the lock
     // signal, the comparison, and the replace, with nothing else between
     // them: the file at the name must still be, byte for byte, the file
     // that was read.
-    if let Err(failure) = held(job) {
-        made.remove();
-        return Err(failure);
-    }
+    held(job)?;
     if job.target.digest(job.max_bytes) != Some(job.before) {
-        made.remove();
         return Err(changed());
     }
     // The commit point: one call, and the name is the new file's. The call
-    // follows no link at either name.
-    match fs::rename(&made.path, job.target.path()) {
+    // follows no link at either name, and refuses one at the target's.
+    match temporary.replace() {
         Ok(()) => flushed(job),
-        Err(error) => {
+        Err(failure) => {
             // The system said no. The file's own bytes say what happened.
             match after_refusal(job.target.digest(job.max_bytes), job.before, job.intended) {
                 Refused::Landed => flushed(job),
-                Refused::Unknown => {
-                    *left = Some(made);
-                    Err(StepFailure::unknown(unavailable(
-                        "could not be replaced, and it is no longer the file that was read",
-                    )))
-                }
-                Refused::NotReplaced => {
-                    made.remove();
-                    Err(StepFailure::answered(if held_by_another(&error) {
-                        locked()
-                    } else if error.kind() == ErrorKind::PermissionDenied && cfg!(windows) {
-                        // Windows refuses a replace this way too while
-                        // another program holds the file.
-                        locked()
-                    } else if error.kind() == ErrorKind::PermissionDenied {
-                        not_allowed("its folder cannot be written to")
-                    } else if full(error.kind()) {
-                        codes::failure(
-                            codes::STORAGE_FULL,
-                            "The disk or the folder is full, so the file could not be replaced. The old file is untouched.",
-                            "Free space in the folder, then try again.",
-                        )
-                    } else {
-                        unavailable("could not be replaced; the old file is untouched")
-                    }))
-                }
+                Refused::Unknown => Err(StepFailure::unknown(unavailable(
+                    "could not be replaced, and it is no longer the file that was read",
+                ))),
+                Refused::NotReplaced => Err(StepFailure::answered(refusal(failure))),
             }
         }
     }
@@ -439,18 +280,19 @@ fn replace(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use a2m_provider::{Access, RootName, Roots, Sent};
+    use a2m_provider::{Access, CheckedPath, RootName, Roots, Sent};
 
     use super::*;
 
     /// A folder of its own in the system's temporary folder, removed when
-    /// dropped, and the same folder as the pack is given one.
+    /// dropped, and a file in it as the roots' check gives it.
     struct Scratch {
         path: PathBuf,
-        folder: Folder,
+        roots: Roots,
     }
 
     impl Scratch {
@@ -463,18 +305,26 @@ mod tests {
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).unwrap();
-            let name = RootName::new("files").unwrap();
             let mut roots = Roots::none();
-            roots.add(name.clone(), &path, Access::Write).unwrap();
-            let root = roots.folder(&name, Access::Write).unwrap();
-            let folder = Folder::new(root.clone(), &root);
-            Self { path, folder }
+            roots
+                .add(RootName::new("files").unwrap(), &path, Access::Write)
+                .unwrap();
+            Self { path, roots }
         }
 
-        fn at(&self, name: &str) -> PathBuf {
-            // The root as the roots resolved it, so that a link in the way
-            // to the system's temporary folder plays no part.
-            self.folder.beside(name).unwrap()
+        fn file(&self, name: &str) -> CheckedPath {
+            self.roots
+                .check(&RootName::new("files").unwrap(), name, Access::Write)
+                .unwrap()
+        }
+
+        fn names(&self) -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(&self.path)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
         }
     }
 
@@ -482,109 +332,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
-    }
-
-    fn names(parts: &[&str]) -> impl FnMut() -> Result<String, StepFailure> {
-        let mut parts: Vec<String> = parts.iter().rev().map(|part| (*part).to_owned()).collect();
-        move || Ok(parts.pop().unwrap_or_else(|| "spent".to_owned()))
-    }
-
-    #[cfg(unix)]
-    fn link(to: &Path, at: &Path) -> bool {
-        std::os::unix::fs::symlink(to, at).is_ok()
-    }
-
-    #[cfg(windows)]
-    fn link(to: &Path, at: &Path) -> bool {
-        // Only a user who may make links can; elsewhere the test goes on
-        // with a plain file at the name.
-        std::os::windows::fs::symlink_file(to, at).is_ok()
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    fn link(_to: &Path, _at: &Path) -> bool {
-        false
-    }
-
-    #[test]
-    fn a_name_that_is_taken_is_left_as_it_is_and_another_is_tried() {
-        let scratch = Scratch::new();
-        let other = scratch.at("other.csv");
-        fs::write(&other, b"another file").unwrap();
-        // A link to another file at the first name, a file at the second.
-        let first = scratch.at("stock.csv.a2m-token-one.tmp");
-        if !link(&other, &first) {
-            fs::write(&first, b"first").unwrap();
-        }
-        let before = fs::symlink_metadata(&first).unwrap().file_type();
-        let second = scratch.at("stock.csv.a2m-token-two.tmp");
-        fs::write(&second, b"second").unwrap();
-
-        let mut random = names(&["one", "two", "three"]);
-        let (file, path) =
-            create_temporary(&scratch.folder, "stock.csv", "token", &mut random).unwrap();
-        assert_eq!(path, scratch.at("stock.csv.a2m-token-three.tmp"));
-        // Nothing that was there was removed, replaced, or written through.
-        assert_eq!(fs::read(&other).unwrap(), b"another file");
-        assert_eq!(fs::symlink_metadata(&first).unwrap().file_type(), before);
-        assert_eq!(fs::read(&second).unwrap(), b"second");
-        // Until it is given the old file's permissions, the new file is the
-        // engine's user's alone.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            assert_eq!(file.metadata().unwrap().permissions().mode() & 0o077, 0);
-        }
-        drop(file);
-
-        // Every name tried is taken: the save stops, and removes nothing.
-        let mut random = names(&["one", "two", "three", "two"]);
-        let stopped = create_temporary(&scratch.folder, "stock.csv", "token", &mut random)
-            .err()
-            .unwrap();
-        assert_eq!(stopped.sent, Sent::NotSent);
-        assert_eq!(
-            stopped.failure.code(),
-            &a2m_provider::codes::FILE_UNAVAILABLE
-        );
-        assert_eq!(fs::read(&other).unwrap(), b"another file");
-        assert!(path.exists() && second.exists());
-
-        // A name that is not one name in the folder is refused before
-        // anything is made.
-        let mut random = names(&["../outside"]);
-        assert!(create_temporary(&scratch.folder, "stock.csv", "token", &mut random).is_err());
-    }
-
-    #[test]
-    fn only_the_file_this_driver_made_is_removed() {
-        let scratch = Scratch::new();
-        let mut random = names(&["one"]);
-        let (file, path) =
-            create_temporary(&scratch.folder, "stock.csv", "token", &mut random).unwrap();
-        let made = Made::of(&file, path.clone());
-        drop(file);
-
-        // Another file takes the name, while the one that was made lives on
-        // under another: the name no longer proves anything.
-        let aside = scratch.at("moved-aside.tmp");
-        fs::rename(&path, &aside).unwrap();
-        fs::write(&path, b"somebody else's").unwrap();
-        made.remove();
-        assert_eq!(fs::read(&path).unwrap(), b"somebody else's");
-
-        // A link at the name is left, and so is what it points at.
-        fs::remove_file(&path).unwrap();
-        if link(&aside, &path) {
-            made.remove();
-            assert!(fs::symlink_metadata(&path).is_ok() && aside.exists());
-            fs::remove_file(&path).unwrap();
-        }
-
-        // The file that was made, back under its name, is removed.
-        fs::rename(&aside, &path).unwrap();
-        made.remove();
-        assert!(fs::symlink_metadata(&path).is_err());
     }
 
     #[test]
@@ -635,22 +382,61 @@ mod tests {
                 Sent::NotSent
             )
         );
+        // A refused replace that left the old file is told by the pack's
+        // own words, and a link refused at the name as itself.
+        let told = |code| {
+            refusal(Failure::new(FailureClass::Input, code, "m", "n"))
+                .code()
+                .clone()
+        };
+        assert_eq!(told(a2m_provider::codes::PATH_LOCKED), codes::FILE_LOCKED);
+        assert_eq!(told(a2m_provider::codes::DISK_FULL), codes::STORAGE_FULL);
+        assert_eq!(
+            told(a2m_provider::codes::PATH_NOT_ALLOWED),
+            provider("path_not_allowed")
+        );
     }
 
     #[test]
-    fn a_temporary_file_is_used_only_when_it_holds_what_was_built() {
+    fn a_temporary_file_is_used_only_when_it_holds_what_was_built_and_is_removed_unused() {
         let scratch = Scratch::new();
-        let mut random = names(&["one"]);
-        let (mut file, path) =
-            create_temporary(&scratch.folder, "stock.csv", "token", &mut random).unwrap();
-        file.write_all(b"the new bytes").unwrap();
-        assert!(holds_what_was_built(&mut file, Digest::of(b"the new bytes"), 1024).is_ok());
-        let other = holds_what_was_built(&mut file, Digest::of(b"other bytes"), 1024).unwrap_err();
+        fs::write(scratch.path.join("stock.csv"), b"the old bytes").unwrap();
+        let target = scratch.file("stock.csv");
+        let mut temporary = target.create_temporary().unwrap();
+        // Made for the engine's user alone, before anything is written.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let made: Vec<String> = scratch
+                .names()
+                .into_iter()
+                .filter(|name| name != "stock.csv")
+                .collect();
+            let [made] = made.as_slice() else {
+                panic!("{made:?}");
+            };
+            let mode = fs::metadata(scratch.path.join(made))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0);
+        }
+        temporary.write(b"the new bytes").unwrap();
+        assert!(
+            holds_what_was_built(&mut temporary, Digest::of(b"the new bytes"), 1024).is_ok()
+        );
+        let other =
+            holds_what_was_built(&mut temporary, Digest::of(b"other bytes"), 1024).unwrap_err();
         assert_eq!(other.sent, Sent::NotSent);
         // More than may be read back is not what was built.
-        assert!(holds_what_was_built(&mut file, Digest::of(b"the new bytes"), 4).is_err());
-        drop(file);
-        Made::of(&File::open(&path).unwrap(), path.clone()).remove();
+        assert!(holds_what_was_built(&mut temporary, Digest::of(b"the new bytes"), 4).is_err());
+        // Unused, it is removed, and the old file is as it was.
+        drop(temporary);
+        assert_eq!(scratch.names(), ["stock.csv"]);
+        assert_eq!(
+            fs::read(scratch.path.join("stock.csv")).unwrap(),
+            b"the old bytes"
+        );
     }
 
     #[test]

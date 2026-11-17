@@ -182,3 +182,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0176 | [The action registry takes up the kernel's second pass](0176-the-action-registry-takes-up-the-kernels-second-pass.md) | Accepted (design decision) |
 | 0177 | [A target's offline tests run against a replay of their fixtures](0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md) | Accepted (design decision) |
 | 0179 | [What each pack drafts, so that a scout ends with reads that work](0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md) | Accepted (design decision) |
+| 0183 | [The web pack drafts a read of each table a snapshot names](0183-the-web-pack-drafts-a-read-of-each-table-a-snapshot-names.md) | Accepted (design decision) |
+| 0186 | [The release workflow builds, checks, and publishes the npm packages](0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md) | Accepted (design decision) |
