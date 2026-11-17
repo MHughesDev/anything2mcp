@@ -41,6 +41,9 @@ pub const PERSON_NEEDED: FailureCode = FailureCode::fixed("person_needed");
 /// `input`.
 pub const CLIENT_ACTION: FailureCode = FailureCode::fixed("client_action");
 
+/// A step may take longer than a job's lease lasts. Class `busy`.
+pub const LEASE_TOO_SHORT: FailureCode = FailureCode::fixed("lease_too_short");
+
 pub(crate) fn input(
     code: FailureCode,
     message: impl Into<String>,

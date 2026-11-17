@@ -585,7 +585,29 @@ impl Kernel {
                     in_doubt: may_have_written(class) || control.in_doubt().await,
                 }
             }
-            JobOutcome::LeaseEnding => JobEnd::LeaseEnding,
+            JobOutcome::LeaseEnding => {
+                // The engine gave the job back with most of a full lease
+                // left and nobody told it to pause: its next commit point
+                // needs more time than a lease lasts, and handing the job
+                // out again would end the same way for ever.
+                let asked_to_stop = job.lease.directive() != Directive::Continue;
+                if !asked_to_stop && job.lease.leaves(lease.length / 2) {
+                    let failure = codes::busy(
+                        codes::LEASE_TOO_SHORT,
+                        "A step of this tool may take longer than a job's lease lasts, so it was not started.",
+                        "Raise `runners.lease_seconds` above the tool's longest step time limits, then resume the run.",
+                    );
+                    let (class, code) = (failure.class(), failure.code().clone());
+                    control.apply(RunState::Stopped, Some(failure)).await?;
+                    JobEnd::Stopped {
+                        class,
+                        code,
+                        in_doubt: control.in_doubt().await,
+                    }
+                } else {
+                    JobEnd::LeaseEnding
+                }
+            }
             // A reconcile or a second look ended: the run's state stays.
             JobOutcome::Settled { .. } => JobEnd::Done,
             JobOutcome::Left(failure) => JobEnd::Stopped {

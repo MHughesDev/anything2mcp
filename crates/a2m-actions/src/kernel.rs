@@ -842,6 +842,10 @@ impl Kernel {
     }
 }
 
+/// The shortest lease the in-process runner works under: three of the
+/// engine's default step limits and a heartbeat.
+const IN_PROCESS_LEASE_FLOOR: std::time::Duration = std::time::Duration::from_secs(100);
+
 fn seconds(count: i64) -> std::time::Duration {
     std::time::Duration::from_secs(u64::try_from(count).unwrap_or(0))
 }
@@ -854,6 +858,12 @@ fn sched_settings(settings: &Settings) -> SchedSettings {
     if let Some(lease) = settings.int("runners.lease_seconds") {
         out.lease_length = seconds(lease);
     }
+    // The engine sends a committing step only when the lease leaves time
+    // for the whole binding: its act, its confirm, and its read-back. A
+    // lease shorter than that would hand the job out for ever. In one
+    // process a lost runner is a lost process, found at the next start, so
+    // a longer lease costs nothing: the setting is a floor here.
+    out.lease_length = out.lease_length.max(IN_PROCESS_LEASE_FLOOR);
     if let Some(heartbeat) = settings.int("runners.heartbeat_seconds") {
         out.heartbeat_interval = seconds(heartbeat);
     }
