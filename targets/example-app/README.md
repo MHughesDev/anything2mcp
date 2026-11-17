@@ -20,6 +20,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `GET /api/orders`, `GET /api/orders/{order}` | The same, as JSON |
 | `GET`, `PUT /api/orders/{order}/items/{item}` | Read, or create or update, one line item |
 | `GET /api/orders/{order}/totals` | Totals for an order. Slow on purpose: case 4 |
+| `/orders/{order}/totals` | A page whose own script reads the order's totals from `GET /api/orders/{order}/totals` as it loads, with a made-up anti-forgery header and cookie, and shows the total quantity labelled by its term; it says `Loaded.` once the answer is shown |
 | `GET /api/stock/{item}` | Stock for an item. Every third call since the last reset fails with 503: case 4 |
 | `/orders/{order}/delivery` | Case 33: the order's delivery details on a page of the browser's own controls: a select, a check box, a radio group, a date field, and a text area. Save stays disabled until the date is valid, and asks for confirmation in a native dialog before it saves through the JSON interface |
 | `GET`, `PUT /api/orders/{order}/delivery` | Read or update the delivery details. Every field and the version are required |
@@ -93,6 +94,7 @@ Under `/__control`. It exists only in this application, and no fault ever applie
 | `POST /__control/auth/sessions/expire`, `.../revoke` | End every usable session, as timed out or as ended by an administrator (case 14) |
 | `POST /__control/auth/revoke` | Revoke `bearer_token` or `api_key` until a reset |
 | `GET /__control/traps` | How many writes each trap page caused, by name |
+| `GET /__control/seen` | The method and path, without the query, of every request the application received outside the control interface since the last reset, oldest first and at most 10,000, so a test can show that a refused value sent none |
 
 A fault is a delay, a status, "lost after commit", "redirect after commit", or "changed shape", for the next request, a number of requests, or until cleared, on every path or on paths with a given start. "Lost after commit" (case 17) carries a request out, so its write is stored, then closes the connection without any answer; it applies only to methods other than `GET` and `HEAD`, so a read does not use it up, and it needs the application served by `example_app::serve` or the harness. "Changed shape" (case 31) renames one field wherever it appears in a JSON answer. "Redirect after commit" carries a request that may write out, so its write is stored, then answers `303 See Other` with the `Location` the fault gives, in place of the application's own answer: a write that was made and whose answer is not the application's verdict.
 

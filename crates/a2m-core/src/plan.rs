@@ -1372,6 +1372,15 @@ impl Plan {
                             "has a binding whose only evidence is an acknowledgement and is not irreversible",
                         );
                     }
+                    // A record found by its key and read back by the
+                    // binding is verified by that read, never ended on the
+                    // answer alone (decision 0193).
+                    if !acknowledgement_may_stand(operation.identity.strategy, &binding.read_back) {
+                        return unsafe_plan(
+                            position,
+                            "has a binding that reads its record back by its key and ends it on an acknowledgement",
+                        );
+                    }
                 } else if needs_read_back && binding.read_back.is_empty() {
                     return unsafe_plan(position, "writes and has a binding with no read-back");
                 }
@@ -1504,6 +1513,18 @@ impl Plan {
             self.header.target, self.header.version, self.header.format, encoded.hash
         ))
     }
+}
+
+/// Whether a binding whose evidence is `acknowledged` may end its record on
+/// the system's answer alone: only where the record cannot be read back by
+/// a key. That is a record of identity `none`, or one whose binding has no
+/// read-back step, such as a queue take, whose message is gone once it is
+/// acknowledged. A record found by its key that the binding reads back is
+/// verified by that read (spec section 208; decision 0193). The compiler
+/// and the plan's check ask this one question.
+#[must_use]
+pub fn acknowledgement_may_stand(strategy: IdentityStrategy, read_back: &[Step]) -> bool {
+    strategy == IdentityStrategy::None || read_back.is_empty()
 }
 
 #[cfg(test)]
@@ -2182,6 +2203,44 @@ mod tests {
         plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
         plan.operations[0].bindings[0].read_back.clear();
         plan.encode().unwrap();
+    }
+
+    /// Decision 0193, finding F-1: a record found by its key that its
+    /// binding reads back is never ended on the acknowledgement alone,
+    /// irreversible or not.
+    #[test]
+    fn a_keyed_record_its_binding_reads_back_is_not_ended_on_an_acknowledgement() {
+        let mut plan = sample();
+        plan.operations[0].effect = EffectClass::Irreversible;
+        plan.pipelines[0].effect = EffectClass::Irreversible;
+        plan.operations[0].bindings[0].evidence = WriteEvidence::Acknowledged;
+        assert!(!plan.operations[0].bindings[0].read_back.is_empty());
+        let failure = plan.encode().unwrap_err();
+        assert_eq!(failure.code(), &FailureCode::PLAN_UNREADABLE);
+        assert!(
+            failure
+                .message()
+                .contains("reads its record back by its key"),
+            "{failure}"
+        );
+        // With no key there is nothing to read it back by.
+        let mut keyless = plan.clone();
+        keyless.operations[0].identity = IdentityPlan {
+            strategy: IdentityStrategy::None,
+            key: Vec::new(),
+        };
+        keyless.encode().unwrap();
+        // With no read-back step, the answer is the only evidence there is.
+        plan.operations[0].bindings[0].read_back.clear();
+        plan.encode().unwrap();
+        assert!(super::acknowledgement_may_stand(
+            IdentityStrategy::None,
+            &sample().operations[0].bindings[0].read_back
+        ));
+        assert!(!super::acknowledgement_may_stand(
+            IdentityStrategy::Natural,
+            &sample().operations[0].bindings[0].read_back
+        ));
     }
 
     #[test]

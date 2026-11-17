@@ -1227,3 +1227,160 @@ async fn two_jobs_that_write_on_one_surface_hold_it_one_after_the_other() {
         .unwrap();
     assert_eq!(stand.claim_one(one).await.job, second_job);
 }
+
+/// Runs a reconcile loop for `seconds` of the stand's clock, in steps of
+/// `step` seconds: whenever a job of the run is handed out, it ends at once
+/// as `Stopped` with `class` and the record still in doubt, as a reconcile
+/// that cannot settle it does. The number of jobs handed out.
+async fn attempts(
+    stand: &Stand,
+    runner: a2m_core::RunnerId,
+    class: FailureClass,
+    seconds: u64,
+    step: u64,
+) -> u32 {
+    let mut handed = 0;
+    let mut passed = 0;
+    while passed < seconds {
+        for lease in stand.claim(runner, 1).await {
+            assert_eq!(lease.requirements.kind, JobKind::Reconcile);
+            handed += 1;
+            stand
+                .sched
+                .finish(
+                    &lease.lease_ref(),
+                    JobEnd::Stopped {
+                        class,
+                        code: FailureCode::new("still_in_doubt").unwrap(),
+                        in_doubt: true,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        stand.advance(step);
+        passed += step;
+    }
+    handed
+}
+
+/// Decision 0193: the scheduler does not spin on a run that rests. A run
+/// stopped for a person is never queued again on its own; one that may be
+/// read again is, after a wait that doubles from five seconds to a ceiling
+/// of fifteen minutes, so a paused-clock minute sees four reconciles at
+/// most, and two hours some fifteen.
+#[tokio::test]
+async fn a_reconcile_queued_again_for_one_run_waits_longer_each_time_and_a_person_stop_waits_for_a_person()
+ {
+    for class in FailureClass::ALL.iter().copied() {
+        let stand = Stand::new("spin").await;
+        let one = stand.hello(1).await;
+        let (run, _job) = stand.admit(write(1, "w")).await;
+        let lease = stand.claim_one(one).await;
+        start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+        stand
+            .sched
+            .finish(
+                &lease.lease_ref(),
+                JobEnd::Stopped {
+                    class,
+                    code: FailureCode::new("first_stop").unwrap(),
+                    in_doubt: true,
+                },
+            )
+            .await
+            .unwrap();
+        let in_a_minute = attempts(&stand, one, class, 60, 1).await;
+        let pending = stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{run}' AND state = 'pending'"
+        ));
+        if matches!(
+            class,
+            FailureClass::PossibleCommit | FailureClass::Transient | FailureClass::Busy
+        ) {
+            // At 0, 5, 15, and 35 seconds; the next would be at 75.
+            assert_eq!(in_a_minute, 4, "{class}");
+            assert_eq!(pending, 1, "{class}");
+            let in_two_hours = attempts(&stand, one, class, 2 * 3600, 60).await;
+            assert!((8..=14).contains(&in_two_hours), "{class}: {in_two_hours}");
+        } else {
+            assert_eq!(
+                in_a_minute, 0,
+                "{class}: a stop for a person was queued again"
+            );
+            assert_eq!(pending, 0, "{class}");
+        }
+    }
+}
+
+/// Decision 0193: a named condition wakes a waiting reconcile early, a
+/// resume by a person or a settle time passing, and never before the end
+/// of a lost lease's quarantine.
+#[tokio::test]
+async fn a_waiting_reconcile_is_woken_by_a_resume_or_a_settle_time_and_never_inside_a_quarantine() {
+    let stand = Stand::new("wake").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    let stop = |lease: a2m_sched::LeaseRef| {
+        let sched = stand.sched.clone();
+        async move {
+            sched
+                .finish(
+                    &lease,
+                    JobEnd::Stopped {
+                        class: FailureClass::PossibleCommit,
+                        code: FailureCode::new("still_in_doubt").unwrap(),
+                        in_doubt: true,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    };
+    stop(lease.lease_ref()).await;
+    // The first reconcile, at once; the second waits five seconds, the
+    // third ten.
+    stop(stand.claim_one(one).await.lease_ref()).await;
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(5);
+    stop(stand.claim_one(one).await.lease_ref()).await;
+    assert!(stand.claim(one, 1).await.is_empty());
+
+    // A person resumes: the enqueue is refused, as the run has its job, and
+    // that job is handed out now.
+    let resumed = stand
+        .sched
+        .enqueue(Enqueue {
+            run,
+            job: requirements(true),
+            priority: Priority::Interactive,
+            health: HealthState::Ready,
+            queue_wait: None,
+        })
+        .await;
+    assert!(resumed.is_err());
+    let woken = stand.claim_one(one).await;
+    assert_eq!(woken.requirements.kind, JobKind::Reconcile);
+    stop(woken.lease_ref()).await;
+
+    // A settle time passing brings the next forward, never before now.
+    assert!(stand.claim(one, 1).await.is_empty());
+    let soon = stand.after(1);
+    assert!(stand.sched.wake_reconcile(run, soon).await.unwrap());
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(1);
+    let woken = stand.claim_one(one).await;
+    // A lost lease: its reconcile waits out the quarantine, whatever wakes it.
+    stand.advance(30 + 5);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert_eq!(swept.lost, vec![woken.job]);
+    assert_eq!(swept.reconcile.len(), 1);
+    assert!(!stand.sched.wake_reconcile(run, stand.now()).await.unwrap());
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(59);
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(1);
+    assert_eq!(stand.claim_one(one).await.job, swept.reconcile[0]);
+}

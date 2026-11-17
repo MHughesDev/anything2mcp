@@ -96,6 +96,10 @@ file_kind = "call"
 finding_kind = "stand_call"
 file_kind = "operation"
 
+[[failure_codes]]
+class = "unknown_variant"
+code = "stand_unexpected"
+
 [[settings]]
 key = "page_budget"
 type = "int"
@@ -113,12 +117,27 @@ struct StandPack {
     reached: Arc<Mutex<Vec<String>>>,
     behaviour: Arc<Mutex<Behaviour>>,
     postures: Arc<Mutex<Vec<a2m_provider::Posture>>>,
+    more: Arc<More>,
+}
+
+/// What the stand does beyond the stub, for the scout's tests: more calls
+/// found, an index that lists keys, a read by key that keeps the key it
+/// was asked, and a call that fails every third time it is made.
+#[derive(Default)]
+struct More {
+    /// The discoverer finds the index, the read by key, and the flaky call.
+    found: std::sync::atomic::AtomicBool,
+    /// How many times the flaky call was made.
+    flaky: std::sync::atomic::AtomicU32,
+    /// The key each read by key was asked for.
+    keys: Mutex<Vec<String>>,
 }
 
 /// The stand's driver, with the posture each preparation was handed kept.
 struct Postured {
     inner: StubDriver,
     postures: Arc<Mutex<Vec<a2m_provider::Posture>>>,
+    more: Arc<More>,
 }
 
 impl a2m_provider::Driver for Postured {
@@ -137,7 +156,52 @@ impl a2m_provider::Driver for Postured {
         step: &'a a2m_core::Step,
         input: &'a a2m_provider::StepInput<'a>,
     ) -> BoxFuture<'a, Result<a2m_provider::StepOutcome, a2m_provider::StepFailure>> {
-        self.inner.act(prepared, step, input)
+        use std::sync::atomic::Ordering;
+        let entry = step.refers_to.as_ref().map(|to| to.entry.as_str());
+        let seen = |values: a2m_core::Values| {
+            Ok(a2m_provider::StepOutcome::Done(a2m_provider::Observed {
+                values,
+                ..a2m_provider::Observed::default()
+            }))
+        };
+        match entry {
+            Some("order_index") => Box::pin(async move {
+                seen(a2m_core::Values::new().with(
+                    "order_id",
+                    a2m_core::Value::List(vec![
+                        a2m_core::Value::Text("A-7".to_owned()),
+                        a2m_core::Value::Text("A-8".to_owned()),
+                    ]),
+                ))
+            }),
+            Some("order_by_key") => {
+                let asked = input
+                    .args
+                    .get("order_id")
+                    .and_then(|value| match value {
+                        a2m_core::Value::Text(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                self.more.keys.lock().unwrap().push(asked);
+                Box::pin(async move { seen(a2m_core::Values::new().with("note", "Kept by key")) })
+            }
+            Some("order_flaky") => {
+                let made = self.more.flaky.fetch_add(1, Ordering::SeqCst) + 1;
+                Box::pin(async move {
+                    if made % 3 == 0 {
+                        return Err(a2m_provider::StepFailure::not_sent(Failure::new(
+                            a2m_core::FailureClass::UnknownVariant,
+                            a2m_core::FailureCode::fixed("stand_unexpected"),
+                            "The stand answered what no rule covers.",
+                            "Try again.",
+                        )));
+                    }
+                    seen(a2m_core::Values::new().with("note", "Kept, this time"))
+                })
+            }
+            _ => self.inner.act(prepared, step, input),
+        }
     }
 
     fn health(&self, surface: &a2m_provider::SurfaceRef) -> a2m_provider::DriverHealth {
@@ -156,7 +220,7 @@ impl a2m_provider::Driver for Postured {
 /// The stand's discoverer: it tries to send a step that saves, which the
 /// sandbox refuses unsent, reads once, and finds one call that reads, as a
 /// discoverer of a live system would.
-struct CallsDiscoverer;
+struct CallsDiscoverer(Arc<More>);
 
 fn stand_step(kind: &str, commits: bool) -> a2m_core::Step {
     a2m_core::Step {
@@ -244,6 +308,37 @@ impl a2m_provider::Discoverer for CallsDiscoverer {
                 .build()
                 .unwrap(),
             )?;
+            if self.0.found.load(std::sync::atomic::Ordering::SeqCst) {
+                for found in [
+                    "order_index /index read list:order_id",
+                    "order_by_key /orders/{order_id} read key:order_id",
+                    "order_flaky /flaky read",
+                ] {
+                    out.found(
+                        a2m_core::Finding::about(
+                            a2m_core::Subject::Address(
+                                a2m_core::Address::new(
+                                    "https://test.example.com",
+                                    found.split_whitespace().nth(1).unwrap(),
+                                )
+                                .unwrap(),
+                            ),
+                            a2m_core::FindingKind::new("stand_call").unwrap(),
+                            found,
+                            a2m_core::Source::LiveSystem,
+                            a2m_core::ProducedBy {
+                                provider: "stand".to_owned(),
+                                version: "0.1.0".to_owned(),
+                                component: None,
+                            },
+                            Timestamp::from_unix_millis(1_800_000_000_000),
+                        )
+                        .level(a2m_core::EvidenceLevel::Discovered)
+                        .build()
+                        .unwrap(),
+                    )?;
+                }
+            }
             Ok(a2m_provider::DiscoveryReport::default())
         })
     }
@@ -288,20 +383,46 @@ impl a2m_files::DraftingRule for OperationFromCall {
         else {
             return Ok(Vec::new());
         };
+        // A fourth word `list:<output>` makes that output a list; `key:<input>`
+        // makes the read take that key, with no example of it.
+        let (mut inputs, mut outputs, mut key) = (Vec::new(), Vec::new(), None);
+        match parts.get(3).and_then(|word| word.split_once(':')) {
+            Some(("list", output)) => outputs.push((
+                output,
+                DraftValue::map(vec![
+                    ("type", DraftValue::text("text")),
+                    ("list", DraftValue::Bool(true)),
+                ]),
+            )),
+            Some(("key", input)) => {
+                inputs.push((
+                    input,
+                    DraftValue::map(vec![("type", DraftValue::text("text"))]),
+                ));
+                key = Some(input);
+                outputs.push((
+                    "note",
+                    DraftValue::map(vec![("type", DraftValue::text("note"))]),
+                ));
+            }
+            _ => outputs.push((
+                "note",
+                DraftValue::map(vec![("type", DraftValue::text("note"))]),
+            )),
+        }
+        let mut body = vec![
+            ("operation", DraftValue::text(&format!("{target}_{name}"))),
+            ("title", DraftValue::text(name)),
+            ("effect", DraftValue::text("read")),
+        ];
+        if let Some(key) = key {
+            body.push(("key", DraftValue::text(key)));
+        }
         Ok(vec![a2m_files::DraftDoc {
             path: a2m_files::RelPath::new(&format!("operations/{name}.yaml"))?,
-            body: DraftValue::map(vec![
-                ("operation", DraftValue::text(&format!("{target}_{name}"))),
-                ("title", DraftValue::text(name)),
-                ("effect", DraftValue::text("read")),
-                ("inputs", DraftValue::Map(Vec::new())),
-                (
-                    "outputs",
-                    DraftValue::map(vec![(
-                        "note",
-                        DraftValue::map(vec![("type", DraftValue::text("note"))]),
-                    )]),
-                ),
+            body: DraftValue::map(body.into_iter().chain(vec![
+                ("inputs", DraftValue::Map(inputs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())),
+                ("outputs", DraftValue::Map(outputs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())),
                 (
                     "bindings",
                     DraftValue::List(vec![DraftValue::map(vec![
@@ -310,8 +431,11 @@ impl a2m_files::DraftingRule for OperationFromCall {
                         ("call", DraftValue::text(name)),
                     ])]),
                 ),
-                ("description", DraftValue::text("Drafted from a finding.")),
-            ]),
+                (
+                    "description",
+                    DraftValue::text(&format!("Reads what the call `{name}` answers; drafted from a finding.")),
+                ),
+            ]).collect()),
         }])
     }
 }
@@ -330,9 +454,13 @@ impl Pack for StandPack {
                     behaviour: Arc::clone(&self.behaviour),
                 },
                 postures: Arc::clone(&self.postures),
+                more: Arc::clone(&self.more),
             }),
         )?;
-        to.discoverer(Arc::new(CallsDiscoverer), Arc::new(Plain))?;
+        to.discoverer(
+            Arc::new(CallsDiscoverer(Arc::clone(&self.more))),
+            Arc::new(Plain),
+        )?;
         to.compiler(
             CompilerRegistrations::new()
                 .surface_kind(testing::surface_kind_spec())
@@ -434,6 +562,8 @@ fn repository() -> PathBuf {
 }
 
 struct World {
+    /// What the stand does beyond the stub.
+    more: Arc<More>,
     /// Every step that reached the stand's driver.
     reached: Arc<Mutex<Vec<String>>>,
     /// The posture each preparation of the stand's driver was handed.
@@ -502,10 +632,12 @@ impl World {
         let reached = Arc::new(Mutex::new(Vec::new()));
         let behaviour = Arc::new(Mutex::new(Behaviour::Done));
         let postures = Arc::new(Mutex::new(Vec::new()));
+        let more = Arc::new(More::default());
         builder.add_pack(&StandPack {
             reached: Arc::clone(&reached),
             behaviour: Arc::clone(&behaviour),
             postures: Arc::clone(&postures),
+            more: Arc::clone(&more),
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
@@ -534,6 +666,7 @@ impl World {
                 .is_err()
         );
         Self {
+            more,
             reached,
             postures,
             behaviour,
@@ -547,8 +680,14 @@ impl World {
     }
 
     async fn call(&self, caller: &Caller, action: &str, input: Json) -> Response {
+        self.call_in(caller, action, input, self.project.path())
+            .await
+    }
+
+    /// The same, made in another project folder.
+    async fn call_in(&self, caller: &Caller, action: &str, input: Json, project: &Path) -> Response {
         self.kernel
-            .dispatch(Request::new(action, input, caller.clone()).in_project(self.project.path()))
+            .dispatch(Request::new(action, input, caller.clone()).in_project(project))
             .await
     }
 }
@@ -1664,5 +1803,153 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
             .contains("declares no surface"),
         "{blank}"
     );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Every file under `folder`, with its text.
+fn texts_under(folder: &Path) -> Vec<(PathBuf, String)> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(texts_under(&path));
+        } else {
+            found.push((path.clone(), std::fs::read_to_string(&path).unwrap_or_default()));
+        }
+    }
+    found
+}
+
+/// The scout's try stage, made with the stand's index, read by key, and
+/// flaky call (decision 0189, points 2, 3, and 5). Each trial is submitted
+/// once and found again by a continuation; a call of the scout never
+/// returns with a trial it started still in hand, so an engine that ends
+/// with its command leaves none behind; a trial that fails ends its read's
+/// tries, and the read is tried and not proven, by name; the stage ends;
+/// the read by key, which states no example, is tried with the first key
+/// the index answered, and that key is in no report and no draft; two
+/// scouts give one report.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() {
+    use std::sync::atomic::Ordering;
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    world.more.found.store(true, Ordering::SeqCst);
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
+    let unfinished = || async {
+        let listed = world
+            .call(
+                &agent,
+                "run.list",
+                json!({"state": ["queued", "validating", "running"], "limit": 100}),
+            )
+            .await;
+        listed.result.unwrap()["runs"].as_array().unwrap().len()
+    };
+
+    // With no wait, each call makes one new trial at least, waits for it
+    // to its end, and returns; nothing it started is left in hand.
+    let first = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "wait_seconds": 0}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(first["state"], "working", "{first}");
+    assert_eq!(first["stage"], "try", "{first}");
+    assert_eq!(unfinished().await, 0);
+    let second = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "wait_seconds": 0}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(second["scout_id"], first["scout_id"], "{second}");
+    assert_eq!(unfinished().await, 0);
+    let report = world
+        .call(&agent, "scout.run", json!({"target": "example"}))
+        .await;
+    assert!(report.ok, "{:?}", report.error);
+    let report = report.result.unwrap();
+    assert!(report["report_hash"].is_string(), "{report}");
+    let tools = report["content"]["tried"]["tools"].as_array().unwrap();
+    let of = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["tool"] == name)
+            .unwrap_or_else(|| panic!("{name} in {report}"))
+            .clone()
+    };
+    for name in ["example_order_list", "example_order_index"] {
+        assert_eq!(of(name)["state"], "proven", "{report}");
+    }
+    // The read by key: tried with the index's first key, and proven; the
+    // report says where its input came from, and not what it was.
+    let by_key = of("example_order_by_key");
+    assert_eq!(by_key["state"], "proven", "{by_key}");
+    assert_eq!(by_key["level"], "executed");
+    assert_eq!(
+        by_key["input_from"],
+        json!({"list": "example_order_index", "output": "order_id"})
+    );
+    assert_eq!(*world.more.keys.lock().unwrap(), vec!["A-7"; 5]);
+    // The flaky call: two completed, the third failed by name, and no try
+    // after it.
+    let flaky = of("example_order_flaky");
+    assert_eq!(flaky["state"], "failed", "{flaky}");
+    assert_eq!((flaky["tries"].clone(), flaky["completed"].clone()), (json!(3), json!(2)));
+    assert_eq!(flaky["failure"]["code"], "stand_unexpected", "{flaky}");
+    // Each trial was submitted once, whatever call made it.
+    for (tool, count) in [
+        ("example_order_list", 5),
+        ("example_order_index", 5),
+        ("example_order_by_key", 5),
+        ("example_order_flaky", 3),
+    ] {
+        let listed = world
+            .call(&agent, "run.list", json!({"tool": tool, "limit": 100}))
+            .await
+            .result
+            .unwrap();
+        assert_eq!(listed["runs"].as_array().unwrap().len(), count, "{tool}");
+    }
+    // The key is in no report, no draft, and no open question.
+    assert!(!report.to_string().contains("A-7"), "{report}");
+    for (path, text) in texts_under(&target_dir) {
+        assert!(!text.contains("A-7"), "{}", path.display());
+    }
+    let open = world
+        .call(&agent, "unknown.list", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert!(!open.to_string().contains("A-7"));
+    // A second scout of the same stand in the same state: the same report.
+    let again = world
+        .call(
+            &agent,
+            "scout.run",
+            json!({"target": "example", "fresh": true}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_ne!(again["scout_id"], report["scout_id"]);
+    assert_eq!(again["report_hash"], report["report_hash"], "{again}");
+    // Nothing that saves reached the stand.
+    let reached = world.reached.lock().unwrap().clone();
+    assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
     world.kernel.close(CloseReason::Asked).await;
 }

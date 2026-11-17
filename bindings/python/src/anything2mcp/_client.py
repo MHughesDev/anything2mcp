@@ -11,6 +11,7 @@ import http.client
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 
 from . import _channel
 from ._actions import Actions
+from ._binary import binary_path
 from ._channel import ChannelError
 
 #: The local API version this client speaks; the engine refuses another.
@@ -266,37 +268,113 @@ class Client(Actions):
         self.close()
 
 
+#: How long a client waits for the program it runs to start the engine:
+#: the program waits up to 30 seconds for the engine to answer its hello,
+#: as the command line does, and this is that patience with a margin.
+START_PATIENCE = 60.0
+
+
+def _start_engine(
+    environment: Mapping[str, str],
+    project: Optional[Union[str, Path]],
+    binary: Optional[Union[str, Path]],
+) -> None:
+    """Runs the installed program's ``engine start``, which starts the
+    engine on demand as the command line does and waits for its hello.
+    The client starts nothing itself."""
+    program = Path(binary) if binary is not None else binary_path()
+    if program is None:
+        raise ChannelError(
+            "engine_unreachable",
+            "No engine is running, and the `anything2mcp` program this package installs was not found to start one.",
+            "Start one with `anything2mcp serve`, or install the package again so that its program is installed with it.",
+        )
+    args = [str(program), "engine", "start", "--json"]
+    if project is not None:
+        args += ["--project", str(Path(project).resolve())]
+    try:
+        ran = subprocess.run(
+            args,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=START_PATIENCE,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ChannelError(
+            "engine_unreachable",
+            "No engine is running, and the `anything2mcp` program could not be run to start one.",
+            "Start one with `anything2mcp serve`.",
+        ) from None
+    if ran.returncode == 0:
+        return
+    # The program's own failure, as it wrote it: why no engine was started.
+    try:
+        said = json.loads(ran.stdout)
+    except ValueError:
+        said = None
+    error = said.get("error") if isinstance(said, dict) else None
+    if not isinstance(error, dict):
+        error = {}
+    raise ChannelError(
+        str(error.get("code") or "engine_unreachable"),
+        str(error.get("message") or "No engine is running, and none was started."),
+        str(error.get("fix") or "Start one with `anything2mcp serve`."),
+    )
+
+
+def _open(environment: Mapping[str, str], timeout: Optional[float]) -> http.client.HTTPConnection:
+    """Opens the channel to the engine, or raises ``engine_unreachable``."""
+    if sys.platform.startswith("win"):
+        # A named pipe, checked by its server's user; see ``_winpipe``.
+        from . import _winpipe
+
+        return _winpipe.connect_connection(environment, timeout)
+    path = _channel.socket_path(environment)
+    _channel.check_owner(path)
+    connection = _channel.UnixConnection(path, timeout=timeout)
+    try:
+        connection.connect()
+    except OSError:
+        connection.close()
+        raise ChannelError(
+            "engine_unreachable",
+            "No engine is running.",
+            "Start one with `anything2mcp serve`, or run any `anything2mcp` command.",
+        ) from None
+    return connection
+
+
 def connect(
     *,
     project: Optional[Union[str, Path]] = None,
     name: str = "python",
     timeout: Optional[float] = 660.0,
     env: Optional[Mapping[str, str]] = None,
+    start: bool = True,
+    binary: Optional[Union[str, Path]] = None,
 ) -> Client:
-    """Connects to the local engine that runs as this user. It starts
-    nothing: when no engine answers it raises :class:`ChannelError` with
+    """Connects to the local engine that runs as this user. When none
+    answers, it runs the installed program's ``anything2mcp engine start``,
+    which starts one as any command does, waits for it to answer, and
+    connects to it; the client starts nothing by itself. With
+    ``start=False`` it starts nothing and raises :class:`ChannelError` with
     the code ``engine_unreachable``. ``project`` is the folder the engine
     reads target files from; ``name`` is how this program names itself in
-    the engine's audit log."""
-    environment = os.environ if env is None else env
-    if sys.platform.startswith("win"):
-        # A named pipe, checked by its server's user; see ``_winpipe``.
-        from . import _winpipe
-
-        connection: http.client.HTTPConnection = _winpipe.connect_connection(environment, timeout)
-    else:
-        path = _channel.socket_path(env)
-        _channel.check_owner(path)
-        connection = _channel.UnixConnection(path, timeout=timeout)
-        try:
-            connection.connect()
-        except OSError:
-            connection.close()
-            raise ChannelError(
-                "engine_unreachable",
-                "No engine is running.",
-                "Start one with `anything2mcp serve`, or run any `anything2mcp` command.",
-            ) from None
+    the engine's audit log. ``env`` is the environment the engine is found
+    by, this process's when it is not given; the program that starts one
+    runs with this process's environment and ``env`` over it. ``binary``
+    names the program, which is otherwise the one this package installed."""
+    environment: Mapping[str, str] = os.environ if env is None else env
+    try:
+        connection = _open(environment, timeout)
+    except ChannelError as missing:
+        if not start or missing.code != "engine_unreachable":
+            raise
+        _start_engine({**os.environ, **environment}, project, binary)
+        connection = _open(environment, timeout)
     try:
         return Client(connection, name=name, project=project)
     except (OSError, http.client.HTTPException) as lost:

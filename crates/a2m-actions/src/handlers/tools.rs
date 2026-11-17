@@ -1718,6 +1718,24 @@ pub(crate) async fn submit_trial(
     input: &Values,
     environment: Environment,
 ) -> Result<RunId, Failure> {
+    // A trial is another run than a call of the same input.
+    let mut hasher = FieldHasher::new();
+    hasher.field("purpose", b"anything2mcp draft try 1");
+    hasher.field("input", input.digest().to_string().as_bytes());
+    submit_trial_as(kernel, call, found, input, environment, hasher.finish()).await
+}
+
+/// The same, with the digest that makes the trial the run it is (ledger
+/// rule 6): the scout's trials name their scout and their place in it, so
+/// that each is submitted once and found again by it.
+pub(crate) async fn submit_trial_as(
+    kernel: &Kernel,
+    call: &Call,
+    found: &FoundTool,
+    input: &Values,
+    environment: Environment,
+    input_hash: a2m_core::Digest,
+) -> Result<RunId, Failure> {
     let (name, target, effect) = (
         found.tool.name.clone(),
         found.target.clone(),
@@ -1750,13 +1768,7 @@ pub(crate) async fn submit_trial(
         identity: (principal.principal.kind == PrincipalKind::Person)
             .then_some(Identity::Person(principal.principal.id)),
         effect,
-        input_hash: {
-            // A trial is another run than a call of the same input.
-            let mut hasher = FieldHasher::new();
-            hasher.field("purpose", b"anything2mcp draft try 1");
-            hasher.field("input", input.digest().to_string().as_bytes());
-            hasher.finish()
-        },
+        input_hash,
         input: Some(stored),
         retention: RetentionClass::Long,
     };

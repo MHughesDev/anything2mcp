@@ -31,9 +31,10 @@ use crate::run::{Candidate, Run};
 /// The name discovery is asked about at guard: the built-in tool.
 const DISCOVER_TOOL: &str = "a2m_discover";
 
-/// The port a discoverer is handed.
+/// The port a discoverer is handed: the surface's own driver, read only,
+/// or why there is none.
 struct Sandbox {
-    inner: Option<ReadOnlyPort>,
+    inner: Result<ReadOnlyPort, Failure>,
 }
 
 impl SandboxPort for Sandbox {
@@ -51,15 +52,10 @@ impl SandboxPort for Sandbox {
                     "Report this to the provider's author; a discoverer only reads.",
                 )));
             }
-            let Some(port) = &self.inner else {
-                return Err(StepFailure::not_sent(codes::fail(
-                    FailureClass::Busy,
-                    codes::NO_BINDING,
-                    "No driver is ready for the surface, so nothing on it can be observed.",
-                    "Enable a provider that drives a mode of the surface.",
-                )));
-            };
-            port.act(step, input).await
+            match &self.inner {
+                Ok(port) => port.act(step, input).await,
+                Err(why) => Err(StepFailure::not_sent(why.clone())),
+            }
         })
     }
 }
@@ -191,29 +187,35 @@ impl Engine {
             .await?;
         run.moved(RunState::Running).await?;
 
-        // The driver behind the port: that of the first binding in the plan
-        // that acts on this surface and whose driver the registry has. It
-        // is prepared in the `Discovery` posture.
-        let mut port = Sandbox { inner: None };
-        let binding = plan
-            .operations
-            .iter()
-            .flat_map(|operation| &operation.bindings)
-            .find(|binding| {
-                binding.surface.get() == surface_position && registry.driver(&binding.mode).is_ok()
-            });
+        // The driver behind the port is the surface's own: discovery is
+        // about a surface, not a binding, so a target that declares only
+        // its surface is observed all the same. It is prepared in the
+        // `Discovery` posture.
         let surface_ref = run.surface_at(SurfaceIndex::new(
             u32::try_from(surface_position).unwrap_or(u32::MAX),
         ))?;
-        if let Some(binding) = binding {
-            let handle = registry.driver(&binding.mode)?;
-            let candidate = Candidate {
-                binding: 0,
-                reason: ChoiceReason::FirstInOrder,
-                handle: handle.clone(),
-            };
-            let held = run.hold(&tool, binding, &candidate, false, false).await?;
-            port.inner = Some(ReadOnlyPort::new(handle, run.take(held)));
+        let mut port = Sandbox {
+            inner: Err(codes::fail(
+                FailureClass::Busy,
+                codes::NO_BINDING,
+                "No driver is ready for the surface, so nothing on it can be observed.",
+                "Enable a provider that drives a mode of the surface.",
+            )),
+        };
+        match surface_mode(registry, &surface.kind, archetype, &entry.provider) {
+            Ok((mode, handle)) => {
+                let candidate = Candidate {
+                    binding: 0,
+                    reason: ChoiceReason::FirstInOrder,
+                    handle: handle.clone(),
+                };
+                let at = SurfaceIndex::new(u32::try_from(surface_position).unwrap_or(u32::MAX));
+                let held = run
+                    .hold_on(&tool, &mode, at, &candidate, false, false)
+                    .await?;
+                port.inner = Ok(ReadOnlyPort::new(handle, run.take(held)));
+            }
+            Err(why) => port.inner = Err(why),
         }
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
@@ -289,10 +291,63 @@ impl Engine {
                 break;
             }
         }
-        if let Some(inner) = port.inner.take() {
+        if let Ok(inner) = port.inner {
             let (handle, prepared) = inner.into_parts();
             let _ = caught(handle.release(prepared, outcome.is_err())).await;
         }
         outcome
+    }
+}
+
+/// The mode a discovery of a surface is made through, and its driver: of
+/// the modes the provider that serves the surface's kind declares, those of
+/// the kind's archetype whose driver the registry can hand over; the one an
+/// operation would try first, by the `rank` its manifest declares. Two of
+/// one rank are a choice nothing states, and none is guessed (rule 7).
+fn surface_mode(
+    registry: &a2m_provider::Registry,
+    kind: &a2m_core::SurfaceKind,
+    archetype: a2m_core::Archetype,
+    provider: &a2m_provider::ProviderName,
+) -> Result<(a2m_core::Mode, a2m_provider::DriverHandle), Failure> {
+    let listing = registry
+        .listing()
+        .into_iter()
+        .find(|listing| &listing.name == provider);
+    let mut ready = Vec::new();
+    let mut refused = None;
+    for mode in listing
+        .iter()
+        .flat_map(|listing| listing.manifest.modes.iter())
+        .filter(|mode| mode.archetype == archetype)
+    {
+        match registry.driver(&mode.name) {
+            Ok(handle) => ready.push((mode.rank, mode.name.clone(), handle)),
+            Err(failure) => {
+                refused.get_or_insert(failure);
+            }
+        }
+    }
+    ready.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    match ready.as_slice() {
+        [] => Err(refused.unwrap_or_else(|| {
+            codes::fail(
+                FailureClass::Busy,
+                codes::NO_BINDING,
+                format!(
+                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its archetype, so nothing on the surface can be observed."
+                ),
+                "Enable a provider that drives a mode of the surface's kind.",
+            )
+        })),
+        [(first, ..), (second, ..), ..] if first == second => Err(codes::fail(
+            FailureClass::Busy,
+            codes::NO_BINDING,
+            format!(
+                "The provider `{provider}` drives more than one mode of the surface kind `{kind}` at the same rank, and nothing says which one observes it."
+            ),
+            "Give the modes different ranks in the provider's manifest.",
+        )),
+        [(_, mode, handle), ..] => Ok((mode.clone(), handle.clone())),
     }
 }

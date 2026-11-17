@@ -2,6 +2,7 @@
 //! and the SDK bridge use. It holds no engine logic: it finds the engine,
 //! checks that it belongs to this user, says hello, and carries requests.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ use tokio::sync::{Mutex, watch};
 
 use crate::channel::{
     CLIENT_LABEL_HEADER, CLIENT_VERSION_HEADER, ClientLabel, HELLO_PATH, LOCAL_API,
-    LOCAL_API_HEADER, OsUser, place,
+    LOCAL_API_HEADER, OsUser, place, variable_digests,
 };
 use crate::codes;
 use crate::os::{self, ConnectError};
@@ -169,8 +170,17 @@ impl Connector {
             .as_str()
             .and_then(|text| text.parse::<Version>().ok())
             .ok_or_else(not_an_engine)?;
+        // An engine that names none is told as one whose variables are not
+        // known, never as one that has none.
+        let start_variables = said["start_variables"].as_object().map(|named| {
+            named
+                .iter()
+                .filter_map(|(name, digest)| Some((name.clone(), digest.as_str()?.to_owned())))
+                .collect()
+        });
         Ok(Link {
             engine_version,
+            start_variables,
             ..link
         })
     }
@@ -208,6 +218,7 @@ impl Connector {
             sender: Mutex::new(sender),
             gone,
             engine_version: self.version,
+            start_variables: None,
         })
     }
 }
@@ -227,6 +238,9 @@ pub struct Link {
     /// Turns true when the connection has ended.
     gone: watch::Receiver<bool>,
     engine_version: Version,
+    /// The engine's start variables, by name and digest, as its hello
+    /// named them; `None` when it named none.
+    start_variables: Option<BTreeMap<String, String>>,
 }
 
 impl Link {
@@ -234,6 +248,28 @@ impl Link {
     #[must_use]
     pub const fn engine_version(&self) -> Version {
         self.engine_version
+    }
+
+    /// The names of the start variables whose values differ between the
+    /// engine that answered and `client`'s own: each set on one side only,
+    /// or set to another value, in order of name. `None` when the engine
+    /// named none in its hello, so nothing can be compared.
+    #[must_use]
+    pub fn start_variables_differing(
+        &self,
+        client: &BTreeMap<String, String>,
+    ) -> Option<Vec<String>> {
+        let engine = self.start_variables.as_ref()?;
+        let client = variable_digests(client);
+        let mut names: Vec<String> = engine
+            .keys()
+            .chain(client.keys())
+            .filter(|name| engine.get(*name) != client.get(*name))
+            .cloned()
+            .collect();
+        names.sort();
+        names.dedup();
+        Some(names)
     }
 
     /// Sends one request and returns the response as it arrives; the body

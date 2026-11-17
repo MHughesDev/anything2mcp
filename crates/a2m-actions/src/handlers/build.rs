@@ -351,7 +351,7 @@ handler!(
         let version = chosen_version(kernel, workspace, &target, call.text("version")).await?;
         let compiled = compiled_target(kernel, &call, &target, CompileMode::Publish, version)
             .await?
-            .map_err(Failure::from)?;
+            .map_err(|problems| crate::offline::publish_refusal(&target, problems))?;
         // A publish a person was shown on a page carries the hash of the
         // plan they read: drafts changed since are not published.
         if let Some(pinned) = call.text("plan_hash")

@@ -222,8 +222,14 @@ class ClientTests(unittest.TestCase):
             engine.stop()
 
     def test_no_engine_is_a_named_failure(self) -> None:
+        # Asked to start nothing, the client says so by name.
         with self.assertRaises(anything2mcp.ChannelError) as raised:
-            anything2mcp.connect(env=self.env)
+            anything2mcp.connect(env=self.env, start=False)
+        self.assertEqual(raised.exception.code, "engine_unreachable")
+        # Asked to start one with a program that cannot be run, the same.
+        missing = self.home / "no-such-program"
+        with self.assertRaises(anything2mcp.ChannelError) as raised:
+            anything2mcp.connect(env=self.env, binary=missing)
         self.assertEqual(raised.exception.code, "engine_unreachable")
 
     def test_a_socket_in_a_directory_others_can_change_is_not_trusted(self) -> None:
@@ -321,6 +327,37 @@ class RealEngineTests(unittest.TestCase):
             engine.wait(timeout=60)
             if engine.stderr is not None:
                 engine.stderr.close()
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_a_client_that_finds_no_engine_has_the_program_start_one_and_is_answered(self) -> None:
+        home = Path(tempfile.mkdtemp(prefix="a2m"))
+        env = {"A2M_HOME": str(home)}
+        try:
+            # Asked to start nothing, it starts nothing.
+            with self.assertRaises(anything2mcp.ChannelError) as raised:
+                anything2mcp.connect(env=env, start=False)
+            self.assertEqual(raised.exception.code, "engine_unreachable")
+            self.assertFalse((home / "run" / "engine.sock").exists())
+            # Otherwise the program starts one, as a command would, and the
+            # client is answered by it.
+            with anything2mcp.connect(env=env, name="tests", binary=BINARY) as client:
+                status = client.call("engine.status")
+                self.assertEqual(status.action, "engine.status")
+                self.assertEqual(status.exit_class, "succeeded", status.body)
+            # The engine runs on: a client that starts nothing reaches it.
+            with anything2mcp.connect(env=env, start=False) as again:
+                self.assertTrue(again.call("engine.status").ok)
+            log = (home / "data" / "logs" / "engine-output.log").read_text()
+            self.assertEqual(log.count("a client started the engine on demand"), 1, log)
+        finally:
+            subprocess.run(
+                [BINARY, "engine", "stop"],
+                env={**os.environ, **env},
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
             shutil.rmtree(home, ignore_errors=True)
 
 

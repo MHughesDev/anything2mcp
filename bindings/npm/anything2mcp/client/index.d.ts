@@ -72,6 +72,14 @@ export interface ConnectOptions {
   verifyPipeServer?: (socket: import("node:net").Socket) => Promise<boolean> | boolean;
   /** Windows only: the text of the user's security identifier, which the pipe's name carries. */
   sid?: string;
+  /**
+   * When no engine answers, run the program's `anything2mcp engine start`, which starts one as
+   * any command does, and connect to it. True by default; false starts nothing and rejects with
+   * `engine_unreachable`.
+   */
+  start?: boolean;
+  /** The program that starts the engine; the one the platform package installed by default. */
+  binary?: string;
 }
 
 /** A connection to the local engine. Close it when done. */
@@ -83,7 +91,10 @@ export declare class Client extends Actions {
   close(): void;
 }
 
-/** Connects to the local engine that runs as this user. Starts nothing. */
+/**
+ * Connects to the local engine that runs as this user. When none answers, the installed program
+ * starts one, unless `start` is false.
+ */
 export declare function connect(options?: ConnectOptions): Promise<Client>;
 
 /** Connects to a socket file or pipe name, runs `verify` on it if given, and says hello. */

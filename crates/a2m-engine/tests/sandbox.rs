@@ -78,6 +78,37 @@ async fn a_discoverer_runs_through_the_sandbox_and_its_findings_reach_control() 
     assert!(!asked.unwrap().writes);
 }
 
+/// A target whose operations have no binding yet, as a target that
+/// declares only its surface has none. Discovery is about the surface, and is made through the
+/// surface's own mode, the one its kind's provider ranks first; before, the
+/// port had no driver and every read answered `no_binding`.
+#[tokio::test]
+async fn a_surface_with_no_binding_is_observed_through_its_own_mode() {
+    let scene = Scene::new(ORDER_GET, |plan| {
+        for operation in &mut plan.operations {
+            operation.bindings.clear();
+        }
+    })
+    .await;
+    let outcome = scene.discover("app").await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let results = scene.discoverer.results.lock().unwrap().clone();
+    // The read went through the driver of `app_json`, ranked before
+    // `app_json_spare`, prepared for discovery.
+    assert!(
+        matches!(results[2], Ok(StepOutcome::Absent(_))),
+        "{results:?}"
+    );
+    assert_eq!(*scene.hooks.postures.lock().unwrap(), ["Discovery"]);
+    // The step that commits was refused all the same, and nothing was
+    // written.
+    assert_eq!(
+        results[0].as_ref().unwrap_err().failure.code().as_str(),
+        "sandbox_read_only"
+    );
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_discoverer_that_tries_to_write_is_stopped_and_nothing_is_stored() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;

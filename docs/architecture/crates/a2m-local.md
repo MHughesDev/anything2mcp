@@ -36,6 +36,9 @@ impl Channel {
     /// Refuses with busy / engine_running when another engine holds the lock.
     /// `version` is this program's, which the hello answers with.
     pub async fn bind(paths: &Paths, version: Version) -> Result<Channel, Failure>;
+    /// The hello also names these variables, each by its name and a digest, never the value
+    /// (decision 0192): a client tells whether its own settings variables differ.
+    pub fn with_start_variables(self, variables: &BTreeMap<String, String>) -> Channel;
     pub fn control(&self) -> ChannelControl;
     /// Serves the router the product crate composed: the REST router of a2m-api and
     /// the MCP endpoint of a2m-mcp. Every connection is checked before its first byte is read.
@@ -101,7 +104,8 @@ pub struct Launch {
 impl Launch { pub fn log_of(paths: &Paths) -> PathBuf; }   // `engine.log` in the log directory
 pub enum Started { Found(Link), Launched(Link), Refused(Failure) } // Refused: no process could be started
 impl Connector {
-    pub async fn connect_or_start(&self, paths: &Paths, start: &Launch, patience: Duration)
+    /// The `Launch` is owned by the blocking task that starts the engine (decision 0192).
+    pub async fn connect_or_start(&self, paths: &Paths, start: Launch, patience: Duration)
         -> Result<Started, Failure>;
 }
 pub const START_LOCK_NAME: &str; pub const STARTED_LINE: &str;
@@ -109,6 +113,9 @@ pub const ENGINE_LOG_NAME: &str;   // "engine-output.log", not telemetry's engin
 pub struct Link { /* an HTTP/1.1 connection over the channel; the engine's hello */ }
 impl Link {
     pub fn engine_version(&self) -> Version;
+    /// The names of the start variables that differ from `client`'s own; None when the
+    /// engine named none in its hello.
+    pub fn start_variables_differing(&self, client: &BTreeMap<String, String>) -> Option<Vec<String>>;
     /// transient / connection_lost only when the request was handed back unwritten;
     /// possible_commit / answer_lost once any of it may have reached the engine.
     pub async fn send(&self, req: http::Request<axum::body::Body>)
@@ -343,6 +350,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | A prompt ends with the approval window | Built: a prompt nobody answers is dismissed at the page's deadline and the run ends as declined; for polkit, the cancellation id of the check that was raised is the one cancelled |
 | The page shows the stored change as text | Built: the page shows the record's fields from what to what, and a value that holds markup and a place-holder of the page arrives as text |
 | A write that will not be read back says so before it is approved | Built: `a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_approved`: after the record's heading, "This write is accepted by the system, not read back. Nothing will read it back or compare it after it is sent." |
+| The page names the binding a write is bound to | Built ([decision 0192](../../decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md)): beside each record, the binding `PreviewRecord::bindings` names, by its mode, and what its evidence means for whether the write is read back; for a record whose binding is chosen later, `BINDING_LATER` and every binding it could take, and `MAY_NOT_BE_READ_BACK` in its own sentence (`a_record_whose_binding_is_chosen_later_shows_every_binding_it_could_take_and_what_each_means`) |
 | What is pressed on an act's page is what it showed | Built: `a_persons_act_whose_input_the_page_cannot_show_whole_is_not_carried_out_from_it`: a value cut to the page's length is said above the input, and a press raises no prompt and carries nothing out |
 | A client waits for no engine for ever | Built: `an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patience` and `an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_log` |
 | The started engine's output goes to no file but its own | Built, on macOS and Linux: `the_started_engines_output_is_not_written_through_a_link_and_is_kept_to_the_user`. On Windows the file takes its folder's access list |
@@ -383,4 +391,4 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 - How a drained engine is restarted by the newer client: the client starts the new one after the old has released the engine lock, most likely.
 - Whether the hardened Workstation service, under its own account, needs the access rule widened to name one other user, and how that is kept from becoming a hole.
 - Where `engine.logs` reads from when the engine is not running and logs are rotated. The started engine's output is its own file, `engine-output.log`, since [decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md); it is not rotated.
-- From the second safety review, not built ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)): on Windows the runtime directory that holds the locks is not checked and the output file has no access list of its own (S4); the start's short blocking calls run on an async thread (S5); an engine started on demand keeps the settings variables of the client that started it (S6).
+- From the second safety review ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)), built by [decision 0192](../../decisions/0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md): on Windows the runtime directory is refused when it is a link or another's and is given an access list naming only the user, which its lock files take, and the output file gets one of its own (S4; compiled and linted for Windows, not run); the start runs on a blocking thread that owns the `Launch` (S5); the hello names the engine's start variables by digest, so that a client whose own differ is told (S6).

@@ -233,6 +233,22 @@ impl Scheduler {
     /// already.
     pub async fn enqueue(&self, enqueue: Enqueue) -> Result<JobId, Failure> {
         let settings = self.inner.settings;
+        // Someone asks for the run now: a reconcile of it that waits out a
+        // growing wait is woken, in a transaction of its own, so that it
+        // stands even when this enqueue is refused because that reconcile
+        // is the run's one job (decision 0193).
+        let run = enqueue.run;
+        let woken = self
+            .inner
+            .store
+            .write(Durability::Synced, move |tx| {
+                let now = tx.now();
+                tables::wake_reconcile(tx, &settings, run, now)
+            })
+            .await?;
+        if woken {
+            self.changed();
+        }
         let job = self
             .inner
             .store
@@ -242,6 +258,30 @@ impl Scheduler {
             .await?;
         self.changed();
         Ok(job)
+    }
+
+    /// Brings a reconcile of the run that waits out its growing wait
+    /// forward to `at`: a named condition makes reading the system again
+    /// worth it before then, such as a settle time the engine reported
+    /// passing. Never before now, and never before the end of a quarantine
+    /// a lost lease began. True when a reconcile was brought forward.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the store.
+    pub async fn wake_reconcile(&self, run: RunId, at: Timestamp) -> Result<bool, Failure> {
+        let settings = self.inner.settings;
+        let woken = self
+            .inner
+            .store
+            .write(Durability::Synced, move |tx| {
+                tables::wake_reconcile(tx, &settings, run, at)
+            })
+            .await?;
+        if woken {
+            self.changed();
+        }
+        Ok(woken)
     }
 
     /// Cancels a run. A run no runner holds is cancelled at once. A run a

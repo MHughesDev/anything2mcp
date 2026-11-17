@@ -14,7 +14,7 @@ use std::time::Duration;
 use a2m_auth::SessionLease;
 use a2m_core::{
     Archetype, Digest, Environment, Epoch, Failure, FailureClass, FailureCode, Mode, Plan,
-    RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Values, Version,
+    RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Value, Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_telemetry::Acting;
@@ -154,7 +154,50 @@ pub struct Prepared {
     guard: Option<Guard>,
     /// What the record's earlier steps recorded, for the step being acted.
     recorded: Values,
+    /// Who answers whether another record holds a value, and the record
+    /// of the step being acted, for that step alone.
+    others: Option<(Arc<dyn OtherRecords>, Option<RecordRef>)>,
 }
+
+/// The engine's answer to a driver that asks whether another record holds
+/// a value it recorded ([`Prepared::recorded_elsewhere`]). It names the
+/// record and never gives back a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedElsewhere {
+    /// Another record of the operation holds the value under the name: the
+    /// run and the record. Never the record that asks.
+    Held(RecordRef),
+    /// No other record of the operation, in any run of the workspace, holds
+    /// it, as the ledger's stored values say.
+    NotHeld,
+    /// The engine cannot tell: it was not asked through a handle that
+    /// answers, the question was malformed, its time ran out, or a value it
+    /// would compare was masked. A driver treats this as "may be held".
+    CannotTell,
+}
+
+/// What answers [`Prepared::recorded_elsewhere`]: the engine, for one step
+/// of one record, from its `Control` (the action registry, from the
+/// ledger's stored values). It is bound to the workspace, the operation,
+/// and the record that asks, so the driver names only the value.
+pub trait OtherRecords: Send + Sync {
+    /// Whether any other record of the asking record's operation, in any
+    /// run of the workspace, holds a recorded value under `name` whose
+    /// [`recorded_digest`] is `value`. Compared by digest; the values are
+    /// never handed out.
+    fn holding<'a>(&'a self, name: &'a str, value: Digest) -> BoxFuture<'a, RecordedElsewhere>;
+}
+
+/// The digest a recorded value is compared by when a driver asks whether
+/// another record holds it: of the value's canonical bytes. The answerer
+/// digests each stored value the same way.
+#[must_use]
+pub fn recorded_digest(value: &Value) -> Digest {
+    Digest::of(&value.canonical_bytes())
+}
+
+/// The longest name a driver may ask about.
+const LONGEST_RECORDED_NAME: usize = 64;
 
 /// What the handle remembers of the context a `Prepared` was made in.
 #[derive(Debug, Clone, Copy)]
@@ -172,7 +215,63 @@ impl Prepared {
             state: Box::new(state),
             guard: None,
             recorded: Values::new(),
+            others: None,
         }
+    }
+
+    /// Asks the engine, within a step, whether any other record of this
+    /// operation, in any run of this workspace, holds `value` under `name`
+    /// among the values it recorded before its save: a message a take
+    /// already holds, a sequence another record recorded. Bounded: one
+    /// name of lowercase letters, digits, and underscores, at most 64
+    /// characters; one plain value, compared by its [`recorded_digest`];
+    /// an answer by `deadline`. The answer is [`RecordedElsewhere::CannotTell`]
+    /// outside `act`, through a handle the engine called without an
+    /// answerer ([`DriverHandle::act`], [`DriverHandle::act_recorded`]), for
+    /// a malformed name, a null, a list, a record, or a masked value, and
+    /// when the time runs out. A driver never takes it for "not held".
+    ///
+    /// The future holds nothing of the `Prepared`, so a driver may await it
+    /// while it holds its own state.
+    pub fn recorded_elsewhere(
+        &self,
+        name: &str,
+        value: &Value,
+        deadline: Deadline,
+    ) -> BoxFuture<'static, RecordedElsewhere> {
+        let named = !name.is_empty()
+            && name.len() <= LONGEST_RECORDED_NAME
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        let plain = match value {
+            Value::Null | Value::List(_) | Value::Record(_) => false,
+            Value::Text(text) => !text.contains(a2m_core::REDACTED),
+            _ => true,
+        };
+        let asked = match &self.others {
+            Some((others, asking)) if named && plain => Some((
+                Arc::clone(others),
+                *asking,
+                name.to_owned(),
+                recorded_digest(value),
+            )),
+            _ => None,
+        };
+        Box::pin(async move {
+            let Some((others, asking, name, digest)) = asked else {
+                return RecordedElsewhere::CannotTell;
+            };
+            match tokio::time::timeout_at(deadline.at(), others.holding(&name, digest)).await {
+                // The asking record is never "another" record.
+                Ok(RecordedElsewhere::Held(record)) if Some(record) == asking => {
+                    RecordedElsewhere::CannotTell
+                }
+                Ok(answer) => answer,
+                Err(_) => RecordedElsewhere::CannotTell,
+            }
+        })
     }
 
     /// What the earlier steps of the record this step belongs to returned
@@ -208,6 +307,7 @@ impl Prepared {
             state,
             guard,
             recorded: Values::new(),
+            others: None,
         })
     }
 }
@@ -677,6 +777,31 @@ impl DriverHandle {
         prepared.recorded = recorded.clone();
         let result = self.act_checked(prepared, step, input, authority).await;
         prepared.recorded = Values::new();
+        result
+    }
+
+    /// As [`DriverHandle::act_recorded`], with the engine's answerer for
+    /// the question whether another record holds a value, which the driver
+    /// asks through [`Prepared::recorded_elsewhere`] while it acts, for this
+    /// step and its record alone (decision 0193).
+    ///
+    /// # Errors
+    ///
+    /// As [`DriverHandle::act`].
+    pub async fn act_asking(
+        &self,
+        prepared: &mut Prepared,
+        step: &Step,
+        input: &StepInput<'_>,
+        authority: Authority<'_>,
+        recorded: &Values,
+        others: Arc<dyn OtherRecords>,
+    ) -> Result<StepOutcome, StepFailure> {
+        prepared.others = Some((others, input.record));
+        let result = self
+            .act_recorded(prepared, step, input, authority, recorded)
+            .await;
+        prepared.others = None;
         result
     }
 

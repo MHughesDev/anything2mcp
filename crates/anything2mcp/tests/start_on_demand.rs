@@ -439,3 +439,57 @@ async fn a_served_engine_never_resolves_a_root_against_the_project_that_started_
     }
     stop(&a).await;
 }
+
+/// A settings variable, as a client's environment holds it.
+const CAP: &str = "A2M_TOOLS__RESULT_CAP_BYTES";
+
+fn warnings_of(response: &Json) -> Vec<String> {
+    response["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|warning| warning.as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_whose_settings_variables_differ_from_the_engines_is_told_by_name() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let with_cap = |cap: Option<&str>| {
+        let mut command = starting(&machine, &READ);
+        command.env_remove(CAP);
+        if let Some(cap) = cap {
+            command.env(CAP, cap);
+        }
+        command
+    };
+    // The first starts the engine with its variable; it differs in nothing.
+    let first = output(with_cap(Some("2000000"))).await;
+    assert_read(&first, "Example Customer One");
+    assert!(warnings_of(&object(&first)).is_empty(), "{first:?}");
+    // A later client with another value, and one with none, are served by
+    // the same engine, with its settings, and told so by the variable's
+    // name, never its value. Nothing is started again.
+    for cap in [Some("3000000"), None] {
+        let later = output(with_cap(cap)).await;
+        assert_read(&later, "Example Customer One");
+        let warnings = warnings_of(&object(&later));
+        let told: Vec<&String> = warnings
+            .iter()
+            .filter(|warning| warning.starts_with("settings_differ: "))
+            .collect();
+        assert_eq!(told.len(), 1, "{warnings:?}");
+        assert!(told[0].contains(&format!("`{CAP}`")), "{told:?}");
+        assert!(!told[0].contains("000000"), "{told:?}");
+        assert!(
+            String::from_utf8_lossy(&later.stderr).contains("warning: settings_differ: "),
+            "{later:?}"
+        );
+    }
+    // The same value again: nothing differs.
+    let same = output(with_cap(Some("2000000"))).await;
+    assert!(warnings_of(&object(&same)).is_empty(), "{same:?}");
+    assert_eq!(started(&machine).len(), 1, "{}", log(&machine));
+    stop(&machine).await;
+}

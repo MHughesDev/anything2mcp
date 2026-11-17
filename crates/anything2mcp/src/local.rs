@@ -324,7 +324,11 @@ impl LocalEngine {
         prompt: Arc<dyn PresencePrompt>,
     ) -> Result<Self, Failure> {
         let settings = load_settings(&options)?;
-        let channel = Channel::bind(&options.paths, program_version()?).await?;
+        // The hello names the settings variables this engine was started
+        // with, so that a later client whose own differ is told so.
+        let channel = Channel::bind(&options.paths, program_version()?)
+            .await?
+            .with_start_variables(&crate::engine::settings_variables(&options.environment));
         // The caller of the channel is the user the operating system
         // reports, so that is the name the kernel is opened for.
         options.os_user = OsUser::current()?.as_str().to_owned();

@@ -365,6 +365,14 @@ impl Kernel {
             Some("solo" | "workstation" | "embedded") | None
         );
 
+        // What a scout's compare stage copied into the cache, left by an
+        // engine that stopped before it removed it: no scout runs before
+        // this one opens, so all of it goes (audit finding A5).
+        let scratch = prepared
+            .paths
+            .cache
+            .join(crate::handlers::SCOUT_SCRATCH);
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(scratch)).await;
         let signals = Arc::new(RunSignals::default());
         let acts = crate::acts::Acts::new();
         let mut installation = None;

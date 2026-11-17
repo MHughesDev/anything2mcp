@@ -36,6 +36,46 @@ use crate::packs;
 /// start and never shown.
 pub const PASSPHRASE_VARIABLE: &str = "A2M_VAULT_PASSPHRASE";
 
+/// The warning a client gives when the engine that answers it was started
+/// with other settings variables than its own (decision 0192).
+pub const SETTINGS_DIFFER: &str = "settings_differ";
+
+/// The settings variables of an environment, `A2M_<GROUP>__<KEY>`: what
+/// an engine started with them loads, and what a later client's own are
+/// compared with. The passphrase's variable is none of them.
+#[must_use]
+pub fn settings_variables(
+    environment: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    environment
+        .iter()
+        .filter(|(name, _)| {
+            name.as_str() != PASSPHRASE_VARIABLE
+                && name
+                    .strip_prefix("A2M_")
+                    .is_some_and(|rest| rest.contains("__"))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+/// What a client is told when the engine that answered it was started
+/// with other settings variables: each name, never a value; the engine
+/// serves with its own, and is not restarted, since it may have runs in
+/// hand. `None` when nothing differs, or the engine named none.
+#[must_use]
+pub fn settings_warning(differing: Option<Vec<String>>) -> Option<String> {
+    let names = differing.filter(|names| !names.is_empty())?;
+    let listed = names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{SETTINGS_DIFFER}: The engine that answered was started with other settings variables than this client has ({listed}); it serves with its own, and this client's are not used. To use them, stop the engine with `anything2mcp engine stop` once no run is in hand, and run the command again."
+    ))
+}
+
 /// The name of the file, in the data directory, that keeps the salt of the
 /// passphrase route. The salt is not a secret.
 const SALT_FILE: &str = "vault-salt";

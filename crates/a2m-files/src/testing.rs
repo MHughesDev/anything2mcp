@@ -563,6 +563,7 @@ pub fn surface_kind_spec() -> SurfaceKindSpec {
             path_key: "helper".to_owned(),
             digest_key: Some("helper_digest".to_owned()),
         }],
+        notices: Vec::new(),
     }
 }
 

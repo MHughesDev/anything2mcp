@@ -167,8 +167,15 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     assert!(!text.contains("<script") && !text.contains("<b>"), "{text}");
     assert!(!text.contains("src=") && !text.contains("href="));
     // A write that is read back after it is sent is not said to be one
-    // that is not.
+    // that is not, and the binding the approval binds it to is named, with
+    // what its evidence means (decision 0185).
     assert!(!text.contains("not read back"), "{text}");
+    assert!(
+        text.contains(
+            "<p>Written by the binding <code>app_json</code>, and by no other: it is read back and compared with what was intended after it is sent.</p><table>"
+        ),
+        "{text}"
+    );
 
     // The listener answers its page and its two presses. Every other path
     // and method, a front door's included, answers nothing.
@@ -319,7 +326,7 @@ async fn a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_app
     // Beside the record, after its heading and before its fields, in the
     // words the desk gives.
     let said = format!(
-        "</h3><p><strong>This write is {NOT_READ_BACK}.</strong> Nothing will read it back or compare it after it is sent.</p><table>"
+        "</h3><p><strong>This write is {NOT_READ_BACK}.</strong> Nothing will read it back or compare it after it is sent.</p><p>Written by the binding <code>app_json</code>, and by no other: it is accepted by the system and not read back: nothing compares it after it is sent.</p><table>"
     );
     assert!(text.contains(&said), "{text}");
     assert_eq!(prompt.asked(), 0);
@@ -1018,4 +1025,42 @@ async fn a_persons_act_whose_input_the_page_cannot_show_whole_is_not_carried_out
         .await;
     assert!(!read.ok, "{read:?}");
     world.kernel.close(CloseReason::Asked).await;
+}
+
+#[test]
+fn a_record_whose_binding_is_chosen_later_shows_every_binding_it_could_take_and_what_each_means() {
+    use a2m_actions::{BINDING_LATER, MAY_NOT_BE_READ_BACK, PreviewBinding, PreviewRecord};
+    let record = PreviewRecord {
+        operation: "example_item_upsert".to_owned(),
+        key: "A-100 / L-1".to_owned(),
+        action: "create",
+        fields: Vec::new(),
+        not_read_back: Some(MAY_NOT_BE_READ_BACK),
+        binding_later: Some(BINDING_LATER),
+        bindings: vec![
+            PreviewBinding {
+                mode: "app_json".to_owned(),
+                evidence: "read_back",
+            },
+            PreviewBinding {
+                mode: "<b>spare</b>".to_owned(),
+                evidence: "acknowledged",
+            },
+            PreviewBinding {
+                mode: "app_json_spare".to_owned(),
+                evidence: "response",
+            },
+        ],
+    };
+    let text = crate::surface::written_by_html(&record);
+    assert_eq!(
+        text,
+        format!(
+            "<p><strong>This write {MAY_NOT_BE_READ_BACK}.</strong> A binding that is only acknowledged reads nothing back and compares nothing after it is sent.</p>\
+             <p>This record is {BINDING_LATER}. It is written by one of these bindings, and by no other:</p><ul>\
+             <li><code>app_json</code>: it is read back and compared with what was intended after it is sent.</li>\
+             <li><code>&lt;b&gt;spare&lt;/b&gt;</code>: it is accepted by the system and not read back: nothing compares it after it is sent.</li>\
+             <li><code>app_json_spare</code>: the answer the system gives to the write is compared with what was intended; it is not read back apart.</li></ul>"
+        )
+    );
 }

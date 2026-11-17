@@ -603,3 +603,62 @@ async fn the_started_engines_output_is_not_written_through_a_link_and_is_kept_to
     let mode = std::fs::metadata(&log).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "{mode:o}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hello_names_the_engines_start_variables_by_digest_and_a_client_learns_which_differ() {
+    use std::collections::BTreeMap;
+    let (_folder, paths) = home("variables");
+    let started_with = BTreeMap::from([
+        ("A2M_ENGINE__IDLE_STOP_MINUTES".to_owned(), "5".to_owned()),
+        (
+            "A2M_TOOLS__RESULT_CAP_BYTES".to_owned(),
+            "value-of-tests".to_owned(),
+        ),
+    ]);
+    let engine = Engine::start(
+        Channel::bind(&paths, VERSION)
+            .await
+            .unwrap()
+            .with_start_variables(&started_with),
+        1,
+        IdlePolicy::never(),
+    );
+    let command = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let link = connect(&command).await.unwrap();
+    // The same variables differ in nothing.
+    assert_eq!(
+        link.start_variables_differing(&started_with),
+        Some(Vec::new())
+    );
+    // One with another value, one the engine lacks, and one the client
+    // lacks, each by its name, in order of name.
+    let mine = BTreeMap::from([
+        ("A2M_AUTHORING__SCOUT_RUN".to_owned(), "off".to_owned()),
+        ("A2M_ENGINE__IDLE_STOP_MINUTES".to_owned(), "6".to_owned()),
+    ]);
+    assert_eq!(
+        link.start_variables_differing(&mine),
+        Some(vec![
+            "A2M_AUTHORING__SCOUT_RUN".to_owned(),
+            "A2M_ENGINE__IDLE_STOP_MINUTES".to_owned(),
+            "A2M_TOOLS__RESULT_CAP_BYTES".to_owned(),
+        ])
+    );
+    // The hello carries each value's digest, never the value.
+    let raw = command.open().await.unwrap();
+    let hello = Request::builder()
+        .method(Method::GET)
+        .uri(HELLO_PATH)
+        .header(CLIENT_VERSION_HEADER, VERSION.to_string())
+        .header(LOCAL_API_HEADER, crate::LOCAL_API.to_string())
+        .header(CLIENT_LABEL_HEADER, "cli")
+        .body(Body::empty())
+        .unwrap();
+    let (status, said) = json_of(&raw, hello).await;
+    assert_eq!(status, StatusCode::OK);
+    let named = said["start_variables"].as_object().unwrap();
+    assert_eq!(named.len(), 2, "{said}");
+    assert!(!said.to_string().contains("value-of-tests"), "{said}");
+    drop((link, raw));
+    engine.stop().await;
+}

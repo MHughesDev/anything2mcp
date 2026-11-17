@@ -1033,6 +1033,57 @@ impl GateRun {
     }
 }
 
+/// The operations a publish compile refused for having no offline test
+/// (`kernel.operation_without_test`), by file, each with its two ways on:
+/// a test, or the draft removed (decision 0189).
+pub(crate) fn without_test(
+    target: &a2m_core::TargetName,
+    problems: &a2m_files::Diagnostics,
+) -> Vec<Json> {
+    problems
+        .iter()
+        .filter(|problem| problem.code.as_str() == a2m_files::codes::OPERATION_WITHOUT_TEST)
+        .map(|problem| {
+            json!({
+                "file": problem.at.file.as_str(),
+                "state": "no_test",
+                "next": [
+                    {"action": "test.run", "input": {"target": target.as_str()}, "when": "after an offline test and its fixture are written"},
+                    {"action": "draft.delete", "input": {"target": target.as_str(), "file": problem.at.file.as_str()}, "when": "when the operation is not wanted"},
+                ],
+            })
+        })
+        .collect()
+}
+
+/// The refusal of a publish whose drafts do not compile for publishing.
+/// Where an operation has no offline test, it names the operations and
+/// both ways on, `test.run` and `draft.delete`; the gate stays whole, and
+/// no operation is published without a passing test.
+pub(crate) fn publish_refusal(
+    target: &a2m_core::TargetName,
+    problems: a2m_files::Diagnostics,
+) -> Failure {
+    let untested = without_test(target, &problems);
+    if untested.is_empty() {
+        return Failure::from(problems);
+    }
+    let files: Vec<&str> = untested
+        .iter()
+        .filter_map(|entry| entry["file"].as_str())
+        .collect();
+    codes::input(
+        codes::PUBLISH_GATES_NOT_PASSED,
+        format!(
+            "The target `{target}` is not published: every operation needs a passing offline test, and these have none: {}.",
+            files.join(", ")
+        ),
+        format!(
+            "For each, write an offline test with a fixture and run `test.run` with the target `{target}`, or remove the draft with `draft.delete`; then publish again."
+        ),
+    )
+}
+
 /// Runs the publish gates this build has on a compiled target: the schema
 /// and lint gate, which compiling for publishing passed, and every offline
 /// test of the plan against its fixture.

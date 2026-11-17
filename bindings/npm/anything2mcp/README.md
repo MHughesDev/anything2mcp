@@ -16,7 +16,7 @@ await client.toolCall({ tool: "example_order_get", input: { order_id: "A-100" } 
 client.close();
 ```
 
-The methods and their types (`.d.ts`, written by a generator, no compile step) come from the OpenAPI document the engine serves. The client does not start the engine. It reaches it on macOS and Linux by its socket, after checking that the socket belongs to you. On Windows Node cannot tell who serves a pipe, so `connect` refuses unless you pass `verifyPipeServer` and `sid`.
+The methods and their types (`.d.ts`, written by a generator, no compile step) come from the OpenAPI document the engine serves. When no engine runs, `connect` has the program of the platform package start one, by running `anything2mcp engine start` as any command would, and then connects to it; `connect({ start: false })` starts nothing and rejects with `engine_unreachable`. It reaches it on macOS and Linux by its socket, after checking that the socket belongs to you. On Windows Node cannot tell who serves a pipe, so `connect` refuses unless you pass `verifyPipeServer` and `sid`.
 
 If you install with optional dependencies left out, the program is missing, and `anything2mcp` says which package to install.
 

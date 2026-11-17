@@ -21,11 +21,17 @@ use windows_sys::Win32::Foundation::{
     INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
 };
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
+    SDDL_REVISION_1, SE_FILE_OBJECT, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
+    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_GENERIC_WRITE, FILE_WRITE_DATA, READ_CONTROL, WRITE_DAC,
 };
 use windows_sys::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -92,8 +98,16 @@ fn token_user(token: &OwnedHandle) -> io::Result<String> {
     // type. The identifier it points to lies inside `buffer`, which lives
     // until this function returns.
     let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    // `sid` points into `buffer`, which lives until this function returns.
+    sid_text(sid)
+}
+
+/// The text form of the security identifier `sid` points to, which must
+/// be a valid identifier for the length of the call.
+#[allow(unsafe_code)] // two calls into the operating system; each is explained where it is made
+fn sid_text(sid: PSID) -> io::Result<String> {
     let mut text: *mut u16 = ptr::null_mut();
-    // SAFETY: `sid` points to a valid identifier inside `buffer`. The call
+    // SAFETY: the caller hands a pointer to a valid identifier. The call
     // writes one pointer into `text`, which is ours.
     let ok = unsafe { ConvertSidToStringSidW(sid, &raw mut text) };
     if ok == 0 || text.is_null() {
@@ -158,10 +172,194 @@ pub(crate) fn current_user() -> io::Result<String> {
     user_of_process(None)
 }
 
-/// Makes the runtime directory. It holds only the lock files; the pipe
-/// lives in the system's own name space, guarded by its access list.
+/// The security identifier of the local Administrators group, which may
+/// own what this user made while it ran elevated.
+const ADMINISTRATORS: &str = "S-1-5-32-544";
+
+/// Not this user's to trust: another owns it, or it is a link.
+fn not_ours(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("the {what} is not this user's, or is a link"),
+    )
+}
+
+/// Opens a file or folder to read its owner and replace its access list,
+/// never through a link at its name: a link there is opened as itself.
+fn open_guarded(path: &Path, extra: u32) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC | extra)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Whether what `file` holds open is a link, or another kind of reparse
+/// point, rather than the file or folder itself.
+fn is_reparse_point(file: &std::fs::File) -> io::Result<bool> {
+    use std::os::windows::fs::MetadataExt as _;
+    Ok(file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+/// The owner of what `file` holds open, as the text of its identifier.
+#[allow(unsafe_code)] // two calls into the operating system; each is explained where it is made
+fn owner_of(file: &std::fs::File) -> io::Result<String> {
+    let mut owner: PSID = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: the handle is open for `READ_CONTROL` and owned by `file`,
+    // which outlives the call. The call writes two pointers, both ours;
+    // the group and the lists are not asked for, which null pointers say.
+    let error = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &raw mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &raw mut descriptor,
+        )
+    };
+    if error != 0 || descriptor.is_null() {
+        return Err(io::Error::from_raw_os_error(error as i32));
+    }
+    // `owner` points into `descriptor`, which is still allocated.
+    let said = if owner.is_null() {
+        Err(io::Error::other("the owner could not be read"))
+    } else {
+        sid_text(owner)
+    };
+    // SAFETY: `descriptor` was allocated by the call above, which documents
+    // this call to free it. It is freed exactly once, after the last use of
+    // `owner`, which points into it.
+    unsafe {
+        LocalFree(descriptor);
+    }
+    said
+}
+
+/// Replaces the access list of what `file` holds open with a protected one
+/// that names only `user`, with every right; with `inherit`, files and
+/// folders made inside take it. Nothing of the folders above is inherited.
+#[allow(unsafe_code)] // four calls into the operating system; each is explained where it is made
+fn keep_to(file: &std::fs::File, user: &str, inherit: bool) -> io::Result<()> {
+    if !is_sid(user) {
+        return Err(io::Error::other("the user is not a security identifier"));
+    }
+    let flags = if inherit { "OICI" } else { "" };
+    let rule: Vec<u16> = format!("D:P(A;{flags};FA;;;{user})")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: `rule` is NUL-terminated and outlives the call. The call
+    // writes one pointer into `descriptor`, which is ours.
+    let ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            rule.as_ptr(),
+            SDDL_REVISION_1,
+            &raw mut descriptor,
+            ptr::null_mut(),
+        )
+    };
+    if ok == 0 || descriptor.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut list: *mut ACL = ptr::null_mut();
+    // SAFETY: `descriptor` is the one made above, still allocated; the
+    // call writes three values, all ours. `list` then points into it.
+    let ok = unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor,
+            &raw mut present,
+            &raw mut list,
+            &raw mut defaulted,
+        )
+    };
+    let set = if ok == 0 || present == 0 || list.is_null() {
+        Err(io::Error::other("the access list could not be made"))
+    } else {
+        // SAFETY: the handle is open for `WRITE_DAC` and owned by `file`;
+        // `list` points into `descriptor`, still allocated. The system
+        // copies the list before the call returns.
+        let error = unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                list,
+                ptr::null(),
+            )
+        };
+        if error == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(error as i32))
+        }
+    };
+    // SAFETY: `descriptor` came from the conversion above, which documents
+    // this call to free it. It is freed exactly once, after the last use of
+    // `list`, which points into it.
+    unsafe {
+        LocalFree(descriptor);
+    }
+    set
+}
+
+/// Makes the runtime directory, or checks that the one there is a folder,
+/// not a link, owned by this user or the administrators; and in either case
+/// gives it an access list that names only this user, which the lock files
+/// made inside take (decision 0192). The pipe lives in the system's own
+/// name space, guarded by its own access list.
 pub(crate) fn prepare_dir(dir: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(dir)
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::create_dir(dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let folder = open_guarded(dir, 0)?;
+    if is_reparse_point(&folder)? || !folder.metadata()?.is_dir() {
+        return Err(not_ours("runtime directory"));
+    }
+    let user = current_user()?;
+    let owner = owner_of(&folder)?;
+    if owner != user && owner != ADMINISTRATORS {
+        return Err(not_ours("runtime directory"));
+    }
+    keep_to(&folder, &user, true)
+}
+
+/// Opens the started engine's output file to append to it: never through a
+/// link at its name, only a plain file this user or the administrators
+/// own, and with an access list that names only this user (decision 0192).
+pub(crate) fn open_output(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    // Appending, as `OpenOptions::append` asks for it: every right to write
+    // but the right to write over what is there.
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .access_mode((FILE_GENERIC_WRITE & !FILE_WRITE_DATA) | READ_CONTROL | WRITE_DAC)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    if is_reparse_point(&file)? || !file.metadata()?.is_file() {
+        return Err(not_ours("engine's output file"));
+    }
+    let user = current_user()?;
+    let owner = owner_of(&file)?;
+    if owner != user && owner != ADMINISTRATORS {
+        return Err(not_ours("engine's output file"));
+    }
+    keep_to(&file, &user, false)?;
+    Ok(file)
 }
 
 /// Whether `user` has the form of a security identifier: `S-` and then
@@ -429,5 +627,124 @@ mod tests {
         drop(server);
         let gone = connect(&place, &user).await;
         assert!(matches!(gone, Err(ConnectError::NotRunning)), "{gone:?}");
+    }
+}
+
+#[cfg(test)]
+mod kept_to_the_user {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle as _;
+    use std::path::{Path, PathBuf};
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+        SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+
+    use super::{current_user, open_guarded, open_output, prepare_dir};
+
+    fn fresh(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("a2m-local-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    /// The access list of what is at `path`, in the system's own text.
+    #[allow(unsafe_code)] // two calls into the operating system and one free; each is explained
+    fn access_list(path: &Path) -> String {
+        let file = open_guarded(path, 0).unwrap();
+        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        // SAFETY: the handle is open for `READ_CONTROL`; the call writes
+        // one pointer, ours, and is asked for nothing else.
+        let error = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &raw mut descriptor,
+            )
+        };
+        assert_eq!(error, 0);
+        let mut text: *mut u16 = ptr::null_mut();
+        // SAFETY: `descriptor` is the one the call above allocated; the
+        // call writes one pointer, ours; the length is not asked for.
+        let ok = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &raw mut text,
+                ptr::null_mut(),
+            )
+        };
+        assert_ne!(ok, 0);
+        // SAFETY: `text` is a NUL-terminated string the system allocated,
+        // read up to its NUL; it and `descriptor` are each freed once, with
+        // the call the system documents, and not used again.
+        unsafe {
+            let mut length = 0;
+            while *text.add(length) != 0 {
+                length += 1;
+            }
+            let said = String::from_utf16_lossy(std::slice::from_raw_parts(text, length));
+            LocalFree(text.cast::<c_void>());
+            LocalFree(descriptor);
+            said
+        }
+    }
+
+    /// A protected list with one entry, which allows this user.
+    fn only_the_user(list: &str) {
+        let user = current_user().unwrap();
+        assert!(list.starts_with("D:P"), "{list}");
+        assert_eq!(list.matches('(').count(), 1, "{list}");
+        assert!(list.contains(&format!(";;;{user})")), "{list}");
+        assert!(list.contains("(A;"), "{list}");
+    }
+
+    #[test]
+    fn the_runtime_directory_and_the_output_file_are_kept_to_this_user() {
+        // Made, and made again over itself: both times one entry, the user's.
+        let dir = fresh("runtime");
+        prepare_dir(&dir).unwrap();
+        only_the_user(&access_list(&dir));
+        prepare_dir(&dir).unwrap();
+        let list = access_list(&dir);
+        only_the_user(&list);
+        // What is made inside takes it.
+        assert!(list.contains("OICI"), "{list}");
+
+        // The output file has a list of its own, and is appended to.
+        let output = dir.join("engine-output.log");
+        {
+            use std::io::Write as _;
+            let mut file = open_output(&output).unwrap();
+            file.write_all(b"one\n").unwrap();
+        }
+        {
+            use std::io::Write as _;
+            let mut file = open_output(&output).unwrap();
+            file.write_all(b"two\n").unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "one\ntwo\n");
+        only_the_user(&access_list(&output));
+
+        // A file where the directory should be is not a runtime directory.
+        let not_a_dir = fresh("not-a-dir");
+        std::fs::write(&not_a_dir, b"").unwrap();
+        assert!(prepare_dir(&not_a_dir).is_err());
+        // A folder where the output file should be is not one.
+        assert!(open_output(&dir).is_err());
+
+        std::fs::remove_file(&not_a_dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use a2m_core::{
     Digest, Environment, Failure, FailureClass, Finding, OperationName, Plan, RunId, SurfaceName,
@@ -25,7 +26,7 @@ use serde_json::{Value as Json, json};
 
 use super::build::{off_thread, problems_json, target_folder};
 use super::handler;
-use super::tools::{Tell, plan_to_observe, run_output, submit_discovery, submit_trial, wait_of};
+use super::tools::{Tell, plan_to_observe, run_output, submit_discovery, wait_of};
 use crate::codes;
 use crate::dispatch::{Call, Next, Output};
 use crate::kernel::Kernel;
@@ -200,6 +201,7 @@ async fn identify(
     call: &Call,
     target: &TargetName,
     only: Option<&str>,
+    to_its_end: bool,
 ) -> Result<Identified, Failure> {
     let (plan_hash, plan) = plan_to_observe(kernel, call, target).await?;
     let looks: Vec<Look> = Look::of(kernel, &plan)
@@ -227,11 +229,24 @@ async fn identify(
             runs.insert(look.name.to_string(), run);
         }
     }
-    let wait = wait_of(call);
     let workspace = call.caller.principal.workspace;
     let mut surfaces = Vec::new();
     let mut complete = true;
     for look in looks {
+        // The scout waits for a discovery to its end, as long as its
+        // discoverers may take by their manifests, and never leaves one in
+        // hand behind it (see `TRIAL_BOUND`); `target.probe` waits as its
+        // caller asked.
+        let wait = if to_its_end {
+            let declared: u64 = look
+                .discoverers
+                .iter()
+                .filter_map(|discoverer| discoverer["bounds"]["seconds"].as_u64())
+                .sum();
+            Duration::from_secs(declared.saturating_add(30))
+        } else {
+            wait_of(call)
+        };
         let mut entry = json!({
             "surface": look.name.as_str(),
             "kind": look.kind,
@@ -341,7 +356,7 @@ handler!(
     target_probe,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let identified = identify(kernel, &call, &target, call.text("surface")).await?;
+        let identified = identify(kernel, &call, &target, call.text("surface"), false).await?;
         let output = Output::ok(json!({
             "target": target.as_str(),
             "plan_hash": identified.plan_hash.to_string(),
@@ -453,7 +468,7 @@ handler!(
     auth_detect,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
-        let identified = identify(kernel, &call, &target, call.text("surface")).await?;
+        let identified = identify(kernel, &call, &target, call.text("surface"), false).await?;
         let declared = declared_sign_ins(kernel, &call, &target).await?;
         let shown = sign_ins(&identified, declared.as_ref());
         let needs: Vec<&Json> = shown
@@ -490,19 +505,35 @@ struct Scout {
     id: RunId,
 }
 
-/// The newest scout of a target by the caller's person: the unfinished one
-/// to resume, or with `finished`, the newest that finished.
+/// The key a scout is kept under beside its person and target: the
+/// digest of the project folder it was made in, as the dispatcher resolved
+/// it, or `none` outside a project. A target of one name in two projects
+/// is two targets, and one's scout is never continued in the other (audit
+/// finding A3).
+pub(crate) fn project_key(call: &Call) -> String {
+    call.project_folder().map_or_else(
+        |_| "none".to_owned(),
+        |folder| Digest::of(folder.to_string_lossy().as_bytes()).to_string(),
+    )
+}
+
+/// The newest scout of a target by the caller's person in one project: the
+/// unfinished one to resume, or with `finished`, the newest that finished.
+/// The project a scout was made in is stored with its first stage; a scout
+/// with none stored is of no project, and is never resumed.
 fn newest_scout(
     tx: &mut Tx<'_>,
     workspace: &a2m_core::WorkspaceId,
     principal: &a2m_core::PrincipalId,
     target: &TargetName,
+    project: &str,
     finished: bool,
 ) -> Result<Option<Scout>, Failure> {
     let rows = tx.tables(Owner::Actions).query(
-        "SELECT scout_id, finished_at FROM actions_scouts
-         WHERE workspace_id = ?1 AND principal_id = ?2 AND target = ?3
-         ORDER BY started_at DESC, scout_id DESC",
+        "SELECT s.scout_id, s.finished_at, g.result FROM actions_scouts s
+         LEFT JOIN actions_scout_stages g ON g.run_id = s.scout_id AND g.stage = 0
+         WHERE s.workspace_id = ?1 AND s.principal_id = ?2 AND s.target = ?3
+         ORDER BY s.started_at DESC, s.scout_id DESC",
         &[
             SqlValue::from(workspace.to_string()),
             SqlValue::from(principal.to_string()),
@@ -510,6 +541,13 @@ fn newest_scout(
         ],
     )?;
     for row in rows {
+        let first: Json = row
+            .opt_text(2)?
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Json::Null);
+        if first["project"].as_str() != Some(project) {
+            continue;
+        }
         let done = row.opt_int(1)?.is_some();
         if done == finished {
             return Ok(Some(Scout {
@@ -522,6 +560,48 @@ fn newest_scout(
         }
     }
     Ok(None)
+}
+
+/// What the newest finished scout of the target by the caller's person, in
+/// the call's project, found of one drafted read: its tried entry when it
+/// was proven at `executed`, with the scout's identifier.
+pub(crate) async fn proven_by_scout(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+    tool: &str,
+) -> Result<Option<Json>, Failure> {
+    let principal = &call.caller.principal;
+    let (workspace, person) = (principal.workspace, principal.principal.id);
+    let (named, project) = (target.clone(), project_key(call));
+    let stages = kernel
+        .store()?
+        .read(move |tx| {
+            let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, true)? else {
+                return Ok(None);
+            };
+            Ok(Some((scout.id, stored_stages(tx, scout.id)?)))
+        })
+        .await?;
+    let Some((scout, stages)) = stages else {
+        return Ok(None);
+    };
+    Ok(stages
+        .get(&6)
+        .and_then(|tried| tried["tools"].as_array())
+        .into_iter()
+        .flatten()
+        .find(|entry| {
+            entry["tool"] == tool && entry["state"] == "proven" && entry["level"] == "executed"
+        })
+        .map(|entry| {
+            json!({
+                "by": "scout",
+                "scout_id": scout.to_string(),
+                "level": "executed",
+                "tries": entry["tries"],
+            })
+        }))
 }
 
 fn stored_stages(tx: &mut Tx<'_>, scout: RunId) -> Result<BTreeMap<u8, Json>, Failure> {
@@ -673,21 +753,75 @@ async fn folder_of(call: &Call, target: &TargetName) -> Result<Option<PathBuf>, 
     .await
 }
 
+/// The most files the compare stage copies from a target's folder.
+pub(crate) const COPY_MOST_FILES: usize = 4_096;
+/// The most bytes it copies, all files together.
+pub(crate) const COPY_MOST_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The folder under the engine's cache folder where the compare stage
+/// copies a target's folder, one folder per scout. Nothing else is kept
+/// there: whatever a stopped engine left in it is removed when the next one
+/// opens (audit finding A5).
+pub(crate) const SCOUT_SCRATCH: &str = "scout";
+
+fn too_much() -> Failure {
+    codes::input(
+        codes::PATH_NOT_ALLOWED,
+        format!(
+            "The target's folder holds more than {COPY_MOST_FILES} files or {COPY_MOST_BYTES} bytes, so it is not copied to be compared."
+        ),
+        "Keep only the target's own files in its folder.",
+    )
+}
+
 /// Copies the regular files of a target's folder, and its folders, into an
-/// empty folder, never following a link and passing over hidden names.
-fn copy_target(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with('.') {
+/// empty folder of the engine's cache, within `COPY_MOST_FILES` and
+/// `COPY_MOST_BYTES`. The target's folder is read through checked paths
+/// (audit finding A5): a link is never followed, whether it stood at the
+/// name when the folder was listed or was put there since, since the file
+/// is opened without following one; a hidden name is passed over. A copy
+/// is made new, never through what stands at its name.
+fn copy_target(
+    from: &a2m_provider::CheckedPath,
+    to: &Path,
+    budget: &mut (usize, u64),
+) -> Result<(), Failure> {
+    let unavailable = || {
+        codes::input(
+            codes::PATH_NOT_ALLOWED,
+            "The target's folder could not be copied to compare it.",
+            "Check that the target's folder may be read by this user.",
+        )
+    };
+    std::fs::create_dir_all(to).map_err(|_| unavailable())?;
+    let (entries, _) = from.list()?;
+    for entry in entries {
+        let Some(name) = entry.relative().rsplit('/').next().map(str::to_owned) else {
+            continue;
+        };
+        if name.starts_with('.') {
             continue;
         }
-        let kind = std::fs::symlink_metadata(entry.path())?.file_type();
-        if kind.is_dir() {
-            copy_target(&entry.path(), &to.join(&name))?;
-        } else if kind.is_file() {
-            std::fs::copy(entry.path(), to.join(&name))?;
+        match entry.entry_kind()? {
+            a2m_provider::EntryKind::Folder => copy_target(&entry, &to.join(&name), budget)?,
+            a2m_provider::EntryKind::File => {
+                budget.0 += 1;
+                if budget.0 > COPY_MOST_FILES {
+                    return Err(too_much());
+                }
+                let left = COPY_MOST_BYTES.saturating_sub(budget.1);
+                let bytes = entry
+                    .read(left.min(a2m_files::LARGEST_TARGET_FILE as u64))
+                    .map_err(|_| too_much())?;
+                budget.1 = budget.1.saturating_add(bytes.len() as u64);
+                let mut copy = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(to.join(&name))
+                    .map_err(|_| unavailable())?;
+                std::io::Write::write_all(&mut copy, &bytes).map_err(|_| unavailable())?;
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -716,25 +850,25 @@ fn paths(list: &[a2m_files::RelPath]) -> Vec<String> {
 /// listed, since nothing in the files can be compared with it by rule.
 async fn compare(
     kernel: &Kernel,
-    folder: PathBuf,
+    call: &Call,
+    target: &TargetName,
     scout: RunId,
     findings: Vec<Finding>,
 ) -> Result<(Json, Vec<(String, String, String, String)>), Failure> {
     let kernel = kernel.clone();
+    let (project, target) = (call.project_folder()?.to_path_buf(), target.clone());
     off_thread(move || {
         // The engine's own cache folder: no other account writes there,
         // and the name is the scout's, so no two scouts share it.
-        let scratch = kernel.paths().cache.join("scout").join(scout.to_string());
+        let scratch = kernel
+            .paths()
+            .cache
+            .join(SCOUT_SCRATCH)
+            .join(scout.to_string());
         let _ = std::fs::remove_dir_all(&scratch);
-        let copied = copy_target(&folder, &scratch);
-        let drafted = match copied {
-            Ok(()) => draft_into(&kernel, &scratch, &findings),
-            Err(_) => Err(codes::input(
-                codes::PATH_NOT_ALLOWED,
-                "The target's folder could not be copied to compare it.",
-                "Check that the target's folder may be read by this user.",
-            )),
-        };
+        let from = target_folder(&project, &target)?;
+        let copied = copy_target(&from, &scratch, &mut (0, 0));
+        let drafted = copied.and_then(|()| draft_into(&kernel, &scratch, &findings));
         let _ = std::fs::remove_dir_all(&scratch);
         let report = drafted?;
         let mut asked = Vec::new();
@@ -852,28 +986,211 @@ async fn drafted_tools(
     .await
 }
 
+/// How long the scout waits for one trial to end, counted from when it was
+/// submitted, whatever the call's `wait_seconds`. A trial in hand is waited
+/// for to its end, so that a call never leaves one behind it: an engine
+/// that runs inside a command ends with the command, and a trial it had
+/// claimed would wait out its lease before another engine could take it.
+pub(crate) const TRIAL_BOUND: Duration = Duration::from_secs(120);
+
+/// What the scout tries a drafted read with.
+enum TryInput {
+    /// Its first example, or nothing when it needs no input.
+    Stated(Values),
+    /// The first key a list read of the same record answered in this scout,
+    /// by the list's tool and output. The value is kept only in the
+    /// trial's own stored call, never in the report.
+    FromList(Values, String, String),
+    /// Nothing the scout may use, and why.
+    None(&'static str),
+}
+
+/// The digest that makes one trial of a scout the run it is: the scout, the
+/// plan tried, the read, which try it is, and the input. A continuation of
+/// the scout finds the same trial by it, ended or not, and submits none
+/// again (ledger rule 6).
+fn trial_hash(scout: RunId, plan: Digest, try_number: usize, input: &Values) -> Digest {
+    let mut hasher = a2m_core::FieldHasher::new();
+    hasher.field("purpose", b"anything2mcp scout trial 1");
+    hasher.field("scout", scout.to_string().as_bytes());
+    hasher.field("plan", plan.to_string().as_bytes());
+    hasher.field("try", try_number.to_string().as_bytes());
+    hasher.field("input", input.digest().to_string().as_bytes());
+    hasher.finish()
+}
+
+/// The trial of `found` at `try_number` in this scout: the run submitted for
+/// it before, by an earlier call of the same scout, or a new one, and
+/// whether it is new.
+async fn trial_of(
+    kernel: &Kernel,
+    call: &Call,
+    scout: RunId,
+    found: &FoundTool,
+    input: &Values,
+    try_number: usize,
+    environment: &Environment,
+) -> Result<(RunId, bool), Failure> {
+    let hash = trial_hash(scout, found.plan_hash, try_number, input);
+    let principal = &call.caller.principal;
+    let (workspace, person) = (principal.workspace, principal.principal.id);
+    let (tool, at) = (found.tool.name.clone(), environment.clone());
+    let earlier = kernel
+        .store()?
+        .read(move |tx| {
+            tx.ledger().run_called_since(
+                &workspace,
+                &person,
+                (&tool, &at, &hash),
+                a2m_core::Timestamp::from_unix_millis(0),
+            )
+        })
+        .await?;
+    match earlier {
+        Some(run) => Ok((run, false)),
+        None => super::tools::submit_trial_as(kernel, call, found, input, environment.clone(), hash)
+            .await
+            .map(|run| (run, true)),
+    }
+}
+
+/// How one trial came to rest: its run's row, or `None` when it had not
+/// ended within its bound.
+async fn trial_rests(kernel: &Kernel, run: RunId) -> Result<Option<a2m_ledger::RunRow>, Failure> {
+    let row = kernel.store()?.read(move |tx| tx.ledger().run(run)).await?;
+    let now = kernel.inner.clock.now().as_unix_millis();
+    let waited = u64::try_from(now.saturating_sub(row.created_at.as_unix_millis())).unwrap_or(0);
+    let left = TRIAL_BOUND.saturating_sub(Duration::from_millis(waited));
+    let row = kernel.wait_for_rest(run, left).await?;
+    // At rest: ended, or stopped or waiting with no job in hand for it.
+    let active = matches!(
+        row.state,
+        a2m_core::RunState::Queued | a2m_core::RunState::Validating | a2m_core::RunState::Running
+    );
+    if row.state.is_final() || !active {
+        return Ok(Some(row));
+    }
+    // Not ended within its bound: it is cancelled, so that it does not run
+    // later for nobody; a trial only reads.
+    let _ = kernel.sched()?.cancel(run).await;
+    Ok(None)
+}
+
+/// The input a read takes from a list read of the same record that was
+/// proven in this scout. The rule, and no other: the read states exactly
+/// one key input; among the reads proven so far in this scout run, exactly
+/// one acts on the same surface (by its first binding) and declares an
+/// output of exactly the key's name whose type is a list; the first item of
+/// that output, in the list's own order, is text or a whole number.
+/// Anything else is not tried, with its reason (rule 7: no guessing by
+/// resemblance).
+fn key_from_list(
+    operation: &a2m_core::OperationPlan,
+    proven: &[Proven],
+) -> TryInput {
+    let [key] = operation.identity.key.as_slice() else {
+        return TryInput::None(
+            "It takes an input it states no example of, and its key is not one input; the scout has no value for it.",
+        );
+    };
+    let Some(key) = operation.inputs.get(key.get()) else {
+        return TryInput::None("It takes an input it states no example of; the scout has no value for it.");
+    };
+    if operation
+        .inputs
+        .iter()
+        .any(|input| input.name != key.name && input.required && input.default.is_none())
+    {
+        return TryInput::None(
+            "It takes an input besides its key that it states no example of; the scout has no value for it.",
+        );
+    }
+    let Some(surface) = operation.bindings.first().map(|binding| binding.surface) else {
+        return TryInput::None("It has no binding to try.");
+    };
+    let lists: Vec<&Proven> = proven
+        .iter()
+        .filter(|read| {
+            read.surface == surface
+                && read.lists.contains(&key.name)
+                && read.result.get(&key.name).is_some_and(Json::is_array)
+        })
+        .collect();
+    let [Proven { tool: list, result, .. }] = lists.as_slice() else {
+        return TryInput::None(if lists.is_empty() {
+            "It takes a key it states no example of, and no list read of the same surface proven in this scout answers an output of the key's name."
+        } else {
+            "It takes a key it states no example of, and more than one list read proven in this scout answers an output of the key's name; nothing says which is of the same record."
+        });
+    };
+    let value = match result[&key.name].get(0) {
+        Some(Json::String(text)) => a2m_core::Value::Text(text.clone()),
+        Some(Json::Number(number)) if number.is_i64() => {
+            a2m_core::Value::Int(number.as_i64().unwrap_or_default())
+        }
+        _ => {
+            return TryInput::None(
+                "It takes a key it states no example of, and the list read of the same record answered no first key that is text or a whole number.",
+            );
+        }
+    };
+    TryInput::FromList(
+        Values::new().with(&key.name, value),
+        list.clone(),
+        key.name.clone(),
+    )
+}
+
+/// A read proven in this scout run, as the next reads may use it: kept in
+/// memory for one call only.
+struct Proven {
+    tool: String,
+    /// The surface its first binding acts on.
+    surface: a2m_core::SurfaceIndex,
+    /// Its outputs whose declared type is a list.
+    lists: Vec<String>,
+    /// Its first result.
+    result: Json,
+}
+
+/// What the try stage came to in one call.
+struct Tried {
+    result: Json,
+    runs: BTreeMap<String, Vec<String>>,
+    /// Every trial was made and came to rest, or passed its bound.
+    complete: bool,
+}
+
 /// The try stage: each drafted read tried in the sandbox, `TRIES` times,
-/// one after another, and the results compared. A drafted read that takes
-/// an input it states no example of is not tried: the scout has no value
-/// for it and guesses none.
+/// one after another, and the results compared. Each trial is submitted
+/// once and found again by a continuation (`trial_of`); one in hand is
+/// waited for to its end, or to `TRIAL_BOUND`; one that fails ends the
+/// read's tries, and the read is tried and not proven, with its named
+/// failure. The call's `wait_seconds` is looked at only between trials.
+/// The reads that take a key they state no example of are tried last, with
+/// the first key a list read of the same record answered (`key_from_list`).
+#[allow(
+    clippy::too_many_lines,
+    reason = "one stage, in the order of its steps; split, its state would pass through every part"
+)]
 async fn try_reads(
     kernel: &Kernel,
     call: &Call,
+    scout: RunId,
     target: &TargetName,
     folder: PathBuf,
     tools: &[(String, String)],
     held_back: Vec<String>,
-) -> Result<(Json, BTreeMap<String, Vec<String>>, bool), Failure> {
+) -> Result<Tried, Failure> {
     let mut tried = Vec::new();
     let mut runs = BTreeMap::new();
-    let complete = true;
     let left_out = json!(held_back);
     if tools.is_empty() {
-        return Ok((
-            json!({"tools": tried, "left_out": left_out}),
+        return Ok(Tried {
+            result: json!({"tools": tried, "left_out": left_out}),
             runs,
-            complete,
-        ));
+            complete: true,
+        });
     }
     // What can compile is compiled: every file of the target but the
     // drafts that hold an open question, since one such file keeps its
@@ -888,24 +1205,48 @@ async fn try_reads(
             for (tool, file) in tools {
                 tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile, without those that hold an open question."}));
             }
-            return Ok((
-                json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),
+            return Ok(Tried {
+                result: json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),
                 runs,
-                complete,
-            ));
+                complete: true,
+            });
         }
     };
-    let mut complete = complete;
     let plan = Arc::new(compiled.plan);
     kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&plan));
     let environment = plan
         .default_environment()
         .map(|environment| environment.name.clone());
+    let until = tokio::time::Instant::now() + wait_of(call);
+    let mut waited = false;
+    // The reads proven so far, kept in memory for this call only.
+    let mut proven: Vec<Proven> = Vec::new();
+    // Reads with a stated input first; then those that take a key they
+    // state no example of, which may take it from a list proven before.
+    let mut order: Vec<(bool, &String, &String)> = Vec::new();
     for (name, file) in tools {
-        let Ok(operation) = OperationName::new(name) else {
+        let needs_key = OperationName::new(name)
+            .ok()
+            .and_then(|operation| plan.tool(&operation).map(|tool| tool.runs))
+            .and_then(|runs| match runs {
+                ToolRuns::Operation(index) => plan.operations.get(index.get()),
+                ToolRuns::Pipeline(_) => None,
+            })
+            .is_some_and(|operation| {
+                operation.examples.is_empty()
+                    && !operation
+                        .inputs
+                        .iter()
+                        .all(|input| !input.required || input.default.is_some())
+            });
+        order.push((needs_key, name, file));
+    }
+    order.sort_by_key(|(needs_key, _, _)| *needs_key);
+    for (_, name, file) in order {
+        let Ok(operation_name) = OperationName::new(name) else {
             continue;
         };
-        let Some(tool) = plan.tool(&operation).cloned() else {
+        let Some(tool) = plan.tool(&operation_name).cloned() else {
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "The drafts hold no such tool."}));
             continue;
         };
@@ -919,38 +1260,68 @@ async fn try_reads(
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Only a read is tried; the scout never tries a write."}));
             continue;
         }
-        let input = match &found.tool.runs {
-            ToolRuns::Operation(index) => plan.operations.get(index.get()).and_then(|operation| {
-                match operation.examples.first() {
-                    Some(example) => Some(example.clone()),
-                    None => operation
-                        .inputs
-                        .iter()
-                        .all(|input| !input.required || input.default.is_some())
-                        .then(Values::new),
-                }
-            }),
-            ToolRuns::Pipeline(_) => None,
-        };
-        let (Some(input), Some(environment)) = (input, environment.clone()) else {
-            tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "It takes an input it states no example of; the scout has no value for it."}));
+        let ToolRuns::Operation(index) = found.tool.runs else {
+            tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Only an operation is tried; a pipeline is not."}));
             continue;
         };
-        let mut results = Vec::new();
+        let Some(operation) = plan.operations.get(index.get()) else {
+            continue;
+        };
+        let input = match operation.examples.first() {
+            Some(example) => TryInput::Stated(example.clone()),
+            None if operation
+                .inputs
+                .iter()
+                .all(|input| !input.required || input.default.is_some()) =>
+            {
+                TryInput::Stated(Values::new())
+            }
+            None => key_from_list(operation, &proven),
+        };
+        let (input, from) = match input {
+            TryInput::Stated(input) => (input, None),
+            TryInput::FromList(input, list, output) => (input, Some((list, output))),
+            TryInput::None(why) => {
+                tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": why}));
+                continue;
+            }
+        };
+        let Some(environment) = environment.clone() else {
+            tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "The drafts declare no environment to try it in."}));
+            continue;
+        };
+        let mut results: Vec<Json> = Vec::new();
         let mut kept = Vec::new();
-        let mut ended = true;
-        for _ in 0..TRIES {
-            let run = submit_trial(kernel, call, &found, &input, environment.clone()).await?;
+        let mut not_ended = false;
+        for try_number in 0..TRIES {
+            // The call's wait is looked at between trials only, and after
+            // one trial at least, so that every call moves the stage on.
+            if waited && tokio::time::Instant::now() >= until {
+                return Ok(Tried {
+                    result: Json::Null,
+                    runs,
+                    complete: false,
+                });
+            }
+            let (run, new) =
+                trial_of(kernel, call, scout, &found, &input, try_number, &environment).await?;
+            // A trial made before and found again does not count: the call
+            // moves the stage on by one new trial at least.
+            waited |= new;
             kept.push(run.to_string());
-            let row = kernel.wait_for_rest(run, wait_of(call)).await?;
-            if !row.state.is_final() {
-                ended = false;
+            let Some(row) = trial_rests(kernel, run).await? else {
+                not_ended = true;
+                break;
+            };
+            let shown = run_output(kernel, call, row, Tell::Nobody).await?;
+            let completed = shown.result["status"] == "completed";
+            results.push(shown.result);
+            if !completed {
+                // A trial that fails ends the read's tries: it is tried,
+                // and not proven, with its named failure.
                 break;
             }
-            let shown = run_output(kernel, call, row, Tell::Nobody).await?;
-            results.push(shown.result);
         }
-        complete &= ended;
         runs.insert(name.clone(), kept);
         let completed = results
             .iter()
@@ -959,8 +1330,8 @@ async fn try_reads(
         let same = results
             .windows(2)
             .all(|pair| pair[0]["result"] == pair[1]["result"]);
-        let state = if !ended {
-            "working"
+        let state = if not_ended {
+            "not_ended"
         } else if completed == TRIES && same {
             "proven"
         } else if completed == TRIES {
@@ -977,21 +1348,49 @@ async fn try_reads(
             "same": same,
             "level": if state == "proven" { "executed" } else { "reconstructed" },
         });
+        if not_ended {
+            entry["why"] = json!(format!(
+                "A trial did not end within {} seconds of its submission, and was cancelled.",
+                TRIAL_BOUND.as_secs()
+            ));
+        }
+        if let Some((list, output)) = &from {
+            // Where the input came from, never its value.
+            entry["input_from"] = json!({"list": list, "output": output});
+        }
         if let Some(first) = results.first() {
             // The shape of what the system answered, never its values: a
             // list read may answer a thousand rows of the system's data.
             entry["shape"] = shape_of(&first["result"]);
-            if let Some(failure) = first.get("failure") {
-                entry["failure"] = failure.clone();
-            }
+        }
+        if let Some(failure) = results.iter().find_map(|result| result.get("failure")) {
+            // The class and code only: the message may quote the system.
+            entry["failure"] = json!({"class": failure["class"], "code": failure["code"]});
+        }
+        if state == "proven"
+            && let (Some(binding), Some(first)) = (operation.bindings.first(), results.first())
+        {
+            proven.push(Proven {
+                tool: name.clone(),
+                surface: binding.surface,
+                lists: operation
+                    .outputs
+                    .iter()
+                    .filter(|output| matches!(output.ty, a2m_core::ValueType::List(_)))
+                    .map(|output| output.name.clone())
+                    .collect(),
+                result: first["result"].clone(),
+            });
         }
         tried.push(entry);
     }
-    Ok((
-        json!({"tools": tried, "left_out": left_out}),
+    // In the order of the drafted tools, whatever order they were tried in.
+    tried.sort_by(|a, b| a["tool"].as_str().cmp(&b["tool"].as_str()));
+    Ok(Tried {
+        result: json!({"tools": tried, "left_out": left_out}),
         runs,
-        complete,
-    ))
+        complete: true,
+    })
 }
 
 /// The problems of drafts as the scout reports them: a drafted file's
@@ -1089,10 +1488,14 @@ handler!(
         let (workspace, person) = (principal.workspace, principal.principal.id);
         let named = target.clone();
         let fresh = call.flag("fresh").unwrap_or(false);
+        let project = project_key(&call);
+        let in_project = project.clone();
         let scout = kernel
             .store()?
             .write(Durability::Synced, move |tx| {
-                if !fresh && let Some(scout) = newest_scout(tx, &workspace, &person, &named, false)? {
+                if !fresh
+                    && let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, false)?
+                {
                     return Ok(scout);
                 }
                 let id = RunId::from_parts(tx.now(), tx.random()?)?;
@@ -1120,8 +1523,17 @@ handler!(
 
         // 0. Consent and budget.
         if let std::collections::btree_map::Entry::Vacant(slot) = done.entry(0) {
+            // Consent is never recorded on a person's behalf (section
+            // 213; audit finding A4): the engine keeps no record of who
+            // added the target, and an agent cannot grant it. The stage
+            // says what is true: who asked, and that no consent is held.
             let result = json!({
-                "consent": "The person who added the target, on this machine (section 402).",
+                "project": in_project,
+                "consent": {
+                    "recorded": false,
+                    "asked_by": if call.caller.is_agent { "agent" } else { "person" },
+                    "why": "No consent record exists for this target, and none is made for a person who did not give it. The scout reaches the system only through discovery and trials of reads, in the engine's sandbox, where nothing can be written.",
+                },
                 "decision": call.decision.to_string(),
                 "bounds": "Each discoverer is held to the bounds its manifest declares, and each trial to the step limits of its tool.",
                 "budget_in_force": false,
@@ -1135,7 +1547,7 @@ handler!(
         // 1. Identify; 2. discover. One discovery job per surface: the
         // engine runs every discoverer that suits a surface in one job.
         if !done.contains_key(&1) {
-            let identified = match identify(kernel, &call, &target, None).await {
+            let identified = match identify(kernel, &call, &target, None, true).await {
                 Ok(identified) => identified,
                 // Drafts that do not compile declare no surface the engine
                 // can observe: the scout reports that and goes on, so that
@@ -1208,9 +1620,9 @@ handler!(
         let no_folder = json!({"state": "not_looked_at", "why": "The call is not made in a project that holds the target's folder, so nothing is drafted."});
         if !done.contains_key(&3) {
             let result = match &folder {
-                Some(folder) => {
+                Some(_) => {
                     let (result, asked) =
-                        compare(kernel, folder.clone(), id, findings.clone()).await?;
+                        compare(kernel, &call, &target, id, findings.clone()).await?;
                     let named = target.clone();
                     kernel
                         .store()?
@@ -1296,10 +1708,20 @@ handler!(
                     .collect();
                 let tools =
                     drafted_tools(kernel, folder.clone(), written, held_back.clone()).await?;
-                let (mut result, runs, complete) =
-                    try_reads(kernel, &call, &target, folder.clone(), &tools, held_back).await?;
+                let Tried {
+                    mut result,
+                    runs,
+                    complete,
+                } = try_reads(kernel, &call, id, &target, folder.clone(), &tools, held_back)
+                    .await?;
                 if !complete {
-                    return Ok(stopped(&target, id, 6, "A trial has not ended yet.", &done));
+                    return Ok(stopped(
+                        &target,
+                        id,
+                        6,
+                        "The call's wait ended before every trial was made; each made is kept, and the next call goes on from there.",
+                        &done,
+                    ));
                 }
                 result["runs"] = json!(runs);
                 result
@@ -1338,13 +1760,15 @@ handler!(
         let principal = &call.caller.principal;
         let (workspace, person) = (principal.workspace, principal.principal.id);
         let named = target.clone();
+        let project = project_key(&call);
         let found = kernel
             .store()?
             .read(move |tx| {
-                let Some(scout) = newest_scout(tx, &workspace, &person, &named, true)? else {
+                let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, true)?
+                else {
                     return Ok(None);
                 };
-                let unfinished = newest_scout(tx, &workspace, &person, &named, false)?;
+                let unfinished = newest_scout(tx, &workspace, &person, &named, &project, false)?;
                 Ok(Some((stored_stages(tx, scout.id)?, unfinished)))
             })
             .await?;
@@ -1366,3 +1790,85 @@ handler!(
         Ok(output)
     }
 );
+
+#[cfg(test)]
+mod tests {
+    use super::{COPY_MOST_FILES, copy_target};
+
+    fn folder(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "a2m-scout-copy-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(path.join("project").join("t").join("operations")).unwrap();
+        path
+    }
+
+    /// Audit finding A5: a link in the target's folder is never followed,
+    /// so a file outside the project is never copied into the cache.
+    #[cfg(unix)]
+    #[test]
+    fn the_compare_copy_follows_no_link_out_of_the_project() {
+        let root = folder("link");
+        let project = root.join("project");
+        std::fs::write(root.join("outside.yaml"), "secret-for-tests-outside").unwrap();
+        std::fs::write(project.join("t").join("target.yaml"), "kept").unwrap();
+        std::os::unix::fs::symlink(
+            root.join("outside.yaml"),
+            project.join("t").join("operations").join("swapped.yaml"),
+        )
+        .unwrap();
+        let from = crate::handlers::build::project(&project)
+            .unwrap()
+            .join("t")
+            .unwrap();
+        let to = root.join("copy");
+        copy_target(&from, &to, &mut (0, 0)).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join("target.yaml")).unwrap(), "kept");
+        assert!(!to.join("operations").join("swapped.yaml").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit finding A5, the race: a file the listing saw, swapped for a
+    /// link before it is read, is refused by the read the copy makes of it
+    /// (`std::fs::copy`, which the copy used before, follows the link).
+    #[cfg(unix)]
+    #[test]
+    fn a_link_swapped_in_after_the_listing_is_not_read() {
+        let root = folder("swap");
+        let project = root.join("project");
+        std::fs::write(root.join("outside.yaml"), "secret-for-tests-outside").unwrap();
+        let file = project.join("t").join("operations").join("a.yaml");
+        std::fs::write(&file, "kept").unwrap();
+        let from = crate::handlers::build::project(&project)
+            .unwrap()
+            .join("t/operations")
+            .unwrap();
+        let (entries, _) = from.list().unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(root.join("outside.yaml"), &file).unwrap();
+        assert!(entries[0].read(1024).is_err());
+        let followed = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(followed, "secret-for-tests-outside");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit finding A5: the copy is bounded; a folder past the bound is
+    /// refused, not copied whole.
+    #[test]
+    fn the_compare_copy_is_bounded() {
+        let root = folder("bound");
+        let operations = root.join("project").join("t").join("operations");
+        for number in 0..=COPY_MOST_FILES {
+            std::fs::write(operations.join(format!("o{number}.yaml")), "x").unwrap();
+        }
+        let from = crate::handlers::build::project(&root.join("project"))
+            .unwrap()
+            .join("t")
+            .unwrap();
+        let refused = copy_target(&from, &root.join("copy"), &mut (0, 0)).unwrap_err();
+        assert_eq!(refused.code().as_str(), "path_not_allowed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

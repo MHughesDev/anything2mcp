@@ -280,7 +280,13 @@ test("on macOS and Linux connect finds the socket where the engine puts it", { s
   const c = await client.connect({ env: engine.env, name: "tests" });
   t.after(() => c.close());
   assert.strictEqual((await c.engineStatus()).ok, true);
-  await assert.rejects(client.connect({ env: { A2M_HOME: path.join(scratch(), "nothing") } }), (error) => error.code === "engine_unreachable");
+  const nothing = { A2M_HOME: path.join(scratch(), "nothing") };
+  await assert.rejects(client.connect({ env: nothing, start: false }), (error) => error.code === "engine_unreachable");
+  // Asked to start one with a program that cannot be run, the same.
+  await assert.rejects(
+    client.connect({ env: nothing, binary: path.join(scratch(), "no-such-program") }),
+    (error) => error.code === "engine_unreachable",
+  );
 });
 
 test("each system keeps the socket where the engine puts it", () => {
@@ -373,4 +379,29 @@ test("the client reaches a real engine and the engine answers", { skip: !BINARY 
   assert.strictEqual(status.exitClass, "succeeded");
   const unknown = await c.call("no.such");
   assert.strictEqual(unknown.ok, false);
+});
+
+test("a client that finds no engine has the program start one and is answered", { skip: !BINARY || WINDOWS }, async (t) => {
+  const home = scratch();
+  const env = { A2M_HOME: home };
+  t.after(() => {
+    spawnSync(BINARY, ["engine", "stop"], { env: { ...process.env, ...env }, stdio: "ignore", timeout: 60000 });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  // Asked to start nothing, it starts nothing.
+  await assert.rejects(client.connect({ env, start: false }), (error) => error.code === "engine_unreachable");
+  assert.ok(!fs.existsSync(path.join(home, "run", "engine.sock")));
+  // Otherwise the program starts one, as a command would, and the client is
+  // answered by it.
+  const c = await client.connect({ env, name: "tests", binary: BINARY });
+  const status = await c.engineStatus();
+  assert.strictEqual(status.action, "engine.status");
+  assert.strictEqual(status.exitClass, "succeeded", JSON.stringify(status.body));
+  c.close();
+  // The engine runs on: a client that starts nothing reaches it.
+  const again = await client.connect({ env, start: false });
+  assert.strictEqual((await again.engineStatus()).ok, true);
+  again.close();
+  const log = fs.readFileSync(path.join(home, "data", "logs", "engine-output.log"), "utf8");
+  assert.strictEqual(log.split("a client started the engine on demand").length - 1, 1, log);
 });

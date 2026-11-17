@@ -1698,6 +1698,7 @@ fn where_the_address_is_a_program_each_environments_address_is_declared_too() {
                     path_key: "address".to_owned(),
                     digest_key: Some("digest".to_owned()),
                 }],
+                notices: Vec::new(),
             },
         )
         .err()
@@ -2218,6 +2219,31 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
     assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
     assert!(binding.read_back.is_empty());
 
+    // Decision 0193, finding F-1: a binding that reads its record back by
+    // its key is verified by that read, irreversible or not; the plan's
+    // check refuses the same.
+    let keeps_read_back = format!("{read_back}{acknowledged}");
+    let problems = problems_with(
+        &with(&[
+            (read_back, keeps_read_back.as_str()),
+            ("effect: write", irreversible),
+        ]),
+        &set,
+        CompileMode::Draft,
+    );
+    let problem = problems
+        .find("kernel.acknowledged_where_read_back")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("by its key"), "{problem}");
+    // With no key, the same binding may stand on the acknowledgement.
+    let binding = binding_of(&plan_of(&with(&[
+        (read_back, keeps_read_back.as_str()),
+        ("effect: write", irreversible),
+        ("key: [order_id, item_code]\n", ""),
+    ])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(!binding.read_back.is_empty());
+
     // The response stands where the lowering prefers it.
     let binding = binding_of(&plan_of(&with(&[(
         read_back,
@@ -2273,4 +2299,77 @@ fn a_tools_output_schema_allows_a_masked_number() {
     assert!(output.contains("[redacted]"), "{output}");
     let input = String::from_utf8(tool.input_schema.as_bytes().to_vec()).unwrap();
     assert!(!input.contains("[redacted]"), "{input}");
+}
+
+/// Decision 0193: a notice a pack registers for a surface kind stands on
+/// the compiled plan's surface exactly while the target file's field holds
+/// the word, and a door reads it from the compiler set.
+#[test]
+fn a_surface_carries_the_notice_its_kind_registers_while_its_field_says_so() {
+    use a2m_core::SurfaceNotice;
+    let set = |notice: bool| {
+        let mut builder = CompilerSet::builder();
+        let spec = crate::testing::surface_kind_spec();
+        let spec = if notice {
+            spec.with_notice("profile", "open", SurfaceNotice::UnencryptedCredentials)
+        } else {
+            spec
+        };
+        builder.surface_kind(crate::testing::PACK, spec).unwrap();
+        for part in &crate::testing::STAND_PARTS[1..] {
+            crate::testing::register_part(&mut builder, crate::testing::PACK, part).unwrap();
+        }
+        builder.build()
+    };
+    let with_profile = |profile: Option<&str>| {
+        let mut files = example_files();
+        for (path, bytes) in &mut files {
+            if path.as_str() == "target.yaml"
+                && let Some(profile) = profile
+            {
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                *bytes = text
+                    .replace(
+                        "    address: \"https://app.example.com\"\n",
+                        &format!(
+                            "    address: \"https://app.example.com\"\n    profile: {profile}\n"
+                        ),
+                    )
+                    .into_bytes();
+            }
+        }
+        files
+    };
+    let notices = |set: &CompilerSet, profile: Option<&str>| {
+        let sources = load_files(&TargetRoot::new("example"), &with_profile(profile), set).unwrap();
+        let plan = compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
+            .unwrap_or_else(|problems| panic!("{problems}"))
+            .plan;
+        set.surface_notices(&plan.surfaces[0])
+    };
+    let noticing = set(true);
+    assert_eq!(
+        notices(&noticing, Some("open")),
+        [SurfaceNotice::UnencryptedCredentials]
+    );
+    assert!(notices(&noticing, Some("closed")).is_empty());
+    assert!(notices(&noticing, None).is_empty());
+    // A kind that registers none gives none, whatever the field says.
+    assert!(notices(&set(false), Some("open")).is_empty());
+    // The field must be one of the kind's own, and not its address.
+    for key in ["address", "nowhere"] {
+        let mut builder = CompilerSet::builder();
+        let failure = builder
+            .surface_kind(
+                crate::testing::PACK,
+                crate::testing::surface_kind_spec().with_notice(
+                    key,
+                    "open",
+                    SurfaceNotice::UnencryptedCredentials,
+                ),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(failure.code().as_str(), "registration_conflict", "{key}");
+    }
 }

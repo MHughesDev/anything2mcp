@@ -12,7 +12,7 @@ use std::sync::Arc;
 use a2m_core::{
     ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding, FindingKind,
     IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName,
-    ValueType, Verb, WriteEvidence,
+    SurfaceNotice, SurfacePlan, ValueType, Verb, WriteEvidence,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
@@ -275,6 +275,24 @@ pub struct SurfaceKindSpec {
     /// compiler copies what a surface states under them into
     /// `SurfacePlan::programs`, and refuses a path that is not absolute.
     pub programs: Vec<ProgramField>,
+    /// The notices a surface of this kind carries for a door to show, each
+    /// when one of its fields holds one word ([`SurfaceKindSpec::with_notice`]).
+    pub notices: Vec<NoticeField>,
+}
+
+/// A notice a surface carries when one of its own fields holds one word:
+/// so a pack names, as data, what a door must show, and a door asks
+/// [`CompilerSet::surface_notices`] (decision 0193). The notice and its
+/// words are the kernel's closed list; the field is the target file's,
+/// which a caller's input never sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeField {
+    /// The key of the surface's field, one of the kind's own fields.
+    pub key: String,
+    /// The word that field holds for the notice to stand.
+    pub word: String,
+    /// The notice.
+    pub notice: SurfaceNotice,
 }
 
 impl SurfaceKindSpec {
@@ -286,7 +304,20 @@ impl SurfaceKindSpec {
             address_key: address_key.to_owned(),
             fields,
             programs: Vec::new(),
+            notices: Vec::new(),
         }
+    }
+
+    /// Adds a notice a surface of this kind carries while its own field
+    /// `key` holds `word`, such as `unencrypted_credentials: accepted`.
+    #[must_use]
+    pub fn with_notice(mut self, key: &str, word: &str, notice: SurfaceNotice) -> Self {
+        self.notices.push(NoticeField {
+            key: key.to_owned(),
+            word: word.to_owned(),
+            notice,
+        });
+        self
     }
 
     /// Adds a field that names a program by its absolute path, and the
@@ -396,6 +427,37 @@ impl CompilerSet {
     /// The surface kinds registered, in order of name.
     pub fn surface_kinds(&self) -> impl Iterator<Item = &SurfaceKind> {
         self.surface_kinds.keys()
+    }
+
+    /// The notices a surface of the plan carries for a door to show, in
+    /// the order of the closed list, each once: those its kind's pack
+    /// registered ([`SurfaceKindSpec::with_notice`]) whose field the
+    /// surface's own fields, as the compiler kept them, hold with the word.
+    /// Nothing for a kind no pack registers, or a surface whose fields
+    /// cannot be read. The surface's fields are the target file's; nothing
+    /// a caller sends reaches them (decision 0193).
+    #[must_use]
+    pub fn surface_notices(&self, surface: &SurfacePlan) -> Vec<SurfaceNotice> {
+        let Some(spec) = self.surface_kinds.get(&surface.kind) else {
+            return Vec::new();
+        };
+        if spec.item.notices.is_empty() {
+            return Vec::new();
+        }
+        let Ok(Some(fields)) = surface.payload.decode::<Option<serde_json::Value>>() else {
+            return Vec::new();
+        };
+        SurfaceNotice::ALL
+            .iter()
+            .copied()
+            .filter(|notice| {
+                spec.item.notices.iter().any(|field| {
+                    field.notice == *notice
+                        && fields.get(&field.key).and_then(serde_json::Value::as_str)
+                            == Some(field.word.as_str())
+                })
+            })
+            .collect()
     }
 
     /// The modes that have a lowering, in order of name.
@@ -561,6 +623,17 @@ impl CompilerSetBuilder {
                 "The surface kind `{}` names a program by the key `{}`, which its fields do not list.",
                 spec.kind,
                 crate::schema::shown(key)
+            )));
+        }
+        if let Some(field) = spec
+            .notices
+            .iter()
+            .find(|field| !keys.contains(&field.key.as_str()) || field.key == spec.address_key)
+        {
+            return Err(conflict(format!(
+                "The surface kind `{}` gives a notice by the key `{}`, which is not one of its own fields other than its address.",
+                spec.kind,
+                crate::schema::shown(&field.key)
             )));
         }
         self.set.surface_kinds.insert(

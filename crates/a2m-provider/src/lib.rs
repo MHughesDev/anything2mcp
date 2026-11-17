@@ -45,8 +45,8 @@ pub use discover::{
 };
 pub use driver::{
     Authority, Capture, ChoiceReason, Deadline, Destinations, Driver, DriverHandle, DriverHealth,
-    Observed, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort, Sent, StepFailure,
-    StepInput, StepOutcome, SurfaceRef,
+    Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort,
+    RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef, recorded_digest,
 };
 pub use manifest::{
     ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,

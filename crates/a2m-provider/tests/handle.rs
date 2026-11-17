@@ -1053,3 +1053,142 @@ async fn how_a_step_was_done_and_what_the_system_said_pass_the_handle() {
     assert!(!failure.failure.message().contains("positive"));
     assert!(handle.release(prepared, false).await.complete);
 }
+
+/// The engine's stand-in for the question whether another record holds a
+/// value: the provider's own test answerer, over values it was told were
+/// stored, counting what it was asked.
+struct StoredElsewhere {
+    stored: Vec<(String, a2m_core::Value, RecordRef)>,
+    asked: std::sync::Mutex<Vec<String>>,
+    slow: bool,
+}
+
+impl a2m_provider::OtherRecords for StoredElsewhere {
+    fn holding<'a>(
+        &'a self,
+        name: &'a str,
+        value: a2m_core::Digest,
+    ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
+        Box::pin(async move {
+            self.asked.lock().unwrap().push(name.to_owned());
+            if self.slow {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+            self.stored
+                .iter()
+                .find(|(stored, held, _)| {
+                    stored == name && a2m_provider::recorded_digest(held) == value
+                })
+                .map_or(
+                    a2m_provider::RecordedElsewhere::NotHeld,
+                    |(_, _, record)| a2m_provider::RecordedElsewhere::Held(*record),
+                )
+        })
+    }
+}
+
+/// Decision 0193: a driver may ask, within a step, whether another record
+/// holds a value it recorded; the answer names a record, never a value, and
+/// is "cannot tell" wherever the engine gave no answerer or the question
+/// is out of bounds.
+#[tokio::test(start_paused = true)]
+async fn a_driver_learns_whether_another_record_holds_a_value_and_never_the_value() {
+    let scene = scene();
+    let (handle, mut prepared) = scene.prepared(None, Posture::Live).await;
+    let args = Values::new();
+    let run = a2m_core::RunId::from_bytes([7; 16]);
+    let asking = RecordRef {
+        run,
+        step_seq: 0,
+        record_seq: 1,
+    };
+    let other = RecordRef {
+        run: a2m_core::RunId::from_bytes([8; 16]),
+        step_seq: 2,
+        record_seq: 0,
+    };
+    let step = input(&args, Some(asking), None);
+    let take = scene.step("fetch", false, false);
+    let others = Arc::new(StoredElsewhere {
+        stored: vec![
+            ("stream_seq".to_owned(), a2m_core::Value::Int(41), other),
+            ("stream_seq".to_owned(), a2m_core::Value::Int(42), asking),
+        ],
+        asked: std::sync::Mutex::new(Vec::new()),
+        slow: false,
+    });
+    let answer = |outcome: StepOutcome| match outcome {
+        StepOutcome::Done(observed) => observed.values.get("answer").unwrap().clone(),
+        StepOutcome::Absent(_) => panic!("done"),
+    };
+    let mut ask =
+        async |name: &str, value: a2m_core::Value, answerer: Option<Arc<StoredElsewhere>>| {
+            scene.behave(Behaviour::AskElsewhere(name.to_owned(), value));
+            let outcome = match answerer {
+                Some(answerer) => {
+                    handle
+                        .act_asking(
+                            &mut prepared,
+                            &take,
+                            &step,
+                            Authority::Read,
+                            &Values::new(),
+                            answerer,
+                        )
+                        .await
+                }
+                None => {
+                    handle
+                        .act(&mut prepared, &take, &step, Authority::Read)
+                        .await
+                }
+            };
+            answer(outcome.unwrap())
+        };
+    let held = ask("stream_seq", a2m_core::Value::Int(41), Some(others.clone())).await;
+    assert_eq!(held, "held:2:0".into());
+    let not_held = ask("stream_seq", a2m_core::Value::Int(40), Some(others.clone())).await;
+    assert_eq!(not_held, "not_held".into());
+    // The record that asks is never "another" record.
+    let itself = ask("stream_seq", a2m_core::Value::Int(42), Some(others.clone())).await;
+    assert_eq!(itself, "cannot_tell".into());
+    assert_eq!(others.asked.lock().unwrap().len(), 3);
+    // Out of bounds, nothing is asked.
+    for (name, value) in [
+        ("Stream-Seq", a2m_core::Value::Int(41)),
+        (&"n".repeat(65)[..], a2m_core::Value::Int(41)),
+        ("stream_seq", a2m_core::Value::Null),
+        ("stream_seq", a2m_core::Value::from(a2m_core::REDACTED)),
+        (
+            "stream_seq",
+            a2m_core::Value::List(vec![a2m_core::Value::Int(41)]),
+        ),
+    ] {
+        let answer = ask(name, value, Some(others.clone())).await;
+        assert_eq!(answer, "cannot_tell".into(), "{name}");
+    }
+    assert_eq!(others.asked.lock().unwrap().len(), 3);
+    // Without an answerer, the engine cannot tell; nor outside a step.
+    let without = ask("stream_seq", a2m_core::Value::Int(41), None).await;
+    assert_eq!(without, "cannot_tell".into());
+    // An answer that does not come by the step's deadline is no answer.
+    let slow = Arc::new(StoredElsewhere {
+        stored: Vec::new(),
+        asked: std::sync::Mutex::new(Vec::new()),
+        slow: true,
+    });
+    let late = ask("stream_seq", a2m_core::Value::Int(41), Some(slow.clone())).await;
+    assert_eq!(late, "cannot_tell".into());
+    assert_eq!(slow.asked.lock().unwrap().len(), 1);
+    assert_eq!(
+        prepared
+            .recorded_elsewhere(
+                "stream_seq",
+                &a2m_core::Value::Int(41),
+                Deadline::after(Duration::from_secs(1))
+            )
+            .await,
+        a2m_provider::RecordedElsewhere::CannotTell
+    );
+    assert!(handle.release(prepared, false).await.complete);
+}

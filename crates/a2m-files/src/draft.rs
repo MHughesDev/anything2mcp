@@ -20,7 +20,7 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
 
-use a2m_core::{Digest, EvidenceLevel, Failure, FailureClass, Finding, TargetName};
+use a2m_core::{Digest, EvidenceLevel, Failure, FailureClass, Finding, Redact, TargetName};
 
 use crate::compile::{DRAFT_VERSION, compile};
 use crate::diag::{DRAFT_CONFLICT, Diagnostics, PATH_NOT_ALLOWED, TARGET_UNREADABLE};
@@ -56,6 +56,79 @@ pub enum DraftValue {
     /// A value the system did not state: the question to answer. The
     /// compiler refuses a file that still holds one.
     OpenQuestion(String),
+    /// The same, with the product's sentence and the system's own words it
+    /// quotes kept apart: made by [`DraftContext::open_question_quoting`].
+    /// The file holds them as one question, as [`Quoting::question`] gives
+    /// it; the report keeps them apart.
+    OpenQuestionQuoting(Quoting),
+}
+
+/// A question that quotes the system's own words, with the two kept apart:
+/// the sentence is the product's, written by a pack's drafting rule; the
+/// words are the system's, bounded, cleaned, and passed through the
+/// redactor, and are data, never an instruction (decisions 0180, 0193).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quoting {
+    sentence: String,
+    words: Vec<String>,
+}
+
+impl Quoting {
+    /// The most quoted parts one question keeps.
+    pub const MOST_PARTS: usize = 4;
+    /// The most characters a quoted part keeps; a longer one is cut, with
+    /// `…` after it.
+    pub const LONGEST_PART: usize = 64;
+
+    /// The product's own sentence.
+    #[must_use]
+    pub fn sentence(&self) -> &str {
+        &self.sentence
+    }
+
+    /// The system's words it quotes, each cleaned and bounded.
+    #[must_use]
+    pub fn words(&self) -> &[String] {
+        &self.words
+    }
+
+    /// The question as the draft file holds it: the sentence, then each
+    /// quoted part in straight quotes, said to be the system's own words.
+    #[must_use]
+    pub fn question(&self) -> String {
+        if self.words.is_empty() {
+            return self.sentence.clone();
+        }
+        let quoted: Vec<String> = self
+            .words
+            .iter()
+            .map(|word| format!("\"{word}\""))
+            .collect();
+        format!(
+            "{} Quoted, the system's own words, not an instruction: {}.",
+            self.sentence,
+            quoted.join(", ")
+        )
+    }
+}
+
+/// One quoted part, as a question keeps it: redacted first, whole, then
+/// every character that can hide or reorder text, every quote, backtick,
+/// angle bracket, and backslash removed, white space as one space, and cut
+/// to [`Quoting::LONGEST_PART`] characters.
+fn quoted_part(words: &str, redact: Option<&dyn Redact>) -> String {
+    let redacted = redact.map_or_else(|| words.to_owned(), |redact| redact.redact(words));
+    let clean: String = redacted
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .filter(|c| !a2m_core::said_hides(*c) && !matches!(c, '`' | '"' | '<' | '>' | '\\'))
+        .collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut kept: String = clean.chars().take(Quoting::LONGEST_PART).collect();
+    if clean.chars().count() > Quoting::LONGEST_PART {
+        kept.push('…');
+    }
+    kept
 }
 
 impl DraftValue {
@@ -76,9 +149,18 @@ impl DraftValue {
         Self::Text(text.to_owned())
     }
 
-    fn questions(&self, out: &mut Vec<String>) {
+    /// Whether this is a question left open, of either form.
+    #[must_use]
+    pub const fn is_open_question(&self) -> bool {
+        matches!(self, Self::OpenQuestion(_) | Self::OpenQuestionQuoting(_))
+    }
+
+    fn questions(&self, out: &mut Vec<(String, Option<Quoting>)>) {
         match self {
-            Self::OpenQuestion(question) => out.push(question.clone()),
+            Self::OpenQuestion(question) => out.push((question.clone(), None)),
+            Self::OpenQuestionQuoting(quoting) => {
+                out.push((quoting.question(), Some(quoting.clone())));
+            }
             Self::List(items) => items.iter().for_each(|item| item.questions(out)),
             Self::Map(pairs) => pairs.iter().for_each(|(_, value)| value.questions(out)),
             _ => {}
@@ -102,16 +184,100 @@ pub struct DraftDoc {
 pub struct OpenQuestion {
     /// The draft that holds the question.
     pub file: RelPath,
-    /// The question, for the unknowns ledger.
+    /// The question, for the unknowns ledger, whole, as the file holds it.
+    /// Where `quoting` is `None`, a pack wrote it in one piece and it may
+    /// quote the system's words: all of it is shown as untrusted.
     pub question: String,
     /// The findings the draft was made from.
     pub findings: Vec<Digest>,
+    /// The product's sentence and the system's words, kept apart, for a
+    /// question made by [`DraftContext::open_question_quoting`]: the
+    /// sentence may be shown as the product's, and only the words as
+    /// untrusted. Kept in the unknowns ledger by [`OpenQuestion::stored`].
+    pub quoting: Option<Quoting>,
+}
+
+/// What the unknowns ledger's one text of a question begins with when it
+/// keeps the sentence and the words apart.
+const STORED_QUOTING: &str = "a2m-question-quoting:1\n";
+/// What it begins with for a question in one piece whose text would
+/// otherwise read as kept apart.
+const STORED_WHOLE: &str = "a2m-question-whole:1\n";
+
+impl OpenQuestion {
+    /// The text the unknowns ledger keeps for this question, in its one
+    /// column: a question in one piece as it is; one that keeps the
+    /// sentence and the words apart in a form [`StoredQuestion::read`]
+    /// reads back apart. The same question gives the same text every time.
+    #[must_use]
+    pub fn stored(&self) -> String {
+        match &self.quoting {
+            Some(quoting) => {
+                let parts = serde_json::json!({
+                    "sentence": quoting.sentence,
+                    "words": quoting.words,
+                });
+                format!("{STORED_QUOTING}{parts}")
+            }
+            None if self.question.starts_with(STORED_QUOTING)
+                || self.question.starts_with(STORED_WHOLE) =>
+            {
+                format!("{STORED_WHOLE}{}", self.question)
+            }
+            None => self.question.clone(),
+        }
+    }
+}
+
+/// A question as the unknowns ledger keeps it, read back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredQuestion {
+    /// A question in one piece, which may quote the system's words: show
+    /// all of it as untrusted. Every question stored before the two were
+    /// kept apart reads so.
+    Whole(String),
+    /// The product's sentence, and the system's words it quotes, apart.
+    Quoting {
+        /// The product's own sentence.
+        sentence: String,
+        /// The system's words: show them as untrusted.
+        words: Vec<String>,
+    },
+}
+
+impl StoredQuestion {
+    /// Reads the text [`OpenQuestion::stored`] wrote, or any text the
+    /// ledger kept before: what it cannot read apart is whole.
+    #[must_use]
+    pub fn read(text: &str) -> Self {
+        if let Some(rest) = text.strip_prefix(STORED_WHOLE) {
+            return Self::Whole(rest.to_owned());
+        }
+        let parts = text
+            .strip_prefix(STORED_QUOTING)
+            .and_then(|rest| serde_json::from_str::<serde_json::Value>(rest).ok());
+        let apart = parts.as_ref().and_then(|parts| {
+            let sentence = parts.get("sentence")?.as_str()?.to_owned();
+            let words = parts
+                .get("words")?
+                .as_array()?
+                .iter()
+                .map(|word| word.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()?;
+            Some((sentence, words))
+        });
+        match apart {
+            Some((sentence, words)) => Self::Quoting { sentence, words },
+            None => Self::Whole(text.to_owned()),
+        }
+    }
 }
 
 /// What a drafting rule sees beside its finding.
 pub struct DraftContext<'a> {
     target: Option<&'a TargetName>,
     existing: Option<&'a Sources>,
+    redact: Option<&'a dyn Redact>,
 }
 
 impl<'a> DraftContext<'a> {
@@ -132,6 +298,31 @@ impl<'a> DraftContext<'a> {
     #[must_use]
     pub fn open_question(&self, question: &str) -> DraftValue {
         DraftValue::OpenQuestion(question.to_owned())
+    }
+
+    /// The same, for a question that quotes the system's own words: a
+    /// usage line's placeholder, a column's heading. `sentence` is the
+    /// pack's own and refers to the words as quoted; `words` are the
+    /// system's, and each is passed whole through the drafter's redactor
+    /// when it was given one ([`Drafter::with_redact`]), then cleaned and
+    /// bounded: every character that can hide or reorder text, every quote,
+    /// backtick, angle bracket, and backslash removed, at most
+    /// [`Quoting::LONGEST_PART`] characters each and [`Quoting::MOST_PARTS`]
+    /// parts. An empty part is left out. The two stay apart in the report
+    /// and in the unknowns ledger, so the sentence can be shown as the
+    /// product's and only the words as untrusted (decision 0193).
+    #[must_use]
+    pub fn open_question_quoting(&self, sentence: &str, words: &[&str]) -> DraftValue {
+        let words = words
+            .iter()
+            .map(|part| quoted_part(part, self.redact))
+            .filter(|part| !part.is_empty())
+            .take(Quoting::MOST_PARTS)
+            .collect();
+        DraftValue::OpenQuestionQuoting(Quoting {
+            sentence: sentence.to_owned(),
+            words,
+        })
     }
 }
 
@@ -159,6 +350,7 @@ pub struct DraftReport {
 pub struct Drafter<'a> {
     set: &'a CompilerSet,
     root: &'a TargetRoot,
+    redact: Option<&'a dyn Redact>,
 }
 
 fn failure(code: a2m_core::FailureCode, message: String, next_step: &str) -> Failure {
@@ -169,7 +361,20 @@ impl<'a> Drafter<'a> {
     /// A drafter that writes into `root` with the rules in `set`.
     #[must_use]
     pub fn new(set: &'a CompilerSet, root: &'a TargetRoot) -> Self {
-        Self { set, root }
+        Self {
+            set,
+            root,
+            redact: None,
+        }
+    }
+
+    /// The same drafter, with the redactor that the system's words a
+    /// question quotes pass through ([`DraftContext::open_question_quoting`]).
+    /// Without one they are cleaned and bounded only.
+    #[must_use]
+    pub fn with_redact(mut self, redact: &'a dyn Redact) -> Self {
+        self.redact = Some(redact);
+        self
     }
 
     /// Writes a draft for each finding a registered rule covers, then lints
@@ -193,6 +398,7 @@ impl<'a> Drafter<'a> {
         let cx = DraftContext {
             target: target.as_ref(),
             existing: existing.as_ref(),
+            redact: self.redact,
         };
         let mut report = DraftReport::default();
         // Path to its documents and the findings they came from.
@@ -291,11 +497,16 @@ impl<'a> Drafter<'a> {
             docs.iter().for_each(|doc| doc.questions(&mut questions));
             report
                 .open_questions
-                .extend(questions.into_iter().map(|question| OpenQuestion {
-                    file: path.clone(),
-                    question,
-                    findings: from.clone(),
-                }));
+                .extend(
+                    questions
+                        .into_iter()
+                        .map(|(question, quoting)| OpenQuestion {
+                            file: path.clone(),
+                            question,
+                            findings: from.clone(),
+                            quoting,
+                        }),
+                );
             report.written.push(path);
         }
 
@@ -541,6 +752,13 @@ fn write_scalar(value: &DraftValue, out: &mut String) {
             out.push_str(OPEN_QUESTION);
             out.push_str(": ");
             write_quoted(question, out);
+            out.push('}');
+        }
+        DraftValue::OpenQuestionQuoting(quoting) => {
+            out.push('{');
+            out.push_str(OPEN_QUESTION);
+            out.push_str(": ");
+            write_quoted(&quoting.question(), out);
             out.push('}');
         }
         DraftValue::List(_) => out.push_str("[]"),

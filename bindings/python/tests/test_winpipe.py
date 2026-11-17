@@ -234,7 +234,7 @@ class RealPipeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as home:
             with self.assertRaises(anything2mcp.ChannelError) as raised:
-                anything2mcp.connect(env={"A2M_HOME": home})
+                anything2mcp.connect(env={"A2M_HOME": home}, start=False)
             self.assertEqual(raised.exception.code, "engine_unreachable")
 
     BINARY = os.environ.get("A2M_TEST_BINARY", "")
@@ -251,7 +251,7 @@ class RealPipeTests(unittest.TestCase):
                 client = None
                 for _ in range(100):
                     try:
-                        client = anything2mcp.connect(env=env)
+                        client = anything2mcp.connect(env=env, start=False)
                         break
                     except anything2mcp.ChannelError:
                         engine.poll()

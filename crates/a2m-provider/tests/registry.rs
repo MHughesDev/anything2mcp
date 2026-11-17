@@ -505,3 +505,62 @@ fn a_pack_whose_manifest_is_refused_is_named_with_its_problem_and_registers_noth
     assert_eq!(named[0].problem, problems[0].failure);
     assert_eq!(registry.archetype(&mode()), None);
 }
+
+/// Decision 0193, finding P-3: a refused manifest that says the name of a
+/// registered provider is not listed under that name.
+#[test]
+fn a_refused_provider_never_takes_a_registered_providers_name() {
+    let alpha = TestPack::new("alpha");
+    let pretends = TestPack::with_manifest(
+        "alpha",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+            manifest("alpha", "request", "")
+        ),
+    );
+    for packs in [[&alpha, &pretends], [&pretends, &alpha]] {
+        let (registry, problems) = build(&packs, ProviderSettings::default());
+        assert_eq!(registry.listing().len(), 1);
+        assert!(registry.listing()[0].registered);
+        assert_eq!(registry.archetype(&mode()), Some(Archetype::Request));
+        let refused = registry.refused();
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].name, None);
+        assert_eq!(refused[0].version, None);
+        // Its problem is listed, and under no provider's name.
+        let of_refused: Vec<_> = problems
+            .iter()
+            .filter(|problem| problem.failure == refused[0].problem)
+            .collect();
+        assert_eq!(of_refused.len(), 1);
+        assert_eq!(of_refused[0].provider, None);
+        assert!(
+            problems
+                .iter()
+                .all(|problem| problem.provider.as_ref() != Some(&name("alpha"))),
+            "{problems:?}"
+        );
+    }
+    // Two refused manifests that say one name: the second is unnamed.
+    let other = TestPack::with_manifest(
+        "beta",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"transient\"\ncode = \"manifest_invalid\"\n",
+            manifest("beta", "request", "")
+        ),
+    );
+    let again = TestPack::with_manifest(
+        "beta",
+        format!(
+            "{}\n[[failure_codes]]\nclass = \"busy\"\ncode = \"manifest_invalid\"\n",
+            manifest("beta", "request", "")
+        ),
+    );
+    let (registry, _) = build(&[&other, &again], ProviderSettings::default());
+    let names: Vec<_> = registry
+        .refused()
+        .iter()
+        .map(|one| one.name.clone())
+        .collect();
+    assert_eq!(names, [Some("beta".to_owned()), None]);
+}

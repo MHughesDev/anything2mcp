@@ -62,6 +62,7 @@ kernel_codes! {
     IDENTITY_NOT_POSSIBLE = "identity_not_possible": "An operation's identity strategy is possible in each of its bindings.",
     IDENTITY_INVALID = "identity_invalid": "An identity names inputs of the operation, and fits the operation's effect.",
     WRITE_WITHOUT_READ_BACK = "write_without_read_back": "A write binding reads the record back.",
+    ACKNOWLEDGED_WHERE_READ_BACK = "acknowledged_where_read_back": "A binding that reads its record back by its key is verified by that read, never ended on an acknowledgement.",
     COMMIT_POINTS_DIFFER = "commit_points_differ": "The steps that commit in each write binding number what the operation declares.",
     EFFECT_LOWER_THAN_DERIVED = "effect_lower_than_derived": "A declared effect is never lower than the derived one.",
     STEP_CYCLE = "step_cycle": "A pipeline step uses only the results of steps before it.",

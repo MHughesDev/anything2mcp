@@ -174,12 +174,27 @@ fn ended_early(log: &Path) -> Failure {
 /// the user on macOS and Linux. On those systems a link at its name, a
 /// file that is not this user's, and a file swapped in while it was
 /// opened are refused, and a file others may read is narrowed to the user
-/// (decision 0181). On Windows the file takes the access list of its
-/// folder.
+/// (decision 0181). On Windows a link at its name and a file another owns
+/// are refused, and the file is given an access list that names only this
+/// user (decision 0192).
 fn open_log(log: &Path) -> std::io::Result<File> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder)?;
     }
+    // On Windows: never through a link, only a file of this user's, and
+    // with an access list of its own that names only this user.
+    #[cfg(windows)]
+    {
+        os::open_output(log)
+    }
+    #[cfg(not(windows))]
+    {
+        open_output_elsewhere(log)
+    }
+}
+
+#[cfg(not(windows))]
+fn open_output_elsewhere(log: &Path) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]

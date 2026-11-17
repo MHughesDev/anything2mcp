@@ -369,8 +369,25 @@ impl RegistryBuilder {
             settings,
             host,
             mut pending,
-            unnamed,
+            mut unnamed,
         } = self;
+        // A refused manifest's name is its own unchecked word. One that
+        // says the name of a provider that is listed, or of a refused one
+        // named before it, is kept unnamed, so that its problem is never
+        // listed under a name another provider holds (decision 0193).
+        let mut taken: BTreeSet<String> = pending
+            .iter()
+            .map(|one| one.manifest.provider.name.as_str().to_owned())
+            .collect();
+        for refused in &mut unnamed {
+            if let Some(name) = refused.name.take() {
+                if taken.insert(name.clone()) {
+                    refused.name = Some(name);
+                } else {
+                    refused.version = None;
+                }
+            }
+        }
         // Name order, so that the order of the calls changes nothing.
         pending.sort_by(|a, b| {
             (&a.manifest.provider.name, &a.manifest.digest)
@@ -816,7 +833,9 @@ struct Inner {
 /// registered and it has no listing: kept so that `provider.list` names it
 /// with its problem, never leaving it out unseen. Its name and version are
 /// read from the manifest's text as far as they can be, and are the
-/// manifest's own words, unchecked.
+/// manifest's own words, unchecked. A name that another provider holds,
+/// listed or refused before it, is not kept: such a provider is unnamed,
+/// and its problem is never listed under another's name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefusedProvider {
     /// The name its manifest gives, when the text says one.

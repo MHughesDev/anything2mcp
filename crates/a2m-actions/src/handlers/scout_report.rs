@@ -142,6 +142,7 @@ pub(crate) fn assemble(
     let drafted: Vec<Json> = list(&stage(4)["written"]).cloned().collect();
     let refused: Vec<Json> = list(&stage(4)["refused"]).cloned().collect();
     let content = json!({
+        "consent": stage(0)["consent"],
         "surfaces": stage(1)["surfaces"],
         "sign_in": stage(1)["sign_in"],
         "found": stage(2)["findings"],

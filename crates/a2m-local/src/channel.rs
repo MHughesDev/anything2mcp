@@ -7,6 +7,7 @@
 //! anyone else is closed. The first request on a connection is the hello;
 //! every later request carries the [`Peer`] in its extensions.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -295,7 +296,31 @@ pub struct Channel {
     lock: EngineLock,
     expected: OsUser,
     version: Version,
+    /// The engine's start variables, each by its name and the digest of
+    /// its value, which the hello answers with.
+    start_variables: BTreeMap<String, String>,
     control: ChannelControl,
+}
+
+/// The digest of one start variable, as the hello carries it: of its name
+/// and its value together, so that one value under two names differs.
+fn variable_digest(name: &str, value: &str) -> String {
+    Digest::of(format!("{name}={value}").as_bytes()).to_string()
+}
+
+/// Each variable by its name and the digest of its value.
+pub(crate) fn variable_digests(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    variables
+        .iter()
+        .map(|(name, value)| (name.clone(), variable_digest(name, value)))
+        .collect()
+}
+
+/// What the hello answers with.
+#[derive(Clone)]
+struct Hello {
+    version: Version,
+    start_variables: Arc<BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for Channel {
@@ -364,11 +389,23 @@ impl Channel {
             lock,
             expected,
             version,
+            start_variables: BTreeMap::new(),
             control: ChannelControl {
                 stop,
                 refused: Arc::new(AtomicU64::new(0)),
             },
         })
+    }
+
+    /// The same channel, whose hello names the variables the engine was
+    /// started with that would change what it does, so that a client can
+    /// tell whether its own differ (decision 0192). Each is answered as
+    /// its name and the digest of its value, never the value; the channel
+    /// does not know what any of them means.
+    #[must_use]
+    pub fn with_start_variables(mut self, variables: &BTreeMap<String, String>) -> Self {
+        self.start_variables = variable_digests(variables);
+        self
     }
 
     /// Where the engine lock of the data directory was taken, which the
@@ -400,6 +437,7 @@ impl Channel {
             lock,
             expected,
             version,
+            start_variables,
             control,
         } = self;
         let (open, open_seen) = watch::channel(0_usize);
@@ -409,7 +447,11 @@ impl Channel {
             open,
             refused: Arc::clone(&control.refused),
         };
-        let app = service.layer(axum::middleware::from_fn_with_state(version, front));
+        let hello = Hello {
+            version,
+            start_variables: Arc::new(start_variables),
+        };
+        let app = service.layer(axum::middleware::from_fn_with_state(hello, front));
         let mut asked = control.stop.subscribe();
         let stop = control.stop.clone();
         let signal = async move {
@@ -575,7 +617,7 @@ fn hello_invalid(why: &str) -> Response {
 
 /// What stands in front of the composed service: the hello, and the peer.
 async fn front(
-    State(version): State<Version>,
+    State(hello): State<Hello>,
     ConnectInfo(seat): ConnectInfo<Seat>,
     mut request: Request,
     next: Next,
@@ -610,7 +652,11 @@ async fn front(
         }
         // The first hello names the connection; a second changes nothing.
         let _ = seat.label.set(label);
-        let body = json!({"engine_version": version.to_string(), "local_api": LOCAL_API});
+        let body = json!({
+            "engine_version": hello.version.to_string(),
+            "local_api": LOCAL_API,
+            "start_variables": *hello.start_variables,
+        });
         return (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],

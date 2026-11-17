@@ -165,6 +165,19 @@ pub(super) struct Options {
     block_store: bool,
     /// The settings the kernel is opened with.
     pub(super) settings: Settings,
+    /// What is done to the folders before the kernel opens.
+    pub(super) before_open: Option<fn(&Paths)>,
+}
+
+impl Options {
+    /// The defaults, with `before` done to the folders before the kernel
+    /// opens.
+    pub(super) fn before_open(before: fn(&Paths)) -> Self {
+        Self {
+            before_open: Some(before),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Options {
@@ -174,6 +187,7 @@ impl Default for Options {
             key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
             block_store: false,
             settings: Settings::defaults(),
+            before_open: None,
         }
     }
 }
@@ -203,6 +217,9 @@ pub(super) async fn world(options: Options) -> World {
         // A file where the store's folder should be: the store cannot open.
         std::fs::create_dir_all(&paths.data).unwrap();
         std::fs::write(&paths.store, b"not a folder").unwrap();
+    }
+    if let Some(before) = options.before_open {
+        before(&paths);
     }
     let manual = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
     let clock: Arc<dyn Clock> = Arc::clone(&manual) as Arc<dyn Clock>;

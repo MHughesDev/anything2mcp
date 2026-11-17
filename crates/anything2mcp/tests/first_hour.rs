@@ -4,18 +4,21 @@
 //! against what the test application holds.
 //!
 //! `init`, the target added, its surface declared, the scout and its
-//! report, a drafted read linted and tried, its offline test written by
-//! hand and run, the publish asked for and carried out by a person on the
-//! engine's page, and the published tool called. Every command is the
-//! real program, a thin client of one served engine. The engine is the
-//! same `LocalEngine` that `serve` starts, run in this process because the
-//! program ships no presence prompt a test can pass; the person's press
-//! goes through its page, as in `local_engine.rs`.
+//! report, the drafts not wanted removed, the read kept given its offline
+//! test and run, its first binding promoted on that evidence, the publish
+//! asked for and carried out by a person on the engine's page, and the
+//! published tool called. Every command is the real program, a thin client
+//! of one served engine. The engine is the same `LocalEngine` that `serve`
+//! starts, run in this process because the program ships no presence prompt
+//! a test can pass; the person's press goes through its page, as in
+//! `local_engine.rs`.
 //!
-//! Where the product stops today, the test asserts the named stop and says
-//! which package lifts it, so that it fails loudly when the stop moves.
-//! The whole flow is timed; the target is a first tool in under ten
-//! minutes.
+//! One hand step is left, and asserted where it is: the offline test and
+//! its fixture are written by the developer, because `fixture.record` is
+//! not built (an observed answer is the system's data until a person has
+//! scrubbed it). The whole flow is timed; the target is a first tool in
+//! under ten minutes. A second test scouts the same application with an
+//! engine that runs inside each command.
 
 #![allow(
     clippy::unwrap_used,
@@ -25,7 +28,6 @@
 
 mod common;
 
-use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -77,6 +79,9 @@ impl PresencePrompt for Passed {
 struct Desk {
     home: Folder,
     project: Folder,
+    /// Whether each command runs the engine inside itself, and so is given
+    /// the vault's passphrase, as a person running it at a terminal would.
+    inside: bool,
 }
 
 impl Desk {
@@ -94,6 +99,15 @@ impl Desk {
         Self {
             home,
             project: Folder::new("first-project"),
+            inside: false,
+        }
+    }
+
+    /// A machine on which no engine is served: each command runs one.
+    fn inside() -> Self {
+        Self {
+            inside: true,
+            ..Self::new()
         }
     }
 
@@ -112,6 +126,9 @@ impl Desk {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        if self.inside {
+            command.env(PASSPHRASE_VARIABLE, PASSPHRASE);
+        }
         command
     }
 
@@ -178,6 +195,12 @@ impl Desk {
             text.contains("version.publish") && text.contains(READ),
             "{text}"
         );
+        // The page names the binding that acts for the first time in this
+        // version, by operation and mode.
+        assert!(
+            text.contains(&format!("First to act in this version: {READ} (read), through the mode http.")),
+            "{text}"
+        );
         let marker = "name=\"once\" value=\"";
         let from = text.find(marker).unwrap() + marker.len();
         let once = &text[from..from + text[from..].find('"').unwrap()];
@@ -208,7 +231,6 @@ impl Desk {
         let mut scouted = Json::Null;
         for _ in 0..calls {
             scouted = self.ok(&args).await;
-            eprintln!("SCOUT: {scouted}");
             if scouted["result"].get("report_hash").is_some() {
                 break;
             }
@@ -218,12 +240,6 @@ impl Desk {
         scouted
     }
 }
-
-/// The one read a developer writes by hand before the scout can observe
-/// the surface (see the stop below): the test application's order, by its
-/// number.
-const SEED_ENDPOINT: &str = "endpoint: order_get\nsurface: api\nmethod: GET\npath: \"/api/orders/{order_id}\"\nauth: none\neffect: read\nheaders: {accept: \"application/json\"}\nresponses: {absent: [404]}\nresponse_schema:\n  type: object\n  required: [order_id, customer, status]\n  properties:\n    order_id: {type: string}\n    customer: {type: string}\n    status: {type: string, enum: [draft, submitted]}\n";
-const SEED_OPERATION: &str = "operation: example_order_get\ntitle: Get an order\neffect: read\nkey: order_id\ninputs:\n  order_id: {type: identifier, description: \"Order number shown in the application\"}\noutputs:\n  status: {type: identifier}\n  customer: {type: text}\nexamples:\n  - {order_id: \"A-100\"}\nbindings:\n  - mode: http\n    verb: read\n    endpoint: order_get\ndescription: >\n  Reads the status and the customer of one order.\n";
 
 /// The offline test a developer writes for the read once the publish
 /// asks for one, with a fixture of synthetic values that match the test
@@ -242,7 +258,7 @@ fn target_file(address: &str) -> String {
     )
 }
 
-/// The names of the scout's tried reads at one level of proof.
+/// The names of the scout's tried reads that were proven, or not.
 fn tried(report: &Json, proven: bool) -> Vec<String> {
     let tools = report["result"]["content"]["tried"]["tools"]
         .as_array()
@@ -250,24 +266,63 @@ fn tried(report: &Json, proven: bool) -> Vec<String> {
         .unwrap_or_default();
     let mut names: Vec<String> = tools
         .iter()
-        .filter(|tool| (tool["proven"] == true) == proven)
+        .filter(|tool| (tool["state"] == "proven") == proven)
         .filter_map(|tool| tool["tool"].as_str().map(str::to_owned))
         .collect();
     names.sort();
     names
 }
 
-fn files_of(folder: &Path) -> Vec<String> {
-    let mut found = Vec::new();
-    for entry in std::fs::read_dir(folder).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            found.extend(files_of(&path));
-        } else {
-            found.push(path.display().to_string());
-        }
+/// The drafted files a scout of the test application writes for the read
+/// this hour is for: its endpoint and its operation.
+const KEPT: [&str; 2] = ["endpoints/get_order.yaml", "operations/api_orders_get.yaml"];
+
+/// What a scout's report says, checked the same way for every scout of the
+/// test application: what was found, what was drafted, what was proven.
+fn check_report(report: &Json) {
+    let content = &report["result"]["content"];
+    let surface = &content["surfaces"][0];
+    assert_eq!(surface["state"], "identified", "{report}");
+    // Found through the surface's own mode, with no binding written first:
+    // the operations the published description states, and the endpoints
+    // the live look found.
+    assert_eq!(
+        surface["findings_by_kind"],
+        json!({"described_operation": {"inferred": 8}, "endpoint": {"discovered": 2}}),
+        "{report}"
+    );
+    let written: Vec<&str> = content["drafted"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|file| file["file"].as_str())
+        .collect();
+    for file in KEPT {
+        assert!(written.contains(&file), "{file} in {written:?}");
     }
-    found
+    // Every drafted read tried, five times each or to its first failure:
+    // the reads with an example of their own proven at `executed`.
+    let mut proven = PROVEN.map(str::to_owned).to_vec();
+    proven.sort();
+    assert_eq!(tried(report, true), proven, "{report}");
+    assert_eq!(tried(report, false), ["example_api_stock_get"], "{report}");
+    let tools = content["tried"]["tools"].as_array().unwrap();
+    let stock = tools
+        .iter()
+        .find(|tool| tool["tool"] == "example_api_stock_get")
+        .unwrap();
+    // The stand fails every third call: two completed, the third failed by
+    // name, and the read is tried and not proven.
+    assert_eq!(stock["state"], "failed", "{stock}");
+    assert_eq!(stock["tries"], 3, "{stock}");
+    assert_eq!(stock["completed"], 2, "{stock}");
+    assert_eq!(stock["failure"]["code"], "unexpected_status", "{stock}");
+    for tool in tools.iter().filter(|tool| tool["state"] == "proven") {
+        assert_eq!(tool["level"], "executed", "{tool}");
+        assert_eq!(tool["tries"], 5, "{tool}");
+    }
+    // An agent asked: no consent is recorded on the person's behalf.
+    assert_eq!(content["consent"]["recorded"], false, "{report}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -306,71 +361,30 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         .unwrap();
     let serving = tokio::spawn(local.serve());
 
-    // 2. The target is added, and its surface declared.
+    // 2. The target is added, and its surface declared: nothing else.
     let added = desk
         .ok(&["target", "add", "example", "--address", &app.url("")])
         .await;
     assert_eq!(added["result"]["folder"], "targets/example", "{added}");
     desk.write("target.yaml", &target_file(&app.url(""))).await;
 
-    // 3. The scout and its report.
-    let first = desk.scout(false, 3).await;
-    let surfaces = &first["result"]["content"]["surfaces"];
-    let ended = &surfaces[0]["ended"];
-    // The named stop of today: a target that declares only its surface
-    // has nothing the scout's sandbox can observe it through. The engine
-    // prepares the driver of the first binding in the plan that acts on
-    // the surface (`a2m-engine`, `sandbox.rs`), and a new target has none,
-    // so the published description is not read (`busy`/`no_binding`) and
-    // the live look finds nothing. This lifts when discovery prepares the
-    // surface kind's driver without a binding: the engine's package of the
-    // scout (decision 0179's stage 3). Until then a developer writes one
-    // read by hand first, as the stop's fix says.
-    assert_eq!(ended[0]["discoverer"], "http_description", "{first}");
+    // 3. The scout and its report. It observes the surface through the
+    // surface's own mode, drafts by the packs' rules, and tries every
+    // drafted read; each trial is submitted once, and the stage ends.
+    let first = desk.scout(false, 20).await;
+    assert!(first["result"]["report_hash"].is_string(), "{first}");
+    check_report(&first);
+    // A second scout of the same application in the same state, with the
+    // same drafts, gives the same report.
+    let again = desk.scout(true, 20).await;
+    check_report(&again);
+    assert_ne!(again["result"]["scout_id"], first["result"]["scout_id"]);
     assert_eq!(
-        ended[0]["report"]["failure"]["code"], "no_binding",
-        "{first}"
+        again["result"]["report_hash"], first["result"]["report_hash"],
+        "{first}\n{again}"
     );
-    assert_eq!(ended[1]["findings"], 0, "{first}");
-    assert_eq!(
-        first["result"]["content"]["drafted"]["written"],
-        json!([]),
-        "{first}"
-    );
-    desk.write("endpoints/orders.yaml", SEED_ENDPOINT).await;
-    desk.write("operations/orders.yaml", SEED_OPERATION).await;
 
-    let scouted = desk.scout(true, 3).await;
-    let tried_runs = desk.ok(&["run", "list", "--limit", "100"]).await; eprintln!("RUNS: {tried_runs}");
-    // The named stop of today: the scout drafts the reads of the published
-    // description and checks that they compile, and its try stage then
-    // never ends. Each continuation submits the trials again, they
-    // complete, and the scout still answers that a trial has not ended
-    // (decision 0179's stage 6; the package that is changing the scout's
-    // try stage and its report lifts it). When it lifts, the report is
-    // asserted here: the five reads in `PROVEN` proven at level `executed`,
-    // `example_api_stock_get` tried and not proven, and a second scout
-    // giving the same `report_hash`.
-    assert_eq!(scouted["result"]["stage"], "try", "{scouted}");
-    assert_eq!(
-        scouted["result"]["why"], "A trial has not ended yet.",
-        "{scouted}"
-    );
-    let _ = (PROVEN, tried as fn(&Json, bool) -> Vec<String>);
-    // What it drafted is in the target's folder: an endpoint and a read
-    // for each read the description states.
-    let drafted = files_of(&desk.project.path().join("targets").join("example"));
-    for f in &drafted { eprintln!("FILE {f}\n{}", std::fs::read_to_string(f).unwrap()); }
-    for file in ["operations/api_orders_get.yaml", "endpoints/get_order.yaml"] {
-        assert!(
-            drafted
-                .iter()
-                .any(|path| path.replace('\\', "/").ends_with(file)),
-            "{file} in {drafted:?}"
-        );
-    }
-
-    // 4. The drafted read made usable: linted, and tried in the sandbox.
+    // 4. The drafted read looked at: linted, and tried in the sandbox.
     let linted = desk.ok(&["lint", "example"]).await;
     assert_eq!(linted["result"]["ok"], true, "{linted}");
     assert!(
@@ -399,38 +413,39 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         "{tried}"
     );
 
-    // 5. Its tests. Nothing drafted one: an observed answer is business
-    // data until a fixture is scrubbed, and `fixture.record` is not built.
-    // The gates refuse every operation that has no offline test.
+    // 5. Its tests. The gates refuse every operation that has no offline
+    // test, and name both ways on: a test, or the draft removed.
     let untested = desk.ok(&["test", "example"]).await;
-    let problems = &untested["result"]["gates"][0]["problems"];
-    assert!(
-        problems.as_array().unwrap().iter().any(|problem| {
-            problem["code"] == "kernel.operation_without_test"
-                && problem["file"] == Json::Null
-                && problem["at"]["file"] == "operations/api_orders_get.yaml"
-        }),
-        "{untested}"
-    );
-    // The developer keeps the one read this hour is for. No command removes
-    // a draft file, so they do it in their editor: every other drafted
-    // file, and the read written by hand before the scout.
-    let folder = desk.project.path().join("targets").join("example");
-    for path in files_of(&folder) {
-        let name = path.replace('\\', "/");
-        if ![
-            "target.yaml",
-            "endpoints/get_order.yaml",
-            "operations/api_orders_get.yaml",
-        ]
+    let missing = untested["result"]["missing"].as_array().unwrap().clone();
+    let entry = missing
         .iter()
-        .any(|kept| name.ends_with(&format!("/{kept}")))
-        {
-            std::fs::remove_file(&path).unwrap();
+        .find(|entry| entry["file"] == "operations/api_orders_get.yaml")
+        .unwrap_or_else(|| panic!("{untested}"));
+    assert_eq!(entry["next"][0]["action"], "test.run", "{entry}");
+    assert_eq!(entry["next"][1]["action"], "draft.delete", "{entry}");
+    // The developer keeps the one read this hour is for, and removes the
+    // other drafted operations, as the refusal says.
+    for entry in &missing {
+        let file = entry["file"].as_str().unwrap();
+        if KEPT.contains(&file) {
+            continue;
         }
+        let removed = desk.ok(&["draft", "delete", "example", "--file", file]).await;
+        assert_eq!(removed["result"]["removed"], true, "{removed}");
+        assert!(
+            !desk
+                .project
+                .path()
+                .join("targets")
+                .join("example")
+                .join(file)
+                .exists()
+        );
     }
-    // And writes its offline test, with a fixture of synthetic values that
-    // match the application's seed, as the refusal's fix says.
+    // The hand step that is left: the offline test and its fixture of
+    // synthetic values that match the application's seed, written by the
+    // developer. It lifts when `fixture.record` scrubs an observed answer
+    // into a fixture.
     desk.write("fixtures/api_orders_get/fixture.yaml", FIXTURE)
         .await;
     desk.write("fixtures/api_orders_get/get_order.json", FIXTURE_ANSWER)
@@ -440,46 +455,41 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     assert_eq!(tested["result"]["passed"], true, "{tested}");
     assert_eq!(tested["result"]["gates"][1]["state"], "passed", "{tested}");
 
-    // 6. The publish, asked for by the developer's agent, waits for a
-    // person on the engine's page; the person reads it, presses Carry out,
-    // and passes the presence prompt.
-    desk.publish_as_a_person(&prompt, "1.0.0", 1).await;
-    // 7. The published tool, called by an agent, reads what the
-    // application holds.
-    let (code, refused) = desk.run(&["call", READ, "--input", ORDER_INPUT]).await;
-    // The named stop of today: a drafted binding is `draft`, and a
-    // published binding that is `draft` may not act (`busy`/`no_binding`).
-    // Nothing turns a tried draft binding into a verified one: `binding
-    // promote` takes a `shadow` binding, and the scout's proof of a read
-    // does not reach the file. It lifts when a read proven at `executed`
-    // is drafted, or promoted, as verified (the scout's package and the
-    // action registry's, decision 0179). Until then the developer, a
-    // person, marks the binding verified in their editor, tests again, and
-    // publishes the next version.
-    assert_eq!(code, Some(1), "{refused}");
-    assert_eq!(refused["error"]["code"], "no_binding", "{refused}");
+    // 6. The read's first binding made able to act: its offline test
+    // passes, and the scout proved it at `executed`. An agent may promote
+    // a read; the file's status is rewritten through the checked write.
+    let promoted = desk
+        .ok(&[
+            "binding", "promote", "example", "--tool", READ, "--mode", "http",
+        ])
+        .await;
+    assert_eq!(promoted["result"]["promoted"], true, "{promoted}");
+    assert_eq!(
+        promoted["result"]["evidence"]["tried"]["by"], "scout",
+        "{promoted}"
+    );
+    let operation = desk
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("operations")
+        .join("api_orders_get.yaml");
     assert!(
-        refused["error"]["message"]
-            .as_str()
+        std::fs::read_to_string(&operation)
             .unwrap()
-            .contains("is `draft` and may not act"),
-        "{refused}"
+            .contains("status: \"verified\""),
     );
-    let operation = folder.join("operations").join("api_orders_get.yaml");
-    let text = std::fs::read_to_string(&operation).unwrap();
-    let marked = text.replacen(
-        "    verb: \"read\"\n",
-        "    verb: \"read\"\n    status: \"verified\"\n",
-        1,
-    );
-    assert_ne!(marked, text, "{text}");
-    std::fs::write(&operation, marked).unwrap();
     let tested = desk.ok(&["test", "example"]).await;
     assert_eq!(tested["result"]["passed"], true, "{tested}");
-    // The same call again would be given what became of the first act
-    // for the approval window, so the next version is named.
-    desk.publish_as_a_person(&prompt, "1.1.0", 2).await;
 
+    // 7. The publish, asked for by the developer's agent, waits for a
+    // person on the engine's page; the page names the binding that acts
+    // for the first time; the person presses Carry out and passes the
+    // presence prompt.
+    desk.publish_as_a_person(&prompt, "1.0.0", 1).await;
+    // 8. The published tool, called by an agent, reads what the
+    // application holds.
     let called = desk.ok(&["call", READ, "--input", ORDER_INPUT]).await;
     assert_eq!(called["result"]["status"], "completed", "{called}");
     let read = &called["result"]["result"];
@@ -504,4 +514,60 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     let (code, _) = desk.run(&["engine", "stop"]).await;
     assert_eq!(code, Some(0));
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
+}
+
+/// The scout with an engine that runs inside each command, as
+/// `engine.in_process` makes it: every call is a new engine, which ends
+/// with its command. A trial a call starts is waited for to its end within
+/// that call, so none is left claimed by an engine that has gone, and a
+/// later call finds each trial made before and goes on from there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_with_an_engine_inside_each_command_ends_with_its_report() {
+    let app = TestApp::start().await.unwrap();
+    let desk = Desk::inside();
+    desk.ok(&["init"]).await;
+    desk.ok(&["target", "add", "example", "--address", &app.url("")])
+        .await;
+    desk.write("target.yaml", &target_file(&app.url(""))).await;
+    // No wait between trials: each command makes one trial at least, ends,
+    // and the next command, a new engine, continues the same scout.
+    let first = desk
+        .ok(&["scout", "run", "example", "--wait-seconds", "0"])
+        .await;
+    assert_eq!(first["result"]["state"], "working", "{first}");
+    assert_eq!(first["result"]["stage"], "try", "{first}");
+    let second = desk
+        .ok(&["scout", "run", "example", "--wait-seconds", "0"])
+        .await;
+    assert_eq!(second["result"]["state"], "working", "{second}");
+    assert_eq!(second["result"]["scout_id"], first["result"]["scout_id"]);
+    // Then to its end.
+    let mut scouted = Json::Null;
+    for _ in 0..5 {
+        scouted = desk
+            .ok(&["scout", "run", "example", "--wait-seconds", "60"])
+            .await;
+        if scouted["result"].get("report_hash").is_some() {
+            break;
+        }
+    }
+    check_report(&scouted);
+    assert_eq!(scouted["result"]["scout_id"], first["result"]["scout_id"]);
+    // Each trial was submitted once, by whichever engine made it: five runs
+    // of each proven read, three of the read that failed on its third.
+    for (tool, count) in PROVEN
+        .iter()
+        .map(|tool| (*tool, 5))
+        .chain([("example_api_stock_get", 3)])
+    {
+        let listed = desk
+            .ok(&["run", "list", "--tool", tool, "--limit", "100"])
+            .await;
+        assert_eq!(
+            listed["result"]["runs"].as_array().unwrap().len(),
+            count,
+            "{tool}: {listed}"
+        );
+    }
+    assert!(app.writes().await.unwrap().is_empty());
 }

@@ -74,6 +74,16 @@ pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
 /// a write; its control plane holds nothing and refuses (decision 0177).
 pub const OFFLINE_WRITES_NOTHING: FailureCode = FailureCode::fixed("offline_writes_nothing");
 
+/// A binding `binding.promote` may not make verified: not a drafted first
+/// binding of its operation, or one whose file cannot be rewritten by rule
+/// (decision 0189). Class `input`.
+pub const BINDING_NOT_PROMOTABLE: FailureCode = FailureCode::fixed("binding_not_promotable");
+
+/// A promotion whose evidence is missing: an offline test of the operation
+/// that is missing or did not pass, or a read no trial proved at
+/// `executed` (decision 0189). Class `input`.
+pub const PROMOTION_UNPROVEN: FailureCode = FailureCode::fixed("promotion_unproven");
+
 pub(crate) fn stale(
     code: FailureCode,
     message: impl Into<String>,

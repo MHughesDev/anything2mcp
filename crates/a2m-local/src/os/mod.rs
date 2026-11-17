@@ -19,7 +19,7 @@ pub(crate) use unix::{
 mod windows;
 #[cfg(windows)]
 pub(crate) use windows::{
-    Listener, ServerStream, connect, current_user, prepare_dir, spawn_detached,
+    Listener, ServerStream, connect, current_user, open_output, prepare_dir, spawn_detached,
 };
 
 /// The file name of the socket inside the runtime directory.

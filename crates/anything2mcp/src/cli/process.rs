@@ -347,7 +347,17 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
             }
         }
         Err(failure) => say(told(&failure).trim_end()),
-        Ok(_) => {}
+        // An engine that runs with other settings variables serves this
+        // bridge with its own, and the person who starts it is told.
+        Ok(link) => {
+            if let Some(warning) =
+                crate::engine::settings_warning(link.start_variables_differing(
+                    &crate::engine::settings_variables(&host.environment),
+                ))
+            {
+                say(&format!("{PROGRAM}: warning: {warning}"));
+            }
+        }
     }
     // The project folder the bridge was started in, or was given with
     // `--project`, named to the engine on every request, as a command names

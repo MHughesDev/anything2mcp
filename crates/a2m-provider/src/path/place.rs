@@ -232,14 +232,57 @@ mod windows {
     use std::io;
     use std::os::windows::io::AsRawHandle as _;
 
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        ACL, DACL_SECURITY_INFORMATION, EqualSid, GetSecurityDescriptorControl,
+        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx,
     };
 
-    /// The volume's serial number and the file's index, from an open
-    /// handle.
-    #[allow(unsafe_code)] // one call into the operating system, explained below
+    /// The volume's serial number and the file's identifier, from an open
+    /// handle: the 128-bit identifier of `FileIdInfo`, which is unique on
+    /// every file system Windows has, `ReFS` included, whose 64-bit index is
+    /// not (decision 0193). Where a file system does not answer that
+    /// question, the 64-bit index of `GetFileInformationByHandle`.
     pub(super) fn identity(file: &File) -> io::Result<(u64, u128)> {
+        match id_info(file) {
+            Ok(found) => Ok(found),
+            Err(_) => index(file),
+        }
+    }
+
+    #[allow(unsafe_code)] // one call into the operating system, explained below
+    fn id_info(file: &File) -> io::Result<(u64, u128)> {
+        let mut info = FILE_ID_INFO::default();
+        let size = u32::try_from(std::mem::size_of::<FILE_ID_INFO>())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: the handle is the open file's own and stays open for the
+        // call; the buffer is a `FILE_ID_INFO` owned by this frame, of the
+        // size the call is told, which is the structure the class
+        // `FileIdInfo` writes, and it holds plain numbers only.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo,
+                std::ptr::from_mut(&mut info).cast(),
+                size,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((
+            info.VolumeSerialNumber,
+            u128::from_le_bytes(info.FileId.Identifier),
+        ))
+    }
+
+    #[allow(unsafe_code)] // one call into the operating system, explained below
+    fn index(file: &File) -> io::Result<(u64, u128)> {
         let mut info = BY_HANDLE_FILE_INFORMATION {
             dwFileAttributes: 0,
             ftCreationTime: windows_sys::Win32::Foundation::FILETIME {
@@ -264,12 +307,126 @@ mod windows {
         // SAFETY: the handle is the open file's own and stays open for the
         // call, which only writes the structure it is given, a structure
         // of plain numbers owned by this frame.
-        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) };
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
         let index = (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow);
         Ok((u64::from(info.dwVolumeSerialNumber), index))
+    }
+
+    /// A file's owner and access list, as the system gives them: pointers
+    /// into one block the system allocated, freed when this is dropped.
+    struct Described {
+        block: PSECURITY_DESCRIPTOR,
+        owner: PSID,
+        access: *mut ACL,
+    }
+
+    impl Drop for Described {
+        #[allow(unsafe_code)] // one call into the operating system, explained below
+        fn drop(&mut self) {
+            // SAFETY: `block` is the one block `GetSecurityInfo` allocated
+            // for this value, freed here once and never used after.
+            unsafe {
+                LocalFree(self.block.cast());
+            }
+        }
+    }
+
+    impl Described {
+        /// The owner and the access list of an open file. The handle must
+        /// carry the right to read its security, as one opened for reading
+        /// does.
+        #[allow(unsafe_code)] // one call into the operating system, explained below
+        fn of(file: &File) -> io::Result<Self> {
+            let mut owner: PSID = std::ptr::null_mut();
+            let mut access: *mut ACL = std::ptr::null_mut();
+            let mut block: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+            // SAFETY: the handle is the open file's own and stays open for
+            // the call; each out pointer is a local of this frame; the call
+            // allocates one block and points `owner` and `access` into it,
+            // and the block is freed by `Drop` once the pointers are no
+            // longer read.
+            let status = unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    &raw mut owner,
+                    std::ptr::null_mut(),
+                    &raw mut access,
+                    std::ptr::null_mut(),
+                    &raw mut block,
+                )
+            };
+            if status != ERROR_SUCCESS {
+                return Err(io::Error::from_raw_os_error(
+                    i32::try_from(status).unwrap_or(i32::MAX),
+                ));
+            }
+            Ok(Self {
+                block,
+                owner,
+                access,
+            })
+        }
+
+        /// Whether the access list is protected from what the folder passes
+        /// down.
+        #[allow(unsafe_code)] // one call into the operating system, explained below
+        fn protected(&self) -> io::Result<bool> {
+            let mut control = 0_u16;
+            let mut revision = 0_u32;
+            // SAFETY: `block` is a security descriptor the system gave and
+            // that lives until `self` is dropped; the call writes two
+            // numbers owned by this frame.
+            let ok = unsafe {
+                GetSecurityDescriptorControl(self.block, &raw mut control, &raw mut revision)
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(control & SE_DACL_PROTECTED != 0)
+        }
+
+        /// The access list's bytes, `None` for no list at all.
+        #[allow(unsafe_code)] // reads the list the system gave, explained below
+        fn access_bytes(&self) -> Option<&[u8]> {
+            if self.access.is_null() {
+                return None;
+            }
+            // SAFETY: `access` points to an access list inside `block`,
+            // which lives as long as `self` and so as long as the slice;
+            // the list's own header says its size in bytes, and the list
+            // is that long.
+            unsafe {
+                let size = usize::from((*self.access).AclSize);
+                Some(std::slice::from_raw_parts(self.access.cast::<u8>(), size))
+            }
+        }
+
+        /// Whether `other` has the same owner.
+        #[allow(unsafe_code)] // one call into the operating system, explained below
+        fn same_owner(&self, other: &Self) -> bool {
+            if self.owner.is_null() || other.owner.is_null() {
+                return false;
+            }
+            // SAFETY: both point to owners inside blocks the system gave,
+            // which live as long as `self` and `other`.
+            unsafe { EqualSid(self.owner, other.owner) != 0 }
+        }
+    }
+
+    /// Whether two open files have the same owner and the same access
+    /// list, byte for byte, protected alike from what their folder passes
+    /// down. Both handles must carry the right to read their security.
+    pub(super) fn same_owner_and_access(one: &File, other: &File) -> io::Result<bool> {
+        let one = Described::of(one)?;
+        let other = Described::of(other)?;
+        Ok(one.same_owner(&other)
+            && one.protected()? == other.protected()?
+            && one.access_bytes() == other.access_bytes())
     }
 }
 
@@ -339,14 +496,19 @@ mod os {
         }
 
         /// Makes a new file of that name for reading and writing. It fails
-        /// when anything stands at the name, a link included.
+        /// when anything stands at the name, a link included. On Windows it
+        /// is opened to be shared with nobody: while its handle is held, no
+        /// other open of it, for reading, writing, or removing, succeeds
+        /// (decision 0193).
         pub(in super::super) fn create_new(&self, name: &OsStr) -> io::Result<File> {
             let mut options = fs::OpenOptions::new();
             options.read(true).write(true).create_new(true);
             #[cfg(windows)]
             {
                 use std::os::windows::fs::OpenOptionsExt as _;
-                options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+                options
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                    .share_mode(0);
             }
             options.open(self.0.join(name))
         }
@@ -391,26 +553,48 @@ mod os {
             Err(io::Error::from(io::ErrorKind::Unsupported))
         }
 
-        /// Windows keeps no owner, group, or permission bits a program can
-        /// copy through the standard library: a file's access is its
-        /// security descriptor, and a new file takes the one its folder
-        /// passes down. The read-only flag is kept through the file's own
-        /// handle; the owner and the access list are not, so this answers
-        /// `false` (decision 0176).
+        /// A file's access on Windows is its security descriptor, and a new
+        /// file takes the one its folder passes down; nothing is copied
+        /// onto it. The read-only flag is kept through the file's own
+        /// handle. The answer is `true` only where the target, opened
+        /// itself and never through a link, has the very owner and access
+        /// list the new file was given, byte for byte, protected alike:
+        /// then the replace changes neither. A target with an access list
+        /// of its own, narrower or wider than what the folder passes down,
+        /// or another owner, answers `false`, so a caller can tell it apart
+        /// from one that has none (decision 0193).
+        #[cfg(windows)]
         pub(in super::super) fn keep_owner_and_mode(
             &self,
             name: &OsStr,
             file: &File,
         ) -> io::Result<bool> {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            // READ_CONTROL: the right to read the security descriptor.
+            const READ_CONTROL: u32 = 0x0002_0000;
             match fs::symlink_metadata(self.0.join(name)) {
                 Ok(target) if target.file_type().is_file() => {
                     file.set_permissions(target.permissions())?;
-                    Ok(false)
+                    let target = fs::OpenOptions::new()
+                        .access_mode(READ_CONTROL)
+                        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                        .open(self.0.join(name))?;
+                    super::windows::same_owner_and_access(&target, file)
                 }
                 Ok(_) => Ok(false),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
                 Err(error) => Err(error),
             }
+        }
+
+        /// No owner or access can be kept on this system.
+        #[cfg(not(windows))]
+        pub(in super::super) fn keep_owner_and_mode(
+            &self,
+            _name: &OsStr,
+            _file: &File,
+        ) -> io::Result<bool> {
+            Ok(false)
         }
 
         /// Writes the folder's list of names to the disk. Windows keeps a

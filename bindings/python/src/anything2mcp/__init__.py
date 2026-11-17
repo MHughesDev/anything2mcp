@@ -9,7 +9,9 @@ of the local engine.
 
 The client holds no engine logic. It sends an action and its input to the
 engine that runs as this user, over the local channel, and returns the
-engine's response as it was written. It does not start the engine.
+engine's response as it was written. When no engine runs, ``connect``
+runs the installed program's ``anything2mcp engine start``, as any command
+would start one, unless it is given ``start=False``.
 """
 
 from ._channel import ChannelError, socket_path

@@ -2576,6 +2576,19 @@ impl<'a> Compiler<'a> {
             && (info.effect == EffectClass::Write
                 || (info.effect == EffectClass::Irreversible
                     && info.strategy != IdentityStrategy::None));
+        // The plan's check asks the same question (decision 0193).
+        if by.evidence == WriteEvidence::Acknowledged
+            && !a2m_core::acknowledgement_may_stand(info.strategy, &lowered.read_back)
+        {
+            self.error(
+                codes::ACKNOWLEDGED_WHERE_READ_BACK,
+                Stage::Analyze,
+                &binding.at,
+                format!("This `{mode}` binding reads its record back by its key, and its pack states the system's acknowledgement as its only evidence: a record that can be read back is verified by that read."),
+                "Leave the read-back as the binding's evidence, or, where the record truly cannot be read again, declare the operation with no `key` or `identity`.".to_owned(),
+            );
+            fine = false;
+        }
         if needs_read_back && (binding.get("read_back").is_none() || lowered.read_back.is_empty()) {
             self.error(
                 codes::WRITE_WITHOUT_READ_BACK,

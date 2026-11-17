@@ -46,6 +46,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `spec.import` | Operations from an OpenAPI, GraphQL, or OData description, or an upstream MCP server | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
 | `draft.write` | Write a draft file after validation and lint | Builder | build | 5 |
+| `draft.delete` | Remove a draft file of the project; a published version keeps its copy | Builder | build | 5 |
 | `draft.lint` | Compile drafts and report every problem | Builder | build | 1 |
 | `draft.try` | Run a draft binding in the sandbox | Builder | build | 5 |
 | `test.run` | Run the publish gates and return evidence | Builder | build | 3 |
@@ -77,7 +78,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
 | `version.publish` | Publish a reviewed version; a person, never an agent | Publisher | No | 5 |
-| `binding.promote` | Promote a shadow binding to verified; a person | Publisher | No | 4 |
+| `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial; for a write, a person | Publisher | No | 4 |
 | `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6 |
 | `version.rollback` | Make an earlier version current | Publisher | No | 5 |
 | `version.bundle` | Pack a version into a signed file | Publisher | No | 6 |

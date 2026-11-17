@@ -185,6 +185,87 @@ handler!(
     }
 );
 
+handler!(
+    /// `draft.delete`: one draft file of a target removed from the project
+    /// (decision 0189). Only a file the compiler would read as one of the
+    /// target's drafts, in one of its folders, is removed: never the
+    /// target's own top-level files, a name no file kind claims, a link, a
+    /// folder, or a device. A published version is untouched: its sources
+    /// are held in the store, beside its plan, and no path reaches them. The
+    /// lint of what is left comes back.
+    draft_delete,
+    |kernel, call| {
+        let target = TargetName::new(call.required("target")?)?;
+        let path = draft_path(call.required("file")?)?;
+        let project_folder = call.project_folder()?.to_path_buf();
+        let (kernel, named, at) = (kernel.clone(), target.clone(), path.clone());
+        let (digest, problems) = off_thread(move || {
+            let set = kernel.providers().compiler_set();
+            let folder = target_folder(&project_folder, &named)?;
+            if !folder.is_dir() {
+                return Err(codes::input(
+                    codes::NOT_FOUND,
+                    format!("The project has no target named `{named}`."),
+                    "Call `target.list` to see the project's targets.",
+                ));
+            }
+            if at.folder().is_none() {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
+                    "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
+                ));
+            }
+            let file = draft_file(&folder, &at)?;
+            match file.entry_kind()? {
+                EntryKind::File => {}
+                EntryKind::Absent => return Err(no_such_file(&named, &at)),
+                _ => {
+                    return Err(codes::input(
+                        codes::PATH_NOT_ALLOWED,
+                        format!("`{at}` is not a regular file: a link, a folder, or a device is never removed."),
+                        "Name a file of the target's folder.",
+                    ));
+                }
+            }
+            let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
+            if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
+                && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
+            {
+                return Err(codes::input(
+                    codes::PATH_NOT_ALLOWED,
+                    format!("`{at}` is not in a folder of the target's drafts: no file kind claims it, so it is not removed."),
+                    "Name a draft the compiler reads; `target.status` lists them.",
+                ));
+            }
+            file.remove_file()?;
+            let root = TargetRoot::new(folder.as_path());
+            let problems = match a2m_files::load(&root, set) {
+                Ok(sources) => match a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION) {
+                    Ok(compiled) => compiled.warnings,
+                    Err(problems) => problems,
+                },
+                Err(problems) => problems,
+            };
+            Ok((a2m_core::Digest::of(&bytes), problems))
+        })
+        .await?;
+        Ok(Output::ok(json!({
+            "target": target.as_str(),
+            "file": path.as_str(),
+            "removed": true,
+            "digest": digest.to_string(),
+            "ok": !problems.has_errors(),
+            "problems": problems_json(&problems),
+        }))
+        .then(Next::new(
+            "test.run",
+            json!({"target": target.as_str()}),
+            "to run the gates on the drafts that are left",
+        )))
+    }
+);
+
 /// The names of the targets in the project folder: each folder under
 /// `targets/` that holds a `target.yaml`. Looks at the disk.
 fn project_targets(project_folder: &std::path::Path) -> Result<Vec<String>, Failure> {
@@ -386,6 +467,9 @@ handler!(
                         {"gate": "schema_and_lint", "state": "failed", "problems": problems_json(&problems)},
                         {"gate": "offline_replay", "state": "not_run", "tests": []},
                     ],
+                    // An operation with no offline test, with both ways on:
+                    // a test, or the draft removed (decision 0189).
+                    "missing": crate::offline::without_test(&target, &problems),
                     "not_run": crate::offline::gates_not_built(),
                 }))
                 .then(Next::new(

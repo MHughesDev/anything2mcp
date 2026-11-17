@@ -515,7 +515,7 @@ impl Kernel {
             version,
         )
         .await?
-        .map_err(Failure::from)?;
+        .map_err(|problems| crate::offline::publish_refusal(&target, problems))?;
         // The publish gates run now, as they will when the person presses:
         // a publish they would refuse is not put to a person, and the page
         // says which gates ran and which are not built (decision 0180).
@@ -539,6 +539,10 @@ impl Kernel {
             "plan_hash".to_owned(),
             json!(compiled.encoded.hash.to_string()),
         );
+        // The bindings that may act for the first time in this version, by
+        // operation and mode: a first binding promoted from `draft` acts
+        // first here, where a person decides (decision 0189).
+        let first_to_act = self.first_to_act(&target, &compiled.plan).await?;
         let details = compiled
             .review
             .items
@@ -568,9 +572,50 @@ impl Kernel {
                 }
                 line
             })
+            .chain(first_to_act)
             .chain(gates.lines())
             .collect();
         Ok((input, details))
+    }
+
+    /// One line for each verified binding of `plan` that the target's
+    /// current version does not hold verified for the same operation and
+    /// mode: what may act for the first time once `plan` is published.
+    pub(crate) async fn first_to_act(
+        &self,
+        target: &a2m_core::TargetName,
+        plan: &a2m_core::Plan,
+    ) -> Result<Vec<String>, Failure> {
+        let (plans, _) = self.current_plans().await?;
+        let current = plans
+            .into_iter()
+            .find(|(name, _, _)| name == target)
+            .map(|(_, _, plan)| plan);
+        let acted_before = |operation: &a2m_core::OperationName, mode: &a2m_core::Mode| {
+            current.as_ref().is_some_and(|current| {
+                current.operations.iter().any(|earlier| {
+                    earlier.name == *operation
+                        && earlier.bindings.iter().any(|binding| {
+                            binding.mode == *mode
+                                && binding.status == a2m_core::BindingStatus::Verified
+                        })
+                })
+            })
+        };
+        let mut lines = Vec::new();
+        for operation in &plan.operations {
+            for binding in &operation.bindings {
+                if binding.status == a2m_core::BindingStatus::Verified
+                    && !acted_before(&operation.name, &binding.mode)
+                {
+                    lines.push(format!(
+                        "First to act in this version: {} ({}), through the mode {}.",
+                        operation.name, operation.effect, binding.mode
+                    ));
+                }
+            }
+        }
+        Ok(lines)
     }
 
     /// The act that waits under `act`, as its page shows it.

@@ -162,3 +162,18 @@ async fn a_scout_identifies_reports_the_same_twice_and_writes_nothing() {
 
     world.kernel.close(a2m_actions::CloseReason::Asked).await;
 }
+
+/// Audit finding A5: what a scout's compare stage copied into the engine's
+/// cache, left there by an engine that stopped before it removed it, is
+/// removed when the next engine opens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scouts_copy_left_in_the_cache_is_removed_when_the_next_engine_opens() {
+    let world = super::kernel::world(super::kernel::Options::before_open(|paths| {
+        let left = paths.cache.join("scout").join("r_left_by_a_crash");
+        std::fs::create_dir_all(&left).unwrap();
+        std::fs::write(left.join("target.yaml"), "copied").unwrap();
+    }))
+    .await;
+    assert!(!world.kernel.paths().cache.join("scout").exists());
+    world.kernel.close(a2m_actions::CloseReason::Asked).await;
+}

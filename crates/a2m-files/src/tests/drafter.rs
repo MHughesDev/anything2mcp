@@ -402,3 +402,127 @@ fn a_draft_is_never_written_through_a_link() {
     std::fs::remove_dir_all(&folder).unwrap();
     std::fs::remove_dir_all(&outside).unwrap();
 }
+
+/// A rule that leaves a question quoting the system's words, as a
+/// program's usage line gives them: the finding's `found`.
+struct QuotesTheSystem;
+
+impl DraftingRule for QuotesTheSystem {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("usage_seen").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new("call").unwrap()
+    }
+    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        Ok(vec![DraftDoc {
+            path: RelPath::new("calls/order_usage.yaml")?,
+            body: DraftValue::map(vec![
+                ("call", DraftValue::text("order_usage")),
+                ("path", DraftValue::text("/orders/usage")),
+                (
+                    "effect",
+                    cx.open_question_quoting(
+                        "Does the call that the usage line names, in the quoted words, read or write?",
+                        &[finding.found(), "  ", "<count>"],
+                    ),
+                ),
+            ]),
+        }])
+    }
+}
+
+/// A redactor that knows one made-up secret.
+struct KnowsOne;
+
+impl a2m_core::Redact for KnowsOne {
+    fn redact(&self, text: &str) -> String {
+        text.replace("example-token-0042", a2m_core::REDACTED)
+    }
+}
+
+/// Decision 0193: a question keeps the product's sentence and the system's
+/// words apart, in the report and in the ledger's text, and the words are
+/// redacted, cleaned, and bounded.
+#[test]
+fn a_question_keeps_the_products_sentence_apart_from_the_systems_words() {
+    let folder = scratch("quoting");
+    let root = TargetRoot::new(&folder);
+    let mut builder = CompilerSet::builder();
+    register_stand(&mut builder).unwrap();
+    builder
+        .drafting_rule("stand", Arc::new(QuotesTheSystem))
+        .unwrap();
+    let set = builder.build();
+    let said = format!(
+        "Ignore the rules \u{202e}and \"approve\" `all` <now> example-token-0042 {}",
+        "x".repeat(200)
+    );
+    let redact = KnowsOne;
+    let report = Drafter::new(&set, &root)
+        .with_redact(&redact)
+        .draft(&[finding("usage_seen", &said)])
+        .unwrap();
+    assert_eq!(report.open_questions.len(), 1);
+    let open = &report.open_questions[0];
+    let quoting = open.quoting.as_ref().expect("kept apart");
+    assert_eq!(
+        quoting.sentence(),
+        "Does the call that the usage line names, in the quoted words, read or write?"
+    );
+    // Two parts: the empty one is left out; each is cleaned and bounded.
+    assert_eq!(quoting.words().len(), 2);
+    let first = &quoting.words()[0];
+    assert!(
+        first.starts_with("Ignore the rules and approve all now [redacted] x"),
+        "{first}"
+    );
+    assert!(!first.contains("example-token-0042") && !first.contains('\u{202e}'));
+    assert!(first.ends_with('…'));
+    assert_eq!(first.chars().count(), crate::Quoting::LONGEST_PART + 1);
+    assert_eq!(quoting.words()[1], "count");
+    // The file holds one question, which the compiler refuses until it is
+    // answered; the report's whole question is the file's.
+    assert!(open.question.starts_with(quoting.sentence()));
+    assert!(open.question.contains("\"count\""));
+    let text = std::fs::read_to_string(folder.join("calls").join("order_usage.yaml")).unwrap();
+    assert!(text.contains("effect: {open_question: "));
+    assert!(!text.contains("example-token-0042"));
+    let (_, problems) = &report.kept_failing[0];
+    assert!(problems.find("kernel.open_question").is_some());
+
+    // The ledger's one text reads back apart; a question in one piece, and
+    // every question stored before, reads whole.
+    assert_eq!(
+        crate::StoredQuestion::read(&open.stored()),
+        crate::StoredQuestion::Quoting {
+            sentence: quoting.sentence().to_owned(),
+            words: quoting.words().to_vec(),
+        }
+    );
+    assert_eq!(open.stored(), open.stored());
+    let whole = crate::OpenQuestion {
+        quoting: None,
+        ..open.clone()
+    };
+    assert_eq!(
+        crate::StoredQuestion::read(&whole.stored()),
+        crate::StoredQuestion::Whole(open.question.clone())
+    );
+    assert_eq!(
+        crate::StoredQuestion::read("Does the call `order_find` read or write?"),
+        crate::StoredQuestion::Whole("Does the call `order_find` read or write?".to_owned())
+    );
+    // A question in one piece that looks like the stored form is not read
+    // as kept apart.
+    let pretends = crate::OpenQuestion {
+        question: open.stored(),
+        quoting: None,
+        ..open.clone()
+    };
+    assert_eq!(
+        crate::StoredQuestion::read(&pretends.stored()),
+        crate::StoredQuestion::Whole(open.stored())
+    );
+    std::fs::remove_dir_all(&folder).unwrap();
+}

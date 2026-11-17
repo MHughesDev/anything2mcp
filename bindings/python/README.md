@@ -17,6 +17,6 @@ with anything2mcp.connect(project=".") as client:
     other = client.call("engine.status")     # or any action by its name
 ```
 
-The methods are generated from the OpenAPI document the engine serves, one per action, named as the action names it with the dot as an underscore. The client does not start the engine; start it with `anything2mcp serve`. It reaches the engine on macOS and Linux by its socket, and on Windows by its named pipe. On Windows it checks that the process serving the pipe runs as you before it sends anything, and a read has no timeout there.
+The methods are generated from the OpenAPI document the engine serves, one per action, named as the action names it with the dot as an underscore. When no engine runs, `connect` has the program this wheel installed start one, by running `anything2mcp engine start` as any command would, and then connects to it; `connect(start=False)` starts nothing and raises `engine_unreachable`. It reaches the engine on macOS and Linux by its socket, and on Windows by its named pipe. On Windows it checks that the process serving the pipe runs as you before it sends anything, and a read has no timeout there.
 
 Licensed under the MIT licence.

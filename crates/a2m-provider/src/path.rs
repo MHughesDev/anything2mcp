@@ -1128,11 +1128,21 @@ impl Temporary {
     /// is replaced, and nothing else: a link at the name is refused, and not
     /// followed. Then flush the folder with [`CheckedPath::flush_folder`].
     ///
+    /// Only the file this made is put in place. Just before the rename the
+    /// temporary file's name must still hold it, by its identity: a link or
+    /// another file put at that name since is refused, and neither moved
+    /// nor removed. Just after, the target's name must hold it: a swap in
+    /// the few calls between the look and the rename is found there, and
+    /// answered as a failure, never as a replace (decision 0193).
+    ///
     /// # Errors
     ///
     /// `input`/`path_not_allowed` where a link stands at the name;
-    /// `busy`/`path_locked` where another program holds the target; and the
-    /// other kinds of a failed rename. The temporary file is removed.
+    /// `input`/`file_unavailable` where the temporary file's name no longer
+    /// holds the file this made, or the target's name does not hold it after
+    /// the rename; `busy`/`path_locked` where another program holds the
+    /// target; and the other kinds of a failed rename. The temporary file is
+    /// removed while its name still holds it.
     pub fn replace(mut self) -> Result<(), Failure> {
         drop(self.file.take());
         let Some(name) = self.target.named.file_name().map(std::ffi::OsStr::to_owned) else {
@@ -1141,11 +1151,25 @@ impl Temporary {
         if matches!(self.folder.kind(&name), Ok(EntryKind::Link)) {
             return Err(self.target.through_a_link());
         }
+        let Some(own) = self.own.filter(|_| self.still_its_own()) else {
+            return Err(self.target.unavailable(
+                "cannot be replaced: its temporary file's name no longer holds the file that was written",
+            ));
+        };
         self.folder
             .rename(&self.name, &name)
             .map_err(|error| self.target.io_failure(&error, "cannot be replaced"))?;
         // The name now belongs to the target: nothing is left to remove.
         self.name.clear();
+        let placed = self
+            .folder
+            .identity(&name)
+            .is_ok_and(|(device, file)| own == FileIdentity { device, file });
+        if !placed {
+            return Err(self.target.unavailable(
+                "was replaced, and its name does not hold the file that was written",
+            ));
+        }
         Ok(())
     }
 }
@@ -1247,6 +1271,163 @@ mod tests {
         return std::os::unix::fs::symlink(target, link).ok();
         #[cfg(windows)]
         return std::os::windows::fs::symlink_file(target, link).ok();
+    }
+
+    /// Decision 0193, finding P-1: what stands at the temporary file's name
+    /// in place of the file the save wrote is never put at the target's.
+    #[test]
+    fn a_file_or_link_swapped_in_at_the_temporary_name_is_never_put_in_place() {
+        let folder =
+            std::env::temp_dir().join(format!("a2m-provider-swapped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let project = folder.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let outside = folder.join("outside.txt");
+        std::fs::write(&outside, b"secret").unwrap();
+        let mut roots = Roots::none();
+        let name = RootName::new("project").unwrap();
+        roots.add(name.clone(), &project, Access::Write).unwrap();
+        let report = roots.check(&name, "report.csv", Access::Write).unwrap();
+        std::fs::write(project.join("report.csv"), b"old").unwrap();
+
+        // On Windows the temporary file is shared with nobody while its
+        // handle is held, so it cannot be removed to put another in its
+        // place; the swap below is for the systems where it can.
+        let swappable = |at: &std::path::Path| {
+            let removed = std::fs::remove_file(at).is_ok();
+            assert_eq!(removed, cfg!(unix), "removing the temporary file");
+            removed
+        };
+
+        // Another file at the name.
+        let mut temporary = report.create_temporary().unwrap();
+        temporary.write(b"checked").unwrap();
+        temporary.flush().unwrap();
+        assert_eq!(temporary.read_back(64).unwrap(), b"checked");
+        let at = project.join(&temporary.name);
+        if swappable(&at) {
+            std::fs::write(&at, b"someone else's").unwrap();
+            let refused = temporary.replace().unwrap_err();
+            assert_eq!(refused.code(), &codes::FILE_UNAVAILABLE);
+            assert_eq!(std::fs::read(project.join("report.csv")).unwrap(), b"old");
+            assert_eq!(std::fs::read(&at).unwrap(), b"someone else's");
+            std::fs::remove_file(&at).unwrap();
+        } else {
+            drop(temporary);
+        }
+
+        // A link at the name, to a file outside the root.
+        let mut temporary = report.create_temporary().unwrap();
+        temporary.write(b"checked").unwrap();
+        let at = project.join(&temporary.name);
+        if swappable(&at) && link_file(&outside, &at).is_some() {
+            let refused = temporary.replace().unwrap_err();
+            assert_eq!(refused.code(), &codes::FILE_UNAVAILABLE);
+            assert_eq!(std::fs::read(project.join("report.csv")).unwrap(), b"old");
+            assert!(
+                !std::fs::symlink_metadata(project.join("report.csv"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+            std::fs::remove_file(&at).unwrap();
+        } else {
+            drop(temporary);
+        }
+
+        // With nothing swapped the same save puts its file in place.
+        let mut temporary = report.create_temporary().unwrap();
+        temporary.write(b"new").unwrap();
+        temporary.flush().unwrap();
+        temporary.replace().unwrap();
+        assert_eq!(std::fs::read(project.join("report.csv")).unwrap(), b"new");
+        let names: Vec<_> = std::fs::read_dir(&project)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [std::ffi::OsString::from("report.csv")]);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// Decision 0193, finding P-2: while the save writes it, the temporary
+    /// file is the engine's alone. On Windows no other open of it, for
+    /// reading, writing, or removing, succeeds while its handle is held; on
+    /// Linux and macOS only the engine's user may read or write it.
+    #[test]
+    fn nobody_else_opens_the_temporary_file_while_it_is_written() {
+        let folder =
+            std::env::temp_dir().join(format!("a2m-provider-alone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut roots = Roots::none();
+        let name = RootName::new("project").unwrap();
+        roots.add(name.clone(), &folder, Access::Write).unwrap();
+        let report = roots.check(&name, "report.csv", Access::Write).unwrap();
+        let mut temporary = report.create_temporary().unwrap();
+        temporary.write(b"not yet checked").unwrap();
+        let at = folder.join(&temporary.name);
+        #[cfg(windows)]
+        {
+            // ERROR_SHARING_VIOLATION.
+            const SHARING_VIOLATION: i32 = 32;
+            for opened in [
+                std::fs::File::open(&at),
+                std::fs::OpenOptions::new().write(true).open(&at),
+            ] {
+                assert_eq!(opened.unwrap_err().raw_os_error(), Some(SHARING_VIOLATION));
+            }
+            assert_eq!(
+                std::fs::remove_file(&at).unwrap_err().raw_os_error(),
+                Some(SHARING_VIOLATION)
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&at).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        drop(temporary);
+        assert!(!at.exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// Decision 0193, finding P-2: on Windows a caller can tell a target
+    /// whose access list a replace would keep from one with a list of its
+    /// own, which a replace would drop.
+    #[cfg(windows)]
+    #[test]
+    fn a_target_with_an_access_list_of_its_own_is_told_apart_on_windows() {
+        let folder =
+            std::env::temp_dir().join(format!("a2m-provider-access-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut roots = Roots::none();
+        let name = RootName::new("project").unwrap();
+        roots.add(name.clone(), &folder, Access::Write).unwrap();
+        let report = roots.check(&name, "report.csv", Access::Write).unwrap();
+        std::fs::write(folder.join("report.csv"), b"old").unwrap();
+
+        // Made in the same folder by the same user: the same owner and the
+        // access list the folder passes down, which a replace keeps.
+        let mut temporary = report.create_temporary().unwrap();
+        assert!(temporary.keep_owner_and_mode().unwrap());
+        drop(temporary);
+
+        // An access list of its own, with nothing passed down.
+        let user = std::env::var("USERNAME").unwrap();
+        let status = std::process::Command::new("icacls")
+            .arg(folder.join("report.csv"))
+            .args(["/inheritance:r", "/grant:r", &format!("{user}:F")])
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success());
+        let mut temporary = report.create_temporary().unwrap();
+        assert!(!temporary.keep_owner_and_mode().unwrap());
+        drop(temporary);
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     /// The name of a write's temporary file cannot be guessed. This test

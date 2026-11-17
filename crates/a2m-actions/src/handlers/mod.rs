@@ -6,12 +6,13 @@ pub(crate) mod build;
 mod drafts;
 mod machine;
 mod meta;
+mod promote;
 mod provider;
 mod scout;
 mod scout_report;
 mod tools;
 
-pub(crate) use scout::discovery_report_json;
+pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
 
 use crate::def::HandlerFn;
 
@@ -65,6 +66,8 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "finding.describe" => tools::finding_describe,
         "unknown.list" => tools::unknown_list,
         "draft.write" => drafts::draft_write,
+        "draft.delete" => drafts::draft_delete,
+        "binding.promote" => promote::binding_promote,
         "test.run" => drafts::test_run,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,

@@ -514,11 +514,33 @@ impl<'a> Run<'a> {
         again: bool,
         writes: bool,
     ) -> Result<usize, Failure> {
+        self.hold_on(
+            operation,
+            &binding.mode,
+            binding.surface,
+            candidate,
+            again,
+            writes,
+        )
+        .await
+    }
+
+    /// The same, for a mode on a surface with no binding: what a discovery
+    /// job prepares, through the surface's own mode.
+    pub async fn hold_on(
+        &mut self,
+        operation: &OperationName,
+        mode: &Mode,
+        surface: SurfaceIndex,
+        candidate: &Candidate,
+        again: bool,
+        writes: bool,
+    ) -> Result<usize, Failure> {
         let posture = self.posture_for(writes);
         let destinations = self.destinations_of(operation);
         if let Some(position) = self.held.iter().position(|held| {
-            held.mode == binding.mode
-                && held.surface == binding.surface
+            held.mode == *mode
+                && held.surface == surface
                 && held.posture == posture
                 && held.destinations == destinations
                 && !held.poisoned
@@ -527,9 +549,9 @@ impl<'a> Run<'a> {
             return Ok(position);
         }
         let waited = self.engine.deps.clock.elapsed();
-        let surface_ref = self.surface_ref(binding.surface)?;
+        let surface_ref = self.surface_ref(surface)?;
         // A replay uses no session: nothing reaches the system.
-        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(binding.surface).is_some()
+        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(surface).is_some()
         {
             let want = SessionWant {
                 surface: surface_ref.surface.name.clone(),
@@ -573,14 +595,14 @@ impl<'a> Run<'a> {
         let prepared = match prepared {
             Ok(Some(Ok(prepared))) => prepared,
             Ok(Some(Err(failure))) => return Err(failure.failure),
-            Ok(None) => return Err(panicked(&binding.mode, "preparing")),
+            Ok(None) => return Err(panicked(mode, "preparing")),
             Err(_) => {
                 return Err(codes::fail(
                     FailureClass::Transient,
                     codes::PREPARE_TIMED_OUT,
                     format!(
                         "The driver of the mode `{}` was not ready within its time limit.",
-                        binding.mode
+                        mode
                     ),
                     "Call the tool again.",
                 ));
@@ -591,8 +613,8 @@ impl<'a> Run<'a> {
         let serial = self.next_serial;
         self.next_serial += 1;
         self.held.push(Held {
-            mode: binding.mode.clone(),
-            surface: binding.surface,
+            mode: mode.clone(),
+            surface,
             destinations,
             surface_ref,
             handle: candidate.handle.clone(),

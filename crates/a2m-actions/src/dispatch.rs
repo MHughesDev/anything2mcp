@@ -1070,6 +1070,10 @@ impl Kernel {
 fn loosens(def: &ActionDef, input: &Map<String, Json>) -> bool {
     match def.name.as_str() {
         "killswitch.set" => input.get("on").and_then(Json::as_bool) == Some(false),
+        // Whether the operation writes is known only once its drafts are
+        // compiled: the handler asks, as a person's act, when it does
+        // (decision 0189).
+        "binding.promote" => false,
         _ => true,
     }
 }

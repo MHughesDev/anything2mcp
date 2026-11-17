@@ -340,6 +340,7 @@ pub(crate) async fn run_steps(
     steps: Vec<Step>,
     json: bool,
     project: Option<&Path>,
+    warning: Option<&str>,
 ) -> Finished {
     let mut last = None;
     for step in steps {
@@ -362,7 +363,19 @@ pub(crate) async fn run_steps(
         }
     }
     match last {
-        Some(answered) => render::show(&answered.body, answered.exit.exit_code(), tree, json),
+        Some(mut answered) => {
+            // The client's own warning stands with the engine's.
+            if let (Some(warning), Some(warnings)) = (
+                warning,
+                answered
+                    .body
+                    .get_mut("warnings")
+                    .and_then(Json::as_array_mut),
+            ) {
+                warnings.push(Json::from(warning));
+            }
+            render::show(&answered.body, answered.exit.exit_code(), tree, json)
+        }
         None => Finished {
             code: 0,
             stdout: String::new(),

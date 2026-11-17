@@ -758,6 +758,12 @@ pub struct SchedSettings {
     pub quarantine: Duration,
     /// The limit of a budget nobody set: a conservative default.
     pub default_rate: RateLimit,
+    /// How long a reconcile queued again for the same run waits the first
+    /// time: each one after it waits twice as long as the one before, up to
+    /// `reconcile_wait_ceiling` (decision 0193).
+    pub reconcile_wait: Duration,
+    /// The longest a reconcile queued again for the same run waits.
+    pub reconcile_wait_ceiling: Duration,
 }
 
 impl Default for SchedSettings {
@@ -775,6 +781,8 @@ impl Default for SchedSettings {
                 refill: 1,
                 per: Duration::from_secs(1),
             },
+            reconcile_wait: Duration::from_secs(5),
+            reconcile_wait_ceiling: Duration::from_secs(15 * 60),
         }
     }
 }

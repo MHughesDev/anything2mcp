@@ -163,8 +163,26 @@ pub struct Failure {
         clippy::box_collection,
         reason = "one pointer in the failure in place of three; see above"
     )]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Read back through the same bound as `with_said`: a failure that
+    // arrives as data keeps no more than one made here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "said_read"
+    )]
     said: Option<Box<String>>,
+}
+
+#[allow(
+    clippy::box_collection,
+    clippy::unnecessary_box_returns,
+    reason = "the field's own type; see `Failure::said`"
+)]
+fn said_read<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Box<String>>, D::Error> {
+    let text = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(text.and_then(|text| kept_said(&text)).map(Box::new))
 }
 
 /// The longest text of what the system said that a door shows, in
@@ -197,13 +215,97 @@ fn kept_said(text: &str) -> Option<String> {
     Some(text.to_owned())
 }
 
+/// Whether a character can reorder, hide, or restyle text when it is
+/// shown, so that what the system said could pass for something else: every
+/// control character (C0 and C1, the terminal's escape introducers ESC and
+/// CSI among them, and NEL); the bidirectional marks, embeddings, overrides,
+/// and isolates; the zero-width and other invisible format characters, the
+/// soft hyphen, the word joiner, and the byte order mark; the line and
+/// paragraph separators; the variation selectors and the tag characters;
+/// and the other characters Unicode says to show as nothing (decision
+/// 0193). The list is closed and written out here, from Unicode's
+/// `Default_Ignorable_Code_Point` property and its format characters, so
+/// that it does not move with an outside table.
+#[must_use]
+pub fn said_hides(c: char) -> bool {
+    if c.is_control() {
+        return true;
+    }
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x034F
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x115F..=0x1160
+            | 0x17B4..=0x17B5
+            | 0x180B..=0x180F
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x206F
+            | 0x3164
+            | 0xFE00..=0xFE0F
+            | 0xFEFF
+            | 0xFFA0
+            | 0xFFF0..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1345F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0000..=0xE0FFF
+    )
+}
+
+/// Writes `text` with every character [`said_hides`] names as its escape,
+/// `\n`, `\u{1b}`, `\u{202e}`, never removed, except those `keep` says
+/// to leave.
+fn escaped(text: &str, keep: fn(char) -> bool) -> Cow<'_, str> {
+    if !text.chars().any(|c| said_hides(c) && !keep(c)) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
+        if !said_hides(c) || keep(c) {
+            out.push(c);
+        } else if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.extend(c.escape_unicode());
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// What the system said, made safe to carry in a door's data: every
+/// character [`said_hides`] names is written as its escape, except a line
+/// feed and a tab, which a door's encoding, such as JSON, carries as its
+/// own escapes. The one function every door passes the system's words
+/// through before it shows them, with [`said_cut`] and [`said_shown`]
+/// (decision 0193). Text with nothing to escape is returned as it is.
+#[must_use]
+pub fn said_neutral(text: &str) -> Cow<'_, str> {
+    escaped(text, |c| c == '\n' || c == '\t')
+}
+
 /// What the system said, cut for display from text that was already
 /// redacted: its first `longest` characters, ending before a redaction mark
 /// that the cut would split, so that no part of a mark, and nothing a mark
-/// stands for, is shown as if it were text. The `bool` says whether it was
-/// cut.
+/// stands for, is shown as if it were text; then passed through
+/// [`said_neutral`], so that nothing in it can reorder, hide, or restyle
+/// what is shown. The `bool` says whether it was cut.
 #[must_use]
-pub fn said_cut(redacted: &str, longest: usize) -> (&str, bool) {
+pub fn said_cut(redacted: &str, longest: usize) -> (Cow<'_, str>, bool) {
+    let (kept, cut) = cut_at(redacted, longest);
+    (said_neutral(kept), cut)
+}
+
+/// The first `longest` characters, never inside a redaction mark.
+fn cut_at(redacted: &str, longest: usize) -> (&str, bool) {
     let Some((mut at, _)) = redacted.char_indices().nth(longest) else {
         return (redacted, false);
     };
@@ -216,22 +318,17 @@ pub fn said_cut(redacted: &str, longest: usize) -> (&str, bool) {
     (&redacted[..at], true)
 }
 
-/// What the system said, as a door shows it, from text that was already
-/// redacted: cut by [`said_cut`], with `…` after a cut, and every control
-/// character escaped (`\n`, `\u{1b}`), never removed, so that the text
-/// cannot move a cursor or rewrite a line, and a line break stays visible.
-/// The `bool` says whether it was cut.
+/// What the system said, as a door shows it on a line of its own, from
+/// text that was already redacted: cut as [`said_cut`] cuts it, with `…`
+/// after a cut, and every character [`said_hides`] names escaped (`\n`,
+/// `\u{1b}`, `\u{202e}`), a line feed and a tab too, never removed, so
+/// that the text cannot move a cursor, rewrite a line, reverse its order,
+/// or hide a part, and a line break stays visible. The `bool` says whether
+/// it was cut.
 #[must_use]
 pub fn said_shown(redacted: &str, longest: usize) -> (String, bool) {
-    let (kept, cut) = said_cut(redacted, longest);
-    let mut shown = String::with_capacity(kept.len() + 4);
-    for c in kept.chars() {
-        if c.is_control() {
-            shown.extend(c.escape_default());
-        } else {
-            shown.push(c);
-        }
-    }
+    let (kept, cut) = cut_at(redacted, longest);
+    let mut shown = escaped(kept, |_| false).into_owned();
     if cut {
         shown.push('…');
     }
@@ -420,6 +517,106 @@ mod tests {
             "{}",
             failure.next_step()
         );
+    }
+
+    /// Decision 0193, finding C-2: no character of a class that can
+    /// reorder, hide, or restyle shown text passes a door as itself.
+    #[test]
+    fn every_character_that_can_reorder_hide_or_restyle_text_is_escaped_for_a_door() {
+        let classes: &[(&str, &[char])] = &[
+            (
+                "bidirectional marks, embeddings, and overrides",
+                &[
+                    '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+                    '\u{202e}', '\u{061c}',
+                ],
+            ),
+            (
+                "bidirectional isolates",
+                &['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'],
+            ),
+            (
+                "zero-width and other invisible format characters",
+                &[
+                    '\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{2064}', '\u{feff}',
+                    '\u{00ad}', '\u{180e}', '\u{fff9}', '\u{3164}',
+                ],
+            ),
+            (
+                "line and paragraph separators",
+                &['\u{2028}', '\u{2029}', '\u{0085}'],
+            ),
+            (
+                "variation selectors and tags",
+                &['\u{fe0f}', '\u{e0041}', '\u{e0100}'],
+            ),
+            (
+                "terminal escape introducers",
+                &[
+                    '\u{1b}', '\u{9b}', '\u{9d}', '\u{90}', '\u{7}', '\r', '\u{8}',
+                ],
+            ),
+        ];
+        for (class, chars) in classes {
+            for &c in *chars {
+                assert!(super::said_hides(c), "{class}: {:?}", c);
+                let text = format!("total{c}must be positive");
+                let (carried, cut) = super::said_cut(&text, super::SAID_LONGEST);
+                assert!(!cut);
+                assert!(!carried.contains(c), "{class}: {c:?} passed `said_cut`");
+                assert!(
+                    carried.contains(&c.escape_unicode().to_string())
+                        || carried.contains(&c.escape_default().to_string()),
+                    "{class}: {carried}"
+                );
+                let (shown, _) = super::said_shown(&text, super::SAID_LONGEST);
+                assert!(!shown.contains(c), "{class}: {c:?} passed `said_shown`");
+                assert!(!super::said_neutral(&text).contains(c), "{class}");
+            }
+        }
+        // Ordinary text, letters of every script, and emoji pass as they are.
+        for plain in [
+            "total must be positive",
+            "Größe ≤ 12 mm",
+            "عدد",
+            "数量",
+            "ok 👍",
+        ] {
+            assert!(plain.chars().all(|c| !super::said_hides(c)), "{plain}");
+            assert_eq!(super::said_neutral(plain), plain);
+            assert_eq!(super::said_shown(plain, super::SAID_LONGEST).0, plain);
+        }
+        // A door's data keeps a line feed and a tab, which its encoding
+        // escapes; the line a command prints shows them escaped.
+        assert_eq!(super::said_cut("a\nb\tc", 400).0, "a\nb\tc");
+        assert_eq!(super::said_shown("a\nb\tc", 400).0, "a\\nb\\tc");
+        // The cut is made before the escape: an escape is never split.
+        let (carried, cut) = super::said_cut("ab\u{202e}cd", 3);
+        assert!(cut);
+        assert_eq!(carried, "ab\\u{202e}");
+    }
+
+    /// A failure that arrives as data is held to the bound `with_said` keeps.
+    #[test]
+    fn a_failure_read_as_data_keeps_no_more_of_what_the_system_said_than_one_made_here() {
+        let failure = Failure::new(
+            FailureClass::Rejected,
+            FailureCode::new("system_refused").unwrap(),
+            "The system refused the record.",
+            "Correct the record and call again.",
+        );
+        let mut json = serde_json::to_value(&failure).unwrap();
+        json["said"] = serde_json::Value::String("x".repeat(super::SAID_CEILING + 1));
+        let read: Failure = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(read.said(), Some(super::SAID_TOO_LONG));
+        json["said"] = serde_json::Value::String(" \n ".to_owned());
+        assert_eq!(
+            serde_json::from_value::<Failure>(json).unwrap().said(),
+            None
+        );
+        let kept = failure.with_said("total must be positive");
+        let json = serde_json::to_value(&kept).unwrap();
+        assert_eq!(serde_json::from_value::<Failure>(json).unwrap(), kept);
     }
 
     #[test]

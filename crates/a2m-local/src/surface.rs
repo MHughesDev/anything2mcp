@@ -25,9 +25,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_actions::{
-    ApprovalAsk, ApprovalDesk, ApprovalPreview, BoxFuture, PersonActAsk, PersonActId,
-    PersonSurface, PresenceAsk, PresenceProof, PresenceReport, PreviewRecord, SessionAsk,
-    SignInAsk, SurfaceLink,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, BINDING_LATER, BoxFuture, MAY_NOT_BE_READ_BACK,
+    PersonActAsk, PersonActId, PersonSurface, PresenceAsk, PresenceProof, PresenceReport,
+    PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Digest, Failure, PrincipalId, RunId};
@@ -492,15 +492,7 @@ fn change_html(change: &Change) -> String {
             escape(&record.key),
             escape(record.action),
         );
-        // A write the system only acknowledges is said to be one before
-        // the person approves it (decision 0181): nothing will compare it.
-        if let Some(words) = record.not_read_back {
-            let _ = write!(
-                out,
-                "<p><strong>This write is {}.</strong> Nothing will read it back or compare it after it is sent.</p>",
-                escape(words),
-            );
-        }
+        out.push_str(&written_by_html(record));
         out.push_str("<table><thead><tr><th scope=\"col\">Field</th><th scope=\"col\">Now</th><th scope=\"col\">After the write</th><th scope=\"col\">Changes</th></tr></thead><tbody>");
         for field in &record.fields {
             let now = field.current.as_ref().map_or_else(
@@ -522,6 +514,78 @@ fn change_html(change: &Change) -> String {
             );
         }
         out.push_str("</tbody></table></section>");
+    }
+    out
+}
+
+/// What one binding's evidence means for whether the write is read back,
+/// in the page's words.
+fn evidence_words(evidence: &str) -> &'static str {
+    match evidence {
+        "read_back" => "it is read back and compared with what was intended after it is sent",
+        "response" => {
+            "the answer the system gives to the write is compared with what was intended; it is not read back apart"
+        }
+        "acknowledged" => {
+            "it is accepted by the system and not read back: nothing compares it after it is sent"
+        }
+        // A kind of evidence this page does not know is told as the
+        // weakest.
+        _ => "this page does not know its evidence: take it as not read back",
+    }
+}
+
+/// What the page says, beside a record and before its fields, about how
+/// it will be written: a write the system only acknowledges, said to be
+/// one before the person approves it (decision 0181), and the binding the
+/// approval binds the write to, or every binding it could take when that
+/// is chosen later (decision 0185). Each word is escaped.
+pub(crate) fn written_by_html(record: &PreviewRecord) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    match record.not_read_back {
+        Some(words) if words == MAY_NOT_BE_READ_BACK => {
+            let _ = write!(
+                out,
+                "<p><strong>This write {}.</strong> A binding that is only acknowledged reads nothing back and compares nothing after it is sent.</p>",
+                escape(words),
+            );
+        }
+        Some(words) => {
+            let _ = write!(
+                out,
+                "<p><strong>This write is {}.</strong> Nothing will read it back or compare it after it is sent.</p>",
+                escape(words),
+            );
+        }
+        None => {}
+    }
+    match (record.binding_later, record.bindings.as_slice()) {
+        (_, []) => {}
+        (None, [binding]) => {
+            let _ = write!(
+                out,
+                "<p>Written by the binding <code>{}</code>, and by no other: {}.</p>",
+                escape(&binding.mode),
+                escape(evidence_words(binding.evidence)),
+            );
+        }
+        (later, bindings) => {
+            let _ = write!(
+                out,
+                "<p>This record is {}. It is written by one of these bindings, and by no other:</p><ul>",
+                escape(later.unwrap_or(BINDING_LATER)),
+            );
+            for binding in bindings {
+                let _ = write!(
+                    out,
+                    "<li><code>{}</code>: {}.</li>",
+                    escape(&binding.mode),
+                    escape(evidence_words(binding.evidence)),
+                );
+            }
+            out.push_str("</ul>");
+        }
     }
     out
 }
