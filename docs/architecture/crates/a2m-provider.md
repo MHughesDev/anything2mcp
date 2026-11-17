@@ -9,7 +9,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 | Side | Kernel |
 | Layer | 5, Contract |
 | May depend on | Layers 1 to 4 |
-| Depends on | `a2m-core`, including `Plan` and `Step` as data; `a2m-files` for the compiler registration traits only; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken`; `a2m-telemetry` for spans. Outside: `serde`, a TOML parser and a JSON Schema validator, each an outside crate to be verified |
+| Depends on | `a2m-core`, including `Plan` and `Step` as data; `a2m-files` for the compiler registration traits and its schema type; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken` and `RecordRef`; `a2m-telemetry` for the handle a pack is given. Outside ([decision 0088](../../decisions/0088-the-provider-contracts-outside-crates.md)): `serde`, `toml`, `sha2`, `getrandom`, Tokio; `command-fds` and `rustix` on Linux and macOS; `windows-sys` on Windows. No JSON Schema validator |
 | Built in | Stage B, package B3 (manifest, registry); slice 1.1 (`Driver`); slice 1.3 (compiler registrations); Stage E, package E1 (`Discoverer`, `Describer`); package F3 and Phase 8 (plug-in host) |
 | Carries out | Spec sections [202](../../spec/2-kernel/202-kernel-and-packs.md), [203](../../spec/2-kernel/203-the-provider-contract.md), [204](../../spec/2-kernel/204-supervising-subsystems.md), [218](../../spec/2-kernel/218-discovery-and-findings.md) for the discoverer's side, [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
 
@@ -29,7 +29,7 @@ It must never: decide whether something may happen; sign in or renew; write a le
 
 ## The manifest
 
-One file per provider, `anything2mcp-provider.toml`. A first-party pack embeds the same file with `include_str!`, so packs and plug-ins pass one parser and one schema. TOML was chosen over YAML because a manifest is configuration a person reviews before enabling, read by machines on every start, and TOML has no anchors, aliases, or implicit typing; target files stay YAML, settings stay TOML ([decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md)). The file is checked against a JSON Schema kept in this crate.
+One file per provider, `anything2mcp-provider.toml`. A first-party pack embeds the same file with `include_str!`, so packs and plug-ins pass one parser and one schema. TOML was chosen over YAML because a manifest is configuration a person reviews before enabling, read by machines on every start, and TOML has no anchors, aliases, or implicit typing; target files stay YAML, settings stay TOML ([decision 0014](../../decisions/0014-declarative-files-yaml-targets-toml-settings-cel-expressions.md)). The file's shape is checked by the types it is read into, `Manifest::parse`: a key the format does not know, or a badly formed name, is refused with the line. In a mode, `rank`, `intent_window`, `session_reads`, `session_writes`, and `exclusive` may be left out; they default to 100, 1, 1, 1, and `surface`.
 
 ```toml
 manifest_format = 1                      # this file's own format number
@@ -87,14 +87,24 @@ kinds = ["schema", "field"]              # finding kinds it may return
 sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 50000000, depth = 8 }
+surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its archetype
 
 [[file_kinds]]
 name = "sheets"
 directory = "sheets/"
-schema = "schemas/sheets.json"           # shipped beside the manifest
-[[binding_fields]]
-mode = "sheet"
-schema = "schemas/binding.json"
+surface_kinds = ["file"]                 # the surface kinds it owns the kind for
+schema = "schemas/sheets.json"           # plug-ins only: shipped beside the manifest. A pack registers the schema as an object
+
+[[finding_kinds]]                        # the finding kinds it owns
+name = "schema"
+surface_kinds = ["file"]
+
+[[controls]]                             # the controls it can operate
+name = "grid"
+
+[[failure_codes]]                        # every code its drivers may return, with its one class
+class = "rejected"
+code = "sheet_protected"
 
 [[lint_rules]]
 code = "SHEET001"
@@ -134,6 +144,16 @@ supported = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"]
 [evidence]
 max_level = "discovered"
 vouches_for = ["live_system", "artifact"]
+
+[[settings]]                             # the pack's own group, `packs.example_sheet`; one entry for each key
+key = "max_rows"
+type = "int"                             # "bool" | "int" | "text" | "choice" | "list"
+default = 100000
+min = 1                                  # for "int"; `choices = [...]` for "choice"
+max = 1000000
+scope = "user"                           # "installation" | "user" | "project"
+protected = false                        # a protected setting also states `safer = "lower"`
+doc = "The most rows one read may return."
 ```
 
 A kind has one owning pack per surface kind, and another pack may declare that it reads it (decision 0062). The web pack's manifest, for instance, lets its `page_http` mode use the HTTP pack's endpoint catalog without owning it:
@@ -150,200 +170,396 @@ Checks made when a manifest is read, and when the registry is built, each a name
 
 | Check | Failure |
 | --- | --- |
-| The file parses and fits the schema | `input`, `manifest_invalid`, with the field and line |
+| The file parses, has no key the format does not know, and every name in it is well formed | `input`, `manifest_invalid`, with the line; a rule that spans fields names the field |
 | `contract` is current or previous | `input`, `contract_unsupported` |
-| Every mode and surface kind has exactly one archetype; two providers that register one name agree on it | `input`, `mode_conflict` |
-| Every step kind, file kind, lint code, and finding kind is a well formed checked name, unique to its provider | `input`, `schema_invalid` |
+| A mode or surface kind is stated once in a manifest. Two providers that register one mode agree on its archetype. A surface kind has one provider | `input`, `mode_conflict`, for each provider involved |
+| Every step kind, file kind, lint code, finding kind, control, and failure code is listed once; a lint code and an action start with the provider's name | `input`, `manifest_invalid` |
 | Every kind a provider `reads` has exactly one enabled owner for that surface kind. If the owner is absent or disabled, the reader stays registered, the problem is listed, and any binding that needs the kind does not compile | `input`, `kind_owner_missing`, naming the kind, the surface kind, and the pack to enable |
 | No two enabled packs own one kind for one surface kind | `input`, `kind_owner_conflict` |
-| Every object registered matches a declared point, mode, or discoverer | `policy`, `effect_not_declared` |
-| A plug-in's signature verifies, or unsigned plug-ins are switched on by a person | `policy`, `signature_invalid` |
+| A point names only a declared mode or discoverer; a surface kind that holds a session, and an auth provider, are covered by `effects.sessions`; a discoverer returns only finding kinds the manifest owns or reads. Every object registered matches what is declared | `policy`, `effect_not_declared` |
+| A plug-in's signature verifies, or unsigned plug-ins are switched on by a person. Not built: a plug-in is listed as present and not enabled | `policy`, `signature_invalid` |
 | A discoverer's `max_level` is `inferred` or `discovered` | `input`, `manifest_invalid` |
-| A program in `run` or `effects.processes` is a relative path inside the provider or a fixed absolute path | `input`, `path_not_allowed` |
+| A program in `run` or `effects.processes` is a relative path inside the provider or a fixed absolute path, and a requirement is looked for only at fixed absolute paths | `input`, `path_not_allowed` |
+| A pack's settings group fits the `[[settings]]` its manifest declares | `input`, `pack_settings_invalid`; the pack is `misconfigured` and registers nothing |
+| Two providers carry one name | `input`, `provider_duplicate` |
 
 ## Interface
 
+This is the interface as it is built ([decision 0089](../../decisions/0089-the-provider-contract-as-building-it-settled-it.md)). Every async method of every trait here returns `BoxFuture<'a, T>`, which is `Pin<Box<dyn Future<Output = T> + Send + 'a>>` and the same type `a2m-auth` uses, so each trait is a trait object. An implementation writes `Box::pin(async move { ... })`.
+
 ```rust
 // The registry. Built once at start by the product crate; replaced whole when a provider is enabled or disabled.
-pub struct RegistryBuilder { /* settings, collected registrations, problems */ }
+pub struct HostServices { pub supervisor: Supervisor, pub roots: Roots, pub redact: Arc<dyn Redact>, pub telemetry: Telemetry }
+pub struct ProviderSettings {
+    pub disabled: BTreeSet<ProviderName>,                 // a compiled-in pack is enabled unless listed
+    pub mode_providers: BTreeMap<Mode, ProviderName>,     // which provider drives a contested mode
+    pub packs: BTreeMap<ProviderName, Values>,            // each pack's own group, `packs.<pack>`, as written
+}
+pub struct RegistryBuilder { /* settings, host services, collected providers */ }
 impl RegistryBuilder {
-    pub fn new(settings: ProviderSettings) -> Self;           // which providers are enabled; which provider fills a contested mode
-    /// One call per enabled first-party pack. The product crate makes no other call per pack.
+    pub fn new(settings: ProviderSettings, host: HostServices) -> Self;
+    /// One call per first-party pack. The product crate makes no other call per pack.
     pub fn add_pack(&mut self, pack: &dyn Pack);
-    /// A plug-in found on the machine: built in, through an entry point, or in the plug-in directory.
-    pub fn add_plugin(&mut self, found: FoundManifest);
-    /// Every problem at once. A provider with a problem is listed with it and registers nothing.
+    /// A plug-in found on the machine. Listed as present and not enabled; it registers nothing.
+    pub fn add_plugin(&mut self, found: &FoundManifest);
+    /// Every problem at once. A provider with a problem is listed with it and registers nothing,
+    /// except one that reads a kind whose owner is missing (`registered: true`).
     pub fn build(self) -> (Registry, Vec<RegistryProblem>);
 }
 
 pub trait Pack: Send + Sync {
-    fn manifest(&self) -> &'static str;                        // the TOML text
-    fn register(&self, to: &mut Registrar<'_>) -> Result<(), Failure>;
+    fn manifest(&self) -> &'static str;                        // the TOML text, embedded with include_str!
+    fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure>;
 }
 
-/// What a pack hands over. Each call is checked against the manifest as it is made.
+/// What a pack is handed when it registers. Clone it into the objects that need it.
+pub struct PackContext { /* private */ }
+impl PackContext {
+    pub fn provider(&self) -> &ProviderName;
+    pub fn supervisor(&self) -> &ScopedSupervisor;             // starts only what the manifest declares
+    pub fn roots(&self) -> &Roots;                             // only the roots the manifest declares
+    pub fn folder(&self, root: &RootName, access: Access) -> Result<CheckedPath, Failure>;
+    pub fn redact(&self) -> &Arc<dyn Redact>;
+    pub fn telemetry(&self) -> &Telemetry;
+    pub fn settings(&self) -> &Values;                         // `packs.<pack>`, validated, defaults filled in
+}
+
+/// What a pack hands over. Each call is checked against the manifest as it is made;
+/// anything undeclared, or handed over twice, is `policy`, `effect_not_declared`.
 pub struct Registrar<'a> { /* the provider being registered */ }
 impl Registrar<'_> {
-    pub fn driver(&mut self, mode: Mode, driver: Arc<dyn Driver>);
-    pub fn discoverer(&mut self, d: Arc<dyn Discoverer>, describer: Arc<dyn Describer>);
-    pub fn auth_provider(&mut self, p: Arc<dyn AuthProvider>);         // trait from `a2m-auth`; only those needing a surface
-    pub fn source_reader(&mut self, r: Arc<dyn SourceReader>);         // trait from `a2m-sources`
-    pub fn compiler(&mut self, c: CompilerRegistrations);              // from `a2m-files`: file kinds, lowerings, lint rules, drafting rules
-    pub fn action(&mut self, a: Arc<dyn ProviderAction>);              // under the provider's name space
-}                                                                      // surface kinds and step kinds come from the manifest alone
+    pub fn driver(&mut self, mode: Mode, driver: Arc<dyn Driver>) -> Result<(), Failure>;
+    pub fn discoverer(&mut self, d: Arc<dyn Discoverer>, describer: Arc<dyn Describer>) -> Result<(), Failure>;
+    pub fn auth_provider(&mut self, p: Arc<dyn AuthProvider>) -> Result<(), Failure>;   // trait from `a2m-auth`
+    pub fn source_reader(&mut self, r: Arc<dyn SourceReader>) -> Result<(), Failure>;   // trait from `a2m-sources`
+    pub fn compiler(&mut self, c: CompilerRegistrations) -> Result<(), Failure>;        // may be called more than once
+    pub fn action(&mut self, a: Arc<dyn ProviderAction>) -> Result<(), Failure>;
+}                                                              // modes, step kinds, and finding kinds come from the manifest alone
 
-/// An action a provider adds. Its four faces are generated by `a2m-actions`, whose dispatcher alone calls it,
+/// The objects a pack brings to the compiler; the traits are `a2m-files`'s.
+#[derive(Clone, Default)]
+pub struct CompilerRegistrations {
+    pub surface_kinds: Vec<SurfaceKindSpec>, pub controls: Vec<ControlName>,
+    pub file_kinds: Vec<Arc<dyn FileKind>>, pub lowerings: Vec<Arc<dyn Lowering>>,
+    pub lint_rules: Vec<Arc<dyn LintRule>>, pub drafting_rules: Vec<Arc<dyn DraftingRule>>,
+}                                                              // with a builder method of the same name for each
+
+/// An action a provider adds. Its faces are generated by `a2m-actions`, whose dispatcher alone calls it,
 /// after the caller's credential is checked and policy has decided. It gets checked paths and the registry, never the store.
-#[async_trait]
 pub trait ProviderAction: Send + Sync {
-    fn name(&self) -> &ActionName;                                     // as declared in the manifest
-    fn input_schema(&self) -> &JsonSchema;
+    fn name(&self) -> ActionName;                                      // as declared in the manifest
+    fn input_schema(&self) -> &JsonSchema;                             // `a2m-files`'s schema type
     fn output_schema(&self) -> &JsonSchema;
-    async fn handle(&self, input: &Values, ctx: &ActionContext<'_>) -> Result<Values, Failure>;
+    fn handle<'a>(&'a self, input: &'a Values, cx: &'a ActionContext<'a>) -> BoxFuture<'a, Result<Values, Failure>>;
 }
+pub struct ActionContext<'a> { pub roots: &'a Roots, pub registry: &'a Registry, pub redact: &'a dyn Redact }
 
-pub struct Registry { /* immutable; cheap to clone behind an Arc */ }
+#[derive(Clone)]
+pub struct Registry { /* immutable; an Arc inside */ }
 impl Registry {
     pub fn digest(&self) -> Digest;                            // keys the tool-list cache and is recorded in every trace
     pub fn archetype(&self, mode: &Mode) -> Option<Archetype>;
+    pub fn modes(&self) -> impl Iterator<Item = &Mode>;
     pub fn surface_kind(&self, kind: &SurfaceKind) -> Option<&SurfaceKindEntry>;   // archetype, whether it holds a session, which provider
-    pub fn action(&self, name: &ActionName) -> Option<Arc<dyn ProviderAction>>;    // for the dispatcher in `a2m-actions`
-    pub fn mode_defaults(&self, mode: &Mode) -> Option<&ModeDefaults>;   // rank, intent window, session limits, exclusive
+    pub fn mode_defaults(&self, mode: &Mode) -> Option<ModeDefaults>;   // rank, intent window, session limits, exclusive
     /// The driver for a mode, with the provider choice already made and its reason attached.
     pub fn driver(&self, mode: &Mode) -> Result<DriverHandle, Failure>;
-    pub fn source_reader(&self, format: &SourceFormat) -> Result<Arc<dyn SourceReader>, Failure>;
+    pub fn source_reader(&self, name: &ReaderName) -> Result<Arc<dyn SourceReader>, Failure>;   // those packs registered; the built-in ones are `a2m-sources`'s
+    pub fn source_readers(&self) -> Vec<Arc<dyn SourceReader>>;
     pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle>;
     pub fn auth_providers(&self) -> Vec<Arc<dyn AuthProvider>>;          // handed to the keeper by `a2m-actions`
     pub fn compiler_set(&self) -> &CompilerSet;                         // handed to the compiler by `a2m-actions`
-    pub fn listing(&self) -> Vec<ProviderListing>;                      // manifest, availability, health; for `provider.list`
+    pub fn action(&self, name: &ActionName) -> Option<(Arc<dyn ProviderAction>, EffectClass)>;   // for the dispatcher in `a2m-actions`
+    pub fn actions(&self) -> impl Iterator<Item = &ActionName>;
+    pub fn kind_owner(&self, of: KindOf, kind: &str, surface_kind: &SurfaceKind) -> Option<&ProviderName>;
+    pub fn listing(&self) -> Vec<ProviderListing>;                      // manifest, availability, problems; for `provider.list`
+    pub fn provider_roots(&self, provider: &ProviderName) -> Option<&Roots>;
+    pub fn provider_settings(&self, provider: &ProviderName) -> Option<&Values>;
     pub fn supervisor(&self) -> &Supervisor;
+    pub fn roots(&self) -> &Roots;                                      // every named root, for the kernel's own reads
 }
 ```
 
 **There is no priority and no silent fallback.** If one mode is driven by two ready providers and no setting names one, `driver` fails with `input`, `provider_ambiguous`, and the message lists each candidate with its availability. If the named one is not ready, it fails with `busy`, `provider_unavailable`, carrying the availability state and its fix; it never falls to the other. Registration order never affects the result, and a test builds the registry in every order and compares digests.
 
-**Declared against observed.** `ProviderListing` carries three separate answers: the manifest (what it can do), the availability (can it here, now), and the health (is it working). Availability is computed by looking for each requirement at its declared paths and taking its digest. It starts no process. Its states are the eight of section 203; the subsystem states of section 204 are separate. Both are status words, so they belong in `a2m-core` as enums with a test against the documents.
+**The digest** covers, for every registered provider in order of name, its version, the digest of its manifest, its availability, the names of every object it registered, and the digest of its validated settings; and every choice a setting makes. A provider that is listed and not registered is not in it.
+
+**Declared against observed.** `ProviderListing` carries the manifest (what it can do), the availability (can it here, now), whether its objects are registered, and its problems. Availability is computed when the pack is added, by looking for each requirement at its declared paths and taking its digest, and by comparing the host with `platforms`. It starts no process: the function has no way to reach the supervisor. Its states are the eight of section 203. A requirement's `versions` is text for a person; the check cannot ask a program its version without starting it. Health, as a third answer, is `DriverHandle::health`.
 
 ### The extension points
 
 The driver interface is settled here as follows, closing the two points the technical reference leaves to slice 1.1.
 
-1. **Confirm and read-back are lists of steps, carried out by `act`.** There is no `read_back` method. The compiler lowers a binding into three step lists, act, confirm, and read-back, and the engine passes each step to `act`. The plan then says everything a driver will do, the trace has one record per step whatever the part of the loop, and the preview, the freshness check, and reconcile run the read-back list on its own exactly as file formats require. A separate method would let a pack hide reading logic the plan does not show, and would give two ways to read a record.
+1. **Confirm and read-back are lists of steps, carried out by `act`.** There is no `read_back` method. The compiler lowers a binding into its step lists, and the engine passes each step to `act`. The plan then says everything a driver will do, the trace has one record per step whatever the part of the loop, and the preview, the freshness check, and reconcile run the read-back list on its own exactly as file formats require. A separate method would let a pack hide reading logic the plan does not show, and would give two ways to read a record.
 2. **A step can report a record as absent.** `StepOutcome::Absent` is allowed only for a step the plan marks `lookup`. Anywhere else it is refused by the handle as `unknown_variant`, `unexpected_absent`.
 3. **Declared capabilities leave the trait.** The sketch's `mode()` and `capabilities()` repeat the manifest; knowledge lives in one place, so the registry answers both.
 4. **Every failure says whether anything was sent,** as the supervisor's rule asks of every subsystem.
-5. **A step can return what reconcile will need before the commit point.** A key a store assigned inside an open transaction, or the digest a file will have once it is replaced, is learned before the step that commits. A step not marked `commits` may return it as `Observed::for_reconcile`; the engine records it durably through `Control` before the committing step is sent. The handle refuses `for_reconcile` on the committing step itself, where it would be too late to be safe.
+5. **A step can return what reconcile will need before the commit point.** A key a store assigned inside an open transaction, or the digest a file will have once it is replaced, is learned before the step that commits. A step not marked `commits` may return it as `Observed::for_reconcile`; the engine records it durably before the committing step is sent. The handle refuses `for_reconcile` on the committing step itself, as `unknown_variant`, `reconcile_too_late`.
 
 ```rust
-#[async_trait]
 pub trait Driver: Send + Sync {
     /// Acquire what the binding needs: a tab, a client, a window, an open file. `lease` is None for a surface with no session.
-    async fn prepare(&self, ctx: &PrepareContext, lease: Option<&SessionLease>) -> Result<Prepared, StepFailure>;
+    fn prepare<'a>(&'a self, cx: &'a PrepareContext<'a>, lease: Option<&'a SessionLease>)
+        -> BoxFuture<'a, Result<Prepared, StepFailure>>;
     /// Carry out exactly one step of the kinds this mode declared. Never retries. Values are already evaluated.
-    async fn act(&self, p: &mut Prepared, step: &Step, input: &StepInput) -> Result<StepOutcome, StepFailure>;
+    fn act<'a>(&'a self, prepared: &'a mut Prepared, step: &'a Step, input: &'a StepInput<'a>)
+        -> BoxFuture<'a, Result<StepOutcome, StepFailure>>;
     /// From memory, without input or output: may this driver be chosen for this surface now.
     fn health(&self, surface: &SurfaceRef) -> DriverHealth;
     /// Give back what prepare acquired. `poisoned` after a failure: recycle, never reuse.
-    async fn release(&self, p: Prepared, poisoned: bool) -> Cleanup;
+    fn release<'a>(&'a self, prepared: Prepared, poisoned: bool) -> BoxFuture<'a, Cleanup>;
 }
 
-pub struct Prepared(Box<dyn Any + Send>);                      // the driver's own state; opaque to the kernel
+pub struct Prepared { /* the driver's own state; opaque to the kernel */ }
+impl Prepared {
+    pub fn new<T: Any + Send>(state: T) -> Self;
+    pub fn state<T: Any>(&mut self) -> Option<&mut T>;
+    pub fn into_state<T: Any>(self) -> Result<Box<T>, Self>;
+}
 pub struct PrepareContext<'a> {
-    pub run: &'a RunId, pub surface: &'a SurfaceRef, pub posture: Posture,
-    pub deadline: Deadline, pub redact: &'a dyn Redact,
+    pub run: RunId, pub epoch: Epoch,                         // the run and its lease number
+    pub surface: &'a SurfaceRef,
+    pub plan: &'a Plan,                                       // the published plan as data; a step's `refers_to` names an entry of a pack section
+    pub posture: Posture, pub deadline: Deadline, pub redact: &'a dyn Redact,
     pub destinations: &'a Destinations,                       // the target's declared surfaces, within the manifest's network effect
     pub paths: &'a CheckedPaths,                              // every file this run may touch, already checked; a driver resolves none
     pub supervisor: &'a ScopedSupervisor,                     // starts only what the manifest and the published plan declare
-    pub widgets: &'a WidgetSet,                               // empty until plug-in widget drivers exist
 }
+pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: SurfacePlan }   // at this environment's address
 pub enum Posture { Live, Sandbox { test_records: bool }, Discovery }   // the driver applies its own kind's read-only guard outside Live
+pub struct Deadline(/* a Tokio instant */);                   // Deadline::after(duration), at(), remaining(), passed()
+pub struct Destinations { /* addresses, compared as written */ }      // Destinations::new(addresses), contains(address), iter()
+pub struct StepInput<'a> {
+    pub args: &'a Values,                                     // the step's arguments, by name, already evaluated
+    pub record: Option<RecordRef>,                            // the commit point the step belongs to (`a2m-ledger`)
+    pub key: Option<&'a RecordKey>,
+    pub stamp: Option<&'a str>,                               // the record's idempotency token
+    pub deadline: Deadline,
+}
 pub enum StepOutcome { Done(Observed), Absent(Observed) }
+#[derive(Default)]
 pub struct Observed {
     pub values: Values, pub assigned_key: Option<RecordKey>,
     pub for_reconcile: Values,                                // learned before the commit point; recorded before the committing step
     pub captures: Vec<Capture>,                               // already redacted
 }
-
-/// File access. A `CheckedPath` is made only by `Roots::check`: a named root, a relative path, no `..`, no link leaving
-/// the root, resolved once. `a2m-actions` uses the same check for the kernel's own reads.
-pub struct Roots { /* named roots from settings and the project, each with read or write */ }
-impl Roots { pub fn check(&self, root: &RootName, relative: &str, access: Access) -> Result<CheckedPath, Failure>; }
-pub struct CheckedPath(/* private */);                        // no public constructor; opened only by its own methods
-pub struct StepFailure { pub failure: Failure, pub sent: Sent }
-pub enum Sent { NotSent, Unknown, Answered }                   // Answered: the system replied, so the outcome is known
+pub struct Capture { pub name: String, pub media_type: String, pub bytes: Vec<u8> }
+pub struct StepFailure { pub failure: Failure, pub sent: Sent }       // StepFailure::not_sent(f), answered(f), unknown(f)
+pub enum Sent { NotSent, Answered, Unknown }                   // Answered: the system replied, so the outcome is known
 pub enum DriverHealth { Ready, Degraded(FailureCode), Unavailable(FailureCode) }
 
+/// File access. A `CheckedPath` is made only by `Roots::check`, `Roots::folder`, and `CheckedPath::join`.
+pub struct Roots { /* named roots, each readable or writable */ }
+impl Roots {
+    pub fn none() -> Self;
+    pub fn add(&mut self, name: RootName, folder: &Path, access: Access) -> Result<(), Failure>;   // an existing folder, by absolute path
+    pub fn narrowed(&self, read: &[RootName], write: &[RootName]) -> Result<Self, Failure>;        // what one manifest declares
+    pub fn folder(&self, root: &RootName, access: Access) -> Result<CheckedPath, Failure>;
+    pub fn check(&self, root: &RootName, relative: &str, access: Access) -> Result<CheckedPath, Failure>;
+}
+pub enum Access { Read, Write }
+#[derive(Clone)]
+pub struct CheckedPath { /* private; no public constructor */ }
+impl CheckedPath {
+    pub fn root(&self) -> &RootName;   pub fn relative(&self) -> &str;   pub fn access(&self) -> Access;
+    pub fn as_path(&self) -> &Path;                           // to hand to a program or a system call; never to build a path from
+    pub fn join(&self, relative: &str) -> Result<Self, Failure>;
+    pub fn exists(&self) -> bool;   pub fn is_dir(&self) -> bool;   pub fn size(&self) -> Result<u64, Failure>;
+    pub fn open(&self) -> Result<std::fs::File, Failure>;
+    pub fn read(&self, max_bytes: u64) -> Result<Vec<u8>, Failure>;
+    pub fn write(&self, bytes: &[u8]) -> Result<(), Failure>;           // to a new file beside it, which then takes its name
+    pub fn create_dir_all(&self) -> Result<(), Failure>;   pub fn remove_file(&self) -> Result<(), Failure>;
+    pub fn list(&self) -> Result<(Vec<Self>, usize), Failure>;          // entries in order of name, and how many were left out
+}
+pub struct CheckedPaths { /* by the name the plan gives each */ }       // none(), insert(name, path), get(name), iter()
+
 /// The only way the engine reaches a driver. Not constructible outside this crate.
-pub struct DriverHandle { /* Arc<dyn Driver>, archetype, provider choice */ }
+#[derive(Clone)]
+pub struct DriverHandle { /* the driver, the mode's declared steps and codes, the provider choice */ }
 impl DriverHandle {
-    pub fn choice(&self) -> &ProviderChoice;                   // provider, version, digest, reason: recorded in the trace
-    pub async fn prepare(&self, ctx: &PrepareContext<'_>, lease: Option<&SessionLease>) -> Result<Prepared, StepFailure>;
-    /// A step marked `commits` needs `Authority::Write` with a token from `a2m-ledger`, or it is refused unsent.
-    pub async fn act(&self, p: &mut Prepared, step: &Step, input: &StepInput, auth: Authority<'_>) -> Result<StepOutcome, StepFailure>;
+    pub fn mode(&self) -> &Mode;   pub fn archetype(&self) -> Archetype;
+    pub fn choice(&self) -> &ProviderChoice;                   // provider, version, manifest digest, reason: recorded in the trace
+    /// The supervisor for the PrepareContext: the manifest's programs, and the plan's where the manifest says `plan_programs`.
+    pub fn supervisor(&self, plan_programs: Vec<ProgramRef>) -> ScopedSupervisor;
+    pub async fn prepare(&self, cx: &PrepareContext<'_>, lease: Option<&SessionLease>) -> Result<Prepared, StepFailure>;
+    /// A step marked `commits` needs `Authority::Write` with the token `a2m-ledger` issued for its record, or it is refused unsent.
+    pub async fn act(&self, prepared: &mut Prepared, step: &Step, input: &StepInput<'_>, authority: Authority<'_>)
+        -> Result<StepOutcome, StepFailure>;
     pub fn health(&self, surface: &SurfaceRef) -> DriverHealth;
-    pub async fn release(&self, p: Prepared, poisoned: bool) -> Cleanup;
+    pub async fn release(&self, prepared: Prepared, poisoned: bool) -> Cleanup;
 }
 pub enum Authority<'a> { Read, Write(&'a IntentToken) }
 
-#[async_trait]
 pub trait Discoverer: Send + Sync {
-    /// From the manifest and the surface description alone: does it apply here.
+    fn name(&self) -> DiscovererName;                          // as the manifest declares it
+    /// From the surface description alone: does it apply here.
     fn suits(&self, surface: &SurfaceDescription) -> bool;
-    /// Observe within `bounds`, reaching the system only through `port`. Findings go to `out` as they are made.
-    async fn discover(&self, port: &dyn SandboxPort, scope: &DiscoveryScope, out: &mut dyn FindingSink)
-        -> Result<DiscoveryReport, Failure>;           // report: bounds hit, coverage, counts dropped
+    /// Observe within the scope's bounds, reaching the system only through `port`. Findings go to `out` as they are made.
+    fn discover<'a>(&'a self, port: &'a dyn SandboxPort, scope: &'a DiscoveryScope<'a>, out: &'a mut dyn FindingSink)
+        -> BoxFuture<'a, Result<DiscoveryReport, Failure>>;
 }
+pub struct SurfaceDescription { pub kind: SurfaceKind, pub archetype: Archetype, pub address: String, pub facts: Values }
+pub struct DiscoveryScope<'a> {
+    pub surface: &'a SurfaceRef, pub bounds: Bounds, pub deadline: Deadline,
+    pub paths: &'a CheckedPaths, pub redact: &'a dyn Redact, pub focus: &'a Values,
+}
+pub trait FindingSink: Send { fn found(&mut self, finding: Finding) -> Result<(), Failure>; }
+#[derive(Default)]
+pub struct DiscoveryReport { pub coverage: Coverage, pub bounds_hit: Vec<String>, pub dropped: u64 }
 
-/// Implemented by the engine's sandbox; a write cannot pass through it.
-#[async_trait]
+/// Implemented by the engine's sandbox; a write cannot pass through it. `ReadOnlyPort::new(handle, prepared)` is one, ready made.
 pub trait SandboxPort: Send + Sync {
-    async fn act(&self, step: &Step, input: &StepInput) -> Result<StepOutcome, StepFailure>;
+    fn act<'a>(&'a self, step: &'a Step, input: &'a StepInput<'a>) -> BoxFuture<'a, Result<StepOutcome, StepFailure>>;
 }
 
 pub trait Describer: Send + Sync {
-    /// Pure: findings in, text and structure an agent can read out. No input or output; untrusted text stays marked.
+    /// Pure: findings in, text and structure an agent can read out. No input or output; untrusted text stays apart.
     fn describe(&self, findings: &[Finding], form: DescribeForm) -> Description;
+}
+pub enum DescribeForm { Summary, Full }
+#[derive(Default)]
+pub struct Description { pub text: String, pub data: Values, pub untrusted: Vec<String> }
+
+/// A registered discoverer, as the registry gives it to a runner.
+impl DiscovererHandle {
+    pub fn provider(&self) -> &ProviderName;   pub fn declared(&self) -> &DiscovererDecl;
+    pub fn suits(&self, surface: &SurfaceDescription) -> bool;
+    pub async fn discover(&self, port: &dyn SandboxPort, scope: &DiscoveryScope<'_>, out: &mut dyn FindingSink)
+        -> Result<DiscoveryReport, Failure>;                   // each finding is checked against the manifest as it arrives
+    pub fn describe(&self, findings: &[Finding], form: DescribeForm) -> Description;
 }
 ```
 
 Contracts the signatures do not show:
 
-- **The handle is the enforcement point.** Before calling the pack it checks: the step's kind is one the mode declared; a `commits` step carries a token whose run, record key, and lease number match the context; the posture is `Live`, or `Sandbox` with a token for a declared test record. A refused step is reported `Sent::NotSent`.
-- **The handle fixes the class of a doubtful write.** A failure on a `commits` step with `Sent::Unknown` becomes `possible_commit`, whatever class the driver gave. A driver cannot make a doubtful write look retryable.
-- **A failure's class is one of the twelve, and its code is declared.** A code the provider's manifest and the reference do not name is refused as `unknown_variant`, `undeclared_code`.
+- **The handle is the enforcement point.** Before calling the pack it checks: the step's kind is one the mode declared (`unknown_variant`, `step_kind_unknown`); a `commits` step is asked for in a posture that may write, `Live` or `Sandbox` with test records (`policy`, `read_only_posture`), and carries a token whose run and lease number are those `prepare` was given and whose record is the one in the step's input (`policy`, `intent_missing`). A refused step is reported `Sent::NotSent`. A `Prepared` that did not come from the handle's own `prepare` commits nothing.
+- **The handle fixes the class of a doubtful write.** A failure on a `commits` step with `Sent::Unknown` becomes `possible_commit`, `no_confirmation`, whatever class the driver gave. A driver cannot make a doubtful write look retryable.
+- **A failure's class is one of the twelve, and its code is declared.** A code passes when the manifest's `failure_codes` lists it with the same class, when it is the step's own `fails_as`, or when it is a code of this crate or of the session keeper. Anything else is refused as `unknown_variant`, `undeclared_code`. Every failure passes the redactor on its way out of the handle.
 - **Cancellation.** A driver must be safe to cancel on any step not marked `commits`. On a `commits` step the engine waits to the deadline and never drops the future.
-- **No secret leaves a driver.** Credentials arrive through the lease's injection, assumed to be a method of `SessionLease` that writes into a sink the driver owns and never returns the value. Captures pass the `Redact` the context carries before they leave `act`.
-- **A discoverer has no handle and no token.** A runner calls it inside the engine's sandbox for a discovery job, and it reaches the system only through `SandboxPort`. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its archetype, each pack states and its conformance test proves.
+- **No secret leaves a driver.** Credentials arrive through `SessionLease::apply`, which writes into a sink the driver owns and never returns the value. Captures pass the `Redact` the context carries before they leave `act`.
+- **A discoverer has no handle and no token.** `discover` is given a `SandboxPort`, a scope, and a sink. The port's one method takes no `Authority`, so there is nowhere to pass a token; a `DriverHandle` comes only from the registry, which no pack is given; an `IntentToken` has no public constructor. `ReadOnlyPort` sends every step with `Authority::Read`, so a step marked `commits` is refused before the driver sees it. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its archetype, each pack states and its conformance test proves.
+- **`CheckedPath` refuses the same forms on every operating system:** an empty path, an absolute path, `.` and `..`, a backslash, a colon (so every drive, stream, and network form), a home folder mark, a control character, a part that ends with a dot or a space, a device name, and a link that leads outside the root. A link that stays inside is followed. The path is resolved once; every method that opens the file looks once more that it still resolves inside the root.
+
+### A pack, whole
+
+```rust
+pub struct ExamplePack;
+
+impl Pack for ExamplePack {
+    fn manifest(&self) -> &'static str {
+        include_str!("../anything2mcp-provider.toml")       // declares the mode `example`, its steps, the file kind, the discoverer
+    }
+
+    fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
+        let mode = Mode::new("example")?;
+        to.driver(mode, Arc::new(ExampleDriver { cx: cx.clone() }))?;
+        to.compiler(
+            CompilerRegistrations::new()
+                .surface_kind(example_surface_kind())           // a SurfaceKindSpec
+                .file_kind(Arc::new(ExampleFiles::new()))       // implements `FileKind` of the files crate
+                .lowering(Arc::new(ExampleLowering::new())),    // implements `Lowering` of the files crate
+        )?;
+        to.discoverer(Arc::new(ExampleDiscoverer), Arc::new(ExampleDescriber))
+    }
+}
+
+struct ExampleDriver { cx: PackContext }
+
+impl Driver for ExampleDriver {
+    fn prepare<'a>(&'a self, cx: &'a PrepareContext<'a>, _lease: Option<&'a SessionLease>)
+        -> BoxFuture<'a, Result<Prepared, StepFailure>> {
+        Box::pin(async move { Ok(Prepared::new(ExampleClient::open(&cx.surface.surface.address))) })
+    }
+    fn act<'a>(&'a self, prepared: &'a mut Prepared, step: &'a Step, input: &'a StepInput<'a>)
+        -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
+        Box::pin(async move {
+            let client = prepared.state::<ExampleClient>().ok_or_else(|| StepFailure::not_sent(not_prepared()))?;
+            let values = client.carry_out(step, input.args).await?;   // its error type converts to StepFailure with `sent` set
+            Ok(StepOutcome::Done(Observed { values, ..Observed::default() }))
+        })
+    }
+    fn health(&self, _surface: &SurfaceRef) -> DriverHealth { DriverHealth::Ready }
+    fn release<'a>(&'a self, _prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
+        Box::pin(async move { Cleanup::complete() })
+    }
+}
+```
 
 ## The supervisor
 
+Built: one-shot runs and foreign links ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Not built: the framed link with its handshake, the queue, and ownership records. The table of rules below is the design; the rows on the handshake, the framing, the queue, and proving ownership by the owner mark describe what is not built yet.
+
 ```rust
-pub struct Supervisor { /* places, counts, owned groups, cleanup states */ }
+#[derive(Clone)]
+pub struct Supervisor { /* limits, running subsystems, leftovers */ }
 impl Supervisor {
-    pub async fn start(&self, spec: LaunchSpec) -> Result<Subsystem, Failure>;
-    pub fn list(&self) -> Vec<SubsystemListing>;               // identifier, kind, since when, for whom, state
+    pub fn new(limits: SupervisorLimits) -> Self;              // per_kind: 16 unless a kind is listed
+    /// A program run to completion.
+    pub async fn run(&self, spec: LaunchSpec, link: OneShot) -> Result<Finished, ConnFailure>;
+    /// A program that speaks its own protocol over a pair of pipes, until it is stopped.
+    pub async fn start_foreign(&self, spec: LaunchSpec, pipe: ForeignPipe) -> Result<ForeignLink, Failure>;
+    pub fn list(&self) -> Vec<SubsystemListing>;               // identifier, kind, place, for whom, link, process, state
     pub async fn stop(&self, id: SubsystemId) -> Cleanup;
-    pub async fn shutdown(&self) -> Cleanup;                   // every caller that asks joins the same cleanup
+    pub async fn shutdown(&self) -> Cleanup;                   // every caller that asks joins the same cleanup; nothing starts afterwards
+    pub fn leftovers(&self) -> Vec<Leftover>;   pub fn clear_leftovers(&self);
 }
-pub struct LaunchSpec { pub component: ComponentRef, pub args: Vec<OsString>, pub env: EnvAllowlist,
-                        pub cwd: RootRef, pub link: LinkKind, pub place: PlaceKey, pub kind: SubsystemKind }
-pub enum LinkKind {
-    Framed { max_frame_bytes: u32 },       // our framing and the full handshake: plug-ins, bridges
-    Foreign,                               // the program's own protocol, framed by its pack: a browser's debugging pipe
-    OneShot { max_output_bytes: u64 },     // run to completion, no handshake: a command; exit status and bounded output
+pub struct LaunchSpec {
+    pub program: ProgramRef,                                   // an absolute path, and the digest declared for it, if any
+    pub args: Vec<OsString>,                                   // a list, never a shell line
+    pub env: EnvAllowlist,                                     // the child's whole environment
+    pub cwd: Option<CheckedPath>,                              // None: the system's temporary folder
+    pub kind: SubsystemKind,                                   // counted by kind
+    pub place: Option<String>,                                 // one subsystem of a kind holds a place
 }
-/// What a pack's driver gets. Its allowlist is the manifest's `processes`, plus, where `plan_programs` is true,
-/// the programs the published plan names with their digests. Anything else is `effect_not_declared`.
-pub struct ScopedSupervisor { /* the supervisor, the provider, the plan's programs */ }
-pub struct Subsystem { pub id: SubsystemId, pub conn: Connection }
-impl Connection {
-    /// One request, one reply, under a deadline. The failure says whether the request ran.
-    pub async fn request(&self, msg: Frame, deadline: Deadline) -> Result<Frame, ConnFailure>;
+pub struct ProgramRef { pub path: PathBuf, pub digest: Option<Digest> }
+#[derive(Default)]
+pub struct EnvAllowlist { pub pass: Vec<String>, pub set: Vec<(String, OsString)> }   // names passed through; pairs set. Never a secret
+pub struct OneShot { pub max_output_bytes: u64, pub time_limit: Duration, pub stdin: Option<Vec<u8>> }
+pub struct ForeignPipe {
+    pub child_reads_fd: i32, pub child_writes_fd: i32,         // Linux and macOS: the child's two descriptors, 3 and 4 for a browser
+    pub windows_argument: String,                              // Windows: one argument added last; `{read}` and `{write}` become the handle values
+}
+pub enum LinkKind { OneShot(OneShot), Foreign(ForeignPipe) }
+pub struct Finished {
+    pub exit: Exit,                                            // Exit::Code(i32) | Exit::Killed
+    pub stdout: Vec<u8>, pub stderr: Vec<u8>,                  // each up to max_output_bytes
+    pub stdout_bytes: u64, pub stderr_bytes: u64,              // all that was written; truncated() says whether more than was kept
+    pub program_digest: Digest, pub verified: bool,            // verified: the digest is the declared one
+    pub cleanup: Cleanup,
+}
+pub struct ForeignLink {
+    pub id: SubsystemId,
+    pub to_child: Box<dyn AsyncWrite + Send + Unpin>, pub from_child: Box<dyn AsyncRead + Send + Unpin>,
+    pub program_digest: Digest, pub verified: bool,
+}
+/// What a pack gets. Its allowlist is the manifest's `processes` and the paths of its requirements, plus,
+/// where `plan_programs` is true, the programs the engine names from the published plan. Anything else is `effect_not_declared`.
+#[derive(Clone)]
+pub struct ScopedSupervisor { /* the supervisor, the provider, the declared programs */ }
+impl ScopedSupervisor {
+    pub async fn run(&self, spec: LaunchSpec, link: OneShot) -> Result<Finished, ConnFailure>;
+    pub async fn start_foreign(&self, spec: LaunchSpec, pipe: ForeignPipe) -> Result<ForeignLink, Failure>;
+    pub async fn stop(&self, id: SubsystemId) -> Cleanup;      // only what this provider started
 }
 pub struct ConnFailure { pub failure: Failure, pub ran: Ran }
 pub enum Ran { NotStarted, Unknown }
-pub struct Cleanup { pub complete: bool, pub remaining: Vec<Leftover> }
+pub struct Cleanup { pub complete: bool, pub remaining: Vec<Leftover> }   // Cleanup::complete(), Cleanup::incomplete(remaining)
+pub struct Leftover { pub kind: Option<SubsystemKind>, pub what: String }
 ```
+
+What the built part holds:
+
+| Rule | How it is held |
+| --- | --- |
+| Identify before starting | The program is named by an absolute path and digested before it starts. A declared digest that differs is refused, `policy`, `effect_not_declared`. With no declared digest it starts and is marked unverified |
+| Nothing inherited | The child's environment is cleared; only the names listed are passed through and only the pairs listed are set, plus the owner mark, 128 random bits in `ANYTHING2MCP_OWNER_MARK` |
+| A group the supervisor can end | A process group on Linux and macOS, signalled only while its leader is unreaped; a job object on Windows that ends its processes when its last handle closes |
+| Bounded | A one-shot run has a time limit, at which the whole group is ended and the run is `transient`, `timeout` with `Ran::Unknown`; each output stream is kept up to its bound, and read and counted beyond it |
+| Nothing left behind | At a program's exit its whole group is ended; `stop` and `shutdown` end the group and wait for it; a run whose future is dropped ends its group |
+| Counted, and one per place | Each kind has a limit, and a taken place is refused, both `busy`, `subsystem_limit` |
+| Incomplete cleanup is a state | It names what remains and blocks new starts of that kind with `busy`, `cleanup_incomplete`, until a person clears it |
+
+The design in full:
 
 | Rule | How it is held |
 | --- | --- |
@@ -397,65 +613,78 @@ The host supports the current and previous version. A method the plug-in does no
 
 | Caller | Uses |
 | --- | --- |
-| The product crate | `RegistryBuilder`, `Pack` |
-| `a2m-engine` | `Registry::driver`, `DriverHandle`, `archetype`, `mode_defaults`, `source_reader`; implements `SandboxPort` |
+| The product crate | `RegistryBuilder`, `HostServices`, `ProviderSettings`, `Pack`, `Supervisor::new`, `Roots::add` |
+| `a2m-engine` | `Registry::driver`, `DriverHandle`, `archetype`, `mode_defaults`, `source_reader`; implements `SandboxPort`, or uses `ReadOnlyPort` |
 | `a2m-actions` | `listing`, `discoverers_for` when it submits a discovery job, `auth_providers`, `compiler_set`, `action` for its dispatcher, `Roots::check` for the kernel's own reads, `supervisor` for `doctor.run` |
 | A runner | `discoverers_for` and `Discoverer::discover`, inside the engine's sandbox, for a discovery job |
-| Packs | `Pack`, `Registrar`, the traits, `PrepareContext`, `CheckedPath`, `ScopedSupervisor` to start their programs |
+| Packs | `Pack`, `PackContext`, `Registrar`, `CompilerRegistrations`, the traits, `PrepareContext`, `CheckedPath`, `ScopedSupervisor` to start their programs |
 | `a2m-sched` | Nothing. Mode defaults reach it as data in a job's requirements |
 
-It calls: `a2m-files` to accept compiler registrations; `a2m-telemetry` for spans; the pack and plug-in objects it holds.
+It calls: `a2m-files` to accept compiler registrations; the pack objects it holds. It emits no spans of its own yet.
 
 ## State
 
-Memory only: the registry snapshot; for each subsystem its place, count, state, and owned group; cleanup states. The supervisor's ownership records are written through `a2m-ledger` from build step 7, so that a crashed engine's leftovers can be recognized at the next start. Settings choose which providers are enabled; they are read by the product crate, not here.
+Memory only: the registry snapshot; for each running subsystem its kind, place, and group; the leftovers of stops that were incomplete. The supervisor's ownership records will be written through `a2m-ledger` from build step 7, so that a crashed engine's leftovers can be recognized at the next start; they are not built. Settings choose which providers are enabled; they are read by the product crate, not here.
 
 ## Failures
 
+The codes are constants in this crate's `codes` module, and `codes::ALL` lists each with its one class.
+
 | Class | Code | When |
 | --- | --- | --- |
-| `input` | `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `path_not_allowed` | A manifest fails its checks; `Roots::check` refuses a path |
-| `input` | `provider_ambiguous`, `mode_unknown` | Two ready providers and no setting; a mode nobody registered |
+| `input` | `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `provider_duplicate` | A manifest fails its checks |
+| `input` | `path_not_allowed`, `file_unavailable` | `Roots::check` refuses a path, or a manifest names a program by a path that is not allowed; a checked file cannot be read or written |
+| `input` | `provider_ambiguous`, `mode_unknown`, `not_registered` | Two ready providers and no setting; a mode nobody drives; a reader nobody registered |
 | `input` | `kind_owner_missing`, `kind_owner_conflict` | A kind a provider reads has no enabled owner; two enabled packs own one kind for one surface kind |
-| `policy` | `effect_not_declared`, `signature_invalid`, `intent_missing` | A registration or start beyond the manifest; a bad signature; a `commits` step without a token |
-| `busy` | `provider_unavailable`, `queue_full`, `cleanup_incomplete` | Not ready, with the availability state; a full subsystem queue; leftovers block a start |
-| `unknown_variant` | `handshake_failed`, `undeclared_code`, `unexpected_absent` | A subsystem fails its handshake; a driver invents a code; `Absent` from a step that is no lookup |
-| `transient` | `connection_lost`, `timeout` | A stream broke or a deadline passed on a step that commits nothing |
-| `possible_commit` | `no_confirmation` | The same on a `commits` step |
+| `input` | `pack_settings_invalid`, `program_not_found` | A pack's settings do not fit its schema; a program is not at its declared path |
+| `policy` | `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture` | A registration, a start, or a root beyond the manifest, or a program whose digest is not the declared one; a bad signature; a `commits` step without its token; a `commits` step where nothing may be written |
+| `busy` | `provider_unavailable`, `subsystem_limit`, `cleanup_incomplete`, `shutting_down`, `start_failed`, `queue_full` | Not ready, with the availability state; the kind's limit or a taken place; leftovers block a start; the supervisor is stopping; the operating system did not start the program; a full subsystem queue |
+| `unknown_variant` | `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `handshake_failed` | A driver invents a code; `Absent` from a step that is no lookup; a step of a kind the mode did not declare; `for_reconcile` from a committing step; a finding of an undeclared kind or level; a subsystem fails its handshake |
+| `transient` | `connection_lost`, `timeout` | A stream broke or a time limit passed on something that commits nothing |
+| `possible_commit` | `no_confirmation` | A `commits` step whose fate is unknown |
+
+`signature_invalid`, `queue_full`, `handshake_failed`, and `connection_lost` are reserved for the parts not built.
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| A manifest that asks for an undeclared effect, or registers beyond it, is refused with a named failure | Package B3's test |
-| A mode registered twice with two archetypes is refused | Package B3's test |
-| Registration order never changes the registry's digest or any choice | A test that builds in every order |
-| Two ready providers and no setting give `provider_ambiguous`, never a choice | Unit test |
-| A `commits` step without a matching token never reaches a driver | A stub driver that fails the test if called |
-| A doubtful write is always `possible_commit` | A stub driver returning `transient` with `Sent::Unknown` |
-| An availability check starts no process | A test that counts child processes |
-| A path outside its root, through `..` or a link, can never become a `CheckedPath` | `Roots::check` tests with planted links on three operating systems |
-| A driver can start only what the manifest and the published plan declare | A pack stub that asks for an undeclared program and gets `effect_not_declared` |
-| `for_reconcile` on a committing step is refused | A stub driver |
-| A malformed or oversized frame closes the connection and fails every pending request | A test plug-in that misbehaves on cue |
-| The supervisor never signals a process it cannot prove it started | A test that places a foreign process in reach; cleanup reports incomplete |
-| No secret appears in a frame log, a capture, or a failure | The planted-secret test, extended to plug-in traffic |
+| A manifest that asks for an undeclared effect, or registers beyond it, is refused with a named failure | `tests/registry.rs`: an undeclared point, an undeclared session, and a pack that registers a driver its manifest does not list |
+| A mode registered twice, or with two archetypes, is refused | `tests/registry.rs`, in one manifest and across two packs in both orders |
+| Registration order never changes the registry's digest or any choice; a changed registration changes the digest | `tests/registry.rs` builds three packs in all six orders, then with a pack, an object, and a setting changed |
+| Two ready providers and no setting give `provider_ambiguous`, never a choice; a provider that is not ready is never replaced | `tests/registry.rs` |
+| A kind has one owner for a surface kind, and a reader of a missing owner stays registered | `tests/registry.rs` |
+| A `commits` step without the token of its run, lease number, and record never reaches a driver | `tests/handle.rs`, with real tokens from a real store and a stub driver that records what reaches it |
+| A doubtful write is always `possible_commit` | `tests/handle.rs`: a stub driver returning `transient` with `Sent::Unknown` |
+| `for_reconcile` on a committing step, `Absent` from a step that is no lookup, and an undeclared code are refused | `tests/handle.rs` |
+| A discoverer cannot write | By the types, as stated under the contracts above; and `tests/handle.rs` sends a committing step through `ReadOnlyPort` and sees it refused before the driver |
+| An availability check starts no process | By construction: the check has no way to reach the supervisor. No test counts processes |
+| A path outside its root, through `..`, an absolute or drive or network form, or a link, can never become a `CheckedPath` | `tests/paths.rs`: thirty-seven escape forms, refused on every operating system; planted links, on Linux and macOS, and on Windows where the test may make a link |
+| A pack can start only what its manifest and the published plan declare | `tests/supervisor.rs`: a pack whose manifest names the stand's program starts it, and is refused another |
+| A one-shot run captures its output, is ended at its time limit with everything it started, keeps output to its bound, and leaves no process | `tests/supervisor.rs`, against the command-line test stand, which is asked which of its children are alive |
+| A foreign link carries bytes both ways on descriptors 3 and 4, and stopping it ends the group | `tests/supervisor.rs`, on Linux and macOS. The Windows handles are compiled and linted, and not run from here |
+| A malformed or oversized frame closes the connection and fails every pending request | Not built |
+| The supervisor never signals a process it cannot prove it started | By construction on Linux and macOS: a group is signalled only while its leader is unreaped (decision 0090). No test places a foreign process in reach |
+| No secret appears in a frame log, a capture, or a failure | The handle redacts every failure. The planted-secret test is not written here |
 
 ## Build order
 
-1. Manifest parsing and checks, `RegistryBuilder`, `Pack`, and a pack that registers only its modes. Package B3.
-2. `Driver`, `DriverHandle`, `Authority`, and the choice rule, with a stub driver. Slice 1.1, with the web pack's interface driver as the first real one.
-3. `CompilerRegistrations` gathered into `CompilerSet`. Slice 1.3.
-4. The `commits` check against a real `IntentToken`. Slice 3.3.
-5. `Discoverer`, `Describer`, `SandboxPort`. Package E1.
-6. The supervisor for `Foreign` links, when the browser base first starts through it; `CheckedPath` with the first pack that opens a file; `OneShot` links with the command pack; then `Framed` links with the handshake.
-7. Ownership records through `a2m-ledger`, and leftovers recognized at start.
-8. The plug-in host and protocol version 1, with a test plug-in in another language. Package F3 for listing; Phase 8 for driving.
+1. Done: manifest parsing and checks, `RegistryBuilder`, `Pack`, `PackContext`, pack settings. Package B3.
+2. Done: `Driver`, `DriverHandle`, `Authority`, and the choice rule, with a stub driver. Slice 1.1's contract half; the first real driver is a pack's.
+3. Done: `CompilerRegistrations` gathered into `CompilerSet`. Slice 1.3's contract half.
+4. Done: the `commits` check against a real `IntentToken`. Slice 3.3's contract half.
+5. Done: `Discoverer`, `Describer`, `SandboxPort`, `ReadOnlyPort`, `ProviderAction`. Package E1's contract half.
+6. Done: the supervisor for `OneShot` and `Foreign` links, `ScopedSupervisor`, and `CheckedPath`. Not built: `Framed` links with the handshake, the request queue, and joining a start for a place that is taken.
+7. Not built: ownership records through `a2m-ledger`, and leftovers recognized at start.
+8. Not built: the plug-in host and protocol version 1, and the check of a plug-in's signature. A plug-in found on the machine is listed as present and not enabled. Package F3 for listing; Phase 8 for driving.
 
 ## Open points
 
 - Whether an upstream MCP server's mapping file is its manifest. This design assumes so, listed under the `mcp` pack, and checked by that pack's file kind.
 - Which operating-system mechanism backs `confined` on each platform. Until it is researched, a plug-in's effects are listed as `declared`.
 - The widget driver extension point has no trait yet. First-party widget drivers stay inside the web pack's driver; the trait is written when a plug-in first needs to supply one.
-- Reading another process's environment on macOS for the ownership check, and whether job-object membership is enough on Windows in every case.
+- A process that leaves its group on Linux or macOS is not found, and nothing ends the children of an engine that crashed there; both wait for the ownership records. Whether job-object membership is enough on Windows in every case.
+- Where the published plan names the programs a command surface starts, so that the engine can pass them to `DriverHandle::supervisor` without reading a pack's payload.
+- A requirement's version is not checked, because the availability check starts nothing.
 - Whether `Posture::Discovery` and `Posture::Sandbox` should be one posture with a flag; they differ today only in whether test records exist.
+- The Windows code of the supervisor has been compiled and linted, and has not been run.
