@@ -42,6 +42,7 @@ dependencies = [
  "a2m-vault",
  "axum",
  "example-app",
+ "futures-core",
  "reqwest",
  "serde_json",
  "tokio",

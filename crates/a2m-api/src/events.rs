@@ -246,9 +246,17 @@ async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::S
         if page.events.is_empty() && lines.send(Bytes::from(": waiting\n\n")).await.is_err() {
             return;
         }
-        let next = tokio::select! {
-            () = lines.closed() => return,
-            next = kernel.next_events(&caller.principal, page.run, page.last, EVENTS_PAGE, KEEP_ALIVE) => next,
+        let principal = &caller.principal;
+        let next = if whole {
+            tokio::select! {
+                () = lines.closed() => return,
+                next = kernel.next_events(principal, page.run, page.last, EVENTS_PAGE, KEEP_ALIVE) => next,
+            }
+        } else {
+            // More is stored already: read on without a wait.
+            kernel
+                .events(principal, page.run, page.last, EVENTS_PAGE)
+                .await
         };
         page = match next {
             Ok(next) => next,

@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_actions::{Caller, FrontDoor, Kernel, Request, Response, RestRouteFace, rest_routes};
+use a2m_actions::{
+    Caller, FrontDoor, Kernel, ProjectFolder, Request, Response, RestRouteFace, rest_routes,
+};
 use a2m_core::{Failure, FailureClass, FailureCode};
 use axum::Router;
 use axum::extract::{FromRequestParts, RawPathParams};
@@ -16,6 +18,7 @@ use axum::routing::{MethodFilter, MethodRouter, on};
 use serde_json::{Map, Value as Json};
 
 use crate::codes;
+use crate::events::{self, RUN_EVENTS_PATH};
 use crate::openapi::{self, OPENAPI_PATH};
 use crate::status::{json_answer, refused, render};
 
@@ -46,14 +49,6 @@ impl Default for ApiSettings {
 /// The longest `Idempotency-Key` accepted.
 pub const IDEMPOTENCY_KEY_LONGEST: usize = 200;
 
-/// The project folder a local command was run in. Whoever mounts the
-/// router on the local channel may put one on a request as an extension,
-/// beside the caller; it becomes the request's project folder, which the
-/// dispatcher's handlers check before any use. Nothing in a request's
-/// path, query, or body can set it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectFolder(pub std::path::PathBuf);
-
 /// One route as the router serves it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServedRoute {
@@ -61,7 +56,8 @@ pub struct ServedRoute {
     pub method: &'static str,
     /// The path, with `{field}` for a field taken from the path.
     pub path: String,
-    /// The action it dispatches; empty for the document's own route.
+    /// The action it dispatches; empty for the two routes that dispatch
+    /// none: a run's events, and the document's own.
     pub action: String,
 }
 
@@ -98,6 +94,23 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
         };
         by_path.insert(face.path, methods);
     }
+    // A run's events: not an action, so not a route face. The handler
+    // reads no body and dispatches nothing.
+    let events_kernel = kernel.clone();
+    let events = move |request: axum::extract::Request| {
+        let kernel = events_kernel.clone();
+        async move {
+            let (parts, body) = request.into_parts();
+            drain(&settings, &parts, body).await;
+            let caller = caller_of(&parts.extensions);
+            events::serve(kernel, caller, parts).await
+        }
+    };
+    let methods = match by_path.remove(RUN_EVENTS_PATH) {
+        Some(existing) => existing.on(MethodFilter::GET, events),
+        None => on(MethodFilter::GET, events),
+    };
+    by_path.insert(RUN_EVENTS_PATH.to_owned(), methods);
     let mut router = Router::new();
     for (path, methods) in by_path {
         router = router.route(&path, methods.fallback(not_allowed(settings)));
@@ -119,8 +132,9 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
         .fallback(not_found(settings)))
 }
 
-/// Every route the router built from this registry serves, the document's
-/// own route last: what the OpenAPI document must describe.
+/// Every route the router built from this registry serves: what the
+/// OpenAPI document must describe. The two routes that are no action's
+/// come last: a run's events, then the document's own.
 #[must_use]
 pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute> {
     let mut served: Vec<ServedRoute> = rest_routes(registry)
@@ -131,11 +145,13 @@ pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute>
             action: face.action,
         })
         .collect();
-    served.push(ServedRoute {
-        method: "GET",
-        path: OPENAPI_PATH.to_owned(),
-        action: String::new(),
-    });
+    for path in [RUN_EVENTS_PATH, OPENAPI_PATH] {
+        served.push(ServedRoute {
+            method: "GET",
+            path: path.to_owned(),
+            action: String::new(),
+        });
+    }
     served
 }
 
@@ -268,12 +284,12 @@ async fn prepare(
             }
         }
     }
-    let mut request = Request::new(&route.action, Json::Object(input), caller);
+    // The project folder is what the mount stated beside the caller, and
+    // nothing in the path, the query, or the body. The dispatcher checks
+    // it before any handler sees it.
+    let mut request = Request::new(&route.action, Json::Object(input), caller)
+        .in_project_folder(parts.extensions.get::<ProjectFolder>());
     request.idempotency_key = key;
-    request.project = parts
-        .extensions
-        .get::<ProjectFolder>()
-        .map(|folder| folder.0.clone());
     Ok(request)
 }
 
@@ -637,7 +653,7 @@ fn check_routes(routes: &[RestRouteFace]) -> Result<(), Failure> {
             "Give each action's alias a path no other route has.",
         )
     };
-    let mut seen: Vec<(&str, &str)> = vec![("GET", OPENAPI_PATH)];
+    let mut seen: Vec<(&str, &str)> = vec![("GET", OPENAPI_PATH), ("GET", RUN_EVENTS_PATH)];
     for route in routes {
         if !openapi::under_prefix(&route.path) || route.method != "GET" && route.method != "POST" {
             return Err(conflict(format!(
