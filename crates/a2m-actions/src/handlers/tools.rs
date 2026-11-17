@@ -966,7 +966,7 @@ fn listed_run(kernel: &Kernel, row: &RunRow, in_doubt: bool) -> Json {
     entry
 }
 
-fn wait_of(call: &Call) -> Duration {
+pub(crate) fn wait_of(call: &Call) -> Duration {
     let seconds = call.int("wait_seconds").unwrap_or(DEFAULT_WAIT_SECONDS);
     Duration::from_secs(u64::try_from(seconds).unwrap_or(0))
 }
@@ -1130,7 +1130,7 @@ impl Kernel {
 /// them. The actions that start or continue a run may; reading a run asks
 /// nobody anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tell {
+pub(crate) enum Tell {
     /// `tool.call` and `run.resume`.
     Person,
     /// `run.get`.
@@ -1139,7 +1139,7 @@ enum Tell {
 
 /// The run as `tool.call`, `run.get`, and `run.resume` return it, with the
 /// next step for the state it is in.
-async fn run_output(
+pub(crate) async fn run_output(
     kernel: &Kernel,
     call: &Call,
     row: RunRow,
@@ -1646,6 +1646,24 @@ handler!(
                 )
             })?;
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+        let run = submit_trial(kernel, &call, &found, &input, environment).await?;
+        let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        let output = run_output(kernel, &call, row, Tell::Person).await?;
+        Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
+    }
+);
+
+/// Keeps the call of a trial of one drafted read and submits it as a `Try`
+/// job of a run of its own; the plan must be kept in memory already
+/// (`Kernel::keep_draft`). Gives the run.
+pub(crate) async fn submit_trial(
+    kernel: &Kernel,
+    call: &Call,
+    found: &FoundTool,
+    input: &Values,
+    environment: Environment,
+) -> Result<RunId, Failure> {
+    let (name, target, effect) = (found.tool.name.clone(), found.target.clone(), found.effect().0);
         let store = kernel.store()?;
         let principal = &call.caller.principal;
         let stored = store
@@ -1655,7 +1673,7 @@ handler!(
                 owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
                 kind: BlobKind::Input,
                 class: RetentionClass::Long,
-                plain: encode_values(&input)?,
+                plain: encode_values(input)?,
             })
             .await?;
         let run = NewRun {
@@ -1719,16 +1737,13 @@ handler!(
         let run = match admitted {
             Admitted::New { run, .. } | Admitted::Existing { run } => run,
         };
-        let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
-        let output = run_output(kernel, &call, row, Tell::Person).await?;
-        Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
-    }
-);
+    Ok(run)
+}
 
 /// The plan a target's discovery or trial works on: its drafts, compiled
 /// as a draft and kept in memory, when the call is made in a project that
 /// holds the target; its current published version otherwise.
-async fn plan_to_observe(
+pub(crate) async fn plan_to_observe(
     kernel: &Kernel,
     call: &Call,
     target: &a2m_core::TargetName,
@@ -1770,6 +1785,97 @@ async fn plan_to_observe(
         })
 }
 
+/// The name a discovery run's stored call is kept under.
+pub(crate) const DISCOVER_TOOL: &str = "a2m_discover";
+
+/// Keeps the call of a discovery of one surface and submits it as a
+/// `Discover` job of a run of its own, in the engine's sandbox. Gives the
+/// run. A discovery of the same surface of the same plan by the same
+/// caller that has not ended is given back, not started again.
+pub(crate) async fn submit_discovery(
+    kernel: &Kernel,
+    call: &Call,
+    target: &a2m_core::TargetName,
+    plan_hash: a2m_core::Digest,
+    environment: &Environment,
+    surface: &a2m_core::SurfaceName,
+) -> Result<RunId, Failure> {
+    let store = kernel.store()?;
+    let principal = &call.caller.principal;
+    let tool = OperationName::new(DISCOVER_TOOL)?;
+    let input = Values::new()
+        .with(
+            crate::runner::DISCOVERY_SURFACE,
+            a2m_core::Value::Text(surface.to_string()),
+        )
+        .with(
+            crate::runner::DISCOVERY_FOCUS,
+            a2m_core::Value::Record(Values::new()),
+        );
+    let stored = store
+        .blobs()
+        .put(NewBlob {
+            workspace: principal.workspace,
+            owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
+            kind: BlobKind::Input,
+            class: RetentionClass::Long,
+            plain: encode_values(&input)?,
+        })
+        .await?;
+    let run = NewRun {
+        workspace: principal.workspace,
+        principal: principal.principal.id,
+        client_label: codes::shown(&call.caller.client),
+        tool_name: tool,
+        tool_kind: ToolKind::Operation,
+        target: target.clone(),
+        target_version: plan_hash,
+        environment: environment.clone(),
+        identity: (principal.principal.kind == PrincipalKind::Person)
+            .then_some(Identity::Person(principal.principal.id)),
+        effect: EffectClass::Read,
+        input_hash: input.digest(),
+        input: Some(stored),
+        retention: RetentionClass::Long,
+    };
+    let facts = CallerFacts::of(&call.caller, call.decision);
+    let kept = run.clone();
+    store
+        .write(Durability::Synced, move |tx| {
+            keep_run_call(tx, &kept, stored, &facts)
+        })
+        .await?;
+    let admitted = kernel
+        .sched()?
+        .submit(Submission {
+            job: JobRequirements {
+                kind: JobKind::Discover,
+                target: run.target.clone(),
+                environment: environment.clone(),
+                modes: Vec::new(),
+                os: None,
+                acts_as: Some(run.principal),
+                session: None,
+                session_limits: SessionLimits {
+                    reads: 4,
+                    writes: 0,
+                },
+                exclusive: Vec::new(),
+                max_step: Duration::from_secs(30),
+                writes: false,
+            },
+            run,
+            priority: Priority::Interactive,
+            health: sched_health(kernel),
+            queue_wait: None,
+            budgets: Vec::new(),
+        })
+        .await?;
+    Ok(match admitted {
+        Admitted::New { run, .. } | Admitted::Existing { run } => run,
+    })
+}
+
 handler!(
     /// `discover.run`: one `Discover` job of its own run for each surface
     /// of the target, or the one named, in the engine's sandbox, where a
@@ -1806,85 +1912,10 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
-        let store = kernel.store()?;
-        let principal = &call.caller.principal;
-        let tool = OperationName::new("a2m_discover")?;
         let mut runs = Vec::new();
         for surface in &surfaces {
-            let input = Values::new()
-                .with(
-                    crate::runner::DISCOVERY_SURFACE,
-                    a2m_core::Value::Text(surface.to_string()),
-                )
-                .with(
-                    crate::runner::DISCOVERY_FOCUS,
-                    a2m_core::Value::Record(Values::new()),
-                );
-            let stored = store
-                .blobs()
-                .put(NewBlob {
-                    workspace: principal.workspace,
-                    owner: OwnerRef::of(&Identity::Person(principal.principal.id)),
-                    kind: BlobKind::Input,
-                    class: RetentionClass::Long,
-                    plain: encode_values(&input)?,
-                })
-                .await?;
-            let run = NewRun {
-                workspace: principal.workspace,
-                principal: principal.principal.id,
-                client_label: codes::shown(&call.caller.client),
-                tool_name: tool.clone(),
-                tool_kind: ToolKind::Operation,
-                target: target.clone(),
-                target_version: plan_hash,
-                environment: environment.clone(),
-                identity: (principal.principal.kind == PrincipalKind::Person)
-                    .then_some(Identity::Person(principal.principal.id)),
-                effect: EffectClass::Read,
-                input_hash: input.digest(),
-                input: Some(stored),
-                retention: RetentionClass::Long,
-            };
-            let facts = CallerFacts::of(&call.caller, call.decision);
-            let kept = run.clone();
-            store
-                .write(Durability::Synced, move |tx| {
-                    keep_run_call(tx, &kept, stored, &facts)
-                })
-                .await?;
-            let admitted = kernel
-                .sched()?
-                .submit(Submission {
-                    job: JobRequirements {
-                        kind: JobKind::Discover,
-                        target: run.target.clone(),
-                        environment: environment.clone(),
-                        modes: Vec::new(),
-                        os: None,
-                        acts_as: Some(run.principal),
-                        session: None,
-                        session_limits: SessionLimits {
-                            reads: 4,
-                            writes: 0,
-                        },
-                        exclusive: Vec::new(),
-                        max_step: Duration::from_secs(30),
-                        writes: false,
-                    },
-                    run,
-                    priority: Priority::Interactive,
-                    health: sched_health(kernel),
-                    queue_wait: None,
-                    budgets: Vec::new(),
-                })
-                .await?;
-            runs.push((
-                surface.clone(),
-                match admitted {
-                    Admitted::New { run, .. } | Admitted::Existing { run } => run,
-                },
-            ));
+            let run = submit_discovery(kernel, &call, &target, plan_hash, &environment, surface).await?;
+            runs.push((surface.clone(), run));
         }
         let mut shown = Vec::new();
         let mut all_ended = true;
@@ -1903,9 +1934,10 @@ handler!(
             }
             shown.push(Json::Object(entry));
         }
-        let workspace = principal.workspace;
+        let workspace = call.caller.principal.workspace;
         let listed = target.clone();
-        let findings = store
+        let findings = kernel
+            .store()?
             .read(move |tx| tx.findings().list(&workspace, &listed))
             .await?;
         let mut by_kind = std::collections::BTreeMap::<String, u64>::new();

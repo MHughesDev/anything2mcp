@@ -496,11 +496,11 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         word: "add",
-        does: "Register a target, probe it, detect its sign-in, and ask for a sign-in.",
+        does: "Register a target, scout it, show the report, and ask for a sign-in.",
         steps: &[
             step("target.add", Some("name")),
-            step("target.probe", Some("target")),
-            step("auth.detect", Some("target")),
+            step("scout.run", Some("target")),
+            step("scout.report", Some("target")),
             step("session.login", Some("target")),
         ],
     },

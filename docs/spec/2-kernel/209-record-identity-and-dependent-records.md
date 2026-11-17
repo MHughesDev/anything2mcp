@@ -28,7 +28,7 @@ Every write operation declares how its record is found again. The compiler refus
 
 **Values known before the commit point.** Some systems hand out the identifier before the write commits: a data store returns the assigned key inside an open transaction, and some report a transaction's identifier before it ends. A step's outcome may carry such values, and the engine records them in the ledger before the step that commits is acted. A lost answer to the commit is then reconciled by the captured value ([section 307](../3-packs/307-the-data-pack.md)). The later steps of the record, its read-back, its lookup, and the read at reconcile, are handed what was recorded ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
 
-**A key is never guessed.** A step is handed the record's key in the system: its key inputs, or the key the system assigned. A record's place in the run is the engine's name for it and is never handed to a step; a binding that would have to read a record back by a key the record cannot have is refused when it compiles, and again before anything is sent ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)).
+**A key is never guessed.** A step is handed the record's key in the system: its key inputs, or the key the system assigned. A record's place in the run is the engine's name for it and is never handed to a step; a step of a record that has no key in the system yet is handed none, and a driver that needs one stops by its own name ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)).
 
 **Rules for `find`.**
 

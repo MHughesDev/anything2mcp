@@ -7,7 +7,11 @@ mod drafts;
 mod machine;
 mod meta;
 mod provider;
+mod scout;
+mod scout_report;
 mod tools;
+
+pub(crate) use scout::discovery_report_json;
 
 use crate::def::HandlerFn;
 
@@ -53,6 +57,10 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "draft.read" => drafts::draft_read,
         "draft.try" => tools::draft_try,
         "discover.run" => tools::discover_run,
+        "target.probe" => scout::target_probe,
+        "auth.detect" => scout::auth_detect,
+        "scout.run" => scout::scout_run,
+        "scout.report" => scout::scout_report,
         "finding.list" => tools::finding_list,
         "finding.describe" => tools::finding_describe,
         "unknown.list" => tools::unknown_list,

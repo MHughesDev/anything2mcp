@@ -2569,23 +2569,6 @@ impl<'a> Compiler<'a> {
             );
             fine = false;
         }
-        // A key is never guessed (decision 0161): a record that cannot be
-        // found again has no key in the system before its save, so a
-        // read-back of it would have nothing to read by.
-        if writes
-            && info.strategy == IdentityStrategy::None
-            && by.evidence == WriteEvidence::ReadBack
-            && !lowered.read_back.is_empty()
-        {
-            self.error(
-                codes::IDENTITY_INVALID,
-                Stage::Analyze,
-                &binding.at,
-                format!("This `{mode}` binding reads its record back, and the operation's identity `none` gives the record no key to read it by."),
-                "Declare how the record is found again, or let the save's answer stand as the evidence.".to_owned(),
-            );
-            fine = false;
-        }
         if fine { surface } else { None }
     }
 

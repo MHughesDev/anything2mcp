@@ -2079,21 +2079,6 @@ async fn commit_point(
             "Declare the operation `irreversible`, or give the binding a read-back, and publish the target again.",
         )));
     }
-    if binding.evidence == WriteEvidence::ReadBack
-        && found.identity.strategy == IdentityStrategy::None
-    {
-        // A key is never guessed: a record that cannot be found again has
-        // no key in the system to read it back by before its save.
-        return Err(Stop::Fail(codes::fail(
-            FailureClass::UnknownVariant,
-            codes::NO_READ_BACK,
-            format!(
-                "The binding of `{}` reads its record back, and the record has no key in the system to be read by.",
-                found.name
-            ),
-            "Declare how the record is found again, or let the save's answer stand as the evidence, and publish the target again.",
-        )));
-    }
     // Whether the lease leaves time for the record's steps, each counted at
     // its real time limit. Asked before the waits, so that a job that
     // cannot finish the record does not queue for it.

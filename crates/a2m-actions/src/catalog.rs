@@ -227,6 +227,8 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("target.probe", "The platform, framework, support tier, and surfaces at an address or in a running application. Read only.", BUILDER, Build, "5", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("surface", TEXT, "One surface. Every surface when left out.")
+            .long_running()
             .done(),
         act("target.status", "The target's build state and the next action to take.", BUILDER, Build, "5", Inspect)
             .pos("target", TEXT, TARGET)
@@ -238,6 +240,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("auth.detect", "The sign-in method of a surface, with evidence, and a recommended identity mode. Read only.", BUILDER, Build, "2", Observe)
             .pos("target", TEXT, TARGET)
             .opt("surface", TEXT, "The surface to look at.")
+            .long_running()
             .done(),
         act("screen.snapshot", "A compact snapshot of what a surface shows now, with stable references to its elements.", BUILDER, Build, "1", Observe)
             .pos("target", TEXT, TARGET)
@@ -386,6 +389,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("scout.run", "Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads. Resumable; never writes to the system.", BUILDER, Build, "Stage E", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("fresh", BOOL, "Start a new scout instead of continuing the last one that did not finish.")
             .long_running()
             .done(),
         act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first.", BUILDER, Build, "Stage E", Inspect)

@@ -122,6 +122,7 @@ async fn a_read_over_https_is_trusted_through_the_authority_the_installation_nam
     // name, and nothing was read.
     let untrusted = run(&machine, &read).await;
     let response = object(&untrusted);
+    eprintln!("DEBUG first {}", response["result"]["run_id"]);
     assert_eq!(
         response["error"]["code"], "certificate_untrusted",
         "{response}"
@@ -131,7 +132,12 @@ async fn a_read_over_https_is_trusted_through_the_authority_the_installation_nam
     let pem = machine.project.path().join("authority.pem");
     std::fs::write(&pem, authority.pem()).unwrap();
     name_roots(&machine, &[&pem]);
+    {
+        let out = std::process::Command::new("curl").args(["-sS","-o","/dev/null","-w","%{http_code}","--cacert"]).arg(&pem).arg(app.secure_url("/api/orders/A-100")).output().unwrap();
+        eprintln!("DEBUG curl {} {}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    }
     let trusted = run(&machine, &read).await;
+    eprintln!("DEBUG second {}", object(&trusted)["result"]["run_id"]);
     assert_eq!(trusted.status.code(), Some(0), "{trusted:?}");
     let response = object(&trusted);
     assert_eq!(response["result"]["status"], "completed", "{response}");

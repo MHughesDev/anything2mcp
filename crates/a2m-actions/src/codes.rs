@@ -61,6 +61,10 @@ pub const IDEMPOTENCY_KEY_REUSED: FailureCode = FailureCode::fixed("idempotency_
 /// they compile to another plan. Class `stale`.
 pub const DRAFTS_CHANGED: FailureCode = FailureCode::fixed("drafts_changed");
 
+/// The setting `authoring.scout.run` is `off`, and `scout.run` was called.
+/// Class `policy`.
+pub const SCOUT_OFF: FailureCode = FailureCode::fixed("scout_off");
+
 pub(crate) fn stale(
     code: FailureCode,
     message: impl Into<String>,

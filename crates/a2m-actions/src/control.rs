@@ -713,17 +713,49 @@ impl Control for InProcessControl {
                         })
                         .await
                 }
-                EngineEvent::Discovered { findings, .. } => {
+                EngineEvent::Discovered {
+                    surface,
+                    provider,
+                    discoverer,
+                    findings,
+                    report,
+                } => {
                     // Each finding was checked against its provider's
                     // manifest by the sandbox; the store names it by the
-                    // digest of its content.
+                    // digest of its content. What the discoverer reported,
+                    // and which findings were its, is kept beside it for
+                    // the scout (decision 0170).
                     let workspace = self.run.workspace;
                     let target = self.run.target.clone();
+                    let run = self.run.id;
+                    let ids: Vec<String> = findings
+                        .iter()
+                        .map(|finding| finding.id().to_string())
+                        .collect();
+                    let ended = crate::handlers::discovery_report_json(&report);
                     store
                         .write(Durability::Synced, move |tx| {
                             for finding in &findings {
                                 tx.findings().put(&workspace, &target, finding)?;
                             }
+                            let now = tx.now().as_unix_millis();
+                            tx.tables(a2m_ledger::Owner::Actions).execute(
+                                "INSERT INTO actions_discovery_results
+                                    (run_id, provider, discoverer, surface, findings, report, sent_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                 ON CONFLICT (run_id, provider, discoverer)
+                                 DO UPDATE SET findings = excluded.findings,
+                                     report = excluded.report, sent_at = excluded.sent_at",
+                                &[
+                                    a2m_ledger::SqlValue::from(run.to_string()),
+                                    a2m_ledger::SqlValue::from(provider.as_str()),
+                                    a2m_ledger::SqlValue::from(discoverer.as_str()),
+                                    a2m_ledger::SqlValue::from(surface.as_str()),
+                                    a2m_ledger::SqlValue::from(json!(ids).to_string()),
+                                    a2m_ledger::SqlValue::from(ended.to_string()),
+                                    a2m_ledger::SqlValue::from(now),
+                                ],
+                            )?;
                             Ok(())
                         })
                         .await

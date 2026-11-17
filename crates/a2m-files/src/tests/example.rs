@@ -2114,8 +2114,7 @@ fn a_choice_whose_code_is_another_choices_label_is_refused_when_the_type_compile
 
 /// What a binding offers as evidence (decision 0161): an acknowledgement
 /// alone only for an operation declared irreversible, which then needs no
-/// read-back; and a record that cannot be found again is never read back,
-/// because it has no key to be read by.
+/// read-back.
 #[test]
 fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
     let set = stand_set().unwrap();
@@ -2185,21 +2184,6 @@ fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
         "    read_back: {call: line_item_get, prefer: response}\n",
     )])));
     assert_eq!(binding.evidence, a2m_core::WriteEvidence::Response);
-
-    // A record that cannot be found again has no key to read it back by.
-    let unkeyed = with(&[
-        (
-            "key: [order_id, item_code]\n",
-            "identity: {strategy: none}\n",
-        ),
-        ("effect: write", irreversible),
-    ]);
-    let problems = problems_with(&unkeyed, &set, CompileMode::Draft);
-    let problem = problems
-        .iter()
-        .find(|problem| problem.code.as_str() == "kernel.identity_invalid")
-        .unwrap_or_else(|| panic!("{problems}"));
-    assert!(problem.message.contains("no key"), "{problem}");
 }
 
 /// A binding's steps may read what the last read of the record gave and the
