@@ -1746,6 +1746,9 @@ pub struct Faults {
     pub evidence_down: AtomicBool,
     /// What a step learned before its commit point cannot be stored.
     pub before_commit_refused: AtomicBool,
+    /// The first piece of evidence handed over once a save has reached the
+    /// driver cannot be stored: the outputs of the record.
+    pub outputs_refused: AtomicBool,
     /// The call of this name never answers.
     pub hangs_on: Mutex<Option<&'static str>>,
 }
@@ -2125,6 +2128,14 @@ impl Control for StoreControl {
                     })
                     .is_ok()
             {
+                return Err(failure(
+                    FailureClass::Busy,
+                    "storage_full",
+                    "The evidence store is full.",
+                ));
+            }
+            let saved = self.hooks.count("put_item") + self.hooks.count("add_item") > 0;
+            if saved && self.faults.outputs_refused.swap(false, Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
                     "storage_full",

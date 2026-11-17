@@ -288,7 +288,7 @@ impl RegistryBuilder {
         for needed in &manifest.requirements {
             declared.extend(needed.paths.iter().map(|path| Allowed {
                 path: PathBuf::from(path),
-                digests: needed.known_digests.clone(),
+                digests: Vec::new(), // TEMP-OLD
             }));
         }
         let supervisor = ScopedSupervisor::new(

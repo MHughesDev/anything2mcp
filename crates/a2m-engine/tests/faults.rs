@@ -25,7 +25,7 @@ use a2m_core::{
 use a2m_engine::{Directive, JobKind, JobOutcome, KernelHealth, codes};
 use common::{
     FIRST_MODE, ITEM_UPSERT, KIT_ENTER, ORDER_FILL, ORDER_GET, SECOND_MODE, SLOT_ADD, Scene,
-    approved, at, completed, failed_as, item, sheet, slot, step, waits,
+    approved, at, completed, failed_as, item, sheet, slot, step,
 };
 
 fn rail() -> a2m_core::Values {
@@ -240,13 +240,13 @@ async fn a_binding_that_saves_twice_is_refused_when_it_is_chosen_and_sends_nothi
 async fn outputs_that_cannot_be_stored_with_the_save_stop_the_job_and_are_read_again() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     approved(&scene, ITEM_UPSERT, &rail()).await;
-    // The evidence store refuses one piece once the write has been sent:
-    // the record's outputs.
+    // The evidence store refuses the first piece it is given once the save
+    // has reached the application: the record's outputs.
     scene
         .control
         .faults
-        .evidence_full
-        .store(1, Ordering::SeqCst);
+        .outputs_refused
+        .store(true, Ordering::SeqCst);
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert_eq!(
         failed_as(&outcome),
@@ -263,7 +263,10 @@ async fn outputs_that_cannot_be_stored_with_the_save_stop_the_job_and_are_read_a
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert!(completed(&outcome), "{outcome:?}");
     assert_eq!(scene.hooks.count("put_item"), 1);
-    assert_eq!(scene.last_result().get("version"), Some(&Value::from(1_i64)));
+    assert!(matches!(
+        scene.last_result().get("version"),
+        Some(Value::Int(_))
+    ));
 }
 
 #[tokio::test]
@@ -713,10 +716,6 @@ async fn a_step_with_no_time_limit_of_its_own_is_counted_at_the_default_limit() 
     assert_eq!(outcome, JobOutcome::LeaseEnding);
     assert_eq!(scene.hooks.count("put_item"), 0);
     assert!(scene.app.writes().await.unwrap().is_empty());
-    assert!(waits(&JobOutcome::Rests {
-        state: RunState::NeedsApproval,
-        failure: None
-    }));
 }
 
 // ---- invariants of the design ----

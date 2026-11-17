@@ -19,11 +19,12 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use a2m_core::{BindingStatus, FailureClass, RecordState, RunState};
+use a2m_core::{BindingStatus, FailureClass, RecordState, RunState, ValueType, Values};
 use a2m_engine::{EngineEvent, JobKind, JobOutcome};
 use a2m_provider::{Sent, StepOutcome};
 use common::{
-    ITEM_UPSERT, ORDER_GET, Scene, approved, completed, failed_as, item, item_key, waits,
+    ITEM_UPSERT, ORDER_GET, Scene, approved, completed, expr, failed_as, item, item_key, step,
+    waits,
 };
 
 fn order() -> a2m_core::Values {
@@ -231,15 +232,174 @@ async fn a_try_of_a_write_is_refused_before_the_driver_unless_its_record_is_a_te
     assert_eq!(scene.record_states().await, [RecordState::Verified]);
     assert_eq!(scene.app.write_count("A-102", "T-1").await.unwrap(), 1);
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+    // The record was looked up, at the preview and again before its write,
+    // with the driver's own guard on. One context alone was prepared in
+    // the posture that may write: the one the test record was written in.
+    let postures = scene.hooks.postures.lock().unwrap().clone();
+    assert_eq!(
+        postures,
+        [
+            "Sandbox { test_records: false }",
+            "Sandbox { test_records: false }",
+            "Sandbox { test_records: true }"
+        ]
+    );
+}
+
+/// An environment that declares one test record, and a drafted step that
+/// changes a record that is not one while it says it commits nothing.
+fn dressed_write(plan: &mut a2m_core::Plan) -> a2m_core::Step {
+    plan.environments[0].test_records = vec![item_key("A-102", "T-1")];
+    let order = expr(plan, "\"A-102\"", ValueType::Text);
+    let other = expr(plan, "\"L-900\"", ValueType::Text);
+    let text = expr(plan, "\"Not a test record\"", ValueType::Text);
+    let one = expr(plan, "1", ValueType::Int);
+    let length = expr(plan, "\"1\"", ValueType::Text);
+    step(
+        "put_item",
+        &[
+            ("order_id", order),
+            ("item_code", other),
+            ("description", text),
+            ("quantity", one),
+            ("length_in", length),
+        ],
+        false,
+        false,
+    )
+}
+
+#[tokio::test]
+async fn a_try_of_a_read_keeps_the_drivers_guard_on_where_test_records_are_declared() {
+    // A draft read whose lowering is wrong: its first step changes a
+    // record. The environment declares a test record, which says nothing
+    // about this job: it writes no record at all.
+    let scene = Scene::new(ORDER_GET, |plan| {
+        let dressed = dressed_write(plan);
+        for binding in &mut plan.operations[0].bindings {
+            binding.status = BindingStatus::Draft;
+            binding.act.insert(0, dressed.clone());
+        }
+    })
+    .await;
+    let outcome = scene
+        .work(
+            JobKind::Try,
+            ORDER_GET,
+            Values::new().with("order_id", "A-100"),
+        )
+        .await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Policy, "read_only_posture".to_owned())
+    );
+    // Every driver of the job was prepared with its guard on, and the
+    // test application holds nothing new.
+    let postures = scene.hooks.postures.lock().unwrap().clone();
+    assert!(!postures.is_empty());
+    assert!(
+        postures
+            .iter()
+            .all(|posture| posture == "Sandbox { test_records: false }"),
+        "{postures:?}"
+    );
+    assert!(scene.app.writes().await.unwrap().is_empty());
     assert!(
         scene
-            .hooks
-            .postures
-            .lock()
+            .app
+            .stored_item("A-102", "L-900")
+            .await
             .unwrap()
-            .iter()
-            .all(|posture| posture == "Sandbox { test_records: true }")
+            .is_none()
     );
+}
+
+#[tokio::test]
+async fn a_try_of_a_write_runs_its_reads_under_the_guard_and_changes_its_test_record_alone() {
+    // A drafted write to a declared test record. Its read-back, which
+    // also looks the record up at the preview, holds a step that changes
+    // a record that is not a test record.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        let dressed = dressed_write(plan);
+        let binding = &mut plan.operations[2].bindings[0];
+        binding.status = BindingStatus::Draft;
+        binding.read_back.insert(0, dressed);
+    })
+    .await;
+    let test_record = item("A-102", "T-1", "Trial", 1, "1");
+    let outcome = scene.work(JobKind::Try, ITEM_UPSERT, test_record).await;
+    // The lookup ran where nothing may be written: the pack's guard
+    // refused the step, unsent.
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Policy, "read_only_posture".to_owned())
+    );
+    assert_eq!(
+        *scene.hooks.postures.lock().unwrap(),
+        ["Sandbox { test_records: false }"]
+    );
+    assert!(scene.app.writes().await.unwrap().is_empty());
+
+    // The same step among the act steps, before the save. It runs in the
+    // context the test record is written in, where the kernel has only
+    // the token to go by; the pack's guard there lets through the step
+    // that commits and nothing else that changes the system.
+    let scene = Scene::new(ITEM_UPSERT, |plan| {
+        let dressed = dressed_write(plan);
+        let binding = &mut plan.operations[2].bindings[0];
+        binding.status = BindingStatus::Draft;
+        binding.act.insert(0, dressed);
+    })
+    .await;
+    let test_record = item("A-102", "T-1", "Trial", 1, "1");
+    let outcome = scene
+        .work(JobKind::Try, ITEM_UPSERT, test_record.clone())
+        .await;
+    assert!(waits(&outcome), "{outcome:?}");
+    let diff = scene.run_row().await.diff_hash.unwrap();
+    scene.control.approve(diff).await;
+    let outcome = scene.work(JobKind::Try, ITEM_UPSERT, test_record).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Policy, "read_only_posture".to_owned())
+    );
+    assert!(scene.app.writes().await.unwrap().is_empty());
+    assert!(
+        scene
+            .app
+            .stored_item("A-102", "L-900")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_discoverer_that_floods_is_held_to_its_declared_size_and_the_bound_is_reported() {
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    // The discoverer hands over far more than the bytes its manifest
+    // declares.
+    let flood = 20_000_i64;
+    let outcome = scene
+        .discover_with("app", Values::new().with("flood", flood))
+        .await;
+    assert!(completed(&outcome), "{outcome:?}");
+    let events = scene.control.events.lock().unwrap();
+    let (findings, report) = events
+        .iter()
+        .find_map(|event| match event {
+            EngineEvent::Discovered {
+                findings, report, ..
+            } => Some((findings, report)),
+            _ => None,
+        })
+        .unwrap();
+    let report = report.as_ref().unwrap();
+    let kept = u64::try_from(findings.len()).unwrap();
+    let made = u64::try_from(flood).unwrap() + 1;
+    assert!(kept < made, "every finding was kept");
+    assert!(report.bounds_hit.iter().any(|bound| bound == "bytes"));
+    assert_eq!(kept + report.dropped, made);
 }
 
 // ---- a second look after a lost lease ----
