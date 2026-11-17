@@ -10,9 +10,9 @@
 //!
 //! It also holds [`LocalSurface`], the person surface on one machine: the
 //! only holder of the approval desk, a page on a short-lived loopback
-//! listener, and the presence prompt: polkit on a Linux desktop, and none
-//! yet on macOS and Windows. Nothing reached through the channel can
-//! approve.
+//! listener, and the presence prompt: polkit on a Linux desktop,
+//! LocalAuthentication on macOS, and Windows Hello on Windows. Nothing
+//! reached through the channel can approve.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 7.
