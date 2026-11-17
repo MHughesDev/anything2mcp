@@ -473,9 +473,13 @@ async fn an_expired_or_declined_approval_is_refused() {
     assert_eq!(code(begin(&stand, fence, diff()).await), APPROVAL_STALE);
 
     // A fresh approval, then a decline: the decline revokes it.
+    let now = Timestamp::from_unix_millis(START + 15 * 60 * 1000);
     let fresh = stand
         .surface
-        .approve(approved(fence.run, PrincipalRef::person(person(1)), diff()))
+        .approve(Approved {
+            proved_at: now,
+            ..approved(fence.run, PrincipalRef::person(person(1)), diff())
+        })
         .await
         .unwrap();
     stand
@@ -484,6 +488,18 @@ async fn an_expired_or_declined_approval_is_refused() {
             run: fence.run,
             by: None,
             channel: Channel::LocalPrompt,
+        })
+        .await
+        .unwrap();
+    assert_eq!(code(begin(&stand, fence, diff()).await), APPROVAL_STALE);
+    // An approval recorded after the decline is not used either: `consume`
+    // asks whether the run was declined at the point of action (decision
+    // 0145).
+    stand
+        .surface
+        .approve(Approved {
+            proved_at: now,
+            ..approved(fence.run, PrincipalRef::person(person(1)), diff())
         })
         .await
         .unwrap();
