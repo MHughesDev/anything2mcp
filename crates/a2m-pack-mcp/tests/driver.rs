@@ -14,12 +14,12 @@ use std::sync::Arc;
 use a2m_core::{FailureClass, PackPayload, Plan, Step, Value, Values};
 use a2m_pack_mcp::{UpstreamMcp, codes};
 use a2m_provider::{
-    Authority, DriverHandle, DriverHealth, Observed, Posture, Prepared, Registry, Sent,
-    StepFailure, StepOutcome, SurfaceRef,
+    Authority, Destinations, DriverHandle, DriverHealth, Observed, Posture, Prepared, Registry,
+    Sent, StepFailure, StepOutcome, SurfaceRef,
 };
 use common::{
-    Folder, Sessions, compiled_fixture, fence_of, input, key, prepare, record, registry,
-    registry_with, running, steps, store, surface, token,
+    Folder, Sessions, compiled_fixture, fence_of, input, key, prepare, prepare_reaching, record,
+    registry, registry_set, registry_with, remapped, running, steps, store, surface, token,
 };
 use example_mcp::faults::{Drift, Fault, FaultKind, Malformed};
 use example_mcp::harness::HttpStand;
@@ -779,4 +779,326 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     );
     assert!(!format!("{failure:?}").contains("PLANTED"));
     handle.release(prepared, true).await;
+}
+
+#[tokio::test]
+async fn a_tool_that_runs_free_text_is_never_called() {
+    let mut scene = scene().await;
+    let search = steps(&scene.plan, "example_order_search").act;
+    let args = || Values::new().with("query", "dock");
+
+    // The tool's whole input is one string. A reviewer stated that the
+    // server does not run it: it is called, and what it returns is one
+    // value, `text`.
+    let found = done(scene.read(&search, args()).await);
+    assert!(found.values.get("text").is_some());
+    assert_eq!(found.values.len(), 1);
+    assert_eq!(scene.calls_to("orders_search"), 1);
+
+    // A mapping that says the server runs the string, and one that says
+    // nothing about it: neither makes the tool callable, whatever compiled
+    // the plan.
+    let compiled = scene.plan.clone();
+    for flag in [serde_json::json!(true), serde_json::Value::Null] {
+        scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+            entry["free_text"] = flag.clone();
+        });
+        assert_eq!(
+            failed(scene.read(&search, args()).await),
+            code(FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent),
+            "free_text: {flag}"
+        );
+    }
+    // The same for a tool with more than one argument that a reviewer says
+    // runs free text.
+    scene.plan = remapped(&compiled, "orders", "orders_list", |entry| {
+        entry["free_text"] = serde_json::json!(true);
+    });
+    let list = steps(&compiled, "example_order_create").lookup.unwrap();
+    assert_eq!(
+        failed(scene.read(&list, Values::new()).await),
+        code(FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
+    );
+    assert_eq!(scene.calls_to("orders_search"), 1);
+    assert_eq!(scene.calls_to("orders_list"), 0);
+}
+
+#[tokio::test]
+async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    // The first run opens a connection, and the driver keeps it.
+    done(scene.get("A-100").await);
+    assert_eq!(scene.calls_to("orders_get"), 1);
+
+    // A run that may not reach the address is refused, although a
+    // connection to it is open.
+    let nowhere = Destinations::new(Vec::<String>::new());
+    let refused = prepare_reaching(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence_of(7),
+        Posture::Live,
+        None,
+        &nowhere,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (
+            refused.failure.class(),
+            refused.failure.code(),
+            refused.sent
+        ),
+        (FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
+    );
+
+    // The plan is published again with another protocol revision: the next
+    // run does not speak the old one over the old connection.
+    let mut stateless = scene.surface.clone();
+    stateless.surface.payload =
+        PackPayload::encode(&serde_json::json!({"revision": "2026-07-28"})).unwrap();
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &stateless,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    assert_eq!(
+        control.calls().unwrap().last().unwrap().connection,
+        "stateless"
+    );
+
+    // The plan is published again with another address: the next run
+    // reaches the server at the new address, not the one it was connected
+    // to.
+    let other = HttpStand::start().await.unwrap();
+    let moved = surface(&scene.plan, "orders", Some(&other.url()));
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &moved,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+    handle.release(prepared, false).await;
+    assert_eq!(other.control().calls_to("orders_get").unwrap(), 1);
+    assert_eq!(scene.calls_to("orders_get"), 2);
+}
+
+#[tokio::test]
+async fn a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin() {
+    let scene = scene().await;
+    let control = scene.stand.control();
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["A-100"]).await;
+    let (handle, mut prepared) = prepare(
+        &scene.registry,
+        &scene.plan,
+        &scene.surface,
+        fence,
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let get = steps(&scene.plan, "example_order_get").act;
+    let order_args = Values::new().with("order_id", "A-100");
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&order_args, None, None, None),
+                Authority::Read,
+            )
+            .await,
+    );
+
+    // Between two calls of the one run the server changes the write tool.
+    // Over HTTP it gives no notice: the driver opens no stream to hear one.
+    control
+        .set_drift(Drift::InputSchemaChanged {
+            tool: "orders_update".to_owned(),
+        })
+        .unwrap();
+    let listed = control.request_count("tools/list").unwrap();
+    let update = steps(&scene.plan, "example_order_note_update");
+    let args = Values::new()
+        .with("order_id", "A-100")
+        .with("field", "note")
+        .with("value", "Leave at the gate");
+    let order = key("A-100");
+    let intent = token(&ledger, fence, 0, "A-100").await;
+    let changed = handle
+        .act(
+            &mut prepared,
+            &update.act,
+            &input(&args, Some(record(&fence, 0)), Some(&order), None),
+            Authority::Write(&intent),
+        )
+        .await;
+    // The list was read again before the write, and the write never left.
+    assert_eq!(
+        failed(changed),
+        code(
+            FailureClass::Drift,
+            &codes::UPSTREAM_TOOL_CHANGED,
+            Sent::NotSent
+        )
+    );
+    assert!(control.request_count("tools/list").unwrap() > listed);
+    assert_eq!(scene.calls_to("orders_update"), 0);
+    assert_eq!(control.write_count("A-100").unwrap(), 0);
+    handle.release(prepared, false).await;
+}
+
+#[tokio::test]
+async fn a_read_is_compared_with_a_list_no_older_than_the_setting_allows() {
+    // With the setting at nothing, the list is read again before every
+    // read on a connection that can give no notice.
+    let scene = scene_with(|folder| {
+        registry_set(
+            folder,
+            Arc::new(a2m_core::NoSecrets),
+            Values::new().with("list_max_age_ms", 0_i64),
+        )
+    })
+    .await;
+    let control = scene.stand.control();
+    let (handle, mut prepared) = scene.prepared().await;
+    let get = steps(&scene.plan, "example_order_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let read = |prepared| async {
+        let mut prepared: Prepared = prepared;
+        let outcome = handle
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
+            .await;
+        (prepared, outcome)
+    };
+    let (prepared, first) = read(prepared).await;
+    done(first);
+    control
+        .set_drift(Drift::OutputSchemaChanged {
+            tool: "orders_get".to_owned(),
+        })
+        .unwrap();
+    let (prepared, second) = read(prepared).await;
+    assert_eq!(
+        failed(second),
+        code(
+            FailureClass::Drift,
+            &codes::UPSTREAM_TOOL_CHANGED,
+            Sent::NotSent
+        )
+    );
+    assert_eq!(scene.calls_to("orders_get"), 1);
+    handle.release(prepared, false).await;
+}
+
+#[tokio::test]
+async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_against_it() {
+    let mut scene = scene().await;
+    let control = scene.stand.control();
+    let compiled = scene.plan.clone();
+
+    // A tool with a pinned output schema. The order A-101 holds, in its
+    // note, text aimed at an agent. The mapping lists the note as text
+    // that may pass: it is among the values.
+    let listed = done(scene.get("A-101").await);
+    assert_eq!(
+        listed.values.get("note"),
+        Some(&Value::from(INSTRUCTION_TEXT))
+    );
+    // A mapping that does not list it: the note does not reach a caller.
+    // What cannot hold free text still does: a number, and a string its
+    // pinned schema closes to a list of values.
+    scene.plan = remapped(&compiled, "orders", "orders_get", |entry| {
+        entry["untrusted_fields"] = serde_json::json!(["customer"]);
+    });
+    let unlisted = done(scene.get("A-101").await);
+    let names: Vec<&str> = unlisted.values.names().collect();
+    assert_eq!(names, ["customer", "status", "version"]);
+    assert!(!format!("{:?}", unlisted.values).contains(INSTRUCTION_TEXT));
+
+    // A tool with no output schema, mapped as one whose result is
+    // structured. The mapping names what it takes: a key and a note.
+    scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+        entry["result"] = serde_json::json!("structured");
+        entry["key"] = serde_json::json!(["order_id"]);
+        entry["untrusted_fields"] = serde_json::json!(["note"]);
+    });
+    let search = steps(&compiled, "example_order_search").act;
+    let args = || Values::new().with("query", "dock");
+    let answer_with = |content: serde_json::Value| {
+        control
+            .set_fault(Fault::once(FaultKind::ResultStructured { content }).on_tool("orders_search"))
+            .unwrap();
+    };
+    let mismatch = || {
+        code(
+            FailureClass::Drift,
+            &codes::RESPONSE_SCHEMA_MISMATCH,
+            Sent::Answered,
+        )
+    };
+    // No structured content at all, a result without the key, and a key
+    // that is neither text nor a whole number: each is a named stop.
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    answer_with(serde_json::json!({"note": "Deliver to dock 2", "count": 3}));
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    answer_with(serde_json::json!({"order_id": {"is": "A-100"}, "note": "Deliver to dock 2"}));
+    assert_eq!(failed(scene.read(&search, args()).await), mismatch());
+    // What the mapping names is taken, and nothing else: not a number it
+    // does not name, and not text aimed at an agent.
+    answer_with(serde_json::json!({
+        "order_id": "A-100",
+        "note": "Deliver to dock 2",
+        "count": 3,
+        "advice": INSTRUCTION_TEXT,
+    }));
+    let taken = done(scene.read(&search, args()).await);
+    assert_eq!(
+        taken.values,
+        Values::new()
+            .with("note", "Deliver to dock 2")
+            .with("order_id", "A-100")
+    );
+    assert_eq!(taken.assigned_key, Some(key("A-100")));
 }
