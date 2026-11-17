@@ -12,7 +12,7 @@ Roadmap package 0.4, with research brief 1. Throwaway code: it answers one quest
 | `a-own-pipe/` | Candidate (a). `src/cdp.rs` is the whole protocol client; `src/launch.rs` hands the pipe to the browser, two ways on POSIX and one on Windows; `src/main.rs` is the steps | Yes, on Linux. The Windows part compiles for `x86_64-pc-windows-msvc` and was never run. The POSIX part also compiles for `aarch64-apple-darwin` |
 | `b-chromiumoxide/` | Candidate (b): the one existing DevTools crate that passed the licence and maintenance checks and has no default that breaks a product rule | Yes, on Linux |
 | `c-thirtyfour/` | Candidate (c): a WebDriver client | Up to the session, which the driver program on this machine refuses because it is for another browser version |
-| `checked-not-run/` | Five more crates. Only the dependency tree of each was checked, and its source read. Each failed a check before a program was worth writing; the research note says which | No |
+| `checked-not-run/` | Six more crates. Only the dependency tree of each was checked, and its source read. Each failed a check before a program was worth writing; the research note says which | No |
 | `z-baseline/` | The shared harness alone, so that a candidate's build time and crate count can be given as a difference | Yes |
 | `results/` | What the programs printed: three runs each | |
 | `measure.sh` | Prints the crates each candidate adds and what the licence list refuses | Yes |

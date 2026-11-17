@@ -58,7 +58,10 @@ impl Cdp {
         W: AsyncWrite + Send + Unpin + 'static,
     {
         let (events, _) = broadcast::channel(1024);
-        let shared = Arc::new(Shared { pending: Mutex::new(Some(HashMap::new())), events });
+        let shared = Arc::new(Shared {
+            pending: Mutex::new(Some(HashMap::new())),
+            events,
+        });
         tokio::spawn(read_loop(BufReader::new(reader), shared.clone()));
         Self {
             shared,
@@ -140,7 +143,9 @@ pub async fn wait_event<T>(
             }
         }
     };
-    tokio::time::timeout(deadline, wait).await.unwrap_or(Err(CdpError::Timeout))
+    tokio::time::timeout(deadline, wait)
+        .await
+        .unwrap_or(Err(CdpError::Timeout))
 }
 
 async fn read_loop<R: AsyncRead + Unpin>(mut reader: BufReader<R>, shared: Arc<Shared>) {
@@ -164,13 +169,21 @@ async fn read_loop<R: AsyncRead + Unpin>(mut reader: BufReader<R>, shared: Arc<S
                 }),
                 None => Ok(message["result"].take()),
             };
-            let waiter = shared.pending.lock().expect("lock").as_mut().and_then(|p| p.remove(&id));
+            let waiter = shared
+                .pending
+                .lock()
+                .expect("lock")
+                .as_mut()
+                .and_then(|p| p.remove(&id));
             if let Some(waiter) = waiter {
                 let _ = waiter.send(reply);
             }
         } else if let Some(method) = message.get("method").and_then(Value::as_str) {
             let _ = shared.events.send(Event {
-                session: message.get("sessionId").and_then(Value::as_str).map(str::to_owned),
+                session: message
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 method: method.to_owned(),
                 params: message["params"].take(),
             });

@@ -14,11 +14,17 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
 async fn main() {
-    let app = common::TestApp::start().await.expect("the test application starts");
+    let app = common::TestApp::start()
+        .await
+        .expect("the test application starts");
     let dir = common::owned_data_dir("webdriver");
-    let driver_program = std::env::var("A2M_SPIKE_DRIVER").expect("set A2M_SPIKE_DRIVER to a driver program");
+    let driver_program =
+        std::env::var("A2M_SPIKE_DRIVER").expect("set A2M_SPIKE_DRIVER to a driver program");
     // The driver listens on a loopback port. It has no pipe and no sign-in of its own.
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|l| l.local_addr()).expect("a free port").port();
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .expect("a free port")
+        .port();
 
     let t0 = Instant::now();
     let mut driver_process = tokio::process::Command::new(driver_program)
@@ -36,7 +42,8 @@ async fn main() {
     println!("driver ready after {} ms", common::ms(t0.elapsed()));
 
     let mut caps = DesiredCapabilities::chrome();
-    caps.set_binary(&common::browser_program().display().to_string()).expect("binary");
+    caps.set_binary(&common::browser_program().display().to_string())
+        .expect("binary");
     for arg in common::base_args(&dir) {
         caps.add_arg(&arg).expect("argument");
     }
@@ -58,11 +65,21 @@ async fn main() {
         .first()
         .await
         .expect("field");
-    println!("value: {:?} after {} ms", field.prop("value").await.expect("read"), common::ms(t0.elapsed()));
+    println!(
+        "value: {:?} after {} ms",
+        field.prop("value").await.expect("read"),
+        common::ms(t0.elapsed())
+    );
     // The classic protocol has no accessibility tree and no request interception.
-    println!("page source: {} bytes", driver.source().await.expect("source").len());
+    println!(
+        "page source: {} bytes",
+        driver.source().await.expect("source").len()
+    );
     driver.quit().await.expect("quit");
     let _ = driver_process.kill().await;
-    println!("left over: {:?}", common::wait_no_leftovers(&dir, Duration::from_secs(5)));
+    println!(
+        "left over: {:?}",
+        common::wait_no_leftovers(&dir, Duration::from_secs(5))
+    );
     common::remove_data_dir(&dir);
 }

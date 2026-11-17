@@ -55,7 +55,11 @@ pub fn leftovers(data_dir: &Path) -> Option<Vec<u32>> {
     let needle = data_dir.display().to_string();
     let mut found = Vec::new();
     for entry in std::fs::read_dir("/proc").ok()?.flatten() {
-        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
             continue;
         };
         if pid == std::process::id() {
@@ -77,12 +81,26 @@ pub fn wait_no_leftovers(data_dir: &Path, limit: Duration) -> Leftover {
     let start = Instant::now();
     loop {
         match leftovers(data_dir) {
-            None => return Leftover { checked: false, remaining: 0, after_ms: 0.0 },
+            None => {
+                return Leftover {
+                    checked: false,
+                    remaining: 0,
+                    after_ms: 0.0,
+                };
+            }
             Some(found) if found.is_empty() => {
-                return Leftover { checked: true, remaining: 0, after_ms: ms(start.elapsed()) };
+                return Leftover {
+                    checked: true,
+                    remaining: 0,
+                    after_ms: ms(start.elapsed()),
+                };
             }
             Some(found) if start.elapsed() > limit => {
-                return Leftover { checked: true, remaining: found.len(), after_ms: ms(start.elapsed()) };
+                return Leftover {
+                    checked: true,
+                    remaining: found.len(),
+                    after_ms: ms(start.elapsed()),
+                };
             }
             Some(_) => std::thread::sleep(Duration::from_millis(10)),
         }
@@ -111,7 +129,12 @@ pub struct Reads {
 pub fn summarize(mut samples: Vec<Duration>) -> Reads {
     samples.sort();
     let at = |q: f64| ms(samples[((samples.len() - 1) as f64 * q).round() as usize]);
-    Reads { count: samples.len(), median_ms: at(0.5), p95_ms: at(0.95), max_ms: at(1.0) }
+    Reads {
+        count: samples.len(),
+        median_ms: at(0.5),
+        p95_ms: at(0.95),
+        max_ms: at(1.0),
+    }
 }
 
 /// What one candidate measured. Every field is filled by the candidate program.
@@ -148,7 +171,10 @@ pub struct KillResult {
 
 impl Report {
     pub fn print(&self) {
-        println!("{}", serde_json::to_string_pretty(self).expect("a report serializes"));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(self).expect("a report serializes")
+        );
     }
 }
 

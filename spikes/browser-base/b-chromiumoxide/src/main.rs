@@ -48,7 +48,9 @@ async fn start(tag: &str) -> (Browser, tokio::task::JoinHandle<()>, std::path::P
 
 #[tokio::main]
 async fn main() {
-    let app = common::TestApp::start().await.expect("the test application starts");
+    let app = common::TestApp::start()
+        .await
+        .expect("the test application starts");
     let url = app.url(common::FORM_PATH);
     let mut report = common::Report {
         candidate: "b: chromiumoxide 0.9.1".to_owned(),
@@ -62,11 +64,25 @@ async fn main() {
     report.launch_to_connected_ms = common::ms(t0.elapsed());
     let page = browser.new_page(url.as_str()).await.expect("page");
     page.wait_for_navigation().await.expect("navigation");
-    page.evaluate(EvaluateParams::builder().expression(FIELD_VISIBLE).await_promise(true).build().expect("params"))
+    page.evaluate(
+        EvaluateParams::builder()
+            .expression(FIELD_VISIBLE)
+            .await_promise(true)
+            .build()
+            .expect("params"),
+    )
+    .await
+    .expect("wait");
+    let field = page
+        .find_element(format!("#{}", common::FIELD_ID))
         .await
-        .expect("wait");
-    let field = page.find_element(format!("#{}", common::FIELD_ID)).await.expect("field");
-    report.field_value = field.property("value").await.expect("read").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
+        .expect("field");
+    report.field_value = field
+        .property("value")
+        .await
+        .expect("read")
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default();
     report.cold_start_to_first_read_ms = common::ms(t0.elapsed());
     report.wait_kind = "the crate's navigation wait, then our own in-page observer; the crate has no wait for an element".to_owned();
 
@@ -79,19 +95,48 @@ async fn main() {
     report.warm_reads = common::summarize(samples);
 
     let t = Instant::now();
-    let tree = page.execute(GetFullAxTreeParams::default()).await.expect("tree");
+    let tree = page
+        .execute(GetFullAxTreeParams::default())
+        .await
+        .expect("tree");
     report.snapshot_ms = common::ms(t.elapsed());
     report.snapshot_nodes = tree.result.nodes.len();
     report.snapshot_kind = "accessibility tree, through the crate's raw command".to_owned();
 
-    let mut paused = page.event_listener::<EventRequestPaused>().await.expect("listener");
-    let pattern = RequestPattern::builder().url_pattern("*/api/orders/*").request_stage(RequestStage::Request).build();
-    page.execute(EnableParams::builder().pattern(pattern).build()).await.expect("intercept");
-    page.evaluate("document.querySelector('#line-item button[type=submit]').click()").await.expect("click");
-    let event = tokio::time::timeout(Duration::from_secs(10), paused.next()).await.expect("in time").expect("a paused request");
-    page.execute(FailRequestParams::new(event.request_id.clone(), ErrorReason::BlockedByClient)).await.expect("fail");
-    report.intercepted = format!("{} {} failed before sending", event.request.method, event.request.url.replace(&app.url(""), ""));
-    report.writes_stored_after_blocked_save = app.writes().await.expect("the control interface answers").len();
+    let mut paused = page
+        .event_listener::<EventRequestPaused>()
+        .await
+        .expect("listener");
+    let pattern = RequestPattern::builder()
+        .url_pattern("*/api/orders/*")
+        .request_stage(RequestStage::Request)
+        .build();
+    page.execute(EnableParams::builder().pattern(pattern).build())
+        .await
+        .expect("intercept");
+    page.evaluate("document.querySelector('#line-item button[type=submit]').click()")
+        .await
+        .expect("click");
+    let event = tokio::time::timeout(Duration::from_secs(10), paused.next())
+        .await
+        .expect("in time")
+        .expect("a paused request");
+    page.execute(FailRequestParams::new(
+        event.request_id.clone(),
+        ErrorReason::BlockedByClient,
+    ))
+    .await
+    .expect("fail");
+    report.intercepted = format!(
+        "{} {} failed before sending",
+        event.request.method,
+        event.request.url.replace(&app.url(""), "")
+    );
+    report.writes_stored_after_blocked_save = app
+        .writes()
+        .await
+        .expect("the control interface answers")
+        .len();
 
     let _ = browser.close().await;
     let exited = tokio::time::timeout(Duration::from_secs(10), browser.wait()).await;
@@ -105,21 +150,36 @@ async fn main() {
     let page = browser.new_page(url.as_str()).await.expect("page");
     page.wait_for_navigation().await.expect("navigation");
     let pending = tokio::spawn(async move {
-        page.evaluate(EvaluateParams::builder().expression("new Promise(() => {})").await_promise(true).build().expect("params"))
-            .await
-            .map(|_| ())
+        page.evaluate(
+            EvaluateParams::builder()
+                .expression("new Promise(() => {})")
+                .await_promise(true)
+                .build()
+                .expect("params"),
+        )
+        .await
+        .map(|_| ())
     });
     tokio::time::sleep(Duration::from_millis(300)).await; // the spike's own timing, so the call is on the wire
     let t = Instant::now();
-    browser.get_mut_child().expect("child").inner.start_kill().expect("kill");
-    report.kill_mid_call.outcome = match tokio::time::timeout(Duration::from_secs(15), pending).await {
-        Ok(Ok(result)) => format!("{result:?}"),
-        Ok(Err(_)) => "panicked".to_owned(),
-        Err(_) => "hung: no answer in 15 s".to_owned(),
-    };
+    browser
+        .get_mut_child()
+        .expect("child")
+        .inner
+        .start_kill()
+        .expect("kill");
+    report.kill_mid_call.outcome =
+        match tokio::time::timeout(Duration::from_secs(15), pending).await {
+            Ok(Ok(result)) => format!("{result:?}"),
+            Ok(Err(_)) => "panicked".to_owned(),
+            Err(_) => "hung: no answer in 15 s".to_owned(),
+        };
     report.kill_mid_call.after_kill_ms = common::ms(t.elapsed());
     let late = tokio::time::timeout(Duration::from_secs(5), browser.version()).await;
-    report.notes.push(format!("a call after the kill: {:?}", late.map(|r| r.map(|v| v.product))));
+    report.notes.push(format!(
+        "a call after the kill: {:?}",
+        late.map(|r| r.map(|v| v.product))
+    ));
     let _ = browser.wait().await;
     pump.abort();
     report.kill_mid_call.leftover = common::wait_no_leftovers(&dir, Duration::from_secs(5));

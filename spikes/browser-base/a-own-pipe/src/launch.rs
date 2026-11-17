@@ -47,7 +47,10 @@ pub fn launch(program: &Path, args: &[String], handoff: Handoff) -> std::io::Res
 }
 
 fn common(command: &mut Command) {
-    command.arg("--remote-debugging-pipe").stderr(std::process::Stdio::null()).kill_on_drop(true);
+    command
+        .arg("--remote-debugging-pipe")
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
     // Its own process group, so that the whole tree can be ended as one. Ending
     // the group is the supervisor's job in the product; the spike only sets it.
     #[cfg(unix)]
@@ -67,12 +70,21 @@ mod unix {
         let (to_browser, browser_reads) = pipe::pipe()?;
         let (browser_writes, from_browser) = pipe::pipe()?;
         let mut command = Command::new(program);
-        command.args(args).stdin(Stdio::null()).stdout(Stdio::null());
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null());
         common(&mut command);
         command
             .fd_mappings(vec![
-                FdMapping { parent_fd: browser_reads.into_blocking_fd()?, child_fd: 3 },
-                FdMapping { parent_fd: browser_writes.into_blocking_fd()?, child_fd: 4 },
+                FdMapping {
+                    parent_fd: browser_reads.into_blocking_fd()?,
+                    child_fd: 3,
+                },
+                FdMapping {
+                    parent_fd: browser_writes.into_blocking_fd()?,
+                    child_fd: 4,
+                },
             ])
             .map_err(|_| std::io::Error::other("two mappings name one descriptor"))?;
         let child = command.spawn()?;
@@ -80,7 +92,11 @@ mod unix {
         // is dropped they stay open here, and a dead browser would not show as
         // the end of the pipe.
         drop(command);
-        Ok(Launched { child, to_browser: Box::new(to_browser), from_browser: Box::new(from_browser) })
+        Ok(Launched {
+            child,
+            to_browser: Box::new(to_browser),
+            from_browser: Box::new(from_browser),
+        })
     }
 
     pub fn shell_exec(program: &Path, args: &[String]) -> std::io::Result<Launched> {
@@ -95,9 +111,19 @@ mod unix {
             .stdout(Stdio::piped());
         common(&mut command);
         let mut child = command.spawn()?;
-        let to_browser = child.stdin.take().ok_or_else(|| std::io::Error::other("no pipe"))?;
-        let from_browser = child.stdout.take().ok_or_else(|| std::io::Error::other("no pipe"))?;
-        Ok(Launched { child, to_browser: Box::new(to_browser), from_browser: Box::new(from_browser) })
+        let to_browser = child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("no pipe"))?;
+        let from_browser = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("no pipe"))?;
+        Ok(Launched {
+            child,
+            to_browser: Box::new(to_browser),
+            from_browser: Box::new(from_browser),
+        })
     }
 }
 
@@ -127,7 +153,11 @@ mod windows {
                 if on { HANDLE_FLAG_INHERIT } else { 0 },
             )
         };
-        if ok == 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+        if ok == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     pub fn inherited_handles(program: &Path, args: &[String]) -> std::io::Result<Launched> {
@@ -175,6 +205,10 @@ mod windows {
         // Close this process's copies of the browser's ends, so that a dead
         // browser shows as the end of the pipe.
         drop((browser_reads, browser_writes));
-        Ok(Launched { child, to_browser: Box::new(to_browser), from_browser: Box::new(from_browser) })
+        Ok(Launched {
+            child,
+            to_browser: Box::new(to_browser),
+            from_browser: Box::new(from_browser),
+        })
     }
 }

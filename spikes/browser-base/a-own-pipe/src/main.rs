@@ -32,17 +32,38 @@ struct Tab {
 
 impl Tab {
     async fn call(&self, method: &str, params: Value) -> Result<Value, CdpError> {
-        self.cdp.call(Some(&self.session), method, params, DEADLINE).await
+        self.cdp
+            .call(Some(&self.session), method, params, DEADLINE)
+            .await
     }
 }
 
 async fn open_tab(cdp: &Cdp) -> Result<Tab, CdpError> {
-    let target = cdp.call(None, "Target.createTarget", json!({"url": "about:blank"}), DEADLINE).await?;
+    let target = cdp
+        .call(
+            None,
+            "Target.createTarget",
+            json!({"url": "about:blank"}),
+            DEADLINE,
+        )
+        .await?;
     let frame = target["targetId"].as_str().unwrap_or_default().to_owned();
     let attached = cdp
-        .call(None, "Target.attachToTarget", json!({"targetId": frame, "flatten": true}), DEADLINE)
+        .call(
+            None,
+            "Target.attachToTarget",
+            json!({"targetId": frame, "flatten": true}),
+            DEADLINE,
+        )
         .await?;
-    let tab = Tab { cdp: cdp.clone(), session: attached["sessionId"].as_str().unwrap_or_default().to_owned(), frame };
+    let tab = Tab {
+        cdp: cdp.clone(),
+        session: attached["sessionId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        frame,
+    };
     tab.call("Page.enable", json!({})).await?;
     Ok(tab)
 }
@@ -51,10 +72,16 @@ async fn open_tab(cdp: &Cdp) -> Result<Tab, CdpError> {
 async fn goto_form(tab: &Tab, url: &str) -> Result<(), CdpError> {
     let mut events = tab.cdp.events();
     tab.call("Page.navigate", json!({"url": url})).await?;
-    wait_event(&mut events, DEADLINE, |e| (e.method == "Page.domContentEventFired").then_some(())).await?;
+    wait_event(&mut events, DEADLINE, |e| {
+        (e.method == "Page.domContentEventFired").then_some(())
+    })
+    .await?;
     // The helper runs in a world of its own, which the page's scripts cannot reach.
     let world = tab
-        .call("Page.createIsolatedWorld", json!({"frameId": tab.frame, "worldName": "a2m-spike"}))
+        .call(
+            "Page.createIsolatedWorld",
+            json!({"frameId": tab.frame, "worldName": "a2m-spike"}),
+        )
         .await?;
     tab.call(
         "Runtime.evaluate",
@@ -80,8 +107,16 @@ async fn locate(tab: &Tab, name: &str) -> Result<String, CdpError> {
         .await?;
     let nodes = found["nodes"].as_array().cloned().unwrap_or_default();
     assert_eq!(nodes.len(), 1, "the query must name exactly one element");
-    let object = tab.call("DOM.resolveNode", json!({"backendNodeId": nodes[0]["backendDOMNodeId"]})).await?;
-    Ok(object["object"]["objectId"].as_str().unwrap_or_default().to_owned())
+    let object = tab
+        .call(
+            "DOM.resolveNode",
+            json!({"backendNodeId": nodes[0]["backendDOMNodeId"]}),
+        )
+        .await?;
+    Ok(object["object"]["objectId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 async fn read_value(tab: &Tab, object: &str) -> Result<String, CdpError> {
@@ -91,12 +126,20 @@ async fn read_value(tab: &Tab, object: &str) -> Result<String, CdpError> {
             json!({"objectId": object, "functionDeclaration": "function () { return this.value; }", "returnByValue": true}),
         )
         .await?;
-    Ok(value["result"]["value"].as_str().unwrap_or_default().to_owned())
+    Ok(value["result"]["value"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 async fn start(tag: &str, handoff: Handoff) -> (Launched, std::path::PathBuf) {
     let dir = common::owned_data_dir(tag);
-    let launched = launch(&common::browser_program(), &common::base_args(&dir), handoff).expect("launch");
+    let launched = launch(
+        &common::browser_program(),
+        &common::base_args(&dir),
+        handoff,
+    )
+    .expect("launch");
     (launched, dir)
 }
 
@@ -110,7 +153,9 @@ async fn main() {
         #[cfg(windows)]
         _ => Handoff::InheritedHandles,
     };
-    let app = common::TestApp::start().await.expect("the test application starts");
+    let app = common::TestApp::start()
+        .await
+        .expect("the test application starts");
     let url = app.url(common::FORM_PATH);
     let mut report = common::Report {
         candidate: "a: own client".to_owned(),
@@ -120,9 +165,19 @@ async fn main() {
 
     // Launch, connect, open the page, wait, read one field.
     let t0 = Instant::now();
-    let (Launched { mut child, to_browser, from_browser }, dir) = start("own", handoff).await;
+    let (
+        Launched {
+            mut child,
+            to_browser,
+            from_browser,
+        },
+        dir,
+    ) = start("own", handoff).await;
     let cdp = Cdp::connect(from_browser, to_browser);
-    let version = cdp.call(None, "Browser.getVersion", json!({}), DEADLINE).await.expect("version");
+    let version = cdp
+        .call(None, "Browser.getVersion", json!({}), DEADLINE)
+        .await
+        .expect("version");
     report.launch_to_connected_ms = common::ms(t0.elapsed());
     report.browser_version = version["product"].as_str().unwrap_or_default().to_owned();
     let tab = open_tab(&cdp).await.expect("tab");
@@ -154,7 +209,10 @@ async fn main() {
     ));
     // The same question answered by a helper in the page, in one round trip.
     let world = tab
-        .call("Page.createIsolatedWorld", json!({"frameId": tab.frame, "worldName": "a2m-spike-read"}))
+        .call(
+            "Page.createIsolatedWorld",
+            json!({"frameId": tab.frame, "worldName": "a2m-spike-read"}),
+        )
         .await
         .expect("world");
     let by_label = format!(
@@ -191,7 +249,10 @@ async fn main() {
         new MutationObserver((_, o) => { if (document.getElementById('late')) { o.disconnect(); seen(); } }) \
             .observe(document.body, {childList: true}); })";
     let eval = |expression: &'static str, wait: bool| {
-        tab.call("Runtime.evaluate", json!({"expression": expression, "awaitPromise": wait, "returnByValue": true}))
+        tab.call(
+            "Runtime.evaluate",
+            json!({"expression": expression, "awaitPromise": wait, "returnByValue": true}),
+        )
     };
     let (mut observed, mut polled) = (Vec::new(), Vec::new());
     for _ in 0..20 {
@@ -199,13 +260,18 @@ async fn main() {
         // one round trip, measured above, carries the answer.
         eval(LATE, false).await.expect("late");
         let seen = eval(SEEN_BY_OBSERVER, true).await.expect("observer");
-        observed.push(Duration::from_secs_f64(seen["result"]["value"].as_f64().unwrap_or(0.0) / 1000.0));
+        observed.push(Duration::from_secs_f64(
+            seen["result"]["value"].as_f64().unwrap_or(0.0) / 1000.0,
+        ));
         // The poll: ask every 50 ms; each answer says how long the element had been there.
         eval(LATE, false).await.expect("late");
         loop {
-            let age = eval("window.__late === null ? null : performance.now() - window.__late", false)
-                .await
-                .expect("poll");
+            let age = eval(
+                "window.__late === null ? null : performance.now() - window.__late",
+                false,
+            )
+            .await
+            .expect("poll");
             if let Some(age) = age["result"]["value"].as_f64() {
                 polled.push(Duration::from_secs_f64(age / 1000.0));
                 break;
@@ -222,15 +288,21 @@ async fn main() {
 
     // A snapshot of the accessibility tree.
     let t = Instant::now();
-    let tree = tab.call("Accessibility.getFullAXTree", json!({})).await.expect("tree");
+    let tree = tab
+        .call("Accessibility.getFullAXTree", json!({}))
+        .await
+        .expect("tree");
     report.snapshot_ms = common::ms(t.elapsed());
     report.snapshot_nodes = tree["nodes"].as_array().map_or(0, Vec::len);
     report.snapshot_kind = "accessibility tree".to_owned();
 
     // Intercept the save the page sends, and fail it before it leaves the browser.
-    tab.call("Fetch.enable", json!({"patterns": [{"urlPattern": "*/api/orders/*", "requestStage": "Request"}]}))
-        .await
-        .expect("intercept");
+    tab.call(
+        "Fetch.enable",
+        json!({"patterns": [{"urlPattern": "*/api/orders/*", "requestStage": "Request"}]}),
+    )
+    .await
+    .expect("intercept");
     let mut events = cdp.events();
     tab.call(
         "Runtime.evaluate",
@@ -238,18 +310,30 @@ async fn main() {
     )
     .await
     .expect("click");
-    let paused = wait_event(&mut events, DEADLINE, |e| (e.method == "Fetch.requestPaused").then(|| e.params.clone()))
-        .await
-        .expect("a paused request");
-    tab.call("Fetch.failRequest", json!({"requestId": paused["requestId"], "errorReason": "BlockedByClient"}))
-        .await
-        .expect("fail the request");
+    let paused = wait_event(&mut events, DEADLINE, |e| {
+        (e.method == "Fetch.requestPaused").then(|| e.params.clone())
+    })
+    .await
+    .expect("a paused request");
+    tab.call(
+        "Fetch.failRequest",
+        json!({"requestId": paused["requestId"], "errorReason": "BlockedByClient"}),
+    )
+    .await
+    .expect("fail the request");
     report.intercepted = format!(
         "{} {} failed before sending",
         paused["request"]["method"].as_str().unwrap_or("?"),
-        paused["request"]["url"].as_str().unwrap_or("?").replace(&app.url(""), "")
+        paused["request"]["url"]
+            .as_str()
+            .unwrap_or("?")
+            .replace(&app.url(""), "")
     );
-    report.writes_stored_after_blocked_save = app.writes().await.expect("the control interface answers").len();
+    report.writes_stored_after_blocked_save = app
+        .writes()
+        .await
+        .expect("the control interface answers")
+        .len();
 
     // A second tab on the warm browser, opened on the form and read.
     let t = Instant::now();
@@ -266,29 +350,47 @@ async fn main() {
     // Close, and check that nothing is left.
     let _ = cdp.call(None, "Browser.close", json!({}), DEADLINE).await;
     let exited = tokio::time::timeout(DEADLINE, child.wait()).await;
-    report.notes.push(format!("exit after Browser.close: {exited:?}"));
+    report
+        .notes
+        .push(format!("exit after Browser.close: {exited:?}"));
     report.clean_close = common::wait_no_leftovers(&dir, Duration::from_secs(5));
     common::remove_data_dir(&dir);
 
     // Kill the browser while a call is pending.
-    let (Launched { mut child, to_browser, from_browser }, dir) = start("own-kill", handoff).await;
+    let (
+        Launched {
+            mut child,
+            to_browser,
+            from_browser,
+        },
+        dir,
+    ) = start("own-kill", handoff).await;
     let cdp = Cdp::connect(from_browser, to_browser);
     let tab = open_tab(&cdp).await.expect("tab");
     goto_form(&tab, &url).await.expect("page");
     let pending = tokio::spawn(async move {
-        tab.call("Runtime.evaluate", json!({"expression": "new Promise(() => {})", "awaitPromise": true})).await
+        tab.call(
+            "Runtime.evaluate",
+            json!({"expression": "new Promise(() => {})", "awaitPromise": true}),
+        )
+        .await
     });
     tokio::time::sleep(Duration::from_millis(300)).await; // the spike's own timing, so the call is on the wire
     let t = Instant::now();
     child.start_kill().expect("kill");
-    report.kill_mid_call.outcome = match tokio::time::timeout(Duration::from_secs(15), pending).await {
-        Ok(Ok(result)) => format!("{result:?}"),
-        Ok(Err(_)) => "panicked".to_owned(),
-        Err(_) => "hung".to_owned(),
-    };
+    report.kill_mid_call.outcome =
+        match tokio::time::timeout(Duration::from_secs(15), pending).await {
+            Ok(Ok(result)) => format!("{result:?}"),
+            Ok(Err(_)) => "panicked".to_owned(),
+            Err(_) => "hung".to_owned(),
+        };
     report.kill_mid_call.after_kill_ms = common::ms(t.elapsed());
-    let late = cdp.call(None, "Browser.getVersion", json!({}), DEADLINE).await;
-    report.notes.push(format!("a call after the kill: {late:?}"));
+    let late = cdp
+        .call(None, "Browser.getVersion", json!({}), DEADLINE)
+        .await;
+    report
+        .notes
+        .push(format!("a call after the kill: {late:?}"));
     let _ = child.wait().await;
     report.kill_mid_call.leftover = common::wait_no_leftovers(&dir, Duration::from_secs(5));
     common::remove_data_dir(&dir);

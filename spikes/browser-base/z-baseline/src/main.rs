@@ -4,7 +4,9 @@ use spike_browser_common as common;
 
 #[tokio::main]
 async fn main() {
-    let app = common::TestApp::start().await.expect("the test application starts");
+    let app = common::TestApp::start()
+        .await
+        .expect("the test application starts");
     println!("{}", app.url(common::FORM_PATH));
     let _ = serde_json::json!({});
 }
