@@ -70,7 +70,7 @@ A lost lease means the control plane does not know whether the last write was se
 4. If policy allows, the run then resumes on its own; otherwise it waits for a person.
 5. If the lost runner returns, it uploads what it journaled locally as late evidence. Late evidence is stored and shown, but changes no state.
 
-**The gap that cannot be closed.** The lease number protects the ledger, because the ledger can check it. The target application cannot: it has no idea Web2MCP's leases exist. A runner that froze just after deciding to click Save, and thawed after its lease was lost, can still send that write. This is a known limit of any lease protecting a resource that cannot check it. What Web2MCP does about it:
+**The gap that cannot be closed.** The lease number protects the ledger, because the ledger can check it. The target application cannot: it has no idea Anything2MCP's leases exist. A runner that froze just after deciding to click Save, and thawed after its lease was lost, can still send that write. This is a known limit of any lease protecting a resource that cannot check it. What Anything2MCP does about it:
 
 - The runner stops acting before its lease ends and re-checks the deadline immediately before every commit point.
 - Steps are short, so the moment between the check and the write is small.

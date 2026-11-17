@@ -5,7 +5,7 @@ Discovery is how the runtime learns what a system can do. This section defines w
 ## Three rules first
 
 1. **Discovery cannot write.** The engine enforces it for every discoverer, whoever supplied it. A discoverer that needs a system to change in order to observe it is not a discoverer.
-2. **Discovery returns findings, and a finding cannot run.** Only a compiled plan runs. Nothing turns a finding into an operation except a person or an agent writing target files that then pass the compiler and the gates.
+2. **Discovery returns findings, and a finding cannot run.** Only a compiled plan runs. A finding becomes something that can run only as target files that pass the compiler and the gates, whoever or whatever wrote them: a person, an agent, or the drafter of [section 67](67-the-scout-and-who-does-what.md).
 3. **A finding claims the least it can.** Where a field is not given, it takes the weakest value, never the strongest.
 
 ## A finding

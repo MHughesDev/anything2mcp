@@ -39,7 +39,7 @@ Beyond the script, each of the 52 sections was read against the later sections t
 | Problem | Fix |
 | --- | --- |
 | Commands were named two ways: flat in the reference, noun and verb in the authoring section | One [action catalog](../reference/action-catalog.md) now lists every action; commands, MCP tools, routes, and SDK methods all take their names from it |
-| Three built-in tools did not follow the naming rule | Now `w2m_tool_call`, `w2m_tool_search`, and `w2m_draft_try` |
+| Three built-in tools did not follow the naming rule | Now `a2m_tool_call`, `a2m_tool_search`, and `a2m_draft_try` |
 | The failure classes `input` and `busy` were in the reference but not in the engine's table | Added to the engine's table |
 | The engine was said to attach to the user's running browser | Withdrawn in five places; the engine always uses its own browser profile |
 | Each run was said to get a copied browser context | Replaced: runs share one live session in separate tabs |
@@ -183,18 +183,18 @@ These are named in the specification and left for the phase that builds them. A 
 | A vision mode for pixel-only applications | Later | A stated non-goal for now |
 | High-availability details of the Cluster profile | 9 | The stateless front and outbound runners already allow it |
 
-## Before the first build session
+## Things only the owner can do
 
-Things only the owner can do.
+Updated on 2026-11-17. None of these stops the build. [Publishing setup](publishing-setup.md) has the detail for the first three.
 
-- [x] Hold `web2mcp` on crates.io.
-- [x] Hold `w2mcp` on npm.
-- [ ] Secure `web2mcp` on PyPI by publishing a first release from the release workflow; see [publishing setup](publishing-setup.md).
-- [ ] Decide whether the repository is private. Real target files never go in it either way.
-- [ ] Choose where real target files will live.
-- [ ] Name the MCP clients that matter most, for the Phase 0 spike.
+- [ ] PyPI: a pending trusted publisher for `anything2mcp` that names the renamed repository, the workflow `release.yml`, and the environment `pypi`. The first release from the workflow then holds the name.
+- [ ] crates.io: one first publish of `anything2mcp`, after which trusted publishing can be configured.
+- [ ] npm: one first publish of `anything2mcp`, after which trusted publishing can be configured.
+- [ ] Switch on private vulnerability reporting in the repository's settings.
 - [ ] Confirm a Windows machine is available, or that CI is the only Windows environment.
-- [ ] For the first real application: get agreement from its owner and from IT before any use on real work.
+- [ ] At the end of the build, for each real system to be tried: agreement from its owner before any use.
+
+Settled since this list was first written: the repository is public; real target files live in the developer's own repository; no MCP client is preferred ([decision 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)). The earlier names were held on crates.io and npm by placeholders, which stay where they are.
 
 ## Keeping it ready, and making it better
 

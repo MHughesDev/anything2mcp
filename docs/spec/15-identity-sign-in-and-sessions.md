@@ -10,7 +10,7 @@ The system works out how each target signs in, reuses sign-ins the device alread
 | `managed_session` | A person signs in once in a visible window; the session is stored encrypted and kept alive | Apps with their own login, or no device SSO |
 | `custom` | Dedicated credentials: API keys, OAuth client credentials, client certificates, Basic, NTLM or Kerberos, or a dedicated account's password and one-time-code secret where IT allows it | Service accounts, shared servers, vendor APIs |
 
-**Auth discovery.** `web2mcp add <url>` and the `w2m_auth_detect` tool work out the method and recommend a mode, with reasons, for a person to confirm. They look for:
+**Auth discovery.** `anything2mcp add <url>` and the `a2m_auth_detect` tool work out the method and recommend a mode, with reasons, for a person to confirm. They look for:
 
 - Redirects to known identity hosts (Microsoft, Okta, Google, ADFS, Ping) and the provider's OpenID discovery document.
 - `WWW-Authenticate` challenges for Basic, NTLM, Negotiate, or Bearer.

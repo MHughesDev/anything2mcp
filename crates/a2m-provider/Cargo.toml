@@ -1,0 +1,11 @@
+[package]
+name = "a2m-provider"
+description = "The provider contract for Anything2MCP: manifests, the registry of packs and plug-ins, and the supervisor of outside processes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

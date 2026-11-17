@@ -1,22 +1,22 @@
 # Walkthrough: from nothing to a working tool
 
-What using Web2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change as the commands are built. It doubles as the acceptance test for Phase 5, which runs these steps and checks each result.
+What using Anything2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change as the commands are built. It doubles as the acceptance test for Phase 5, which runs these steps and checks each result.
 
 Commands a coding agent runs are shown as the agent sees them, with one JSON object returned per command.
 
 ## 1. Install and start a project
 
 ```text
-pip install web2mcp
-web2mcp init
+pip install anything2mcp
+anything2mcp init
 ```
 
-`init` creates a project folder with `web2mcp.toml`, an `AGENTS.md` that teaches the build loop, and an empty `targets/` folder. Nothing else needs configuring.
+`init` creates a project folder with `anything2mcp.toml`, an `AGENTS.md` that teaches the build loop, and an empty `targets/` folder. Nothing else needs configuring.
 
 ## 2. Add the application
 
 ```text
-web2mcp add http://localhost:4010
+anything2mcp add http://localhost:4010
 ```
 
 ```json
@@ -31,7 +31,7 @@ A browser window opens at the application's sign-in page. The person signs in on
 ## 3. See where things stand
 
 ```text
-web2mcp status
+anything2mcp status
 ```
 
 ```json
@@ -42,11 +42,11 @@ web2mcp status
 ## 4. Look at a screen
 
 ```text
-web2mcp screen snapshot --url /orders/A-100/items
+anything2mcp screen snapshot --url /orders/A-100/items
 ```
 
 ```json
-{"ok": true, "result": {"path": ".web2mcp/out/snapshot-01.txt", "elements": 14, "matches": []},
+{"ok": true, "result": {"path": ".anything2mcp/out/snapshot-01.txt", "elements": 14, "matches": []},
  "next": {"action": "capture.start"}}
 ```
 
@@ -55,9 +55,9 @@ The agent reads the file itself. The snapshot is not returned inline.
 ## 5. Record the application being used
 
 ```text
-web2mcp capture start
-web2mcp capture stop
-web2mcp endpoints infer
+anything2mcp capture start
+anything2mcp capture stop
+anything2mcp endpoints infer
 ```
 
 Between start and stop, the person or the agent opens an order and looks at its lines. Exploration cannot send anything but reads. `infer` returns the endpoints it found, with schemas, and writes draft files.
@@ -67,7 +67,7 @@ Between start and stop, the person or the agent opens an order and looks at its 
 The agent edits the files under `targets/example/`: a screen, an endpoint, and a read operation. Then:
 
 ```text
-web2mcp lint
+anything2mcp lint
 ```
 
 ```json
@@ -85,8 +85,8 @@ The agent fixes both and runs `lint` again until it passes.
 ## 7. Try it and test it
 
 ```text
-web2mcp try example_order_get --input order_id=A-100
-web2mcp test
+anything2mcp try example_order_get --input order_id=A-100
+anything2mcp test
 ```
 
 `try` runs the draft in the sandbox and returns the result with the binding used. `test` runs the publish gates and returns which passed, with evidence for any that did not.
@@ -94,7 +94,7 @@ web2mcp test
 ## 8. Publish
 
 ```text
-web2mcp publish
+anything2mcp publish
 ```
 
 The command returns exit code 3: a person must review. The person is shown the review summary, ordered by risk, and approves. The version is now published and its plan hash recorded.
@@ -102,7 +102,7 @@ The command returns exit code 3: a person must review. The person is shown the r
 ## 9. Connect an agent and use the tool
 
 ```text
-web2mcp connect <client>
+anything2mcp connect <client>
 ```
 
 The agent's tool list now includes the control tools. It finds and calls the new tool:
@@ -117,28 +117,28 @@ The agent's tool list now includes the control tools. It finds and calls the new
 After the agent has also built `example_line_item_upsert` and the pipeline `example_order_sheet_enter`, and the person has published them:
 
 ```text
-web2mcp run example_order_sheet_enter --source sheet.xlsx --input order_id=A-100
+anything2mcp run example_order_sheet_enter --source sheet.xlsx --input order_id=A-100
 ```
 
 ```json
 {"ok": true, "action": "tool.call",
  "result": {"run_id": "r_8f21", "tool": "example_order_sheet_enter@1", "status": "needs_approval",
             "summary": "12 line items: 9 to create, 3 to update. Waiting for approval.",
-            "diff": {"create": 9, "update": 3, "unchanged": 0, "detail": ".web2mcp/out/r_8f21-diff.json"}},
+            "diff": {"create": 9, "update": 3, "unchanged": 0, "detail": ".anything2mcp/out/r_8f21-diff.json"}},
  "next": {"action": "run.get", "args": {"run_id": "r_8f21"}, "when": "after the person approves"}}
 ```
 
 The person gets a notification, reads the diff on the approval page, presses Approve, and confirms with the computer's own prompt. Then:
 
 ```text
-web2mcp run get r_8f21
+anything2mcp run get r_8f21
 ```
 
 ```json
 {"ok": true, "action": "run.get",
  "result": {"run_id": "r_8f21", "status": "completed", "mode": "ui",
             "summary": "12 line items verified: 9 created, 3 updated.",
-            "trace": ".web2mcp/out/r_8f21-trace.jsonl"}}
+            "trace": ".anything2mcp/out/r_8f21-trace.jsonl"}}
 ```
 
 ## 11. Run it again

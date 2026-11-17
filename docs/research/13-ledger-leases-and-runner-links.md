@@ -11,7 +11,7 @@ Feeds spec sections [42](../spec/42-run-ledger-design.md) and [43](../spec/43-ru
 - A vendor FAQ says the same of its own product and of its competitors: idempotency and reconciliation for outside calls stay with the application ([Diagrid](https://www.diagrid.io/faq/682-does-catalyst-guarantee-exactly-once-execution-for-external-api-calls-from-ai-agents)).
 - A small database-backed step log gives at-least-once and nothing more; the receiving side has to supply the rest ([HackerNoon](https://hackernoon.com/you-dont-need-temporal-yet-durable-execution-for-ai-agents-in-150-lines)).
 
-**Consequence.** The decision to build a small ledger instead of adopting an engine loses no guarantee an engine would have given. The wrapped applications rarely accept idempotency keys, so Web2MCP supplies the receiving side itself: an intent recorded first, a keyed upsert, and a read-back to learn what happened.
+**Consequence.** The decision to build a small ledger instead of adopting an engine loses no guarantee an engine would have given. The wrapped applications rarely accept idempotency keys, so Anything2MCP supplies the receiving side itself: an intent recorded first, a keyed upsert, and a read-back to learn what happened.
 
 ## A job queue in Postgres
 
@@ -29,7 +29,7 @@ Feeds spec sections [42](../spec/42-run-ledger-design.md) and [43](../spec/43-ru
 - Where fencing is impossible, correctness has to come from somewhere else: idempotency, a transaction, or a different design ([HackerNoon](https://hackernoon.com/distributed-locks-are-more-dangerous-than-they-look)).
 - One write-up notes a further limit: a stale write that arrives before any newer one is not refused merely because its lease expired ([OneUptime](https://oneuptime.com/blog/post/2026-09-09-etcd-fenced-lock-leases-revisions/markdown)).
 
-**Consequence.** Web2MCP's ledger can check lease numbers, so it is fenced. The wrapped application cannot, so writes to it rest on idempotent upserts, version preconditions where the application has them, a quarantine, and a later verification read. The remaining window is written down in spec section 43.
+**Consequence.** Anything2MCP's ledger can check lease numbers, so it is fenced. The wrapped application cannot, so writes to it rest on idempotent upserts, version preconditions where the application has them, a quarantine, and a later verification read. The remaining window is written down in spec section 43.
 
 ## Workers that dial out
 

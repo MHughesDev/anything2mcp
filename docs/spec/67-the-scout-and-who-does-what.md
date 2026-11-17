@@ -1,0 +1,137 @@
+# 67. The scout, and who does what
+
+A developer points the runtime at a system and wants tools. This section draws the line between the work the runtime does by itself, the work that stays with the developer or their agent, and the work only a person may do. It also says what the runtime assumes about the world and what it leaves out on purpose. Decisions: [record 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) and [record 0059](../decisions/0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md).
+
+## The line
+
+Every job falls into one of three kinds. The test is what the job needs.
+
+| Kind | The job needs | Who does it | Examples |
+| --- | --- | --- | --- |
+| Mechanical | A rule that gives the same answer every time | The runtime, by itself | Telling what kind of system this is; reading what it publishes; turning a published description into an endpoint; trying a read five times and comparing |
+| Judgment | Knowing what the system is for | The developer, or an agent working for them, at build time | Naming a tool; choosing which of two hundred endpoints matter; saying how a record is found again; settling a conflict between two findings |
+| Authority | The right to decide | A person | Saying the system may be inspected; signing in; approving a write; publishing tools to other people |
+
+Two rules hold the line in place.
+
+- **The runtime never does judgment.** It runs no model ([principle 3](03-design-principles.md)). Where a rule gives no answer, the result is an open question in the unknowns ledger ([section 58](58-discovery-and-findings.md)), never a guess.
+- **Nobody but a person holds authority.** An agent cannot grant itself consent, approve its own write, or publish. These are the product's own protections and they are not settings ([section 51](51-defending-against-a-manipulated-agent.md)).
+
+## The scout
+
+The scout is the mechanical half of the overlay method ([section 60](60-overlaying-tools-on-an-existing-system.md)) run as one pipeline. One action, `scout.run`, takes a target and does steps 2 and 3 of that method, the mechanical part of step 4, and the read half of step 6. `scout.report` returns the last report.
+
+| # | Stage | What happens | Built from |
+| --- | --- | --- | --- |
+| 1 | Identify | Each declared surface is probed: what kind it is, which pack serves it, how sign-in works. Surfaces the target did not declare and plainly offers, such as a published API description, are reported as candidates and are not entered | `target.probe`, `auth.detect` |
+| 2 | Discover | Every enabled discoverer that suits a surface runs, within its bounds | `discover.run` |
+| 3 | Compare | What the system says about itself is set against what was seen. Each difference becomes a finding or an open question | [Section 58](58-discovery-and-findings.md) |
+| 4 | Draft | The drafter writes draft files wherever a finding maps to a file by rule | `draft.write` |
+| 5 | Check | The drafts are linted and compiled. A draft that fails is kept, with its findings, and marked | `draft.lint` |
+| 6 | Try | Each drafted read that the scout is allowed to try runs in the sandbox, five times, and the results are compared | `draft.try` |
+| 7 | Report | One report: what was found, what was drafted, what was proven, what is open, and what the developer should look at first | `scout.report` |
+
+- **It is a fixed pipeline.** There is no model in it and no choice in it. The same system in the same state gives the same report, and the report carries a hash to show it.
+- **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage.
+- **It is bounded and polite.** Every stage has a limit on time, size, depth, and number of requests, and the report says which limits were hit. The scout identifies itself as automation, keeps to the target's rate limit, and stops at a block ([principle 9](03-design-principles.md)).
+- **It needs consent like any discovery.** On one machine the person who added the target has given it. On a server the target's consent record must exist first ([section 61](61-effects-hazards-and-consent.md)).
+- **It needs a session, and cannot make one.** If a surface needs a sign-in, the scout reports `needs_login` for that surface, carries on with the others, and resumes when the person has signed in.
+
+## What the drafter writes
+
+The drafter is kernel code. Each pack registers the drafting rules for its own file kinds ([section 55](55-kernel-and-packs.md)).
+
+| From a finding about | The drafter writes | It leaves to the developer |
+| --- | --- | --- |
+| A published API description | Endpoint entries, field types taken from the schema, and one read operation for each method the description marks safe | Which of them become tools, and their names in the language of the work |
+| Captured exchanges, with no description | Endpoint entries with two-tier path templates ([section 60](60-overlaying-tools-on-an-existing-system.md)), marked `inferred` | Confirming every template; all operations |
+| An upstream MCP server's tool list | A pass-through binding for each tool the server marks read-only | Tools not marked read-only; whether the server's marking is believed for writes |
+| A program's own help and version output | Command definitions with typed arguments | Which commands read and which write. Help text does not say, so no operation is drafted |
+| An observed interface | Screen models: fields with their roles, names, and locators | Every action on a screen; what a field means |
+| A database's schema | Record kinds, field types, and a read by key for each table with a declared key | Joins, business names, and every write |
+| The structure of a real file | A source definition and a template fingerprint | The mapping from columns to fields |
+| A device's own description of itself | A map of its readable objects and a read for each | Units the device does not state; every write |
+
+Every draft made this way:
+
+- is an ordinary draft at `reconstructed` ([section 59](59-the-evidence-ladder.md)), and names the findings it was made from;
+- gets a mechanical name, made from the surface's own words, that is marked as provisional;
+- carries no unit, key, or read-back rule the system did not itself state. Where one is needed and missing, the draft has an open question in its place and does not compile until it is settled.
+
+## What the scout may try
+
+The scout tries a read only when one of two things is true.
+
+| The read is safe because | Examples |
+| --- | --- |
+| The engine enforces it | A database read inside a read-only transaction; a file opened for reading; an interface snapshot that follows plain links and never submits a form or presses a button |
+| The system's own contract says so | A request with a method the service's own description marks safe; a device object the device lists as readable |
+
+Everything else is left untried: a command with unknown effect, a tool not marked read-only, a request with no description behind it. The scout never tries a write, on any system, under any setting. A read that passes five identical runs moves to `executed`. It goes no higher by the scout's hand: `behavior_verified` needs the publish gates, and `approved` needs a person.
+
+## What stays with the developer
+
+Three things, and the report lists them in this order.
+
+1. **Meaning.** What things are called, which capabilities are worth being tools, what a field's unit is when the system does not say, what counts as the same record.
+2. **Writes.** Everything about them: the operation, its identity strategy, its read-back rule, its effect class, and above all where a test write is allowed. The developer declares test records ([section 27](27-testing-and-publish-gates.md)). Without one, a write can be drafted and can never be verified.
+3. **Open questions.** Whatever the scout could not decide is in the unknowns ledger, each with the observation that would settle it. `unknown.settle` closes one with evidence.
+
+An agent is well suited to all three, and the product gives it the same tools a person has: the report, the findings, the drafts, the sandbox. The agent works at build time. Nothing it writes runs until it has passed the compiler and the gates.
+
+## What only a person does
+
+| Act | Why it cannot be handed to an agent |
+| --- | --- |
+| Saying that a system may be inspected and wrapped | It is a statement of right, and the agent may have been steered |
+| Signing in, and supplying a credential | A secret never reaches a caller ([principle 10](03-design-principles.md)). The person signs in to the system; the vault holds the rest |
+| Declaring a test record on a real system | It says where damage is acceptable |
+| Approving a write, and raising what a tool is allowed to do | [Section 18](18-safety-policy-and-approvals.md) |
+| Switching on a provider that starts a process or reaches a network | A protected setting ([section 56](56-the-provider-contract.md)) |
+| Publishing tools for other people to use | [Section 20](20-access-control-toolsets-and-tenancy.md) |
+
+On one machine, with one user, these are light: a prompt from the operating system, a sign-in window. They are never absent.
+
+## What the runtime assumes
+
+| It assumes | It does not assume |
+| --- | --- |
+| The system has at least one surface that the user is entitled to use and that a pack can reach | Source code, a vendor's help, a published interface, or a stable one |
+| Reading is repeatable, or the system says when it is not | That a read is free: reads are rate-limited and counted |
+| A write is unsafe to repeat until an identity strategy proves otherwise | That a system forgives a duplicate |
+| The machine it runs on belongs to the user, with a key store and a browser already there | A cloud service, an account with us, or a network beyond the target |
+| Someone, a person or an agent, exercises judgment at build time | That an agent is present. Every file can be written by hand |
+| A person can be reached when authority is needed | That the person is watching. Work that needs them stops and waits |
+| Whatever calls the tools may have been steered ([section 51](51-defending-against-a-manipulated-agent.md)) | Any particular client, model, or vendor. A client is anything that speaks the protocol |
+
+## What is left out on purpose
+
+| Left out | Because |
+| --- | --- |
+| A model inside the product, or an agent framework | Principles 3 and 4 of [section 3](03-design-principles.md). The developer brings their own agent, of any make |
+| A catalog of definitions for real products | [Record 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps |
+| Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop |
+| A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 61](61-effects-hazards-and-consent.md)) |
+| Hosting | The product runs where the developer runs it |
+| Guessing | Principle 11. Unknown means stop |
+
+## Settings
+
+Scouting is configured in the `authoring` group ([section 30](30-settings.md)). Key names are a draft, as all are until the settings loader is written.
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `authoring.scout.run` | `on_request`: only when `scout.run` is called. `on_add`: also when a target is added | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
+| `authoring.scout.try_reads` | Whether stage 6 runs | On |
+| `authoring.scout.budget` | Limits on time, requests, and depth for one scout | Small enough that a scout of an ordinary system ends within minutes |
+| `authoring.scout.providers` | Which optional discoverers the scout may use, by name | None. The first-party discoverers are always available |
+
+No setting lets the scout write, try a write, or skip consent.
+
+## Open points
+
+- The exact drafting rules for each pack. They are written when the pack is, and each is a small table from finding kind to file kind.
+- How mechanical names are made so that they are stable across two scouts of the same system.
+- Whether following plain links in an interface is always a read. Some applications change state on a plain request; the web pack's discoverer must refuse a link whose address looks like an action, and what "looks like" means is to be settled in Phase 4.
+- Whether stage 6 should compare across sessions as well as across runs.
+- The size of the default budget. It is a target until the first scout of the test application is measured.

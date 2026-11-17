@@ -2,7 +2,11 @@
 
 One file per decision: the context, what was decided, what follows from it, what was rejected, and what would reopen it. Add a new numbered file for every decision that changes the design; never rewrite an old one. To reverse a decision, add a new record that supersedes it and mark the old one superseded.
 
-A record's status is one of: **Accepted**, in force; **Proposed**, written by an agent or anyone else for the owner to accept or decline, and not to be built on until accepted or supported by a tested hypothesis; **Superseded**, replaced by a later record that names it. Proposing a change to any decision is welcome. Changing an accepted one needs the owner.
+A record's status is one of: **Accepted**, in force; **Proposed**, a change someone wants and has not been given, not to be built on until accepted or supported by a tested hypothesis; **Superseded**, replaced by a later record that names it.
+
+Who may change what ([record 0055](0055-agents-plan-build-and-merge-without-waiting-for-the-owner.md)): a record marked as a design decision can be superseded by any agent with a new record that gives the evidence. A record marked as an owner decision is changed only by the owner; an agent that thinks one is wrong writes a Proposed record and carries on. A record the owner has not read says so in its status line and is in force all the same.
+
+Records 0001 to 0054 were written when the product was named Web2MCP, and keep the names of their time. [Record 0056](0056-one-name-everywhere-anything2mcp.md) has the key from the earlier names to the present ones.
 
 | # | Decision | Status |
 | --- | --- | --- |
@@ -23,11 +27,11 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 | 0015 | [SQLite locally, Postgres on servers, and a built-in ledger](0015-sqlite-locally-postgres-on-servers-and-a-built-in-ledger.md) | Accepted (design decision) |
 | 0016 | [Plug-ins are separate processes](0016-plug-ins-are-separate-processes.md) | Accepted (design decision) |
 | 0017 | [Operate openly: no evasion of bot defenses or MFA](0017-operate-openly-no-evasion-of-bot-defenses-or-mfa.md) | Accepted (design decision) |
-| 0018 | [License: Apache-2.0](0018-license-apache-2-0.md) | Accepted (design decision) |
+| 0018 | [License: Apache-2.0](0018-license-apache-2-0.md) | Superseded by 0057 |
 | 0019 | [Priority order: safe, correct, fast, easy](0019-priority-order-safe-correct-fast-easy.md) | Accepted (owner decision) |
 | 0020 | [Every write is verified, and resume reconciles first](0020-every-write-is-verified-and-resume-reconciles-first.md) | Accepted (design decision) |
 | 0021 | [No real application is named in the repository](0021-no-real-application-is-named-in-the-repository.md) | Accepted (owner decision) |
-| 0022 | [Published package names](0022-published-package-names.md) | Accepted (owner decision) |
+| 0022 | [Published package names](0022-published-package-names.md) | Superseded by 0056 |
 | 0023 | [Commands and files first for building, MCP tools second, one registry for both](0023-commands-and-files-first-for-building-mcp-tools-second-one-registry-for-both.md) | Accepted (design decision) |
 | 0024 | [One local engine per user, reached over a socket or named pipe](0024-one-local-engine-per-user-reached-over-a-socket-or-named-pipe.md) | Accepted (design decision) |
 | 0025 | [pip and npm packages ship the binary with a thin SDK; no in-process bindings yet](0025-pip-and-npm-packages-ship-the-binary-with-a-thin-sdk-no-in-process-bindings-yet.md) | Accepted (design decision) |
@@ -60,3 +64,8 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 | 0052 | [Effects are declared and enforced, and a hazard raises the approval](0052-effects-are-enforced-and-hazards-raise-the-approval.md) | Accepted (design decision) |
 | 0053 | [REA is studied for its method, and used only as an optional provider](0053-rea-is-studied-for-method-and-used-only-as-an-optional-provider.md) | Accepted (design decision) |
 | 0054 | [Devices are reached through their own interfaces, and firmware only through the device's own update](0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md) | Accepted (design decision) |
+| 0055 | [Agents plan, build, and merge without waiting for the owner](0055-agents-plan-build-and-merge-without-waiting-for-the-owner.md) | Accepted (owner decision) |
+| 0056 | [One name everywhere: `anything2mcp`, with `a2m` for the parts](0056-one-name-everywhere-anything2mcp.md) | Accepted (design decision) |
+| 0057 | [The licence is MIT](0057-the-licence-is-mit.md) | Accepted (owner decision) |
+| 0058 | [A toolkit for developers, with no catalog and no preferred agent](0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md) | Accepted (owner decision) |
+| 0059 | [The scout drafts and proves reads by itself, and three things stay with the developer](0059-the-scout-drafts-and-proves-reads-and-three-things-stay-with-the-developer.md) | Accepted (design decision) |

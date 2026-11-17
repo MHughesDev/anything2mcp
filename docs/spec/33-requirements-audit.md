@@ -1,6 +1,6 @@
 # 33. Requirements audit
 
-Every stated requirement is covered by the design; five are covered only under conditions or limits outside Web2MCP's control, and two rest on targets not yet measured.
+Every stated requirement is covered by the design; five are covered only under conditions or limits outside Anything2MCP's control, and two rest on targets not yet measured.
 
 | Requirement | Verdict | How | Condition or limit |
 | --- | --- | --- | --- |
@@ -40,6 +40,6 @@ Every stated requirement is covered by the design; five are covered only under c
 1. **Scope.** This is a large system. The build plan orders it so each phase is useful alone.
 2. **The Rust browser engine.** Rebuilding reliable waiting and acting is the hardest engineering in the project.
 3. **Per-user access on a server** depends on each organization's Conditional Access rules.
-4. **Permission.** Wrapping third-party software can conflict with vendor terms and IT policy. Web2MCP is built to operate openly and with approval.
+4. **Permission.** Wrapping third-party software can conflict with vendor terms and IT policy. Anything2MCP is built to operate openly and with approval.
 5. **Hosted-agent compatibility**, starting with Copilot Studio, needs hands-on testing.
 6. **Desktop mode** depends on how well each desktop app exposes accessibility data.

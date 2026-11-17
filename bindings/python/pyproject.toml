@@ -3,17 +3,21 @@ requires = ["flit_core==4.2.0"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "web2mcp"
+name = "anything2mcp"
 version = "0.0.1"
-description = "Placeholder for Web2MCP: turn any existing app into safe, deterministic MCP tools. Nothing is usable yet."
+description = "Placeholder for Anything2MCP: turn existing software and systems into safe, deterministic MCP tools. Nothing is usable yet."
 readme = "README.md"
 requires-python = ">=3.9"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
 ]
 
 [project.urls]
-Repository = "https://github.com/MHughesDev/web2mcp"
+Repository = "https://github.com/MHughesDev/anything2mcp"
+Changelog = "https://github.com/MHughesDev/anything2mcp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/MHughesDev/anything2mcp/issues"

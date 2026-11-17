@@ -24,7 +24,7 @@ A policy gate sits between the front doors and the engine. Every call passes thr
 
 | Channel | How it works | Fits |
 | --- | --- | --- |
-| MCP URL-mode elicitation | The server sends the client a link to Web2MCP's approval page; the person approves in their browser, signed in as themselves. The MCP spec reserves URL mode for sensitive interactions that must not pass through the client ([MCP spec](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation)) | Clients that support elicitation |
+| MCP URL-mode elicitation | The server sends the client a link to Anything2MCP's approval page; the person approves in their browser, signed in as themselves. The MCP spec reserves URL mode for sensitive interactions that must not pass through the client ([MCP spec](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation)) | Clients that support elicitation |
 | Approval page link in the result | The result carries `needs_approval` and a link; the person opens it | Every client, including ones without elicitation |
 | Chat approval | An approval card in Microsoft Teams or Slack, sent to the approver | Company deployments |
 | Local prompt | A prompt raised by the engine itself, with an operating-system user-presence check where one exists; there is no approve command or tool ([section 39](39-local-engine-and-clients.md)) | Solo use |
@@ -39,7 +39,7 @@ A policy gate sits between the front doors and the engine. Every call passes thr
 
 - Results are structured; free text sits only in fields marked `untrusted` in the output schema.
 - Free-text fields are length-limited and stripped of markup and hidden characters.
-- The permission manifest blocks undeclared destinations, so a hijacked agent cannot use a Web2MCP tool to send data elsewhere.
+- The permission manifest blocks undeclared destinations, so a hijacked agent cannot use a Anything2MCP tool to send data elsewhere.
 - Writes still need a person's approval of a visible diff.
 
 **Supply chain.** Published versions are immutable, hashed, and signed by the publisher. The server loads only versions whose signature and hash are in its registry.

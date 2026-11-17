@@ -1,6 +1,6 @@
 # Research: products that turn applications into APIs or agent tools
 
-**Status:** completed by a research agent on 2026-11-15, plus search results gathered in the design sessions. Only browser-to-mcp, Pomerado, and the pip `web2mcp` package were inspected at code level (see [10-code-reviews.md](10-code-reviews.md)); everything else is from product pages, docs, and listings. Feeds [spec section 35](../spec/35-prior-art.md).
+**Status:** completed by a research agent on 2026-11-15, plus search results gathered in the design sessions. Only browser-to-mcp, Pomerado, and the pip `anything2mcp` package were inspected at code level (see [10-code-reviews.md](10-code-reviews.md)); everything else is from product pages, docs, and listings. Feeds [spec section 35](../spec/35-prior-art.md).
 
 ## The four underlying mechanisms
 
@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | Live UI control | An agent looks at the page and acts, one tool call per action | Playwright MCP, Chrome extension bridges |
 | Recorded UI replay | Actions are recorded or authored once and replayed as fixed steps | browser-to-mcp, webpage-mcp, Pomerado |
-| Traffic-derived API | Watch the requests the UI sends, then send them from code | Integuru, the pip `web2mcp` (crudely) |
+| Traffic-derived API | Watch the requests the UI sends, then send them from code | Integuru, the pip `anything2mcp` (crudely) |
 | Site-provided tools | The site publishes its own tools in the browser | WebMCP proposal and polyfills |
 
-Web2MCP combines the second and third, uses the fourth where offered, and uses the first only as evidence at build time.
+Anything2MCP combines the second and third, uses the fourth where offered, and uses the first only as evidence at build time.
 
 ## Findings from the landscape research
 
@@ -27,13 +27,13 @@ Web2MCP combines the second and third, uses the fourth where offered, and uses t
 
 ## Closeness ranking
 
-Ranked by how much of the Web2MCP design each covers. Positions below the first two rest on descriptions, not code.
+Ranked by how much of the Anything2MCP design each covers. Positions below the first two rest on descriptions, not code.
 
 1. Pomerado
 2. browser-to-mcp
 3. CloudCruise
 4. webpage-mcp (mcpland)
-5. Web2MCP, the TypeScript project of the same name
+5. Anything2MCP, the TypeScript project of the same name
 6. holon-run/webmcp-bridge
 7. grain-mcp-server
 8. Skyvern
@@ -42,7 +42,7 @@ Ranked by how much of the Web2MCP design each covers. Positions below the first 
 11. Browser Use workflow-use
 12. zen-mcp/browser
 13. Integuru
-14. Xzeroone/web2mcp (pip)
+14. Xzeroone/anything2mcp (pip)
 15. Kadoa
 16. Browse AI
 17. Apify MCP
@@ -56,7 +56,7 @@ Ranked by how much of the Web2MCP design each covers. Positions below the first 
 25. Extension bridges: BrowserMCP, Browsentic, agent-browser-bridge, Browser Bridge, T3rnel, byob
 26. WebMCP family: the W3C proposal, MCP-B, teatak/mcp-server-browser, Cloudflare's preview, cf-webmcp, WebMCP Bridge
 
-## The gap Web2MCP fills
+## The gap Anything2MCP fills
 
 None of these combines: self-hosted, no model at run time, every mode in one engine, verified writes with out-of-band approval, resumable runs, per-user and service identity under enterprise single sign-on, governance, and a company-server shape.
 
@@ -64,4 +64,4 @@ None of these combines: self-hosted, no model at run time, every mode in one eng
 
 - Self-healing claims from Skyvern, Twin, and Simular are not documented; CloudCruise's 99% figure is the vendor's own.
 - Induced being offline and MultiOn pivoting come only from secondary directories.
-- The TypeScript Web2MCP project's repository was not found; its description comes from listings, one of which confuses it with the W3C WebMCP proposal.
+- The TypeScript Anything2MCP project's repository was not found; its description comes from listings, one of which confuses it with the W3C WebMCP proposal.

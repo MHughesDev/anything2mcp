@@ -255,7 +255,7 @@ Expressions are CEL. They always terminate and never convert types silently.
 | `steps` | In a pipeline: `steps.<id>.result` is an earlier step's result |
 | `env` | The environment's name and kind |
 
-Host functions, the starting library: `to_inches`, `to_feet_inches`, `to_unit`, `parse_decimal`, `round_to`, `parse_date`, `format_date`, `trim`, `lower`, `upper`, `code_for`, `label_for`, `coalesce`. Each is tested, documented by `web2mcp docs`, and versioned with the engine. Anything not expressible this way is a reviewed plug-in, not a script.
+Host functions, the starting library: `to_inches`, `to_feet_inches`, `to_unit`, `parse_decimal`, `round_to`, `parse_date`, `format_date`, `trim`, `lower`, `upper`, `code_for`, `label_for`, `coalesce`. Each is tested, documented by `anything2mcp docs`, and versioned with the engine. Anything not expressible this way is a reviewed plug-in, not a script.
 
 ## Open points
 

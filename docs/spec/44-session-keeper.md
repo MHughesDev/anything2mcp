@@ -25,7 +25,7 @@ On a shared server this is enforced in three places: the policy engine refuses a
 
 ## Two corrections to earlier sections
 
-**The engine cannot drive the user's everyday browser profile, and must not try.** Since Chrome 136, the switches that open the DevTools protocol are ignored for the default profile and work only with a separate data directory, a change Google made because that route was being used to steal cookies ([research note 14](../research/14-sessions-and-policy-engines.md)). Chrome on Windows also encrypts its cookie store so that other programs cannot read it. Web2MCP therefore:
+**The engine cannot drive the user's everyday browser profile, and must not try.** Since Chrome 136, the switches that open the DevTools protocol are ignored for the default profile and work only with a separate data directory, a change Google made because that route was being used to steal cookies ([research note 14](../research/14-sessions-and-policy-engines.md)). Chrome on Windows also encrypts its cookie store so that other programs cannot read it. Anything2MCP therefore:
 
 - always runs the browser with its own data directory, one per identity;
 - never reads, copies, or decrypts another program's cookie store;
@@ -135,7 +135,7 @@ Some organizations do not allow a browser session to survive closing the browser
 
 ## Ending a session
 
-- `web2mcp session revoke`, the admin console, or the identity provider disabling the user.
+- `anything2mcp session revoke`, the admin console, or the identity provider disabling the user.
 - On revoke the keeper closes the tabs, calls the application's sign-out if one is declared, deletes the profile directory and saved state, and records the event.
 - A person can always see their own sessions and end them.
 

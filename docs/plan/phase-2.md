@@ -4,7 +4,7 @@ A draft task list, to be revised at the end of Phase 1 and agreed with the owner
 
 **Outcome.** The engine signs in to an application once, as the person, in its own browser profile, keeps that sign-in alive within the organization's rules, shares it between runs, and never lets a secret out.
 
-**Exit test.** An expired session stops every call with `needs_login`; ten runs that meet an expired session cause exactly one renewal; no secret appears in any trace, capture, log, or result; a read on one real application chosen by the owner, whose target files stay outside this repository, gives five identical runs.
+**Exit test.** An expired session stops every call with `needs_login`; ten runs that meet an expired session cause exactly one renewal; no secret appears in any trace, capture, log, or result; a signed-in read on the test application gives five identical runs. A read on a real application was part of this test; the owner has moved real systems to the end of the build ([decision 0058](../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)).
 
 **Read first.** The Phase 2 entry in the [phase map](phase-map.md). Brief 30 (sign-in in engine-owned profiles) decides how much of group C is possible; run it first.
 
@@ -21,7 +21,7 @@ A draft task list, to be revised at the end of Phase 1 and agreed with the owner
 | G | Sharing and isolation | Runs as tabs on one live session; one browser process and profile per identity; the exclusive-session check | Case 15 is detected; two identities never share a process |
 | H | Session actions | `session.status`, `session.login`, `session.revoke`; the session timeline | Revoking closes the tabs, deletes the profile and saved state, and is recorded |
 | I | Diagnosis | `doctor.run`: browser, key store, network reach, session health, clock | Each check has a test that makes it fail and a printed fix |
-| J | A real application | With the owner's go-ahead in that session: one read tool on one real application | Five identical runs; nothing about the application is committed to this repository |
+| J | A signed-in read, proven | One read tool on the test application, behind its sign-in | Five identical runs. A real application is tried at the end of the build, with the owner |
 
 ## Not in this phase
 
@@ -29,6 +29,4 @@ Writes, approvals, tokens obtained on a caller's behalf, the operating system's 
 
 ## Questions for the owner
 
-- Which real application, and who has agreed to it being used.
-- Where its target files will be kept.
-- What the organization's sign-in rules are for that application, as far as the owner knows them.
+None. The questions that stood here were about the real application, which now comes at the end of the build.

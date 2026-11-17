@@ -1,0 +1,37 @@
+name: Design proposal
+description: A new capability, a new kind of system, or a change to the design.
+labels: ["design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The design is written down in docs/spec and its bets are listed in docs/hypotheses. A proposal is easiest to weigh when it says which of those it touches.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can someone not do today, or what goes wrong? Describe the need before the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing nothing.
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: How it would be proven
+      description: The test or measurement that would show the proposal works, and what result would show that it does not.
+  - type: input
+    id: touches
+    attributes:
+      label: Spec sections, decisions, or hypotheses it touches

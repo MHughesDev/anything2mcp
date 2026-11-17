@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the pip package whenever it changes, and publishes it to PyPI only when
-# a version tag is pushed. PyPI's trusted publisher names this file, so it must
-# stay .github/workflows/release.yml (docs/plan/publishing-setup.md). Pushing a
-# version tag is the publishing step, and it is the owner's to approve.
+# Builds the pip package whenever it changes, and publishes it to PyPI in two
+# cases only: a version tag is pushed, or this workflow is started by hand with
+# the version to publish typed in. PyPI's trusted publisher names this file, so
+# it must stay .github/workflows/release.yml (docs/plan/publishing-setup.md).
+# Publishing cannot be undone; RELEASING.md has the steps.
 
 on:
   pull_request:
@@ -12,6 +13,13 @@ on:
       - ".github/workflows/release.yml"
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish_version:
+        description: "Version to publish to PyPI, exactly as in bindings/python/pyproject.toml. Leave empty to build and check without publishing."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -25,25 +33,43 @@ jobs:
     name: Build the pip package
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
     steps:
-      # Pinned by commit; this is v7.0.1. The whole history is fetched so a tag
-      # can be checked against main.
+      # Pinned by commit; this is v7.0.1. The whole history is fetched so the
+      # commit can be checked against main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Refuse a tag that is not the package version on main
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Decide whether this run publishes, and refuse a version that is not the one on main
+        id: decide
+        env:
+          # Read through the environment, never pasted into the script.
+          PUBLISH_VERSION: ${{ inputs.publish_version }}
         run: |
+          wanted=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            wanted="${GITHUB_REF_NAME#v}"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$PUBLISH_VERSION" ]; then
+            wanted="$PUBLISH_VERSION"
+          fi
+          if [ -z "$wanted" ]; then
+            echo "This run builds and checks the package. It does not publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           version=$(python3 -c "import tomllib; print(tomllib.load(open('bindings/python/pyproject.toml', 'rb'))['project']['version'])")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::The tag $GITHUB_REF_NAME does not match the package version $version."
+          if [ "$version" != "$wanted" ]; then
+            echo "::error::Asked to publish $wanted, and the package version is $version."
             exit 1
           fi
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::The tagged commit is not on main, so CI has not passed on it there."
+            echo "::error::This commit is not on main, so CI has not passed on it there."
             exit 1
           fi
+          echo "This run publishes version $version."
+          echo "publish=true" >> "$GITHUB_OUTPUT"
       - name: Install the build tools
         run: |
           python3 -m venv "$RUNNER_TEMP/tools"
@@ -61,7 +87,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/try"
           "$RUNNER_TEMP/try/bin/pip" install --quiet dist/*.whl
-          "$RUNNER_TEMP/try/bin/python" -c "import web2mcp, importlib.metadata as m; print('web2mcp', m.version('web2mcp'))"
+          "$RUNNER_TEMP/try/bin/python" -c "import anything2mcp, importlib.metadata as m; print('anything2mcp', m.version('anything2mcp'))"
       # Pinned by commit; this is v7.0.2.
       - name: Keep the built files for the publish job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -73,7 +99,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: pip-package
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: needs.pip-package.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Add required reviewers to this environment in the repository's settings to

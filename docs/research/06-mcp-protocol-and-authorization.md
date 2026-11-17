@@ -11,7 +11,7 @@
 - Tasks moved out of the core protocol into an official extension, `io.modelcontextprotocol/tasks`. [MCP changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog). Secondary sources describe it as polling based: `tasks/get`, `tasks/update`, `tasks/cancel`. [Flavio Copes](https://flaviocopes.com/mcp-2026-07-28-stateless/)
 - Secondary sources report: Multi Round-Trip Requests carry mid-call input such as elicitation without a held-open stream; Streamable HTTP POST requests carry `Mcp-Method` and `Mcp-Name` headers for routing; list responses are cacheable; Roots, Sampling, Logging, and the legacy HTTP+SSE transport are deprecated; the revision is wire-incompatible with earlier ones. [Appwrite](https://appwrite.io/blog/post/mcp-goes-stateless-in-the-2026-07-28-specification), [Stacktree](https://stacktr.ee/blog/mcp-2026-spec-changes), [Traversaal](https://traversaal.ai/blog/mcp-spec-update-2026-07-28-breaking-changes-stateless-transport-migrate)
 
-**Design consequence.** Web2MCP's `run_id` is exactly the kind of explicit handle the revision expects, so any control-plane replica can answer any request. Per-user tool lists are not possible on one endpoint, which is why toolsets have their own endpoints and per-user rights are enforced at call time.
+**Design consequence.** Anything2MCP's `run_id` is exactly the kind of explicit handle the revision expects, so any control-plane replica can answer any request. Per-user tool lists are not possible on one endpoint, which is why toolsets have their own endpoints and per-user rights are enforced at call time.
 
 ### Authorization
 
@@ -21,7 +21,7 @@
 - Secondary sources report: clients must send the RFC 8707 `resource` parameter; the server must reject tokens not issued for it; token passthrough to downstream APIs is forbidden; clients validate the issuer of authorization responses (RFC 9207). [Scalekit](https://www.scalekit.com/blog/mcp-authorization-guide), [SSOJet](https://ssojet.com/blog/mcp-authentication-oauth-tokens-security-ai-connections)
 - One secondary source reports an "Enterprise-Managed Authorization" extension shipped in June 2026. Not verified. [rohitraj.tech](https://rohitraj.tech/notes/mcp-server-authentication-oauth-guide-2026)
 
-**Design consequence.** Web2MCP is a resource server only. The organization's identity provider issues tokens. A caller's token is never forwarded to a target; reaching a target as the user goes through the identity modes in [spec section 16](../spec/16-identity-on-a-shared-server.md).
+**Design consequence.** Anything2MCP is a resource server only. The organization's identity provider issues tokens. A caller's token is never forwarded to a target; reaching a target as the user goes through the identity modes in [spec section 16](../spec/16-identity-on-a-shared-server.md).
 
 ### Elicitation
 

@@ -20,7 +20,7 @@ There is no official Playwright client for Rust. The options found:
 | headless_chrome | Simpler Rust client | Described as less maintained. [DEV](https://dev.to/vhub_systems_ed5641f65d59/puppeteer-in-rust-chromiumoxide-and-headlesschrome-vs-the-python-alternative-4ji0) |
 | playwright-rust wrappers | Rust bindings that bundle and drive Playwright's Node driver | Full Playwright features, but a Node process sits in the middle. [Project Awesome](https://project-awesome.org/r/padamson-playwright-rust) |
 
-**Decision so far.** Web2MCP owns a small, verb-level engine on the DevTools protocol. Phase 0 runs a spike to choose between building on chromiumoxide, building on Rustwright's core, or writing a protocol client. See [ADR 0004](../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md).
+**Decision so far.** Anything2MCP owns a small, verb-level engine on the DevTools protocol. Phase 0 runs a spike to choose between building on chromiumoxide, building on Rustwright's core, or writing a protocol client. See [ADR 0004](../decisions/0004-rust-browser-engine-on-the-devtools-protocol.md).
 
 **Spike criteria.** Event-driven waits; accessibility-tree access; network event capture and in-page fetch; connect to a browser the engine launched with its own data directory; stability under 30 minutes of continuous use; license; maintenance activity; Windows, macOS, and Linux support.
 

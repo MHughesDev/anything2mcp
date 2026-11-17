@@ -20,10 +20,10 @@
 
 ## Design consequences
 
-1. **`per_user_token`** uses On-Behalf-Of. It works only when the target's API is registered in the tenant and grants Web2MCP's app registration delegated permission. It cannot be used against an API that does not trust Web2MCP's app.
+1. **`per_user_token`** uses On-Behalf-Of. It works only when the target's API is registered in the tenant and grants Anything2MCP's app registration delegated permission. It cannot be used against an API that does not trust Anything2MCP's app.
 2. **Broker-based sign-in belongs on user-device runners**, because the broker needs an interactive session. A headless server cannot use it.
 3. **`service_account`** can be a dedicated user, a service principal, or an Entra agent identity, depending on what the target accepts.
-4. **Web2MCP never imitates another application's client id** to obtain tokens.
+4. **Anything2MCP never imitates another application's client id** to obtain tokens.
 
 ## From general knowledge, to verify
 

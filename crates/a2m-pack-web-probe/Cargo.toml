@@ -1,0 +1,11 @@
+[package]
+name = "a2m-pack-web-probe"
+description = "The web pack's discoverers: the capability probe, traffic capture, and endpoint inference."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

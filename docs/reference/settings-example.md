@@ -1,6 +1,6 @@
 # Settings examples
 
-Two illustrative `web2mcp.toml` files for the groups in [spec section 30](../spec/30-settings.md). Key names are a draft to be settled when the settings loader is written in Phase 1; the groups and defaults are the design. Every value shown is the default unless a comment says otherwise.
+Two illustrative `anything2mcp.toml` files for the groups in [spec section 30](../spec/30-settings.md). Key names are a draft to be settled when the settings loader is written in Phase 1; the groups and defaults are the design. Every value shown is the default unless a comment says otherwise.
 
 ## A laptop
 
@@ -78,15 +78,15 @@ mcp_revisions = ["2026-07-28", "2025-11-25"]
 
 [auth.callers]
 issuer = "https://login.example.com/tenant-id/v2.0"
-audience = "api://web2mcp"
+audience = "api://anything2mcp"
 api_keys = false
 
 [store]
-database = "postgres://web2mcp@db.example.com/web2mcp"
-blobs = "s3://web2mcp-evidence"
+database = "postgres://anything2mcp@db.example.com/anything2mcp"
+blobs = "s3://anything2mcp-evidence"
 
 [vault]
-root_key = "kms://example/web2mcp-root"
+root_key = "kms://example/anything2mcp-root"
 
 [identity]
 default_mode = "per_user_session"
@@ -120,4 +120,4 @@ endpoint = "https://otel.example.com"
 - A setting that would weaken a built-in guardrail is refused when the file loads, with the guardrail named.
 - Protected settings (approval rules, record limits, allowed file roots, capture level on writes, and guardrail switches) can be changed on one machine only with the operating system's user-presence prompt.
 - Secrets never appear in this file. Values such as database passwords are vault or environment references.
-- `web2mcp config show --effective` prints every final value and which layer set it.
+- `anything2mcp config show --effective` prints every final value and which layer set it.

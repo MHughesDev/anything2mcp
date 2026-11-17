@@ -1,8 +1,8 @@
-# Web2MCP system design
+# Anything2MCP system design
 
 The specification, one section per file. Read in order the first time; after that, open only the sections a task touches.
 
-Sections 1 to 38 were exported from the working design document on 2026-11-15. Sections 39 to 52 were added afterwards and refine sections 7, 10, 11, 15, 17, 18, 20, 22, 23, 25, 26, 28, and 29; where they differ, the later section wins. Sections 53 to 66 were added on 2026-11-17 and widen the design from applications to any existing system, as Anything2MCP; they refine sections 5, 6, 7, 26, 29, and 41, and win where they differ. This folder is the master copy.
+Sections 1 to 38 were exported from the working design document on 2026-11-15. Sections 39 to 52 were added afterwards and refine sections 7, 10, 11, 15, 17, 18, 20, 22, 23, 25, 26, 28, and 29; where they differ, the later section wins. Sections 53 to 67 were added on 2026-11-17 and widen the design from applications to any existing system, as Anything2MCP; they refine sections 5, 6, 7, 26, 29, and 41, and win where they differ. Section 67 draws the line between what the runtime automates and what it leaves to the developer. This folder is the master copy.
 
 | # | Section | File |
 | --- | --- | --- |
@@ -72,5 +72,6 @@ Sections 1 to 38 were exported from the working design document on 2026-11-15. S
 | 64 | Rules for tools and capability discovery | [64-rules-for-tools-and-capability-discovery.md](64-rules-for-tools-and-capability-discovery.md) |
 | 65 | Python-first packaging | [65-python-first-packaging.md](65-python-first-packaging.md) |
 | 66 | Readiness of the universal design | [66-readiness-of-the-universal-design.md](66-readiness-of-the-universal-design.md) |
+| 67 | The scout, and who does what | [67-the-scout-and-who-does-what.md](67-the-scout-and-who-does-what.md) |
 
 Related: [technical reference](../reference/technical-reference.md) · [action catalog](../reference/action-catalog.md) · [file formats](../reference/file-formats.md) · [steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md) · [ledger schema](../reference/ledger-schema.md) · [walkthrough](../reference/walkthrough.md) · [glossary](../reference/glossary.md) · [settings examples](../reference/settings-example.md) · [decision records](../decisions/README.md) · [research notes](../research/README.md)

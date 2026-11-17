@@ -12,7 +12,7 @@ Feeds spec sections [47](../spec/47-traces-and-evidence.md) and [48](../spec/48-
 - Trace context travels in the request's `_meta` field under the standard key names, which lets an agent's trace and a server's trace join ([MCP Playground](https://mcpplaygroundonline.com/blog/mcp-observability-opentelemetry)).
 - The official Python SDK for MCP already emits spans this way ([MCP Python SDK](https://py.sdk.modelcontextprotocol.io/run/opentelemetry/)).
 
-**Consequence.** Web2MCP follows these conventions for its MCP spans and accepts incoming trace context, while treating the attribute names as liable to change. Whether the Rust MCP SDK emits such spans itself was not checked.
+**Consequence.** Anything2MCP follows these conventions for its MCP spans and accepts incoming trace context, while treating the attribute names as liable to change. Whether the Rust MCP SDK emits such spans itself was not checked.
 
 ## One Rust crate family covers the three desktop key stores
 

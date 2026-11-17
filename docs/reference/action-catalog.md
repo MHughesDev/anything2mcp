@@ -1,17 +1,17 @@
 # Action catalog
 
-The single list of everything a person, an agent, or a program can ask Web2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 40](../spec/40-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
+The single list of everything a person, an agent, or a program can ask Anything2MCP to do, apart from calling a target's own tools. Every row is one entry in the action registry ([spec section 40](../spec/40-authoring-interface.md)). Its command, MCP tool, REST route, and SDK method are generated from it and always share its name:
 
 | Face | Form | For `target.probe` |
 | --- | --- | --- |
-| Command | `web2mcp <noun> <verb>` | `web2mcp target probe` |
-| MCP tool | `w2m_<noun>_<verb>` | `w2m_target_probe` |
+| Command | `anything2mcp <noun> <verb>` | `anything2mcp target probe` |
+| MCP tool | `a2m_<noun>_<verb>` | `a2m_target_probe` |
 | REST | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` |
 | SDK | `client.<noun>.<verb>()` | `client.target.probe()` |
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record.
 
-**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 20](../spec/20-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `w2m_action_run`. *Phase* is when it is built.
+**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 20](../spec/20-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built.
 
 ## Using tools
 
@@ -57,7 +57,7 @@ This is a design draft. The list is settled action by action as each phase build
 
 ## Providers and discovery
 
-Added with spec sections 56, 58, and 64. Built with the stage of the [long-term plan](../plan/anything2mcp-master-plan.md) named.
+Added with spec sections 56, 58, 64, and 67. Built with the stage of the [long-term plan](../plan/anything2mcp-master-plan.md) named.
 
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
@@ -69,6 +69,8 @@ Added with spec sections 56, 58, and 64. Built with the stage of the [long-term 
 | `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
 | `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E |
+| `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable | Builder | build | Stage E |
+| `scout.report` | The last scout's report: found, drafted, proven, open, and what to look at first | Builder | build | Stage E |
 
 ## Publishing and versions
 

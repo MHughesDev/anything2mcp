@@ -8,7 +8,7 @@ Sections 53 to 65 widen the design from applications to any existing system. Thi
 | --- | --- | --- | --- |
 | 53. The universal runtime | A statement of scope | Use it to decide whether something belongs | Treat a level of the stack as supported because it is named |
 | 54. Interaction archetypes | Designed in outline | Classify a new mode; see what its driver must supply | Build a mode whose steps are still "to be fixed with its first pack" without fixing them first |
-| 55. Kernel and packs | Designed | Draw the crate boundary and enforce it; apply the entry bar | Let a pack reach the kernel outside the five registrations |
+| 55. Kernel and packs | Designed | Draw the crate boundary and enforce it; apply the entry bar | Let a pack reach the kernel outside the six registrations |
 | 56. The provider contract | Designed, without its file format | Write the manifest's schema from the field list | Add an extension point |
 | 57. Supervising subsystems | Designed as rules | Build the supervisor against the rules | Promise confinement of plug-ins before the research is done |
 | 58. Discovery and findings | Designed, without its closed lists | Build the findings store and the comparison | Let anything raise a finding above `discovered` |
@@ -18,7 +18,8 @@ Sections 53 to 65 widen the design from applications to any existing system. Thi
 | 62. Catalog of surface kinds | A catalog | Pick the next pack | Start a pack from a row in a table |
 | 63. Devices and firmware | Rules and a catalog | Know what will be refused | Build a device pack without designing it as a section first |
 | 64. Rules for tools | Designed | Apply them to every action from now on | Add an action that mixes discovery with change |
-| 65. Python-first packaging | Designed in outline | Plan the wheel | Publish under a new name before the owner confirms it |
+| 65. Python-first packaging | Designed in outline | Plan the wheel | Count a name as held before a release is published under it |
+| 67. The scout, and who does what | Designed, without each pack's drafting rules | Build the pipeline's stages as the actions they are made from come to exist | Let the scout try a write, or draft a unit, key, or read-back rule the system did not state |
 
 ## What rests on judgment alone
 

@@ -14,4 +14,4 @@ Every run can be replayed afterward, every change can be traced to a person's ap
 3. The change runs through the publish gates against the live app and the fixtures.
 4. A person approves the diff, and it is published as a new version.
 
-Because locators and endpoints each live in one place, one repair fixes every operation and pipeline that uses them. Web2MCP never heals a locator during a run, since a wrong match on a write path silently corrupts data.
+Because locators and endpoints each live in one place, one repair fixes every operation and pipeline that uses them. Anything2MCP never heals a locator during a run, since a wrong match on a write path silently corrupts data.

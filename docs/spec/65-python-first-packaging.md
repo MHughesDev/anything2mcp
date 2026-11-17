@@ -43,7 +43,7 @@ A provider package may be written in any language. Python is the first language 
 
 ## Names
 
-The long-term plan proposes the names: `anything2mcp` for the package, the crate, and the binary; `a2m` as a short command; the earlier `web2mcp` names kept as a way to install the same thing with the web pack switched on. They are the owner's to confirm, and decision 0022 stands until then.
+The package, the crate, the import, and the command are all `anything2mcp`, and `a2m` is a short name for the command. There are no alias packages under earlier names ([decision 0056](../decisions/0056-one-name-everywhere-anything2mcp.md), [section 41](41-packaging-and-release.md)).
 
 ## Nothing phones home
 

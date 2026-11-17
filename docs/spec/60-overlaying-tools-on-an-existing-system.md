@@ -9,13 +9,15 @@ This is the method, end to end: how an existing system that knows nothing of us 
 | 1 | Register | The target is named, its surfaces are declared, and on a server the record of who agreed to it being wrapped is attached | A target with no tools |
 | 2 | Attach | The probe looks at each surface and says what kind it is, which pack serves it, and how sign-in works | Surfaces, each with a pack and a sign-in method |
 | 3 | Observe | Discoverers watch the system, in use or at rest, and read what it publishes about itself. Nothing is written | Findings, `discovered` or `inferred` ([section 58](58-discovery-and-findings.md)) |
-| 4 | Model | An agent or a person writes the target's files from the findings: screens, endpoints, commands, schemas | Drafts at `reconstructed` |
+| 4 | Model | The target's files are written from the findings: screens, endpoints, commands, schemas. The drafter writes what follows by rule; an agent or a person writes the rest | Drafts at `reconstructed` |
 | 5 | Bind | Each business action is defined once as an operation, with an identity strategy and a read-back rule, and bound to the surfaces that can carry it out | Operations with bindings |
 | 6 | Verify | Fixtures, the sandbox, test records, and the publish gates | A version at `behavior_verified` |
 | 7 | Publish | A person reads the review summary, ordered by risk, and publishes | Tools at `approved` |
 | 8 | Watch | Canaries, the target's identity, and drift detection. A change sends the affected bindings back to step 6 | Tools that stay true, or stop |
 
 Steps 3 to 5 may use any help, an AI agent included. From step 6 on, nothing improvises.
+
+The scout runs steps 2 and 3, the mechanical part of step 4, and the read half of step 6 as one pipeline, with no model in it. [Section 67](67-the-scout-and-who-does-what.md) says what it does and what it leaves to the developer.
 
 ## Observing: one scenario per operation
 

@@ -1,6 +1,6 @@
 ---
 name: research-brief
-description: Run one open research brief for Web2MCP and fold the result into the design. Use before a phase or slice that depends on a brief in docs/research/11-open-research.md, or when a design question needs outside facts.
+description: Run one open research brief for Anything2MCP and fold the result into the design. Use before a phase or slice that depends on a brief in docs/research/11-open-research.md, or when a design question needs outside facts.
 argument-hint: "[brief number]"
 ---
 

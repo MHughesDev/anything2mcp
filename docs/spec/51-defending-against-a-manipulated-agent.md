@@ -1,8 +1,8 @@
 # 51. Defending against a manipulated agent
 
-Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Web2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing.
+Agents read text they did not write: records, notes, pages, files. Any of it can contain instructions aimed at the agent. Anything2MCP therefore assumes that the agent calling a tool, and the agent building one, may at some moment be acting for someone else. This section collects what the design does about that, and adds the rules that were missing.
 
-The aim is simple to state: a manipulated agent should be able to do nothing through Web2MCP that the person could not have been asked to approve, and should not be able to make Web2MCP reach, read, or send anything its tools do not openly declare.
+The aim is simple to state: a manipulated agent should be able to do nothing through Anything2MCP that the person could not have been asked to approve, and should not be able to make Anything2MCP reach, read, or send anything its tools do not openly declare.
 
 ## Inputs cannot change where a request goes
 
@@ -14,7 +14,7 @@ Operation inputs are filled into request templates. A crafted input must not be 
 - **Redirects are followed only within declared surfaces.** Anything else stops with `policy` and the code `surface_not_declared`.
 - **Inputs that are themselves addresses** use a `url` field type that accepts only destinations the operation declared. On a server, private and loopback addresses are refused unless declared.
 
-## Inputs cannot make Web2MCP read arbitrary files
+## Inputs cannot make Anything2MCP read arbitrary files
 
 Sources and uploads take files. A manipulated agent must not be able to name any file on the machine and have it sent to an application.
 
@@ -72,7 +72,7 @@ A shared target pack or a bundle from another machine is unreviewed code.
 
 ## What this cannot do
 
-Web2MCP controls what passes through Web2MCP. An agent that has been granted a read tool can read what that tool returns, and the agent's other tools are outside Web2MCP's control. Sensitivity labels decide what reaches an agent in the first place; after that, the organization's own controls on the agent apply.
+Anything2MCP controls what passes through Anything2MCP. An agent that has been granted a read tool can read what that tool returns, and the agent's other tools are outside Anything2MCP's control. Sensitivity labels decide what reaches an agent in the first place; after that, the organization's own controls on the agent apply.
 
 ## What to build and test
 

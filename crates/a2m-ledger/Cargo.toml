@@ -1,0 +1,11 @@
+[package]
+name = "a2m-ledger"
+description = "The run store, the ledger, reconcile, and the audit chain, on SQLite and Postgres."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

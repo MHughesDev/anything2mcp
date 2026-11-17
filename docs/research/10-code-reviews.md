@@ -1,5 +1,7 @@
 # Research: code-level reviews of three related projects
 
+> Written when this product was named Web2MCP. The names in this note are the ones checked or reviewed at the time, and are left as they were. The product is now Anything2MCP ([decision 0056](../decisions/0056-one-name-everywhere-anything2mcp.md)).
+
 **Status:** each repository was cloned and inspected on 2026-11-15. These are quick reviews of structure, dependencies, and documentation, not audits.
 
 ## browser-to-mcp

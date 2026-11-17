@@ -34,7 +34,7 @@ Microsoft 365 Copilot declarative agents also need an endpoint reachable from th
 1. Serve stateless Streamable HTTP. Offer OAuth and API keys.
 2. With Entra ID as the identity provider, plan on a pre-registered app registration and Copilot Studio's manual OAuth option.
 3. Document all three network bridges; recommend API Management or the virtual-network route.
-4. Provide fallbacks that need no optional MCP feature: an approval link in the tool result, and the `w2m_run_get` tool for long jobs.
+4. Provide fallbacks that need no optional MCP feature: an approval link in the tool result, and the `a2m_run_get` tool for long jobs.
 
 ## To test hands-on in Phase 6
 

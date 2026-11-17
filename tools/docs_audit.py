@@ -107,7 +107,7 @@ def main():
     # 3. Built-in tools are actions in the catalog.
     actions = set(re.findall(r"`([a-z]+\.[a-z_]+)`", catalog))
     for k, v in md.items():
-        for t in set(re.findall(r"\bw2m_[a-z]+(?:_[a-z]+)*\b", v)):
+        for t in set(re.findall(r"\ba2m_[a-z]+(?:_[a-z]+)*\b", v)):
             parts = t.split("_")[1:]
             if len(parts) < 2:
                 note("naming", f"{k}: {t} is not in noun_verb form")
@@ -115,13 +115,13 @@ def main():
                 note("naming", f"{k}: {t} has no action in the catalog")
 
     # 4. Crates: spec 29 layout and the layering table agree; nothing else is named.
-    layout = set(re.findall(r"\b(w2m-[a-z-]+)/", md["docs/spec/29-repository-crates-and-packaging.md"]))
+    layout = set(re.findall(r"\b(a2m-[a-z-]+)/", md["docs/spec/29-repository-crates-and-packaging.md"]))
     layer_text = ref[ref.index("## Crate layering"):ref.index("## Driver interface")]
-    layering = set(re.findall(r"`(w2m-[a-z-]+)`", layer_text))
+    layering = set(re.findall(r"`(a2m-[a-z-]+)`", layer_text))
     for c in sorted(layout ^ layering):
         note("crates", f"{c} is in only one of the spec 29 layout and the layering table")
     for k, v in md.items():
-        for c in set(re.findall(r"`(w2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
+        for c in set(re.findall(r"`(a2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
             note("crates", f"{k}: {c} is not in the spec 29 layout")
 
     # 5. Failure classes agree between the engine section and the reference.
@@ -157,12 +157,12 @@ def main():
     row = re.search(r"^\| Shortcuts \|(.+)$", cmd, re.M)
     shortcuts = set(re.findall(r"`([a-z]+)`", row.group(1))) if row else set()
     for k, v in md.items():
-        for code in re.findall(r"`web2mcp ([a-z]+(?: [a-z]+)?)[^`]*`", v):
+        for code in re.findall(r"`anything2mcp ([a-z]+(?: [a-z]+)?)[^`]*`", v):
             words = code.split()
             if words[0] not in known:
-                note("commands", f"{k}: `web2mcp {words[0]}` is not a shortcut, process command, or noun")
+                note("commands", f"{k}: `anything2mcp {words[0]}` is not a shortcut, process command, or noun")
             elif len(words) == 2 and words[0] in nouns and words[0] not in shortcuts and f"{words[0]}.{words[1]}" not in actions:
-                note("commands", f"{k}: `web2mcp {code}` has no action `{words[0]}.{words[1]}`")
+                note("commands", f"{k}: `anything2mcp {code}` has no action `{words[0]}.{words[1]}`")
 
     # 8. Statements that later decisions replaced. Decision records and research notes may quote them.
     replaced = {
@@ -170,7 +170,6 @@ def main():
         r"started by the MCP client over stdio": "one engine per user, not one per MCP client (decision 0024)",
         r"optional in-process bindings": "in-process bindings are deferred (decision 0025)",
         r"browser context(s)? seeded": "runs share a live session in tabs (decision 0032)",
-        r"npm install -g web2mcp": "the npm package is w2mcp (decision 0022)",
         r"input hash, and approval": "a run is identified by caller, tool version, and input hash (spec 42, rule 6)",
         r"marked interrupted": "a crashed run is `stopped`; interrupted is not a run state (spec 42)",
         r"confirmed actions in a UI binding": "commit points are actions marked `commits` (file formats)",
@@ -254,11 +253,20 @@ def main():
             if f"H-{h}" not in ids and h != "00" and h != "NN":
                 note("hypotheses", f"{k}: refers to H-{h}, which is not in the register")
 
-    # 13. Crates on disk match the layering table, and depend only on lower layers.
-    layer = {}
-    for m in re.finditer(r"^\| (\d+)\. [^|]+\|([^|]+)\|", layer_text, re.M):
+    # 13. Crates on disk match the layering table, and depend only on what their row allows.
+    #     A kernel crate never depends on a pack crate; a pack crate depends on the kernel's
+    #     lower layers and on the base of its own pack, and on nothing else (decision 0056).
+    layer, reach = {}, {}
+    for m in re.finditer(r"^\| (\d+)\. [^|]+\|([^|]+)\|([^|]+)\|", layer_text, re.M):
+        number, allowed = int(m.group(1)), m.group(3)
+        top = re.search(r"Layers? (?:1 to )?(\d+)", allowed)
+        reach[number] = number - 1 if "Everything" in allowed else int(top.group(1)) if top else 0
         for c in re.findall(r"`([a-z0-9-]+)`", m.group(2)):
-            layer[c] = int(m.group(1))
+            layer[c] = number
+
+    def pack_of(crate):
+        return crate.split("-")[2] if crate.startswith("a2m-pack-") else None
+
     on_disk = {}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
@@ -282,11 +290,21 @@ def main():
             note("layering", f"{c} is in the layering table but crates/{c} does not exist")
     for c, deps in sorted(on_disk.items()):
         for d in sorted(deps):
-            if d in layer and c in layer and layer[d] >= layer[c]:
-                note("layering", f"{c} (layer {layer[c]}) depends on {d} (layer {layer[d]}); "
-                                 "a crate may depend only on lower layers")
-            elif d not in layer and (d.startswith("w2m-") or d == "web2mcp"):
-                note("layering", f"{c} depends on {d}, which is not in the layering table")
+            if d not in layer:
+                if d.startswith("a2m-") or d == "anything2mcp":
+                    note("layering", f"{c} depends on {d}, which is not in the layering table")
+                continue
+            if c not in layer or layer[d] <= reach[layer[c]]:
+                continue
+            edge = f"{c} (layer {layer[c]}) depends on {d} (layer {layer[d]})"
+            if pack_of(d) and not pack_of(c) and c != "anything2mcp":
+                note("layering", f"{edge}; a kernel crate never depends on a pack crate")
+            elif pack_of(d) and pack_of(c):
+                if pack_of(d) != pack_of(c) or layer[d] >= layer[c]:
+                    note("layering", f"{edge}; a pack crate may depend on another pack crate "
+                                     "only when that crate is the base of its own pack")
+            else:
+                note("layering", f"{edge}; its row in the layering table allows layers 1 to {reach[layer[c]]}")
 
     # 14. One version number, and one licence text, wherever they are carried.
     workspace_file, pip_file = repo / "Cargo.toml", repo / "bindings" / "python" / "pyproject.toml"
@@ -302,6 +320,29 @@ def main():
         licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
         if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
             note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
+
+    # 15. The product's earlier names appear only in history (decision 0056).
+    earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")
+    history = ("docs/decisions/", "docs/journal/", "docs/plan/publishing-setup.md",
+               "docs/plan/anything2mcp-master-plan.md", "docs/research/10-", "docs/research/12-",
+               "docs/references/sources.md",
+               "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
+    kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}
+    skipped = {".git", "target", "__pycache__", "dist", ".venv", "node_modules"}
+    for path in sorted(repo.rglob("*")):
+        rel = path.relative_to(repo).as_posix()
+        if (not path.is_file() or skipped & set(rel.split("/")) or rel.startswith(history)
+                or (path.suffix not in kinds and not path.name.startswith("."))):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+        for i, line in enumerate(lines, 1):
+            found_name = earlier.search(re.sub(r"\]\([^)]*decisions/[^)]*\)", "]", line))
+            if found_name:
+                note("names", f"{rel}:{i}: `{found_name.group(0)}` is an earlier name; "
+                              "the product is Anything2MCP, its crates are a2m-*")
 
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "

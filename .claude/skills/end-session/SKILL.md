@@ -1,6 +1,6 @@
 ---
 name: end-session
-description: Close a working session on Web2MCP. Use before stopping work for any reason, so the next session can continue. Writes the journal entry and checks the repository is left in a true state.
+description: Close a working session on Anything2MCP. Use before stopping work for any reason, so the next session can continue. Writes the journal entry and checks the repository is left in a true state.
 ---
 
 # End a session
@@ -11,7 +11,7 @@ A session that ends without a journal entry has lost its work for the next agent
 2. Check that the documents are true: any section the session's work contradicted is corrected, any decision made has a record in `docs/decisions/`, any hypothesis tested has a result file in `docs/hypotheses/` and its status updated in the register.
 3. Write a journal entry in `docs/journal/` using the layout in `docs/journal/README.md`, and add it to the top of the table there. Be exact about what is finished, what is half-done, and what failed.
 4. Make sure "Next" names one concrete first step.
-5. Run `git status`. Tell the owner what is uncommitted and ask whether to commit and push. Do not push without being asked.
-6. Give the owner a short report: what works now, what was learned about the design, what changed in the documents, and what you would do next.
+5. Run `git status`. Commit what is uncommitted, one concern per commit, and push the branch. Open a pull request if none is open, and merge it once every check is green. Never merge over a red check; if one stays red, say so in the journal and leave the pull request open.
+6. Give a short report: what works now, what was learned about the design, what changed in the documents, which decisions were made that the owner has not read, and what comes next.
 
 Never write that something works unless a test run in this session showed it.
