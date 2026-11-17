@@ -25,10 +25,14 @@ use crate::kernel::{
 use crate::load::{SourceFile, Sources};
 use crate::register::{CompileMode, CompilerSet, Lowered, Possible};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
+use crate::source::{
+    Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
+    SourceSpec, TemplateVersion,
+};
 use crate::types::{self, Labels};
 use crate::view::{
     InputInfo, LowerContext, Model, OpInfo, OperationView, ResolvedBinding, ResolvedView,
-    SurfaceInfo, check_expr, check_site, env_type, expr_text, input_type, type_env,
+    SurfaceInfo, check_expr, check_site, env_type, expr_text, input_type, type_env, unknown_env,
 };
 
 /// The version of this compiler, which a plan's header names.
@@ -1780,7 +1784,7 @@ impl<'a> Compiler<'a> {
             })
             .collect();
         fine &= twice(self, "template version", &versions);
-        if versions.is_empty() && reader != k::OPERATION_READER {
+        if versions.is_empty() && reader != OPERATION_READER {
             self.error(
                 codes::MISSING_FIELD,
                 Stage::Validate,
@@ -1793,7 +1797,6 @@ impl<'a> Compiler<'a> {
 
         // Row fields: a bare column is data; an expression goes to the plan.
         let mut fields = Vec::new();
-        let mut bare = Vec::new();
         let mut row = Vec::new();
         let mut written: Vec<(String, &Located<Doc>)> = Vec::new();
         for field in doc.get("fields").map(Located::entries).unwrap_or_default() {
@@ -1844,11 +1847,6 @@ impl<'a> Compiler<'a> {
                         );
                         fine = false;
                     }
-                    bare.push(if required {
-                        FieldOf::required(field_name, ty.clone())
-                    } else {
-                        FieldOf::optional(field_name, ty.clone())
-                    });
                 }
                 (None, Some(expression)) => written.push((field_name.to_owned(), expression)),
                 _ => {
@@ -1867,12 +1865,12 @@ impl<'a> Compiler<'a> {
             } else {
                 FieldOf::optional(field_name, ty)
             });
-            fields.push(serde_json::json!({
-                "name": field_name,
-                "field_type": field_type.get(),
-                "required": required,
-                "column": column.and_then(Located::as_text),
-            }));
+            fields.push(RowField {
+                name: field_name.to_owned(),
+                field_type,
+                required,
+                column: column.and_then(Located::as_text).map(str::to_owned),
+            });
         }
         if fields.is_empty() {
             self.error(
@@ -1885,8 +1883,10 @@ impl<'a> Compiler<'a> {
             fine = false;
         }
         // An expression reads `row`, the record of the fields that are bare
-        // columns, each already of its field type.
-        let env = type_env(&[("row", ValueType::Record(bare))]);
+        // columns, and `source`. Neither has a type until a file is read, so
+        // an expression must end in a type of its own: a function's result,
+        // or a comparison.
+        let env = unknown_env(&["row", "source"]);
         let mut mapping = Vec::new();
         for (field_name, expression) in written {
             match self.expr(expression, &env, None) {
@@ -1914,35 +1914,92 @@ impl<'a> Compiler<'a> {
                     codes::UNKNOWN_NAME,
                     Stage::Resolve,
                     &part.at,
-                    format!("The key names `{}`, which is not a row field.", shown(&part.value)),
+                    format!(
+                        "The key names `{}`, which is not a row field.",
+                        shown(&part.value)
+                    ),
                     fix,
                 );
                 fine = false;
             }
         }
-        let delimiter = doc.get("options").and_then(|options| options.get("delimiter"));
+        let delimiter = doc
+            .get("options")
+            .and_then(|options| options.get("delimiter"));
         if let Some(delimiter) = delimiter
-            && delimiter.as_text().is_none_or(|text| text.chars().count() != 1)
+            && delimiter.as_text().is_none_or(|text| {
+                text.len() != 1 || text.contains(['"', '\n', '\r']) || !text.is_ascii()
+            })
         {
             self.error(
                 codes::UNKNOWN_VALUE,
                 Stage::Validate,
                 &delimiter.at,
-                "A delimiter is one character.".to_owned(),
+                "A delimiter is one ASCII character that is not a quote or a line break."
+                    .to_owned(),
                 "Write the one character that stands between fields, such as `\";\"`.".to_owned(),
             );
             fine = false;
         }
-        let payload = serde_json::json!({
-            "versions": doc.get("versions").map_or_else(|| serde_json::json!([]), Located::to_json),
-            "locate": doc.get("locate").map_or_else(|| serde_json::json!("document"), Located::to_json),
-            "columns": columns.iter().map(|column| column.value.as_str()).collect::<Vec<_>>(),
-            "fields": fields,
-            "key": key.iter().map(|part| part.value.as_str()).collect::<Vec<_>>(),
-            "missing": texts("missing").iter().map(|text| text.value.as_str()).collect::<Vec<_>>(),
-            "hidden": doc.text("hidden").unwrap_or("reject"),
-            "options": {"delimiter": delimiter.and_then(Located::as_text)},
-        });
+        let mut template_versions = Vec::new();
+        for version in doc.get("versions").map(Located::items).unwrap_or_default() {
+            let Some(fingerprint) = version.get("fingerprint") else {
+                continue;
+            };
+            let parts: Vec<FingerprintPart> = fingerprint
+                .get("parts")
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|part| serde_json::from_value(part.to_json()).ok())
+                .collect();
+            let computed = Fingerprint::of_parts(parts);
+            if let Some(stated) = fingerprint.get("digest")
+                && stated.as_text() != Some(computed.digest.to_string().as_str())
+            {
+                self.error(
+                    codes::UNKNOWN_VALUE,
+                    Stage::Validate,
+                    &stated.at,
+                    "The fingerprint's digest is not the digest of its parts.".to_owned(),
+                    format!("Write `digest: \"{}\"`, or leave the digest out; the compiler works it out from the parts.", computed.digest),
+                );
+                fine = false;
+            }
+            template_versions.push(TemplateVersion {
+                version: version.text("version").unwrap_or_default().to_owned(),
+                fingerprint: computed,
+            });
+        }
+        let locate = match doc.get("locate") {
+            None => Locate::Document,
+            Some(locate) => match (locate.text("named"), locate.text("sheet")) {
+                (Some(name), _) => Locate::Named(name.to_owned()),
+                (_, Some(sheet)) => Locate::Sheet(sheet.to_owned()),
+                _ => Locate::Document,
+            },
+        };
+        let payload = SourceSpec {
+            versions: template_versions,
+            locate,
+            columns: columns.into_iter().map(|column| column.value).collect(),
+            fields,
+            key: key.into_iter().map(|part| part.value).collect(),
+            missing: texts("missing")
+                .into_iter()
+                .map(|text| text.value)
+                .collect(),
+            hidden: if doc.text("hidden") == Some("include") {
+                HiddenRule::Include
+            } else {
+                HiddenRule::Reject
+            },
+            options: ReaderOptions {
+                delimiter: delimiter
+                    .and_then(Located::as_text)
+                    .and_then(|text| text.chars().next()),
+            },
+        };
         let payload = PackPayload::encode(&payload).ok()?;
         fine.then(|| {
             (
@@ -1996,7 +2053,7 @@ impl<'a> Compiler<'a> {
         {
             match self.source_plans.get(text).cloned() {
                 Some((plan, row)) => {
-                    if plan.reader != k::OPERATION_READER {
+                    if plan.reader != OPERATION_READER {
                         if let Some(taken) = inputs.iter().find(|input| input.plan.name == "source")
                         {
                             let at = taken.at.clone();

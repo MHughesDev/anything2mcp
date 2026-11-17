@@ -1,0 +1,11 @@
+[package]
+name = "a2m-pack-data"
+description = "The data pack: the `sql` driver over relational stores, with keyed writes and the catalog as its discoverer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,22 +1,23 @@
 //! The keeper's rows: sessions, their timeline, their saved state, and the
 //! stored credentials, each sealed.
 //!
-//! The keeper owns the meaning of these rows. Where they are kept is behind
-//! [`SessionStore`]: in memory today, and in the store's tables once
-//! `a2m-ledger` offers the interface through which a crate keeps its own.
-//! Every change of state is one compare-and-set on the session's state and
-//! epoch, written together with its timeline event and its saved state, so
-//! that two keepers on one store cannot both win a renewal.
+//! The keeper owns the meaning of these rows; the store owns the connection,
+//! the transactions, and the migration that creates the tables (decision
+//! 0080). Every change of state is one compare-and-set on the session's
+//! state and epoch, written in one transaction with its timeline event and
+//! its saved state, so that two keepers on one store cannot both win a
+//! renewal.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-
-use a2m_core::{DecisionId, Failure, RunId, RunnerId, SessionId, SessionState, Timestamp};
+use a2m_core::{
+    DecisionId, Failure, RunId, RunnerId, SessionId, SessionState, Timestamp, WorkspaceId,
+};
+use a2m_ledger::{Durability, Store};
 use a2m_vault::Sealed;
 
 use crate::key::SessionKey;
 use crate::name::{CredentialRef, ProfileRef, ProviderName};
 use crate::person::PersonReason;
+use crate::tables;
 
 /// One session's record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +104,28 @@ impl EventKind {
             Self::Restored => "restored",
         }
     }
+
+    /// The kind a timeline word names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
+    }
+
+    /// Every kind.
+    pub const ALL: [Self; 12] = [
+        Self::Created,
+        Self::SignInStarted,
+        Self::SignedIn,
+        Self::Leased,
+        Self::Checked,
+        Self::RenewalStarted,
+        Self::Renewed,
+        Self::Prompted,
+        Self::Expired,
+        Self::Revoked,
+        Self::Abandoned,
+        Self::Restored,
+    ];
 }
 
 /// One line of a session's timeline. It holds names, times, and causes, and
@@ -120,7 +143,7 @@ pub struct SessionEvent {
     /// The epoch after it.
     pub epoch: u64,
     /// Why, as a fixed word such as `sign_refused` or `max_age`.
-    pub cause: &'static str,
+    pub cause: String,
     /// The run a lease was given to.
     pub run: Option<RunId>,
     /// The policy decision about whom that run acts as.
@@ -139,52 +162,28 @@ pub(crate) enum Saved {
     Delete,
 }
 
-/// Where the keeper's rows are kept. A clone shares the same rows, so a test
-/// keeps one across a simulated restart, as a database file would be kept.
+/// Where the keeper's rows are kept: the store, through the tables this
+/// crate owns. A clone is the same store.
 #[derive(Debug, Clone)]
 pub struct SessionStore {
-    backing: Backing,
-}
-
-#[derive(Debug, Clone)]
-enum Backing {
-    Memory(Arc<Mutex<Memory>>),
-}
-
-#[derive(Debug, Default)]
-struct Memory {
-    rows: BTreeMap<SessionId, SessionRow>,
-    by_key: BTreeMap<SessionKey, SessionId>,
-    events: Vec<SessionEvent>,
-    saved: BTreeMap<SessionId, Sealed>,
-    credentials: BTreeMap<(String, CredentialRef), Sealed>,
+    store: Store,
 }
 
 impl SessionStore {
-    /// Rows held in memory. For tests, and for a process that keeps nothing.
+    /// The keeper's rows in `store`. The store's migrations have made the
+    /// tables.
     #[must_use]
-    pub fn in_memory() -> Self {
-        Self {
-            backing: Backing::Memory(Arc::new(Mutex::new(Memory::default()))),
-        }
-    }
-
-    fn memory(&self) -> MutexGuard<'_, Memory> {
-        let Backing::Memory(memory) = &self.backing;
-        memory.lock().unwrap_or_else(PoisonError::into_inner)
+    pub fn new(store: Store) -> Self {
+        Self { store }
     }
 
     pub(crate) async fn find(&self, key: &SessionKey) -> Result<Option<SessionRow>, Failure> {
-        let memory = self.memory();
-        Ok(memory
-            .by_key
-            .get(key)
-            .and_then(|id| memory.rows.get(id))
-            .cloned())
+        let key = key.clone();
+        self.store.read(move |tx| tables::find(tx, &key)).await
     }
 
     pub(crate) async fn get(&self, id: SessionId) -> Result<Option<SessionRow>, Failure> {
-        Ok(self.memory().rows.get(&id).cloned())
+        self.store.read(move |tx| tables::get(tx, id)).await
     }
 
     /// Inserts `row` unless a session of its key exists, and returns the
@@ -194,18 +193,11 @@ impl SessionStore {
         row: SessionRow,
         event: SessionEvent,
     ) -> Result<SessionRow, Failure> {
-        let mut memory = self.memory();
-        if let Some(existing) = memory
-            .by_key
-            .get(&row.key)
-            .and_then(|id| memory.rows.get(id))
-        {
-            return Ok(existing.clone());
-        }
-        memory.by_key.insert(row.key.clone(), row.id);
-        memory.rows.insert(row.id, row.clone());
-        memory.events.push(event);
-        Ok(row)
+        self.store
+            .write(Durability::Synced, move |tx| {
+                tables::create(tx, &row, &event)
+            })
+            .await
     }
 
     /// The compare-and-set: writes `next`, its event, and the change to the
@@ -219,29 +211,15 @@ impl SessionStore {
         event: SessionEvent,
         saved: Saved,
     ) -> Result<bool, Failure> {
-        let mut memory = self.memory();
-        let current = memory.rows.get(&seen.id);
-        if !current.is_some_and(|row| row.state == seen.state && row.epoch == seen.epoch) {
-            return Ok(false);
-        }
-        match saved {
-            Saved::Keep => {}
-            Saved::Put(sealed) => {
-                memory.saved.insert(next.id, sealed);
-            }
-            Saved::Delete => {
-                memory.saved.remove(&next.id);
-            }
-        }
-        memory.rows.insert(next.id, next);
-        memory.events.push(event);
-        Ok(true)
+        let seen = seen.clone();
+        self.store
+            .write(Durability::Synced, move |tx| {
+                tables::advance(tx, &seen, &next, &event, &saved)
+            })
+            .await
     }
 
-    /// Notes a use or a passed check, and appends its event. A check that
-    /// confirmed the credential clears the count of unconfirmed attempts. It
-    /// changes neither the state nor the epoch, so it needs no
-    /// compare-and-set.
+    /// Notes a use or a passed check, and appends its event.
     pub(crate) async fn note(
         &self,
         id: SessionId,
@@ -250,55 +228,47 @@ impl SessionStore {
         confirmed: bool,
         event: SessionEvent,
     ) -> Result<(), Failure> {
-        let mut memory = self.memory();
-        if let Some(row) = memory.rows.get_mut(&id) {
-            row.last_used_at = used_at.or(row.last_used_at);
-            row.checked_at = checked_at.or(row.checked_at);
-            if confirmed {
-                row.stored_attempts = 0;
-            }
-        }
-        memory.events.push(event);
-        Ok(())
+        self.store
+            .write(Durability::Relaxed, move |tx| {
+                tables::note(tx, id, used_at, checked_at, confirmed, &event)
+            })
+            .await
     }
 
     pub(crate) async fn saved(&self, id: SessionId) -> Result<Option<Sealed>, Failure> {
-        Ok(self.memory().saved.get(&id).cloned())
+        self.store.read(move |tx| tables::saved(tx, id)).await
     }
 
     pub(crate) async fn all(&self) -> Result<Vec<SessionRow>, Failure> {
-        Ok(self.memory().rows.values().cloned().collect())
+        self.store.read(tables::all).await
     }
 
     pub(crate) async fn events(&self, id: SessionId) -> Result<Vec<SessionEvent>, Failure> {
-        Ok(self
-            .memory()
-            .events
-            .iter()
-            .filter(|event| event.session == id)
-            .cloned()
-            .collect())
+        self.store.read(move |tx| tables::events(tx, id)).await
     }
 
     pub(crate) async fn put_credential(
         &self,
+        workspace: WorkspaceId,
         owner: String,
         reference: CredentialRef,
         sealed: Sealed,
     ) -> Result<(), Failure> {
-        self.memory().credentials.insert((owner, reference), sealed);
-        Ok(())
+        self.store
+            .write(Durability::Synced, move |tx| {
+                tables::put_credential(tx, &workspace, &owner, &reference, &sealed)
+            })
+            .await
     }
 
     pub(crate) async fn credential(
         &self,
-        owner: &str,
-        reference: &CredentialRef,
+        workspace: WorkspaceId,
+        owner: String,
+        reference: CredentialRef,
     ) -> Result<Option<Sealed>, Failure> {
-        Ok(self
-            .memory()
-            .credentials
-            .get(&(owner.to_owned(), reference.clone()))
-            .cloned())
+        self.store
+            .read(move |tx| tables::credential(tx, &workspace, &owner, &reference))
+            .await
     }
 }

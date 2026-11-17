@@ -592,7 +592,7 @@ impl Inner {
             kind: EventKind::Created,
             state: row.state,
             epoch: row.epoch,
-            cause: "first_use",
+            cause: "first_use".to_owned(),
             run: None,
             decided: None,
         };
@@ -643,7 +643,7 @@ impl Inner {
             kind,
             state: to,
             epoch: next.epoch,
-            cause,
+            cause: cause.to_owned(),
             run: None,
             decided: None,
         };
@@ -1057,8 +1057,8 @@ impl Inner {
             state: row.state,
             epoch: row.epoch,
             cause: match req.purpose {
-                Purpose::Run => "run",
-                Purpose::Probe => "probe",
+                Purpose::Run => "run".to_owned(),
+                Purpose::Probe => "probe".to_owned(),
             },
             run: Some(req.run),
             decided: Some(req.decided),
@@ -1255,7 +1255,7 @@ impl Inner {
                     kind: EventKind::Restored,
                     state: row.state,
                     epoch: row.epoch,
-                    cause: "restart",
+                    cause: "restart".to_owned(),
                     run: None,
                     decided: None,
                 };
@@ -1353,7 +1353,7 @@ impl Inner {
                 kind: EventKind::Checked,
                 state: row.state,
                 epoch: row.epoch,
-                cause: "probe_passed",
+                cause: "probe_passed".to_owned(),
                 run: None,
                 decided: None,
             };

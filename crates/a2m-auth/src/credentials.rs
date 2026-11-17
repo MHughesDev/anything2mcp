@@ -66,7 +66,7 @@ impl StoredCredentials {
         let cx = context(workspace, identity, reference)?;
         let sealed = self.vault.seal(&cx, secret.expose().as_bytes()).await?;
         self.store
-            .put_credential(owner_key(workspace, identity), reference.clone(), sealed)
+            .put_credential(*workspace, identity.to_string(), reference.clone(), sealed)
             .await
     }
 }
@@ -78,20 +78,19 @@ impl Credentials for StoredCredentials {
         reference: &'a CredentialRef,
     ) -> BoxFuture<'a, Result<Secret, Failure>> {
         Box::pin(async move {
-            let owner = owner_key(&session.workspace, &session.identity);
             let sealed = self
                 .store
-                .credential(&owner, reference)
+                .credential(
+                    session.workspace,
+                    session.identity.to_string(),
+                    reference.clone(),
+                )
                 .await?
                 .ok_or_else(|| failure::credential_missing(reference.as_str()))?;
             let cx = context(&session.workspace, &session.identity, reference)?;
             self.vault.open_secret(&cx, &sealed).await
         })
     }
-}
-
-fn owner_key(workspace: &WorkspaceId, identity: &Identity) -> String {
-    format!("{workspace}/{identity}")
 }
 
 fn context(

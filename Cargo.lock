@@ -15,6 +15,7 @@ name = "a2m-auth"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-ledger",
  "a2m-telemetry",
  "a2m-vault",
  "axum",
@@ -93,7 +94,23 @@ name = "a2m-mcp"
 version = "0.0.1"
 
 [[package]]
+name = "a2m-pack-command"
+version = "0.0.1"
+
+[[package]]
+name = "a2m-pack-data"
+version = "0.0.1"
+
+[[package]]
 name = "a2m-pack-desktop"
+version = "0.0.1"
+
+[[package]]
+name = "a2m-pack-device"
+version = "0.0.1"
+
+[[package]]
+name = "a2m-pack-file"
 version = "0.0.1"
 
 [[package]]
@@ -102,6 +119,10 @@ version = "0.0.1"
 
 [[package]]
 name = "a2m-pack-mcp"
+version = "0.0.1"
+
+[[package]]
+name = "a2m-pack-stream"
 version = "0.0.1"
 
 [[package]]

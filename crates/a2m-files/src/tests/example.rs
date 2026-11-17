@@ -424,7 +424,19 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
             .collect::<Vec<_>>(),
         ["order_id", "source"]
     );
-    assert_eq!(pipeline.source.as_ref().unwrap().mapping.len(), 2);
+    // Bare columns are data in the source's payload; only an expression is in the plan's mapping.
+    let source = pipeline.source.as_ref().unwrap();
+    assert_eq!(source.mapping.len(), 1);
+    assert_eq!(source.mapping[0].name, "label");
+    let spec: crate::SourceSpec = source.payload.decode().unwrap();
+    assert_eq!(spec.columns, ["Code", "Length"]);
+    assert_eq!(spec.fields.len(), 3);
+    assert_eq!(spec.fields[0].column.as_deref(), Some("Code"));
+    assert_eq!(spec.fields[2].column, None);
+    assert_eq!(spec.key, ["code"]);
+    assert_eq!(spec.locate, crate::Locate::Document);
+    assert!(spec.versions[0].fingerprint.is_sound());
+    assert_eq!(spec.options.delimiter, None);
     assert_eq!(pipeline.limits.max_records, Some(50));
 
     let tool = plan

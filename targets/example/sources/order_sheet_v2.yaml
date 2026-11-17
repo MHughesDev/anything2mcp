@@ -1,9 +1,20 @@
 template: order_sheet_v2
 reader: csv
-fingerprint: {header: ["Code", "Length"]}
-columns: {code: "Code", length: "Length"}
-mapping:
-  code: "trim(source.code)"
-  length: "to_inches(source.length)"
-rows: 'source.code != ""'
+versions:
+  - version: "2"
+    fingerprint:
+      digest: "7c00941f8d452ede3c7f4908015699942a87aecdd932649718d72bf6851999c7"
+      parts:
+        - {kind: sheet, place: "sheet 1", value: "|shown"}
+        - {kind: header, place: "column 1", value: "Code"}
+        - {kind: header, place: "column 2", value: "Length"}
+locate: document
+columns: ["Code", "Length"]
+fields:
+  code: {type: identifier, column: "Code"}
+  length: {type: length_ft_in, column: "Length"}
+  label: {type: identifier, expression: "upper(row.code)"}
+key: [code]
+rows: 'row.code != ""'
 missing: ["n/a"]
+hidden: reject

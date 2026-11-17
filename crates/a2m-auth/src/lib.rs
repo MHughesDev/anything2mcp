@@ -32,6 +32,7 @@ pub mod providers;
 mod sink;
 mod state;
 mod store;
+mod tables;
 #[cfg(test)]
 mod tests;
 mod work;

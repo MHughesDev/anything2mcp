@@ -35,6 +35,11 @@ anything2mcp/
     a2m-pack-http/        # HTTP pack: http and api drivers; OpenAPI, GraphQL, OData import
     a2m-pack-mcp/         # MCP pack: pass-through to an upstream MCP server, through a mapping file
     a2m-pack-desktop/     # desktop pack: Windows UI Automation, macOS Accessibility, Linux AT-SPI
+    a2m-pack-command/      # the command pack: the cli driver over declared programs, run by the supervisor
+    a2m-pack-data/         # the data pack: the sql driver; reads and keyed writes; the catalog as discoverer
+    a2m-pack-file/         # the file pack: the file driver; named places in files under declared roots
+    a2m-pack-stream/       # the stream pack: the stream driver; bounded reads and keyed publishes
+    a2m-pack-device/       # the device pack: the device driver; points over a link, ranges enforced first
     # The product: wires the packs into the kernel.
     anything2mcp/         # the `anything2mcp` and `a2m` commands and the embeddable library facade
   bindings/

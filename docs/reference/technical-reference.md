@@ -19,7 +19,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | 7. Actions | `a2m-actions` | Layers 1 to 6 |
 | 8. Roles | `a2m-runner`, `a2m-mcp`, `a2m-api`, `a2m-local` | Layers 1 to 7 |
 | 9. Pack bases | `a2m-pack-web-browser` | Layers 1 to 5 |
-| 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop` | Layers 1 to 5, and the base of its own pack |
+| 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device` | Layers 1 to 5, and the base of its own pack |
 | 11. Product | `anything2mcp` | Everything |
 
 Three rules follow from the table, and the audit states each one by name when it is broken:

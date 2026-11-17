@@ -1,0 +1,11 @@
+[package]
+name = "a2m-pack-file"
+description = "The file pack: the `file` driver over files under declared roots, read and replaced whole."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

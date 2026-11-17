@@ -176,6 +176,17 @@ pub(crate) fn type_env(names: &[(&str, ValueType)]) -> TypeEnv {
     env
 }
 
+/// An environment whose names have no type until the expression runs. An
+/// expression that reads one must still end in a known type to go into a
+/// plan.
+pub(crate) fn unknown_env(names: &[&str]) -> TypeEnv {
+    let mut env = TypeEnv::new(LibraryVersion::CURRENT);
+    for name in names {
+        let _ = env.declare_unknown(name);
+    }
+    env
+}
+
 /// Checks one expression and gives its plan form, or a diagnostic at its
 /// place in the file.
 pub(crate) fn check_expr(

@@ -10,6 +10,7 @@ use a2m_core::{
 };
 
 use crate::schema::JsonSchema;
+use crate::source::PartKind;
 
 /// The owner of the kernel's file kinds and lint codes.
 pub const KERNEL_OWNER: &str = "kernel";
@@ -292,27 +293,9 @@ fn pipeline() -> JsonSchema {
         )
 }
 
-/// The kinds of part a template's fingerprint is made of. They are the
-/// source readers' words; the compiler checks a file against them and passes
-/// the fingerprint on unread.
-pub const FINGERPRINT_PART_KINDS: &[&str] = &[
-    "date_system",
-    "sheet",
-    "header",
-    "merged",
-    "table",
-    "table_header",
-    "list",
-    "name",
-    "macros",
-];
-
-/// The reader name of a source whose rows are another operation's result.
-pub const OPERATION_READER: &str = "operation";
-
 fn source() -> JsonSchema {
     let part = JsonSchema::object()
-        .required("kind", JsonSchema::words(FINGERPRINT_PART_KINDS))
+        .required("kind", JsonSchema::words(PartKind::NAMES))
         .required("place", JsonSchema::text())
         .required("value", JsonSchema::text());
     let version = JsonSchema::object()
@@ -320,7 +303,7 @@ fn source() -> JsonSchema {
         .required(
             "fingerprint",
             JsonSchema::object()
-                .required("digest", JsonSchema::text())
+                .optional("digest", JsonSchema::text())
                 .required("parts", JsonSchema::list(part)),
         );
     let field = JsonSchema::object()

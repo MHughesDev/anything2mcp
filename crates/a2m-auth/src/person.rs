@@ -37,6 +37,19 @@ impl PersonReason {
             Self::CredentialRefused => "credential_refused",
         }
     }
+
+    /// The reason a timeline word names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::SignIn,
+            Self::Consent,
+            Self::SecondFactor,
+            Self::CredentialRefused,
+        ]
+        .into_iter()
+        .find(|reason| reason.as_str() == name)
+    }
 }
 
 /// One request to the session's own person.

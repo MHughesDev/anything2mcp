@@ -22,6 +22,7 @@ pub mod kernel;
 mod load;
 mod register;
 mod schema;
+mod source;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod types;
@@ -46,6 +47,10 @@ pub use register::{
     DraftingRule, ExprSite, FileKind, LintRule, Lowered, Lowering, Possible, SurfaceKindSpec,
 };
 pub use schema::{Checked, JsonSchema, OPEN_QUESTION, Reference};
+pub use source::{
+    Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, PartKind, ReaderOptions,
+    RowField, SourceSpec, TemplateVersion,
+};
 pub use view::{
     FieldTypeView, InputView, KindContext, LowerContext, OperationView, ResolvedBinding,
     ResolvedView, SurfaceView, TargetView, expr_text,
