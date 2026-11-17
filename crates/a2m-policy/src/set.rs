@@ -179,7 +179,10 @@ pub struct Quota {
     pub period_minutes: u32,
 }
 
-/// The protected settings a policy set carries (spec section 226).
+/// The protected settings a policy set carries (spec section 226), and the
+/// policy settings of the installation, which the kernel hands in with
+/// [`BuiltIn::with_settings`]. A field added after the first stored format
+/// reads as its default from a set stored before it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// Who must approve a write.
@@ -188,11 +191,57 @@ pub struct Settings {
     pub max_records_per_run: u32,
     /// How long an approval may wait to be used, in minutes.
     pub approval_window_minutes: u32,
+    /// The highest effect class a tool may have when the caller is an
+    /// agent, whatever a grant gives.
+    #[serde(default = "highest_effect")]
+    pub agent_effect_ceiling: EffectClass,
+    /// Whether a write may go anywhere but declared test records of a test
+    /// environment. Off, a write whose records are not all such is refused.
+    #[serde(default = "yes")]
+    pub writes_outside_tests: bool,
+    /// Whether an irreversible run needs the approvals of two people.
+    #[serde(default)]
+    pub two_person_irreversible: bool,
+    /// Whether a pre-approval rule may let a write proceed without a person.
+    #[serde(default = "yes")]
+    pub pre_approval: bool,
+}
+
+const fn highest_effect() -> EffectClass {
+    EffectClass::Irreversible
+}
+
+const fn yes() -> bool {
+    true
 }
 
 impl Settings {
-    /// The longest approval window any set may state: one day.
+    /// The longest approval window any set may state: one day. The
+    /// installation's setting has the same ceiling (decision 0145).
     pub const LONGEST_WINDOW_MINUTES: u32 = 24 * 60;
+
+    /// The tighter of the two on every setting: what is in force when a
+    /// stored set and the installation's settings both apply.
+    #[must_use]
+    pub fn tighter(&self, other: &Self) -> Self {
+        Self {
+            approve_writes: self.approve_writes.max(other.approve_writes),
+            max_records_per_run: self.max_records_per_run.min(other.max_records_per_run),
+            approval_window_minutes: self
+                .approval_window_minutes
+                .min(other.approval_window_minutes),
+            agent_effect_ceiling: self.agent_effect_ceiling.min(other.agent_effect_ceiling),
+            writes_outside_tests: self.writes_outside_tests && other.writes_outside_tests,
+            two_person_irreversible: self.two_person_irreversible || other.two_person_irreversible,
+            pre_approval: self.pre_approval && other.pre_approval,
+        }
+    }
+
+    /// Whether these settings are looser than `old` on any one of them.
+    #[must_use]
+    pub fn looser_than(&self, old: &Self) -> bool {
+        self.tighter(old) != *self
+    }
 }
 
 impl Default for Settings {
@@ -201,6 +250,10 @@ impl Default for Settings {
             approve_writes: ApproveWrites::PersonEachRun,
             max_records_per_run: 50,
             approval_window_minutes: 15,
+            agent_effect_ceiling: EffectClass::Irreversible,
+            writes_outside_tests: true,
+            two_person_irreversible: false,
+            pre_approval: true,
         }
     }
 }
@@ -305,6 +358,16 @@ impl BuiltIn {
             profile: Profile::Server,
             layers: PolicyLayers::default(),
         }
+    }
+
+    /// The same set, with the installation's policy settings in place of
+    /// its own: what the kernel opens the policy engine with. It stays the
+    /// built-in set of its profile, and the settings stay in force under any
+    /// set published later, which can only tighten them.
+    #[must_use]
+    pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.layers.settings = settings;
+        self
     }
 
     /// Where this set runs.
@@ -480,14 +543,14 @@ impl CandidateSet {
     }
 
     /// Whether this set is looser than `current` on a protected setting: a
-    /// higher record limit, a longer approval window, a weaker approver, or a
-    /// pre-approval rule `current` does not hold.
+    /// higher record limit, a longer approval window, a weaker approver, a
+    /// higher ceiling for agents, writes outside test records, one approver
+    /// of an irreversible run, pre-approval switched on, or a pre-approval
+    /// rule `current` does not hold.
     #[must_use]
     pub fn loosens(&self, current: &PolicyLayers) -> bool {
         let (new, old) = (&self.compiled.layers.settings, &current.settings);
-        new.max_records_per_run > old.max_records_per_run
-            || new.approval_window_minutes > old.approval_window_minutes
-            || new.approve_writes < old.approve_writes
+        new.looser_than(old)
             || self
                 .compiled
                 .layers

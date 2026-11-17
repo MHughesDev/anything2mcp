@@ -1,6 +1,6 @@
 # `a2m-local`
 
-The engine on one machine, and the channel to it. This crate holds both ends of the local channel: the listener inside the engine, and the connector every thin client uses to find the engine, start it when nothing answers, and check its version. It also holds the short-lived loopback listener that serves an approval or sign-in page, and the operating system's notification and user-presence prompt: polkit on a Linux desktop, built; macOS and Windows, not built yet. Nothing reached through the channel can approve.
+The engine on one machine, and the channel to it. This crate holds both ends of the local channel: the listener inside the engine, and the connector every thin client uses to find the engine, start it when nothing answers, and check its version. It also holds the short-lived loopback listener that serves an approval or sign-in page, and the operating system's notification and user-presence prompt: polkit on a Linux desktop, LocalAuthentication on macOS, and Windows Hello on Windows; the last two are written and not yet run. Nothing reached through the channel can approve.
 
 ## Facts
 
@@ -9,7 +9,7 @@ The engine on one machine, and the channel to it. This crate holds both ends of 
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`, and for the person surface `a2m-policy`, `a2m-auth`, `a2m-vault`. Outside: Tokio, axum, `hyper`, `hyper-util`; `rustix` on macOS and Linux and `windows-sys` on Windows ([decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md)). On Linux only, for the presence prompt: `zbus` 6.3.0 (no default features; `tokio`, `proxy`) and `zbus_polkit` 6.0.0 ([decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md)). The crates for the macOS and Windows prompts are named in [decision 0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) and not in the tree yet. A crate for notifications is still to be chosen |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`, and for the person surface `a2m-policy`, `a2m-auth`, `a2m-vault`. Outside: Tokio, axum, `hyper`, `hyper-util`; `rustix` on macOS and Linux and `windows-sys` on Windows ([decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md)). On Linux only, for the presence prompt: `zbus` 6.3.0 (no default features; `tokio`, `proxy`) and `zbus_polkit` 6.0.0 ([decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md)). On macOS only: `objc2-local-authentication` 0.3.2, `objc2` 0.6.5, `objc2-foundation` 0.3.2, and `block2` 0.6.2, with no default features. On Windows only: `windows` 0.62.2 (`Security_Credentials_UI`, `Win32_System_WinRT`, `Win32_Foundation`) and `windows-future` 0.3.2, and more features of `windows-sys` ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). A crate for notifications is still to be chosen |
 | Built in | Roadmap package 1.4 (the channel, the lifecycle); 3.6 (the loopback listener, the presence prompt, notifications) |
 | Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on one machine, the protected settings of [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md); the [local channel](../../reference/technical-reference.md#local-channel) and [on-disk layout](../../reference/technical-reference.md#on-disk-layout) of the technical reference |
 
@@ -111,7 +111,8 @@ pub enum PresenceKind { OsPrompt, DialogOnly, NotAvailable }            // os_pr
 pub enum PromptName { Polkit, LocalAuthentication, WindowsHello }       // polkit, local_authentication, windows_hello
 pub enum PresenceReason {                                               // one word, for a report
     Ready, NotBuilt, NoSystemBus, NoPolkit, PolicyNotInstalled, SessionNotActive,
-    NoAgent, GrantedWithoutAsking, CheckFailed,
+    NoAgent, GrantedWithoutAsking, NoWindowStation, SessionRemote, SessionLocked,
+    NotSetUp, DisabledByPolicy, DeviceBusy, LockedOut, CheckFailed,
 }
 pub struct Availability {
     pub kind: PresenceKind, pub prompt: Option<PromptName>, pub reason: PresenceReason,
@@ -130,7 +131,7 @@ pub enum PromptAnswer {
     NotAvailable(Availability),   // could not be raised, and why
 }
 pub struct NoPrompt;                                // not_available, not_built
-pub fn system_prompt() -> Arc<dyn PresencePrompt>;  // polkit on Linux; NoPrompt on macOS and Windows
+pub fn system_prompt() -> Arc<dyn PresencePrompt>;  // polkit, LocalAuthentication, Windows Hello; NoPrompt elsewhere
 pub async fn presence_available() -> Availability;  // what system_prompt() says of itself, for doctor.run
 ```
 
@@ -195,8 +196,8 @@ Where the operating system offers no prompt a background process can raise, the 
 | System | Prompt | State |
 | --- | --- | --- |
 | Linux | polkit `CheckAuthorization` on the system bus, for the engine's own process and the one action `io.github.mhughesdev.anything2mcp.presence` | Built: `src/presence/polkit.rs` |
-| macOS | The system's own authentication | Not built: `NoPrompt` answers `not_built` |
-| Windows | Windows Hello | Not built: `NoPrompt` answers `not_built` |
+| macOS 13 and later | `LAContext` with the policy of the device's owner: Touch ID or a paired watch, and the account password where neither can be used | Written, not run: `src/presence/local_authentication.rs` |
+| Windows 10 and 11 | Windows Hello, through `IUserConsentVerifierInterop::RequestVerificationForWindowAsync`, with `CheckAvailabilityAsync` read first | Written, not run: `src/presence/windows_hello.rs` |
 
 **The policy file** is `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy`: one action, `allow_any` no, `allow_inactive` no, `allow_active` `auth_self`. An administrator copies it into `/usr/share/polkit-1/actions`; the remedy the engine gives says so. A test holds the file to the action id in the code and to those defaults. The packages do not carry the file yet.
 
@@ -219,6 +220,30 @@ Where the operating system offers no prompt a background process can raise, the 
 | polkit refuses, and lists the action | `not_available`, `check_failed` | the same |
 | polkit says the check was cancelled | `not_available`, `check_failed` | `Dismissed` |
 | Any other error, or no answer in ten seconds to a call that asks nobody | `not_available`, `check_failed`, with the error's name | the same |
+
+**How the macOS and Windows prompts answer** ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). Each is one file with the same shape as the Linux one: a small trait over the system (`Authenticator`, `Verifier`), the real system behind it in a module compiled on its own system only, and total functions from what the system says to what the prompt answers. The files are compiled into the tests on every system, so the whole mapping is tested everywhere against a made-up system.
+
+1. Before anybody is asked, the session is read, then the system is asked without showing anything (`canEvaluatePolicy`, `CheckAvailabilityAsync`). Only a session at the screen, not locked, whose system says it can ask, goes on.
+2. The prompt carries the engine's words: `{title}: {detail}` of `PromptText`, so the tool and the first twelve characters of the change's hash. macOS shows them after "is trying to"; Windows shows them as the dialog's message.
+3. Dropping the future of the system's ask takes the dialog away: macOS invalidates the context, which lives on a thread of its own because it may not move between threads; Windows cancels the operation and then closes its owner window. So the deadline, and an ask dropped for any other reason, both close the dialog. macOS sets the reuse duration to none on every context, so no earlier unlock counts.
+4. Windows needs a window to own the dialog. Each ask makes one of its own: a hidden window of the system's `STATIC` class, on a thread that runs its messages until the ask ends.
+
+| What the system says | macOS | Windows | The answer |
+| --- | --- | --- | --- |
+| No graphical session, or another user's at the screen | `CGSessionCopyCurrentDictionary` is null, or not on the console | | `not_available`, `session_not_active` |
+| The services' session, or a window station that is not `WinSta0` | | session 0, or the station's name | `not_available`, `no_window_station` |
+| Remote desktop | | `SM_REMOTESESSION` | `not_available`, `session_remote` |
+| The screen is locked | the session's lock key, which Apple does not document | the session's flags | `not_available`, `session_locked` |
+| Nothing set up to check | no password; no biometry, watch, or pairing | device not present; not configured for the user | `not_available`, `not_set_up` |
+| Turned off by policy; busy | | disabled by policy; device busy | `not_available`, `disabled_by_policy`; `device_busy` |
+| Locked out, before the prompt | biometry lockout | | `not_available`, `locked_out` |
+| No interface may be shown | not interactive | | `not_available`, `session_not_active` |
+| The person passed | success | verified | `Present` |
+| Cancelled by the person, the system, or the engine | user cancel, user fallback, system cancel, app cancel | canceled | `Dismissed` |
+| Failed, or locked out after the prompt | authentication failed, biometry lockout | retries exhausted | `Denied` |
+| Anything else: an unknown code or result, an error of another domain, a failed call, an unknown lock state, no answer in ten seconds to a call that asks nobody | | | `not_available`, `check_failed`, with the code |
+
+**What CI shows, and what only a person can.** On a macOS and a Windows runner, one test each calls the real `available()` through `system_prompt()` and asserts only that it answers one of the named outcomes within the bound, and writes the answer to the log; another holds this build's codes to the system crate's constants. The real `ask` is never called in CI. A person checks once on each system: the prompt comes to the front after a press in the browser; it shows our words with the same twelve characters the page shows; a prompt left alone closes at the deadline; synthetic input cannot press it; and, on macOS, that a program with no bundle gets the dialog at all, and what its title says.
 
 **What `doctor.run` and `serve` say.** `LocalSurface::presence` gives the kind, the prompt's name, the reason, a sentence, and the remedy. The product's `serve` writes them as one line before it says it is ready. `doctor.run` does not report them yet: `PersonSurface` has no way to ask a surface what its presence check is.
 
@@ -285,7 +310,8 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 4. Done: the loopback listener and the approval page, which shows the stored change through `ApprovalDesk::preview`, with the prompt behind an interface. Not built: the words above the records for uploads, sends, and anything irreversible.
 5. Done: the presence prompt's interface as [decision 0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) gives it: availability asked at run time with a kind and a reason, a deadline on every ask, one prompt at a time, and the name of the prompt that answered.
 6. Done, with what only a prepared machine can show: the Linux prompt over polkit. Run here: the whole mapping against a made-up authority; the real bus code against an address where nothing listens; and the real bus code against a real polkit on a bus of the test's own, for the cases that need nothing installed (no polkit on the bus, and no policy file). Not run anywhere yet: the cases that need the policy file installed and a test account, which the CI job prepares (below). Never run: a dialog on a real desktop, under Wayland and under X11, which needs a person once.
-7. Not built: the macOS and Windows prompts, the fallback dialog, notifications, the sign-in status page, and the way to a session's person. On macOS and Windows no approval is recorded on one machine and no protected setting is loosened. H-12 is open.
+7. Written, not run: the macOS and Windows prompts ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). Run here, on Linux: their whole mapping against a made-up system. Compiled and linted for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`, tests included, through a scratch crate that holds only `presence.rs`, its files, and their tests, because the whole crate's tree compiles SQLite. CI on macOS and Windows is the first compile of the whole crate and the first run of the real `available()`; the real `ask` needs a person once on each.
+8. Not built: the fallback dialog, notifications, the sign-in status page, and the way to a session's person. H-12 is open.
 
 **The test against a real polkit** is `against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared`. It runs only when `A2M_TEST_POLKIT` says how far the machine was prepared, and is otherwise skipped by name:
 
@@ -301,7 +327,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 ## Open points
 
 - Settled by [decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md): the pipe, the peer checks, and the locks need no new crate. Still open from research brief 26: starting a detached process on each system.
-- Settled by [research note 20](../../research/20-operating-system-user-presence-checks.md) and decisions [0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) and [0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md): which presence prompts a background process can raise, and the Linux one as built. Still open: how the policy file reaches a machine that installed the product through pip or npm, which carry one binary; whether a desktop's polkit agent closes its dialog when the check is cancelled; and the hand check on a desktop.
+- Settled by [research note 20](../../research/20-operating-system-user-presence-checks.md) and decisions [0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) and [0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md): which presence prompts a background process can raise, and the Linux one as built; [decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md), the macOS and Windows ones as written. Still open: how the policy file reaches a machine that installed the product through pip or npm, which carry one binary; whether a desktop's polkit agent closes its dialog when the check is cancelled; the hand check on a desktop; and on macOS and Windows the hand checks listed under the presence prompt, of which the one most likely to change the design is whether the Windows prompt comes to the front.
 - How `doctor.run` learns the presence check: a method on `PersonSurface` that the dispatcher's `doctor.run` asks, most likely.
 - The record of an approval names the prompt only once the policy engine's `PresenceCheck` has the three names.
 - Whether an engine that is not elevated can read the user of an elevated client's process on Windows. If it cannot, that client is refused, which is the safe side.

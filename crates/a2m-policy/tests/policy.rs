@@ -234,6 +234,8 @@ fn approved(run: RunId, by: PrincipalRef, hash: Digest) -> Approved {
         approver: by,
         channel: Channel::LocalPrompt,
         presence: PresenceCheck::OsPrompt,
+        proved_at: Timestamp::from_unix_millis(START),
+        prompt: Some("example_prompt".to_owned()),
     }
 }
 
@@ -986,8 +988,8 @@ async fn decisions_versions_and_switches_survive_a_restart_and_can_be_explained(
     let (why_denied, why_waits) = store
         .read(move |tx| {
             Ok((
-                explainer.explain(tx, denied.id)?,
-                explainer.explain(tx, waits.id)?,
+                explainer.explain(tx, denied.id, workspace())?,
+                explainer.explain(tx, waits.id, workspace())?,
             ))
         })
         .await
@@ -1015,7 +1017,7 @@ async fn decisions_versions_and_switches_survive_a_restart_and_can_be_explained(
     assert_eq!(stopped.refusal.unwrap().code(), &KILL_SWITCH_ON);
     let explainer = policy.clone();
     let why = store
-        .read(move |tx| explainer.explain(tx, stopped.id))
+        .read(move |tx| explainer.explain(tx, stopped.id, workspace()))
         .await
         .unwrap();
     assert!(why.summary.contains("kill switch"), "{}", why.summary);
@@ -1023,7 +1025,7 @@ async fn decisions_versions_and_switches_survive_a_restart_and_can_be_explained(
     // An identifier that names no decision is an input failure.
     let unknown = a2m_core::DecisionId::from_bytes([5; 16]);
     let missing = store
-        .read(move |tx| policy.explain(tx, unknown))
+        .read(move |tx| policy.explain(tx, unknown, workspace()))
         .await
         .unwrap_err();
     assert_eq!(missing.class(), FailureClass::Input);

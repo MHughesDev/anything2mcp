@@ -204,7 +204,7 @@ pub(crate) fn css(selector: &str) -> Query {
 }
 
 /// What a base error means for a discoverer that was only looking.
-pub(crate) fn failure(error: &BrowserError, scope: &DiscoveryScope<'_>) -> Failure {
+pub(crate) fn failure(error: &BrowserError) -> Failure {
     if let Some(failure) = error.failure() {
         return failure;
     }
@@ -259,7 +259,7 @@ pub(crate) async fn present(
     match tab.locate(query, scope.deadline).await {
         Ok(_) | Err(BrowserError::Ambiguous { .. }) => Ok(true),
         Err(BrowserError::NotFound) => Ok(false),
-        Err(error) => Err(failure(&error, scope)),
+        Err(error) => Err(failure(&error)),
     }
 }
 
@@ -272,13 +272,13 @@ pub(crate) async fn json_body(
     let body = match tab.locate(&css("body"), scope.deadline).await {
         Ok(body) => body,
         Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => return Ok(None),
-        Err(error) => return Err(failure(&error, scope)),
+        Err(error) => return Err(failure(&error)),
     };
     let text = match tab.read(&body, &ReadWhat::Text, scope.deadline).await {
         Ok(RawValue::Text(text)) => text,
         Ok(RawValue::Flag(_) | RawValue::Absent)
         | Err(BrowserError::TooLarge { .. } | BrowserError::NotFound) => return Ok(None),
-        Err(error) => return Err(failure(&error, scope)),
+        Err(error) => return Err(failure(&error)),
     };
     let text = text.trim();
     if !(text.starts_with('{') || text.starts_with('[')) {
@@ -337,7 +337,7 @@ impl Core {
                 &Origins::of([&surface]),
             )
             .await
-            .map_err(|error| failure(&error, scope))
+            .map_err(|error| failure(&error))
     }
 
     /// The surface's own address, taken apart.
@@ -417,7 +417,7 @@ impl Core {
                     standing: Standing::SignIn("other_origin"),
                 });
             }
-            Err(error) => return Err(failure(&error, scope)),
+            Err(error) => return Err(failure(&error)),
         };
         // A redirect is followed by the browser before this crate sees it;
         // one that ended at an address that looks like an action is not
@@ -476,7 +476,7 @@ impl Core {
         match tab.wait(&until, deadline).await {
             Ok(()) => Ok(true),
             Err(BrowserError::Timeout { .. }) => Ok(false),
-            Err(error) => Err(failure(&error, scope)),
+            Err(error) => Err(failure(&error)),
         }
     }
 

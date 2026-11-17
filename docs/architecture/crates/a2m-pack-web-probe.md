@@ -71,7 +71,7 @@ Rule one of [section 218](../../spec/2-kernel/218-discovery-and-findings.md) is 
 | --- | --- |
 | The type | This crate keeps an `Observer` from the base and nothing else of the cell it is given. An `Observer` opens observing tabs only; one has no input method, and there is no way to obtain an acting tab from it. A check in CI is to refuse the names of the acting types in this crate's source; it must match whole words, because the crate names the cell `SharedBrowsers`. The check is not written yet |
 | The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames. This crate marks no request safe. WebSockets are refused at creation. A refused request becomes an `exchange` finding that says the system never answered; anything else refused becomes a limitation on the finding of its page |
-| Navigation | A link is followed only when it is a plain link to the surface's own origin, its name is shared with no other link on the page, and neither its address nor its name holds a word of `ACTION_WORDS` (sign-out, delete, remove, approve, confirm, send, pay, and the like). A link not followed is counted in the report, and a link refused as an action is a limitation on the screen. A focus can name a path of the surface and nothing else. What "looks like an action" means is settled in Phase 4 |
+| Navigation | A link is followed only when it is a plain link to the surface's own origin, its name is shared with no other link on the page, and neither its address nor its name holds a word of `ACTION_WORDS` (sign-out, delete, remove, approve, confirm, send, pay, and the like). A link not followed is counted in the report, and a link refused as an action is a limitation on the screen. A focus can name a path of the surface and nothing else. Every address the tab is sent to passes the same word check, whatever named it, the surface, a focus, or a link: one that looks like an action is never visited, and stops the discovery with `policy`, `address_looks_like_an_action` ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)). A redirect is followed by the browser before this crate sees it: one that ends at such an address is not read, and stops the discovery the same way, after the visit. The tab is opened for the surface's origin, and the browser holds it there: a move the page starts is ended before it leaves the browser, and a redirect to another origin is ended too, which the probe reports as a sign-in by redirect. What "looks like an action" means is settled in Phase 4 |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox. A discoverer is given only what `SandboxPort` offers: no driver, no ledger token, no way to reach `Driver::act`. This crate has no driver, so it sends no step through the port at all |
 
 **Capture of a person's use is not exploration, and is not built.** When a person starts a capture, they use the system in a visible window through a watching tab, and may save. That save is the person's act; the discoverer only listens. The scout never opens a watching tab, and a capture can only be started and stopped by the person whose use it records ([section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
@@ -166,10 +166,11 @@ It uses the base's `Observer`, `Look`, `Snapshot`, and the list of what an obser
 | `edge_blocked` | `forbidden_by_edge`, `rate_limited_by_edge` | A page answered 403 or 429. `web_probe` names the block in its surface finding; the other discoverers stop. `challenge_page` is not built |
 | `session_expired` | `needs_login` | A page asks for a sign-in: it answered 401, the tab ended at another origin, or a password input shows. `web_probe` makes a finding of it; the other discoverers stop, and a page a link led to is counted and passed over |
 | `policy` | `surface_not_declared` | Asked to look at an address that is not of the surface's origin |
+| `policy` | `address_looks_like_an_action` | Asked to visit an address whose path or query holds a word of `ACTION_WORDS`, by the surface, a focus, or a link; or a redirect ended at one |
 | `input` | `focus_invalid` | The focus `paths` is not a list of paths that each start with one `/` |
 | `transient` | `page_not_loaded`; the base's `timeout` and `connection_lost` | The page did not load, or the browser was lost |
 | `busy` | The base's `browser_unavailable` | No browser is installed |
-| `unknown_variant` | `page_unreadable` | The page could not be read in a way no rule covers |
+| `unknown_variant` | `page_unreadable` | The page could not be read in a way no rule covers. The message names the kind of answer and holds none of the browser's or the page's text |
 
 `unknown_platform` is not a failure in discovery: the surface finding says so, and its tier is `unsupported` until a person names a profile.
 
@@ -186,6 +187,8 @@ Hitting a bound is not a failure. The report names the bound, `pages` or `second
 | An endpoint with a tier-two segment is `inferred`; an endpoint never answered is `inferred` | Unit tests on templating, and the capture of two orders with `tier_two` |
 | A discovery that hits a bound says which, and how many pages it left | A discovery whose time is up |
 | A sign-in wall and a block are named and never read | A page that redirects to a sign-in form; a page that answers 403 |
+| An address that looks like an action is never visited, whatever named it; a redirect to another origin is a sign-in by redirect | `an_address_that_looks_like_an_action_is_never_visited_whatever_names_it`: two focus paths, by path and by query, for both discoverers that take a focus, and a surface whose own address is one; the control interface counts no write |
+| A failure message holds no page text | `a_page_that_cannot_be_read_puts_none_of_its_text_in_the_message` |
 | A platform the profiles do not know is reported unknown, never guessed | The probe of the test application: `unknown_platform`, tier `unsupported` |
 | A registry with only this pack builds, and its digest is stable | Two registries |
 
@@ -209,6 +212,8 @@ Run on Linux only. The crate has no code that differs by operating system.
 - A page inside an application that holds a password input is taken for a sign-in wall and is not read.
 - When a page is ready to be read. A page is read when its document is parsed, or when the focus's `ready_text` shows. A page that fills itself by script later is read early, and nothing says so.
 - Whether a discovery should look through a session marked for discovery. The scope carries none.
+- **One profile, `discovery`, serves every person's discoveries of a target and environment.** Cookies and storage a page sets persist from one discovery to the next, so two discoveries can differ by what an earlier one left, and a profile signed in by some means of the system's own would no longer look as nobody. The browser engine starts with a cleared environment and an owned data directory, so a device's account is not handed to it; a fresh profile for each discovery would close the rest, at the cost of a browser start each time.
+- A page title in a `screen` finding is redacted and cut to 160 characters; it is free text from the system, which the describer keeps apart and which no field marks untrusted yet.
 - The sandbox port takes steps for a driver. A discoverer that looks through a browser of its own pack has no use for it, and one that needs stored findings cannot get them.
 - The file format of a scenario ([section 401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md)).
 - Whether capture should also read what in-page code sends over WebSockets and server-sent events, which section 301 observes for confirmation and does not drive.

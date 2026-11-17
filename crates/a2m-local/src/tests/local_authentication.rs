@@ -15,8 +15,8 @@ use tokio::time::Instant;
 
 use super::world::within;
 use crate::presence::local_authentication::{
-    Authenticator, Fault, LocalAuthenticationPrompt, Session, answered, code, placed,
-    reason_for, unavailable,
+    Authenticator, Fault, LocalAuthenticationPrompt, Session, answered, code, placed, reason_for,
+    unavailable,
 };
 use crate::{PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName, PromptText};
 
@@ -80,7 +80,11 @@ struct Fake {
 }
 
 impl Fake {
-    fn new(session: Session, can: Result<(), Fault>, after: Option<Result<(), Fault>>) -> Arc<Self> {
+    fn new(
+        session: Session,
+        can: Result<(), Fault>,
+        after: Option<Result<(), Fault>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             session,
             can,
@@ -98,7 +102,9 @@ impl Fake {
     }
 
     fn raised(&self) -> bool {
-        self.calls().iter().any(|call| call.starts_with("evaluate "))
+        self.calls()
+            .iter()
+            .any(|call| call.starts_with("evaluate "))
     }
 }
 
@@ -176,7 +182,10 @@ fn only_the_systems_yes_is_a_persons_presence_and_no_error_is() {
         code::SYSTEM_CANCEL,
         code::APP_CANCEL,
     ] {
-        assert_eq!(answered(Err(Fault::Code(dismissed))), PromptAnswer::Dismissed);
+        assert_eq!(
+            answered(Err(Fault::Code(dismissed))),
+            PromptAnswer::Dismissed
+        );
     }
     for denied in [code::AUTHENTICATION_FAILED, code::BIOMETRY_LOCKOUT] {
         assert_eq!(answered(Err(Fault::Code(denied))), PromptAnswer::Denied);
@@ -190,7 +199,10 @@ fn only_the_systems_yes_is_a_persons_presence_and_no_error_is() {
         code::BIOMETRY_NOT_PAIRED,
         code::BIOMETRY_DISCONNECTED,
     ] {
-        assert_eq!(named(Fault::Code(not_set_up)), Some(PresenceReason::NotSetUp));
+        assert_eq!(
+            named(Fault::Code(not_set_up)),
+            Some(PresenceReason::NotSetUp)
+        );
     }
     assert_eq!(
         named(Fault::Code(code::NOT_INTERACTIVE)),
@@ -208,7 +220,11 @@ fn only_the_systems_yes_is_a_persons_presence_and_no_error_is() {
         Fault::Foreign(code::AUTHENTICATION_FAILED),
         Fault::Lost,
     ] {
-        assert_eq!(named(failed), Some(PresenceReason::CheckFailed), "{failed:?}");
+        assert_eq!(
+            named(failed),
+            Some(PresenceReason::CheckFailed),
+            "{failed:?}"
+        );
     }
 
     // Before the prompt, every fault is a reason, never a yes; a lockout
@@ -246,7 +262,12 @@ async fn the_prompt_is_raised_only_where_the_system_could_ask_and_passes_only_on
                 )
                 .await;
                 let could = session == Session::OnConsole && can == Ok(());
-                assert_eq!(fake.raised(), could, "{session:?}, {can:?}: {:?}", fake.calls());
+                assert_eq!(
+                    fake.raised(),
+                    could,
+                    "{session:?}, {can:?}: {:?}",
+                    fake.calls()
+                );
                 assert_eq!(
                     got == PRESENT,
                     could && after == Ok(()),
@@ -293,7 +314,11 @@ async fn the_dialog_shows_the_engines_words_and_the_deadline_takes_it_away() {
     // The words, exactly as the surface gave them.
     let fake = Fake::new(Session::OnConsole, Ok(()), Some(Ok(())));
     assert_eq!(
-        within("the ask", prompt_over(&fake).ask(text(), Instant::now() + FAR)).await,
+        within(
+            "the ask",
+            prompt_over(&fake).ask(text(), Instant::now() + FAR)
+        )
+        .await,
         PRESENT
     );
     let reason = reason_for(&text());
@@ -324,9 +349,11 @@ async fn the_dialog_shows_the_engines_words_and_the_deadline_takes_it_away() {
     // An ask that is dropped takes its dialog away too.
     let fake = Fake::new(Session::OnConsole, Ok(()), None);
     let prompt = prompt_over(&fake);
-    let dropped =
-        tokio::time::timeout(Duration::from_millis(100), prompt.ask(text(), Instant::now() + FAR))
-            .await;
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(100),
+        prompt.ask(text(), Instant::now() + FAR),
+    )
+    .await;
     assert!(dropped.is_err());
     assert_eq!(fake.calls().last().map(String::as_str), Some("invalidate"));
 
@@ -354,7 +381,10 @@ fn the_codes_are_the_frameworks() {
         (code::BIOMETRY_LOCKOUT, LAError::BiometryLockout),
         (code::APP_CANCEL, LAError::AppCancel),
         (code::INVALID_CONTEXT, LAError::InvalidContext),
-        (code::COMPANION_NOT_AVAILABLE, LAError::CompanionNotAvailable),
+        (
+            code::COMPANION_NOT_AVAILABLE,
+            LAError::CompanionNotAvailable,
+        ),
         (code::BIOMETRY_NOT_PAIRED, LAError::BiometryNotPaired),
         (code::BIOMETRY_DISCONNECTED, LAError::BiometryDisconnected),
         (code::INVALID_DIMENSIONS, LAError::InvalidDimensions),

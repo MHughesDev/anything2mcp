@@ -203,7 +203,7 @@ impl WebProbe {
             let snapshot = tab
                 .snapshot(&SnapshotLimits::default(), scope.deadline)
                 .await
-                .map_err(|error| failure(&error, scope))?;
+                .map_err(|error| failure(&error))?;
             if snapshot.cut {
                 limitations.push((
                     LimitationCode::Truncated,
@@ -414,7 +414,7 @@ impl WebSnapshot {
                     links.unread += 1;
                     continue;
                 }
-                Err(error) => return Err(failure(&error, scope)),
+                Err(error) => return Err(failure(&error)),
             };
             let what = ReadWhat::Attribute {
                 name: "href".to_owned(),
@@ -426,7 +426,7 @@ impl WebSnapshot {
                     links.unread += 1;
                     continue;
                 }
-                Err(error) => return Err(failure(&error, scope)),
+                Err(error) => return Err(failure(&error)),
             };
             if looks_like_an_action(&href) || looks_like_an_action(name) {
                 links.refused += 1;
@@ -463,7 +463,7 @@ impl WebSnapshot {
             let snapshot = tab
                 .snapshot(&SnapshotLimits::default(), scope.deadline)
                 .await
-                .map_err(|error| failure(&error, scope))?;
+                .map_err(|error| failure(&error))?;
             if snapshot.cut {
                 limitations.push((
                     LimitationCode::Truncated,

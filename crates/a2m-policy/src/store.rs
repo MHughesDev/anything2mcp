@@ -138,6 +138,7 @@ pub(crate) struct StoredDecision {
     pub(crate) decided_at: Timestamp,
     pub(crate) resource: Option<String>,
     pub(crate) refusal_code: Option<String>,
+    pub(crate) workspace: String,
 }
 
 pub(crate) fn decision(
@@ -147,7 +148,7 @@ pub(crate) fn decision(
 ) -> Result<Option<StoredDecision>, Failure> {
     let row = tables(tx, key)?.query_first(
         "SELECT principal_id, question, allowed, reasons, policy_version, decided_at, resource,
-                refusal_code
+                refusal_code, workspace_id
          FROM decisions WHERE id = ?1",
         &[SqlValue::from(id)],
     )?;
@@ -161,6 +162,7 @@ pub(crate) fn decision(
             decided_at: Timestamp::from_unix_millis(row.int(5)?),
             resource: row.opt_text(6)?.map(str::to_owned),
             refusal_code: row.opt_text(7)?.map(str::to_owned),
+            workspace: row.text(8)?.to_owned(),
         })
     })
     .transpose()
@@ -267,6 +269,7 @@ pub(crate) struct StoredApproval {
     pub(crate) expires_at: Option<i64>,
     pub(crate) used_at: Option<i64>,
     pub(crate) revoked_at: Option<i64>,
+    pub(crate) approver: String,
 }
 
 fn approval_of(row: &Row) -> Result<StoredApproval, Failure> {
@@ -276,6 +279,7 @@ fn approval_of(row: &Row) -> Result<StoredApproval, Failure> {
         expires_at: row.opt_int(2)?,
         used_at: row.opt_int(3)?,
         revoked_at: row.opt_int(4)?,
+        approver: row.text(5)?.to_owned(),
     })
 }
 
@@ -287,7 +291,7 @@ pub(crate) fn approvals_of(
 ) -> Result<Vec<StoredApproval>, Failure> {
     tables(tx, key)?
         .query(
-            "SELECT id, diff_hash, expires_at, used_at, revoked_at FROM approvals
+            "SELECT id, diff_hash, expires_at, used_at, revoked_at, approver_id FROM approvals
              WHERE scope = 'run' AND run_id = ?1 ORDER BY granted_at DESC, id DESC",
             &[SqlValue::from(run)],
         )?

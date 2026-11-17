@@ -27,6 +27,7 @@ Rust tests do not start the binary. They call `example_app::harness::TestApp::st
 | `/secure/...` | Cases 13 to 15 and 29: signing in, below |
 | `/traps/...` | Case 32: pages that write by themselves, below |
 | `/escapes/...` | Case 32, continued: pages that try to get out of a tab that only observes, below |
+| `/leaving/{how}/orders/{order}/items/{item}` | Case 32, for the interface driver: the line-item form on a page that moves itself to the other loopback name while it loads (`load`), leaves or opens a window on it after Save (`click`, `window`), shows a refusal once a field is typed (`stale`), or says "Saved." before anything is done (`saved`). Every move aims at `/traps/write/leaving/{how}` |
 | `/edge/elsewhere`, `/edge/blocked`, `/edge/limited` | Cases 34 and 23: a redirect to the other loopback host name (`localhost` when asked as `127.0.0.1`), a 403 page as a protective edge would send, and a 429 with `Retry-After: 30` |
 
 Rules a line-item write must pass: the order is a draft; the description is not empty; the quantity is 1 to 9999; the length is a number of inches that is a whole number of sixteenths. An update must carry a version, and a create must carry none: a version left out of an update, or sent with a create, is refused as invalid with 422, like any other field. A version that is present but is not the stored one is a conflict, refused with 409. A refused write stores nothing.

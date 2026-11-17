@@ -379,7 +379,12 @@ mod system {
             // checked says, allocated by the system with the alignment of
             // any structure. Level 1 is checked before the union is read.
             let info = unsafe { &*buffer.cast::<WTSINFOEXW>() };
-            (info.Level == 1).then(|| unsafe { info.Data.WTSInfoExLevel1.SessionFlags })
+            if info.Level == 1 {
+                // SAFETY: level 1 says the union holds its level-1 member.
+                Some(unsafe { info.Data.WTSInfoExLevel1.SessionFlags })
+            } else {
+                None
+            }
         };
         // SAFETY: the buffer came from `WTSQuerySessionInformationW` and is
         // freed once; nothing read from it is used afterwards.

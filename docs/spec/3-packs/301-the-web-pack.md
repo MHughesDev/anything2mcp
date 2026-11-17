@@ -95,6 +95,8 @@ The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the
 - **An outcome can carry outputs known before the commit point,** such as a value the form shows before saving. The engine records them before the committing step runs.
 - **A driver never signs in or renews.** It reports a sign of expiry through the lease and stops; the session keeper decides.
 - **The fixed environment never varies:** viewport, locale, time zone, color scheme, and reduced motion are set per target.
+- **A tab stays on its surface.** A `ui` tab is opened for its surface's origin, and the browser engine holds it there. A move the page tries to another origin, a window, and a download stop the run; after a committing click each leaves the write in doubt.
+- **An answer is what changed after the click.** A committing action is not clicked while the page already shows one of the screen's variants or the action's confirmation, since its answer could not be told from them ([decision 0144](../../decisions/0144-the-web-drivers-and-discoverers-after-their-safety-audit.md)).
 
 A `ui` step costs under 50 ms of overhead and a `page_http` step under 20 ms, on a warm tab. These are budgets until measured ([section 225](../2-kernel/225-performance.md)).
 
@@ -282,7 +284,7 @@ This is held in four places, and each would hold without the others.
 | --- | --- |
 | The type | The probe is constructed with an `Observer`. It opens observing and watching tabs only; neither has an input method, and there is no way to get an acting tab from one. A check in CI refuses the names of the acting types in the probe's source |
 | The browser | An observing tab fails every request whose method is not GET, HEAD, or OPTIONS before it leaves the browser, from the page, its workers, and its frames, unless a person marked that request safe |
-| Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped |
+| Navigation | A link is followed only when it is a plain link to a declared surface, it is not a form, and its address does not look like an action by the pack's list of such words (sign-out, delete, remove, approve, confirm, send, pay, and the like). A refused link is counted, never silently dropped. Every address discovery visits passes the same check, whatever named it: a link, a focus path, or the surface itself |
 | The kernel | Discovery runs as a job on a runner, inside the engine's sandbox, with a lease the keeper marked for discovery. A discoverer is given only what the sandbox port offers: no driver, no ledger token, no way to act |
 
 In an observing tab:

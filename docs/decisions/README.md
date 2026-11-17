@@ -147,6 +147,8 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0141 | [The data pack holds a statement to one read or one keyed write, and a connection to one file](0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md) | Accepted (design decision) |
 | 0142 | [The presence prompt's interface and the Linux prompt, as built](0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md) | Accepted (design decision) |
 | 0143 | [The browser engine after its safety audit](0143-the-browser-engine-after-its-safety-audit.md) | Accepted (design decision) |
+| 0144 | [The web drivers and discoverers after their safety audit](0144-the-web-drivers-and-discoverers-after-their-safety-audit.md) | Accepted (design decision) |
+| 0146 | [The macOS and Windows presence prompts, as built](0146-the-macos-and-windows-presence-prompts-as-built.md) | Accepted (design decision) |
 | 0147 | [The engine after its safety audit](0147-the-engine-after-its-safety-audit.md) | Accepted (design decision) |
 | 0148 | [The provider contract and the scheduler after their safety audit](0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md) | Accepted (design decision) |
 | 0149 | [The file pack after its safety audit](0149-the-file-pack-after-its-safety-audit.md) | Accepted (design decision) |

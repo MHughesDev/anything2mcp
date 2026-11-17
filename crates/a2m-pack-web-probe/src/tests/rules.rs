@@ -352,3 +352,21 @@ fn a_screen_finding_keeps_structure_and_types_and_no_value() {
     let (names, shared) = crate::screen::link_names(&snapshot);
     assert_eq!((names, shared), (vec!["L-101", "Orders"], 0));
 }
+
+#[test]
+fn a_page_that_cannot_be_read_puts_none_of_its_text_in_the_message() {
+    let planted = "secret-for-tests-page-text";
+    for error in [
+        a2m_pack_web_browser::BrowserError::Unexpected(planted.to_owned()),
+        a2m_pack_web_browser::BrowserError::RequestFailed(planted.to_owned()),
+    ] {
+        let failure = crate::look::failure(&error);
+        assert_eq!(failure.code(), &crate::codes::PAGE_UNREADABLE);
+        assert!(
+            !failure.message().contains(planted),
+            "{}",
+            failure.message()
+        );
+        assert!(!format!("{failure:?}").contains(planted));
+    }
+}

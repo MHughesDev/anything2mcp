@@ -33,7 +33,7 @@ word! {
 
 /// Raised whenever the logic of a guardrail changes, so that the guardrails'
 /// hash, and with it every set's version, changes too.
-const GUARDRAILS_REVISION: u32 = 1;
+const GUARDRAILS_REVISION: u32 = 2;
 
 /// A built-in forbid. No policy set can remove one: they are not in a set's
 /// data, they are consulted before any permit, and their hash is part of
@@ -47,6 +47,22 @@ pub(crate) struct Guardrail {
 
 fn caller_is_not_a_person(request: &Request) -> bool {
     request.principal.kind != PrincipalKind::Person || request.context.caller_is_agent
+}
+
+/// Whether the caller is an agent: an agent identity, or any principal a
+/// front door says an agent calls as.
+fn caller_is_an_agent(request: &Request) -> bool {
+    request.principal.kind == PrincipalKind::Agent || request.context.caller_is_agent
+}
+
+/// Whether the request is about a write: a tool above `read`, the question
+/// whether it may proceed without a person, or a person's approval of it.
+fn about_a_write(request: &Request) -> bool {
+    request.context.effect != EffectClass::Read
+        && matches!(
+            request.question,
+            Question::UseTool | Question::WriteWithoutPerson | Question::Approve
+        )
 }
 
 /// Whether the principal is `person`, or was proved to act for them.
@@ -108,6 +124,39 @@ pub(crate) const GUARDRAILS: &[Guardrail] = &[
                 && matches!(&request.resource, Resource::Identity(Identity::Person(owner)) if !is_or_acts_for(request, owner))
         },
         refusal: || Some(failure::identity_not_allowed()),
+    },
+    // The forbids below follow the settings in force, so a set, or the
+    // installation's settings, can only switch them on (decision 0145).
+    Guardrail {
+        id: "limit.agent_effect_ceiling",
+        says: "When the caller is an agent, a tool whose effect class is above the setting `agent_effect_ceiling` is not used, whatever a grant gives.",
+        applies: |settings, request| {
+            matches!(
+                request.question,
+                Question::UseTool | Question::WriteWithoutPerson
+            ) && caller_is_an_agent(request)
+                && request.context.effect > settings.agent_effect_ceiling
+        },
+        refusal: || Some(failure::effect_too_high()),
+    },
+    Guardrail {
+        id: "limit.writes_only_to_test_records",
+        says: "With the setting `writes_outside_tests` off, a write proceeds, and is approved, only when every record it writes is a declared test record of a test environment.",
+        applies: |settings, request| {
+            !settings.writes_outside_tests
+                && request.question != Question::UseTool
+                && about_a_write(request)
+                && !request.context.test_records
+        },
+        refusal: || Some(failure::not_granted()),
+    },
+    Guardrail {
+        id: "limit.no_pre_approval",
+        says: "With the setting `pre_approval` off, no pre-approval rule lets a write proceed without a person: every write waits for one.",
+        applies: |settings, request| {
+            !settings.pre_approval && request.question == Question::WriteWithoutPerson
+        },
+        refusal: || None,
     },
 ];
 
@@ -592,6 +641,10 @@ mod tests {
                 approve_writes: ApproveWrites::NamedApprover,
                 max_records_per_run: 1_000_000,
                 approval_window_minutes: Settings::LONGEST_WINDOW_MINUTES,
+                agent_effect_ceiling: EffectClass::Irreversible,
+                writes_outside_tests: true,
+                two_person_irreversible: false,
+                pre_approval: true,
             },
             tests: Vec::new(),
         };

@@ -68,9 +68,11 @@ fn added(how: &str) -> Option<String> {
         "load" => format!("location.href = {};", trap("load")),
         "click" => save(&format!("location.href = {};", trap("click"))).replace("{before}", ""),
         "window" => save("").replace("{before}", &format!("window.open({});", trap("window"))),
-        "stale" => "addEventListener(\"input\", () => { document.getElementById(\"problems\").innerHTML = \
+        "stale" => {
+            "addEventListener(\"input\", () => { document.getElementById(\"problems\").innerHTML = \
                     \"<li>The quantity was refused earlier.</li>\"; }, {once: true});"
-            .to_owned(),
+                .to_owned()
+        }
         "saved" => "document.getElementById(\"status\").textContent = \"Saved.\";".to_owned(),
         _ => return None,
     })

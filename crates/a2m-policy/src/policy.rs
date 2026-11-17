@@ -13,7 +13,7 @@ use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
 use crate::model::{PrincipalRef, Question, Request, RuleId, word};
 use crate::rules::{self, Answer, Verdict};
-use crate::set::{self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, TestReport};
+use crate::set::{self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, Settings, TestReport};
 use crate::store;
 
 /// The policy engine. Cheap to clone; every clone is the same engine.
@@ -27,6 +27,10 @@ struct Inner {
     /// The key to this crate's tables, which the store hands out once.
     key: PolicyKey,
     profile: Profile,
+    /// The installation's policy settings, from the built-in set the engine
+    /// was opened with: in force under any stored set, which can only
+    /// tighten them.
+    floor: Settings,
     /// The set in force as this process last saw it. `decide` asks the store
     /// for the newest version on every call and loads it when it differs, so
     /// a version published by any process takes effect at the next decision.
@@ -256,6 +260,7 @@ impl Policy {
         built_in: BuiltIn,
     ) -> Result<(Self, ApprovalSurface), Failure> {
         let profile = built_in.profile();
+        let floor = built_in.layers().settings.clone();
         let candidate = CandidateSet::compile(built_in.layers(), profile)?;
         tests_must_pass(&candidate.test())?;
         // The key to this crate's tables comes from the store once: a
@@ -267,6 +272,7 @@ impl Policy {
                 store: store.clone(),
                 key,
                 profile,
+                floor,
                 current: Mutex::new(Current::None),
             }),
         };
@@ -346,7 +352,11 @@ impl Policy {
             .flatten()
             .and_then(|row| {
                 let digest: Digest = row.version.parse().ok()?;
-                set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()
+                let mut set = set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()?;
+                // The installation's settings stay in force under a set
+                // published later: on each setting, the tighter one holds.
+                set.layers.settings = set.layers.settings.tighter(&self.inner.floor);
+                Some(set)
             });
         loaded.map_or_else(
             || Current::Unreadable(version.to_owned()),
@@ -515,10 +525,18 @@ impl Policy {
     ///
     /// # Errors
     ///
-    /// `input`/`decision_not_found` when no such decision is recorded; the
-    /// store's failures.
-    pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId) -> Result<Explanation, Failure> {
-        let Some(row) = store::decision(tx, self.key(), &id.to_string())? else {
+    /// `input`/`decision_not_found` when no such decision is recorded in
+    /// the caller's `workspace`: a decision of another workspace is not
+    /// told apart from one that does not exist. The store's failures.
+    pub fn explain(
+        &self,
+        tx: &mut Tx<'_>,
+        id: DecisionId,
+        workspace: WorkspaceId,
+    ) -> Result<Explanation, Failure> {
+        let found = store::decision(tx, self.key(), &id.to_string())?
+            .filter(|row| row.workspace == workspace.to_string());
+        let Some(row) = found else {
             return Err(Failure::new(
                 FailureClass::Input,
                 DECISION_NOT_FOUND,
@@ -674,17 +692,26 @@ fn tests_must_pass(report: &TestReport) -> Result<(), Failure> {
 
 /// Whether a kill switch that is on covers the request.
 fn covers(on: &[(String, String)], request: &Request) -> bool {
-    let workspace = request.context.workspace.to_string();
     let tool = match &request.resource {
-        crate::model::Resource::Tool(tool) => Some(tool),
+        crate::model::Resource::Tool(tool) => Some((tool.target.as_str(), tool.tool.as_str())),
         _ => None,
     };
+    covers_parts(on, &request.context.workspace.to_string(), tool)
+}
+
+/// Whether a switch that is on covers work in `workspace` on a tool, named
+/// by its target and its full name.
+pub(crate) fn covers_parts(
+    on: &[(String, String)],
+    workspace: &str,
+    tool: Option<(&str, &str)>,
+) -> bool {
     on.iter()
         .any(|(scope, name)| match KillScopeKind::from_text(scope) {
             Some(KillScopeKind::Everything) => true,
-            Some(KillScopeKind::Workspace) => *name == workspace,
-            Some(KillScopeKind::Target) => tool.is_some_and(|tool| tool.target.as_str() == name),
-            Some(KillScopeKind::Operation) => tool.is_some_and(|tool| tool.tool.as_str() == name),
+            Some(KillScopeKind::Workspace) => name == workspace,
+            Some(KillScopeKind::Target) => tool.is_some_and(|(target, _)| target == name),
+            Some(KillScopeKind::Operation) => tool.is_some_and(|(_, tool)| tool == name),
             // A switch this engine cannot read stops everything.
             None => true,
         })

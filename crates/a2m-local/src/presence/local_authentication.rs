@@ -170,6 +170,10 @@ pub(crate) fn unavailable(fault: &Fault) -> Availability {
             "The system may not show a prompt to this process, so no presence prompt can be raised.",
             "Start the engine from your own login session at the Mac itself, then press again.",
         ),
+        // Errors of the engine's own use of a context, which it never
+        // reuses and gives no dimensions to.
+        Fault::Code(code::INVALID_CONTEXT) => failed("invalid_context".to_owned()),
+        Fault::Code(code::INVALID_DIMENSIONS) => failed("invalid_dimensions".to_owned()),
         Fault::Code(other) => failed(format!("local_authentication {other}")),
         Fault::Foreign(other) => failed(format!("another domain's error {other}")),
         Fault::Lost => failed("no answer".to_owned()),

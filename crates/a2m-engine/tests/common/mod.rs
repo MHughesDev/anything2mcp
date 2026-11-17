@@ -2058,8 +2058,7 @@ impl Control for StoreControl {
             let settled = self
                 .store
                 .write(Durability::Synced, move |tx| {
-                    tx.ledger()
-                        .settle(
+                    tx.ledger().settle(
                         &fence,
                         record,
                         Reconciled::Landed {

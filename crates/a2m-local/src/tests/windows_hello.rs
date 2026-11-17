@@ -192,7 +192,11 @@ fn only_verified_is_a_persons_presence_and_no_error_is() {
     // presence.
     for answer in every_answer() {
         let got = answered(answer);
-        assert_eq!(got == PRESENT, answer == Ok(code::VERIFIED), "{answer:?} gave {got:?}");
+        assert_eq!(
+            got == PRESENT,
+            answer == Ok(code::VERIFIED),
+            "{answer:?} gave {got:?}"
+        );
         assert_ne!(got, PromptAnswer::Confirmed, "{answer:?}");
     }
     // Each of the others has its name.
@@ -206,12 +210,23 @@ fn only_verified_is_a_persons_presence_and_no_error_is() {
         named(Ok(code::DISABLED_BY_POLICY)),
         Some(PresenceReason::DisabledByPolicy)
     );
-    assert_eq!(named(Ok(code::DEVICE_BUSY)), Some(PresenceReason::DeviceBusy));
+    assert_eq!(
+        named(Ok(code::DEVICE_BUSY)),
+        Some(PresenceReason::DeviceBusy)
+    );
     for unknown in [-1, 7, 8, i32::MIN, i32::MAX] {
-        assert_eq!(named(Ok(unknown)), Some(PresenceReason::CheckFailed), "{unknown}");
+        assert_eq!(
+            named(Ok(unknown)),
+            Some(PresenceReason::CheckFailed),
+            "{unknown}"
+        );
     }
     for fault in every_fault() {
-        assert_eq!(named(Err(fault)), Some(PresenceReason::CheckFailed), "{fault:?}");
+        assert_eq!(
+            named(Err(fault)),
+            Some(PresenceReason::CheckFailed),
+            "{fault:?}"
+        );
     }
     // An error is shown by its code alone, as Windows writes one.
     let shown = unavailable(&Fault::Call(-2_147_024_891));
@@ -228,7 +243,10 @@ fn only_verified_is_a_persons_presence_and_no_error_is() {
     }
     let why = |availability| standing(availability).unwrap_err().reason;
     assert_eq!(why(Ok(code::DEVICE_NOT_PRESENT)), PresenceReason::NotSetUp);
-    assert_eq!(why(Ok(code::DISABLED_BY_POLICY)), PresenceReason::DisabledByPolicy);
+    assert_eq!(
+        why(Ok(code::DISABLED_BY_POLICY)),
+        PresenceReason::DisabledByPolicy
+    );
     assert_eq!(why(Ok(code::DEVICE_BUSY)), PresenceReason::DeviceBusy);
     for odd in [code::RETRIES_EXHAUSTED, code::CANCELED, 9] {
         assert_eq!(why(Ok(odd)), PresenceReason::CheckFailed, "{odd}");
@@ -349,9 +367,17 @@ async fn the_prompt_is_raised_only_where_windows_hello_could_ask_and_passes_only
 #[tokio::test]
 async fn the_dialog_shows_the_engines_words_and_the_deadline_cancels_it() {
     // The words, exactly as the surface gave them.
-    let fake = Fake::new(Ok(AT_THE_SCREEN), Ok(code::VERIFIED), Some(Ok(code::VERIFIED)));
+    let fake = Fake::new(
+        Ok(AT_THE_SCREEN),
+        Ok(code::VERIFIED),
+        Some(Ok(code::VERIFIED)),
+    );
     assert_eq!(
-        within("the ask", prompt_over(&fake).ask(text(), Instant::now() + FAR)).await,
+        within(
+            "the ask",
+            prompt_over(&fake).ask(text(), Instant::now() + FAR)
+        )
+        .await,
         PRESENT
     );
     let message = message_for(&text());
@@ -376,15 +402,21 @@ async fn the_dialog_shows_the_engines_words_and_the_deadline_cancels_it() {
     // An ask that is dropped cancels its dialog too.
     let fake = Fake::new(Ok(AT_THE_SCREEN), Ok(code::VERIFIED), None);
     let prompt = prompt_over(&fake);
-    let dropped =
-        tokio::time::timeout(Duration::from_millis(100), prompt.ask(text(), Instant::now() + FAR))
-            .await;
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(100),
+        prompt.ask(text(), Instant::now() + FAR),
+    )
+    .await;
     assert!(dropped.is_err());
     assert_eq!(fake.calls().last().map(String::as_str), Some("cancel"));
 
     // At or after the deadline nothing is raised at all, even where the
     // person would pass.
-    let fake = Fake::new(Ok(AT_THE_SCREEN), Ok(code::VERIFIED), Some(Ok(code::VERIFIED)));
+    let fake = Fake::new(
+        Ok(AT_THE_SCREEN),
+        Ok(code::VERIFIED),
+        Some(Ok(code::VERIFIED)),
+    );
     let got = prompt_over(&fake).ask(text(), Instant::now()).await;
     assert_eq!(got, PromptAnswer::Dismissed);
     assert!(!fake.raised(), "{:?}", fake.calls());
@@ -395,19 +427,26 @@ async fn the_dialog_shows_the_engines_words_and_the_deadline_cancels_it() {
 #[test]
 fn the_values_are_the_systems() {
     use windows::Security::Credentials::UI::{
-        UserConsentVerificationResult as Result, UserConsentVerifierAvailability as Availability,
+        UserConsentVerificationResult as Verification,
+        UserConsentVerifierAvailability as Availability,
     };
     for (ours, theirs) in [
-        (code::VERIFIED, Result::Verified.0),
-        (code::DEVICE_NOT_PRESENT, Result::DeviceNotPresent.0),
-        (code::NOT_CONFIGURED_FOR_USER, Result::NotConfiguredForUser.0),
-        (code::DISABLED_BY_POLICY, Result::DisabledByPolicy.0),
-        (code::DEVICE_BUSY, Result::DeviceBusy.0),
-        (code::RETRIES_EXHAUSTED, Result::RetriesExhausted.0),
-        (code::CANCELED, Result::Canceled.0),
+        (code::VERIFIED, Verification::Verified.0),
+        (code::DEVICE_NOT_PRESENT, Verification::DeviceNotPresent.0),
+        (
+            code::NOT_CONFIGURED_FOR_USER,
+            Verification::NotConfiguredForUser.0,
+        ),
+        (code::DISABLED_BY_POLICY, Verification::DisabledByPolicy.0),
+        (code::DEVICE_BUSY, Verification::DeviceBusy.0),
+        (code::RETRIES_EXHAUSTED, Verification::RetriesExhausted.0),
+        (code::CANCELED, Verification::Canceled.0),
         (code::VERIFIED, Availability::Available.0),
         (code::DEVICE_NOT_PRESENT, Availability::DeviceNotPresent.0),
-        (code::NOT_CONFIGURED_FOR_USER, Availability::NotConfiguredForUser.0),
+        (
+            code::NOT_CONFIGURED_FOR_USER,
+            Availability::NotConfiguredForUser.0,
+        ),
         (code::DISABLED_BY_POLICY, Availability::DisabledByPolicy.0),
         (code::DEVICE_BUSY, Availability::DeviceBusy.0),
     ] {

@@ -479,3 +479,50 @@ async fn a_wall_a_block_and_a_bound_are_named_and_never_passed() {
     assert!(site.writes().await.is_empty());
     bench.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_address_that_looks_like_an_action_is_never_visited_whatever_names_it() {
+    let site = Site::start().await;
+    let bench = Bench::new("action-paths", no_secrets());
+    let orders = site.url("/orders");
+    let refused = |failure: Failure| {
+        assert_eq!(
+            (failure.class(), failure.code()),
+            (FailureClass::Policy, &codes::ADDRESS_LOOKS_LIKE_AN_ACTION),
+            "{failure}"
+        );
+    };
+    // A focus that names one, by its path or by its query, for both of
+    // the discoverers that take a focus.
+    for path in ["/probe/items/L-101/remove", "/probe/plain?then=delete"] {
+        for name in ["web_snapshot", "web_capture"] {
+            let look = Look {
+                paths: vec![path],
+                ..Look::default()
+            };
+            refused(bench.run(name, &orders, &look).await.err().unwrap());
+        }
+    }
+    // A surface whose own address is one.
+    let acting = site.url("/probe/items/L-101/remove");
+    refused(
+        bench
+            .run("web_probe", &acting, &Look::default())
+            .await
+            .err()
+            .unwrap(),
+    );
+    // The route writes when it is visited, and it never was.
+    assert!(site.writes().await.is_empty());
+
+    // A start page that sends its visitor to another origin: the browser
+    // ends the move there, and the probe sees a sign-in by redirect.
+    let elsewhere = site.url("/edge/elsewhere");
+    let probe = must(bench.run("web_probe", &elsewhere, &Look::default()).await);
+    let (_, found) = probe.one("surface", "/edge/elsewhere");
+    assert_eq!(found["answer"], "sign_in");
+    assert_eq!(found["redirected"], true);
+    let (_, found) = probe.one("sign_in_method", "/edge/elsewhere");
+    assert_eq!(found["method"], "redirect");
+    bench.end().await;
+}
