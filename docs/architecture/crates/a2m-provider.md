@@ -512,6 +512,8 @@ pub struct LaunchSpec {
     pub place: Option<String>,                                 // one subsystem of a kind holds a place
 }
 pub struct ProgramRef { pub path: PathBuf, pub digest: Option<Digest> }
+// impl From<&DeclaredProgram> for ProgramRef, from the plan type of the core crate: the engine passes `surface.programs.iter().map(ProgramRef::from).collect()`
+// to `DriverHandle::supervisor`, where `surface` is the `SurfacePlan` of the run (decision 0124).
 #[derive(Default)]
 pub struct EnvAllowlist { pub pass: Vec<String>, pub set: Vec<(String, OsString)> }   // names passed through; pairs set. Never a secret
 pub struct OneShot { pub max_output_bytes: u64, pub time_limit: Duration, pub stdin: Option<Vec<u8>> }

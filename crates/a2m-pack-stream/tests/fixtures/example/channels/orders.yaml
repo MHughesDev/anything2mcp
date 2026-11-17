@@ -1,0 +1,45 @@
+channel: orders.status
+address: example.orders.status
+shape: retained
+role: state
+schema: order_status
+key: {field: order_id, type: identifier}
+correlation: {field: headers.correlation_id}
+read_through: [browse, own_subscription]
+subscription: example.runtime
+consumers: none
+wait: {default: 2s, max: 10s}
+limits: {browse_count: 100, message_bytes: 65536}
+---
+channel: orders.events
+address: example.orders.events
+shape: log
+role: events
+schema: order_event
+key: {field: order_id}
+read_through: [browse, own_subscription]
+consumers: outside
+idempotency: {header: idempotency-token}
+wait: {default: 2s, max: 10s}
+limits: {browse_count: 2}
+---
+channel: orders.work
+address: example.orders.work
+shape: queue
+role: events
+key: {field: order_id}
+read_through: browse
+ownership: runtime_owned
+consumers: none
+idempotency: {header: idempotency-token, broker_dedupe: true}
+wait: {default: 2s, max: 10s}
+---
+channel: orders.notices
+address: example.orders.notices
+shape: topic
+role: events
+correlation: {field: headers.correlation_id}
+read_through: own_subscription
+subscription: example.runtime
+consumers: outside
+wait: {default: 2s, max: 10s}

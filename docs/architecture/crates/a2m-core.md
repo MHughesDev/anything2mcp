@@ -182,7 +182,7 @@ pub const PLAN_FORMAT: u16 = 1;
 pub struct Plan {
     pub header: PlanHeader,                 // format, minimum_engine, compiler, target, version, sources
     pub target: TargetPlan,                 // what holds for the target as a whole; below
-    pub surfaces: Vec<SurfacePlan>,         // name, kind, address, same_session_as, stands, rate, payload
+    pub surfaces: Vec<SurfacePlan>,         // name, kind, address, same_session_as, stands, rate, programs, payload
     pub environments: Vec<EnvironmentPlan>, // name, kind, addresses, test_records: Vec<RecordKey>, approve_writes: Option<ApproveWrites>
     pub auth: Vec<AuthPlan>,                // one per group of surfaces that share a sign-in; below
     pub field_types: Vec<FieldTypePlan>,    // name, base, ty, places, rounding, step, unit, display_unit, currency, zone, codes, sensitivity, untrusted, format, normalizer
@@ -193,6 +193,10 @@ pub struct Plan {
     pub packs: Vec<PackSection>,            // each pack's own compiled knowledge, opaque here
     pub tests: Vec<TestPlan>,               // name, tool, kind, fixture, inputs, expect, restore
 }
+/// A program a surface's driver may start. `SurfacePlan::programs` lists them for every environment of the target;
+/// the engine hands them to the supervisor and reads nothing else in them. A path that is not absolute does not encode or decode.
+pub struct DeclaredProgram { pub path: String, pub digest: Option<Digest> }
+impl DeclaredProgram { pub fn is_absolute_path(path: &str) -> bool; }   // from the root, a drive, or a network share; the same answer on every machine
 pub struct PlanExpr { pub source: String, pub result: ValueType, pub library: u32 }   // canonical CEL text, already checked
 pub struct ExprIndex(u32);   // and SurfaceIndex, EnvironmentIndex, FieldTypeIndex, InputIndex, OperationIndex, PipelineIndex, SectionIndex, ToolIndex: new, get
 
@@ -372,6 +376,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 | No plan type is written as a float, and no map's own order reaches the bytes | `plan::tests` walks an encoded plan that uses every part; `canonical::tests` encodes a hash map twenty times and refuses a float |
 | A plan with a loose reference is refused by `encode` and by `decode` | `plan::tests`, one case for each kind of reference, and one for a surface signed in to twice |
 | A credential in a plan is a reference; other text in its place is refused and never shown | `plan::tests`, `ident::tests` |
+| A program a plan declares is named by an absolute path, judged the same way on every machine; a plan that names one any other way is refused by `encode` and by `decode` | `plan::tests` |
 | A name written in the source is checked when the crate is built | `ident::tests`, whose constants would not compile otherwise; the doc test of `checked_name!` |
 | A dropped secret's bytes are zeros | `secret::tests`, on what `Drop` calls; memory that was given back cannot be read by a test |
 | The digest of named fields has one encoding | `digest::tests`, against a digest worked out apart from the crate |
@@ -393,6 +398,7 @@ It produces no other class. Each code is a constant on `FailureCode`. A crate th
 10. Done: `SubsystemState`, `SubsystemMove`, `DoctorState`.
 11. Done: what the run time needs from target files and the plan lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetPlan`, `AuthPlan` with `ProbePlan`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and decision points, a tool's module, `FieldFormat` and a field type's step; with `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
 12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
+13. Done: `DeclaredProgram` and `SurfacePlan::programs`, the programs a surface's driver may start, in the plan's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
 
 ## Open points
 

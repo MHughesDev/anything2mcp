@@ -11,7 +11,7 @@ The runtime starts, talks to, and stops many things it did not write: browsers, 
 | Time limits, cancellation, and cleanup | Report cleanup as done when it could not be confirmed |
 | How many of each may run | Fetch a program. It starts what is installed |
 
-It is the only way anything starts a process. A pack's driver, and the plug-in host, are each given a supervisor scoped to what they may start: the programs the provider's manifest declares, each with its digest, and, where the manifest allows it, the programs a published plan names with their digests. A request to start anything else is refused as `effect_not_declared`, and no caller's input can choose a program ([section 213](213-effects-hazards-and-consent.md)).
+It is the only way anything starts a process. A pack's driver, and the plug-in host, are each given a supervisor scoped to what they may start: the programs the provider's manifest declares, each with its digest, and, where the manifest allows it, the programs a published plan names with their digests. The plan names them for each surface: the pack that registers a surface kind says which of a surface's fields hold a program's absolute path and its digest, the compiler copies what a target states there into the plan and refuses a path that is not absolute, and the engine hands that list to the supervisor without reading it. A request to start anything else is refused as `effect_not_declared`, and no caller's input can choose a program ([section 213](213-effects-hazards-and-consent.md)).
 
 ## Starting something
 

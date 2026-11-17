@@ -1,0 +1,175 @@
+# The manifest of the file pack (spec section 308). Everything the pack may
+# register or do is declared here; the registry refuses the rest.
+manifest_format = 1
+contract = 1
+
+[provider]
+name = "file"
+version = "0.0.1"
+publisher = "Anything2MCP"
+kind = "pack"
+
+[[modes]]
+name = "file"
+archetype = "artifact"
+verbs = ["read", "list", "update", "create", "delete"]
+steps = ["open", "locate", "set", "read", "save"]
+rank = 60
+intent_window = 1
+session_reads = 1
+session_writes = 1
+exclusive = "file"
+
+[[surface_kinds]]
+name = "file"
+archetype = "artifact"
+
+[points]
+driver = ["file"]
+discoverer = ["file_layout"]
+
+[[discoverers]]
+name = "file_layout"
+archetype = "artifact"
+surface_kinds = ["file"]
+kinds = ["file_layout", "file_key_candidate"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 60, bytes = 67108864, depth = 1 }
+
+[[file_kinds]]
+name = "document"
+directory = "documents/"
+surface_kinds = ["file"]
+
+[[finding_kinds]]
+name = "file_layout"
+surface_kinds = ["file"]
+
+[[finding_kinds]]
+name = "file_key_candidate"
+surface_kinds = ["file"]
+
+[[lint_rules]]
+code = "file.stands_undeclared"
+level = "error"
+summary = "A binding that writes a file is on a surface that declares `stands`."
+
+[[lint_rules]]
+code = "file.beneath_application"
+level = "error"
+summary = "A write to a file beneath an application is irreversible and has the owner's word in the authorization record."
+
+[[lint_rules]]
+code = "file.open_without_signal"
+level = "error"
+summary = "A binding that writes a file an application may hold open declares the sign that it does."
+
+[[lint_rules]]
+code = "file.format_read_only"
+level = "error"
+summary = "A binding writes only a format the pack has a patch editor for: delimited text or JSON."
+
+[[drafting_rules]]
+finding_kind = "file_layout"
+file_kind = "document"
+
+[[failure_codes]]
+class = "drift"
+code = "file_missing"
+
+[[failure_codes]]
+class = "drift"
+code = "file_unreadable"
+
+[[failure_codes]]
+class = "drift"
+code = "place_not_found"
+
+[[failure_codes]]
+class = "drift"
+code = "key_not_unique"
+
+[[failure_codes]]
+class = "drift"
+code = "fingerprint_mismatch"
+
+[[failure_codes]]
+class = "drift"
+code = "round_trip_failed"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "formula_at_place"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "metadata_not_kept"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "value_unreadable"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "shape_unsupported"
+
+[[failure_codes]]
+class = "policy"
+code = "file_protected"
+
+[[failure_codes]]
+class = "policy"
+code = "file_too_large"
+
+[[failure_codes]]
+class = "busy"
+code = "file_locked"
+
+[[failure_codes]]
+class = "busy"
+code = "storage_full"
+
+[[failure_codes]]
+class = "stale"
+code = "changed_since_preview"
+
+[[failure_codes]]
+class = "input"
+code = "payload_unreadable"
+
+[effects]
+read_roots = ["project", "files"]
+write_roots = ["files"]
+
+[[settings]]
+key = "max_bytes"
+type = "int"
+default = 16777216
+min = 1
+max = 1073741824
+doc = "The most bytes one file may have."
+
+[[settings]]
+key = "max_rows"
+type = "int"
+default = 200000
+min = 1
+max = 10000000
+doc = "The most rows one part of a file may have."
+
+[[settings]]
+key = "max_cells"
+type = "int"
+default = 2000000
+min = 1
+max = 100000000
+doc = "The most values one file may have."
+
+[[settings]]
+key = "max_cell_bytes"
+type = "int"
+default = 65536
+min = 1
+max = 16777216
+doc = "The most bytes one value may have."

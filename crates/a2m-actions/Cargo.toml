@@ -1,11 +1,30 @@
 [package]
 name = "a2m-actions"
-description = "The action registry: one definition per authoring and admin action."
+description = "The action registry, the dispatcher, the settings loader, and the kernel handle."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+a2m-auth = { path = "../a2m-auth" }
+a2m-core = { path = "../a2m-core" }
+a2m-files = { path = "../a2m-files" }
+a2m-ledger = { path = "../a2m-ledger" }
+a2m-policy = { path = "../a2m-policy" }
+a2m-provider = { path = "../a2m-provider" }
+a2m-sched = { path = "../a2m-sched" }
+a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-vault = { path = "../a2m-vault" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+a2m-files = { path = "../a2m-files", features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

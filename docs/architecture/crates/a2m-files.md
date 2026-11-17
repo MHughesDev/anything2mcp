@@ -75,9 +75,18 @@ pub struct JsonSchema;
 //   list(item), non_empty_list(item), map_of(value), either(vec),
 //   object().required(key, schema).optional(key, schema)   -- a key it does not list is refused
 // keys(), to_json(), check(&Located<Doc>) -> Checked { diagnostics, references }
+// check_values(&Values), check_value(&Value), check_json(&serde_json::Value) -> Result<(), Misfits>
+
+/// One place where a run-time value does not fit: its path (`lines[2].quantity`; empty for the root), the code a file
+/// that broke the same rule would get, what is wrong, and a fix. The message never holds the value.
+pub struct Misfit { pub path: String, pub code: LintCode, pub message: String, pub fix: String }
+/// At least one misfit. Converts to `Failure`: `input`, `schema_invalid`, with the first path in the message.
+pub struct Misfits;   // as_slice(), paths(), Display, Error
 ```
 
-An `open_question` left by the drafter is refused wherever it stands, whatever the schema says.
+An `open_question` left by the drafter is refused wherever it stands in a file, whatever the schema says.
+
+**One checker, three kinds of value.** A located document, a `Value`, and JSON are walked by the same rules, so an action's input is judged as a target file is, in the same words. `to_json` gives the standard JSON Schema document of one schema, which is what a front door publishes for a tool. Three things differ for a run-time value. No message quotes the value, only its kind and its path. An open question means nothing there. A reference is taken as text, since only the compiler can resolve it. In JSON a number with a fraction fits only where any value does, and a truth value is never one of a list of words, as the published schema says. A map's members are walked in order of name, so the order of the misfits does not depend on how the JSON library was built.
 
 ### Compiling
 
@@ -154,6 +163,7 @@ These are data, with the serde form `a2m-sources` reads ([decision 0087](../../d
 | `tools` | 8 | Operations, then pipelines. A decimal travels as text in a tool's schema. A tool's module is the longest of the target's modules that follows the target's name in its own |
 | `target` | 2 and 3 | The target's own facts. `defaults.timeouts` and `defaults.limits` are not here: a lowering reads a timeout and writes it into its steps, and a pipeline that states no limit takes the default, so the engine applies none |
 | `environments` | 3 | Test records as record keys, as written; the approval rule. `production` is added when the file does not declare it, and is the default environment unless the file names one |
+| `surfaces` | 2 and 3 | A surface's `programs`: what it states under the fields its kind names as program fields, and, where the path field is the address key, its address in each environment, with the surface's digest. A path that is not absolute, a digest that is not one, and a digest with no program are `program_invalid`, at the value's place |
 | `auth` | 3, after the operations and the pack sections | One entry per group of surfaces. A probe is a `read` operation with the inputs `probe_inputs` gives, or a name a pack's document defines on one of the entry's surfaces; anything else is `unknown_name` or `probe_invalid`. A credential that is not a vault reference is `credential_in_file`, and is never shown |
 | `field_types` | 3 | The normalizer and, from the same rule, the format as data: decimal mark, step, pattern, zone offset, case and whitespace |
 | `pipelines` | 3 to 7 | A source's bare columns go in its payload, a `SourceSpec`; its expressions in `mapping` |
@@ -213,8 +223,15 @@ pub trait DraftingRule: Send + Sync {
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure>;
 }
 
-/// A surface kind a pack serves, as data.
-pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema }
+/// A surface kind a pack serves, as data. `programs` says which of its fields name a program the surface's driver may start.
+pub struct SurfaceKindSpec { pub kind: SurfaceKind, pub address_key: String, pub fields: JsonSchema, pub programs: Vec<ProgramField> }
+impl SurfaceKindSpec {
+    pub fn new(kind: SurfaceKind, address_key: &str, fields: JsonSchema) -> Self;       // starts no program
+    pub fn with_program(self, path_key: &str, digest_key: Option<&str>) -> Self;
+}
+/// The key of a surface that holds a program's absolute path, and the key that holds its digest when the kind has one.
+/// The path key may be the address key: then the surface's address in each environment is a program too.
+pub struct ProgramField { pub path_key: String, pub digest_key: Option<String> }
 
 /// Everything every enabled pack registered. Built by `a2m-provider`; passed by `a2m-actions`.
 pub struct CompilerSet;
@@ -285,6 +302,8 @@ pub struct OpenQuestion { pub file: RelPath, pub question: String, pub findings:
 
 The module `testing`, behind the feature of that name, holds a small imaginary pack called `stand`: one surface kind, the file kind `call` in `calls/`, the mode `stand` with the verbs `read` and `upsert`, one control, one lint rule, and one drafting rule. `testing::stand_set()` gives a `CompilerSet` with it, `testing::register_stand(&mut builder)` adds it to a builder, and `testing::example_root()` is the `example` target in `targets/example/`, which is written for it. A crate above names the feature under its dev-dependencies. It is never enabled in the product.
 
+A crate whose tests need a whole pack, with a driver beside the compiler side, registers the parts itself through `a2m-provider`. The objects are `testing::surface_kind_spec()`, `control()`, `file_kind()`, `lowering()`, `lint_rule()`, and `drafting_rule()`. The names its manifest declares are `PACK`, `FOLDER`, `surface_kind()`, `call_kind()`, `mode()`, `verbs()`, `step_kinds()`, `lint_code()`, and `finding_kind()`. The module's own text says what a driver meets in a plan compiled with it. A test in `a2m-provider` registers the pack this way and compiles the `example` target to the same plan as `stand_set()`. The surface kind takes an optional `helper` program with a `helper_digest`, so that a test can put a declared program in a plan.
+
 ## Used by, and uses
 
 | Caller | Uses |
@@ -312,6 +331,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 | `input` | `draft_conflict` | The drafter would overwrite a file the developer changed |
 | `input` | `registration_conflict` | Two packs registered the same surface kind, control, file kind and surface kind, mode and verb, lint code, or drafting pair; or a pack registered a name that is the kernel's |
 | `input` | `target_unreadable` | The drafter could not write a draft into the target folder |
+| `input` | `schema_invalid` | `Misfits`: a run-time value does not fit its `JsonSchema`. The message names the first path and counts the rest |
 
 ## Invariants
 
@@ -326,6 +346,8 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 | A draft never carries a unit, key, or read-back the finding did not state | A test with a finding that lacks a value, for the test pack's rule; each pack adds one per drafting rule |
 | What `compile` emits decodes, through `a2m-core`, to an equal `Plan` with the same hash | A round-trip test over the `example` target |
 | A pack is handed another pack's entries only when it declared the read | A test with a second lowering that declared none |
+| A program a surface declares reaches the plan, and one named by a relative path does not compile | Tests with the test pack's helper program, and with a surface kind whose address is the program, in the surface and in an environment |
+| A run-time value is judged by the rules a file is, and each kind of misfit is refused with the path of its field and without the value | `schema::tests`, over named values and over JSON, and one case that compares the words with a file's |
 
 ## Build order
 
@@ -336,6 +358,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 5. Done: identity strategies for `natural` and `composite`, commit-point counting for writes, and the write lint rules. Not done: the long form of `identity` for `stamped` and `find` has only its strategy and inputs; the stamped field and the lookup are written with the first operation that needs one. Packages 3.3 and 3.8.
 6. Done: pipelines, and sources compiled to `SourceSpec`. `a2m-sources` uses these types and has no copy, and a test there compiles the `example` target and reads its fixture sheet. Package 3.9.
 7. Done: the drafter and its rules for what a draft may hold, proven with the test pack's drafting rule. Not done: no pack's drafting rules exist. Package E4.
+8. Done: three gaps the provider contract's builder found ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)): a surface kind's program fields and the plan's declared programs; run-time values and JSON checked against a `JsonSchema`; and the test pack's parts made public.
 
 Not built, in any step:
 
