@@ -395,7 +395,8 @@ impl Core {
 
     /// Starts a call that waits for a run without the wait, so that the
     /// run can be followed. `Err` holds the answer when there is no run to
-    /// follow: the call was refused, or its input was not taken.
+    /// follow: the call was refused, its input was not taken, or its run
+    /// already rests or has ended.
     pub(crate) async fn start(
         &self,
         route: &Route,
@@ -412,6 +413,12 @@ impl Core {
             .filter(|_| response.error.is_none())
             .and_then(|result| {
                 let run = result[RUN_FIELD].as_str()?.parse::<RunId>().ok()?;
+                // A run that already rests or has ended is answered: the
+                // call that found it so has said all there is to say.
+                let state = result["status"].as_str()?.parse::<RunState>().ok()?;
+                if !active(state) {
+                    return None;
+                }
                 // The events the answer already counted are not told again.
                 Some((run, result["events"].as_u64().unwrap_or(0)))
             });
@@ -477,15 +484,11 @@ impl Core {
             return Vec::new();
         };
         following.after = page.last;
-        let active = matches!(
-            page.state,
-            RunState::Queued | RunState::Validating | RunState::Running
-        );
         following.stand = if page.ended {
             Stand::Ended
         } else if page.settled() {
             Stand::Rests
-        } else if active {
+        } else if active(page.state) {
             Stand::Working
         } else {
             Stand::Settling
@@ -557,6 +560,14 @@ fn render(response: &Response) -> Rendered {
         face: McpResultFace::of(response),
         meta,
     }
+}
+
+/// Whether a run in this state is being worked on, or will be.
+const fn active(state: RunState) -> bool {
+    matches!(
+        state,
+        RunState::Queued | RunState::Validating | RunState::Running
+    )
 }
 
 /// The input of a call that waits for its run, asking for no wait.

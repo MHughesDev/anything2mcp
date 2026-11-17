@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, DigestPurpose, ExprIndex, Failure, FailureClass, IdentityStrategy,
-    InputPlan, OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RecordState,
-    RunState, StepArg, ToolRuns, Value, Values,
+    BindingPlan, Digest, ExprIndex, Failure, FailureClass, IdentityStrategy, InputPlan,
+    OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RecordState, RunState,
+    StepArg, ToolRuns, Value, Values,
 };
 use a2m_expr::names;
 use a2m_ledger::{
@@ -25,7 +25,7 @@ use crate::control::{Clearance, EngineEvent, Evidence, GuardQuestion, Preview};
 use crate::diff::{Diff, DiffAction, DiffField, DiffRecord};
 use crate::job::{JobKind, RecordSnapshot};
 use crate::loaded::{Loaded, Scope};
-use crate::run::{Candidate, RecordCx, Run, StepCx, Stop, merge, operation};
+use crate::run::{Candidate, RecordCx, Run, StepCx, Stop, masked, merge, operation};
 use crate::values::encode_values;
 
 /// How the work on a tool ended, when nothing stopped it.
@@ -172,9 +172,10 @@ fn commit_failure(failure: StepFailure) -> Failure {
         Sent::NotSent => failure,
         Sent::Unknown if class == FailureClass::PossibleCommit => failure,
         Sent::Unknown => in_doubt("the step that saves the record", &failure),
-        Sent::Answered if matches!(class, FailureClass::Policy | FailureClass::Input) => {
-            in_doubt("reading the answer to the step that saves the record", &failure)
-        }
+        Sent::Answered if matches!(class, FailureClass::Policy | FailureClass::Input) => in_doubt(
+            "reading the answer to the step that saves the record",
+            &failure,
+        ),
         Sent::Answered => failure,
     }
 }
@@ -202,48 +203,18 @@ fn confirm_failure(failure: StepFailure) -> Failure {
     }
 }
 
-/// Whether a value read back from the store was masked by the redactor.
-fn masked(value: &Value) -> bool {
-    match value {
-        Value::Text(text) => text.contains(REDACTED),
-        Value::List(items) => items.iter().any(masked),
-        Value::Record(values) => values.iter().any(|(_, value)| masked(value)),
-        _ => false,
-    }
-}
-
-/// A value as it is stored or shown: itself when it holds no registered
-/// secret. A value that holds one is replaced whole, by the redaction mark
-/// and the workspace's keyed digest of the value, so that two stored values
-/// are equal exactly when the values were and nothing of the secret is
-/// kept.
+/// A value as it is stored or shown: with every registered secret in it
+/// replaced by the redaction mark.
 fn kept_value(run: &Run<'_>, value: &Value) -> Value {
-    let redacted = run.engine.deps.redact.redact_value(value);
-    if redacted == *value {
-        return redacted;
-    }
-    let digest = run.engine.deps.keyed.keyed_digest(
-        &run.job.workspace,
-        DigestPurpose::RestrictedValue,
-        &value.canonical_bytes(),
-    );
-    Value::Text(format!("{REDACTED} {digest}"))
+    run.engine.deps.redact.redact_value(value)
 }
 
 /// Values as they are stored or shown. Every value the engine hands to
 /// `Control`, as evidence, in the diff, or as a result, passes through
-/// here; a name is redacted too, because a system chooses the names it
-/// returns.
+/// here, whatever passed the redactor before it; a name is redacted too,
+/// because a system chooses the names it returns.
 fn kept(run: &Run<'_>, values: &Values) -> Values {
-    values
-        .iter()
-        .map(|(name, value)| {
-            (
-                run.engine.deps.redact.redact(name),
-                kept_value(run, value),
-            )
-        })
-        .collect()
+    run.engine.deps.redact.redact_values(values)
 }
 
 /// The steps of a binding in the order a write runs them.
@@ -1161,6 +1132,22 @@ fn derive_step(
         } else {
             key_of(found, &call.inputs, record)?
         };
+        if kept(run, &call.inputs) != call.inputs {
+            // A value that holds a registered secret is masked wherever it
+            // is stored, shown, or read back, so a record written with one
+            // could never be compared with what the system holds. Rule 4
+            // keeps secrets out of tool inputs; a write that carries one
+            // is refused before anything is sent.
+            return Err(Stop::Fail(codes::fail(
+                FailureClass::Input,
+                codes::INPUT_INVALID,
+                format!(
+                    "A value the operation `{}` would write holds a registered secret, and a write of one cannot be verified.",
+                    found.name
+                ),
+                "Leave the secret out of the tool's input; a secret reaches a system only through its session.",
+            )));
+        }
         let intended = compare::intended(&fields, &call.inputs);
         let binding = if call.pending {
             // The binding is chosen when the record's inputs are whole.
@@ -1725,31 +1712,34 @@ async fn reconcile(
                 "Look at the system, then cancel the run or settle the record by hand.",
             )));
         }
-        if record.masked {
-            // What would find the record again was masked when it was
-            // stored. Reading with the mask would find nothing, and nothing
-            // found would be taken for a write that did not land.
-            return Err(Stop::Fail(codes::fail(
-                FailureClass::PossibleCommit,
-                codes::CANNOT_RECONCILE,
-                format!(
-                    "A record of `{}` may have been written, and what would find it again holds a registered secret and was not stored.",
-                    found.name
-                ),
-                "Look at the system, then cancel the run or settle the record by hand.",
-            )));
-        }
-        run.checkpoint(Duration::ZERO)?;
-        // Take or confirm the lock under this lease, then read.
-        run.control.lock(record.record).await?;
         let mode = held.and_then(|held| held.mode.clone());
-        let context = hold_for(run, found, record, mode.as_ref(), false).await?;
-        let raw = read_record(run, found, record, context, true).await?;
-        let seen = raw
-            .as_ref()
-            .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
-            .transpose()?;
-        let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
+        // A failure of a class that would end the run for good says only
+        // that the record could not be read: it is still in doubt, and the
+        // run stops for a resume or a person.
+        let (raw, seen, evidence, context) = match read_in_doubt(
+            run,
+            loaded,
+            found,
+            record,
+            mode.as_ref(),
+        )
+        .await
+        {
+            Err(Stop::Fail(failure)) if settles(failure.class()) => {
+                return Err(Stop::Fail(codes::fail(
+                    FailureClass::PossibleCommit,
+                    codes::CANNOT_RECONCILE,
+                    format!(
+                        "A record of `{}` may have been written and could not be read (`{}/{}`).",
+                        found.name,
+                        failure.class(),
+                        failure.code()
+                    ),
+                    "Look at the system, then resume the run, cancel it, or settle the record by hand.",
+                )));
+            }
+            read => read?,
+        };
         let seen_kept = seen.as_ref().map(|seen| kept(run, seen));
         let reconciled = match &seen {
             Some(seen) if *seen == record.intended => {
@@ -1796,6 +1786,50 @@ async fn reconcile(
         }
     }
     Ok(())
+}
+
+/// Reads one record in doubt, through the mode its intent was stored for:
+/// what the system gave, the values as they are compared, the evidence of
+/// the read, and the context it was read in.
+async fn read_in_doubt(
+    run: &mut Run<'_>,
+    loaded: &Loaded,
+    found: &OperationPlan,
+    record: &mut Planned,
+    mode: Option<&a2m_core::Mode>,
+) -> Result<(Option<Values>, Option<Values>, BlobRef, usize), Stop> {
+    run.checkpoint(Duration::ZERO)?;
+    // Take or confirm the lock under this lease, then read.
+    run.control.lock(record.record).await?;
+    let context = hold_for(run, found, record, mode, false).await?;
+    let binding = &found.bindings[record.binding];
+    let by_lookup = matches!(
+        found.identity.strategy,
+        IdentityStrategy::Stamped | IdentityStrategy::Find
+    ) && !binding.lookup.is_empty()
+        && record.assigned.is_none()
+        && !record.recorded;
+    if record.masked && !by_lookup {
+        // What would find the record again was masked when it was stored.
+        // Reading without it could find nothing, and nothing found would
+        // be taken for a write that did not land.
+        return Err(Stop::Fail(codes::fail(
+            FailureClass::PossibleCommit,
+            codes::CANNOT_RECONCILE,
+            format!(
+                "A record of `{}` may have been written, and what would find it again holds a registered secret and was not stored.",
+                found.name
+            ),
+            "Look at the system, then cancel the run or settle the record by hand.",
+        )));
+    }
+    let raw = read_record(run, found, record, context, true).await?;
+    let seen = raw
+        .as_ref()
+        .map(|raw| compare::seen(loaded, &record.fields, &record.intended, raw))
+        .transpose()?;
+    let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
+    Ok((raw, seen, evidence, context))
 }
 
 /// Reads every record the ledger holds as verified once more, and reports

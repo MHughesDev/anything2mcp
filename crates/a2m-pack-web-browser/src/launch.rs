@@ -6,7 +6,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use a2m_provider::{EnvAllowlist, ForeignPipe};
+use a2m_core::{Failure, FailureClass};
+use a2m_provider::{CheckedPath, EnvAllowlist, ForeignPipe};
 
 /// One place a browser is installed, on one operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +95,54 @@ pub(crate) fn find(named: Option<&Path>) -> Option<PathBuf> {
             .map(PathBuf::from)
             .find(|path| path.is_file()),
     }
+}
+
+/// Makes a browser's data directory private to the engine's user, and
+/// refuses one that is not private afterwards.
+///
+/// The browser is started with a key store of its own, so the key its
+/// cookie store is written under is fixed and known: who can read the
+/// folder can read the session. On Linux and macOS the folder is given to
+/// its owner alone, mode 0700, whatever the process's mask left it with;
+/// a folder that belongs to someone else cannot be changed and is refused.
+/// The browser gives its own files the modes 0600 and 0700 (measured,
+/// decision 0143), so this folder is the second lock, not the only one.
+///
+/// On Windows nothing is done here. A folder takes the access list of the
+/// folder it is made in; under a person's own profile that is the person,
+/// the system, and the administrators. The engine does not read access
+/// lists, so a data directory placed where others can read is not noticed
+/// by this crate.
+pub(crate) fn make_private(folder: &CheckedPath) -> Result<(), Failure> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = folder.as_path();
+        let private = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .and_then(|()| std::fs::metadata(path))
+            .is_ok_and(|now| is_private(now.permissions().mode()));
+        if !private {
+            return Err(Failure::new(
+                FailureClass::Input,
+                a2m_provider::codes::PATH_NOT_ALLOWED,
+                format!(
+                    "The browser's data directory `{folder}` can be read by other users of this machine, and the engine could not make it private."
+                ),
+                "Give the folder to the engine's user alone (mode 0700), or remove it so that the engine makes it afresh.",
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (folder, FailureClass::Input);
+    }
+    Ok(())
+}
+
+/// Whether a folder's mode lets nobody but its owner in.
+#[cfg(unix)]
+fn is_private(mode: u32) -> bool {
+    mode & 0o077 == 0
 }
 
 /// The arguments every browser is started with, before its data directory.
@@ -212,6 +261,16 @@ mod tests {
             all.iter()
                 .any(|argument| argument == "--user-data-dir=profile")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_is_private_only_when_nobody_but_its_owner_has_any_right_in_it() {
+        assert!(is_private(0o40700));
+        assert!(is_private(0o40500));
+        for open in [0o40755, 0o40750, 0o40701, 0o40710, 0o40770, 0o40707] {
+            assert!(!is_private(open), "{open:o}");
+        }
     }
 
     #[test]

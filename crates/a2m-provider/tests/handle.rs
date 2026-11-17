@@ -626,7 +626,9 @@ async fn a_committing_step_that_was_sent_is_never_settled_by_a_class_that_means_
         (FailureClass::Input, "example_shape"),
     ] {
         // Answered, as a driver says of a reply it read: in doubt.
-        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(
+            class, code,
+        ))));
         let failure = handle
             .act(&mut prepared, &send, &write, Authority::Write(&token_one))
             .await
@@ -645,7 +647,9 @@ async fn a_committing_step_that_was_sent_is_never_settled_by_a_class_that_means_
             "{class}/{code}"
         );
         // Not sent at all: the class stands, and nothing is in doubt.
-        scene.behave(Behaviour::Fail(StepFailure::not_sent(failure_of(class, code))));
+        scene.behave(Behaviour::Fail(StepFailure::not_sent(failure_of(
+            class, code,
+        ))));
         let failure = handle
             .act(&mut prepared, &send, &write, Authority::Write(&token_one))
             .await
@@ -655,7 +659,9 @@ async fn a_committing_step_that_was_sent_is_never_settled_by_a_class_that_means_
             (class, Sent::NotSent)
         );
         // On a step that commits nothing, the class stands as well.
-        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(
+            class, code,
+        ))));
         let failure = handle
             .act(
                 &mut prepared,
@@ -677,7 +683,9 @@ async fn a_committing_step_that_was_sent_is_never_settled_by_a_class_that_means_
         (FailureClass::Rejected, "example_refused"),
         (FailureClass::Stale, "example_changed"),
     ] {
-        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(class, code))));
+        scene.behave(Behaviour::Fail(StepFailure::answered(failure_of(
+            class, code,
+        ))));
         let failure = handle
             .act(&mut prepared, &send, &write, Authority::Write(&token_one))
             .await
@@ -742,7 +750,12 @@ async fn a_secret_a_driver_returns_does_not_pass_the_handle() {
     };
     let shown = format!("{observed:?}");
     assert!(!shown.contains(SECRET), "{shown}");
-    assert!(observed.captures.iter().all(|capture| !has_secret(&capture.bytes)));
+    assert!(
+        observed
+            .captures
+            .iter()
+            .all(|capture| !has_secret(&capture.bytes))
+    );
     // What is not a secret is as the driver returned it.
     assert_eq!(observed.values.get("quantity"), Some(&Value::Int(12)));
     assert_eq!(

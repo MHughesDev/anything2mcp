@@ -112,16 +112,19 @@ fn the_example_target_compiles_and_its_source_reads_its_fixture_sheet_into_typed
     assert_eq!(second.get("length"), Some(&inches("36")));
 
     // A sheet of another layout is refused by the fingerprint the compiler
-    // wrote, with the difference.
+    // wrote, with the difference: the template's header and its place, and
+    // never the input's own text.
     let rejected = read(&compiled, b"Code,Width\nL-101,\"3' 0\"\"\"\n").unwrap_err();
     assert!(
         rejected
             .problems
             .iter()
             .any(|problem| problem.code == SOURCE_TEMPLATE_UNKNOWN
-                && problem.message.contains("`Width`")),
+                && problem.message.contains("`Length`")
+                && problem.message.contains("column 2")),
         "{rejected:?}"
     );
+    assert!(!format!("{rejected:?}").contains("Width"), "{rejected:?}");
 }
 
 #[test]

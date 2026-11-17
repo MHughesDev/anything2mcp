@@ -98,11 +98,34 @@ pub(crate) fn numbered(path: &Path, number: u32) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Opens the log for appending. A line is redacted, but it names runs,
+/// sessions, and targets, so on Unix the file is the owner's alone: it is
+/// made with mode `0600`, and one that is already there with wider
+/// permissions is narrowed. On Windows a file takes the permissions of its
+/// folder, which is in the user's own profile.
 fn open_for_append(path: &Path) -> io::Result<(File, u64)> {
-    let file = OpenOptions::new().create(true).append(true).open(path)?;
-    let written = file.metadata()?.len();
-    Ok((file, written))
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(OWNER_ONLY);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o777 != OWNER_ONLY {
+            file.set_permissions(fs::Permissions::from_mode(OWNER_ONLY))?;
+        }
+    }
+    Ok((file, metadata.len()))
 }
+
+/// Read and write for the owner, nothing for anyone else.
+#[cfg(unix)]
+const OWNER_ONLY: u32 = 0o600;
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
@@ -118,6 +141,31 @@ mod tests {
 
     use super::{RotatingFile, Rotation, numbered};
     use crate::testing::TempFolder;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_file_is_its_owners_alone_and_a_wider_one_is_narrowed() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let folder = TempFolder::new("owner");
+        let path = folder.path().join("logs").join("engine.log");
+        let rotation = Rotation {
+            max_bytes: 10,
+            keep: 1,
+        };
+        let mode = |path: &std::path::Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let mut file = RotatingFile::open(&path, rotation).unwrap();
+        file.write_line(b"12345678\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // The file made after a rotation is the owner's alone as well.
+        file.write_line(b"abcdefgh\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&numbered(&path, 1)), 0o600);
+        drop(file);
+        // One left readable by everyone is narrowed when it is opened.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let _file = RotatingFile::open(&path, rotation).unwrap();
+        assert_eq!(mode(&path), 0o600);
+    }
 
     #[test]
     fn a_full_file_is_rotated_and_the_oldest_is_deleted() {

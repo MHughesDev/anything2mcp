@@ -72,6 +72,9 @@ pub const DRIVER_PANICKED: FailureCode = FailureCode::fixed("driver_panicked");
 /// `unknown_variant`: a condition gave a value that is neither true nor
 /// false.
 pub const CONDITION_NOT_BOOLEAN: FailureCode = FailureCode::fixed("condition_not_boolean");
+/// `unknown_variant`: an argument of a step holds the mask of a value the
+/// redactor removed.
+pub const ARGUMENT_MASKED: FailureCode = FailureCode::fixed("argument_masked");
 
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
@@ -105,6 +108,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Busy, "control_unanswered"),
     (FailureClass::UnknownVariant, "driver_panicked"),
     (FailureClass::UnknownVariant, "condition_not_boolean"),
+    (FailureClass::UnknownVariant, "argument_masked"),
 ];
 
 pub(crate) fn fail(

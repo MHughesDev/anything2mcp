@@ -729,3 +729,114 @@ fn an_artifact_is_redacted_and_checked_or_it_is_dropped() {
             .all(|limitation| limitation.code == LimitationCode::Redacted)
     );
 }
+
+/// A redactor that knows one secret by its own text, as the vault's knows a
+/// registered secret: it finds it written out, and in no other form.
+struct KnowsOne(&'static str);
+
+impl Redact for KnowsOne {
+    fn redact(&self, text: &str) -> String {
+        text.replace(self.0, "[redacted]")
+    }
+}
+
+#[test]
+fn an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped() {
+    const SECRET: &str = "example-key-ab&cd-7781";
+    let offer = |text: &str| {
+        let mut snapshot = offered(ArtifactKind::Snapshot, CapturePoint::Checkpoint);
+        snapshot.bytes = text.as_bytes().to_vec();
+        snapshot
+    };
+    let dropped = ArtifactOutcome::Dropped(DropReason::HeldSecret);
+    let mut builder = builder(1, CaptureLevel::Standard, Arc::new(KnowsOne(SECRET)));
+
+    // Written out, it is redacted and the snapshot is kept.
+    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(&format!("<td>{SECRET}</td>")))
+    else {
+        panic!("a snapshot with a secret written out is kept, redacted");
+    };
+    assert_eq!(kept.bytes, b"<td>[redacted]</td>");
+
+    // Split by a tag, by a hidden character, written with a reference in a
+    // value, and both at once: the redactor sees none of them in the bytes,
+    // and each is still the secret for whoever reads the page.
+    for held in [
+        "<td>example-key-<wbr>ab&cd-7781</td>".to_owned(),
+        "<td>example-key-ab&cd\u{200B}-7781</td>".to_owned(),
+        "<input value=\"example-key-ab&amp;cd-7781\">".to_owned(),
+        "<input value=\"example-key-ab&#38;cd-7781\">".to_owned(),
+        "<input value=\"example-key-ab&#x26;cd-7781\">".to_owned(),
+        "<b>example-key-</b>ab&amp;cd<i>-7781</i>".to_owned(),
+    ] {
+        assert_eq!(builder.artifact(offer(&held)), dropped, "{held}");
+    }
+
+    // Markup and references that hold no secret do not drop a snapshot.
+    let plain = "<p>Total &amp; tax: <b>12</b></p>";
+    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(plain)) else {
+        panic!("a snapshot with no secret is kept");
+    };
+    assert_eq!(kept.bytes, plain.as_bytes());
+
+    // A record's free text with the secret behind a reference is not kept.
+    let mut step = step(0, Phase::Act, 0, "fill", 1);
+    step.acting = Some(Acting {
+        means: vec![Detail::new("typed", "example-key-ab&amp;cd-7781")],
+        measured: Vec::new(),
+    });
+    builder.record(step);
+    let trace = builder.finish().unwrap();
+    let text = String::from_utf8(trace.bytes.clone()).unwrap();
+    assert!(!text.contains("ab&amp;cd"), "{text}");
+    assert!(text.contains("[redacted]"), "{text}");
+}
+
+#[test]
+fn a_trace_is_checked_against_its_own_chain() {
+    use a2m_telemetry::{TraceCheck, check_trace};
+    let mut builder = builder(1, CaptureLevel::Minimal, Arc::new(NoSecrets));
+    for number in 0..4 {
+        builder.record(step(0, Phase::Act, number, "fill", 1));
+    }
+    let trace = builder.finish().unwrap();
+    let lines = read_trace(&trace.bytes).unwrap();
+    assert_eq!(check_trace(&lines), TraceCheck::Whole);
+
+    // A step line removed, two swapped, one repeated, the end line gone, and
+    // an end line that states another signature.
+    let mut removed = lines.clone();
+    removed.remove(2);
+    let mut swapped = lines.clone();
+    swapped.swap(1, 2);
+    let mut repeated = lines.clone();
+    repeated.insert(2, lines[2].clone());
+    let mut headless = lines.clone();
+    headless.remove(0);
+    let mut endless = lines.clone();
+    endless.pop();
+    let mut other = lines.clone();
+    if let Some(TraceLine::End(end)) = other.last_mut() {
+        end.signature = Digest::of(b"another signature");
+    }
+    for broken in [removed, swapped, repeated, headless, endless, other] {
+        assert_eq!(check_trace(&broken), TraceCheck::Broken);
+    }
+
+    // A debug print of a record a driver handed over shows no value of it.
+    let mut record = step(0, Phase::Act, 0, "fill", 1);
+    record.values = vec![TracedValue::read(
+        "example-field-name",
+        Sensitivity::Restricted,
+        Value::from("example-token-in-a-value"),
+        Value::from("example-token-in-a-value"),
+    )];
+    record.acting = Some(Acting {
+        means: vec![Detail::new("typed", "example-token-in-a-detail")],
+        measured: Vec::new(),
+    });
+    let printed = format!("{record:?}");
+    for hidden in ["example-token", "example-field-name", "SO-1001"] {
+        assert!(!printed.contains(hidden), "{printed}");
+    }
+}

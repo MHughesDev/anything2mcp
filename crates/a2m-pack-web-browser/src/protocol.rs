@@ -228,8 +228,6 @@ pub(crate) struct TargetInfo {
     pub kind: String,
     #[serde(default)]
     pub target_id: String,
-    #[serde(default)]
-    pub url: String,
     /// The target that opened this one, when one did.
     pub opener_id: Option<String>,
 }
@@ -735,6 +733,10 @@ command!(SetEmulatedMedia<'_>, "Emulation.setEmulatedMedia" => Nothing);
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequestPattern<'a> {
     pub url_pattern: &'a str,
+    /// Only requests of this kind, such as `Document`; every kind when
+    /// left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_type: Option<&'a str>,
     pub request_stage: &'a str,
 }
 

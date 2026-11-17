@@ -177,6 +177,45 @@ fn a_badly_formed_name_or_file_is_refused_with_the_line() {
         Manifest::parse(&program).unwrap_err().code(),
         &codes::PATH_NOT_ALLOWED
     );
+    // A pack has no folder of its own: a relative program path would be
+    // looked for in the engine's working folder.
+    let relative = manifest("alpha", "request", "").replace(
+        "[effects]",
+        "[effects]\nprocesses = [{ path = \"bin/tool\" }]",
+    );
+    assert_eq!(
+        Manifest::parse(&relative).unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED
+    );
+    let plugin = relative.replace(r#"kind = "pack""#, r#"kind = "plugin""#);
+    assert_ne!(
+        Manifest::parse(&plugin).unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED,
+        "a plug-in may name a program inside its own folder"
+    );
+    // A code that states the kernel's own bookkeeping is not a provider's
+    // to declare, whatever class it gives it.
+    for code in codes::KERNEL_ONLY {
+        let kernels = manifest(
+            "alpha",
+            "request",
+            &format!("\n[[failure_codes]]\nclass = \"busy\"\ncode = \"{code}\"\n"),
+        );
+        assert_eq!(
+            Manifest::parse(&kernels).unwrap_err().code(),
+            &codes::MANIFEST_INVALID,
+            "{code}"
+        );
+    }
+    // A step kind that always commits is one of the mode's step kinds.
+    let commits = manifest("alpha", "request", "").replace(
+        "steps = [\"fetch\", \"send\"]",
+        "steps = [\"fetch\", \"send\"]\ncommit_steps = [\"save\"]",
+    );
+    assert_eq!(
+        Manifest::parse(&commits).unwrap_err().code(),
+        &codes::MANIFEST_INVALID
+    );
     let level = manifest("alpha", "request", "")
         .replace(r#"max_level = "discovered""#, r#"max_level = "approved""#);
     assert_eq!(

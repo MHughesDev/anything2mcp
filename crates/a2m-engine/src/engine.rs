@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, Failure, FailureClass, KeyedDigest, OperationName, Plan, Redact, RunState,
-    SurfaceName, ToolRuns, Version,
+    Digest, Failure, FailureClass, KeyedDigest, OperationName, Plan, Redact, RunState, SurfaceName,
+    ToolRuns, Version,
 };
 use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;

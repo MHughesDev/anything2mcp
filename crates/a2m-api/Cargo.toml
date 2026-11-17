@@ -23,6 +23,7 @@ a2m-auth = { path = "../a2m-auth" }
 a2m-engine = { path = "../a2m-engine" }
 a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger" }
+a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-sources = { path = "../a2m-sources" }
 a2m-telemetry = { path = "../a2m-telemetry" }

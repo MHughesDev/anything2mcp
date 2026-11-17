@@ -141,8 +141,11 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0135 | [The wheel carries the binary and a thin client, and npm uses platform packages](0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md) | Accepted (design decision) |
 | 0136 | [The MCP pack refuses free text, reads its list again before a write, and passes on only listed members](0136-the-mcp-pack-refuses-free-text-reads-its-list-again-before-a-write-and-passes-on-only-listed-members.md) | Accepted (design decision) |
 | 0137 | [A device is held to its serial, a write frame is recorded before it is sent, and a run has a frame ceiling](0137-a-device-is-held-to-its-serial-a-write-frame-is-recorded-before-it-is-sent-and-a-run-has-a-frame-ceiling.md) | Accepted (design decision) |
+| 0138 | [The vault and the session keeper after their safety audit](0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) | Accepted (design decision) |
 | 0139 | [A write that was sent is never settled by an answer that is not the application's verdict](0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md) | Accepted (design decision) |
 | 0140 | [The command pack after its safety audit](0140-the-command-pack-after-its-safety-audit.md) | Accepted (design decision) |
 | 0141 | [The data pack holds a statement to one read or one keyed write, and a connection to one file](0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md) | Accepted (design decision) |
 | 0142 | [The presence prompt's interface and the Linux prompt, as built](0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md) | Accepted (design decision) |
+| 0149 | [The file pack after its safety audit](0149-the-file-pack-after-its-safety-audit.md) | Accepted (design decision) |
 | 0150 | [A take records its message before it acknowledges, and an answer with no rule leaves a write in doubt](0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) | Accepted (design decision) |
+| 0151 | [The doors take up the action registry's second pass](0151-the-doors-take-up-the-action-registrys-second-pass.md) | Accepted (design decision) |

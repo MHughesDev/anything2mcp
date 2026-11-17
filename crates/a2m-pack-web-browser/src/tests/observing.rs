@@ -40,7 +40,7 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     // First, that the test means something: in an acting tab the same
     // scripts do write, from the page and from a worker.
     let browser = stand.open(&clerk).await;
-    let acting = must(browser.acting_tab(&environment()).await);
+    let acting = must(browser.acting_tab(&environment(), &origins(&app)).await);
     must(acting.goto(&form, soon()).await);
     assert_eq!(
         must(acting.page.as_the_page(&put(&app), soon()).await),
@@ -63,7 +63,7 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     let observer = stand.browsers.observer();
     let tab = must(
         observer
-            .observing_tab(&clerk, &environment(), &SafeRequests::default())
+            .observing_tab(&clerk, &environment(), &SafeRequests::default(), &origins(&app))
             .await,
     );
     assert_eq!(stand.supervisor.list().len(), 1);
@@ -135,7 +135,7 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
             address_prefix: app.url(ITEM),
         }],
     };
-    let tab = must(observer.observing_tab(&clerk, &environment(), &safe).await);
+    let tab = must(observer.observing_tab(&clerk, &environment(), &safe, &origins(&app)).await);
     must(tab.goto(&form, soon()).await);
     assert_eq!(
         must(tab.page.as_the_page(&put(&app), soon()).await),

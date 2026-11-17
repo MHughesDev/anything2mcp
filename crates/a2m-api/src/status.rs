@@ -135,6 +135,8 @@ mod tests {
             (FailureClass::Policy, "caller_missing", 401),
             (FailureClass::Policy, "caller_not_verified", 401),
             (FailureClass::Policy, "role_too_low", 403),
+            // A kill switch is the policy engine's refusal (spec section 212).
+            (FailureClass::Policy, "kill_switch_on", 403),
             (FailureClass::Input, "schema_invalid", 400),
             (FailureClass::Input, "body_too_large", 413),
             (FailureClass::Stale, "approval_stale", 409),

@@ -9,7 +9,7 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("looking");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &origins(&app)).await);
     assert_eq!(browser.health(), BrowserHealth::Busy);
 
     let loaded = must(
@@ -153,7 +153,7 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
         BrowserError::NotFound
     );
     // And to one tab.
-    let second = must(browser.acting_tab(&environment()).await);
+    let second = must(browser.acting_tab(&environment(), &origins(&app)).await);
     must(
         second
             .goto(&Address::new(&app.url(FORM)).unwrap(), soon())
@@ -190,7 +190,7 @@ async fn a_wait_ends_on_an_event_of_the_page_and_never_on_a_guess() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("waiting");
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &origins(&app)).await);
 
     // An element that arrives late is noticed when it arrives. Nothing in
     // this page runs on a timer: the element is added when the test says
@@ -295,7 +295,7 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
     settings.max_read_chars = 64;
     let stand = Stand::with_redactor("secrets", settings, &[], Arc::new(Knows(SECRET)));
     let browser = stand.open(&profile("clerk")).await;
-    let tab = must(browser.acting_tab(&environment()).await);
+    let tab = must(browser.acting_tab(&environment(), &data_pages()).await);
     let page = page_of(&format!(
         "<!doctype html><title>Sign in {SECRET}</title>\
          <input type=password aria-label=Password value=hunter2-password>\

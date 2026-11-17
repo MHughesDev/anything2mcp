@@ -57,6 +57,9 @@ const NAME_SHOWN: usize = 96;
 const SERVICE_UNKNOWN: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
 const NAME_HAS_NO_OWNER: &str = "org.freedesktop.DBus.Error.NameHasNoOwner";
 const SPAWN_FAILED: &str = "org.freedesktop.DBus.Error.Spawn.";
+/// The errors of a service manager that the bus asked to start polkit and
+/// that did not: the unit is missing, masked, or failed.
+const UNIT_FAILED: &str = "org.freedesktop.systemd1.";
 const POLKIT_FAILED: &str = "org.freedesktop.PolicyKit1.Error.Failed";
 const POLKIT_CANCELLED: &str = "org.freedesktop.PolicyKit1.Error.Cancelled";
 /// The key of a result's details that polkit sets when the person closed
@@ -218,7 +221,11 @@ pub(crate) fn answered(answer: Result<Verdict, Fault>) -> PromptAnswer {
 pub(crate) fn fault_named(name: Option<&str>) -> Fault {
     match name {
         Some(SERVICE_UNKNOWN | NAME_HAS_NO_OWNER) => Fault::NoPolkit,
-        Some(name) if name.starts_with(SPAWN_FAILED) => Fault::NoPolkit,
+        // Every call here goes to polkit, so a failure to start a service
+        // is a failure to start polkit.
+        Some(name) if name.starts_with(SPAWN_FAILED) || name.starts_with(UNIT_FAILED) => {
+            Fault::NoPolkit
+        }
         Some(POLKIT_FAILED) => Fault::Refused,
         Some(POLKIT_CANCELLED) => Fault::Cancelled,
         // Only the name is shown, and only its plain characters: nothing

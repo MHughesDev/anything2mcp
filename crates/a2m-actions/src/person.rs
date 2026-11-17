@@ -19,7 +19,7 @@ use a2m_core::{
     RunState, SessionId, TargetName, Timestamp, WorkspaceId,
 };
 use a2m_engine::Diff;
-use a2m_ledger::{Durability, Fence, RunRow, Store};
+use a2m_ledger::{AuditEntry, Durability, Fence, RunRow, Store};
 use a2m_policy::{ApprovalSurface, Approved, Channel, Declined, PresenceCheck, PrincipalRef};
 
 use crate::codes;
@@ -104,12 +104,33 @@ pub struct PresenceAsk {
     pub summary: String,
 }
 
+/// How long before it is used a proof of presence may have been made, in
+/// milliseconds. A prompt is answered and its proof used at once; a proof
+/// older than this was kept by someone, and proves nothing about now.
+pub const PRESENCE_WINDOW_MS: i64 = 120_000;
+
+/// How far ahead of the kernel's clock a proof's time may be, in
+/// milliseconds: the difference between two readings of one clock.
+const PRESENCE_AHEAD_MS: i64 = 5_000;
+
 /// Proof that a person was present, made only by a person surface.
+///
+/// It says which kind of check was passed, who passed it, when, and, where
+/// the surface says so, which prompt answered. Whoever uses a proof checks
+/// it: the dispatcher against its caller, the approval desk against the
+/// approver, both against the kernel's clock.
+///
+/// Nothing in the type system keeps another crate from making one: the
+/// crate that raises the prompt is above this one, so the constructor must
+/// be reachable from it. What a proof is worth is decided by which person
+/// surface the product crate mounts, and a surface makes a proof only
+/// after its own prompt was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PresenceProof {
     check: PresenceCheck,
     principal: PrincipalId,
     at: Timestamp,
+    prompt: Option<&'static str>,
 }
 
 impl PresenceProof {
@@ -121,7 +142,19 @@ impl PresenceProof {
             check,
             principal,
             at,
+            prompt: None,
         }
+    }
+
+    /// The same proof, naming the prompt that answered, such as the name
+    /// of the operating system's own. The name is recorded with an
+    /// approval; it is a word of the surface's and is checked as one:
+    /// lowercase letters, digits, and underscores, at most 40. A name of
+    /// another shape is not kept.
+    #[must_use]
+    pub const fn naming(mut self, prompt: &'static str) -> Self {
+        self.prompt = if is_word(prompt) { Some(prompt) } else { None };
+        self
     }
 
     /// The check that was passed.
@@ -141,6 +174,51 @@ impl PresenceProof {
     pub const fn at(&self) -> Timestamp {
         self.at
     }
+
+    /// The prompt that answered, when the surface named it.
+    #[must_use]
+    pub const fn prompt(&self) -> Option<&'static str> {
+        self.prompt
+    }
+
+    /// Checks the proof where it is used: it is `person`'s, and it was made
+    /// within [`PRESENCE_WINDOW_MS`] before `now`.
+    ///
+    /// # Errors
+    ///
+    /// Why the proof is not taken, as the end of a sentence.
+    pub fn checked(&self, person: PrincipalId, now: Timestamp) -> Result<(), &'static str> {
+        if self.principal != person {
+            return Err("it was given for another person");
+        }
+        let age = now
+            .as_unix_millis()
+            .saturating_sub(self.at.as_unix_millis());
+        if age > PRESENCE_WINDOW_MS {
+            return Err("it is older than a proof of presence may be");
+        }
+        if age < -PRESENCE_AHEAD_MS {
+            return Err("its time is ahead of the engine's clock");
+        }
+        Ok(())
+    }
+}
+
+/// Whether `text` is a short word: lowercase letters, digits, underscores.
+const fn is_word(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes.len() > 40 {
+        return false;
+    }
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_') {
+            return false;
+        }
+        at += 1;
+    }
+    true
 }
 
 /// What a role supplies so that a person can be reached.
@@ -434,13 +512,20 @@ impl ApprovalDesk {
         })
     }
 
-    /// Records a person's approval of the diff they saw. The policy engine
-    /// decides first whether this person may approve this run, and records
-    /// that decision whether it allows or refuses.
+    /// Records a person's approval of the diff they saw.
+    ///
+    /// The proof of presence is checked first, by the store's clock, which
+    /// is the kernel's: it must be the approver's own and of now. Then the
+    /// policy engine decides whether this person may approve this run, and
+    /// records that decision whether it allows or refuses. What the proof
+    /// says, its kind of check, whose it is, when it was made, and the
+    /// prompt that answered, is written to the audit log in the same
+    /// transaction as the approval, and so is a refusal.
     ///
     /// # Errors
     ///
-    /// `policy`/`approval_refused`, `policy`/`approval_stale`,
+    /// `policy`/`approval_refused` when the proof is another person's or
+    /// not of now; `policy`/`approval_refused`, `policy`/`approval_stale`,
     /// `input`/`not_found`, and the store's failures, as the policy engine
     /// answers them.
     pub async fn approve(
@@ -452,17 +537,61 @@ impl ApprovalDesk {
         proof: PresenceProof,
     ) -> Result<ApprovalId, Failure> {
         let waiting = self.waiting(run).await?;
+        let surface = Arc::clone(&self.surface);
+        let workspace = self.workspace;
+        let approved = Approved {
+            run,
+            diff_hash,
+            tool_version: waiting.tool_version,
+            approver,
+            channel,
+            presence: proof.check(),
+        };
         let approval = self
-            .surface
-            .approve(Approved {
-                run,
-                diff_hash,
-                tool_version: waiting.tool_version,
-                approver,
-                channel,
-                presence: proof.check(),
+            .store
+            .write(Durability::Synced, move |tx| {
+                let entry = |action: &str, detail: String| AuditEntry {
+                    workspace,
+                    actor: approved.approver.id.to_string(),
+                    action: action.to_owned(),
+                    subject: run.to_string(),
+                    detail,
+                };
+                let shown = format!(
+                    "presence={} of={} at={} prompt={} channel={}",
+                    proof.check(),
+                    proof.principal(),
+                    proof.at().as_unix_millis(),
+                    proof.prompt().unwrap_or("unnamed"),
+                    approved.channel,
+                );
+                if let Err(why) = proof.checked(approved.approver.id, tx.now()) {
+                    tx.audit()
+                        .append(&entry("approval.refused", format!("{shown} refused={why}")))?;
+                    return Ok(Err(codes::policy(
+                        a2m_policy::APPROVAL_REFUSED,
+                        format!("The approval was not recorded: the proof of presence was not taken, because {why}."),
+                        "Open the approval link again and answer the prompt yourself.",
+                    )));
+                }
+                // The decision about the approver commits whether the
+                // approval is recorded or refused.
+                match surface.record_approval(tx, &approved) {
+                    Ok(id) => {
+                        tx.audit()
+                            .append(&entry("approval.recorded", format!("{shown} approval={id}")))?;
+                        Ok(Ok(id))
+                    }
+                    Err(refused) => {
+                        tx.audit().append(&entry(
+                            "approval.refused",
+                            format!("{shown} refused={}", refused.code()),
+                        ))?;
+                        Ok(Err(refused))
+                    }
+                }
             })
-            .await?;
+            .await??;
         // A reader of the run is told that it is approved and waits only
         // to be resumed. This decides nothing: the approval itself is in
         // the store.

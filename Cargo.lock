@@ -36,6 +36,7 @@ dependencies = [
  "a2m-engine",
  "a2m-expr",
  "a2m-ledger",
+ "a2m-policy",
  "a2m-provider",
  "a2m-sources",
  "a2m-telemetry",

@@ -11,9 +11,7 @@
 mod common;
 
 use a2m_core::FailureClass;
-use a2m_provider::{
-    Access, EntryKind, ProviderSettings, RegistryBuilder, RootName, Roots, codes,
-};
+use a2m_provider::{Access, EntryKind, ProviderSettings, RegistryBuilder, RootName, Roots, codes};
 use common::{Folder, TestPack, host};
 
 fn root(name: &str) -> RootName {
@@ -336,7 +334,12 @@ fn a_link_at_the_final_name_is_reported_and_never_written_or_removed_through() {
     let (folder, roots) = scene();
     let project = folder.path().join("project");
     std::fs::write(project.join("other.txt"), b"other").unwrap();
-    if link_file(&project.join("other.txt"), &project.join("orders").join("alias.txt")).is_none() {
+    if link_file(
+        &project.join("other.txt"),
+        &project.join("orders").join("alias.txt"),
+    )
+    .is_none()
+    {
         // Without the right to make a link there is nothing to plant.
         return;
     }
@@ -353,7 +356,11 @@ fn a_link_at_the_final_name_is_reported_and_never_written_or_removed_through() {
         EntryKind::Absent
     );
     assert_eq!(
-        orders.join("none/deeper.txt").unwrap().entry_kind().unwrap(),
+        orders
+            .join("none/deeper.txt")
+            .unwrap()
+            .entry_kind()
+            .unwrap(),
         EntryKind::Absent
     );
     assert_eq!(
@@ -391,7 +398,11 @@ fn a_link_at_the_final_name_is_reported_and_never_written_or_removed_through() {
     // that was not there yet.
     let later = orders.join("later.txt").unwrap();
     assert_eq!(later.entry_kind().unwrap(), EntryKind::Absent);
-    link_file(&project.join("other.txt"), &project.join("orders").join("later.txt")).unwrap();
+    link_file(
+        &project.join("other.txt"),
+        &project.join("orders").join("later.txt"),
+    )
+    .unwrap();
     assert_eq!(later.entry_kind().unwrap(), EntryKind::Link);
     assert_eq!(
         later.write(b"changed").unwrap_err().code(),
@@ -424,7 +435,10 @@ fn a_file_swapped_for_a_link_after_the_check_is_not_opened() {
     ] {
         link_file(&target, &project.join("orders").join("one.txt")).unwrap();
         assert_eq!(one.read(16).unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
-        assert_eq!(one.write(b"x").unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+        assert_eq!(
+            one.write(b"x").unwrap_err().code(),
+            &codes::PATH_NOT_ALLOWED
+        );
         std::fs::remove_file(project.join("orders").join("one.txt")).unwrap();
     }
     // A folder on the way swapped for a link to a folder inside the root.
@@ -433,7 +447,10 @@ fn a_file_swapped_for_a_link_after_the_check_is_not_opened() {
     std::fs::rename(project.join("orders"), project.join("orders-moved")).unwrap();
     link_folder(&project.join("elsewhere"), &project.join("orders")).unwrap();
     assert_eq!(one.read(16).unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
-    assert_eq!(one.write(b"x").unwrap_err().code(), &codes::PATH_NOT_ALLOWED);
+    assert_eq!(
+        one.write(b"x").unwrap_err().code(),
+        &codes::PATH_NOT_ALLOWED
+    );
     assert_eq!(
         std::fs::read(project.join("elsewhere").join("one.txt")).unwrap(),
         b"elsewhere"
@@ -442,4 +459,60 @@ fn a_file_swapped_for_a_link_after_the_check_is_not_opened() {
         std::fs::read(folder.path().join("outside").join("secret.txt")).unwrap(),
         b"secret"
     );
+}
+
+/// A folder made new is the caller's own: the call fails when anything is
+/// at the name already.
+#[test]
+fn a_folder_is_made_new_or_not_at_all() {
+    let (folder, roots) = scene();
+    let project = folder.path().join("project");
+    let orders = roots
+        .check(&root("project"), "orders", Access::Write)
+        .unwrap();
+    let run = orders.join("run-1").unwrap();
+    run.create_dir().unwrap();
+    assert_eq!(run.entry_kind().unwrap(), EntryKind::Folder);
+    assert!(
+        std::fs::read_dir(project.join("orders").join("run-1"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    // A second time, over a file, and over the folder that holds it.
+    for taken in [run.clone(), orders.join("one.txt").unwrap(), orders.clone()] {
+        assert_eq!(
+            taken.create_dir().unwrap_err().code(),
+            &codes::FILE_UNAVAILABLE,
+            "{taken}"
+        );
+    }
+    // The folder above it must be there, and the path must allow writing.
+    assert_eq!(
+        orders
+            .join("none/run-2")
+            .unwrap()
+            .create_dir()
+            .unwrap_err()
+            .code(),
+        &codes::FILE_UNAVAILABLE
+    );
+    assert_eq!(
+        roots
+            .check(&root("project"), "orders/run-3", Access::Read)
+            .unwrap()
+            .create_dir()
+            .unwrap_err()
+            .code(),
+        &codes::EFFECT_NOT_DECLARED
+    );
+    // Over a link, whatever it leads to: nothing is made where it leads.
+    let outside = folder.path().join("outside").join("new-folder");
+    if link_folder(&outside, &project.join("orders").join("run-4")).is_some() {
+        // The link leads nowhere yet, so the path can still be made.
+        if let Ok(planted) = orders.join("run-4") {
+            assert!(planted.create_dir().is_err());
+        }
+        assert!(!outside.exists(), "a folder was made outside the root");
+    }
 }

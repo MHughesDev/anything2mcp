@@ -1002,9 +1002,8 @@ impl Supervisor {
         pipe: ForeignPipe,
         scope: Option<&Scope>,
     ) -> Result<ForeignLink, Failure> {
-        let (id, group, pipes, program_digest, verified) = self
-            .launch(&spec, scope, &LinkKind::Foreign(pipe))
-            .await?;
+        let (id, group, pipes, program_digest, verified) =
+            self.launch(&spec, scope, &LinkKind::Foreign(pipe)).await?;
         let Some((to_child, from_child)) = pipes else {
             self.forget(id);
             group.reap().await;
@@ -1201,9 +1200,7 @@ impl ScopedSupervisor {
     /// `policy`/`effect_not_declared` for a program that is not declared,
     /// or whose digest is not a declared one; then as [`Supervisor::run`].
     pub async fn run(&self, spec: LaunchSpec, link: OneShot) -> Result<Finished, ConnFailure> {
-        self.supervisor
-            .run_for(spec, link, Some(&self.scope))
-            .await
+        self.supervisor.run_for(spec, link, Some(&self.scope)).await
     }
 
     /// As [`Supervisor::start_foreign`], for a declared program.

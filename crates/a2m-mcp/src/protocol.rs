@@ -331,8 +331,8 @@ impl Progress {
 
 /// Makes a call for a caller that asked for progress, and says what the
 /// call's run does while it is waited for. `None` when the caller went
-/// away: it is then sent nothing more. A dispatch is never cut off; only
-/// the waiting between dispatches is.
+/// away: it is then sent nothing more. A dispatch runs on a task of its
+/// own and is never cut off; only the waiting for it is.
 async fn with_progress(
     core: &Arc<Core>,
     route: Route,
@@ -346,9 +346,14 @@ async fn with_progress(
         // The call starts a run. It is started without the wait, and the
         // run's events are followed until it rests, ends, or the caller's
         // wait is over.
-        let mut following = match core.start(&route, wait, asker).await {
-            Ok(following) => following,
-            Err(answer) => return Some(Some(answer)),
+        let started = {
+            let (core, route, asker) = (Arc::clone(core), route.clone(), asker.clone());
+            tokio::spawn(async move { core.start(&route, wait, &asker).await })
+        };
+        let mut following = match dispatched(started, progress).await? {
+            Some(Ok(following)) => following,
+            Some(Err(answer)) => return Some(Some(answer)),
+            None => return Some(None),
         };
         while following.open() {
             let notes = tokio::select! {
@@ -359,7 +364,11 @@ async fn with_progress(
                 return None;
             }
         }
-        return Some(Some(core.finish(route, following, asker).await));
+        let finished = {
+            let (core, asker) = (Arc::clone(core), asker.clone());
+            tokio::spawn(async move { core.finish(route, following, &asker).await })
+        };
+        return dispatched(finished, progress).await;
     }
     // Any other call is dispatched as it was written. One that continues a
     // run the caller names is followed while it is waited for.
@@ -388,6 +397,16 @@ async fn with_progress(
         return None;
     }
     Some(outcome)
+}
+
+/// Waits for a dispatch that runs on a task of its own, so that it is
+/// never cut off. `None` when the caller went away first; `Some(None)`
+/// when the task ended without an answer.
+async fn dispatched<T>(work: JoinHandle<T>, progress: &Progress) -> Option<Option<T>> {
+    tokio::select! {
+        () = progress.messages.closed() => None,
+        joined = work => Some(joined.ok()),
+    }
 }
 
 /// The next notes of a followed run, or a wait without end when no run is

@@ -12,8 +12,10 @@
 //! named, proving that nothing else changed, and replacing the old file
 //! with the new one in one call of the operating system. Delimited text
 //! and JSON are written; a workbook is read. No input chooses which file is
-//! opened, and the pack resolves no path: every file is a `CheckedPath`
-//! from the roots its manifest declares.
+//! opened, and the pack resolves no path: a surface's folder is a
+//! `CheckedPath` from the roots its manifest declares, and a file is one
+//! checked name in it, taken as the name itself and never as what a link at
+//! the name points to (decision 0149).
 //!
 //! The product crate registers the pack with
 //! `RegistryBuilder::add_pack(&a2m_pack_file::pack())`.

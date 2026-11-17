@@ -406,7 +406,9 @@ async fn a_record_is_read_again_in_the_context_that_writes_it() {
     // read back.
     assert_eq!(
         log,
-        ["get_item", "lock", "get_item", "intend", "put_item", "get_item"]
+        [
+            "get_item", "lock", "get_item", "intend", "put_item", "get_item"
+        ]
     );
     assert_eq!(scene.app.write_count("A-102", "T-1").await.unwrap(), 1);
 }

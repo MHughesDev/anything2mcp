@@ -374,10 +374,8 @@ fn evidence_holds(scene: &Scene, text: &str) -> bool {
 #[tokio::test]
 async fn a_secret_the_system_shows_is_in_nothing_the_engine_stores_or_shows() {
     let shown = "secret-for-tests-7c41e9";
-    let written = "secret-for-tests-b20f55";
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     scene.vault.register(&a2m_core::Secret::new(shown));
-    scene.vault.register(&a2m_core::Secret::new(written));
 
     // The system shows a registered secret in a field that carries no
     // label: the description of a line item that exists.
@@ -393,45 +391,85 @@ async fn a_secret_the_system_shows_is_in_nothing_the_engine_stores_or_shows() {
         .unwrap();
     assert!(seeded.status().is_success());
 
-    // The record is updated. Its diff, the values seen before, the
-    // evidence of every read, and the values after hold the secret
-    // nowhere, and the diff shows that something was redacted.
+    // The record is previewed for an update. Its diff, the values seen
+    // before, and the intended values hold the secret nowhere, and the
+    // diff shows that something was redacted.
     let input = item("A-102", "L-300", "New rail", 3, "150.5");
     approved(&scene, ITEM_UPSERT, &input).await;
     assert!(!evidence_holds(&scene, shown), "after the preview");
     assert!(evidence_holds(&scene, "[redacted]"));
-    // The values seen before the write are compared as they were stored:
-    // the record still reads as the preview saw it, and is written.
-    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
-    assert!(completed(&outcome), "{outcome:?}");
-    assert!(!evidence_holds(&scene, shown), "after the write");
-    let stored = scene.app.stored_item("A-102", "L-300").await.unwrap();
-    assert_eq!(stored.unwrap().description, "New rail");
 
-    // A value the caller writes that holds a registered secret reaches
-    // the system whole, and is stored and shown nowhere.
-    scene.another_run(ITEM_UPSERT).await;
-    let input = item("A-102", "L-301", &format!("Rail {written}"), 1, "20");
-    approved(&scene, ITEM_UPSERT, &input).await;
+    // This binding hands the save the record as it was last read, and
+    // that now holds a mask where the secret was. A mask is never sent to
+    // the system: the save is refused before it reaches the driver, and
+    // the record stays as it was.
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
-    assert!(completed(&outcome), "{outcome:?}");
-    let stored = scene.app.stored_item("A-102", "L-301").await.unwrap();
-    assert_eq!(stored.unwrap().description, format!("Rail {written}"));
-    assert_eq!(scene.record_states().await, [RecordState::Verified]);
-    assert!(!evidence_holds(&scene, written));
-    assert!(!evidence_holds(&scene, shown));
-    for result in scene.control.results.lock().unwrap().iter() {
-        let text = format!("{result:?}");
-        assert!(!text.contains(written) && !text.contains(shown), "{text}");
-    }
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::UnknownVariant, "argument_masked".to_owned())
+    );
+    assert_eq!(scene.hooks.count("put_item"), 0);
+    let stored = scene.app.stored_item("A-102", "L-300").await.unwrap();
+    assert_eq!(stored.unwrap().description, format!("Rail {shown}"));
+    assert!(
+        !evidence_holds(&scene, shown),
+        "after the write was refused"
+    );
+    assert!(!format!("{outcome:?}").contains(shown));
 }
 
 #[tokio::test]
-async fn a_recorded_value_the_redactor_masked_is_never_sent_back_to_the_system() {
-    // The code the system hands out before the save is recorded for
-    // reconcile. Here it holds a registered secret, so what is stored is
-    // its mask.
+async fn a_write_that_carries_a_registered_secret_is_refused_before_anything_is_sent() {
+    let written = "secret-for-tests-b20f55";
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    scene.vault.register(&a2m_core::Secret::new(written));
+    let input = item("A-102", "L-301", &format!("Rail {written}"), 1, "20");
+    let outcome = scene.work(JobKind::Preview, ITEM_UPSERT, input).await;
+    // What is read back passes the redactor, so such a value could never
+    // be compared with what the system holds.
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::Input, "input_invalid".to_owned())
+    );
+    assert!(!format!("{outcome:?}").contains(written));
+    assert!(scene.hooks.postures.lock().unwrap().is_empty());
+    assert!(!evidence_holds(&scene, written));
+    assert!(scene.app.writes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_value_the_redactor_masked_is_never_sent_to_the_system() {
+    // The code the system hands out before the save holds a registered
+    // secret, so what the step returned is its mask. The save would take
+    // the code as an argument.
     let scene = Scene::new(common::SLOT_ADD, |_| {}).await;
+    scene.vault.register(&a2m_core::Secret::new("N-001"));
+    let input = common::slot("A-102", 4, "12");
+    approved(&scene, common::SLOT_ADD, &input).await;
+    let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
+    assert_eq!(
+        common::failed_as(&outcome),
+        (FailureClass::UnknownVariant, "argument_masked".to_owned())
+    );
+    // The save never reached the driver, nothing was written under the
+    // mask, and nothing that was stored holds the code.
+    assert_eq!(scene.hooks.count("add_item"), 0);
+    assert!(scene.app.writes().await.unwrap().is_empty());
+    assert!(!evidence_holds(&scene, "N-001"));
+}
+
+#[tokio::test]
+async fn a_record_in_doubt_whose_stored_values_were_masked_is_not_looked_for_under_the_mask() {
+    // The code the system hands out before the save is recorded for
+    // reconcile. It holds a registered secret, so what is recorded is its
+    // mask. The save itself does not take the code here, so it is sent,
+    // and its answer is lost.
+    let scene = Scene::new(common::SLOT_ADD, |plan| {
+        plan.operations[7].bindings[0].act[1]
+            .args
+            .retain(|arg| arg.name != "code");
+    })
+    .await;
     scene.vault.register(&a2m_core::Secret::new("N-001"));
     let input = common::slot("A-102", 4, "12");
     approved(&scene, common::SLOT_ADD, &input).await;
@@ -440,17 +478,16 @@ async fn a_recorded_value_the_redactor_masked_is_never_sent_back_to_the_system()
         .work(JobKind::Execute, common::SLOT_ADD, input.clone())
         .await;
     assert_eq!(
-        common::failed_as(&outcome).0,
-        FailureClass::PossibleCommit,
-        "{outcome:?}"
+        common::failed_as(&outcome),
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned())
     );
-    assert!(!evidence_holds(&scene, "N-001"));
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
+    assert!(!evidence_holds(&scene, "N-001"));
 
-    // On resume the record in doubt cannot be found by what was stored.
-    // Looking for it under the mask would find nothing, and nothing found
-    // would be taken for a write that did not land: the run stops for a
-    // person, and nothing is written a second time.
+    // On resume the record cannot be found by what was recorded. Reading
+    // without it could find nothing, and nothing found would be taken for
+    // a write that did not land: the run stops for a person, and nothing
+    // is written a second time.
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, common::SLOT_ADD, input).await;
     assert_eq!(
@@ -459,11 +496,4 @@ async fn a_recorded_value_the_redactor_masked_is_never_sent_back_to_the_system()
     );
     assert_eq!(scene.hooks.count("add_item"), 1);
     assert_eq!(scene.app.writes().await.unwrap().len(), 1);
-    for step in scene.hooks.given("get_item") {
-        let code = step.args.get("item_code").cloned();
-        assert!(
-            !matches!(&code, Some(Value::Text(text)) if text.contains("[redacted]")),
-            "{code:?}"
-        );
-    }
 }

@@ -151,7 +151,7 @@ pub struct SafeRequests {
 }
 
 impl SafeRequests {
-    fn allows(&self, method: &str, address: &str) -> bool {
+    pub(crate) fn allows(&self, method: &str, address: &str) -> bool {
         matches!(method, "GET" | "HEAD" | "OPTIONS")
             || self
                 .allowed
@@ -1664,6 +1664,29 @@ impl Page {
         Ok(evaluated.result.read::<String>().unwrap_or_default())
     }
 
+    /// The same, run as if a person had just used the page: what a page
+    /// needs before the browser lets it open a window. For this crate's
+    /// tests only.
+    #[cfg(test)]
+    pub(crate) async fn as_the_page_with_a_gesture(
+        &self,
+        expression: &str,
+        deadline: Deadline,
+    ) -> Result<String, BrowserError> {
+        let evaluated = self
+            .call(
+                &crate::protocol::EvaluateAsUser {
+                    expression,
+                    return_by_value: true,
+                    await_promise: true,
+                    user_gesture: true,
+                },
+                deadline,
+            )
+            .await?;
+        Ok(evaluated.result.read::<String>().unwrap_or_default())
+    }
+
     /// One request that never answers, for the test that kills the browser
     /// while a call is pending.
     #[cfg(test)]
@@ -1704,6 +1727,13 @@ impl Page {
     /// requests pass through its page's, which is already on (measured
     /// against the browser of decision 0111). Every other kind must take
     /// its own, or it stays stopped.
+    ///
+    /// The refusal of sockets is placed where the child can take it. A
+    /// worker has one global, which is there while it waits: the script is
+    /// run in it once. A frame in another process has no document while it
+    /// waits, and loads a new one whenever it moves: the script is placed
+    /// on every document it will load, which the browser allows once the
+    /// frame's page events are switched on (measured, decision 0143).
     async fn guard_child(&self, session: &str, kind: &str, waiting: bool) {
         let deadline = Deadline::after(self.call_deadline);
         let client = &self.client;
@@ -1723,6 +1753,7 @@ impl Page {
                     auto_attach: true,
                     wait_for_debugger_on_start: true,
                     flatten: true,
+                    filter: None,
                 },
                 deadline,
             )
@@ -1741,25 +1772,85 @@ impl Page {
                 deadline,
             )
             .await;
-        let sockets_refused = client
-            .call(
-                Some(session),
-                &Evaluate {
-                    expression: REFUSE_SOCKETS,
-                    context_id: None,
-                    return_by_value: true,
-                    await_promise: false,
-                },
-                deadline,
-            )
-            .await
-            .is_ok_and(|evaluated| evaluated.exception_details.is_none());
+        let now = Evaluate {
+            expression: REFUSE_SOCKETS,
+            context_id: None,
+            return_by_value: true,
+            await_promise: false,
+        };
+        let sockets_refused = match client.call(Some(session), &PageEnable {}, deadline).await {
+            Ok(_) => {
+                let on_every_document = client
+                    .call(
+                        Some(session),
+                        &AddScriptOnNewDocument {
+                            source: REFUSE_SOCKETS,
+                            world_name: None,
+                        },
+                        deadline,
+                    )
+                    .await
+                    .is_ok();
+                if !waiting {
+                    // It already runs: the document it has is locked too.
+                    let _ = client.call(Some(session), &now, deadline).await;
+                }
+                on_every_document
+            }
+            // Not a frame: it has no page events to switch on.
+            Err(ClientError::Protocol { code, .. }) if code == METHOD_NOT_FOUND => client
+                .call(Some(session), &now, deadline)
+                .await
+                .is_ok_and(|evaluated| evaluated.exception_details.is_none()),
+            Err(_) => false,
+        };
         if !(intercepted && nested && sockets_refused) {
             self.block("WORKER", "");
             return;
         }
         if waiting {
             let _ = client.call(Some(session), &RunIfWaiting {}, deadline).await;
+        }
+    }
+
+    /// What becomes of a request that is not a move of the tab itself.
+    fn judge_request(&self, paused: &RequestPaused) -> Verdict {
+        let request = &paused.request;
+        match &self.safe {
+            Some(safe) if !safe.allows(&request.method, &request.url) => {
+                Verdict::Refuse(Some(request.method.clone()))
+            }
+            _ => Verdict::Pass,
+        }
+    }
+
+    /// What becomes of the request of the tab's own next document.
+    ///
+    /// A tab goes only to the origins it was opened for, whoever moves it
+    /// and through however many redirects: each hop is asked here. A tab
+    /// that only observes is moved by `goto` alone: a move its page starts
+    /// is ended before its request leaves the browser, whatever its
+    /// method, because a system may treat a GET as an action.
+    fn judge_move(&self, paused: &RequestPaused) -> Verdict {
+        let request = &paused.request;
+        let inside = self.origins.allows_reported(&request.url);
+        let mut moves = self.moves();
+        let mover = moves.mover(paused);
+        let reads = matches!(request.method.as_str(), "GET" | "HEAD" | "OPTIONS");
+        match (mover, &self.safe) {
+            (Mover::Goto, _) if !inside => {
+                // The `goto` reports it, as its own error.
+                moves.refused = Some(shown_origin(&request.url));
+                Verdict::Refuse(None)
+            }
+            (Mover::Goto, _) => {
+                drop(moves);
+                self.judge_request(paused)
+            }
+            (Mover::Page, Some(_)) if reads => Verdict::Refuse(Some(NAVIGATION.to_owned())),
+            (Mover::Page, Some(_)) => Verdict::Refuse(Some(request.method.clone())),
+            (Mover::Page, None) if inside => Verdict::Pass,
+            (Mover::Page, None) => Verdict::Refuse(Some(NAVIGATION.to_owned())),
         }
     }
 
@@ -1816,6 +1907,23 @@ impl Page {
             EventKind::TargetCrashed if own => {
                 self.status.send_replace(Status::Crashed);
             }
+            EventKind::MoveAsked(asked) if own => {
+                if asked.frame_id == self.target {
+                    self.moves().asked(&asked.url);
+                }
+            }
+            EventKind::MoveStarted(started) if own => {
+                if started.frame_id == self.target {
+                    self.moves().started(
+                        &started.url,
+                        &started.loader_id,
+                        &started.navigation_type,
+                    );
+                }
+            }
+            // The browser writes no file for it: every download is denied
+            // when the browser starts. This is the report.
+            EventKind::DownloadBegins(download) => self.block(DOWNLOAD, &download.url),
             EventKind::Attached(attached) => {
                 if self.safe.is_some() {
                     self.guard_child(
@@ -1833,38 +1941,48 @@ impl Page {
                 }
             }
             EventKind::RequestPaused(paused) => {
-                let Some(safe) = &self.safe else { return };
                 let deadline = Deadline::after(self.call_deadline);
                 let session = event.session.as_deref();
-                let (method, address) = (&paused.request.method, &paused.request.url);
-                if safe.allows(method, address) {
-                    let _ = self
-                        .client
-                        .call(
-                            session,
-                            &ContinueRequest {
-                                request_id: &paused.request_id,
-                            },
-                            deadline,
-                        )
-                        .await;
+                let document = paused.resource_type == "Document";
+                let verdict = if own && document && paused.frame_id == self.target {
+                    self.judge_move(&paused)
                 } else {
-                    // Recorded first, so that whoever sees the request fail
-                    // can already read why.
-                    self.block(method, address);
-                    // Failed before it leaves the browser. If this call is
-                    // lost, the request stays paused: it is never sent.
-                    let _ = self
-                        .client
-                        .call(
-                            session,
-                            &FailRequest {
-                                request_id: &paused.request_id,
-                                error_reason: "BlockedByClient",
-                            },
-                            deadline,
-                        )
-                        .await;
+                    self.judge_request(&paused)
+                };
+                match verdict {
+                    Verdict::Pass => {
+                        let _ = self
+                            .client
+                            .call(
+                                session,
+                                &ContinueRequest {
+                                    request_id: &paused.request_id,
+                                },
+                                deadline,
+                            )
+                            .await;
+                    }
+                    Verdict::Refuse(report) => {
+                        // Recorded first, so that whoever sees the request
+                        // fail can already read why.
+                        if let Some(word) = report {
+                            self.block(&word, &paused.request.url);
+                        }
+                        // Ended before it leaves the browser. If this call
+                        // is lost, the request stays paused: it is never
+                        // sent.
+                        let _ = self
+                            .client
+                            .call(
+                                session,
+                                &FailRequest {
+                                    request_id: &paused.request_id,
+                                    error_reason: if document { ABORTED } else { BLOCKED },
+                                },
+                                deadline,
+                            )
+                            .await;
+                    }
                 }
             }
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
@@ -1901,6 +2019,7 @@ impl Page {
             return;
         }
         self.browser.tabs.fetch_sub(1, Ordering::SeqCst);
+        self.browser.pages().remove(&self.target);
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let client = self.client.clone();
             let target = self.target.clone();
@@ -1987,8 +2106,100 @@ fn fetch_everything() -> FetchEnable<'static> {
     FetchEnable {
         patterns: vec![RequestPattern {
             url_pattern: "*",
+            resource_type: None,
             request_stage: "Request",
         }],
+    }
+}
+
+/// Only the requests of documents: what a tab that may act holds, to keep
+/// itself on its origins.
+fn fetch_documents() -> FetchEnable<'static> {
+    FetchEnable {
+        patterns: vec![RequestPattern {
+            url_pattern: "*",
+            resource_type: Some("Document"),
+            request_stage: "Request",
+        }],
+    }
+}
+
+/// Watches the browser itself for windows its pages open, for as long as
+/// the browser's link lasts.
+///
+/// The browser is told, when it starts, to attach every new page before it
+/// runs. A page the engine made carries no opener, and its own tab lets it
+/// run. A page with an opener is a window some page opened: every request
+/// of it is ended before it leaves the browser, it is let run only so that
+/// the page that opened it is not left waiting, and it is closed; the tab
+/// that opened it reports it. A window is never let run without that lock:
+/// its first request leaves the browser at once (measured, decision 0143).
+pub(crate) async fn watch_windows(
+    browser: Weak<BrowserInner>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+    call_deadline: Duration,
+) {
+    // The session of each window not yet reported, with what opened it.
+    let mut unreported: BTreeMap<String, String> = BTreeMap::new();
+    while let Some(event) = events.recv().await {
+        let Some(browser) = browser.upgrade() else {
+            return;
+        };
+        let client = &browser.client;
+        let deadline = Deadline::after(call_deadline);
+        match event.kind {
+            EventKind::Attached(Attached {
+                session_id,
+                target_info,
+                ..
+            }) if event.session.is_none() => {
+                let Some(opener) = target_info.opener_id else {
+                    continue;
+                };
+                unreported.insert(session_id.clone(), opener);
+                let locked = client
+                    .call(Some(&session_id), &fetch_everything(), deadline)
+                    .await
+                    .is_ok();
+                if locked {
+                    let _ = client
+                        .call(Some(&session_id), &RunIfWaiting {}, deadline)
+                        .await;
+                }
+                let _ = client
+                    .call(
+                        None,
+                        &CloseTarget {
+                            target_id: &target_info.target_id,
+                        },
+                        deadline,
+                    )
+                    .await;
+            }
+            EventKind::RequestPaused(paused) => {
+                let session = event.session.as_deref();
+                if let Some(opener) = session.and_then(|session| unreported.remove(session)) {
+                    browser.report(&opener, POPUP, &paused.request.url);
+                }
+                let _ = client
+                    .call(
+                        session,
+                        &FailRequest {
+                            request_id: &paused.request_id,
+                            error_reason: ABORTED,
+                        },
+                        deadline,
+                    )
+                    .await;
+            }
+            EventKind::Detached(detached) => {
+                // It was closed before it asked for anything.
+                if let Some(opener) = unreported.remove(&detached.session_id) {
+                    browser.report(&opener, POPUP, "");
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -2006,12 +2217,14 @@ async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
     });
 }
 
-/// Opens a tab on `about:blank` in the browser, in the posture given.
+/// Opens a tab on `about:blank` in the browser, in the posture given, for
+/// the origins given.
 pub(crate) async fn open_page(
     shared: &Arc<Shared>,
     browser: &Arc<BrowserInner>,
     env: &PageEnvironment,
     posture: Posture,
+    origins: &Origins,
 ) -> Result<Arc<Page>, BrowserError> {
     let client = browser.client.clone();
     let settings = &shared.settings;
@@ -2058,9 +2271,15 @@ pub(crate) async fn open_page(
             Posture::Act => None,
             Posture::Observe(safe) => Some(safe),
         },
+        origins: origins.clone(),
+        helper: helper_for(origins),
+        moves: Mutex::new(Moves::default()),
         browser: Arc::clone(browser),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);
+    browser
+        .pages()
+        .insert(page.target.clone(), Arc::downgrade(&page));
     // Listening starts before anything is switched on, so no event is missed.
     let events = client.subscribe(Some(&page.session));
     tokio::spawn(pump(Arc::clone(&page), events));
@@ -2080,6 +2299,10 @@ async fn prepare(
     env: &PageEnvironment,
     deadline: Deadline,
 ) -> Result<(), BrowserError> {
+    // The browser attaches every new page before it runs, to catch the
+    // windows that pages open. This page is the engine's own, on
+    // `about:blank`: it is let run, and locked before it is sent anywhere.
+    page.call(&RunIfWaiting {}, deadline).await?;
     if page.safe.is_some() {
         // The lock goes on before the page can do anything: requests are
         // intercepted, workers wait until they are locked too, service
@@ -2090,6 +2313,7 @@ async fn prepare(
                 auto_attach: true,
                 wait_for_debugger_on_start: true,
                 flatten: true,
+                filter: None,
             },
             deadline,
         )
@@ -2114,6 +2338,9 @@ async fn prepare(
         )
         .await?;
     } else {
+        // A tab that may act holds only the requests of documents: that is
+        // where it is kept on the origins it was opened for.
+        page.call(&fetch_documents(), deadline).await?;
         page.call(&NetworkEnable {}, deadline).await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     }
@@ -2171,7 +2398,7 @@ async fn prepare(
     // The helper: in every document from now on, and in this one.
     page.call(
         &AddScriptOnNewDocument {
-            source: HELPER,
+            source: &page.helper,
             world_name: Some(WORLD),
         },
         deadline,
@@ -2189,7 +2416,7 @@ async fn prepare(
     let installed = page
         .call(
             &Evaluate {
-                expression: HELPER,
+                expression: &page.helper,
                 context_id: Some(world.execution_context_id),
                 return_by_value: true,
                 await_promise: false,
@@ -2390,13 +2617,29 @@ impl ActTab {
     }
 }
 
+impl ActTab {
+    /// What this tab refused since the last call, oldest first: a move of
+    /// the tab to an origin it was not opened for (`NAVIGATION`), a window
+    /// its page opened, which was closed before it fetched anything
+    /// (`POPUP`), and a download, for which no file was written
+    /// (`DOWNLOAD`); each with the address it was for, cut at the query. A
+    /// step that expected none of these has met something no rule covers.
+    #[must_use]
+    pub fn blocked(&self) -> Vec<RequestShape> {
+        self.page.take_blocked()
+    }
+}
+
 impl ObserveTab {
     pub(crate) fn new(page: Arc<Page>) -> Self {
         Self { page }
     }
 
     /// What this tab refused since the last call, oldest first: a request
-    /// whose method could change the system, by its method; a socket
+    /// whose method could change the system, by its method; a move of the
+    /// tab that its page started (`NAVIGATION`); a window its page opened,
+    /// closed before it fetched anything (`POPUP`); a download, for which
+    /// no file was written (`DOWNLOAD`); a socket
     /// (`WEBSOCKET`, `WEBTRANSPORT`, `PEERCONNECTION`), a shared worker
     /// (`SHAREDWORKER`), or a service worker (`SERVICEWORKER`) refused when
     /// the page made it; and a worker or frame that could not be locked

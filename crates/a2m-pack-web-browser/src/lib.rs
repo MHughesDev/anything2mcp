@@ -17,12 +17,14 @@
 //!
 //! Not built yet: a visible window, exporting and importing a session's
 //! state, the watching tab, frames, the stream of network exchanges,
-//! pop-ups, downloads, uploads, recycling, and the platform profiles.
+//! declared pop-ups and downloads (an undeclared one is refused and
+//! reported), uploads, recycling, and the platform profiles.
 
 mod browsers;
 mod client;
 mod error;
 mod launch;
+mod origin;
 mod protocol;
 mod snapshot;
 mod tab;
@@ -36,11 +38,12 @@ mod tests;
 pub use a2m_provider::Deadline;
 
 pub use browsers::{
-    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, Observer,
-    OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
+    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, Browsers, DIGESTS_SETTING,
+    Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, Visibility,
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
+pub use origin::Origins;
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use tab::{
     ActTab, By, DialogAnswer, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment,

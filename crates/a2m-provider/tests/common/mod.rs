@@ -75,11 +75,7 @@ impl a2m_core::Redact for OneSecret {
 }
 
 /// The host services of a test, with the redactor given.
-pub fn host_with(
-    folder: &Folder,
-    roots: Roots,
-    redact: Arc<dyn a2m_core::Redact>,
-) -> HostServices {
+pub fn host_with(folder: &Folder, roots: Roots, redact: Arc<dyn a2m_core::Redact>) -> HostServices {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     HostServices {

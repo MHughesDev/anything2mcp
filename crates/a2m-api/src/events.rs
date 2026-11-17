@@ -16,10 +16,10 @@
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use a2m_actions::{Caller, EVENTS_PAGE, ExitClass, Kernel, Response, RunEventView, RunEvents};
-use a2m_core::{Failure, FailureClass, RunId};
+use a2m_core::{Failure, FailureClass, RunId, RunState};
 use axum::body::{Body, Bytes};
 use axum::extract::{FromRequestParts, RawPathParams};
 use axum::http::{HeaderValue, StatusCode, header, request::Parts};
@@ -223,18 +223,30 @@ pub(crate) async fn serve(
     answer
 }
 
+/// How long the first look lasts for a run whose state rests while its job
+/// is still in a runner's hands, and the longest such a look grows to. The
+/// record that the job has ended appends no event, so the kernel's wait
+/// for the next event does not end on it; the run is looked at again
+/// after this long, twice as long each time.
+const SETTLE_FIRST: Duration = Duration::from_millis(20);
+const SETTLE_LONGEST: Duration = Duration::from_secs(2);
+
 /// Sends the run's events as they come, each with its sequence number as
 /// its `id`, and ends with a `settled` event once the run has ended or
 /// rests with every event sent. It stops when the caller has gone. It only
 /// reads, so stopping it leaves nothing half done.
 async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::Sender<Bytes>) {
+    let principal = &caller.principal;
     let mut page = first;
+    let mut settle = SETTLE_FIRST;
+    let mut said = Instant::now();
     loop {
         for event in &page.events {
             let line = format!("id: {}\ndata: {}\n\n", event.seq, event_json(event));
             if lines.send(Bytes::from(line)).await.is_err() {
                 return;
             }
+            said = Instant::now();
         }
         // A full page may have more behind it, whatever the run's state.
         let whole = page.events.len() < EVENTS_PAGE as usize;
@@ -243,20 +255,36 @@ async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::S
             let _ = lines.send(Bytes::from(line)).await;
             return;
         }
-        if page.events.is_empty() && lines.send(Bytes::from(": waiting\n\n")).await.is_err() {
-            return;
-        }
-        let principal = &caller.principal;
-        let next = if whole {
-            tokio::select! {
-                () = lines.closed() => return,
-                next = kernel.next_events(principal, page.run, page.last, EVENTS_PAGE, KEEP_ALIVE) => next,
+        if said.elapsed() >= KEEP_ALIVE {
+            if lines.send(Bytes::from(": waiting\n\n")).await.is_err() {
+                return;
             }
-        } else {
+            said = Instant::now();
+        }
+        let active = matches!(
+            page.state,
+            RunState::Queued | RunState::Validating | RunState::Running
+        );
+        let next = if !whole {
             // More is stored already: read on without a wait.
             kernel
                 .events(principal, page.run, page.last, EVENTS_PAGE)
                 .await
+        } else {
+            // A run whose state rests while its job is still in hand
+            // settles without a further event: it is looked at again soon.
+            let wait = if active {
+                settle = SETTLE_FIRST;
+                KEEP_ALIVE
+            } else {
+                let wait = settle;
+                settle = (settle * 2).min(SETTLE_LONGEST);
+                wait
+            };
+            tokio::select! {
+                () = lines.closed() => return,
+                next = kernel.next_events(principal, page.run, page.last, EVENTS_PAGE, wait) => next,
+            }
         };
         page = match next {
             Ok(next) => next,

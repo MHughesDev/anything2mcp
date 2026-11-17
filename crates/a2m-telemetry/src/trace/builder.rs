@@ -19,7 +19,7 @@ use super::{
 };
 use crate::clock::micros;
 use crate::failure::TRACE_HOLDS_SECRET;
-use crate::text::{FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, limit_text};
+use crate::text::{FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, decode_references, limit_text};
 
 /// The size, in bytes, a trace is cut at unless the engine names another.
 pub const DEFAULT_TRACE_LIMIT: usize = 32 * 1024 * 1024;
@@ -316,8 +316,21 @@ impl TraceBuilder {
             return ArtifactOutcome::Dropped(DropReason::NotText);
         };
         let redacted = self.redact.redact(&text);
-        // The check on the way out, for this piece.
-        if self.redact.contains_secret(&redacted) {
+        // The check on the way out, for this piece. The bytes that are kept
+        // hold their markup, so a secret that markup splits, or that is
+        // written with a character reference in it, is still there for
+        // whoever opens the evidence, although the redactor could not see
+        // it. The text is therefore checked as it is kept, as it reads
+        // once its markup and hidden characters are taken out, and as both
+        // read with their character references written out. A hit in any
+        // form drops the artifact: what is kept cannot be cleaned without
+        // ceasing to be the snapshot.
+        let cleaned = clean_text(&redacted);
+        let held = self.redact.contains_secret(&redacted)
+            || self.redact.contains_secret(&cleaned)
+            || self.redact.contains_secret(&decode_references(&redacted))
+            || self.redact.contains_secret(&decode_references(&cleaned));
+        if held {
             self.limit_once(
                 LimitationCode::Redacted,
                 "An artifact still held a registered secret after redaction, and was dropped.",
@@ -478,9 +491,17 @@ impl TraceBuilder {
     /// Free text made safe to keep: redacted, cleaned of markup and hidden
     /// characters, and redacted once more, because cleaning can join the
     /// two halves of a secret that markup had split.
+    ///
+    /// A secret written with a character reference in it is not the
+    /// secret's own text, so no redaction finds it; a text whose references,
+    /// written out, hold a secret is not kept at all.
     fn safe(&self, text: &str) -> String {
         let cleaned = clean_text(&self.redact.redact(text));
-        self.redact.redact(&cleaned)
+        let safe = self.redact.redact(&cleaned);
+        if self.redact.contains_secret(&decode_references(&safe)) {
+            return a2m_core::REDACTED.to_owned();
+        }
+        safe
     }
 
     fn safe_value(&self, value: &Value) -> Value {

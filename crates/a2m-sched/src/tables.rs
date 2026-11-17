@@ -548,8 +548,13 @@ pub(crate) fn grant(
         let free = keys.iter().all(|key| {
             holds.get(key).is_none_or(|holder| *holder == me) && !spoken_for.contains(key)
         });
-        if find_job(tx, *job)?.state != JobState::Leased {
-            // Its job has ended: it is given nothing and keeps no place.
+        let waiting = find_job(tx, *job)?;
+        let now = tx.now();
+        if waiting.state != JobState::Leased || waiting.lease_until.is_none_or(|until| now >= until)
+        {
+            // Its job has ended, or its lease has run out and it is about
+            // to be declared lost: it is given nothing and keeps no place,
+            // as `acquire` would refuse it now.
             continue;
         }
         if free {
@@ -1309,7 +1314,16 @@ pub(crate) fn finish(
                 run_state,
                 Some((*class, code.clone())),
             )?;
-            if *in_doubt && run_state.is_some_and(|state| !state.is_final()) {
+            // The runner's word is not all that is asked: the ledger knows
+            // which records had their intent stored and were never read
+            // back, and a run that holds one is reconciled whatever its
+            // runner reported.
+            let in_doubt = *in_doubt
+                || match job.run {
+                    Some(run) => !tx.ledger().in_doubt(run)?.is_empty(),
+                    None => false,
+                };
+            if in_doubt && run_state.is_some_and(|state| !state.is_final()) {
                 let now = tx.now();
                 ended.reconcile = Some(queue_reconcile(tx, settings, &job, now)?);
             }

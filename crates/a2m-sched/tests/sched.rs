@@ -1021,3 +1021,209 @@ fn the_crate_never_sleeps_and_does_not_know_the_engine_or_a_pack() {
         }
     }
 }
+
+// ---- the audit's three findings (decision 0148) ----------------------------
+
+/// A runner that reports nothing in doubt is not taken at its word while
+/// the ledger holds a record whose intent was stored and never read back.
+#[tokio::test]
+async fn a_stopped_job_is_reconciled_when_the_ledger_holds_a_record_in_doubt() {
+    let stand = Stand::new("doubt").await;
+    let one = stand.hello(1).await;
+    let (run, _job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    start_writing(&stand.store, lease.fence().unwrap(), "order-1", true).await;
+    stand
+        .sched
+        .finish(
+            &lease.lease_ref(),
+            JobEnd::Stopped {
+                class: FailureClass::Busy,
+                code: codes::RECORD_LOCKED,
+                in_doubt: false,
+            },
+        )
+        .await
+        .unwrap();
+    // The store is asked: a reconcile job waits for the run.
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{run}' AND state = 'pending'"
+        )),
+        1
+    );
+    let again = stand.claim_one(one).await;
+    assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    assert_eq!(again.run, Some(run));
+
+    // A run with no intent stored is not reconciled on the same report.
+    let (other, _job) = stand.admit(write(2, "w")).await;
+    stand
+        .sched
+        .finish(&again.lease_ref(), JobEnd::Done)
+        .await
+        .unwrap();
+    let lease = stand.claim_one(one).await;
+    assert_eq!(lease.run, Some(other));
+    start_writing(&stand.store, lease.fence().unwrap(), "order-2", false).await;
+    stand
+        .sched
+        .finish(
+            &lease.lease_ref(),
+            JobEnd::Stopped {
+                class: FailureClass::Busy,
+                code: codes::RECORD_LOCKED,
+                in_doubt: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        stand.counted(&format!(
+            "SELECT COUNT(*) FROM jobs WHERE run_id = '{other}' AND state = 'pending'"
+        )),
+        0
+    );
+}
+
+/// A clock that was set back and comes forward again refills nothing for
+/// the time it passes twice. The store is given a bucket last counted an
+/// hour from now, as a clock set back by an hour would leave it.
+#[tokio::test]
+async fn a_clock_that_went_back_does_not_refill_a_budget_twice() {
+    let stand = Stand::new("clock-back").await;
+    let one = stand.hello(1).await;
+    stand.admit(read(1, "a")).await;
+    let lease = stand.claim_one(one).await.lease_ref();
+    let surface = BudgetKey::surface(workspace(), &target(), &environment(), "orders").unwrap();
+    stand
+        .sched
+        .set_budget(
+            surface.clone(),
+            RateLimit {
+                capacity: 4,
+                refill: 2,
+                per: Duration::from_secs(1),
+            },
+        )
+        .await
+        .unwrap();
+    let ahead = stand.after(3600).as_unix_millis();
+    stand
+        .raw()
+        .execute("UPDATE budgets SET updated_at = ?1", [ahead])
+        .unwrap();
+    let budgets = [surface];
+
+    // What the bucket holds is granted, and the moment it is counted to
+    // does not go back.
+    assert_eq!(
+        stand
+            .sched
+            .rate(&lease, &budgets, 4)
+            .await
+            .unwrap()
+            .requests,
+        4
+    );
+    assert_eq!(stand.counted("SELECT updated_at FROM budgets"), ahead);
+    // Ten seconds later, still before that moment: nothing has refilled,
+    // and the next refill is beyond the lease.
+    stand.advance(10);
+    refused(
+        stand.sched.rate(&lease, &budgets, 1).await,
+        &codes::RATE_LIMITED,
+    );
+    assert_eq!(stand.counted("SELECT level FROM budgets"), 0);
+    assert_eq!(stand.counted("SELECT updated_at FROM budgets"), ahead);
+}
+
+/// A job that waits for a resource and whose lease has run out, and that
+/// the scheduler has not yet declared lost, is given nothing: `acquire`
+/// would refuse it at that moment.
+#[tokio::test]
+async fn a_waiter_whose_lease_has_run_out_is_granted_nothing() {
+    let stand = Stand::new("late-grant").await;
+    let one = stand.hello(1).await;
+    stand.admit(read(1, "a")).await;
+    stand.admit(read(2, "b")).await;
+    let leases = stand.claim(one, 2).await;
+    let (a, b) = (leases[0].lease_ref(), leases[1].lease_ref());
+    let keys = [ResourceKey::new("link", "example-device").unwrap()];
+    stand
+        .sched
+        .acquire(&a, &keys, Duration::ZERO)
+        .await
+        .unwrap();
+    // B waits for as long as its lease lasts.
+    let lease_ends = stand.after(30);
+    let (sched, wanted) = (stand.sched.clone(), keys.clone());
+    let b_waits =
+        tokio::spawn(async move { sched.acquire(&b, &wanted, Duration::from_secs(600)).await });
+    stand.waits_until(lease_ends).await;
+
+    // Both leases run out. A's result is still taken, and frees the key.
+    stand.advance(30);
+    stand.sched.release(&a, &keys).await.unwrap();
+    assert_eq!(
+        stand.counted("SELECT COUNT(*) FROM resource_holds"),
+        0,
+        "a job whose lease had run out was given the resource"
+    );
+    assert_eq!(stand.sched.sweep().await.unwrap().waits_ended, 1);
+    refused(b_waits.await.unwrap(), &codes::RESOURCE_IN_USE);
+    assert_eq!(stand.counted("SELECT COUNT(*) FROM resource_holds"), 0);
+}
+
+/// What one write holds alone is named by one key, whoever submits the job:
+/// two jobs that write on one surface run one after the other, and a job on
+/// another surface is not held up.
+#[tokio::test]
+async fn two_jobs_that_write_on_one_surface_hold_it_one_after_the_other() {
+    let stand = Stand::new("held-alone").await;
+    let one = stand.hello(1).await;
+    let on = |surface: &str| {
+        ResourceKey::held_alone("file", workspace(), &target(), &environment(), surface).unwrap()
+    };
+    assert_eq!(on("reports"), on("reports"));
+    assert_ne!(on("reports"), on("ledgers"));
+    assert_ne!(
+        on("reports"),
+        ResourceKey::held_alone("link", workspace(), &target(), &environment(), "reports").unwrap()
+    );
+    assert!(
+        ResourceKey::held_alone("File", workspace(), &target(), &environment(), "reports").is_err()
+    );
+
+    let mut first = write(1, "a");
+    first.job.exclusive = vec![on("reports")];
+    let mut second = write(2, "b");
+    second.job.exclusive = vec![on("reports")];
+    let mut elsewhere = write(3, "c");
+    elsewhere.job.exclusive = vec![on("ledgers")];
+    let (_, first_job) = stand.admit(first).await;
+    let (_, second_job) = stand.admit(second).await;
+    let (_, elsewhere_job) = stand.admit(elsewhere).await;
+
+    // Three free slots, and two jobs are handed out: the second waits for
+    // the surface the first holds.
+    let leases = stand.claim(one, 3).await;
+    assert_eq!(
+        leases.iter().map(|lease| lease.job).collect::<Vec<_>>(),
+        [first_job, elsewhere_job]
+    );
+    assert_eq!(
+        stand.stored(&format!(
+            "SELECT job_id FROM resource_holds WHERE resource_key = '{}'",
+            on("reports")
+        )),
+        first_job.to_string()
+    );
+    // The end of the first frees it for the second.
+    stand
+        .sched
+        .finish(&leases[0].lease_ref(), JobEnd::Done)
+        .await
+        .unwrap();
+    assert_eq!(stand.claim_one(one).await.job, second_job);
+}

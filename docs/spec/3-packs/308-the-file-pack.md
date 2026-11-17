@@ -31,6 +31,8 @@ To patch a file without disturbing it, the pack needs to know where in the bytes
 | | Running, opening, or evaluating macros, embedded code, external links, or formulas. Their bytes are copied untouched |
 | | A file that is encrypted, password-protected, or signed: reading past a protection is refused, and changing a signed file would break the signature |
 | | Writing while an application has the file open, where that can be detected; and a write binding where it cannot and the target has not said |
+| | Writing a file the engine's user may not write itself, though a replace needs only the right to write its folder |
+| | Writing text into delimited text that a spreadsheet program would run as a formula when a person opens the file, unless the document declares the column free text that may begin so. A value is never changed to make it safe |
 
 **Writing beneath an application.** A file an application owns, such as its data file or its configuration, is a lower level of that application ([section 401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md), rule 4). The `file` surface declares `stands: alone` or `stands: beneath: <surface>`, exactly as a database surface does ([section 307](307-the-data-pack.md)), and the same rule follows: undeclared, no write compiles; beneath, a write compiles only with the owner's word in the authorization record, is shown first in the review summary, and is `irreversible` unless read back through the application.
 
@@ -103,10 +105,10 @@ bindings:
 | `surface`, `file` (required) | A `file` surface, and a name inside its folder. The name has no `..`, no separator that leaves the folder, and no placeholder |
 | `format` (required) | `delimited`, `json`, `workbook`, `yaml`, `toml`, `xml`, or `text_document`. Which of them can be written is a property of the pack, below |
 | `fingerprint` | What identifies this layout, as for a source template. A file that does not match is `drift` |
-| `may_be_open`, `lock_signal` | Whether an application may hold the file open, and the sign that it does: a sibling file the target names, or the operating system's own refusal to share |
+| `may_be_open`, `lock_signal` | Whether an application may hold the file open, and the sign that it does: a sibling file the target names, or the operating system's own refusal to share. Absent is not said, never `false`: a binding that writes the file compiles only when the document states `true` or `false` |
 | `records.<kind>` | One kind of named place: a `table` the file defines, or a `sheet` with a header row found by its text; a `cell` by defined name; a `path` in a structured file; `rows` of delimited text |
 | `key` | The fields that identify one row or element. Required for tables, sheets, and rows. A path with a key leads to a list whose elements are the records; a path without one leads to a single record |
-| `fields` | Each field's place within the record (`header`, `path`) and its field type. `writable: true` marks a field a binding may set; nothing else is ever set |
+| `fields` | Each field's place within the record (`header`, `path`) and its field type. `writable: true` marks a field a binding may set; nothing else is ever set. In delimited text, `may_begin_formula: true` says the column is free text that may begin with `=`, `+`, `-`, or `@` and that no spreadsheet program opens the file |
 
 A key path is a list of keys, never a string to be split, and no input reaches it. An element of a list is chosen by the record's key, as a row is: the binding gives each key field a value, and the driver compares it, typed, with what each element holds. An input cannot add a key to a path, leave the file, or name an element by position ([decision 0103](../../decisions/0103-the-file-pack-as-building-it-settled-it.md)).
 
@@ -129,12 +131,12 @@ One save is one commit point. An operation whose input is a list of rows saves t
 
 | Part | What the driver does |
 | --- | --- |
-| Prepare | Receives from the kernel a path already resolved and checked to lie inside an allowed root, with links resolved before the check; the pack never resolves a path from text. Refuses anything that is not a regular file with one link. Checks the lock signal. Reads the bytes once, without changing the file, records their digest and the file's identity, and parses them through `a2m-sources`. Checks the fingerprint |
+| Prepare | Receives from the kernel a path already resolved and checked to lie inside an allowed root, with links resolved before the check; the pack never resolves a path from text. Refuses anything that is not a regular file with one link. A link at the file's own name is refused wherever it points, for a read and for a write: the document names a file, not what a link leads to. A link in the way to the surface's folder is followed for a read while it stays inside the root, and refused for a write, which would land in a folder the surface does not name. Checks the lock signal, which counts by being there, whatever it is. Reads the bytes once, without changing the file, records their digest and the file's identity, and parses them through `a2m-sources`. Checks the fingerprint |
 | Act | `locate` finds each named place in the parsed form, with its position in the bytes. `set` builds the new bytes by replacing only the spans of the places named. Then the untouched check: the new bytes are parsed again and every place outside the named ones must equal what it was. Then `save` |
-| Save | Writes the new bytes to a temporary file in the same folder, named with the record's idempotency token, and flushes it to disk. Copies the old file's permissions to it. Digests the file at the declared path again: if it differs from the digest taken at prepare, stops as `stale` and removes the temporary file. Otherwise replaces the old file with the new one in one call of the operating system, and flushes the folder where the system allows |
+| Save | Looks again that the file is a regular file under its own name that the engine's user may write. Makes a temporary file in the same folder under a name that holds the record's idempotency token and a random part, only if nothing has that name; what has it is never removed, opened, or followed. Gives the new file the old file's owner, group, and permissions before writing the new bytes, and stops with `metadata_not_kept` where it cannot. Flushes it to disk. Then, as the last act before the replace, digests the file at the declared path again: if it differs from the digest taken at prepare, stops as `stale` and removes the temporary file. Otherwise replaces the old file with the new one in one call of the operating system, and flushes the folder where the system allows |
 | Confirm | The replace returned success, and the file now at the path has the intended digest |
 | Read back | Opens the file again from disk, as a new read, parses it, reads the same places, and compares after normalization |
-| Release | Removes the pack's own temporary file if it is still there. It removes nothing it cannot prove it wrote |
+| Release | Removes the pack's own temporary file if it is still there, known by its identity and not by its name. It removes nothing it cannot prove it wrote |
 
 No retries inside. The replace is the commit point: before it the old file is untouched, and after it the new file is whole. There is never a moment when the file at the path is a mixture of the two.
 
@@ -147,14 +149,14 @@ A stop after the replace was called and before it was recorded is `possible_comm
 | The file at the path has | Means | Then |
 | --- | --- | --- |
 | The intended digest | The save landed | Read back the places, mark `verified` |
-| The digest seen before the write | It did not land | Return the record to `planned`; remove the temporary file named with its token |
+| The digest seen before the write | It did not land | Return the record to `planned`. A temporary file a killed save left is not used and not removed by a later run, which cannot prove it made it; its name holds the record's token, so a person can tell whose it was |
 | Neither | Someone else saved the file, or the save landed and was changed since | Read the places: if they hold the intended values, `verified`; otherwise `stale`, `changed_since_preview` |
 
 ## Change by someone else
 
 - **Changed since the preview.** The engine's freshness check reads the places again ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)). If their values are unchanged, the write goes ahead on the file as it is now, though other parts of it changed, because the approved diff is about records and not bytes. If the values changed, `stale`.
-- **Changed during the write.** The digest check just before the replace catches a change since prepare. A change in the small window between that check and the replace is not caught by the save. Read-back then shows the pack's own values, and the other program's change is lost. This window is stated, not hidden.
-- **Held open by another program.** On Windows a replace fails while another program holds the file without sharing it, and the run waits as `busy`. On macOS and Linux the replace succeeds, and the other program may later save its own copy over it. That is why `may_be_open` exists: when it is true, a write binding needs a `lock_signal`, and when the signal is present the run is `busy`, `file_locked`. When it is true and no signal can be declared, writes do not compile.
+- **Changed during the write.** The digest check is the last act before the replace, and catches a change since prepare. So of two runs that read one file, the second to save is `stale`. A change in the small window between that check and the replace, which is one call wide, is not caught by the save. Read-back then shows the pack's own values, and the other program's change is lost. This window is stated, not hidden.
+- **Held open by another program.** On Windows a replace fails while another program holds the file without sharing it, and the run waits as `busy`. On macOS and Linux the replace succeeds, and the other program may later save its own copy over it. That is why `may_be_open` exists: when it is true, a write binding needs a `lock_signal`, and when the signal is present the run is `busy`, `file_locked`. When it is true and no signal can be declared, writes do not compile. When the document does not say, writes do not compile either, and the driver refuses a plan that holds one.
 
 ## What must survive a round trip
 
@@ -217,15 +219,16 @@ The scout tries each drafted read five times. Opening a file for reading is a re
 
 | What goes wrong | Class | Code |
 | --- | --- | --- |
-| The path is outside an allowed root, a link leads out, the file is not a regular file with one link, or the folder is not writable | `input` | `path_not_allowed`, the provider contract's own code and class |
+| The path is outside an allowed root, a link leads out, the file's own name is a link, a link stands in the way to the folder of a write, the file is not a regular file with one link, or the folder is not writable | `input` | `path_not_allowed`, the provider contract's own code and class |
 | The file is missing; it does not parse; a named place is not found; two rows share a key | `drift` | `file_missing`, `file_unreadable`, `place_not_found`, `key_not_unique` (proposed; the last shared with section 307) |
 | The fingerprint does not match | `drift` | `fingerprint_mismatch` |
 | A formula where a value was declared | `unknown_variant` | `formula_at_place` (proposed) |
-| The file is encrypted, protected, signed, or marked read-only | `policy` | `file_protected` |
+| The file is encrypted, protected, signed, marked read-only, or not writable by the engine's user | `policy` | `file_protected` |
+| Text for delimited text begins as a formula does, or with a tab or a line break | `input` | `value_begins_formula`. Nothing was written |
 | The lock signal is present, or the system refuses to share the file | `busy` | `file_locked` (proposed) |
 | The disk or folder is full | `busy` | `storage_full` |
 | The untouched check fails, so the editor would change something else | `drift` | `round_trip_failed` (proposed). Nothing was written |
-| Permissions cannot be carried to the new file | `unknown_variant` | `metadata_not_kept` (proposed). Nothing was written |
+| The owner, the group, or the permissions cannot be carried to the new file | `unknown_variant` | `metadata_not_kept` (proposed). Nothing was written |
 | The file changed between prepare and the replace | `stale` | `changed_since_preview` |
 | A stop after the replace was called, before it was recorded | `possible_commit` | `no_confirmation` |
 | Read-back differs | `mismatch` | `read_back_differs` |
@@ -245,7 +248,7 @@ Files in a temporary folder, in `targets/example-files/`. It is the cheapest sta
 | 5 | Holds a file open without sharing, and creates the lock signal | `busy`, `file_locked` |
 | 6 | Plants a formula at a declared value, and a formula that depends on a written cell | `formula_at_place`; the declared formula rule |
 | 7 | Plants a macro part, a signature, and an encrypted file | Copied untouched; `file_protected` |
-| 8 | Plants a link pointing outside the root, and a file with two links | `path_not_allowed` |
+| 8 | Plants a link pointing outside the root, a link that stays inside it at a file's name and at a temporary file's name, and a file with two links | `path_not_allowed`; no other file is removed or written |
 | 9 | Replaces a file with another layout | `fingerprint_mismatch`; levels fall |
 | 10 | Holds a value the application would store differently: a date serial, a padded number, text with a narrow space | Normalization; `mismatch` |
 | 11 | Holds text with instructions aimed at an agent | Untrusted fields |
@@ -290,6 +293,7 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 - **Files whose name changes,** such as one per month. Choosing by an input is refused. A declared rule such as "the newest file in the folder that matches this layout" is deterministic, and is still a choice of file; whether it is allowed is not settled.
 - **Folders on a network share, or kept in step by another program.** A replace there may not happen in one step, and a program that copies files about may hold or rewrite them. Whether the pack can detect either, or the surface must declare it, is not settled.
 - **Adding a row to a workbook table** changes the table's range in another part of the package. It is a declared second place, and its editor comes after updates.
-- **The window between the last digest check and the replace.** A lock the operating system enforces would close it on Windows only.
+- **The window between the last digest check and the replace.** A lock the operating system enforces would close it on Windows only. Between two runs of the engine it closes when the scheduler holds one file to one run, as the mode's `exclusive` setting states and nothing enforces yet ([decision 0149](../../decisions/0149-the-file-pack-after-its-safety-audit.md)).
+- **Extended attributes and access lists.** A replace carries the old file's owner, group, and permission bits, and nothing more. Whether the pack must carry the rest, or refuse a file that has it, is not settled.
 - **Declared fields in text documents,** and whether any document format can pass the round-trip tests.
 - **The positions in `a2m-sources`' parsed form.** Their exact shape is settled with the crate's design.

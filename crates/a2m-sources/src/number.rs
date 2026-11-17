@@ -52,16 +52,23 @@ pub fn exact(text: &str) -> Result<Decimal, NumberFault> {
     };
     // All the digits, and where the point sits among them.
     let mut all: String = format!("{whole}{fraction}");
-    let mut point = i64::try_from(whole.len()).map_err(|_| NumberFault::OutOfRange)? + exponent;
     // Zeros that carry no value must not use up digits.
     let leading = all.len() - all.trim_start_matches('0').len();
     all.drain(..leading);
-    point -= i64::try_from(leading).map_err(|_| NumberFault::OutOfRange)?;
     let trailing = all.trim_end_matches('0').len();
     all.truncate(trailing);
     if all.is_empty() {
+        // Zero, wherever an exponent would move its point.
         return Ok(Decimal::ZERO);
     }
+    // An exponent at either end of what 64 bits hold must not wrap, and
+    // must not panic where overflow is checked.
+    let whole_digits = i64::try_from(whole.len()).map_err(|_| NumberFault::OutOfRange)?;
+    let leading = i64::try_from(leading).map_err(|_| NumberFault::OutOfRange)?;
+    let point = whole_digits
+        .checked_add(exponent)
+        .and_then(|point| point.checked_sub(leading))
+        .ok_or(NumberFault::OutOfRange)?;
     let length = i64::try_from(all.len()).map_err(|_| NumberFault::OutOfRange)?;
     let limit = i64::try_from(LONGEST).map_err(|_| NumberFault::OutOfRange)?;
     if point > limit || point < -limit || length > limit {
@@ -131,6 +138,20 @@ mod tests {
         assert_eq!(read("1e-400"), "OutOfRange");
         assert_eq!(read("1e99999999999999999999"), "OutOfRange");
         assert_eq!(read("123456789012345678901234567890123"), "OutOfRange");
+        // The largest and the smallest exponent 64 bits hold: no panic where
+        // overflow is checked, and no wrapped point where it is not.
+        for text in [
+            "1e9223372036854775807",
+            "123.456e9223372036854775807",
+            "1e-9223372036854775808",
+            ".00001e-9223372036854775808",
+            "0.5e-9223372036854775808",
+            "-9e9223372036854775806",
+        ] {
+            assert_eq!(read(text), "OutOfRange", "{text}");
+        }
+        assert_eq!(read("0e9223372036854775807"), "0");
+        assert_eq!(read("0.000e-9223372036854775808"), "0");
         assert!(is_plain_whole("1002"));
         assert!(is_plain_whole("-7"));
         assert!(!is_plain_whole("0040"));

@@ -202,6 +202,32 @@ async fn the_applications_own_refusal_in_a_confirm_step_stands_and_the_record_is
 }
 
 #[tokio::test]
+async fn a_record_in_doubt_that_cannot_be_read_stays_in_doubt_and_the_run_can_be_resumed() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    scene.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
+
+    // On resume the read of the record in doubt fails with a class that
+    // would end a run for good. The record was not read, so nothing is
+    // settled: the run stops, and its lock is kept.
+    for (class, code) in SETTLING {
+        *scene.hooks.fails_after.lock().unwrap() = Some(("get_item".to_owned(), class, code));
+        scene.new_lease().await;
+        let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+        assert_eq!(
+            failed_as(&outcome),
+            (FailureClass::PossibleCommit, "cannot_reconcile".to_owned()),
+            "{class}/{code}"
+        );
+        assert_eq!(scene.run_row().await.state, RunState::Stopped);
+        assert_eq!(scene.locks().await.len(), 1);
+    }
+    resumed_as_landed(&scene, "a record in doubt that could not be read").await;
+}
+
+#[tokio::test]
 async fn a_binding_that_saves_twice_is_refused_before_anything_is_sent() {
     // The plan check in the core crate holds every binding of an operation
     // to the operation's number of commit points, so a binding that saves
@@ -230,7 +256,11 @@ async fn a_binding_that_saves_twice_is_refused_before_anything_is_sent() {
         failed_as(&outcome),
         (FailureClass::Busy, "job_kind_not_built".to_owned())
     );
-    assert!(scene.steps(&["lock", "intend", "put_item", "add_item"]).is_empty());
+    assert!(
+        scene
+            .steps(&["lock", "intend", "put_item", "add_item"])
+            .is_empty()
+    );
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
 

@@ -308,7 +308,7 @@ Every failure carries a class, a stable code, a plain sentence, and a next step.
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required`, `headroom_short`, `lease_stale`, `credential_refused` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
 | `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed`, `binding_drifted` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned`, `driver_panicked`, `condition_not_boolean` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned`, `driver_panicked`, `condition_not_boolean`, `argument_masked` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
 | `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match`, `cannot_reconcile` |

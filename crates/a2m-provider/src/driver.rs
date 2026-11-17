@@ -703,10 +703,9 @@ impl DriverHandle {
             && match sent {
                 Sent::NotSent => false,
                 Sent::Unknown => true,
-                Sent::Answered => matches!(
-                    failure.class(),
-                    FailureClass::Policy | FailureClass::Input
-                ),
+                Sent::Answered => {
+                    matches!(failure.class(), FailureClass::Policy | FailureClass::Input)
+                }
             };
         if in_doubt {
             sent = Sent::Unknown;

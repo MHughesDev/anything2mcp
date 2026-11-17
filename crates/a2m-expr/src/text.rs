@@ -38,6 +38,16 @@ pub fn lower(text: &str) -> String {
     text.to_lowercase()
 }
 
+/// The form in which two texts are compared without regard to case: the
+/// lower case of the upper case, in form C. Lower case alone is not enough:
+/// a system that shows text in capitals turns one letter into two, as in
+/// `Straße` and `STRASSE`, and the two must compare equal. Applying the rule
+/// to its own result changes nothing.
+#[must_use]
+pub fn fold(text: &str) -> String {
+    nfc(&nfc(text).to_uppercase().to_lowercase())
+}
+
 /// The text in upper case, by the Unicode rule that needs no locale.
 #[must_use]
 pub fn upper(text: &str) -> String {
@@ -64,6 +74,24 @@ mod tests {
         assert_eq!(collapse_space("  a\u{A0}\u{A0}b \u{202F} c\r\n"), "a b c");
         assert_eq!(collapse_space("\u{A0}"), "");
         assert_eq!(collapse_space("a"), "a");
+    }
+
+    #[test]
+    fn text_shown_in_capitals_folds_to_the_text_it_was_made_from() {
+        // One letter that capitals turn into two.
+        assert_eq!(fold("Stra\u{df}e"), "strasse");
+        assert_eq!(fold("STRASSE"), fold("Stra\u{df}e"));
+        assert_ne!(lower("STRASSE"), lower("Stra\u{df}e"));
+        // A final sigma and one in the middle of a word.
+        assert_eq!(fold("\u{39F}\u{394}\u{39F}\u{3A3}"), fold("\u{3BF}\u{3B4}\u{3BF}\u{3C3}"));
+        // A ligature, a composed letter, and one written in two parts.
+        assert_eq!(fold("\u{FB01}t"), "fit");
+        assert_eq!(fold("CAFE\u{301}"), fold("caf\u{e9}"));
+        // Different texts stay different, and folding twice changes nothing.
+        assert_ne!(fold("order"), fold("orders"));
+        for text in ["Stra\u{df}e", "\u{130}stanbul", "\u{39F}\u{394}\u{39F}\u{3A3}", "\u{FB01}t", "a\u{345}"] {
+            assert_eq!(fold(&fold(text)), fold(text), "{text}");
+        }
     }
 
     #[test]

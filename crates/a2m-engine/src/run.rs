@@ -8,8 +8,8 @@ use std::time::Duration;
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
     BindingPlan, BindingStatus, Environment, Failure, FailureClass, Mode, OperationIndex,
-    OperationName, OperationPlan, RecordKey, RunState, SessionState, Step, SurfaceIndex, Value,
-    Values,
+    OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState, Step, SurfaceIndex,
+    Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_provider::{
@@ -635,6 +635,20 @@ impl<'a> Run<'a> {
                     .map_err(StepFailure::not_sent)?;
                 args.insert(arg.name.clone(), value);
             }
+            if args.iter().any(|(_, value)| masked(value)) {
+                // The mask stands for a value the redactor removed. Sent
+                // to the system it would be looked up, or written, as if
+                // it were that value.
+                return Err(StepFailure::not_sent(codes::fail(
+                    FailureClass::UnknownVariant,
+                    codes::ARGUMENT_MASKED,
+                    format!(
+                        "An argument of a `{}` step holds the mask of a value the redactor removed, and a mask is never sent to the system.",
+                        cx.step.kind
+                    ),
+                    "The system showed a registered secret where the step takes a value; change the step so that it does not take that value.",
+                )));
+            }
             let limit = self.limit_of(cx.step);
             let deadline = Deadline::after(limit);
             let input = StepInput {
@@ -898,6 +912,18 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
     // held beyond the step. Keeping one needs a place in the trace for it,
     // which the provider contract does not give yet.
     drop(observed.captures);
+}
+
+/// Whether a value holds the redaction mark: it was masked by the redactor,
+/// by the engine's own when it was stored or by the handle's when a driver
+/// returned it.
+pub(crate) fn masked(value: &Value) -> bool {
+    match value {
+        Value::Text(text) => text.contains(REDACTED),
+        Value::List(items) => items.iter().any(masked),
+        Value::Record(values) => values.iter().any(|(_, value)| masked(value)),
+        _ => false,
+    }
 }
 
 /// The failure of a step, or of preparing, in which a provider's code

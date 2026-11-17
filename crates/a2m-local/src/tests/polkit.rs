@@ -291,6 +291,7 @@ fn an_error_of_the_bus_is_named_by_its_name_and_shows_nothing_else() {
         named("org.freedesktop.DBus.Error.Spawn.ChildExited"),
         Fault::NoPolkit
     );
+    assert_eq!(named("org.freedesktop.systemd1.Masked"), Fault::NoPolkit);
     assert_eq!(
         named("org.freedesktop.PolicyKit1.Error.Failed"),
         Fault::Refused
@@ -631,7 +632,7 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     assert_eq!(again.reason, PresenceReason::Ready, "{again:?}");
 
     // A dialog nobody answers is taken away at the deadline, and the
-    // answer is a dismissal. The agent is told, and is free for the next.
+    // answer is a dismissal.
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move {
@@ -643,14 +644,17 @@ async fn against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared() {
     let (got, soon) = within("the deadline", asking).await.unwrap();
     assert_eq!(got, PromptAnswer::Dismissed);
     assert!(Instant::now() >= soon);
+    // The text agent may still wait at its terminal for the password of
+    // the check that is gone, so the next ask gets an agent of its own.
+    // polkit holds nothing against this process from the cancelled check:
+    // the next prompt is raised and passed.
+    drop(agent);
+    let mut agent = Agent::start();
     let asking = tokio::spawn({
         let prompt = Arc::clone(&prompt);
         async move { ask_through_agent(&prompt, far).await }
     });
-    tokio::task::block_in_place(|| {
-        agent.heard.clear();
-        agent.types(REAL_PASSWORD);
-    });
+    tokio::task::block_in_place(|| agent.types(REAL_PASSWORD));
     let got = within("the ask after a cancelled one", asking)
         .await
         .unwrap();

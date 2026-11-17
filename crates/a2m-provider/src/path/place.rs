@@ -37,7 +37,9 @@ mod os {
     use std::os::fd::OwnedFd;
     use std::path::Component;
 
-    use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, openat, renameat, statat, unlinkat};
+    use rustix::fs::{
+        AtFlags, CWD, FileType, Mode, OFlags, mkdirat, openat, renameat, statat, unlinkat,
+    };
     use rustix::io::Errno;
 
     use super::{EntryKind, File, OsStr, Path, Unreached, io};
@@ -95,6 +97,12 @@ mod os {
                 Mode::from_raw_mode(0o666),
             )?;
             Ok(File::from(handle))
+        }
+
+        /// Makes a new folder of that name. It fails when anything stands
+        /// at the name, a link included.
+        pub(in super::super) fn create_dir(&self, name: &OsStr) -> io::Result<()> {
+            Ok(mkdirat(&self.0, name, Mode::from_raw_mode(0o777))?)
         }
 
         /// Opens the file of that name for reading. A link there is not
@@ -186,6 +194,12 @@ mod os {
                 options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
             }
             options.open(self.0.join(name))
+        }
+
+        /// Makes a new folder of that name. It fails when anything stands
+        /// at the name, a link included.
+        pub(in super::super) fn create_dir(&self, name: &OsStr) -> io::Result<()> {
+            fs::create_dir(self.0.join(name))
         }
 
         /// Gives the file `from` the name `to`, both in this folder. What

@@ -4,7 +4,9 @@
 mod load;
 mod schema;
 
-pub use load::{Entry, Layer, Overridden, PresetInfo, Settings, SourceFile, Sources};
+pub use load::{
+    Entry, Layer, Overridden, PROJECT_FILE_NAME, PresetInfo, Settings, SourceFile, Sources,
+};
 pub use schema::{
     BuiltInPreset, DefaultValue, Effective, Kind, PRESETS, PROFILES, SCHEMA, Safer, Scope,
     SettingDef, find,

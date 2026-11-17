@@ -27,7 +27,8 @@ pub use artifact::{
 };
 pub use builder::{DEFAULT_TRACE_LIMIT, FinishedTrace, TraceBuilder, TraceRefused};
 pub use wire::{
-    EndLine, HeaderLine, Held, PassLine, StepLine, TRACE_SCHEMA, TraceLine, ValueLine, read_trace,
+    EndLine, HeaderLine, Held, PassLine, StepLine, TRACE_SCHEMA, TraceCheck, TraceLine, ValueLine,
+    check_trace, read_trace,
 };
 
 /// How much evidence a run keeps. The plan and policy decide a run's level;
@@ -103,7 +104,7 @@ impl Phase {
 
 /// One step, as the engine saw it. One record is one driver instruction: one
 /// call of a driver's `act`. A step that is retried is two records.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StepRecord {
     /// Which pass of the engine loop this step belongs to, from 0. A pass is
     /// one turn through the loop: one operation call, for one record, by one
@@ -195,12 +196,63 @@ pub struct Acting {
 }
 
 /// One named detail of what a driver did.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Detail {
     /// The detail's name, fixed by the pack.
     pub name: String,
     /// Its value, as text.
     pub value: String,
+}
+
+/// What a debug print shows of a value a driver handed over: that it is
+/// there, never what it is. A step record is given to the trace before
+/// anything in it was redacted, and its record key, its field names, its
+/// values, and the details of how it acted may all have come from a system.
+/// The same holds for a detail read back from a stored trace: it is printed
+/// by its presence alone.
+struct Present(bool);
+
+impl std::fmt::Debug for Present {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0 { "present" } else { "absent" })
+    }
+}
+
+impl std::fmt::Debug for StepRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StepRecord")
+            .field("pass", &self.pass)
+            .field("phase", &self.phase)
+            .field("step", &self.step)
+            .field("kind", &self.kind)
+            .field("record", &Present(self.record.is_some()))
+            .field("begins", &self.begins)
+            .field("took", &self.took)
+            .field("locating", &Present(self.locating.is_some()))
+            .field("acting", &self.acting)
+            .field("values", &self.values)
+            .field("outcome", &self.outcome)
+            .field("artifacts", &self.artifacts.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Detail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Detail").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for TracedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TracedValue")
+            .field("sensitivity", &self.sensitivity)
+            .field("volatile", &self.volatile)
+            .field("intended", &Present(self.intended.is_some()))
+            .field("read_back", &Present(self.read_back.is_some()))
+            .field("matched", &self.matched)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Detail {
@@ -215,7 +267,7 @@ impl Detail {
 }
 
 /// One field's values at one step.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct TracedValue {
     /// The field's name.
     pub field: String,

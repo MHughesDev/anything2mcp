@@ -40,11 +40,13 @@ pub use telemetry::{
     CALL_COUNT, CALL_DURATION, CALL_RETRIES, STEP_SPAN, SpanGuard, Telemetry, TelemetrySettings,
     start, start_with_clock,
 };
-pub use text::{FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, limit_text};
+pub use text::{
+    FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, decode_references, limit_text, strip_hidden,
+};
 pub use trace::{
     Acting, ArtifactKind, ArtifactOutcome, ArtifactRef, CaptureLevel, CapturePoint, ChoiceReason,
     DEFAULT_TRACE_LIMIT, Detail, DropReason, EndLine, FinishedTrace, HeaderLine, Held,
     KeptArtifact, Locating, MaskReport, OfferedArtifact, PassLine, PassStart, Phase, StepLine,
-    StepRecord, TRACE_SCHEMA, TraceBuilder, TraceIdentity, TraceLine, TraceOutcome, TraceRefused,
-    TracedValue, ValueLine, read_trace,
+    StepRecord, TRACE_SCHEMA, TraceBuilder, TraceCheck, TraceIdentity, TraceLine, TraceOutcome,
+    TraceRefused, TracedValue, ValueLine, check_trace, read_trace,
 };

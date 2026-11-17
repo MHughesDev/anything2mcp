@@ -267,6 +267,10 @@ fn a_float_an_unknown_name_and_a_wrong_type_are_refused_with_a_place() {
         "parse_decimal(input.name, 2, \"half_even\", \";\")",
         "code_for(input.name, {\"A\": \"Active\", \"B\": \"Active\"})",
         "code_for(input.name, {})",
+        "code_for(input.name, {\"A\": \"B\", \"B\": \"C\"})",
+        "as_choice(input.name, {\"A\": \"Open\", \"Open\": \"Closed\"})",
+        "code_for(input.name, {\"A\": \"x\", \"A \": \"y\"})",
+        "parse_date(input.name, \"YYYYMD\")",
         "excel_serial_to_date(input.count, \"1905\")",
         "decimal(\"1,5\")",
         "nosuch(1)",
@@ -724,6 +728,16 @@ fn a_value_the_system_rounds_or_reformats_compares_equal_and_another_does_not() 
             Value::from(" CAF\u{c9}\u{a0}TABLE "),
             Value::from("Cafe Table"),
         ),
+        // A system that shows text in capitals turns one letter into two.
+        (
+            FieldRule::Text {
+                case_sensitive: false,
+                whitespace: Whitespace::Trim,
+            },
+            Value::from("Stra\u{df}e 5"),
+            Value::from("STRASSE 5"),
+            Value::from("STRASSE 6"),
+        ),
         (
             FieldRule::Text {
                 case_sensitive: true,
@@ -883,6 +897,36 @@ fn a_rule_the_library_does_not_know_is_refused_when_the_field_type_compiles() {
                 },
             ],
         },
+        // A code that is another choice's label: a value read back could
+        // be either choice.
+        FieldRule::Choice {
+            codes: vec![
+                CodeLabel {
+                    code: "A".into(),
+                    label: "B".into(),
+                },
+                CodeLabel {
+                    code: "B".into(),
+                    label: "C".into(),
+                },
+            ],
+        },
+        FieldRule::Choice {
+            codes: vec![
+                CodeLabel {
+                    code: "open".into(),
+                    label: "Open".into(),
+                },
+                CodeLabel {
+                    code: "Open".into(),
+                    label: "Closed".into(),
+                },
+            ],
+        },
+        // A date whose month and day run together.
+        FieldRule::Date {
+            format: "YYYYMD".into(),
+        },
     ] {
         assert_eq!(
             rule.normalizer().unwrap_err().code,
@@ -890,6 +934,50 @@ fn a_rule_the_library_does_not_know_is_refused_when_the_field_type_compiles() {
             "{rule:?}"
         );
     }
+}
+
+/// The route of a failed write reported as verified: the caller writes the
+/// code `B`, the write fails, the record still holds `A`, and the system
+/// shows `A` by its label, which is `B`.
+#[test]
+fn a_choice_read_back_never_stands_for_two_choices() {
+    let pair = |code: &str, label: &str| CodeLabel {
+        code: code.into(),
+        label: label.into(),
+    };
+    let ambiguous = FieldRule::Choice {
+        codes: vec![pair("A", "B"), pair("B", "C")],
+    };
+    let refusal = ambiguous.normalizer().unwrap_err();
+    assert_eq!(refusal.code, EXPRESSION_INVALID);
+    assert!(refusal.to_string().contains("label of another choice"), "{refusal}");
+
+    // A plan the compiler did not make cannot carry the list either: the
+    // text is canonical, and the load checks the rule again.
+    let stored = PlanExpr {
+        source: "as_choice(value, {\"A\": \"B\", \"B\": \"C\"})".into(),
+        result: ValueType::Choice,
+        library: LibraryVersion::CURRENT.get(),
+    };
+    let failure = Normalizer::load(&stored).unwrap_err();
+    assert_eq!(failure.code(), &PLAN_EXPRESSION_UNLOADABLE);
+
+    // A code may be its own label, and codes may differ from labels in
+    // case: neither makes one text stand for two choices.
+    let plain = normalizer(&FieldRule::Choice {
+        codes: vec![pair("A", "A"), pair("b", "Bee"), pair("C", "c")],
+    });
+    let code = |text: &str| plain.normalize(&Value::from(text)).unwrap().normalized;
+    assert_eq!(code("A"), Value::from("A"));
+    assert_eq!(code("Bee"), Value::from("b"));
+    assert_eq!(code("c"), Value::from("C"));
+    // The intended value and a stale one never agree.
+    let intended = plain.normalize(&Value::from("b")).unwrap();
+    for stale in ["A", "C", "c"] {
+        let read = plain.normalize(&Value::from(stale)).unwrap();
+        assert!(!intended.agrees_with(&read), "{stale}");
+    }
+    assert!(intended.agrees_with(&plain.normalize(&Value::from(" Bee ")).unwrap()));
 }
 
 #[test]
@@ -921,6 +1009,16 @@ fn a_value_a_rule_cannot_read_stops_and_is_never_guessed() {
                 mark: point,
             },
             Value::from("EUR 5.00"),
+        ),
+        // Another currency's symbol is another value.
+        (
+            FieldRule::Money {
+                currency: "EUR".into(),
+                places: None,
+                rounding: even,
+                mark: point,
+            },
+            Value::from("\u{a3}5.00"),
         ),
         // A whole number of money could be units or cents.
         (

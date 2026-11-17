@@ -18,8 +18,7 @@ use a2m_core::{Digest, FailureClass, RunState, SessionState, SurfaceName, Value,
 use a2m_engine::{EngineEvent, JobKind, JobOutcome};
 use a2m_telemetry::ChoiceReason;
 use common::{
-    FIRST_MODE, ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, SECURE_GET, STOCK_GET, Scene,
-    expr,
+    FIRST_MODE, ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, SECURE_GET, STOCK_GET, Scene, expr,
 };
 
 fn order(id: &str) -> Values {
@@ -304,7 +303,9 @@ async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
         }
     })
     .await;
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     let failure = outcome.failure().unwrap();
     assert_eq!(
         (failure.class(), failure.code().as_str()),
@@ -319,7 +320,9 @@ async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
         plan.operations[0].bindings[0].precondition = Some(not_a_condition);
     })
     .await;
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     assert_eq!(
         outcome.failure().unwrap().code().as_str(),
         "condition_not_boolean"
@@ -344,7 +347,13 @@ async fn what_a_writing_tool_must_hold_alone_is_told_from_the_plan_and_the_manif
     // what its bindings' modes declare, once for each surface: the test
     // pack's modes state nothing, which is the surface.
     assert!(needs(ORDER_GET).is_empty());
-    assert_eq!(needs(ITEM_UPSERT), [("surface".to_owned(), "app".to_owned())]);
-    assert_eq!(needs(ORDER_FILL), [("surface".to_owned(), "app".to_owned())]);
+    assert_eq!(
+        needs(ITEM_UPSERT),
+        [("surface".to_owned(), "app".to_owned())]
+    );
+    assert_eq!(
+        needs(ORDER_FILL),
+        [("surface".to_owned(), "app".to_owned())]
+    );
     assert!(needs("example_no_such_tool").is_empty());
 }

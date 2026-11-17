@@ -119,7 +119,8 @@ pub struct Renewal { pub remaining: Duration, pub directive: Directive }
 pub enum Directive { Continue, Cancel, Drain, Pause }
 pub enum JobEnd { Done, Rests, Stopped { class: FailureClass, code: FailureCode, in_doubt: bool }, LeaseEnding }
 
-pub struct ResourceKey(/* `kind:name`, ordered by its text */);    // ::new(kind, name), ::record(workspace, target, environment, key_hash), ::session(id)
+pub struct ResourceKey(/* `kind:name`, ordered by its text */);    // ::new(kind, name), ::record(workspace, target, environment, key_hash), ::session(id),
+                                                                    // ::held_alone(kind, workspace, target, environment, surface): what one write holds alone on a surface
 pub struct BudgetKey(/* `kind:name` */);                            // ::target, ::surface, ::session, ::caller, ::new
 pub struct RateLimit { pub capacity: u32, pub refill: u32, pub per: Duration }
 pub struct RateGrant { pub requests: u32, pub over: Duration }
@@ -160,6 +161,7 @@ The loop that runs work in the same process says `hello` like any runner, so che
 - **Matching.** A job goes to a runner in its workspace that serves its target, offers one of its modes with a free slot, reports its operating system when the job names one, and, when the runner is a person's own device, only if the job acts as that person. A job that needs a live session goes to the session's home runner. If that runner has said `bye` and the session is movable, any matching runner may take it and the keeper restores the session there.
 - **Per-session parallelism.** Leased jobs sharing a session are counted, reads and writes apart, against the job's `session_limits`. A job over the limit stays pending; if it waits past its queue limit, its run is told `busy`, `session_in_use`.
 - **Exclusive resources.** At most one job holds each `ResourceKey`; the primary key of `resource_holds` is the rule. A job is not handed out while another holds one of its keys, and it takes all of them in the transaction that leases it. This is how desktop work on one application, and anything else that changes a person's screen or holds a device link, is serialized without the scheduler knowing what a screen is. A waiting job keeps its place for its keys: a later job that wants one of them is not handed out first.
+- **What a mode holds alone.** A mode's manifest says what one write holds alone: `surface`, `file`, `screen`, or `link`. `ResourceKey::held_alone` names that thing for one surface of a target in one environment, as `kind:workspace/target/environment/surface`, so that every submitter names it by the same key ([decision 0148](../../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)). The scheduler compares the key and does not know what the kind means. Whoever submits a job that writes puts one key in `JobRequirements::exclusive` for each need the engine reports with `exclusive_needs`; today the submitter leaves the list empty, so nothing is held. A screen belongs to a runner's machine and not to a surface, and no key is bound to the runner at lease: two applications on one desktop are kept apart only when a key can name the runner, which is not built.
 - **Waiting is bounded.** A job that no runner takes within its queue limit, five minutes by default, ends, and its run stops as `busy` with the reason: `session_in_use`, `resource_in_use`, or `runner_unavailable` saying what is missing.
 
 ## Leases
@@ -171,7 +173,7 @@ The loop that runs work in the same process says `hello` like any runner, so che
 | Declared lost | 5 s after the scheduler's own count runs out | By `sweep`. In those five seconds the heartbeat is refused, a result is still taken, and nobody else is given the job |
 | Quarantine | 60 s, or the job's `max_step` if greater | Before anyone touches the run's records again |
 
-Leasing a job of a run raises the run's lease number through the ledger and writes it to the job in the same transaction, so the ledger refuses anything older. A lease ends in one of three ways: `finish`; `finish` with `LeaseEnding`, which puts the job back in the queue; or loss.
+Leasing a job of a run raises the run's lease number through the ledger and writes it to the job in the same transaction, so the ledger refuses anything older. A lease ends in one of three ways: `finish`; `finish` with `LeaseEnding`, which puts the job back in the queue; or loss. A `finish` with `Stopped` queues a reconcile job when the runner says a record is in doubt, and also when the ledger does: the ledger is asked for the run's records whose intent was stored and that were never read back, and the runner's `in_doubt: false` is not taken against it.
 
 On loss, `sweep` does section 223's steps in one transaction:
 
@@ -186,7 +188,7 @@ When the reconcile job is leased it gets the next lease number, and confirms the
 
 A job may take further keys while it runs, with `acquire`, and give them back with `release`; the end of the job frees whatever it holds.
 
-**The ordering rule.** Keys are ordered by their text. One call takes its keys together, all or none. A job that already holds keys, those of its requirements included, may ask only for keys that sort after every key it holds; a call that breaks the order is refused at once with `busy`, `resource_order`, and does not wait. So a job only ever waits for keys above the ones it holds, no circle of waiting jobs can form, and there is no deadlock. Those who wait are served in the order they came, and no wait outlasts its limit or the lease.
+**The ordering rule.** Keys are ordered by their text. One call takes its keys together, all or none. A job that already holds keys, those of its requirements included, may ask only for keys that sort after every key it holds; a call that breaks the order is refused at once with `busy`, `resource_order`, and does not wait. So a job only ever waits for keys above the ones it holds, no circle of waiting jobs can form, and there is no deadlock. Those who wait are served in the order they came, and no wait outlasts its limit or the lease. A waiter whose lease has run out on the scheduler's count, and that `sweep` has not yet declared lost, is granted nothing, as `acquire` would refuse it at that moment.
 
 ## Record locks
 
@@ -203,7 +205,7 @@ The lock table and its rules belong to `a2m-ledger` ([section 208](../../spec/2-
 
 A budget is a token bucket named by a `BudgetKey`: for a target, a surface, a session, or a caller. Its limit is set with `set_budget` from the target's files; a budget nobody set gets a conservative default, five requests and one more each second. A job asks for a grant against several budgets at once, such as 20 requests against its surface, its session, and its caller, and spends it locally. The grant is the same number from each, never more than the emptiest holds, and unspent requests are not returned. When a budget is empty, the call waits for the refill if that falls inside the lease, and otherwise answers `busy`, `rate_limited` with the time.
 
-Buckets are kept in the store, in whole numbers, and refill by the store's clock and nothing else. A restart does not refill them.
+Buckets are kept in the store, in whole numbers, and refill by the store's clock and nothing else. A restart does not refill them. The moment a bucket is counted to never goes back: when the clock is set back, the bucket refills nothing until the clock has passed that moment again, so no stretch of time is counted twice.
 
 ## Holds
 
@@ -258,6 +260,10 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | A full queue answers at once and never grows | Submissions past the queue's length and the caller's cap; the store is asked what it holds |
 | An interactive job is dispatched before a batch job queued earlier, and one caller cannot starve another | A batch job, a flood from one caller, and one job from another |
 | Budgets refill by the clock only, and a restart does not refill them | Sweeps and calls with the clock standing still; a restart |
+| A clock that went back refills no budget twice | A bucket counted to an hour from now, as a clock set back leaves it: the moment stays, and nothing refills before it |
+| A stopped job is reconciled when the ledger holds a record in doubt, whatever its runner reported | A job that stored an intent and reports `in_doubt: false`; the store is asked for the reconcile job |
+| A waiter whose lease has run out is granted nothing | A key freed at the moment the waiter's lease ended, before any sweep; the store is asked who holds it |
+| What one write holds alone has one key, and two jobs that name it run one after the other | Three jobs on two surfaces with three free slots |
 | Everything queued or leased is found again after a restart | The store closed and opened again: the queue, the lease, the runner, the hold; a job whose runner is gone is recovered by the deadline rule |
 | No fixed sleeps | Every test runs on a clock that moves only when told; a source test forbids sleeping in the crate |
 | The scheduler names no mode and does not depend on the engine | The audit's layering rule; a source test |

@@ -676,6 +676,30 @@ impl CheckedPath {
         self.still_inside()
     }
 
+    /// Makes this one folder, new: the call fails when anything stands at
+    /// the name already, a folder, a file, or a link, so a caller that gets
+    /// `Ok` holds a folder that was empty and its own at that moment. The
+    /// folder above it must be there.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPath::write`]; `input`/`file_unavailable` also when
+    /// something is already there.
+    pub fn create_dir(&self) -> Result<(), Failure> {
+        self.writable()?;
+        let (folder, name) = self.place()?;
+        let folder = self
+            .folder_now(folder)?
+            .ok_or_else(|| self.unavailable("cannot be made: the folder above it is not there"))?;
+        folder.create_dir(name).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                self.unavailable("cannot be made new: something is already there")
+            } else {
+                self.unavailable("cannot be made")
+            }
+        })
+    }
+
     /// Removes the file. A link at the name is not removed and not
     /// followed: it is refused.
     ///

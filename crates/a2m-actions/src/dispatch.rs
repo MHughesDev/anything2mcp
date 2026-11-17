@@ -79,6 +79,19 @@ impl Principal {
     pub const fn acting_for(&self) -> Option<&ActingFor> {
         self.acting_for.as_ref()
     }
+
+    /// The person whose runs this caller may read, resume, and cancel: the
+    /// person it was proved to act for, or itself when it is a person. A
+    /// delegation proves nothing yet, and an agent or a program that acts
+    /// for nobody owns no person's run.
+    #[must_use]
+    pub fn person(&self) -> Option<a2m_core::PrincipalId> {
+        match &self.acting_for {
+            Some(ActingFor::LocalUser(person) | ActingFor::TokenSubject(person)) => Some(*person),
+            Some(ActingFor::Delegation(_)) => None,
+            None => (self.principal.kind == PrincipalKind::Person).then_some(self.principal.id),
+        }
+    }
 }
 
 /// Who is calling, as the front door states it after the check.
@@ -139,7 +152,10 @@ impl ProjectFolder {
 }
 
 /// What a front door hands the dispatcher.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Its debug print names the action and the fields of its input and never
+/// shows a value: the input of `secret.set` holds the secret.
+#[derive(Clone, PartialEq)]
 pub struct Request {
     /// The action's name, as the caller wrote it.
     pub action: String,
@@ -153,6 +169,24 @@ pub struct Request {
     /// The dispatcher checks it before any handler sees it: see
     /// [`Request::in_project_folder`].
     pub project: Option<PathBuf>,
+}
+
+/// The names of an input's fields, for a debug print that shows no value.
+fn field_names(input: &Map<String, Json>) -> Vec<&str> {
+    input.keys().map(String::as_str).collect()
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fields = self.input.as_object().map(field_names).unwrap_or_default();
+        f.debug_struct("Request")
+            .field("action", &codes::shown(&self.action))
+            .field("input_fields", &fields)
+            .field("door", &self.caller.door)
+            .field("is_agent", &self.caller.is_agent)
+            .field("project", &self.project.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Request {
@@ -375,7 +409,9 @@ impl Response {
 }
 
 /// What a handler is given: the validated input and the checked caller.
-#[derive(Debug, Clone)]
+///
+/// Its debug print names the fields of the input and never shows a value.
+#[derive(Clone)]
 pub struct Call {
     /// The input. It passed the action's schema.
     pub input: Map<String, Json>,
@@ -393,6 +429,26 @@ pub struct Call {
     pub project_refused: Option<Failure>,
     /// Proof that a person is present, when the action needed it.
     pub presence: Option<PresenceProof>,
+    /// The effect class and hazard the dispatcher's decision was made for.
+    /// For `tool.call` these are the published tool's, as it stood when
+    /// the decision was made; the handler refuses a tool that has another
+    /// by the time it looks. `None` for `tool.call` of a tool that was not
+    /// found.
+    pub decided: Option<(EffectClass, Hazard)>,
+}
+
+impl std::fmt::Debug for Call {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Call")
+            .field("input_fields", &field_names(&self.input))
+            .field("door", &self.caller.door)
+            .field("is_agent", &self.caller.is_agent)
+            .field("decision", &self.decision)
+            .field("project", &self.project.is_some())
+            .field("presence", &self.presence.is_some())
+            .field("decided", &self.decided)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Call {
@@ -616,6 +672,7 @@ impl Kernel {
         // The `Nothing` actions report on the engine and must answer when
         // there is no store to record a decision in. They change nothing and
         // show no data of any system.
+        let decided = effect;
         let decision = if def.needs == HealthNeed::Nothing && health.state == HealthState::Stopped {
             DecisionId::from_bytes([0; 16])
         } else {
@@ -641,8 +698,14 @@ impl Kernel {
             decision.id
         };
 
-        // 5. Person.
-        let presence = if def.person == PersonNeed::Presence {
+        // 5. Person. An act that is a person's whenever it loosens is asked
+        // for here as well, so that no handler has to remember to ask.
+        let asks = match def.person {
+            PersonNeed::Presence => true,
+            PersonNeed::PresenceWhenLoosening => loosens(&def, &input),
+            PersonNeed::None => false,
+        };
+        let presence = if asks {
             Some(
                 self.presence(&request.caller, &def, effect_class)
                     .await
@@ -654,9 +717,12 @@ impl Kernel {
 
         // 6. Run. The project folder a door stated is checked first; one
         // that fails is not handed on.
+        // What is handed on is the folder as the check resolved it, with
+        // every link followed, never the path as it was stated: a link in
+        // the stated path that is changed after the check moves nothing.
         let (project, project_refused) = match request.project {
             Some(stated) => match self.checked_project(&stated).await {
-                Ok(()) => (Some(stated), None),
+                Ok(folder) => (Some(folder), None),
                 Err(refused) => (None, Some(refused)),
             },
             None => (None, None),
@@ -669,6 +735,7 @@ impl Kernel {
             project,
             project_refused,
             presence,
+            decided,
         };
         let output = self
             .run_handler(&def, call)
@@ -679,22 +746,25 @@ impl Kernel {
         Ok((self.capped(&def, output), decision))
     }
 
-    /// Checks a project folder a front door stated. It is taken only on one
-    /// machine, where the caller is the user the engine runs as; it must be
-    /// an absolute path to a folder that exists; and it may neither hold
-    /// nor lie inside one of the engine's own folders, so that no action
-    /// can be pointed at the store, the vault's files, or the settings
-    /// through it. Symbolic links are followed before the comparison.
+    /// Checks a project folder a front door stated, and gives the folder
+    /// with every link followed. It is taken only on one machine, where
+    /// the caller is the user the engine runs as; it must be an absolute
+    /// path to a folder that exists; it may neither hold nor lie inside one
+    /// of the engine's own folders, or a folder in which another program
+    /// keeps its data; it must hold a project file; and it must be inside
+    /// what the setting `files.allowed_roots` allows. So no action can be
+    /// pointed at the store, the vault's files, a browser's profile, or a
+    /// key folder through it.
     ///
     /// # Errors
     ///
     /// `input`/`path_not_allowed`, with the reason.
-    async fn checked_project(&self, stated: &std::path::Path) -> Result<(), Failure> {
+    async fn checked_project(&self, stated: &std::path::Path) -> Result<PathBuf, Failure> {
         let refuse = |why: &str| {
             codes::input(
                 codes::PATH_NOT_ALLOWED,
                 format!("The project folder of this call is not used: {why}."),
-                "Run the command inside a project folder of your own, or pass `--project` with its full path.",
+                "Run the command inside a project folder of your own, one that holds `anything2mcp.toml`, or pass `--project` with its full path.",
             )
         };
         if !self.is_local() {
@@ -706,33 +776,19 @@ impl Kernel {
             return Err(refuse("its path is not a full path"));
         }
         let stated = stated.to_path_buf();
-        let paths = self.paths().clone();
+        let kernel = self.clone();
         // Looking at the disk waits: off the async threads.
         tokio::task::spawn_blocking(move || {
-            let folder = std::fs::canonicalize(&stated)
-                .ok()
-                .filter(|folder| folder.is_dir())
-                .ok_or_else(|| refuse("there is no such folder"))?;
-            for own in [
-                &paths.installation_config,
-                &paths.config,
-                &paths.data,
-                &paths.runtime,
-                &paths.cache,
-            ] {
-                // A folder of the engine that does not exist yet is
-                // compared as it is written.
-                let own = std::fs::canonicalize(own).unwrap_or_else(|_| own.clone());
-                if folder.starts_with(&own) || own.starts_with(&folder) {
-                    return Err(refuse(
-                        "it holds, or lies inside, one of the engine's own folders",
-                    ));
-                }
-            }
-            Ok(())
+            crate::project::check(
+                &stated,
+                kernel.paths(),
+                kernel.settings(),
+                &kernel.inner.places,
+            )
         })
         .await
-        .unwrap_or_else(|_| Err(refuse("it could not be looked at")))
+        .unwrap_or(Err("it could not be looked at"))
+        .map_err(refuse)
     }
 
     /// Asks the role's person surface for proof that a person is present.
@@ -757,14 +813,30 @@ impl Kernel {
                 "Ask the person to run it themselves, at a terminal.",
             ));
         }
-        self.person()
+        let asked = caller.principal.principal.id;
+        let proof = self
+            .person()
             .confirm_presence(PresenceAsk {
-                principal: caller.principal.principal.id,
+                principal: asked,
                 action: def.name.clone(),
                 effect,
                 summary: def.summary.clone(),
             })
-            .await
+            .await?;
+        // The proof is checked where it is used: it must be this caller's,
+        // and it must be of now. A surface that hands back a proof it kept
+        // from another person's prompt, or from an earlier one, proves
+        // nothing about this call.
+        proof
+            .checked(asked, self.inner.clock.now())
+            .map_err(|why| {
+                codes::policy(
+                    a2m_policy::PRESENCE_REQUIRED,
+                    format!("`{}` is a person's act, and the proof of presence was not taken: {why}.", def.name),
+                    "Run the command again and answer the prompt yourself.",
+                )
+            })?;
+        Ok(proof)
     }
 
     async fn run_handler(&self, def: &ActionDef, call: Call) -> Result<Output, Failure> {
@@ -910,6 +982,17 @@ impl Kernel {
                 self.tool_effect(tool).await
             }
         }
+    }
+}
+
+/// Whether a call of an action that is a person's act whenever it loosens
+/// does loosen. Releasing a kill switch does. An action that has not said
+/// how its loosening is told is asked for on every call, which is the safe
+/// side: `config.set` and `provider.enable`, until they are built.
+fn loosens(def: &ActionDef, input: &Map<String, Json>) -> bool {
+    match def.name.as_str() {
+        "killswitch.set" => input.get("on").and_then(Json::as_bool) == Some(false),
+        _ => true,
     }
 }
 

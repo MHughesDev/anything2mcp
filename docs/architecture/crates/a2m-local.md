@@ -214,7 +214,7 @@ Where the operating system offers no prompt a background process can raise, the 
 | Not authorized, no challenge | `not_available`, `session_not_active` | `Denied` |
 | Authorized together with challenge or dismissed | `not_available`, `granted_without_asking` | `not_available`, `check_failed` |
 | No system bus | `not_available`, `no_system_bus` | the same |
-| The bus has no polkit, or cannot start it | `not_available`, `no_polkit` | the same |
+| The bus has no polkit, or cannot start it: the service is unknown, has no owner, or its start failed | `not_available`, `no_polkit` | the same |
 | polkit refuses, and does not list the action | `not_available`, `policy_not_installed` | the same |
 | polkit refuses, and lists the action | `not_available`, `check_failed` | the same |
 | polkit says the check was cancelled | `not_available`, `check_failed` | `Dismissed` |
@@ -296,7 +296,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | `no_session` | The policy file is installed; the test runs as an ordinary account in no local, active session | `not_available`, `session_not_active` |
 | `root` | The same, run as the administrator account | `not_available`, `granted_without_asking` |
 | `no_agent` | A rule of the job gives the test account `auth_self` for the action, standing in for the seat a CI machine does not have; no agent runs | `not_available`, `no_agent` |
-| `ready` | The same, and the test starts polkit's text agent for its own process and types the test account's made-up password | no agent first; a wrong password is not presence; the right one is `Present(polkit)`, and polkit would ask again after it; a dialog nobody answers is cancelled at the deadline, and the next ask passes |
+| `ready` | The same, and the test starts polkit's text agent for its own process and types the test account's made-up password | no agent first; a wrong password is not presence; the right one is `Present(polkit)`, and polkit would ask again after it; a dialog nobody answers is dismissed at the deadline, and the next ask, through an agent of its own, passes |
 
 ## Open points
 

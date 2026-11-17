@@ -27,7 +27,7 @@ use tracing::{Event, Metadata, Subscriber};
 use crate::clock::Clock;
 use crate::failure::STORAGE_FULL;
 use crate::rotate::{RotatingFile, Rotation};
-use crate::text::limit_text;
+use crate::text::{limit_text, strip_hidden};
 
 /// The name of the log file inside the folder a caller gives.
 pub const LOG_FILE_NAME: &str = "engine.log";
@@ -288,9 +288,16 @@ impl LogCore {
         self.emit(&text);
     }
 
-    /// Text made safe to write: redacted, then limited in length.
+    /// Text made safe to write: redacted, cleared of characters nobody can
+    /// see, redacted once more, then limited in length. JSON already
+    /// escapes line feeds and the control characters; a direction override,
+    /// a line separator, or a zero-width character would pass it and make a
+    /// terminal or a viewer show something the line does not hold. Taking
+    /// them out can join the halves of a secret they had split, which is
+    /// why the text is redacted again.
     fn safe(&self, text: &str) -> String {
-        limit_text(&self.redact.redact(text), LOG_TEXT_LIMIT)
+        let shown = strip_hidden(&self.redact.redact(text));
+        limit_text(&self.redact.redact(&shown), LOG_TEXT_LIMIT)
     }
 
     fn emit(&self, line: &str) {

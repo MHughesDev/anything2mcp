@@ -209,6 +209,32 @@ impl ResourceKey {
         ))
     }
 
+    /// The key of what one write holds alone on one surface of a target in
+    /// one environment: `kind` is the word the write's mode declares, such
+    /// as `surface`, `file`, `link`, or `screen`, and `surface` is the
+    /// surface's name in the target's files. Whoever submits a job that
+    /// writes puts one such key in [`JobRequirements::exclusive`] for every
+    /// surface the job may write on, so that every submitter names the same
+    /// thing by the same key. The scheduler compares the key and does not
+    /// know what the kind means.
+    ///
+    /// # Errors
+    ///
+    /// As [`ResourceKey::new`].
+    pub fn held_alone(
+        kind: &str,
+        workspace: WorkspaceId,
+        target: &TargetName,
+        environment: &Environment,
+        surface: &str,
+    ) -> Result<Self, Failure> {
+        checked_key(
+            kind,
+            &format!("{workspace}/{target}/{environment}/{surface}"),
+        )
+        .map(Self)
+    }
+
     /// The key of the one place a session has for a writer.
     #[must_use]
     pub fn session(session: SessionId) -> Self {
