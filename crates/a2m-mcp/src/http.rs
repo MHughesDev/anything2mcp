@@ -147,6 +147,7 @@ impl McpService {
                 settings: settings.checked()?,
                 dispatched: AtomicU64::new(0),
                 cancelled: tokio::sync::watch::channel(0).0,
+                following: tokio::sync::watch::channel(0).0,
             }),
         })
     }
@@ -501,6 +502,12 @@ impl McpService {
     #[cfg(test)]
     pub(crate) fn cancellations(&self) -> tokio::sync::watch::Receiver<u64> {
         self.core.cancelled.subscribe()
+    }
+
+    /// Told each time a call begins to follow the run it started.
+    #[cfg(test)]
+    pub(crate) fn followings(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.core.following.subscribe()
     }
 
     /// How many requests this endpoint has handed the dispatcher.

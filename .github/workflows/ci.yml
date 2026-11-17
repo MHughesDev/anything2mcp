@@ -146,3 +146,77 @@ jobs:
         run: |
           node --test test/platform.test.js
           node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"
+
+  presence:
+    name: The Linux presence prompt against a real polkit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ACTION: io.github.mhughesdev.anything2mcp.presence
+      ACCOUNT: a2m-presence
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Install polkit, its text agent, and what the job drives them with
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends polkitd dbus bsdutils jq
+      - name: Build the tests of a2m-local and put the test program where another account can run it
+        shell: bash
+        run: |
+          set -euo pipefail
+          program=$(cargo test --locked -p a2m-local --lib --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "a2m_local") | .executable' \
+            | tail -n 1)
+          test -x "$program"
+          sudo install -m 0755 "$program" /usr/local/bin/a2m-local-tests
+          sudo tee /usr/local/bin/a2m-presence-stage >/dev/null <<'SCRIPT'
+          #!/bin/bash
+          # Runs the test against a real polkit as account $1, on a machine prepared as $2.
+          # It fails unless exactly that one test ran and passed.
+          set -euo pipefail
+          sudo -u "$1" env "A2M_TEST_POLKIT=$2" /usr/local/bin/a2m-local-tests \
+            --exact tests::polkit::against_a_real_polkit_the_prompt_answers_as_the_machine_is_prepared \
+            --nocapture 2>&1 | tee /tmp/a2m-presence-stage.log
+          grep -q 'test result: ok. 1 passed' /tmp/a2m-presence-stage.log
+          SCRIPT
+          sudo chmod 0755 /usr/local/bin/a2m-presence-stage
+      - name: Create the test account with a made-up password, and start polkit
+        run: |
+          sudo useradd --no-create-home --shell /bin/sh "$ACCOUNT"
+          echo "$ACCOUNT:secret-for-tests-presence" | sudo chpasswd
+          sudo systemctl start polkit.service
+      - name: polkit runs and the policy file is not installed
+        run: a2m-presence-stage "$ACCOUNT" no_policy
+      - name: Install the policy file as an administrator does
+        run: |
+          sudo install -m 0644 "crates/a2m-local/polkit/$ACTION.policy" "/usr/share/polkit-1/actions/$ACTION.policy"
+          sudo systemctl restart polkit.service
+          timeout 60 sh -c "until pkaction --action-id '$ACTION' >/dev/null 2>&1; do sleep 1; done"
+          pkaction --action-id "$ACTION" --verbose
+      - name: A runner has no seat, so no session on it is local and active
+        run: a2m-presence-stage "$ACCOUNT" no_session
+      - name: The administrator account is allowed without being asked, which proves nobody
+        run: a2m-presence-stage root root
+      - name: Give the test account auth_self by a rule, in the place of the seat a runner lacks
+        run: |
+          sudo tee /etc/polkit-1/rules.d/00-a2m-presence-test.rules >/dev/null <<RULE
+          polkit.addRule(function(action, subject) {
+              if (action.id == "$ACTION" && subject.user == "$ACCOUNT") {
+                  return polkit.Result.AUTH_SELF;
+              }
+          });
+          RULE
+          sudo systemctl restart polkit.service
+          timeout 60 sh -c "until pkaction --action-id '$ACTION' >/dev/null 2>&1; do sleep 1; done"
+      - name: polkit would ask, and no agent is there to ask through
+        run: a2m-presence-stage "$ACCOUNT" no_agent
+      - name: A text agent types the password, wrong, right, and not at all
+        run: a2m-presence-stage "$ACCOUNT" ready
+      - name: Show polkit's log when a stage failed
+        if: failure()
+        run: sudo journalctl --unit polkit.service --no-pager | tail -n 200

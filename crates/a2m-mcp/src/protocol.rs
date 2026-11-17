@@ -355,6 +355,7 @@ async fn with_progress(
             Some(Err(answer)) => return Some(Some(answer)),
             None => return Some(None),
         };
+        core.following.send_modify(|count| *count += 1);
         while following.open() {
             let notes = tokio::select! {
                 () = progress.messages.closed() => return None,

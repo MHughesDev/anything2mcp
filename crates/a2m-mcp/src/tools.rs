@@ -65,6 +65,9 @@ pub(crate) struct Core {
     /// How many calls stopped waiting because their caller cancelled or
     /// closed the stream.
     pub(crate) cancelled: tokio::sync::watch::Sender<u64>,
+    /// How many calls began to follow the run they started. Read by the
+    /// tests that hold a run back until its call is being followed.
+    pub(crate) following: tokio::sync::watch::Sender<u64>,
 }
 
 /// Who asks, as the mount of the endpoint stated it: the caller the kernel

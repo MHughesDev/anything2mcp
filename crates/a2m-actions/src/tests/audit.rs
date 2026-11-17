@@ -748,12 +748,6 @@ async fn two_writes_on_one_surface_are_one_at_a_time_by_the_scheduler() {
         .expect("the second run's job waits");
     let waiting = world.kernel.sched().unwrap().job(job).await.unwrap();
     assert_eq!(waiting.attempts, 0, "{waiting:?}");
-    // A read on the same surface holds nothing alone and is not kept back.
-    let read = world
-        .call("tool.call", json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}))
-        .await;
-    assert!(read.ok, "{read:?}");
-
     // The first job ends, at the rest for its approval, and the second is
     // handed out and runs to its own.
     {

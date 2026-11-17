@@ -180,7 +180,33 @@ struct World {
     kernel: Kernel,
     surface: Arc<Present>,
     person: Caller,
+    /// A project folder: it holds a project file and the files of the
+    /// imaginary `example` target, copied from the repository.
+    project: Folder,
     _folder: Folder,
+}
+
+/// Copies a folder and everything in it.
+fn copy_folder(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_folder(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// A project folder with the `example` target's files in it.
+fn example_project() -> Folder {
+    let project = Folder::new("actions-example-project");
+    std::fs::write(project.path().join("anything2mcp.toml"), "").unwrap();
+    let target = Path::new("targets").join("example");
+    copy_folder(&repository().join(&target), &project.path().join(&target));
+    project
 }
 
 impl World {
@@ -239,13 +265,14 @@ impl World {
             kernel,
             surface,
             person: Caller::new(principal, FrontDoor::Command, false),
+            project: example_project(),
             _folder: folder,
         }
     }
 
     async fn call(&self, caller: &Caller, action: &str, input: Json) -> Response {
         self.kernel
-            .dispatch(Request::new(action, input, caller.clone()).in_project(repository()))
+            .dispatch(Request::new(action, input, caller.clone()).in_project(self.project.path()))
             .await
     }
 }
@@ -375,6 +402,20 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
 async fn a_target_is_added_to_a_project_and_its_first_file_is_linted() {
     let world = World::open().await;
     let project = Folder::new("actions-project");
+    // A folder is a project once a person has put a project file in it.
+    let no_file = world
+        .kernel
+        .dispatch(
+            Request::new(
+                "target.add",
+                json!({"name": "example"}),
+                world.person.clone(),
+            )
+            .in_project(project.path()),
+        )
+        .await;
+    assert_eq!(no_file.error.unwrap().code, "path_not_allowed");
+    std::fs::write(project.path().join("anything2mcp.toml"), "").unwrap();
     let add = |name: &'static str| {
         world.kernel.dispatch(
             Request::new(

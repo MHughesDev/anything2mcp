@@ -2,7 +2,7 @@
 //! tab that may only observe. Everything that only looks is the [`Look`]
 //! trait, which both have; only [`ActTab`] has a method that acts.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::sync::atomic::Ordering;
@@ -2280,6 +2280,20 @@ pub(crate) async fn watch_windows(
             _ => {}
         }
     }
+}
+
+async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
+    while let Some(event) = events.recv().await {
+        page.heard(event).await;
+    }
+    // The subscription ended: the tab was released, or the link closed.
+    page.status.send_if_modified(|status| {
+        let open = *status != Status::Gone && *status != Status::Crashed;
+        if open {
+            *status = Status::Gone;
+        }
+        open
+    });
 }
 
 /// Opens a tab on `about:blank` in the browser, in the posture given, for

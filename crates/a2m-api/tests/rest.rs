@@ -747,12 +747,14 @@ async fn a_runs_events_are_read_from_a_number_and_streamed_until_the_run_settles
         }
     };
 
-    // A write, started without a wait. Its stream is opened while the run
-    // is worked on, and ends when the run comes to rest for a person.
+    // A write, started without a wait. Its stream is opened at once, and
+    // ends when the run comes to rest for a person, whether the run got
+    // there before the stream was opened or after.
     let mut call = write_call();
     call["wait_seconds"] = json!(0);
     let (status, started) = world.post("/api/v1/actions/tool.call", &call).await;
-    assert_eq!(status, 200, "{started}");
+    // 200 while the run is worked on; 202 should it rest already.
+    assert!(status == 200 || status == 202, "{status}: {started}");
     let run = started["result"]["run_id"].as_str().unwrap().to_owned();
     let first = stream(&run, None).await;
     let (ids, end) = first.split_at(first.len() - 1);

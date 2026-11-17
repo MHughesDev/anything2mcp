@@ -379,13 +379,10 @@ async fn a_cancelled_line_closes_that_requests_stream_and_other_requests_are_sti
         }),
     );
     stdio.write(slow.to_string().as_bytes()).await;
-    // The call is under way once its first progress arrives, and its run
-    // once a note says what the run does.
-    for _ in 0..2 {
-        let note = stdio.message().await;
-        assert_eq!(note["method"], "notifications/progress");
-        assert_eq!(note["params"]["progressToken"], "p");
-    }
+    // The call is under way once its first progress arrives.
+    let note = stdio.message().await;
+    assert_eq!(note["method"], "notifications/progress");
+    assert_eq!(note["params"]["progressToken"], "p");
 
     let cancel = json!({
         "jsonrpc": "2.0",
@@ -769,7 +766,31 @@ fn notes_of(mut messages: Vec<Json>, token: &Json) -> (Vec<String>, Json) {
     (notes, answer)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// Holds every step back at the driver until it is opened, so that a test
+/// decides when a run goes on, by what happened and not by the clock.
+struct Gate {
+    open: std::sync::Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+impl Gate {
+    fn set(&self, open: bool) {
+        *self.open.lock().unwrap() = open;
+        self.changed.notify_all();
+    }
+
+    /// Waits until the gate is open. A test that never opens it fails at
+    /// its own time limit, long before this one.
+    fn pass(&self) {
+        let closed = self.open.lock().unwrap();
+        let _unused = self
+            .changed
+            .wait_timeout_while(closed, std::time::Duration::from_secs(300), |open| !*open)
+            .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_resume() {
     let world = World::ready().await;
     let service = world.service("use", McpSettings::local());
@@ -782,13 +803,33 @@ async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_r
         )
     };
     let token = json!("p");
+    let gate = std::sync::Arc::new(Gate {
+        open: std::sync::Mutex::new(true),
+        changed: std::sync::Condvar::new(),
+    });
+    world.hooks.on_step({
+        let gate = std::sync::Arc::clone(&gate);
+        move |_| gate.pass()
+    });
+    // A call whose run is held at its first step until the door follows
+    // it: what the run does from there on is told as it happens.
+    let followed = |message: Json| {
+        let (http, gate) = (http.clone(), std::sync::Arc::clone(&gate));
+        let mut begun = service.followings();
+        async move {
+            gate.set(false);
+            let (reply, ()) = tokio::join!(http.post(&message), async {
+                begun.changed().await.unwrap();
+                gate.set(true);
+            });
+            reply
+        }
+    };
 
     // A read: the run is followed to its end, and the answer is the run
     // as `run.get` gives it, which is what the call without progress
     // answers.
-    let reply = http
-        .post(&with_token(1, ORDER_GET, json!({"order_id": "A-100"})))
-        .await;
+    let reply = followed(with_token(1, ORDER_GET, json!({"order_id": "A-100"}))).await;
     let (notes, answer) = notes_of(reply.messages, &token);
     assert_eq!(notes[0], "The call was handed to the engine.");
     let run = &answer["result"]["structuredContent"];
@@ -814,7 +855,7 @@ async fn progress_says_what_the_run_does_for_a_read_a_write_that_rests_and_its_r
         "quantity": 3,
         "length_in": "150.5",
     });
-    let reply = http.post(&with_token(2, ITEM_UPSERT, input.clone())).await;
+    let reply = followed(with_token(2, ITEM_UPSERT, input.clone())).await;
     let (notes, answer) = notes_of(reply.messages, &token);
     let run = answer["result"]["structuredContent"].clone();
     assert_eq!(run["status"], "needs_approval", "{answer}");
