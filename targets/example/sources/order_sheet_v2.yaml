@@ -13,8 +13,8 @@ columns: ["Code", "Length"]
 fields:
   code: {type: identifier, column: "Code"}
   length: {type: length_ft_in, column: "Length"}
-  label: {type: identifier, expression: "upper(row.code)"}
+  label: {type: identifier, expression: "upper(row.Code)"}
 key: [code]
-rows: 'row.code != ""'
+rows: 'row.Code != ""'
 missing: ["n/a"]
 hidden: reject

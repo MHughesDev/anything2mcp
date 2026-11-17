@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,7 +14,8 @@ use a2m_core::{
     RunId, Secret, TargetName, Timestamp, WorkspaceId,
 };
 use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
-use a2m_vault::{BoxFuture, MemoryKeyRecords, MemoryKeyStore, Vault};
+use a2m_ledger::{Store, StoreConfig};
+use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
 use tokio::sync::Semaphore;
 
 use crate::failure;
@@ -358,12 +360,38 @@ pub(super) const PERSON_ONLY: ProviderNeeds = ProviderNeeds {
     confirms: true,
 };
 
-/// One engine: a keeper and its worker in one process, over rows, keys, and
-/// a clock that outlive it.
+/// A folder of the test's own under the machine's temporary folder, removed
+/// when the test is done with it.
+pub(super) struct Folder(PathBuf);
+
+impl Folder {
+    fn new() -> Self {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let name = format!(
+            "a2m-auth-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        );
+        let path = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        // Best effort: a store thread that is still closing may hold a file.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// One engine: a keeper and its worker in one process, over the store, a
+/// key store, and a clock that outlive it.
 pub(super) struct World {
     pub(super) clock: Arc<ManualClock>,
     keys: Arc<MemoryKeyStore>,
-    records: Arc<MemoryKeyRecords>,
+    /// Where the store's file is, for a world that can be restarted.
+    folder: Option<Folder>,
     pub(super) store: SessionStore,
     pub(super) vault: Arc<Vault>,
     pub(super) credentials: StoredCredentials,
@@ -376,12 +404,21 @@ pub(super) struct World {
 }
 
 impl World {
-    pub(super) fn new(needs: ProviderNeeds) -> Self {
+    /// An engine over a store in memory.
+    pub(super) async fn new(needs: ProviderNeeds) -> Self {
+        Self::fresh(needs, None).await
+    }
+
+    /// An engine over a store in a file, so that it can be restarted.
+    pub(super) async fn on_disk(needs: ProviderNeeds) -> Self {
+        Self::fresh(needs, Some(Folder::new())).await
+    }
+
+    async fn fresh(needs: ProviderNeeds, folder: Option<Folder>) -> Self {
         Self::over(
             Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START))),
             Arc::new(MemoryKeyStore::new()),
-            Arc::new(MemoryKeyRecords::new()),
-            SessionStore::in_memory(),
+            folder,
             Arc::new(Fake::new(needs)),
             Arc::new(Person::new()),
             Arc::new(Probe {
@@ -389,32 +426,44 @@ impl World {
                 calls: AtomicU32::new(0),
             }),
         )
+        .await
     }
 
-    /// The engine after a restart: the rows, the keys, and the world outside
-    /// are the same; everything held in memory is gone.
-    pub(super) fn restarted(&self) -> Self {
-        Self::over(
-            Arc::clone(&self.clock),
-            Arc::clone(&self.keys),
-            Arc::clone(&self.records),
-            self.store.clone(),
-            Arc::clone(&self.fake),
-            Arc::clone(&self.person),
-            Arc::clone(&self.probe),
-        )
+    /// The engine after a restart: the store's file, the key store, and the
+    /// world outside are the same; everything held in memory is gone, and
+    /// the store is opened anew.
+    pub(super) async fn restarted(self) -> Self {
+        let Self {
+            clock,
+            keys,
+            folder,
+            fake,
+            person,
+            probe,
+            ..
+        } = self;
+        assert!(folder.is_some(), "only a world on disk can be restarted");
+        Self::over(clock, keys, folder, fake, person, probe).await
     }
 
-    fn over(
+    async fn over(
         clock: Arc<ManualClock>,
         keys: Arc<MemoryKeyStore>,
-        records: Arc<MemoryKeyRecords>,
-        store: SessionStore,
+        folder: Option<Folder>,
         fake: Arc<Fake>,
         person: Arc<Person>,
         probe: Arc<Probe>,
     ) -> Self {
-        let vault = Arc::new(Vault::new(keys.clone(), records.clone()));
+        let config = match &folder {
+            Some(folder) => StoreConfig::in_dir(&folder.0),
+            None => StoreConfig::in_memory(),
+        };
+        let ledger = Store::open(config.with_clock(clock.clone()))
+            .await
+            .unwrap();
+        let vault = Arc::new(Vault::new(keys.clone(), Arc::new(ledger.key_records())));
+        ledger.attach(Arc::clone(&vault)).await.unwrap();
+        let store = SessionStore::new(ledger);
         let credentials = StoredCredentials::new(store.clone(), Arc::clone(&vault));
         let providers = ProviderSet::neutral()
             .with(Arc::clone(&fake) as Arc<dyn AuthProvider>)
@@ -444,7 +493,7 @@ impl World {
         Self {
             clock,
             keys,
-            records,
+            folder,
             store,
             vault,
             credentials,
@@ -489,13 +538,13 @@ impl World {
     }
 }
 
-/// Lets every task that can run, run. On the one-thread runtime the tests
-/// use, a task stops only where the test itself holds it, so this returns
-/// with every task at such a point.
-pub(super) async fn settle() {
-    for _ in 0..200 {
-        tokio::task::yield_now().await;
-    }
+/// Runs `work` on a runtime of its own, for a test that is not async.
+pub(super) fn block<T>(work: impl Future<Output = T>) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(work)
 }
 
 /// Runs `work` on a one-thread runtime with the telemetry receiving every
