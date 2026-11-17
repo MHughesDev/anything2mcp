@@ -182,7 +182,7 @@ fn budget_exceeded(what: &str) -> StepFailure {
 
 /// The bytes a hexadecimal text stands for, or `None` when it is not one.
 fn unhex(text: &str) -> Option<Vec<u8>> {
-    if !text.is_ascii() || text.len() % 2 != 0 {
+    if !text.is_ascii() || !text.len().is_multiple_of(2) {
         return None;
     }
     text.as_bytes()

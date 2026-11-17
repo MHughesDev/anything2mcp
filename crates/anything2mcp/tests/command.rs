@@ -477,18 +477,16 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
     assert_eq!(add.status.code(), Some(1), "{added}");
+    assert_eq!(added["action"], "session.login", "{added}");
     assert_eq!(added["error"]["code"], "action_not_built");
     // The step it stopped before was never begun, and the note says what
-    // was done and what was not. Which step that is moves as the actions
-    // beneath `add` are built.
-    let stopped_before = added["action"].as_str().unwrap();
+    // was done and what was not.
     let note = added["error"]["message"].as_str().unwrap();
+    assert!(note.contains("stopped before `session.login`"), "{note}");
     assert!(
-        note.contains(&format!("stopped before `{stopped_before}`")),
+        note.contains("Done: `target.add`, `scout.run`, `scout.report`"),
         "{note}"
     );
-    assert!(note.contains("Done: `target.add`"), "{note}");
-    assert!(note.contains("`session.login`"), "{note}");
     let file = bare
         .project
         .path()

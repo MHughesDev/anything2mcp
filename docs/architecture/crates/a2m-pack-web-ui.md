@@ -160,7 +160,7 @@ What the kernel gives this crate:
 
 - Every step input is built with `StepInput::new` and `for_record`. The `acting` capture is made with `Capture::acting`; its bytes are the ones written before. Five runs of one read give one signature (the existing test).
 - A refusal the page shows, a screen variant handled `stop`, carries the text of that variant's element through `StepFailure::with_said`, read through the browser base, which redacts every text it reads. The failure's sentence names the variant and nothing the page said.
-- No write here states `acknowledged`: every write of the `ui` mode names a `read_back`. `delete` is `irreversible`; a screen that declares any action counts as a write.
+- No write here states `acknowledged`: the package named none for this pack. `delete` is `irreversible`; a screen that declares any action counts as a write.
 - No version guard of an endpoint, and no key argument, exists in this pack: `page_http` is not built.
 - Keys: no step reads `StepInput::key`.
 
