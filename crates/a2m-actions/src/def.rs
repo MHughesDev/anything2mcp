@@ -484,7 +484,7 @@ pub(crate) fn next_schema() -> JsonSchema {
 }
 
 /// Builds a definition. Used by the catalog and nowhere else.
-pub(crate) struct Def(ActionDef);
+pub(crate) struct Def(ActionDef, bool);
 
 /// A new definition with the defaults of a read that needs the store.
 pub(crate) fn act(
@@ -513,7 +513,21 @@ pub(crate) fn act(
         rest_alias: None,
         phase,
         handler: Handler::NotBuilt,
-    })
+    }, false)
+}
+
+/// The result of a person's act an agent asked for, while it waits on the
+/// person surface's page (decision 0163): `needs_person`, the act, the
+/// action, the link, what the person is told, and when it stops waiting.
+pub(crate) fn person_act_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("state", JsonSchema::words(&["needs_person"]))
+        .required("act", JsonSchema::text())
+        .required("action", JsonSchema::text())
+        .optional("link", JsonSchema::text())
+        .required("person", JsonSchema::text())
+        .required("expires_at", JsonSchema::int())
+        .optional("next", next_schema())
 }
 
 impl Def {
@@ -614,6 +628,13 @@ impl Def {
         self
     }
 
+    /// The action hands a person's act to the person surface, and its
+    /// result may be that act waiting: `publish.request`.
+    pub(crate) fn asks_a_person(mut self) -> Self {
+        self.1 = true;
+        self
+    }
+
     pub(crate) fn person(mut self, person: PersonNeed) -> Self {
         self.0.person = person;
         self
@@ -636,6 +657,12 @@ impl Def {
         // section 221). An output that is a map of anything admits it
         // already; a strict object is given the key here.
         self.0.output = self.0.output.optional("next", next_schema());
+        // A person's act asked for by an agent rests on a page, and the
+        // result says so (decision 0163).
+        if self.0.person != PersonNeed::None || self.1 {
+            let own = std::mem::replace(&mut self.0.output, JsonSchema::any());
+            self.0.output = JsonSchema::either(vec![own, person_act_output()]);
+        }
         self.0
     }
 }

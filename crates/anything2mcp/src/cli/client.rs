@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use a2m_actions::{ExitClass, Paths, REST_PREFIX};
 use a2m_api::EXIT_CLASS_HEADER;
 use a2m_core::{Failure, FailureClass};
-use a2m_local::{ClientLabel, Connector, EngineLock, Link, codes as local_codes};
+use a2m_local::{ClientLabel, Connector, EngineLock, Launch, Link, Started, codes as local_codes};
 use a2m_mcp::{HttpRequest, HttpResponse};
 use axum::body::{Body, BodyDataStream, Bytes};
 use axum::http::{Method, Request, header};
@@ -39,33 +39,60 @@ const STARTING_PAUSE: Duration = Duration::from_millis(25);
 
 /// What a command found on this machine.
 pub(crate) enum Found {
-    /// An engine answers on the local channel.
+    /// An engine answers on the local channel: it ran already, or was
+    /// started on demand.
     Engine(Link),
-    /// No engine runs for this user and data directory, and the engine
-    /// lock is now this command's: it holds it for as long as it runs the
-    /// engine inside itself, so that no second engine opens the store.
-    Nothing(EngineLock),
+    /// No engine runs for this user and data directory, none was started,
+    /// and the engine lock is now this command's: it holds it for as long
+    /// as it runs the engine inside itself, so that no second engine opens
+    /// the store. The failure, when there is one, is why an engine that was
+    /// to be started on demand could not be: the operating system refused
+    /// to start a process.
+    Nothing(EngineLock, Option<Failure>),
 }
 
 fn unreachable(failure: &Failure) -> bool {
     *failure.code() == local_codes::ENGINE_UNREACHABLE
 }
 
-/// Looks for the local engine. When none answers, the engine lock is
-/// taken, in the same step that finds it free, and handed back: nothing
-/// can open the store between the look and the open. An engine that holds
-/// the lock and does not answer is waited for, for a bounded time: a
-/// `serve` that is starting or closing, or another command that runs the
-/// engine inside itself. Nothing is started.
+/// Looks for the local engine, and when none answers starts one on demand
+/// as `launch` says, when it says anything (decision 0165).
+///
+/// When none is started, the engine lock is taken, in the same step that
+/// finds it free, and handed back: nothing can open the store between the
+/// look and the open. An engine that holds the lock and does not answer
+/// is waited for, for a bounded time: a `serve` that is starting or
+/// closing, or another command that runs the engine inside itself.
 ///
 /// # Errors
 ///
 /// What `Connector::connect` answers for an engine that cannot be used,
 /// `busy`/`engine_unreachable` for a lock that was held for the whole
-/// wait, and what `EngineLock::take` answers for a lock file that cannot
-/// be opened.
-pub(crate) async fn find(paths: &Paths, label: ClientLabel) -> Result<Found, Failure> {
+/// wait or an engine started on demand that never answered, and what
+/// `EngineLock::take` answers for a lock file that cannot be opened.
+pub(crate) async fn find(
+    paths: &Paths,
+    label: ClientLabel,
+    launch: impl FnOnce() -> Option<Launch>,
+) -> Result<Found, Failure> {
     let connector = Connector::new(paths, program_version()?, label)?;
+    match connector.connect().await {
+        Ok(link) => return Ok(Found::Engine(link)),
+        Err(failure) if unreachable(&failure) => {}
+        Err(failure) => return Err(failure),
+    }
+    let mut refused = None;
+    if let Some(launch) = launch() {
+        match connector
+            .connect_or_start(paths, &launch, STARTING_WAIT)
+            .await?
+        {
+            Started::Found(link) | Started::Launched(link) => return Ok(Found::Engine(link)),
+            // A machine where a detached start is refused: the command
+            // runs the engine inside itself, as `--in-process` does.
+            Started::Refused(failure) => refused = Some(failure),
+        }
+    }
     let give_up = tokio::time::Instant::now() + STARTING_WAIT;
     loop {
         match connector.connect().await {
@@ -83,7 +110,7 @@ pub(crate) async fn find(paths: &Paths, label: ClientLabel) -> Result<Found, Fai
                         )
                     })?;
                 match taken {
-                    Ok(lock) => return Ok(Found::Nothing(lock)),
+                    Ok(lock) => return Ok(Found::Nothing(lock, refused)),
                     Err(failure) if *failure.code() != local_codes::ENGINE_RUNNING => {
                         return Err(failure);
                     }
@@ -104,6 +131,36 @@ pub(crate) async fn find(paths: &Paths, label: ClientLabel) -> Result<Found, Fai
             }
             Err(failure) => return Err(failure),
         }
+    }
+}
+
+/// Starts the engine on demand for a client that cannot run it inside
+/// itself, the bridge, and connects to it.
+///
+/// # Errors
+///
+/// What `Connector::connect_or_start` answers, and the refusal of the
+/// operating system to start a process, as `busy`/`engine_unreachable`.
+pub(crate) async fn start(
+    connector: &Connector,
+    paths: &Paths,
+    launch: &Launch,
+) -> Result<(Link, bool), Failure> {
+    match connector
+        .connect_or_start(paths, launch, STARTING_WAIT)
+        .await?
+    {
+        Started::Found(link) => Ok((link, false)),
+        Started::Launched(link) => Ok((link, true)),
+        Started::Refused(failure) => Err(Failure::new(
+            FailureClass::Busy,
+            local_codes::ENGINE_UNREACHABLE,
+            format!(
+                "No engine answers on the local channel, and this machine refused to start one on demand: {}",
+                failure.message()
+            ),
+            "Start the engine with `anything2mcp serve`, then try again.",
+        )),
     }
 }
 
