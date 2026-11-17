@@ -407,7 +407,10 @@ impl Session {
         let allowed = match self.posture {
             Posture::Live => true,
             Posture::Sandbox { test_records: true } => step.kind == SET || step.commits,
-            Posture::Sandbox { test_records: false } | Posture::Discovery => false,
+            Posture::Sandbox {
+                test_records: false,
+            }
+            | Posture::Discovery => false,
         };
         if allowed {
             return Ok(());

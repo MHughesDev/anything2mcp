@@ -102,7 +102,7 @@ pub fn compile(registry: &Registry, root: &TargetRoot) -> Result<Compiled, Diagn
     let sources = a2m_files::load(root, set)?;
     // As a draft: the rules about tests of each tool are warnings. The
     // example target of this crate holds no offline fixtures.
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn plan(registry: &Registry) -> Plan {
@@ -144,12 +144,12 @@ pub fn edited(folder: &Folder, file: &str, text: &str) -> TargetRoot {
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, Digest, EffectClass, Environment, Epoch, Failure, OperationName, PrincipalId,
-    RecordKey, RunId, RunState, Sensitivity, TargetName, Timestamp, Value, Values, WorkspaceId,
+    Digest, EffectClass, Environment, Epoch, Failure, OperationName, PrincipalId, RecordKey, RunId,
+    RunState, Sensitivity, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DriverHandle, Posture, PrepareContext,

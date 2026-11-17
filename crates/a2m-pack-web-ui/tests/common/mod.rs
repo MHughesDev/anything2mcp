@@ -19,14 +19,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, Mode, NoSecrets,
-    OperationName, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
-    Timestamp, Value, Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, Mode, NoSecrets, OperationName,
+    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
+    Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_pack_web_browser::{PROFILE_ROOT, test_support};
 use a2m_pack_web_ui::SharedBrowsers;
@@ -188,7 +188,7 @@ pub fn compile(registry: &Registry, name: &str) -> Compiled {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(fixture(name)), set)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
 }
 
@@ -234,7 +234,7 @@ pub fn compile_changed(
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn shown(problems: &Diagnostics) -> String {
@@ -278,6 +278,17 @@ impl Ran {
                     .means
             })
             .collect()
+    }
+
+    /// The same, as text a test can search: one `name=value` for each
+    /// detail. A detail's debug form shows only that it is there.
+    pub fn means_text(&self) -> String {
+        self.means()
+            .iter()
+            .flatten()
+            .map(|detail| format!("{}={}", detail.name, detail.value))
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 
@@ -537,23 +548,8 @@ pub async fn running(store: &Store, keys: &[RecordKey]) -> Fence {
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

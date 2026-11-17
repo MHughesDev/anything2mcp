@@ -324,3 +324,110 @@ impl DraftingRule for ReadDraft {
         }])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a helper that cannot do its work stops the test"
+    )]
+
+    use std::sync::Arc;
+
+    use a2m_core::{
+        Failure, FileKindName, Finding, FindingKind, ProducedBy, Source, Subject, Timestamp,
+    };
+    use a2m_files::{
+        CompilerSet, DraftContext, DraftDoc, DraftValue, Drafter, DraftingRule, RelPath, TargetRoot,
+    };
+
+    use crate::channel::ChannelKind;
+    use crate::names::{CHANNEL, Names, PACK};
+
+    /// A rule that drafts what the pack's own rules never do: a channel
+    /// file that says the runtime owns a queue, which is what lets a
+    /// `take` remove messages.
+    struct DraftsOwnership(FindingKind);
+
+    impl DraftingRule for DraftsOwnership {
+        fn finding_kind(&self) -> FindingKind {
+            self.0.clone()
+        }
+
+        fn file_kind(&self) -> FileKindName {
+            CHANNEL
+        }
+
+        fn draft(
+            &self,
+            _finding: &Finding,
+            _cx: &DraftContext<'_>,
+        ) -> Result<Vec<DraftDoc>, Failure> {
+            let channel = |file: &str, ownership: &str| -> Result<DraftDoc, Failure> {
+                Ok(DraftDoc {
+                    path: RelPath::new(&format!("channels/{file}.yaml"))?,
+                    body: DraftValue::map(vec![
+                        ("channel", DraftValue::text("orders.work")),
+                        ("address", DraftValue::text("orders.work")),
+                        ("shape", DraftValue::text("queue")),
+                        ("role", DraftValue::text("events")),
+                        ("ownership", DraftValue::text(ownership)),
+                    ]),
+                })
+            };
+            Ok(vec![
+                channel("tries_a_take", "runtime_owned")?,
+                channel("only_looks", "shared")?,
+            ])
+        }
+    }
+
+    #[test]
+    fn a_drafting_rule_that_drafts_a_channel_the_runtime_owns_is_refused() {
+        let names = Names::new().unwrap();
+        let mut builder = CompilerSet::builder();
+        builder
+            .file_kind(PACK, Arc::new(ChannelKind::new(10_000)))
+            .unwrap()
+            .drafting_rule(
+                PACK,
+                Arc::new(DraftsOwnership(names.finding_channel.clone())),
+            )
+            .unwrap();
+        let set = builder.build();
+        let finding = Finding::about(
+            Subject::Unknown {
+                reason: a2m_core::UnknownReason::NotSupported,
+            },
+            names.finding_channel.clone(),
+            "{}",
+            Source::LiveSystem,
+            ProducedBy {
+                provider: PACK.to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            Timestamp::from_unix_millis(0),
+        )
+        .build()
+        .unwrap();
+        let root =
+            std::env::temp_dir().join(format!("a2m-pack-stream-draft-take-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let report = Drafter::new(&set, &TargetRoot::new(&root))
+            .draft(std::slice::from_ref(&finding))
+            .unwrap();
+        let refused: Vec<&str> = report
+            .refused
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+        let exists = root.join("channels").join("tries_a_take.yaml").exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(refused, ["channels/tries_a_take.yaml"]);
+        assert_eq!(written, ["channels/only_looks.yaml"]);
+        assert!(!exists);
+    }
+}

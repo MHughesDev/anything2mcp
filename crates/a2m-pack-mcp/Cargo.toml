@@ -20,7 +20,7 @@ tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 a2m-files = { path = "../a2m-files", features = ["testing"] }
-a2m-ledger = { path = "../a2m-ledger" }
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-mcp = { path = "../../targets/example-mcp" }
 

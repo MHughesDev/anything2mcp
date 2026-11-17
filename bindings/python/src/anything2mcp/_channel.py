@@ -6,11 +6,8 @@ because a client must find the socket before it can ask anything. A test
 in ``tests/`` holds them to the engine's answer when a built binary is
 given.
 
-Only macOS and Linux are built. On Windows the channel is a named pipe
-whose name carries the user's security identifier and a digest of the
-runtime directory, and the client must check that the pipe's server runs
-as the user; both need calls into the operating system that the standard
-library does not offer, so :func:`socket_path` refuses there.
+On macOS and Linux the channel is a Unix socket, found and checked here. On
+Windows it is a named pipe, found and checked in :mod:`_winpipe`.
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ import os
 import socket
 import stat
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Mapping, Optional
 
 APP_FOLDER = "anything2mcp"
@@ -60,11 +57,11 @@ def runtime_dir(env: Optional[Mapping[str, str]] = None, platform: Optional[str]
             )
         return Path(home) / "run"
     if platform.startswith("win"):
-        raise ChannelError(
-            "client_not_built",
-            "This client cannot reach the engine on Windows yet.",
-            "Use the `anything2mcp` command on Windows for now.",
-        )
+        # Shown for the user's information; the pipe's name is made from the
+        # text of this path, in `_winpipe`, and not from this object.
+        from . import _winpipe
+
+        return PureWindowsPath(_winpipe.runtime_dir_text(env))  # type: ignore[return-value]
     user_home = _dir(env, "HOME")
     if user_home is None:
         raise ChannelError(

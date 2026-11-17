@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from . import _channel
+from ._actions import Actions
 from ._channel import ChannelError
 
 #: The local API version this client speaks; the engine refuses another.
@@ -97,7 +100,7 @@ class Response:
         )
 
 
-class Client:
+class Client(Actions):
     """A connection to the local engine. Not safe to share between threads;
     open one per thread. Use it as a context manager, or call :meth:`close`."""
 
@@ -199,18 +202,25 @@ def connect(
     the code ``engine_unreachable``. ``project`` is the folder the engine
     reads target files from; ``name`` is how this program names itself in
     the engine's audit log."""
-    path = _channel.socket_path(env)
-    _channel.check_owner(path)
-    connection = _channel.UnixConnection(path, timeout=timeout)
-    try:
-        connection.connect()
-    except OSError:
-        connection.close()
-        raise ChannelError(
-            "engine_unreachable",
-            "No engine is running.",
-            "Start one with `anything2mcp serve`, or run any `anything2mcp` command.",
-        ) from None
+    environment = os.environ if env is None else env
+    if sys.platform.startswith("win"):
+        # A named pipe, checked by its server's user; see ``_winpipe``.
+        from . import _winpipe
+
+        connection: http.client.HTTPConnection = _winpipe.connect_connection(environment, timeout)
+    else:
+        path = _channel.socket_path(env)
+        _channel.check_owner(path)
+        connection = _channel.UnixConnection(path, timeout=timeout)
+        try:
+            connection.connect()
+        except OSError:
+            connection.close()
+            raise ChannelError(
+                "engine_unreachable",
+                "No engine is running.",
+                "Start one with `anything2mcp serve`, or run any `anything2mcp` command.",
+            ) from None
     try:
         return Client(connection, name=name, project=project)
     except (OSError, http.client.HTTPException) as lost:

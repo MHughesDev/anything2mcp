@@ -1630,3 +1630,77 @@ async fn a_connection_is_not_kept_after_a_failure() {
         .collect();
     assert_eq!(connections.len(), 2, "{connections:?}");
 }
+
+// ---- the guard in a sandbox with test records ----
+
+#[tokio::test]
+async fn a_sandbox_with_test_records_lifts_the_guard_only_for_the_step_that_commits() {
+    let scene = Scene::start().await;
+    let ledger = Ledger::open().await;
+    let test_records = Posture::Sandbox { test_records: true };
+    let none = Values::new();
+
+    // A hand-built step that changes the queue and is not marked `commits`:
+    // attaching a consumer to take from it. Refused by the driver, and the
+    // broker shows nothing taken.
+    let take = &scene.binding("example_order_work_take").act;
+    assert!(take[0].kind.as_str() == "subscribe" && !take[0].commits);
+    let write = ledger.write("taken").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(test_records, Some(write.fence))
+        .await
+        .unwrap();
+    let refused = failed(
+        handle
+            .act(&mut prepared, &take[0], &input(&none), Authority::Read)
+            .await,
+    );
+    assert_eq!(
+        (refused.0.as_str(), refused.2),
+        ("policy", Sent::NotSent),
+        "{refused:?}"
+    );
+    handle.release(prepared, false).await;
+    assert!(scene.broker.deliveries().is_empty());
+    assert!(scene.broker.acknowledgements().is_empty());
+    assert_eq!(scene.broker.queue(WORK).len(), 2);
+
+    // A publish whose mark is taken off is refused before it reaches the
+    // driver, and the broker received nothing.
+    let binding = scene.binding("example_order_status_set");
+    let mut unmarked = binding.act[0].clone();
+    assert!(unmarked.commits);
+    unmarked.commits = false;
+    let write = ledger.write("A-100").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(test_records, Some(write.fence))
+        .await
+        .unwrap();
+    let args = status_args("A-100", "shipped");
+    let refused = failed(
+        handle
+            .act(
+                &mut prepared,
+                &unmarked,
+                &write.input(&args, Some("tok-1")),
+                write.authority(),
+            )
+            .await,
+    );
+    assert_eq!(refused.2, Sent::NotSent, "{refused:?}");
+    assert!(scene.broker.received().is_empty());
+
+    // The step marked `commits` is the one the guard is lifted for.
+    done(
+        handle
+            .act(
+                &mut prepared,
+                &binding.act[0],
+                &write.input(&args, Some("tok-1")),
+                write.authority(),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(scene.broker.received().len(), 1);
+}

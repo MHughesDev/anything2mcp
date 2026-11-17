@@ -320,6 +320,25 @@ impl FileKind for MappingKind {
             .unwrap_or_default()
     }
 
+    /// A mapping describes a write when any of its tools is mapped as
+    /// anything but `read`. The effect is a person's judgment of the tool.
+    /// An effect the drafter left as an open question states nothing: the
+    /// file does not compile until a person answers it, and a mapping alone
+    /// calls nothing. An effect that is some other word is not known to
+    /// read.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let Some(tools) = doc.get("tools") else {
+            return false;
+        };
+        tools.entries().iter().any(|entry| {
+            let effect = entry.value.get("effect");
+            let open = effect.is_some_and(|effect| {
+                matches!(effect.entries(), [only] if only.key.value == a2m_files::OPEN_QUESTION)
+            });
+            !open && effect.and_then(Located::as_text) != Some("read")
+        })
+    }
+
     fn expressions(&self, _doc: &Located<Doc>) -> Vec<ExprSite> {
         Vec::new()
     }

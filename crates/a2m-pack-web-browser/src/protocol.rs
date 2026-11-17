@@ -343,6 +343,26 @@ pub(crate) struct SetDownloadBehavior<'a> {
 }
 command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
 
+/// The permissions the browser grants: those listed, for every origin,
+/// and no other. An empty list refuses every permission a page asks for.
+#[derive(Debug, Serialize)]
+pub(crate) struct GrantPermissions {
+    pub permissions: Vec<String>,
+}
+command!(GrantPermissions, "Browser.grantPermissions" => Nothing);
+
+/// One permission, set for every origin.
+#[derive(Debug, Serialize)]
+pub(crate) struct SetPermission<'a> {
+    pub permission: PermissionDescriptor<'a>,
+    pub setting: &'a str,
+}
+#[derive(Debug, Serialize)]
+pub(crate) struct PermissionDescriptor<'a> {
+    pub name: &'a str,
+}
+command!(SetPermission<'_>, "Browser.setPermission" => Nothing);
+
 // ---- Target ----
 
 #[derive(Debug, Serialize)]

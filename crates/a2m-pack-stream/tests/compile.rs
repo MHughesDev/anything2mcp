@@ -383,3 +383,16 @@ fn a_body_may_not_use_the_name_of_the_brokers_own_facts() {
         "stream.binding_invalid",
     );
 }
+
+#[test]
+fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
+    // A publish that says `effect: read` is refused by what the pack says
+    // the verb does. (A take is held to `irreversible` by the pack's own
+    // rule, `stream.publish_effect`, first.)
+    let publish = "operation: example_extra\neffect: read\ninputs:\n  order_id: {type: identifier}\noutputs: {}\ndescription: An extra operation.\nbindings:\n  - mode: stream\n    verb: publish\n    channel: orders.status\n    key: {order_id: input.order_id}\n    body: {order_id: input.order_id}\n";
+    refused(
+        "operations/extra.yaml",
+        publish,
+        "kernel.effect_lower_than_derived",
+    );
+}

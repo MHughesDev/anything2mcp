@@ -200,9 +200,11 @@ class PlaceTests(unittest.TestCase):
         )
         with self.assertRaises(anything2mcp.ChannelError):
             _channel.socket_path({"A2M_HOME": "relative"}, "linux")
-        with self.assertRaises(anything2mcp.ChannelError) as raised:
-            _channel.socket_path({"HOME": "C:\\Users\\pat"}, "win32")
-        self.assertEqual(raised.exception.code, "client_not_built")
+        # Windows has a pipe and no socket file: its place is in test_winpipe.py.
+        self.assertEqual(
+            _channel.runtime_dir({"LOCALAPPDATA": "C:\\Users\\pat\\AppData\\Local"}, "win32").as_posix(),
+            "C:/Users/pat/AppData/Local/anything2mcp/run",
+        )
 
 
 BINARY = os.environ.get("A2M_TEST_BINARY", "")
@@ -235,6 +237,9 @@ class RealEngineTests(unittest.TestCase):
                 self.assertTrue(status.ok, status.body)
                 self.assertEqual(status.exit_class, "succeeded")
                 self.assertEqual(status.action, "engine.status")
+                typed = client.engine_status()  # the generated method says the same
+                self.assertEqual(typed.action, "engine.status")
+                self.assertTrue(typed.ok, typed.body)
                 unknown = client.call("no.such")
                 self.assertFalse(unknown.ok)
         finally:

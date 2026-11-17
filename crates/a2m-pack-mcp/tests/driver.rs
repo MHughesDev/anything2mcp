@@ -450,6 +450,55 @@ async fn only_mapped_tools_are_reachable() {
     assert_eq!(control.request_count("tools/call").unwrap(), 0);
 }
 
+/// The driver has no guard of its own that a posture lifts: the handle lets
+/// a committing step through in the sandbox only for a declared test record,
+/// and the driver refuses a tool mapped as a write from any step that does
+/// not commit, in every posture, token or none.
+#[tokio::test]
+async fn in_the_sandbox_a_write_tool_is_called_only_by_the_step_that_commits() {
+    let scene = scene().await;
+    let (ledger, _vault) = store().await;
+    let fence = running(&ledger, 1, &["A-100"]).await;
+    let intent = token(&ledger, fence, 0, "A-100").await;
+    let order = key("A-100");
+    let args = Values::new()
+        .with("order_id", "A-100")
+        .with("field", "note")
+        .with("value", "x");
+    let mut unmarked = steps(&scene.plan, "example_order_note_update").act;
+    unmarked.commits = false;
+    for posture in [
+        Posture::Sandbox { test_records: true },
+        Posture::Sandbox {
+            test_records: false,
+        },
+    ] {
+        let (handle, mut prepared) = prepare(
+            &scene.registry,
+            &scene.plan,
+            &scene.surface,
+            fence,
+            posture,
+            None,
+        )
+        .await
+        .unwrap();
+        let refused = handle
+            .act(
+                &mut prepared,
+                &unmarked,
+                &input(&args, Some(record(&fence, 0)), Some(&order), None),
+                Authority::Write(&intent),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused.sent, Sent::NotSent, "{refused}");
+        handle.release(prepared, true).await;
+    }
+    assert_eq!(scene.calls_to("orders_update"), 0);
+    assert_eq!(scene.stand.control().request_count("tools/call").unwrap(), 0);
+}
+
 #[tokio::test]
 async fn what_the_server_gets_wrong_is_a_named_stop() {
     let scene = scene().await;

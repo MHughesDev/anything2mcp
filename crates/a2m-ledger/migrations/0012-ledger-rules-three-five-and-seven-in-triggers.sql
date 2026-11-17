@@ -88,11 +88,13 @@ BEGIN
 END;
 
 -- Rule 5: a record that may have been written goes back to `planned` only
--- after it was read back.
+-- after it was read back. A `failed` record for which no intent was stored
+-- since it was last planned was never sent, and needs no read.
 CREATE TRIGGER run_records_planned_again_only_after_a_read
 BEFORE UPDATE OF state ON run_records
 WHEN NEW.state = 'planned' AND OLD.state IN ('intent', 'acted', 'failed')
     AND NEW.reconciled_at IS NULL
+    AND NOT (OLD.state = 'failed' AND OLD.intent_epoch IS NULL AND OLD.acted_at IS NULL)
 BEGIN
     SELECT RAISE(ABORT, 'a2m: a record returns to planned only after it was read back');
 END;

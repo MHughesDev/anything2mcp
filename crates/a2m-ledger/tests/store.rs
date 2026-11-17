@@ -134,7 +134,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .unwrap();
     let found = store
         .read(move |tx| {
-            tx.policy_tables_for_tests().query_first(
+            policy_tables(tx).query_first(
                 "SELECT run_id, used_at FROM approvals WHERE id = ?1",
                 &[approval.to_string().into()],
             )
@@ -160,7 +160,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     ] {
         let refused = store
             .write(Durability::Synced, move |tx| {
-                tx.policy_tables_for_tests().execute(statement, &[])
+                policy_tables(tx).execute(statement, &[])
             })
             .await
             .unwrap_err();
@@ -189,7 +189,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     // takes all of it back and leaves the store working.
     let read_only = store
         .read(move |tx| {
-            tx.policy_tables_for_tests()
+            policy_tables(tx)
                 .execute("DELETE FROM approvals", &[])
         })
         .await
@@ -199,7 +199,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .write(
             Durability::Synced,
             move |tx| -> Result<(), a2m_core::Failure> {
-                tx.policy_tables_for_tests()
+                policy_tables(tx)
                     .execute("DELETE FROM approvals", &[])?;
                 panic!("inside a transaction");
             },
@@ -209,7 +209,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     assert_eq!(panicked.code(), &codes::STORE_UNAVAILABLE);
     let still = store
         .read(move |tx| {
-            tx.policy_tables_for_tests()
+            policy_tables(tx)
                 .query("SELECT id FROM approvals", &[])
         })
         .await
@@ -223,8 +223,9 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
 /// the store hands out once, and a key of one store opens no other.
 #[tokio::test]
 async fn the_policy_engines_tables_open_only_with_the_key_the_store_hands_out_once() {
-    let store = memory().await;
-    let other = memory().await;
+    // Stores whose key no stand-in took.
+    let store = Store::open(StoreConfig::in_memory()).await.unwrap();
+    let other = Store::open(StoreConfig::in_memory()).await.unwrap();
     let key = store.policy_key().unwrap();
     let again = store.policy_key().unwrap_err();
     assert_eq!(again.code(), &codes::TABLE_NOT_OWNED);

@@ -322,10 +322,7 @@ impl LayoutDiscoverer {
 /// larger than `most`, or not a regular file. Blocking.
 fn read_handed(path: &CheckedPath, most: u64) -> Option<Vec<u8>> {
     path.size().ok()?;
-    std::fs::symlink_metadata(path.as_path())
-        .ok()?
-        .file_type()
-        .is_file()
+    (path.entry_kind().ok()? == a2m_provider::EntryKind::File)
         .then(|| path.read(most).ok())
         .flatten()
 }

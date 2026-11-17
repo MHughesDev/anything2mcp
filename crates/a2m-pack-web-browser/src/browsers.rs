@@ -21,7 +21,9 @@ use crate::client::{Client, ClientError, Why};
 use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
 use crate::launch;
 use crate::origin::Origins;
-use crate::protocol::{CloseBrowser, GetVersion, SetAutoAttach, SetDownloadBehavior, TargetFilter};
+use crate::protocol::{
+    CloseBrowser, GetVersion, GrantPermissions, SetAutoAttach, SetDownloadBehavior, TargetFilter,
+};
 use crate::tab::{
     ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
     watch_windows,
@@ -417,13 +419,15 @@ fn unanswered(error: &ClientError, waited: Duration, redact: &dyn Redact) -> Str
     }
 }
 
-/// Puts on a browser the two locks that are the browser's and not a
+/// Puts on a browser the three locks that are the browser's and not a
 /// tab's.
 ///
 /// Every download is denied: the browser writes no file for one, in any
-/// tab, so nothing lands outside the roots the engine was given. And every
-/// new page is attached before it runs, so that a window a page opens is
-/// caught before its first request ([`watch_windows`]).
+/// tab, so nothing lands outside the roots the engine was given. Every
+/// permission a page asks for is refused, for every origin, so that no
+/// request waits on a prompt nobody answers and none is granted by one.
+/// And every new page is attached before it runs, so that a window a page
+/// opens is caught before its first request ([`watch_windows`]).
 async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Result<(), String> {
     let client = &inner.client;
     let deadline = Deadline::after(call_deadline);
@@ -434,6 +438,27 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
         .call(None, &SetDownloadBehavior { behavior: "deny" }, deadline)
         .await
         .map_err(|_| "it did not take the refusal of downloads".to_owned())?;
+    client
+        .call(
+            None,
+            &GrantPermissions {
+                permissions: Vec::new(),
+            },
+            deadline,
+        )
+        .await
+        .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
+    client
+        .call(
+            None,
+            &crate::protocol::SetPermission {
+                permission: crate::protocol::PermissionDescriptor { name: "geolocation" },
+                setting: "denied",
+            },
+            deadline,
+        )
+        .await
+        .map_err(|_| "it did not take the refusal of geolocation".to_owned())?;
     client
         .call(
             None,

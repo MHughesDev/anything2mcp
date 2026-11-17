@@ -152,12 +152,23 @@ async fn a_field_is_located_by_role_and_name_and_read_and_only_one_match_will_do
             .unwrap_err(),
         BrowserError::NotFound
     );
-    // And to one tab.
+    // And to one tab. This one is sent with a query, which is where
+    // tokens travel: `Loaded` keeps it, for the crates above to decide
+    // by, and a snapshot, which is kept, is cut there.
     let second = must(browser.acting_tab(&environment(), &origins(&app)).await);
-    must(
+    let with_query = format!("{}?ticket=example-token-in-query", app.url(FORM));
+    let loaded = must(
         second
-            .goto(&Address::new(&app.url(FORM)).unwrap(), soon())
+            .goto(&Address::new(&with_query).unwrap(), soon())
             .await,
+    );
+    assert_eq!(loaded.address, with_query);
+    let kept = must(second.snapshot(&SnapshotLimits::default(), soon()).await);
+    assert_eq!(kept.address, app.url(FORM));
+    assert!(
+        !kept.to_text().contains("example-token-in-query"),
+        "{}",
+        kept.to_text()
     );
     let theirs = must(second.locate(&textbox("Description"), soon()).await);
     assert_eq!(

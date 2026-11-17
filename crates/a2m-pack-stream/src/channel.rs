@@ -549,6 +549,17 @@ impl FileKind for ChannelKind {
         Vec::new()
     }
 
+    /// A channel file describes a write when it declares an `ownership`
+    /// other than plainly `shared`: `runtime_owned` is what lets a `take`
+    /// remove messages. An `idempotency` header states how the broker
+    /// treats a repeat and lets nothing run, and the drafter writes it
+    /// from what the broker stated; a publish is allowed by an operation
+    /// and its binding, not by this file.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("ownership")
+            .is_some_and(|ownership| ownership.as_text() != Some("shared"))
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],

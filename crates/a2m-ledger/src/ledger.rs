@@ -502,6 +502,11 @@ pub enum Reconciled {
         /// The evidence of the read.
         evidence: BlobRef,
     },
+    /// Nothing was sent for the record: it `failed` and no intent was
+    /// stored for it since it was last planned, which the ledger checks
+    /// from its own row. It goes back to `planned` without a read; a record
+    /// that had an intent is refused this way (decision 0145).
+    NeverSent,
 }
 
 /// Where a settled record ended.
@@ -655,8 +660,6 @@ fn may_move(from: RunState, to: RunState) -> bool {
     }
 }
 
-/// The failure classes after which nothing is in doubt: the record was read,
-/// or nothing was sent.
 /// The presence checks that show a person was present, as the policy engine
 /// writes them in `approvals.presence_check`. `not_available` is the one
 /// other word: a machine with no such check.
@@ -668,6 +671,9 @@ const PRESENCE_PROVED: [&str; 5] = [
     "signed_in",
 ];
 
+/// The failure classes after which nothing is in doubt when the write was
+/// never sent: the record was read, or nothing was sent. A record that
+/// reached `acted` is in doubt whatever its class.
 const SETTLED_CLASSES: [FailureClass; 3] = [
     FailureClass::Policy,
     FailureClass::Stale,
@@ -1794,6 +1800,15 @@ impl Ledger<'_, '_> {
     ) -> Result<Settled, Failure> {
         let run = self.fenced_for(fence, record)?;
         let row = self.record(record)?;
+        if matches!(seen, Reconciled::NeverSent)
+            && (row.state != RecordState::Failed
+                || row.intent_epoch.is_some()
+                || row.acted_at.is_some())
+        {
+            return Err(failure::unexpected(
+                "a record goes back to `planned` unread only when no intent was stored for it; this one must be read",
+            ));
+        }
         if !row.in_doubt() {
             return Err(failure::unexpected(format!(
                 "only a record in doubt is settled, and this one is `{}`",
@@ -1840,6 +1855,28 @@ impl Ledger<'_, '_> {
                          reconciled_at = ?5
                      WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
                     &params,
+                )?;
+                Ok(Settled::Planned)
+            }
+            Reconciled::NeverSent => {
+                self.event(
+                    run.id,
+                    fence.epoch,
+                    EventKind::ReconcileRead,
+                    &json!({
+                        "step": record.step_seq,
+                        "record": record.record_seq,
+                        "state": "planned",
+                        "read": false,
+                    }),
+                    None,
+                )?;
+                self.tx.exec(
+                    "UPDATE run_records
+                     SET state = 'planned', intent_epoch = NULL, intent_seq = NULL,
+                         failure_class = NULL, failure_code = NULL
+                     WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
+                    &place,
                 )?;
                 Ok(Settled::Planned)
             }

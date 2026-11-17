@@ -92,13 +92,17 @@ async fn one_read_gives_what_the_form_shows_and_five_runs_do_the_same_thing() {
             read.values.get("length_in"),
             Some(&Value::from(format_length_in(stored.length_sixteenths)))
         );
-        runs.push((read.means(), read.values));
+        runs.push((read.means(), read.means_text(), read.values));
         assert!(handle.release(prepared, false).await.complete);
     }
-    assert!(runs.windows(2).all(|pair| pair[0] == pair[1]), "{runs:?}");
+    assert!(
+        runs.windows(2).all(|pair| pair[0] == pair[1]),
+        "{:?}",
+        runs.iter().map(|run| &run.1).collect::<Vec<_>>()
+    );
     // What was done names the template and which locator found each
     // field, never the value that filled a placeholder or a field.
-    let means = format!("{:?}", runs[0].0);
+    let means = runs[0].1.clone();
     assert!(
         means.contains("/orders/{order_id}/items/{item_code}"),
         "{means}"
@@ -321,7 +325,7 @@ async fn one_write_is_stored_once_and_reads_back_as_the_field_type_compares_it()
         )
         .await
         .unwrap();
-    let means = format!("{:?}", acted.means());
+    let means = acted.means_text();
     assert!(
         means.contains("strategy") && means.contains("fill"),
         "{means}"
@@ -637,9 +641,9 @@ async fn a_password_on_the_page_is_never_read_traced_or_logged() {
         "{}",
         snapshots[1]
     );
-    let strategies = format!("{:?}", acted.means());
+    let strategies = acted.means_text();
     assert!(
-        strategies.contains("\"check\"") && strategies.contains("\"select\""),
+        strategies.contains("strategy=check") && strategies.contains("strategy=select"),
         "{strategies}"
     );
     // The password is masked in the evidence, and is in none of it.

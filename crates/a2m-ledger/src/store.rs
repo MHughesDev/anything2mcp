@@ -322,15 +322,6 @@ impl Store {
         Ok(PolicyKey::new(self.inner.shared.id))
     }
 
-    /// A key to the policy engine's tables for a test that stands in for
-    /// the policy engine, however many were handed out. Only with the
-    /// `testing` feature, which no normal build turns on.
-    #[cfg(feature = "testing")]
-    #[must_use]
-    pub fn policy_key_for_tests(&self) -> PolicyKey {
-        PolicyKey::new(self.inner.shared.id)
-    }
-
     /// What the vault is opened with: where its wrapped keys are kept. It
     /// reads and writes only the table of wrapped keys.
     #[must_use]

@@ -426,6 +426,117 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_shared_worker_an_acting_tab_keeps_running_is_out_of_reach_of_an_observed_page() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("shared");
+    let quiet = at(&app.url("/escapes/quiet"));
+    // The page connects to the shared worker, directly or through a frame
+    // it makes for the purpose, and the worker writes when it is reached.
+    let connect = |through_a_frame: bool| {
+        let realm = if through_a_frame {
+            "(() => { const frame = document.createElement('iframe'); \
+             document.body.append(frame); return frame.contentWindow; })()"
+        } else {
+            "window"
+        };
+        format!(
+            "(() => {{ const realm = {realm}; let worker; \
+             try {{ worker = new realm.SharedWorker('/escapes/shared-worker.js'); }} \
+             catch (error) {{ return 'refused'; }} \
+             return new Promise((resolve) => {{ worker.port.onmessage = (event) => resolve(event.data); \
+             worker.port.start(); }}); }})()"
+        )
+    };
+
+    // First, that the test means something: a page of a tab that may act
+    // starts the worker, and the worker writes. The tab stays open, so the
+    // worker keeps running.
+    let browser = stand.open(&profile("clerk")).await;
+    let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
+    must(acting.goto(&quiet, soon()).await);
+    assert_eq!(
+        must(acting.page.as_the_page(&connect(false), soon()).await),
+        "post sent, socket made"
+    );
+    assert_eq!(
+        arrived(&app).await,
+        ["escapes/shared-post", "escapes/shared-socket"]
+    );
+    app.reset().await.unwrap();
+
+    // A page that is only observed, of the same origin and in the same
+    // browser, cannot reach it: not directly, and not through a frame.
+    let tab = observing(&stand, &app, "clerk").await;
+    must(tab.goto(&quiet, soon()).await);
+    for through_a_frame in [false, true] {
+        assert_eq!(
+            must(
+                tab.page
+                    .as_the_page(&connect(through_a_frame), soon())
+                    .await
+            ),
+            "refused",
+            "through a frame: {through_a_frame}"
+        );
+    }
+    refused(|| tab.blocked(), "SHAREDWORKER").await;
+    drop((tab, acting));
+    stand.end().await;
+    assert_eq!(arrived(&app).await, Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_s_requests_for_a_permission_or_a_file_are_refused_with_no_prompt() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("prompts");
+    let quiet = at(&app.url("/escapes/quiet"));
+    // Each request is made as if a person had just used the page, which a
+    // browser asks for before it shows a prompt. A prompt that opened
+    // would leave its request unanswered, and the call would time out.
+    let ask = "(() => { const quiet = (what, promise) => Promise.race([promise, \
+        new Promise((resolve) => setTimeout(() => resolve(what + ' unanswered'), 3000))]); \
+        return Promise.all([\
+        quiet('geolocation', new Promise((resolve) => navigator.geolocation.getCurrentPosition(\
+            () => resolve('located'), (error) => resolve('geolocation ' + error.code)))),\
+        quiet('notifications', Notification.requestPermission().then((answer) => 'notifications ' + answer)),\
+        quiet('clipboard', navigator.clipboard.readText().then(() => 'clipboard read', (error) => 'clipboard ' + error.name)),\
+        navigator.permissions.query({name: 'geolocation'}).then((state) => 'state ' + state.state),\
+        quiet('watch', new Promise((resolve) => navigator.geolocation.watchPosition(\
+            () => resolve('watched'), (error) => resolve('watch ' + error.code)))),\
+        ]).then((answers) => answers.join(', ')); })()";
+    let choose = "(() => { const input = document.createElement('input'); input.type = 'file'; \
+        document.body.append(input); input.click(); return 'chosen'; })()";
+
+    let browser = stand.open(&profile("clerk")).await;
+    let acting = must(browser.acting_tab(&environment(), &only(&app)).await);
+    let tab = observing(&stand, &app, "clerk").await;
+    must(acting.goto(&quiet, soon()).await);
+    must(tab.goto(&quiet, soon()).await);
+    for page in [&acting.page, &tab.page] {
+        eprintln!("MEASURED {}", must(page.as_the_page_with_a_gesture(ask, soon()).await));
+        eprintln!("NO GESTURE {}", must(page.as_the_page(ask, soon()).await));
+        // A file chooser opens nothing, and the page goes on.
+        assert_eq!(
+            must(page.as_the_page_with_a_gesture(choose, soon()).await),
+            "chosen"
+        );
+    }
+    for look in [
+        acting
+            .locate(&Query::role("heading", "Order notes"), soon())
+            .await,
+        tab.locate(&Query::role("heading", "Order notes"), soon())
+            .await,
+    ] {
+        must(look);
+    }
+    assert_eq!(stand.browsers.list()[0].tabs, 2);
+    drop((tab, acting));
+    stand.end().await;
+    assert_eq!(arrived(&app).await, Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_tab_goes_to_looks_at_and_acts_on_no_origin_it_was_not_opened_for() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::with_browser("origins");

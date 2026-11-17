@@ -342,11 +342,18 @@ impl Run {
         })
     }
 
-    fn writes_allowed(&self) -> bool {
-        matches!(
-            self.posture,
-            Posture::Live | Posture::Sandbox { test_records: true }
-        )
+    /// Whether this step may write or take. Live, any step the plan marks
+    /// to write. In a sandbox with test records, only the step marked
+    /// `commits`: the engine gives that posture to the context that writes
+    /// a declared test record, and cannot see what a step that is not
+    /// marked does there, so the driver's own guard stays for every other
+    /// step.
+    fn writes_allowed(&self, step: &Step) -> bool {
+        match self.posture {
+            Posture::Live => true,
+            Posture::Sandbox { test_records: true } => step.commits,
+            _ => false,
+        }
     }
 
     /// The channel a step of the plan refers to.
@@ -696,7 +703,7 @@ impl StreamDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
-        if run.posture == Posture::Discovery || (detail.take && !run.writes_allowed()) {
+        if run.posture == Posture::Discovery || (detail.take && !run.writes_allowed(step)) {
             return Err(read_only("open a subscription"));
         }
         if detail.take && entry.ownership != Ownership::RuntimeOwned {
@@ -943,7 +950,7 @@ impl StreamDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
-        if !run.writes_allowed() {
+        if !run.writes_allowed(step) {
             return Err(read_only("acknowledge a message"));
         }
         if entry.shape != Shape::Queue || entry.ownership != Ownership::RuntimeOwned {
@@ -970,7 +977,7 @@ impl StreamDriver {
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
-        if !run.writes_allowed() {
+        if !run.writes_allowed(step) {
             return Err(read_only("publish a message"));
         }
         let unsendable = |why: &str| {

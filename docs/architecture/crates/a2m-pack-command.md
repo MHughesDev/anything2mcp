@@ -33,6 +33,8 @@ It must never: start a program except through the supervisor it is handed; build
 | Step kinds | `spawn`, `expect`, `parse` |
 | Verbs | `read`, `list`, `search`, `create`, `update`, `delete`, `call` |
 | File kind | `command`, in `commands/`, for `program` surfaces |
+| What saves, for the compiler | `Lowering::commits`: `spawn` is `AsDeclared`, because the same kind starts a command that reads and one that writes, which is the command's declared `effect`; the lowering marks it `commits` exactly for a command that is not `read`, and the driver refuses either mismatch. `expect` and `parse` are `Never`. No kind always saves, so the manifest lists no `commit_steps`. `Lowering::least_effect`: `write` for `create` and `update`, `irreversible` for `delete`, `read` for the rest (a `call` is held to its command's declared effect) |
+| What can describe a write | `FileKind::writes`: a file does when any command in it has an `effect` other than `read`. A command whose effect is still an open question does not count, because every drafted command leaves it open; the file does not compile until a person writes the effect, so an open one cannot reach a plan |
 | Binding fields | `command` (a command's name), `args` (param to expression), `read_back` and `lookup` (each `command`, `args`, and `key`: the params that take the parts of the record's key, in order) |
 | Finding kind | `command` |
 | Discoverer, describer | `help`; its describer counts the commands and keeps every word a program said apart, as untrusted |

@@ -10,7 +10,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Possible,
-    ResolvedBinding, Stage,
+    ResolvedBinding, Stage, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -600,6 +600,32 @@ impl Lowering for StreamLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// `publish` and `acknowledge` always save: the first puts a message on
+    /// a channel, the second removes one from a queue. Every other kind
+    /// never does. `subscribe` and `await` only attach a consumer and hold
+    /// a delivery that is given back unless a later `acknowledge` removes
+    /// it; `latest`, `browse`, and `scan` take nothing; `channels` and
+    /// `describe` are the discoverer's looks.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == STEP_PUBLISH || *kind == STEP_ACKNOWLEDGE {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb: a `publish` writes, and a `take` removes a message that
+    /// cannot be put back. `read`, `list`, and `await` take nothing.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        if *binding.verb == VERB_TAKE {
+            EffectClass::Irreversible
+        } else if *binding.verb == VERB_PUBLISH {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

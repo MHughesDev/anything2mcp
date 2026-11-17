@@ -8,7 +8,8 @@ use a2m_core::{
 };
 use a2m_files::{
     CompileMode, Diagnostic, Diagnostics, Doc, JsonSchema, Level, LintRule, Located, LowerContext,
-    Lowered, Lowering, Place, Possible, ResolvedBinding, ResolvedView, Stage, TargetView,
+    Lowered, Lowering, Place, Possible, ResolvedBinding, ResolvedView, Stage, StepCommits,
+    TargetView,
 };
 
 use crate::codes;
@@ -129,6 +130,37 @@ fn runs_free_text(at: &Place, tool: &str) -> Diagnostic {
         ),
         "Bind the operation to a tool that takes typed arguments. If a person finds that the server does not run the tool's one string, state `free_text: false` in its mapping entry.",
     )
+}
+
+/// The refusal of a step whose tool takes the record's key from the key the
+/// engine gives the step, when the operation has no key input to give it.
+/// A record with no key input is known to the engine only by its place in
+/// the run, and that place is not a key the server knows: it must never be
+/// sent as an argument. An argument the step states itself is not filled
+/// from the key.
+fn place_key_problem(
+    at: &Place,
+    tool: &str,
+    entry: &ToolEntry,
+    given: &[StepArg],
+    key_inputs: usize,
+) -> Option<Diagnostic> {
+    let unfilled = entry
+        .key_args
+        .iter()
+        .enumerate()
+        .find(|(at, argument)| *at >= key_inputs && !given.iter().any(|arg| &arg.name == *argument))?;
+    Some(Diagnostic::error(
+        names::BINDING_INCOMPLETE,
+        Stage::Lower,
+        at,
+        format!(
+            "The mapping of the tool `{}` takes the argument `{}` from the record's key, and the operation has only {key_inputs} key input(s). A record with no key input has only its place in the run, which is never sent to a server.",
+            codes::shown(tool),
+            unfilled.1
+        ),
+        "Give the operation the key inputs the tool needs, or state the argument in the binding's `args`.",
+    ))
 }
 
 /// Whether a value of this type is or holds text. One of a field type's
@@ -266,6 +298,31 @@ impl Lowering for McpLowering {
         &self.step_kinds
     }
 
+    /// A `call_tool` sends a read and a write alike, and which it is is the
+    /// `effect` the mapping gives the tool it names: the lowering marks it
+    /// `commits` exactly when the tool is mapped as a write and the step is
+    /// the binding's own act, and the driver refuses a tool mapped as a
+    /// write from any step not so marked. No kind always saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == names::CALL_TOOL {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// `create`, `update`, and `upsert` write. `delete` and `submit` cannot
+    /// be taken back. The rest claim nothing more than a read: what a tool
+    /// does is the mapping's effect, which the lowering holds the operation
+    /// to.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        match binding.verb.as_str() {
+            "create" | "update" | "upsert" => EffectClass::Write,
+            "delete" | "submit" => EffectClass::Irreversible,
+            _ => EffectClass::Read,
+        }
+    }
+
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
@@ -401,12 +458,21 @@ impl Lowering for McpLowering {
             .and_then(|timeout| u32::try_from(timeout).ok())
             .or_else(|| target.default_timeout_ms("step"))
             .unwrap_or(DEFAULT_TIMEOUT_MS);
+        let key_inputs = operation.key().len();
+        let act_args = args_of(binding.field("args"), cx, &mut problems);
+        problems.extend(place_key_problem(
+            &tool_doc.at,
+            tool,
+            &entry,
+            &act_args,
+            key_inputs,
+        ));
         let act = step(
             Call {
                 surface: &surface_name,
                 tool,
                 entry: &entry,
-                args: args_of(binding.field("args"), cx, &mut problems),
+                args: act_args,
                 timeout_ms,
                 acts: true,
                 one_record: binding.verb.as_str() == "read",
@@ -436,6 +502,13 @@ impl Lowering for McpLowering {
                         }
                         None => Vec::new(),
                     };
+                    problems.extend(place_key_problem(
+                        &tool_doc.at,
+                        read_tool,
+                        &read_entry,
+                        &args,
+                        key_inputs,
+                    ));
                     read_back.extend(step(
                         Call {
                             surface: &surface_name,
@@ -482,12 +555,20 @@ impl Lowering for McpLowering {
                         "Map the lookup tool with `effect: read` and with `records` or `absent_error`.",
                     ));
                 } else {
+                    let lookup_args = args_of(lookup_doc.get("args"), cx, &mut problems);
+                    problems.extend(place_key_problem(
+                        &lookup_tool.at,
+                        name,
+                        &lookup_entry,
+                        &lookup_args,
+                        key_inputs,
+                    ));
                     lookup.extend(step(
                         Call {
                             surface: &surface_name,
                             tool: name,
                             entry: &lookup_entry,
-                            args: args_of(lookup_doc.get("args"), cx, &mut problems),
+                            args: lookup_args,
                             timeout_ms,
                             acts: false,
                             one_record: true,

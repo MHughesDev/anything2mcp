@@ -18,7 +18,7 @@ use std::io::{ErrorKind, Read as _};
 use std::path::{Path, PathBuf};
 
 use a2m_core::Digest;
-use a2m_provider::{Access, CheckedPath, StepFailure};
+use a2m_provider::{Access, CheckedPath, EntryKind, StepFailure};
 
 use crate::codes::{self, stop};
 use crate::open::{held_by_another, locked, missing, not_allowed, unavailable};
@@ -165,10 +165,11 @@ impl Folder {
     /// of the root.
     pub(crate) fn file(&self, name: &str) -> Result<Named, StepFailure> {
         let path = self.beside(name)?;
-        self.checked.join(name).map_err(StepFailure::not_sent)?;
+        let checked = self.checked.join(name).map_err(StepFailure::not_sent)?;
         Ok(Named {
             folder: self.clone(),
             path,
+            checked,
         })
     }
 
@@ -176,6 +177,8 @@ impl Folder {
     /// a link, wherever the link points and whether or not it points at
     /// anything. A lock signal counts by being there.
     pub(crate) fn holds(&self, name: &str) -> Result<bool, StepFailure> {
+        // The pack's own look, not the provider's: the roots' check cannot
+        // join a name that is a link to nothing, and that name is a signal.
         match fs::symlink_metadata(self.beside(name)?) {
             Ok(_) => Ok(true),
             Err(error) if gone(&error) => Ok(false),
@@ -219,6 +222,9 @@ pub(crate) enum Open {
 pub(crate) struct Named {
     folder: Folder,
     path: PathBuf,
+    /// The same name, as the roots' check gave it, for the provider's own
+    /// look at the name itself.
+    checked: CheckedPath,
 }
 
 impl Named {
@@ -238,23 +244,37 @@ impl Named {
     /// it points: a document's file is the file under its own name.
     pub(crate) fn regular(&self) -> Result<Metadata, StepFailure> {
         self.folder.present()?;
+        // The provider's look at the name itself, which never follows a link.
+        match self.checked.entry_kind() {
+            Ok(EntryKind::File) => {}
+            Ok(EntryKind::Absent) => return Err(missing()),
+            Ok(EntryKind::Link) => {
+                return Err(StepFailure::not_sent(not_allowed(
+                    "it is a link, and a document's file is a regular file under its own name",
+                )));
+            }
+            Ok(EntryKind::Folder | EntryKind::Other) => {
+                return Err(StepFailure::not_sent(not_allowed(
+                    "it is not a regular file",
+                )));
+            }
+            Err(_) => {
+                return Err(StepFailure::not_sent(unavailable("cannot be looked at")));
+            }
+        }
+        // Its length, identity, and number of names: what the kind does not say.
         let metadata = match fs::symlink_metadata(&self.path) {
-            Ok(metadata) => metadata,
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Ok(_) => {
+                return Err(StepFailure::not_sent(not_allowed(
+                    "it changed while it was looked at",
+                )));
+            }
             Err(error) if gone(&error) => return Err(missing()),
             Err(_) => {
                 return Err(StepFailure::not_sent(unavailable("cannot be looked at")));
             }
         };
-        if metadata.file_type().is_symlink() {
-            return Err(StepFailure::not_sent(not_allowed(
-                "it is a link, and a document's file is a regular file under its own name",
-            )));
-        }
-        if !metadata.file_type().is_file() {
-            return Err(StepFailure::not_sent(not_allowed(
-                "it is not a regular file",
-            )));
-        }
         if link_count(&metadata).is_some_and(|links| links != 1) {
             return Err(StepFailure::not_sent(not_allowed(
                 "it has more than one name, so replacing it would leave the other name on the old file",

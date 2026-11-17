@@ -16,6 +16,7 @@ verbs = ["read", "list", "await", "publish", "take"]
 # `channels` and `describe` are sent by the discoverer only; no lowering
 # gives them.
 steps = ["latest", "browse", "subscribe", "await", "publish", "acknowledge", "scan", "channels", "describe"]
+commit_steps = ["publish", "acknowledge"]
 rank = 60
 intent_window = 1
 session_reads = 4
