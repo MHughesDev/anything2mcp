@@ -122,6 +122,14 @@ As of 2026-11-17 the stands for the other kinds of system are built too. Each fo
 - **The broker**, `targets/example-broker/`: its [README](../../targets/example-broker/README.md).
 - **The simulated device**, `targets/example-device/`: its [README](../../targets/example-device/README.md).
 - **The MCP stand**, `targets/example-mcp/`: its [README](../../targets/example-mcp/README.md).
+- **The NATS stand**, `targets/example-nats/`: its [README](../../targets/example-nats/README.md). Its faults include `ExpireAuthAfterStore`, `ExpireAuthAfterAck`, and `ForeignDelivery` ([decision 0184](../decisions/0184-the-data-and-stream-packs-after-their-second-safety-audit.md)), and `ConsumerWithoutAckWait`, which describes a consumer without its `ack_wait` ([decision 0197](../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)). The database stand's relay has the fault `HoldCommitAnswer`, which holds the answer to `COMMIT` until the step's deadline.
+
+The application stand has pages whose own script reads from the JSON interface as it loads, for the web pack's drafting of a page's own requests ([decision 0195](../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)):
+
+- `/orders/{order_id}/summary` asks for the totals with no query and no header of the page's own.
+- `/orders/{order_id}/lengths-by-query` and `/orders/{order_id}/lengths-by-header` ask for the total length in centimetres, by a query and by a header the script sets. `/api/orders/{order_id}/lengths` answers in inches unless one of them asks, with the same names either way.
+- `/notes/{note_id}` is one screen at two addresses; the page of `N-2` alone sends a write as it loads, which the control interface counts.
+- `/invitations/{token}` holds a long random text in its address, and its script sends that text in a request's path and as a bare entry of a query.
 
 The application stand also has a TLS side, behind its feature `tls` ([decision 0157](../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)): it serves the application over TLS and over plain HTTP at once, with one store behind both, so a test asks the plain control address what was stored. A `TestAuthority` made at test time signs a good certificate, one for another name, and one that expired in 2000; a second authority stands for an unknown one. A `TlsFront` puts TLS in front of the MCP stand.
 

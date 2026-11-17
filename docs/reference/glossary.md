@@ -42,6 +42,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Extension point | One of the fixed kinds of thing a provider can supply: driver, auth provider, source reader, widget driver, discoverer |
 | Failure class | The category of a stop, which alone decides what happens next |
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
+| First binding | The first binding of an operation, drafted as `draft`; `binding.promote` makes it able to act once the operation's offline tests pass and a scout proved it, and for a write a person does it ([decision 0189](../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)) |
 | Fixture | Scrubbed recorded evidence used for offline tests |
 | Gate evidence | What each publish gate returned when a version was published, stored with the version, with the gates that did not run named as such ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Generation | Which version of a key: 1 for the first, one more after each rotation |
@@ -71,6 +72,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Matched screen | One screen found from several pages whose paths differ in one segment and whose snapshots agree; its address holds a placeholder for that segment ([decision 0187](../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) |
 | Mapping file | The file that names which tools of an upstream MCP server may be reached, and as what. No other tool of that server is reachable |
 | Mode | One concrete way of reaching a system, brought by a pack and belonging to one archetype: `ui`, `http`, and `mcp` are three. The kernel holds no list of modes; a provider registers each one it brings |
+| Observing tab | A browser tab that cannot write, in which every web read runs in every posture; a write's own steps run in an acting tab ([decision 0195](../decisions/0195-a-read-never-runs-where-the-page-may-write-and-a-page-keeps-only-its-structure.md)) |
 | Open question | The marker the drafter leaves in a draft where a value is needed that the system did not state, such as a unit or a key. The compiler refuses it in every mode, and the question goes to the unknowns ledger |
 | Operation | One business action with typed inputs and outputs, defined once |
 | Owner | The person a user session belongs to |
@@ -91,6 +93,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Probe | For a session: a cheap signed-in read. For a target: the first inspection of a system's surfaces |
 | Profile | A deployment shape, such as Solo or Company server. Also a browser's data directory; context makes clear which |
 | Project | A folder with a `anything2mcp.toml` holding target files |
+| Project root | The root of a run's roots that stands for the project folder of each request, so that one engine serves many projects without one reading another's files ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md), [decision 0194](../decisions/0194-the-packs-the-product-and-the-local-surface-take-up-the-kernels-second-pass.md)) |
 | Publish gate | A check a version must pass before it is published. Two of the twelve in section 403 are built, the schema and lint check and the offline replay ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Quarantine | The wait after a lost lease before the run's records may be touched |
 | Quarantined | Said of a record lock that is kept, not released, because its record is in doubt. Only its own run, under a new lease, can confirm it |
@@ -117,6 +120,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Subject | What a finding or a piece of evidence is about, as one tagged identity: a file by digest, an address, a process, a session, a device, or unknown with a reason |
 | Supervisor | The part of the kernel that starts, talks to, and stops outside processes and connections, and stops only what it can prove it started |
 | Surface | One way into a target: a web origin, an API base address, an MCP server, a desktop window, a program, a database, a file, a broker, a device link |
+| Surface notice | A fixed sentence a surface's kind registers for a person to see wherever the surface is shown, such as that credentials go unencrypted ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)) |
 | Target | One system being wrapped: an application, a service, a program, a data store, a device |
 | Template version | One version of a source's template that a source definition knows, with the fingerprint of its structure. An input that matches no template version is refused |
 | Test stand | The piece of test equipment that imitates one kind of system and reports ground truth through a control interface. The test application is the first |
