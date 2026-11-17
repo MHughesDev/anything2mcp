@@ -64,7 +64,8 @@ impl Engine {
 
     async fn stop(self) -> StopReason {
         self.control.stop(StopReason::Asked);
-        within("the engine's stop", self.serving).await.unwrap()
+        // The lock that comes back is dropped here, which releases it.
+        within("the engine's stop", self.serving).await.unwrap().0
     }
 }
 
@@ -303,8 +304,8 @@ struct BusyAtFirst {
 }
 
 impl IdleHolds for BusyAtFirst {
-    fn busy(&self) -> bool {
-        self.asked.fetch_add(1, Ordering::SeqCst) < self.busy_for
+    fn busy(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move { self.asked.fetch_add(1, Ordering::SeqCst) < self.busy_for })
     }
 }
 
@@ -320,9 +321,16 @@ async fn an_engine_with_no_connection_and_nothing_held_stops_and_a_hold_keeps_it
     let engine = Engine::start(channel, 1, idle);
     // Nobody asks it to stop: it stops by itself, and only once the hold
     // let go.
-    let stopped = within("the idle stop", engine.serving).await.unwrap();
+    let (stopped, lock) = within("the idle stop", engine.serving).await.unwrap();
     assert_eq!(stopped, StopReason::Idle);
     assert_eq!(holds.asked.load(Ordering::SeqCst), 3);
+    // The channel no longer serves, and the engine lock is still held: it
+    // came back to the caller, who closes the kernel before letting go.
+    // Until then no second engine can bind.
+    assert!(EngineLock::held(&paths).unwrap());
+    let second = Channel::bind(&paths, VERSION).await.unwrap_err();
+    assert_eq!(*second.code(), codes::ENGINE_RUNNING);
+    drop(lock);
     assert!(!EngineLock::held(&paths).unwrap());
 }
 
@@ -406,9 +414,10 @@ async fn a_read_goes_through_the_channel_to_the_kernel_and_a_secret_does_not_com
 
     drop(link);
     control.stop(StopReason::Asked);
-    let stopped = within("the engine's stop", serving).await.unwrap();
+    let (stopped, lock) = within("the engine's stop", serving).await.unwrap();
     assert_eq!(stopped, StopReason::Asked);
     world.kernel.close(CloseReason::Asked).await;
+    drop(lock);
 }
 
 /// An engine that closes a connection at any moment of the client's hello

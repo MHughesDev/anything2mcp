@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<!--
+  The one polkit action of Anything2MCP: "a person is present".
+
+  The engine asks for it when Approve is pressed on its approval page, and
+  when a protected setting is loosened. polkit then asks the person for
+  their own password. Nothing is run as another user and no right is gained.
+
+  An administrator installs this file as
+  /usr/share/polkit-1/actions/io.github.mhughesdev.anything2mcp.presence.policy
+
+  The defaults are part of the product's security and are not to be
+  loosened. In particular the active default is auth_self, which asks every
+  time; the form that keeps the answer for some minutes would let the next
+  approval pass with no prompt, and the engine then refuses to treat the
+  answer as proof of presence.
+-->
+<policyconfig>
+  <vendor>Anything2MCP</vendor>
+  <vendor_url>https://github.com/MHughesDev/anything2mcp</vendor_url>
+  <action id="io.github.mhughesdev.anything2mcp.presence">
+    <description>Confirm that a person is present at this machine</description>
+    <message>Anything2MCP asks you to confirm that you are present, because Approve was pressed on its approval page or a protected setting is being changed. This dialog cannot show which change it is for: read the page first, and cancel if you did not just ask for this.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

@@ -9,8 +9,11 @@
 //!
 //! A statement's text is a constant of the plan. A value from a tool input
 //! reaches the store only as a bound parameter. A read runs only on a
-//! connection the store itself holds read-only, so a statement that is not
-//! a read is refused by the store and never by reading its text.
+//! connection the store itself holds read-only, so a statement that changes
+//! data is refused by the store. What a read-only connection does not stop,
+//! such as attaching another file, is refused three times: by the compiler
+//! and again by the driver from the statement's words, and by the
+//! connection's own guard whatever the words say.
 //!
 //! The first store is the embedded SQL engine, behind the pack's own small
 //! interface in `store`. Server stores, hand-written writes, procedures,
@@ -28,6 +31,7 @@ mod lint;
 mod lower;
 mod model;
 mod names;
+mod shape;
 mod sqlite;
 mod store;
 

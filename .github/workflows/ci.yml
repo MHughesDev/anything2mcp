@@ -84,3 +84,65 @@ jobs:
         run: python3 tools/docs_audit.py
       - name: Prove the audit fails when it should
         run: python3 tools/test_docs_audit.py
+
+  bindings:
+    name: Wheel and npm packages on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.13"
+      # Pinned by commit; this is v7.1.0.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "22"
+      - name: Name the paths of this operating system
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "VENV_BIN=Scripts" >> "$GITHUB_ENV"
+            echo "EXE=.exe" >> "$GITHUB_ENV"
+          else
+            echo "VENV_BIN=bin" >> "$GITHUB_ENV"
+            echo "EXE=" >> "$GITHUB_ENV"
+          fi
+      - name: Build the wheel and the source distribution
+        working-directory: bindings/python
+        run: |
+          python -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/$VENV_BIN/pip" install --quiet maturin==1.16.0
+          "$RUNNER_TEMP/tools/$VENV_BIN/maturin" build --release --out dist
+          "$RUNNER_TEMP/tools/$VENV_BIN/maturin" sdist --out dist
+          ls -l dist
+      - name: Install the wheel into a clean environment and run both names and the import
+        run: |
+          python -m venv "$RUNNER_TEMP/try"
+          "$RUNNER_TEMP/try/$VENV_BIN/pip" install --quiet bindings/python/dist/*.whl
+          "$RUNNER_TEMP/try/$VENV_BIN/anything2mcp$EXE" --version
+          "$RUNNER_TEMP/try/$VENV_BIN/python" -c "import anything2mcp; print(anything2mcp.binary_path())"
+          # On Windows pip makes no launcher for the a2m script (research note 21).
+          if [ "$RUNNER_OS" != "Windows" ]; then "$RUNNER_TEMP/try/$VENV_BIN/a2m" --version; fi
+      - name: Test the Python client, against a fake engine and the built one
+        working-directory: bindings/python
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: python -m unittest discover -s tests -v
+      - name: Test the npm packages
+        working-directory: bindings/npm
+        run: |
+          node --test test/platform.test.js
+          node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"

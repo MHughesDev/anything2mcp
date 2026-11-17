@@ -27,7 +27,6 @@ use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
 use crate::json::Json;
 use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
-use crate::shape::Kind;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
     ProbeStep, RequestStep, Take, VersionSource, build, parse_path,
@@ -149,7 +148,6 @@ struct Expiry {
 }
 
 /// An answer, held between the `request` step and the steps that check it.
-#[derive(Debug)]
 struct Answer {
     endpoint: String,
     status: u16,
@@ -162,6 +160,24 @@ struct Answer {
     absent: bool,
     /// The version that was sent with the request, as text.
     sent_version: Option<String>,
+    /// Whether the request was a commit point: a write that was sent, whose
+    /// verdict the steps that follow are to read.
+    wrote: bool,
+}
+
+/// An answer's headers and body can hold a cookie or a token. What is
+/// printed of one is its endpoint, its status, and sizes.
+impl fmt::Debug for Answer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Answer")
+            .field("endpoint", &self.endpoint)
+            .field("status", &self.status)
+            .field("headers", &self.headers.len())
+            .field("body_bytes", &self.body.len())
+            .field("absent", &self.absent)
+            .field("wrote", &self.wrote)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Answer {
@@ -184,8 +200,21 @@ struct Session {
     held: Option<Held>,
     expiry: Expiry,
     answer: Option<Answer>,
-    /// The version last read for a record, by the record's key.
-    versions: BTreeMap<Vec<u8>, Json>,
+    /// What this pass knows of a record's version: by the endpoint that
+    /// read the record and the record's key.
+    versions: BTreeMap<(String, Vec<u8>), Known>,
+}
+
+/// What a pass knows of one record's version, from reading the record
+/// through one endpoint. Nothing is held for a record the pass did not
+/// read, and a write that sends a version is not sent for such a record.
+#[derive(Clone, PartialEq, Eq)]
+enum Known {
+    /// The record was read, and this is its version.
+    Version(Json),
+    /// The record was looked up and does not exist: a write creates it,
+    /// and has no version to send.
+    Absent,
 }
 
 /// The driver of the `http` mode.
@@ -214,11 +243,13 @@ fn needs_login(why: &str) -> Failure {
     )
 }
 
-fn record_key(input: &StepInput<'_>) -> Vec<u8> {
+/// Where a pass keeps what one endpoint read of the record a step is for.
+/// `None` for a step that is for no record: a version is never kept, or
+/// taken, under no key.
+fn version_slot(endpoint: &str, input: &StepInput<'_>) -> Option<(String, Vec<u8>)> {
     input
         .key
-        .map(a2m_core::RecordKey::canonical_bytes)
-        .unwrap_or_default()
+        .map(|key| (endpoint.to_owned(), key.canonical_bytes()))
 }
 
 impl HttpDriver {
@@ -413,8 +444,20 @@ enum Lost {
     TimedOut,
 }
 
+/// A write that was sent, with no answer that is the application's
+/// verdict on it. Whether it was made is not known: the record is in
+/// doubt, and reading it back decides. The class is never one the ledger
+/// takes as settled.
+fn in_doubt(endpoint: &str, why: &str) -> StepFailure {
+    StepFailure::unknown(failure_of(
+        FailureClass::PossibleCommit,
+        a2m_provider::codes::NO_CONFIRMATION,
+        format!("The write to the endpoint `{endpoint}` was sent, and {why}."),
+        "Reconcile the record: read it back before anything is written again.",
+    ))
+}
+
 fn lost(how: &Lost, commits: bool, endpoint: &str) -> StepFailure {
-    let reconcile = "Reconcile the record: read it back before anything is written again.";
     match (how, commits) {
         (Lost::BeforeSending, _) => StepFailure::not_sent(failure_of(
             FailureClass::Transient,
@@ -422,14 +465,9 @@ fn lost(how: &Lost, commits: bool, endpoint: &str) -> StepFailure {
             format!("No connection could be made for the endpoint `{endpoint}`; nothing was sent."),
             "Check that the system is reachable, then run the tool again.",
         )),
-        (Lost::AfterSending | Lost::TimedOut, true) => StepFailure::unknown(failure_of(
-            FailureClass::PossibleCommit,
-            a2m_provider::codes::NO_CONFIRMATION,
-            format!(
-                "The write to the endpoint `{endpoint}` was sent, and no complete answer came back."
-            ),
-            reconcile,
-        )),
+        (Lost::AfterSending | Lost::TimedOut, true) => {
+            in_doubt(endpoint, "no complete answer came back")
+        }
         (Lost::AfterSending, false) => StepFailure::unknown(failure_of(
             FailureClass::Transient,
             a2m_provider::codes::CONNECTION_LOST,
@@ -461,7 +499,47 @@ enum NotReceived {
     Refused(Failure),
 }
 
+/// What an answer means for the session or the surface, when it means
+/// anything before its status is judged.
+enum Stop {
+    /// A sign the target or the session's provider declares: the session
+    /// has ended.
+    Expired(Failure),
+    /// A redirect to an address that is not on the surface. It is never
+    /// followed.
+    LeftSurface,
+}
+
 impl Session {
+    /// The address of a built request: the surface's origin, the path its
+    /// address ends in, and the path and the query that were built.
+    ///
+    /// Checked again before sending: what the URL type reads back is the
+    /// surface's origin and exactly the path and the query that were
+    /// built. A dot segment that would be folded away, a separator that
+    /// would start a query, a fragment, or a host, and a byte that would be
+    /// encoded again all change what is read back, and are refused.
+    fn address(&self, built: &Built) -> Result<reqwest::Url, Failure> {
+        let path = format!("{}{}", self.origin.prefix, built.path);
+        let mut address = format!("{}{path}", self.origin.text);
+        if !built.query.is_empty() {
+            address.push('?');
+            address.push_str(&built.query);
+        }
+        let query = (!built.query.is_empty()).then_some(built.query.as_str());
+        reqwest::Url::parse(&address)
+            .ok()
+            .filter(|url| {
+                url.origin().ascii_serialization() == self.origin.text
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path() == path
+                    && url.query() == query
+                    && url.fragment().is_none()
+            })
+            .ok_or_else(|| codes::surface_not_declared("The address of the request"))
+    }
+
     /// Sends one built request to the surface's address and reads the
     /// answer, up to `most` bytes, by `until`.
     async fn send(
@@ -479,18 +557,7 @@ impl Session {
                 "Compile the target again with the version of the HTTP pack that is enabled.",
             ))
         };
-        let mut address = format!("{}{}{}", self.origin.text, self.origin.prefix, built.path);
-        if !built.query.is_empty() {
-            address.push('?');
-            address.push_str(&built.query);
-        }
-        // Checked again before sending: the address built is on the surface.
-        let url = reqwest::Url::parse(&address)
-            .ok()
-            .filter(|url| url.origin().ascii_serialization() == self.origin.text)
-            .ok_or_else(|| {
-                NotReceived::Refused(codes::surface_not_declared("The address of the request"))
-            })?;
+        let url = self.address(built).map_err(NotReceived::Refused)?;
 
         let mut headers = HeaderMap::new();
         for (name, value) in &built.headers {
@@ -601,14 +668,13 @@ impl Session {
         })
     }
 
-    /// What a redirect or a refusing status means for the session, when it
-    /// means anything.
+    /// What a redirect or a refusing status means, when it means anything.
     fn stopped_by(
         &self,
         template: Option<&EndpointTemplate>,
-        path: &str,
+        built: &Built,
         received: &Received,
-    ) -> Option<Failure> {
+    ) -> Option<Stop> {
         let signed_in = self.held.is_some();
         let location = received
             .headers
@@ -616,38 +682,40 @@ impl Session {
             .find(|(name, _)| name == "location")
             .map(|(_, value)| value.as_str());
         if let (300..=399, Some(location)) = (received.status, location) {
-            // A redirect is never followed. One that leaves the surface is
-            // a sign-in request when the target says so, and otherwise a
-            // destination the plan does not list.
-            let elsewhere = reqwest::Url::parse(location)
+            // A redirect is never followed. Where it leads is read as a
+            // browser would read it, against the address of the request:
+            // with a scheme, with none (`//host/path`), or as a path. One
+            // that leaves the surface is a sign-in request when the target
+            // says so, and otherwise a destination the plan does not list.
+            // One that stays on the surface is a status like any other.
+            let elsewhere = self
+                .address(built)
                 .ok()
+                .and_then(|request| request.join(location).ok())
                 .filter(|url| url.origin().ascii_serialization() != self.origin.text);
             if let Some(url) = elsewhere {
                 let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
                 if signed_in && self.expiry.redirect_hosts.contains(&host) {
-                    return Some(needs_login(
+                    return Some(Stop::Expired(needs_login(
                         "the system sent the request on to its sign-in host",
-                    ));
+                    )));
                 }
-                return Some(codes::surface_not_declared(
-                    "The address the system redirected the request to",
-                ));
+                return Some(Stop::LeftSurface);
             }
         }
         if !signed_in {
             return None;
         }
-        let declared =
-            self.expiry.declared_statuses.iter().any(|(status, start)| {
-                *status == received.status && path.starts_with(start.as_str())
-            });
+        let declared = self.expiry.declared_statuses.iter().any(|(status, start)| {
+            *status == received.status && built.path.starts_with(start.as_str())
+        });
         let by_provider = self.expiry.provider_statuses.contains(&received.status)
             && !template.is_some_and(|template| template.answers.declares(received.status));
         (declared || by_provider).then(|| {
-            needs_login(&format!(
+            Stop::Expired(needs_login(&format!(
                 "the system refused its credential with status {}",
                 received.status
-            ))
+            )))
         })
     }
 }
@@ -757,12 +825,32 @@ impl HttpDriver {
             .payload
             .decode()
             .map_err(|_| codes::not_usable("its payload does not decode"))?;
-        let key = record_key(input);
-        let version = if template.version.send.is_some() {
-            session.versions.remove(&key)
-        } else {
-            None
-        };
+
+        // The version precondition. A write whose endpoint sends one goes
+        // out with the version this pass read for the record, through the
+        // endpoint the step names; or, for a record this pass looked up and
+        // found absent, with none, because the write creates it. It never
+        // goes out with none because nothing is known. The version is kept
+        // until a request may have reached the system: an attempt that was
+        // not sent leaves it for the next.
+        let mut version = None;
+        let mut taken_from = None;
+        if template.version.send.is_some() {
+            let reader = payload.version_from.as_deref().ok_or_else(|| {
+                codes::not_usable(format!(
+                    "the endpoint `{name}` sends the record's version, and the step names no endpoint that reads it"
+                ))
+            })?;
+            taken_from = version_slot(reader, input);
+            match taken_from
+                .as_ref()
+                .and_then(|slot| session.versions.get(slot))
+            {
+                Some(Known::Version(read)) => version = Some(read.clone()),
+                Some(Known::Absent) => {}
+                None => return Err(StepFailure::not_sent(codes::version_not_read(&name))),
+            }
+        }
         let built = build(
             &template,
             &payload,
@@ -785,27 +873,64 @@ impl HttpDriver {
         let most = template
             .max_response_bytes
             .unwrap_or(self.max_response_bytes);
-        let received = session
+        // What this endpoint read of the record before is no longer what
+        // the pass knows: the steps that follow say what it knows now.
+        let own = version_slot(&name, input).filter(|_| !template.writes);
+        if let Some(own) = &own {
+            session.versions.remove(own);
+        }
+        let outcome = session
             .send(&built, credentials, most, until(step, input))
-            .await
-            .map_err(|not| match not {
-                NotReceived::Lost(how) => lost(&how, step.commits, &name),
-                NotReceived::Refused(failure) => StepFailure::not_sent(failure),
-                NotReceived::TooLarge => StepFailure::answered(failure_of(
-                    FailureClass::UnknownVariant,
-                    codes::RESPONSE_TOO_LARGE,
-                    format!("The endpoint `{name}` answered with more than {most} bytes."),
-                    "Raise `max_response_bytes` on the endpoint if the answer is meant to be that large.",
-                )),
-            })?;
+            .await;
+        let may_have_arrived = !matches!(
+            outcome,
+            Err(NotReceived::Lost(Lost::BeforeSending) | NotReceived::Refused(_))
+        );
+        if may_have_arrived && let Some(slot) = &taken_from {
+            // The version went out with a request: it is used up.
+            session.versions.remove(slot);
+        }
+        let received = outcome.map_err(|not| match not {
+            NotReceived::Lost(how) => lost(&how, step.commits, &name),
+            NotReceived::Refused(failure) => StepFailure::not_sent(failure),
+            // A write was sent and its answer was not read: in doubt.
+            NotReceived::TooLarge if step.commits => in_doubt(
+                &name,
+                &format!("its answer was larger than {most} bytes and was not read"),
+            ),
+            NotReceived::TooLarge => StepFailure::answered(failure_of(
+                FailureClass::UnknownVariant,
+                codes::RESPONSE_TOO_LARGE,
+                format!("The endpoint `{name}` answered with more than {most} bytes."),
+                "Raise `max_response_bytes` on the endpoint if the answer is meant to be that large.",
+            )),
+        })?;
 
-        if let Some(stop) = session.stopped_by(Some(&template), &built.path, &received) {
-            return Err(StepFailure::answered(stop));
+        match session.stopped_by(Some(&template), &built, &received) {
+            // The session ended. For a write this is `session_expired` and
+            // not a settled class: the ledger keeps the record in doubt,
+            // and the keeper is told, so the run can sign in and reconcile.
+            Some(Stop::Expired(failure)) => return Err(StepFailure::answered(failure)),
+            // A write the system answered by sending the caller elsewhere
+            // may have been made. The redirect is not the application's
+            // verdict, and it is not followed: the record is in doubt.
+            Some(Stop::LeftSurface) if step.commits => {
+                return Err(in_doubt(
+                    &name,
+                    "the system answered with a redirect to an address outside the surface, which was not followed",
+                ));
+            }
+            Some(Stop::LeftSurface) => {
+                return Err(StepFailure::answered(codes::surface_not_declared(
+                    "The address the system redirected the request to",
+                )));
+            }
+            None => {}
         }
         let captures = self.captures(&name, &template.path_text(), &built, credentials, &received);
         let absent = step.lookup && template.answers.absent.contains(&received.status);
-        if absent {
-            session.versions.remove(&key);
+        if absent && let Some(own) = own {
+            session.versions.insert(own, Known::Absent);
         }
         session.answer = Some(Answer {
             endpoint: name,
@@ -815,6 +940,7 @@ impl HttpDriver {
             json: None,
             absent,
             sent_version: version.as_ref().and_then(Json::scalar_text),
+            wrote: step.commits,
         });
         let observed = Observed {
             captures,
@@ -828,20 +954,32 @@ impl HttpDriver {
     }
 }
 
+/// A step that judges a held answer and cannot be carried out as written.
+/// When the answer held is a write's, the write was sent and its verdict
+/// stays unread: the record is in doubt, never "not written".
+fn cannot_judge(held: Option<&Answer>, why: String) -> StepFailure {
+    match held {
+        Some(answer) if answer.wrote => in_doubt(
+            &answer.endpoint,
+            &format!("the step that was to judge its answer cannot be carried out: {why}"),
+        ),
+        _ => codes::not_usable(why),
+    }
+}
+
 /// The answer a `validate` or `extract` step works on: the one its own
 /// endpoint's `request` step received.
 fn held_answer<'a>(
     answer: &'a mut Option<Answer>,
     name: &str,
 ) -> Result<&'a mut Answer, StepFailure> {
-    answer
-        .as_mut()
-        .filter(|answer| answer.endpoint == name)
-        .ok_or_else(|| {
-            codes::not_usable(format!(
-                "no answer of the endpoint `{name}` is held; a `request` step comes first"
-            ))
-        })
+    if !answer.as_ref().is_some_and(|held| held.endpoint == name) {
+        return Err(cannot_judge(
+            answer.as_ref(),
+            format!("no answer of the endpoint `{name}` is held; a `request` step comes first"),
+        ));
+    }
+    answer.as_mut().ok_or_else(|| codes::not_usable("no answer is held"))
 }
 
 fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailure> {
@@ -865,10 +1003,10 @@ fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailu
                 "Compare the system's answer with the endpoint's `response_schema`, and correct the one that is wrong.",
             ))
         };
+        // A body that is not JSON is never read as nothing, whatever the
+        // shape: a page answered in place of the data stops here.
         let json = if answer.body.is_empty() {
             Json::Null
-        } else if shape.kind == Kind::Any {
-            Json::parse(&answer.body).unwrap_or(Json::Null)
         } else {
             Json::parse(&answer.body).map_err(|error| {
                 drift(format!(
@@ -1010,14 +1148,16 @@ impl HttpDriver {
             return Ok(StepOutcome::Absent(Observed::default()));
         }
         let Some(json) = &answer.json else {
-            return Err(codes::not_usable(format!(
-                "the answer of the endpoint `{name}` was not checked; a `validate` step comes first"
-            )));
+            return Err(cannot_judge(
+                Some(answer),
+                format!(
+                    "the answer of the endpoint `{name}` was not checked; a `validate` step comes first"
+                ),
+            ));
         };
-        let payload: ExtractStep = step
-            .payload
-            .decode()
-            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let payload: ExtractStep = step.payload.decode().map_err(|_| {
+            cannot_judge(Some(answer), "its payload does not decode".to_owned())
+        })?;
         let mut values = Values::new();
         for wanted in &payload.values {
             let value = taken(json, &wanted.path, wanted.take).ok_or_else(|| {
@@ -1034,15 +1174,19 @@ impl HttpDriver {
             })?;
             values.insert(wanted.name.clone(), value);
         }
-        let version = match &template.version.read {
-            Some(VersionSource::Field(field)) => json.get(field).cloned(),
-            Some(VersionSource::Header(header)) => answer
-                .header(header)
-                .map(|text| Json::Text(text.to_owned())),
-            None => None,
-        };
-        if let Some(version) = version.filter(|version| *version != Json::Null) {
-            session.versions.insert(record_key(input), version);
+        // What the pass now knows of the record's version, read through
+        // this endpoint: the version, or nothing when the answer holds none.
+        if let (Some(source), Some(slot)) = (&template.version.read, version_slot(&name, input)) {
+            let version = match source {
+                VersionSource::Field(field) => json.get(field).cloned(),
+                VersionSource::Header(header) => answer
+                    .header(header)
+                    .map(|text| Json::Text(text.to_owned())),
+            };
+            match version.filter(|version| *version != Json::Null) {
+                Some(version) => session.versions.insert(slot, Known::Version(version)),
+                None => session.versions.remove(&slot),
+            };
         }
         Ok(StepOutcome::Done(Observed {
             values: self.redact.redact_values(&values),
@@ -1199,10 +1343,12 @@ impl Driver for HttpDriver {
 mod tests {
     use a2m_core::{Decimal, Value};
 
-    use super::{Origin, taken};
+    use std::collections::BTreeMap;
+
+    use super::{Answer, Expiry, Origin, Session, taken};
     use crate::codes;
     use crate::json::Json;
-    use crate::template::Take;
+    use crate::template::{Built, Method, Take};
 
     #[test]
     fn an_address_is_taken_apart_once_and_https_is_refused_by_name() {
@@ -1231,6 +1377,95 @@ mod tests {
             assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "{bad}");
             assert!(!failure.message().contains("PLANTED"), "{failure}");
         }
+    }
+
+    fn session(address: &str) -> Session {
+        let origin = Origin::of(address).unwrap();
+        Session {
+            client: reqwest::Client::new(),
+            client_key: format!("- {}", origin.text),
+            origin,
+            surface: "api".to_owned(),
+            sections: BTreeMap::new(),
+            held: None,
+            expiry: Expiry::default(),
+            answer: None,
+            versions: BTreeMap::new(),
+        }
+    }
+
+    fn built(path: &str, query: &str) -> Built {
+        Built {
+            method: Method::Get,
+            path: path.to_owned(),
+            query: query.to_owned(),
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    #[test]
+    fn the_address_sent_to_is_the_surfaces_origin_and_exactly_the_path_that_was_built() {
+        let session = session("http://app.example.test/v2");
+        let url = session
+            .address(&built("/orders/A%2F1/items", "q=a%26b"))
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://app.example.test/v2/orders/A%2F1/items?q=a%26b"
+        );
+        // What the compiler and the builder refuse is refused again here,
+        // where a plan that held it all the same would be sent: a dot
+        // segment that leaves the surface's path, plain or encoded; a
+        // separator that starts a query, a fragment, or another host; a
+        // byte that would be encoded again.
+        for path in [
+            "/../admin",
+            "/orders/../../admin",
+            "/orders/%2e%2e/%2E%2E/admin",
+            "/orders/./x",
+            "/orders?x=1",
+            "/orders#x",
+            "/orders\\x",
+            "/orders x",
+            "/orders/\u{e9}",
+            "@other.example.test/x",
+            ":8080/x",
+            ".other.example.test/x",
+        ] {
+            let failure = session.address(&built(path, "")).unwrap_err();
+            assert_eq!(failure.code(), &codes::SURFACE_NOT_DECLARED, "{path}");
+            assert_eq!(failure.class(), a2m_core::FailureClass::Policy, "{path}");
+        }
+        for query in ["x=1#y", "x=a b", "x=\u{e9}"] {
+            let failure = session.address(&built("/orders", query)).unwrap_err();
+            assert_eq!(failure.code(), &codes::SURFACE_NOT_DECLARED, "{query}");
+        }
+        // A second `//` after the origin stays a path on the surface's own
+        // host, and is sent as written.
+        let url = session.address(&built("//other.example.test/x", "")).unwrap();
+        assert_eq!(url.host_str(), Some("app.example.test"));
+        assert_eq!(url.path(), "/v2//other.example.test/x");
+    }
+
+    #[test]
+    fn a_held_answer_prints_no_header_and_no_body() {
+        let answer = Answer {
+            endpoint: "order_get".to_owned(),
+            status: 200,
+            headers: vec![(
+                "set-cookie".to_owned(),
+                "session=secret-for-tests-cookie-0010".to_owned(),
+            )],
+            body: br#"{"token":"secret-for-tests-body-0011"}"#.to_vec(),
+            json: Json::parse(br#"{"token":"secret-for-tests-body-0011"}"#).ok(),
+            absent: false,
+            sent_version: Some("7".to_owned()),
+            wrote: false,
+        };
+        let printed = format!("{answer:?} {answer:#?}");
+        assert!(printed.contains("order_get") && printed.contains("200"));
+        assert!(!printed.contains("secret-for-tests"), "{printed}");
     }
 
     #[test]

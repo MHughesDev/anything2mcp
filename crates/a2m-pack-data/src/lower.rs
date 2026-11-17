@@ -421,17 +421,21 @@ impl Lowering for SqlLowering {
                             problems.push(unknown(read_back_name, &read_back.at));
                             Some(Vec::new())
                         }
+                        // A write is read back by the read the pack itself
+                        // wrote: the same record, by its full key, and
+                        // nothing a hand-written text could put in its place.
                         Some(found)
-                            if found.returns != Returns::OneOrNone
+                            if !found.by_key
+                                || found.returns != Returns::OneOrNone
                                 || found.surface != statement.surface
-                                || found.params.iter().any(|param| !param.key) =>
+                                || found.record != statement.record =>
                         {
                             problems.push(problem(
                                 &lint::READ_BACK_INVALID,
                                 Stage::Lower,
                                 &read_back.at,
-                                format!("The read-back `{read_back_name}` is not a read of one record by its key on the same surface."),
-                                "Name a read statement with `returns: one_or_none` whose parameters are the fields of the record's key.",
+                                format!("The read-back `{read_back_name}` is not the read of the record `{}` by its key that the pack writes, on the same surface.", statement.record),
+                                "Declare the read-back as a statement with `effect: read` and `form: table` for the same record, and name it here. A hand-written read is never a read-back.",
                             ));
                             Some(Vec::new())
                         }

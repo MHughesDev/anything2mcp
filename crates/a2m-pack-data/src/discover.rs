@@ -236,7 +236,7 @@ fn tables_found(values: &Values, surface: &str, store: &str) -> Vec<TableFound> 
     for table in &mut found {
         table.cascades_to = cascades
             .iter()
-            .filter(|(referred, _)| *referred == table.table)
+            .filter(|(referred, _)| crate::store::same_name(referred, &table.table))
             .map(|(_, dependent)| dependent.clone())
             .collect();
         table.cascades_to.sort();

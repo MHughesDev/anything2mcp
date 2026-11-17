@@ -23,7 +23,7 @@ use a2m_actions::BoxFuture;
 use tokio::time::Instant;
 
 #[cfg(target_os = "linux")]
-mod polkit;
+pub(crate) mod polkit;
 
 /// Which kind of presence check a machine has. `doctor.run` reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

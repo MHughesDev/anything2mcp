@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use a2m_core::{
     Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, FindingKind,
-    LimitationCode, PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
+    LimitationCode, PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -229,7 +229,12 @@ impl HttpDescription {
         })
     }
 
-    fn finding(&self, origin: &Origin, operation: &DescribedOperation) -> Result<Finding, Failure> {
+    fn finding(
+        &self,
+        origin: &Origin,
+        operation: &DescribedOperation,
+        redact: &dyn Redact,
+    ) -> Result<Finding, Failure> {
         let path = format!("{}{}", origin.prefix, operation.path);
         // Braces are part of a template; anything else that is not plain
         // makes the address the surface's root, and the path stays in what
@@ -239,7 +244,8 @@ impl HttpDescription {
         Ok(Finding::about(
             Subject::Address(address),
             self.kind.clone(),
-            operation.found(),
+            // Once more as it is written: what was formatted is what goes out.
+            redact.redact(&operation.found()),
             Source::PublishedDescription,
             produced_by(&self.provider),
             self.clock.now(),
@@ -295,13 +301,19 @@ impl Discoverer for HttpDescription {
                     ))
                 })?;
                 if u64::try_from(body.len()).unwrap_or(u64::MAX) > scope.bounds.bytes {
-                    return Err(unreadable("it is larger than the discovery may read"));
+                    return Err(openapi::too_large(&format!(
+                        "it is more than the {} bytes the discovery may read",
+                        scope.bounds.bytes
+                    )));
                 }
                 body.as_bytes().to_vec()
             };
-            let operations = openapi::operations(&bytes)?;
+            // The redactor comes first, whichever way the description
+            // arrived: before the text is parsed, cut, or quoted.
+            let text = openapi::redacted(&bytes, scope.redact)?;
+            let operations = openapi::operations(text.as_bytes())?;
             for operation in &operations {
-                out.found(self.finding(&origin, operation)?)?;
+                out.found(self.finding(&origin, operation, scope.redact)?)?;
             }
             Ok(DiscoveryReport {
                 coverage: Coverage::Complete,

@@ -234,3 +234,13 @@ fn a_write_compiles_only_where_the_store_stands_alone() {
     assert!(files.contains(&"operations/line_item_update.yaml"));
     assert!(!files.contains(&"operations/line_item_get.yaml"));
 }
+
+#[test]
+fn d4_probe() {
+    let problems = errors_after(
+        &["statements", "orders.yaml"],
+        "      FROM customers WHERE customer_id = ?\n    params: [{name: customer_id, type: identifier}]\n",
+        "      FROM customers ORDER BY customer_id DESC LIMIT 1\n    params: []\n",
+    );
+    assert!(problems.find("data.read_back_invalid").is_some(), "{problems:#?}");
+}

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use a2m_actions::{CallerCredential, Paths};
+use a2m_actions::{BoxFuture, CallerCredential, Paths};
 use a2m_core::{Digest, Failure, Version};
 use axum::Router;
 use axum::extract::connect_info::Connected;
@@ -188,8 +188,9 @@ impl Peer {
 /// hold of the session keeper. The product crate implements it over the
 /// kernel and the person surface.
 pub trait IdleHolds: Send + Sync {
-    /// Whether something still needs the engine.
-    fn busy(&self) -> bool;
+    /// Whether something still needs the engine. It may read the store:
+    /// a run in hand with nobody connected holds the engine open.
+    fn busy(&self) -> BoxFuture<'_, bool>;
 }
 
 /// When an engine with no connections stops.
@@ -204,8 +205,8 @@ pub struct IdlePolicy {
 struct NoHolds;
 
 impl IdleHolds for NoHolds {
-    fn busy(&self) -> bool {
-        false
+    fn busy(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async { false })
     }
 }
 
@@ -283,7 +284,8 @@ impl ChannelControl {
 }
 
 /// The engine's end of the local channel, bound and not yet serving. It
-/// holds the engine lock until it is dropped or [`Channel::serve`] returns.
+/// holds the engine lock until it is dropped; [`Channel::serve`] hands the
+/// lock back, still held, when it returns.
 pub struct Channel {
     listener: os::Listener,
     lock: EngineLock,
@@ -375,9 +377,13 @@ impl Channel {
     /// stopped or goes idle. Every connection's user is checked before a
     /// byte is read from it. The channel answers the hello itself; every
     /// other request reaches `service` with a [`Peer`] in its extensions,
-    /// and only after its connection said hello. When this returns, the
-    /// socket is gone and the engine lock is released.
-    pub async fn serve(self, service: Router, idle: IdlePolicy) -> StopReason {
+    /// and only after its connection said hello.
+    ///
+    /// When this returns, the socket is gone and the engine lock is still
+    /// held: it comes back to the caller, who drops it once the kernel has
+    /// closed. Until then no second engine can bind, and so none opens the
+    /// store while this one still writes to it.
+    pub async fn serve(self, service: Router, idle: IdlePolicy) -> (StopReason, EngineLock) {
         let Self {
             listener,
             lock,
@@ -411,13 +417,13 @@ impl Channel {
         let served = axum::serve(accepting, app.into_make_service_with_connect_info::<Seat>())
             .with_graceful_shutdown(signal)
             .await;
-        // The listener is gone with the serve; the lock is released last,
-        // so that no second engine binds while this one still listens.
-        drop(lock);
-        match (served, *control.stop.borrow()) {
+        // The listener is gone with the serve. The lock goes back to the
+        // caller, held, so that it outlives the kernel.
+        let why = match (served, *control.stop.borrow()) {
             (Ok(()), Some(reason)) => reason,
             _ => StopReason::Failed,
-        }
+        };
+        (why, lock)
     }
 }
 
@@ -433,7 +439,7 @@ async fn idle_stop(mut open: watch::Receiver<usize>, idle: IdlePolicy) {
         }
         tokio::select! {
             () = tokio::time::sleep(after) => {
-                if *open.borrow() == 0 && !idle.holds.busy() {
+                if *open.borrow() == 0 && !idle.holds.busy().await && *open.borrow() == 0 {
                     return;
                 }
             }

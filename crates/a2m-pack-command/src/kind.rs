@@ -19,9 +19,15 @@ use crate::model::{
 };
 use crate::pattern;
 
-/// The file names a program surface may not have: shells, and interpreters
-/// that take code as an argument. Compared without a `.exe` suffix and
+/// The file names a program surface may not have: shells, interpreters
+/// that take code as an argument, and programs whose work is to start the
+/// program their arguments name. Compared without a `.exe` suffix and
 /// without regard to case.
+///
+/// The list is a net for a mistake, and it is not complete: many programs
+/// can be told to run another through some option of their own. What
+/// holds for those is the review of the target's files, where a command's
+/// arguments are shown.
 pub(crate) const SHELLS_AND_INTERPRETERS: &[&str] = &[
     "sh",
     "bash",
@@ -63,20 +69,156 @@ pub(crate) const SHELLS_AND_INTERPRETERS: &[&str] = &[
     "ssh",
     "eval",
     "exec",
+    // More interpreters.
+    "pythonw",
+    "ipython",
+    "rscript",
+    "r",
+    "java",
+    "javaw",
+    "jshell",
+    "jrunscript",
+    "irb",
+    "wish",
+    "expect",
+    "mshta",
+    // Programs that start the program their arguments name.
+    "nice",
+    "ionice",
+    "timeout",
+    "stdbuf",
+    "chroot",
+    "doas",
+    "pkexec",
+    "runuser",
+    "setsid",
+    "setpriv",
+    "unshare",
+    "nsenter",
+    "taskset",
+    "chrt",
+    "flock",
+    "time",
+    "watch",
+    "script",
+    "strace",
+    "ltrace",
+    "find",
+    "parallel",
+    "systemd-run",
+    "start-stop-daemon",
+    "wsl",
+    "rundll32",
+    "forfiles",
+    "start",
 ];
 
-/// Flags that hand their value to something that runs it.
-const CODE_FLAGS: &[&str] = &[
-    "-c",
-    "-e",
-    "--eval",
-    "--exec",
-    "--execute",
-    "--command",
-    "--expression",
-    "--run",
-    "--script",
+/// One-letter flags that hand their value to something that runs it,
+/// matched as written: `-C` is a folder to many programs.
+const CODE_FLAG_LETTERS: &[&str] = &["c", "e"];
+
+/// Longer names of such flags, matched without regard to case and with one
+/// dash or two: `--exec` and `-exec` are the same flag to different
+/// programs.
+const CODE_FLAG_WORDS: &[&str] = &[
+    "eval",
+    "exec",
+    "execdir",
+    "execute",
+    "command",
+    "cmd",
+    "expression",
+    "expr",
+    "run",
+    "script",
+    "ok",
+    "okdir",
+    "rsh",
+    "to-command",
+    "use-compress-program",
 ];
+
+/// Whether a flag hands its value to something that runs it. The flag is
+/// read as a program would read it: without its dashes, or the `/` of an
+/// option on Windows, and up to a `=` or `:` written into it.
+///
+/// A cluster of one-letter flags, such as `-xc`, is not recognised: what a
+/// cluster means is the program's own.
+pub(crate) fn runs_its_value(flag: &str) -> bool {
+    let name = flag
+        .strip_prefix('/')
+        .unwrap_or_else(|| flag.trim_start_matches('-'));
+    let name = name.split(['=', ':']).next().unwrap_or(name);
+    CODE_FLAG_LETTERS.contains(&name)
+        || CODE_FLAG_WORDS.contains(&name.to_ascii_lowercase().as_str())
+}
+
+/// Words that name a credential when they end a variable's or a flag's
+/// name, as in `EXAMPLE_TOOL_TOKEN` and `--password`.
+const CREDENTIAL_WORDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "apikey",
+    "credential",
+    "credentials",
+];
+
+/// Words that name a credential when `key` follows them, as in `API_KEY`.
+const CREDENTIAL_KEYS: &[&str] = &[
+    "api",
+    "access",
+    "private",
+    "secret",
+    "signing",
+    "encryption",
+];
+
+/// Whether a variable's or a flag's name says that it holds a credential.
+/// Only the end of the name counts, so that `TOKEN_FILE` is not one.
+pub(crate) fn names_a_credential(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    match words.as_slice() {
+        [.., last] if CREDENTIAL_WORDS.contains(last) => true,
+        [.., before, "key"] => CREDENTIAL_KEYS.contains(before),
+        _ => false,
+    }
+}
+
+/// Whether text written in a file looks like a credential: an
+/// authorization scheme and its value, or a long run of letters and digits
+/// mixed, as a key is. A net, not a proof: a key written with other
+/// characters passes, and a review of the files is what holds then.
+pub(crate) fn looks_like_credential(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if ["bearer ", "basic "]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+    {
+        return true;
+    }
+    text.len() >= 32
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'='))
+        && text.bytes().any(|b| b.is_ascii_digit())
+        && text.bytes().any(|b| b.is_ascii_alphabetic())
+}
+
+/// The part of an element that a flag written into it carries: what
+/// follows the first `=` of an element that begins with `-`.
+fn joined_value(element: &str) -> Option<(&str, &str)> {
+    element
+        .starts_with('-')
+        .then(|| element.split_once('='))
+        .flatten()
+}
 
 /// Whether a program's path names a shell or an interpreter.
 pub(crate) fn is_shell_or_interpreter(path: &str) -> bool {
@@ -528,8 +670,42 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         .map(Located::items)
         .unwrap_or_default()
         .iter()
-        .map(|form| texts(Some(form)))
+        .map(|form| {
+            let elements = texts(Some(form));
+            // The words of `{command}` are what the program's own help
+            // printed: they are a value, and no flag may run them.
+            let runs = elements.windows(2).any(|pair| {
+                pair[1] == "{command}"
+                    && pair[0].starts_with(['-', '/'])
+                    && runs_its_value(&pair[0])
+            });
+            if runs {
+                found.bad(
+                    "code_flag",
+                    &form.at,
+                    "A help form puts the words of a command after a flag that hands its value to something that runs it."
+                        .to_owned(),
+                    "Remove the form: a program is never given text to run.",
+                );
+            }
+            elements
+        })
         .collect();
+    let fixed = doc
+        .get("version")
+        .and_then(|version| version.get("args"))
+        .into_iter()
+        .chain(doc.get("help").map(Located::items).unwrap_or_default());
+    for list in fixed {
+        if texts(Some(list)).iter().any(|text| text.contains('\0')) {
+            found.bad(
+                "arg_malformed",
+                &list.at,
+                "An element of an argument list holds a NUL character.".to_owned(),
+                "Remove the character: no program can be given it.",
+            );
+        }
+    }
     let env = doc.get("env");
     let mut env_set = BTreeMap::new();
     for entry in env
@@ -553,6 +729,30 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
             );
             continue;
         }
+        if names_a_credential(name) {
+            found.bad(
+                "secret_variable",
+                &entry.key.at,
+                format!(
+                    "The variable `{}` is named for a credential, and its value would sit in the target's files and in the plan.",
+                    codes::shown(name)
+                ),
+                "Remove it. A credential is kept in the vault and reaches a program only through the session, never through a target's files.",
+            );
+            continue;
+        }
+        if looks_like_credential(&value) {
+            found.bad(
+                "secret_literal",
+                &entry.value.at,
+                format!(
+                    "The value of the variable `{}` looks like a credential written into a target file.",
+                    codes::shown(name)
+                ),
+                "Remove it. A credential is kept in the vault, never in a target's files.",
+            );
+            continue;
+        }
         if value.contains("{session.state_dir}") {
             found.bad(
                 "state_dir_not_built",
@@ -566,6 +766,23 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         env_set.insert(name.clone(), value);
     }
     let env_pass = texts(env.and_then(|env| env.get("pass")));
+    for name in env
+        .and_then(|env| env.get("pass"))
+        .map(Located::items)
+        .unwrap_or_default()
+    {
+        if names_a_credential(&scalar(name)) {
+            found.bad(
+                "secret_variable",
+                &name.at,
+                format!(
+                    "The variable `{}` is named for a credential, and copying it from the engine's own environment would hand the program a secret the redactor was never told of.",
+                    codes::shown(&scalar(name))
+                ),
+                "Remove it. A credential reaches a program only through the session, which registers it with the redactor first.",
+            );
+        }
+    }
     let mut prompts = Vec::new();
     for prompt in doc.get("prompts").map(Located::items).unwrap_or_default() {
         if let Some((text, _)) = checked_pattern(prompt, false, found) {
@@ -651,9 +868,47 @@ fn param(name: &str, doc: &Located<Doc>, cx: &KindContext<'_>, found: &mut Found
     })
 }
 
+/// Refuses a flag that is named for a credential and carries a value.
+fn secret_argument(flag: &str, doc: &Located<Doc>, found: &mut Found) {
+    found.bad(
+        "secret_argument",
+        &doc.at,
+        format!(
+            "The flag `{}` is named for a credential, and a credential never travels as an argument: other programs on the machine can read a process's arguments.",
+            codes::shown(flag)
+        ),
+        "Remove the entry. A program that takes its credential only as an argument cannot be given one.",
+    );
+}
+
 fn arg(doc: &Located<Doc>, params: &BTreeMap<String, Param>, found: &mut Found) -> Option<Arg> {
     if !matches!(doc.value, Doc::Map(_)) {
         let text = scalar(doc);
+        if text.contains('\0') {
+            found.bad(
+                "arg_malformed",
+                &doc.at,
+                "An element of the argument list holds a NUL character.".to_owned(),
+                "Remove the character: no program can be given it.",
+            );
+            return None;
+        }
+        // A credential written as an element, alone or joined to its flag.
+        let (flag, value) = joined_value(&text).unwrap_or(("", &text));
+        if !value.is_empty() && names_a_credential(flag) {
+            secret_argument(flag, doc, found);
+            return None;
+        }
+        if looks_like_credential(value) {
+            found.bad(
+                "secret_literal",
+                &doc.at,
+                "An element of the argument list looks like a credential written into a target file."
+                    .to_owned(),
+                "Remove it. A credential is kept in the vault, never in a target's files, and never travels as an argument.",
+            );
+            return None;
+        }
         return Some(if text == "--" {
             Arg::EndOfOptions
         } else {
@@ -688,6 +943,31 @@ fn arg(doc: &Located<Doc>, params: &BTreeMap<String, Param>, found: &mut Found) 
         );
         return None;
     }
+    if join.as_ref().is_some_and(|join| join.contains('\0')) {
+        return malformed(found);
+    }
+    // Whatever form carries it, a value never follows a flag that runs its
+    // value, and never a flag named for a credential.
+    let carries_value = stamp || named.iter().any(|(key, _)| *key != "when");
+    if let Some(flag) = flag.as_ref().filter(|_| carries_value) {
+        if runs_its_value(flag) {
+            found.bad(
+                "code_flag",
+                &doc.at,
+                format!(
+                    "The flag `{}` hands its value to something that runs it.",
+                    codes::shown(flag)
+                ),
+                "Remove the entry: a program is never given text to run.",
+            );
+            return None;
+        }
+        let name = flag.split('=').next().unwrap_or(flag);
+        if names_a_credential(name) {
+            secret_argument(name, doc, found);
+            return None;
+        }
+    }
     let known = |name: &str, found: &mut Found| -> Option<Param> {
         let known = params.get(name).cloned();
         if known.is_none() {
@@ -714,15 +994,6 @@ fn arg(doc: &Located<Doc>, params: &BTreeMap<String, Param>, found: &mut Found) 
             let declared = known(name, found)?;
             if declared.list || declared.kind == ParamKind::Bool {
                 return malformed(found);
-            }
-            if CODE_FLAGS.contains(&flag.as_str()) {
-                found.bad(
-                    "code_flag",
-                    &doc.at,
-                    format!("The flag `{flag}` hands its value to something that runs it."),
-                    "Remove the entry: a program is never given text to run.",
-                );
-                return None;
             }
             Some(Arg::Flag {
                 flag,
@@ -901,6 +1172,28 @@ fn command(
                 args.push(entry);
             }
         }
+        // A flag written as an element of its own, and the value after it.
+        for pair in args.windows(2) {
+            let [Arg::Literal { text }, after] = pair else {
+                continue;
+            };
+            let value_follows = matches!(after, Arg::Value { .. });
+            if value_follows && text.starts_with(['-', '/']) && runs_its_value(text) {
+                found.bad(
+                    "code_flag",
+                    &doc.at,
+                    format!(
+                        "The command `{name}` puts a value after `{}`, which hands what follows it to something that runs it.",
+                        codes::shown(text)
+                    ),
+                    "Remove the value: a program is never given text to run.",
+                );
+            }
+            let follows = value_follows || matches!(after, Arg::Literal { .. });
+            if follows && text.starts_with('-') && names_a_credential(text) {
+                secret_argument(text, doc, found);
+            }
+        }
         let used: BTreeSet<&str> = args
             .iter()
             .filter_map(|entry| match entry {
@@ -1039,5 +1332,78 @@ fn compile_file(
     }
     if same.is_none() {
         section.programs.push(shared);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_shell_or_interpreter, looks_like_credential, names_a_credential, runs_its_value};
+
+    #[test]
+    fn shells_interpreters_and_programs_that_start_another_are_known_by_name() {
+        for refused in [
+            "/bin/sh",
+            "/usr/bin/python3.12",
+            "/usr/bin/Rscript",
+            "/usr/bin/java",
+            "/usr/bin/timeout",
+            "/usr/bin/nice",
+            "/usr/bin/find",
+            "/usr/sbin/chroot",
+            "/usr/bin/pkexec",
+            r"C:\Windows\System32\rundll32.exe",
+            r"C:\Windows\System32\WSL.EXE",
+            r"C:\tools\run.bat",
+        ] {
+            assert!(is_shell_or_interpreter(refused), "{refused}");
+        }
+        for allowed in ["/opt/example/bin/example-tool", "/usr/bin/finder", "/opt/timeouts"] {
+            assert!(!is_shell_or_interpreter(allowed), "{allowed}");
+        }
+    }
+
+    #[test]
+    fn a_flag_that_runs_its_value_is_known_in_each_spelling() {
+        for runs in [
+            "-c", "-e", "--eval", "--Eval", "-exec", "--exec=", "--command:", "/c", "-okdir",
+            "--rsh",
+        ] {
+            assert!(runs_its_value(runs), "{runs}");
+        }
+        for plain in ["-C", "-E", "--name", "--executor", "--run-id", "--", "-xc"] {
+            assert!(!runs_its_value(plain), "{plain}");
+        }
+    }
+
+    #[test]
+    fn a_credential_is_known_by_the_end_of_its_name_or_by_its_look() {
+        for named in [
+            "EXAMPLE_TOOL_TOKEN",
+            "--password",
+            "--api-key",
+            "ApiKey",
+            "AWS_SECRET_ACCESS_KEY",
+            "-passphrase",
+        ] {
+            assert!(names_a_credential(named), "{named}");
+        }
+        for plain in ["TOKEN_FILE", "--key", "--name", "TZ", "--password-stdin", "KEYBOARD"] {
+            assert!(!names_a_credential(plain), "{plain}");
+        }
+        for key in [
+            "Bearer example-token-0001",
+            "example0key1example2key3example4key5",
+        ] {
+            assert!(looks_like_credential(key), "{key}");
+        }
+        for plain in [
+            "/var/lib/example/home/2024/exports/data",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "iso8601-extended",
+            "C.UTF-8",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ] {
+            assert!(!looks_like_credential(plain), "{plain}");
+        }
     }
 }

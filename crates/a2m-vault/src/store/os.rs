@@ -283,6 +283,164 @@ mod tests {
         assert_eq!(replaced.code(), &failure::KEY_STORE_ENTRY_MISSING);
     }
 
+    /// One entry that every engine of a round shares, in a store with no
+    /// way to write an entry only when there is none, like the real ones.
+    /// It makes the order of the defect certain. The first readers that find
+    /// it empty all find it empty before any of them goes on: the moment at
+    /// which two engines start on a fresh installation. And a second write
+    /// waits until the first writer has read its own entry back.
+    struct OneEntry {
+        state: Mutex<EntryState>,
+        changed: std::sync::Condvar,
+        all_found_nothing: std::sync::Barrier,
+    }
+
+    struct EntryState {
+        secret: Option<Vec<u8>>,
+        /// How many readers are still to be held at the start.
+        early: usize,
+        writes: usize,
+        read_since_the_first_write: bool,
+    }
+
+    /// A handle to the one entry: the store, and each engine's entry in it.
+    struct Shared(Arc<OneEntry>);
+
+    impl OneEntry {
+        fn store(engines: usize) -> Arc<CredentialStore> {
+            Arc::new(Shared(Arc::new(Self {
+                state: Mutex::new(EntryState {
+                    secret: None,
+                    early: engines,
+                    writes: 0,
+                    read_since_the_first_write: false,
+                }),
+                changed: std::sync::Condvar::new(),
+                all_found_nothing: std::sync::Barrier::new(engines),
+            })))
+        }
+    }
+
+    impl keyring_core::api::CredentialApi for Shared {
+        fn set_secret(&self, secret: &[u8]) -> keyring_core::Result<()> {
+            let mut state = self.0.state.lock().unwrap();
+            while state.writes > 0 && !state.read_since_the_first_write {
+                state = self.0.changed.wait(state).unwrap();
+            }
+            state.writes += 1;
+            state.secret = Some(secret.to_vec());
+            Ok(())
+        }
+
+        fn get_secret(&self) -> keyring_core::Result<Vec<u8>> {
+            let held = {
+                let mut state = self.0.state.lock().unwrap();
+                if let Some(secret) = state.secret.clone() {
+                    state.read_since_the_first_write = true;
+                    self.0.changed.notify_all();
+                    return Ok(secret);
+                }
+                let held = state.early > 0;
+                state.early = state.early.saturating_sub(1);
+                held
+            };
+            if held {
+                self.0.all_found_nothing.wait();
+            }
+            Err(Error::NoEntry)
+        }
+
+        fn delete_credential(&self) -> keyring_core::Result<()> {
+            self.0.state.lock().unwrap().secret = None;
+            Ok(())
+        }
+
+        fn get_credential(
+            &self,
+        ) -> keyring_core::Result<Option<Arc<keyring_core::api::Credential>>> {
+            Ok(None)
+        }
+
+        fn get_specifiers(&self) -> Option<(String, String)> {
+            None
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("OneEntry")
+        }
+    }
+
+    impl keyring_core::api::CredentialStoreApi for Shared {
+        fn vendor(&self) -> String {
+            "test".to_owned()
+        }
+
+        fn id(&self) -> String {
+            "one entry".to_owned()
+        }
+
+        fn build(
+            &self,
+            _service: &str,
+            _user: &str,
+            _modifiers: Option<&std::collections::HashMap<&str, &str>>,
+        ) -> keyring_core::Result<Entry> {
+            Ok(Entry::new_with_credential(Arc::new(Shared(Arc::clone(
+                &self.0,
+            )))))
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("OneEntry")
+        }
+    }
+
+    /// Audit finding V-1. Two engines start at once on a fresh installation:
+    /// both find the key store empty before either writes. They must end
+    /// with one root between them, so that what either wrapped opens for
+    /// both, now and after a restart.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_engines_that_start_at_once_end_with_one_root() {
+        for round in 0..8 {
+            let store = OneEntry::store(2);
+            let installation = format!("example-race-{}-{round}", std::process::id());
+            let first = Arc::new(over(&store, &installation).await);
+            let second = Arc::new(over(&store, &installation).await);
+            let wrap = |engine: &Arc<OsKeyStore>| {
+                let engine = Arc::clone(engine);
+                tokio::spawn(async move {
+                    let key = KeyMaterial::generate(&OsRandom).unwrap();
+                    let wrapped = engine.wrap(&key, &binding()).await.unwrap();
+                    (key, wrapped)
+                })
+            };
+            let (one, two) = (wrap(&first), wrap(&second));
+            let (one, two) = (one.await.unwrap(), two.await.unwrap());
+
+            // Each engine opens what the other wrapped, and so does an
+            // engine started afterwards, which reads the store afresh.
+            let later = Arc::new(over(&store, &installation).await);
+            for engine in [&first, &second, &later] {
+                for (key, wrapped) in [&one, &two] {
+                    let unwrapped = engine.unwrap(wrapped, &binding()).await;
+                    assert_eq!(
+                        unwrapped.map(|key| key.expose().to_vec()).ok(),
+                        Some(key.expose().to_vec()),
+                        "round {round}"
+                    );
+                }
+            }
+        }
+    }
+
     /// The real key store of this machine. Ignored by default: a headless
     /// machine has none, and a desktop may ask the person to unlock it.
     /// Run with `cargo test -p a2m-vault -- --ignored`.

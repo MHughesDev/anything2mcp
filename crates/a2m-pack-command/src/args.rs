@@ -2,9 +2,13 @@
 //! list a program is started with.
 //!
 //! Each entry becomes exactly the elements section 306 shows. No element is
-//! split or joined to another, a value is checked against its param before
-//! it is written, and a value that stands as its own element cannot begin
-//! with `-` unless a `--` element came before it.
+//! split or joined to another, and a value is checked against its param
+//! before it is written. A value that stands as its own element cannot
+//! begin with `-` unless a `--` element came before it, so it cannot become
+//! an option; it cannot begin with `@`, which many programs read as the
+//! name of a file of more arguments, wherever it stands; and on Windows it
+//! cannot begin with `/`, which programs there read as an option. A value
+//! joined to its flag is one element that begins with the flag.
 
 use a2m_core::{FailureClass, RecordKey, Value, Values};
 use a2m_provider::StepFailure;
@@ -96,25 +100,40 @@ impl Given<'_> {
     }
 }
 
+/// Why a value may not stand as an element of its own, if it may not.
+///
+/// `--` ends the options a program reads, so a leading `-` is allowed after
+/// it. A file of arguments is read before any option is, and a program on
+/// Windows that reads `/` as an option does not know `--`, so neither is
+/// allowed anywhere.
+fn not_its_own_element(text: &str, options_ended: bool, windows: bool) -> Option<&'static str> {
+    if text.starts_with('-') && !options_ended {
+        Some("it begins with `-` and would be read as an option")
+    } else if text.starts_with('@') {
+        Some("it begins with `@` and could be read as the name of a file of arguments")
+    } else if windows && text.starts_with('/') {
+        Some("it begins with `/` and could be read as an option")
+    } else {
+        None
+    }
+}
+
 /// Builds the element list of one start of `command`.
 ///
 /// # Errors
 ///
 /// Unsent: `input`/`schema_invalid` for a missing value or one that breaks
 /// its param; `input`/`argument_unsafe` for a value that holds a NUL
-/// character or would become an option.
+/// character, or would become an option or the name of a file of
+/// arguments.
 pub fn elements(command: &Command, given: &Given<'_>) -> Result<Vec<String>, StepFailure> {
     let mut out: Vec<String> = Vec::new();
     let mut options_ended = false;
     // A value that is an element of its own may not look like an option.
     let own_element = |name: &str, text: String, options_ended: bool| {
-        if text.starts_with('-') && !options_ended {
-            Err(unsafe_value(
-                name,
-                "it begins with `-` and would be read as an option",
-            ))
-        } else {
-            Ok(text)
+        match not_its_own_element(&text, options_ended, cfg!(windows)) {
+            Some(why) => Err(unsafe_value(name, why)),
+            None => Ok(text),
         }
     };
     let declared = |name: &str| {
@@ -215,7 +234,7 @@ mod tests {
 
     use a2m_core::{FailureClass, RecordKey, Value, Values};
 
-    use super::{Given, elements};
+    use super::{Given, elements, not_its_own_element};
     use crate::codes::{ARGUMENT_UNSAFE, SCHEMA_INVALID};
     use crate::model::{Arg, Command, Effect, Limits, Output, Param, ParamKind};
 
@@ -380,6 +399,23 @@ mod tests {
             elements(&joined, &given(&dashed)).unwrap(),
             ["--name=--yes"]
         );
+
+        // A file of arguments is read before any option, so `--` does not
+        // help; joined to its flag the value is no element of its own.
+        let at = Values::new().with("name", "@/etc/example");
+        for refused in [&positional, &flagged, &after_marker] {
+            let failure = elements(refused, &given(&at)).unwrap_err().failure;
+            assert_eq!(failure.code(), &ARGUMENT_UNSAFE);
+            assert!(!failure.message().contains("example"), "{failure}");
+        }
+        assert_eq!(
+            elements(&joined, &given(&at)).unwrap(),
+            ["--name=@/etc/example"]
+        );
+        // On Windows a leading `/` is an option to many programs.
+        assert!(not_its_own_element("/c", true, true).is_some());
+        assert!(not_its_own_element("/c", true, false).is_none());
+        assert!(not_its_own_element("-5", true, true).is_none());
 
         let nul = Values::new().with("name", "a\0b");
         let failure = elements(&joined, &given(&nul)).unwrap_err().failure;

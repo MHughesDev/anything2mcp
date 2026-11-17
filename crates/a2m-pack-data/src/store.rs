@@ -50,6 +50,8 @@ pub(crate) struct Shape {
     pub params: usize,
     /// The names of its result columns, in order.
     pub columns: Vec<String>,
+    /// Whether the store says the statement changes nothing it stores.
+    pub reads_only: bool,
 }
 
 /// What running a statement gave.
@@ -183,23 +185,45 @@ pub(crate) struct Catalog {
     pub truncated: bool,
 }
 
+/// Why a catalog cannot say what a write to a table reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unseen {
+    /// More tables exist than were read, so a trigger or a cascading key
+    /// may be among those not read.
+    Truncated,
+    /// The table is not in the catalog.
+    NoTable,
+}
+
+/// Whether two names of the store are the same name. A relational store
+/// compares the names of its tables without regard to the case of ASCII
+/// letters, however they were written and whether or not they were quoted.
+pub(crate) fn same_name(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
 impl Catalog {
     /// How a write to `table` reaches beyond the rows it names: the number
     /// of triggers on the table, and of keys in any table that cascade from
-    /// it.
-    pub(crate) fn reach(&self, table: &str) -> (usize, usize) {
+    /// it. A catalog that was cut off, or that does not hold the table,
+    /// cannot say, and says so: it is never read as "nothing".
+    pub(crate) fn reach(&self, table: &str) -> Result<(usize, usize), Unseen> {
+        if self.truncated {
+            return Err(Unseen::Truncated);
+        }
         let triggers = self
             .tables
             .iter()
-            .find(|info| info.name == table)
-            .map_or(0, |info| info.triggers.len());
+            .find(|info| same_name(&info.name, table))
+            .map(|info| info.triggers.len())
+            .ok_or(Unseen::NoTable)?;
         let cascades = self
             .tables
             .iter()
             .flat_map(|info| &info.foreign_keys)
-            .filter(|key| key.references == table && key.cascades())
+            .filter(|key| same_name(&key.references, table) && key.cascades())
             .count();
-        (triggers, cascades)
+        Ok((triggers, cascades))
     }
 }
 
@@ -219,10 +243,14 @@ pub(crate) trait Conn: Send {
     /// Whether a transaction is open, as the store reports it.
     fn in_transaction(&self) -> bool;
 
-    /// Prepares a statement without running it.
+    /// Prepares a statement of a plan without running it. The connection
+    /// refuses one that is not a plain read or a keyed write, whatever its
+    /// words are.
     fn describe(&mut self, text: &str) -> Result<Shape, Refusal>;
 
-    /// Runs a prepared statement with bound parameters.
+    /// Runs a statement of a plan with bound parameters. A connection the
+    /// store holds read-only runs only a statement that the store says
+    /// changes nothing and that returns columns.
     fn run(&mut self, text: &str, params: &[Bound], limits: &RunLimits) -> Result<Ran, Refusal>;
 
     /// Commits the open transaction.
@@ -232,7 +260,8 @@ pub(crate) trait Conn: Send {
     /// roll back is closed by its owner, and the store rolls back for it.
     fn rollback(&mut self);
 
-    /// Reads the catalog: at most `tables` tables and views.
+    /// Reads the catalog: at most `tables` tables and views. When more
+    /// exist, the catalog says that it was cut off.
     fn catalog(&mut self, tables: usize) -> Result<Catalog, Refusal>;
 
     /// What stops the statement this connection is running.
@@ -254,8 +283,9 @@ pub(crate) trait Opener: Send + Sync {
     /// Whether an insert can return the key the store assigned.
     fn returns_assigned_key(&self) -> bool;
 
-    /// Opens a connection to the store's file, held to `access` by the
-    /// store, with the setting read back before it is returned.
+    /// Opens a connection to the store's file, held to `access` and to that
+    /// one file by the store, with each setting read back before it is
+    /// returned.
     fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal>;
 }
 
