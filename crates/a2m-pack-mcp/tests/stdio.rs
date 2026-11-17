@@ -245,6 +245,29 @@ async fn a_plan_published_again_with_another_program_digest_does_not_use_the_run
     assert!(matches!(read, Ok(StepOutcome::Done(_))), "{read:?}");
     assert!(handle.release(prepared, false).await.complete);
 
+    // A run whose plan does not declare the program is refused, although
+    // the program is running.
+    let mut undeclared = local.clone();
+    undeclared.surface.programs.clear();
+    let refused = prepare(
+        &scene.registry,
+        &scene.plan,
+        &undeclared,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (
+            refused.failure.class(),
+            refused.failure.code(),
+            refused.sent
+        ),
+        (FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
+    );
+
     // The same target, published again: it now pins another program. The
     // next run is not given the one that is running; the supervisor is
     // asked, and refuses what is on disk.

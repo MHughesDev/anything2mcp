@@ -54,6 +54,19 @@ impl FarEnd {
                     "a surface with a local server program must have the address `stdio`",
                 )));
             }
+            // The program must be one the run's plan declares for the
+            // surface, with the digest the surface states. The supervisor
+            // asks the same when it starts a program; this asks it of a
+            // program that is running already.
+            let pinned = fields.digest.as_deref().and_then(parse_digest);
+            let declared = cx.surface.surface.programs.iter().any(|declared| {
+                declared.path == program && (declared.digest.is_none() || declared.digest == pinned)
+            });
+            if !declared {
+                return Err(unsent(codes::not_granted(
+                    "The local server program of the surface is not one the published plan declares for it.",
+                )));
+            }
             return Ok(Self::Program {
                 path: program.to_owned(),
                 digest: fields.digest.clone(),

@@ -83,8 +83,16 @@ class = "policy"
 code = "read_statement_wrote"
 
 [[failure_codes]]
+class = "policy"
+code = "statement_not_allowed"
+
+[[failure_codes]]
 class = "drift"
 code = "schema_changed"
+
+[[failure_codes]]
+class = "drift"
+code = "read_not_by_key"
 
 [[failure_codes]]
 class = "drift"
@@ -109,6 +117,10 @@ code = "value_kind_unsupported"
 [[failure_codes]]
 class = "unknown_variant"
 code = "result_too_large"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "catalog_too_large"
 
 [[failure_codes]]
 class = "input"

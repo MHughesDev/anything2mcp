@@ -198,6 +198,16 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         |text| text.replacen("quantity: input.quantity", "amount: input.quantity", 1),
         "http.body_undeclared",
     );
+    // An endpoint that sends a record's version as a precondition, read
+    // back through an endpoint that reads no version: the write could only
+    // ever go out with no precondition.
+    let unread = refused(
+        "endpoints/line_items.yaml",
+        |text| text.replacen("version:\n  read: {field: version}\n", "", 1),
+        "http.version_invalid",
+    );
+    assert_eq!(unread.at.file.as_str(), "operations/line_items.yaml");
+    assert!(unread.message.contains("`line_item_get`"), "{unread}");
     // What is not built is refused by name, not ignored.
     let not_built = refused(
         orders,

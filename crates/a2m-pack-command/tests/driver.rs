@@ -989,24 +989,30 @@ async fn a_created_record_is_found_by_its_assigned_key_and_by_its_stamp() {
 
 // ---- secrets and untrusted output: C13 ----
 
+/// Whether a text holds eight characters in a row of a secret.
+fn holds_part_of(text: &str, secret: &str) -> bool {
+    secret
+        .as_bytes()
+        .windows(8)
+        .any(|part| text.contains(&*String::from_utf8_lossy(part)))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
-    const SECRET: &str = "planted-secret-7731";
-    let scene = Scene::build(Arc::new(Planted(SECRET)), |files| {
-        for (path, text) in files.iter_mut() {
-            if path == "commands/inventory.yaml" {
-                *text = text.replace(
-                    "TZ: UTC,",
-                    &format!("TZ: UTC, EXAMPLE_CLI_TOKEN: {SECRET},"),
-                );
-            }
-        }
-    });
-    scene
-        .stand
-        .control()
-        .set_fault(&Fault::until_cleared(FaultKind::LeakSecret))
-        .unwrap();
+    const SECRET: &str = "secret-for-tests-7731";
+    let scene = Scene::build(Arc::new(Planted(SECRET)), |_| {});
+    // The stand prints the made-up secret on both streams, as a program
+    // that was given a credential might.
+    for stream in [Stream::Stdout, Stream::Stderr] {
+        scene
+            .stand
+            .control()
+            .set_fault(&Fault::once(FaultKind::Say {
+                stream,
+                text: format!("debug: token={SECRET}\n"),
+            }))
+            .unwrap();
+    }
     let mut prepared = scene.live().await;
     let steps = &scene.binding("example_item_get").act;
     let spawned = done(
@@ -1014,21 +1020,12 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
             .run(&mut prepared, &steps[..1], &sku("SK-1001"), With::default())
             .await,
     );
-    let printed: String = spawned
-        .captures
-        .iter()
-        .map(|capture| String::from_utf8_lossy(&capture.bytes).into_owned())
-        .collect();
-    assert!(printed.contains(a2m_core::REDACTED), "{printed}");
-    assert!(!printed.contains(SECRET));
-    // The program did receive it, so the leak was real.
-    assert_eq!(
-        scene.starts()[0]
-            .env
-            .get("EXAMPLE_CLI_TOKEN")
-            .map(String::as_str),
-        Some(SECRET)
-    );
+    assert_eq!(spawned.captures.len(), 2);
+    for capture in &spawned.captures {
+        let printed = String::from_utf8_lossy(&capture.bytes);
+        assert!(printed.contains(a2m_core::REDACTED), "{printed}");
+        assert!(!holds_part_of(&printed, SECRET), "{printed}");
+    }
     // What it printed around its output is not the declared form: the
     // read stops, and its failure quotes nothing.
     let unparsed = failed(
@@ -1042,8 +1039,203 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
         &codes::OUTPUT_UNPARSED,
         Sent::Answered,
     );
-    assert!(!format!("{unparsed:?}").contains(SECRET));
+    assert!(!holds_part_of(&format!("{unparsed:?}"), SECRET));
     scene.handle.release(prepared, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_on_standard_error_that_a_cut_would_divide_reaches_no_failure() {
+    // Longer than what a failure quotes of standard error is cut to.
+    const SECRET: &str = "secret-for-tests-0123456789-abcdefghijklmnopqrstuvwxyz-9876543210";
+    let scene = Scene::build(Arc::new(Planted(SECRET)), |_| {});
+    let control = scene.stand.control();
+    let binding = scene.binding("example_item_set_quantity");
+    let (fence, token) = writing("SK-1001").await;
+    let record_key = key("SK-1001");
+    let with = With {
+        key: Some(&record_key),
+        record: Some(record(&fence, 0)),
+        token: Some(&token),
+        ..With::default()
+    };
+    // The program refuses the value by a rule of its own, with a declared
+    // exit, so its own message is quoted in the failure.
+    let rejected = |said: String| {
+        let scene = &scene;
+        async move {
+            scene
+                .stand
+                .control()
+                .set_fault(&Fault::once(FaultKind::Say {
+                    stream: Stream::Stderr,
+                    text: said,
+                }))
+                .unwrap();
+            let mut prepared = scene.prepare(Posture::Live, Some(fence)).await.unwrap();
+            let spawned = done(
+                scene
+                    .run(&mut prepared, &binding.act, &set("SK-1001", 99_999), with)
+                    .await,
+            );
+            let refused = failed(
+                scene
+                    .run(&mut prepared, &binding.confirm, &Values::new(), with)
+                    .await,
+            );
+            scene.handle.release(prepared, true).await;
+            (spawned, refused)
+        }
+    };
+
+    // One hundred characters, then the secret: the cut falls inside it.
+    for filler in [100, 105, 60] {
+        let (spawned, refused) = rejected(format!("{}{SECRET} ", "x".repeat(filler))).await;
+        is(
+            &refused,
+            FailureClass::Rejected,
+            &codes::APP_VALIDATION_ERROR,
+            Sent::Answered,
+        );
+        let shown = format!("{refused:?}");
+        assert!(shown.contains("untrusted text"), "{shown}");
+        assert!(!holds_part_of(&shown, SECRET), "{filler}: {shown}");
+        for capture in &spawned.captures {
+            let printed = String::from_utf8_lossy(&capture.bytes);
+            assert!(!holds_part_of(&printed, SECRET), "{printed}");
+        }
+    }
+    // The secret within what is quoted is named as redacted, not dropped.
+    let (_, refused) = rejected(format!("token {SECRET} ")).await;
+    assert!(
+        refused.failure.message().contains(a2m_core::REDACTED),
+        "{refused}"
+    );
+
+    // A control character inside the secret: taking it out to clean the
+    // message joins the two halves, and the whole is redacted again.
+    let (first, second) = SECRET.split_at(20);
+    let (_, refused) = rejected(format!("token {first}\r{second} ")).await;
+    let shown = format!("{refused:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+
+    // Nothing was written by any of it.
+    assert_eq!(control.write_count("SK-1001").unwrap(), 0);
+}
+
+// ---- a plan that does not hold together ----
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_writes_is_started_only_by_the_step_that_commits() {
+    let scene = Scene::new();
+    let control = scene.stand.control();
+    let binding = scene.binding("example_item_set_quantity");
+    let mut prepared = scene.live().await;
+    let not_usable = |failure: &StepFailure| {
+        is(
+            failure,
+            FailureClass::Input,
+            &codes::STEP_NOT_USABLE,
+            Sent::NotSent,
+        );
+    };
+
+    // The write's own step, with its mark as a commit point taken off, so
+    // that the handle asks for no token: the driver itself refuses.
+    let mut unmarked = binding.act[0].clone();
+    unmarked.commits = false;
+    not_usable(&failed(
+        scene
+            .run(
+                &mut prepared,
+                &[unmarked],
+                &set("SK-1001", 12),
+                With::default(),
+            )
+            .await,
+    ));
+    // A read-back step that names the command that writes.
+    let mut forged = binding.read_back[0].clone();
+    forged.refers_to.clone_from(&binding.act[0].refers_to);
+    not_usable(&failed(
+        scene
+            .run(
+                &mut prepared,
+                &[forged],
+                &set("SK-1001", 12),
+                With::default(),
+            )
+            .await,
+    ));
+    // The stand: nothing was started, and the item is as it was.
+    assert!(scene.starts().is_empty());
+    assert_eq!(control.write_count("SK-1001").unwrap(), 0);
+    assert_eq!(
+        control.stored_item("SK-1001").unwrap().unwrap().quantity,
+        120
+    );
+
+    // A step that reads how a start ended never reads an earlier start: a
+    // start that was refused leaves nothing behind for it.
+    let get = &scene.binding("example_item_get").act;
+    done(
+        scene
+            .run(&mut prepared, get, &sku("SK-1001"), With::default())
+            .await,
+    );
+    failed(
+        scene
+            .run(&mut prepared, &get[..1], &sku("no code"), With::default())
+            .await,
+    );
+    not_usable(&failed(
+        scene
+            .run(&mut prepared, &get[1..], &Values::new(), With::default())
+            .await,
+    ));
+    assert_eq!(scene.starts().len(), 1);
+    scene.handle.release(prepared, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_given_a_folder_nothing_was_left_in() {
+    let scene = Scene::new();
+    // What an earlier engine with the same process number left behind
+    // under the name this run's first folder would take.
+    let fence = Fence {
+        run: RunId::from_bytes([7; 16]),
+        epoch: Epoch::new(1),
+    };
+    let run: String = fence
+        .run
+        .to_string()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect();
+    let left = scene
+        .folder
+        .path()
+        .join("runs")
+        .join(format!("{run}-{}-1", std::process::id()));
+    std::fs::create_dir_all(&left).unwrap();
+    std::fs::write(left.join("left-behind"), "from an earlier attempt").unwrap();
+
+    done(
+        scene
+            .read("example_echo_text", &Values::new().with("text", "plain"))
+            .await,
+    );
+    let started_in = std::path::PathBuf::from(&scene.starts()[0].cwd);
+    assert_ne!(started_in.file_name(), left.file_name());
+    assert_eq!(
+        started_in.parent().and_then(std::path::Path::file_name),
+        left.parent().and_then(std::path::Path::file_name)
+    );
+    // The run's own folder is gone; what was left behind was not touched.
+    assert!(!started_in.exists());
+    assert_eq!(
+        std::fs::read_to_string(left.join("left-behind")).unwrap(),
+        "from an earlier attempt"
+    );
 }
 
 // ---- discovery and drafting ----

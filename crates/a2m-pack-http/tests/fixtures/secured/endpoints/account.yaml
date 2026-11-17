@@ -44,3 +44,11 @@ auth: none
 effect: read
 max_response_bytes: 1024
 response_schema: {type: any}
+---
+endpoint: page_get
+surface: api
+method: GET
+path: "/page"
+auth: none
+effect: read
+response_schema: {type: any}

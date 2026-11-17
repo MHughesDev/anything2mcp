@@ -173,4 +173,119 @@ mod tests {
         assert_eq!(check(&open), Err(Refused::Missing), "it cannot be run");
         std::fs::remove_dir_all(&folder).unwrap();
     }
+
+    /// A folder of the test's own with a program in `real/`, and a way to
+    /// make more folders with a mode.
+    #[cfg(unix)]
+    struct Place(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl Place {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "a2m-pack-command-safety-{name}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            let place = Self(root);
+            place.folder("", 0o755);
+            place.folder("real", 0o755);
+            let program = place.0.join("real").join("example-tool");
+            std::fs::write(&program, [0x7f, b'E', b'L', b'F']).unwrap();
+            Self::mode(&program, 0o755);
+            place
+        }
+
+        fn mode(path: &Path, mode: u32) {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+
+        fn folder(&self, name: &str, mode: u32) -> std::path::PathBuf {
+            let folder = self.0.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            Self::mode(&folder, mode);
+            folder
+        }
+
+        fn link(target: &Path, at: &Path) {
+            std::os::unix::fs::symlink(target, at).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Place {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_a_folder_others_can_write_is_refused_and_a_closed_chain_is_followed() {
+        let place = Place::new("links");
+        let program = place.0.join("real").join("example-tool");
+        assert_eq!(check(&program), Ok(()));
+
+        // The declared path is a link in a folder anyone may write: whoever
+        // can write the folder chooses where the link leads.
+        let open = place.folder("open", 0o777);
+        Place::link(&program, &open.join("example-tool"));
+        assert_eq!(
+            check(&open.join("example-tool")),
+            Err(Refused::Writable(open.clone()))
+        );
+        // The same for an open folder that the path only passes through.
+        Place::link(&place.0.join("real"), &open.join("through"));
+        assert_eq!(
+            check(&open.join("through").join("example-tool")),
+            Err(Refused::Writable(open.clone()))
+        );
+
+        // A chain that nobody else can write is followed to the file: a
+        // link to a link, one of them relative and through `..`.
+        let closed = place.folder("closed", 0o755);
+        Place::link(
+            Path::new("../real/example-tool"),
+            &closed.join("example-first"),
+        );
+        Place::link(&closed.join("example-first"), &closed.join("example-tool"));
+        assert_eq!(check(&closed.join("example-tool")), Ok(()));
+        // The folder the first link is in is opened afterwards: refused.
+        Place::link(&closed.join("example-tool"), &open.join("example-far"));
+        assert!(matches!(
+            check(&open.join("example-far")),
+            Err(Refused::Writable(_))
+        ));
+
+        // Where only an entry's owner may replace it, a link of ours holds.
+        let shared = place.folder("shared", 0o1777);
+        Place::link(&program, &shared.join("example-tool"));
+        assert_eq!(check(&shared.join("example-tool")), Ok(()));
+
+        // Links that lead in a circle lead nowhere, and a link to a shell
+        // is a shell.
+        Place::link(&closed.join("example-b"), &closed.join("example-a"));
+        Place::link(&closed.join("example-a"), &closed.join("example-b"));
+        assert_eq!(check(&closed.join("example-a")), Err(Refused::Missing));
+        Place::link(Path::new("/bin/sh"), &closed.join("example-shell"));
+        assert_eq!(check(&closed.join("example-shell")), Err(Refused::Script));
+        // A file is the end of a path.
+        assert_eq!(check(&program.join("more")), Err(Refused::Missing));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_or_a_file_a_group_can_write_is_refused_whatever_the_group() {
+        let place = Place::new("group");
+        let folder = place.folder("grouped", 0o775);
+        let program = folder.join("example-tool");
+        std::fs::copy(place.0.join("real").join("example-tool"), &program).unwrap();
+        Place::mode(&program, 0o755);
+        assert_eq!(check(&program), Err(Refused::Writable(folder.clone())));
+        Place::mode(&folder, 0o755);
+        assert_eq!(check(&program), Ok(()));
+        Place::mode(&program, 0o775);
+        assert_eq!(check(&program), Err(Refused::Writable(program.clone())));
+    }
 }

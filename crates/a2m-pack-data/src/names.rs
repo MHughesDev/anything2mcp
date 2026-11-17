@@ -79,10 +79,17 @@ pub mod codes {
         DENIED_BY_STORE = Policy, "denied_by_store";
         /// A statement declared a read tried to change data.
         READ_STATEMENT_WROTE = Policy, "read_statement_wrote";
+        /// A statement is not one plain read or one keyed write: it attaches
+        /// a file, changes a setting or the schema, ends a transaction, is
+        /// several statements, or is a read that returns no column.
+        STATEMENT_NOT_ALLOWED = Policy, "statement_not_allowed";
         /// A table, column, parameter, or trigger differs from the plan.
         SCHEMA_CHANGED = Drift, "schema_changed";
         /// A key matched more than one row.
         KEY_NOT_UNIQUE = Drift, "key_not_unique";
+        /// A read of one record by its key gave a record with another key,
+        /// or does not return the key.
+        READ_NOT_BY_KEY = Drift, "read_not_by_key";
         /// A write changed no row: the record is gone or its key changed.
         CHANGED_SINCE_PREVIEW = Stale, "changed_since_preview";
         /// A write changed no row: the version guard did not hold.
@@ -93,6 +100,9 @@ pub mod codes {
         VALUE_KIND_UNSUPPORTED = UnknownVariant, "value_kind_unsupported";
         /// A statement's result holds more text than the limit allows.
         RESULT_TOO_LARGE = UnknownVariant, "result_too_large";
+        /// The store's catalog holds more tables than one read takes, so
+        /// what a write reaches cannot be shown.
+        CATALOG_TOO_LARGE = UnknownVariant, "catalog_too_large";
         /// An argument is missing, or is a list or a record.
         VALUE_NOT_BINDABLE = Input, "value_not_bindable";
     }

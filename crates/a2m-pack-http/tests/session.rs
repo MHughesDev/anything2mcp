@@ -19,8 +19,8 @@ use a2m_core::{
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
-    CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
-    SandboxPort, Sent, StepFailure, StepInput, SurfaceDescription,
+    Access, CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Posture,
+    ReadOnlyPort, RootName, Roots, SandboxPort, Sent, StepFailure, StepInput, SurfaceDescription,
 };
 use common::{Folder, Scene, Signed, fixture};
 use example_app::harness::TestApp;
@@ -133,6 +133,27 @@ impl Service {
                             "302 Found",
                             "location: http://other.example.test/elsewhere".to_owned(),
                             String::new(),
+                        ),
+                        // A sign-in redirect written without a scheme.
+                        "GET /moved/relative HTTP/1.1" => (
+                            "302 Found",
+                            "location: //login.example.test/sign-in".to_owned(),
+                            String::new(),
+                        ),
+                        // Another host, written the way a browser also reads.
+                        "GET /moved/slashes HTTP/1.1" => (
+                            "302 Found",
+                            "location: /\\other.example.test/elsewhere".to_owned(),
+                            String::new(),
+                        ),
+                        "GET /moved/within HTTP/1.1" => {
+                            ("302 Found", "location: /account".to_owned(), String::new())
+                        }
+                        // A sign-in page answered with 200, as some systems do.
+                        "GET /page HTTP/1.1" => (
+                            "200 OK",
+                            "content-type: text/html".to_owned(),
+                            "<html><body>Sign in to continue</body></html>".to_owned(),
                         ),
                         "GET /large HTTP/1.1" => (
                             "200 OK",
@@ -306,7 +327,40 @@ async fn a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_els
         (FailureClass::Policy, "surface_not_declared")
     );
     assert_eq!(moved.sent, Sent::Answered);
-    assert_eq!(service.seen().len(), before + 2);
+    // The same holds however the address is written: with no scheme, or
+    // with the slashes a browser also takes for the start of a host. One
+    // within the surface is a status like any other, and is not followed.
+    for (place, class, code) in [
+        ("relative", FailureClass::SessionExpired, "needs_login"),
+        ("slashes", FailureClass::Policy, "surface_not_declared"),
+        ("within", FailureClass::UnknownVariant, "unexpected_status"),
+    ] {
+        let moved = scene
+            .read(
+                &handle,
+                &mut prepared,
+                "example_moved_get",
+                &Values::new().with("place", place),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(class_and_code(&moved), (class, code), "{place}");
+        assert_eq!(moved.sent, Sent::Answered, "{place}");
+    }
+    assert_eq!(service.seen().len(), before + 5);
+
+    // A body that is not JSON is never read as nothing, whatever shape the
+    // endpoint declares: a sign-in page answered with 200 stops as drift,
+    // and the page's text is not quoted.
+    let page = scene
+        .read(&handle, &mut prepared, "example_page_get", &none)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&page),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    assert!(!page.failure.message().contains("Sign in"), "{page}");
 
     // An answer larger than its endpoint allows is not read to the end.
     let large = scene
@@ -422,6 +476,17 @@ impl FindingSink for Collected {
 /// Runs every discoverer of the pack that suits the scene's surface, each
 /// through a port that can only read.
 async fn discover(scene: &Scene, focus: &Values) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
+    discover_with(scene, focus, &CheckedPaths::none(), &a2m_core::NoSecrets).await
+}
+
+/// The same, with the files the discoverers may read and the redactor
+/// they are given.
+async fn discover_with(
+    scene: &Scene,
+    focus: &Values,
+    paths: &CheckedPaths,
+    redact: &dyn Redact,
+) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
         archetype: Archetype::Request,
@@ -439,8 +504,8 @@ async fn discover(scene: &Scene, focus: &Values) -> Vec<(String, Result<Vec<Find
             surface: &scene.surface,
             bounds: discoverer.declared().bounds,
             deadline: Deadline::after(Duration::from_secs(30)),
-            paths: &CheckedPaths::none(),
-            redact: &a2m_core::NoSecrets,
+            paths,
+            redact,
             focus,
         };
         let mut sink = Collected::default();
@@ -627,4 +692,56 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     );
     assert!(!description.text.contains("/orders"));
     assert_eq!(description.untrusted.len(), 3);
+}
+
+/// A redactor that knows one secret.
+struct Knows(&'static str);
+
+impl Redact for Knows {
+    fn redact(&self, text: &str) -> String {
+        text.replace(self.0, a2m_core::REDACTED)
+    }
+}
+
+#[tokio::test]
+async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_made_of_it() {
+    // A description that holds a registered secret where a finding would
+    // quote it: in an operation's name, a path, and a word of a shape.
+    let secret = "secret-for-tests-described-0007";
+    let planted = DESCRIPTION
+        .replacen("getOrder", &format!("get{secret}"), 1)
+        .replacen("/account", &format!("/account/{secret}"), 1)
+        .replacen("\"draft\"", &format!("\"{secret}\""), 1);
+    assert_eq!(planted.matches(secret).count(), 3);
+    let folder = Folder::new("described");
+    std::fs::write(folder.path().join("openapi.json"), planted).unwrap();
+    let root = RootName::new("import").unwrap();
+    let mut roots = Roots::none();
+    roots.add(root.clone(), folder.path(), Access::Read).unwrap();
+    let mut paths = CheckedPaths::none();
+    paths.insert(
+        a2m_pack_http::DESCRIPTION_FILE,
+        roots.check(&root, "openapi.json", Access::Read).unwrap(),
+    );
+
+    let service = Service::start("authorization", "none").await;
+    let scene = Scene::new("secured", &service.address);
+    let results = discover_with(&scene, &Values::new(), &paths, &Knows(secret)).await;
+    let findings: Vec<Finding> = results
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(findings.len(), 3);
+    for finding in &findings {
+        let text = format!("{finding:?}");
+        assert!(!text.contains("secret-for-tests"), "{text}");
+    }
+    // The file was read, not the surface: only `http_surface` sent anything.
+    assert!(
+        service
+            .seen()
+            .iter()
+            .all(|(line, _)| !line.contains("openapi")),
+    );
 }

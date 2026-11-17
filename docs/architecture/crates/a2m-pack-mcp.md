@@ -132,7 +132,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | Part | What the driver does |
 | --- | --- |
-| Prepare | Works out the far end the run's surface names, and refuses an address that is not among the run's destinations, whether or not a connection is open. Takes the connection for the target, environment, surface, session, epoch of its credentials, far end, and revision, if it is still alive, or opens one; reads the server's tool list |
+| Prepare | Works out the far end the run's surface names, and refuses an address that is not among the run's destinations, or a program the plan does not declare for the surface, whether or not a connection is open. A program that runs is reused only when the digest the supervisor measured is the one the surface pins. Takes the connection for the target, environment, surface, session, epoch of its credentials, far end, and revision, if it is still alive, or opens one; reads the server's tool list |
 | Act | Refuses, unsent, a tool the mapping does not name, any tool of a `discovery` mapping, a write tool from a step that does not commit, and a tool whose entry says `free_text: true`. Reads the list again when it must (below). Compares the called tool's definition with its pin. Refuses a tool whose whole input is one string unless its entry says `free_text: false`. Builds the arguments, checks them against the pinned input schema, and calls the tool once |
 | Confirm | Within the act: the result is not an error, its structured content fits the pinned output schema, and it holds what the mapping names |
 | Read back | The mapped read tool, called with the record's key, compared after normalization by the engine |
@@ -192,7 +192,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 | Class | Codes | When | Sent |
 | --- | --- | --- | --- |
-| `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool whose entry says `free_text: true`, a one-string tool whose entry does not say `free_text: false`; an address that is not among the run's destinations, at every `prepare` | Not sent |
+| `policy` | `not_granted` | A tool the mapping does not name, an unpinned tool, a tool of a `discovery` mapping, a write tool from a step that does not commit, a tool whose entry says `free_text: true`, a one-string tool whose entry does not say `free_text: false`; an address that is not among the run's destinations, or a local program the plan does not declare for the surface, at every `prepare` | Not sent |
 | `input` | `arguments_invalid` | Arguments that do not fit the pinned input schema, or a value with no form a tool takes | Not sent |
 | `input` | `tls_not_enabled` | An `https://` surface | Not sent |
 | `input` | `not_built` | A local program on Windows, a credential for a local program, a credential that is not a request header, the protocol's authorization flow | Not sent |

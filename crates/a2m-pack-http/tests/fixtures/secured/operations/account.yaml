@@ -55,3 +55,16 @@ bindings:
     endpoint: large_get
 description: >
   Reads an answer that is larger than its endpoint allows.
+---
+operation: example_page_get
+title: Get the page
+effect: read
+inputs: {}
+outputs: {}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: page_get
+description: >
+  Reads an answer that is a page and not JSON.
