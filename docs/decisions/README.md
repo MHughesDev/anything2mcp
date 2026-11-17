@@ -54,3 +54,9 @@ A record's status is one of: **Accepted**, in force; **Proposed**, written by an
 | 0046 | [The pip name is held by a placeholder, published only when a version tag is pushed](0046-the-pip-name-is-held-by-a-placeholder-published-on-a-version-tag.md) | Accepted (design decision) |
 | 0047 | [The test application is a small server in the workspace, and the licence list is closed](0047-the-test-application-is-a-small-server-in-the-workspace-with-a-closed-licence-list.md) | Accepted (design decision) |
 | 0048 | [The product becomes Anything2MCP, a universal runtime built on the same core](0048-the-product-becomes-anything2mcp.md) | Accepted (owner decision) |
+| 0049 | [A neutral kernel, and packs behind one provider contract](0049-a-neutral-kernel-and-packs-behind-one-provider-contract.md) | Accepted (design decision) |
+| 0050 | [Seven interaction archetypes, and modes that arrive with packs](0050-seven-archetypes-and-modes-that-arrive-with-packs.md) | Accepted (design decision) |
+| 0051 | [Findings, and an evidence ladder from inferred to approved](0051-findings-and-the-evidence-ladder.md) | Accepted (design decision) |
+| 0052 | [Effects are declared and enforced, and a hazard raises the approval](0052-effects-are-enforced-and-hazards-raise-the-approval.md) | Accepted (design decision) |
+| 0053 | [REA is studied for its method, and used only as an optional provider](0053-rea-is-studied-for-method-and-used-only-as-an-optional-provider.md) | Accepted (design decision) |
+| 0054 | [Devices are reached through their own interfaces, and firmware only through the device's own update](0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md) | Accepted (design decision) |

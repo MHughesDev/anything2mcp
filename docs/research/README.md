@@ -19,6 +19,7 @@ What was looked up while designing Web2MCP, what it found, and how far each note
 | [13-ledger-leases-and-runner-links.md](13-ledger-leases-and-runner-links.md) | Exactly-once limits, database job queues, leases and fencing, workers that dial out | Partial; search results only |
 | [14-sessions-and-policy-engines.md](14-sessions-and-policy-engines.md) | Browser profile limits, device-bound sessions, Entra session rules, Cedar | Partial; search results only |
 | [15-traces-and-key-stores.md](15-traces-and-key-stores.md) | OpenTelemetry conventions for MCP; operating-system key stores from Rust | Partial; search results only |
+| [16-rea-methods.md](16-rea-methods.md) | How the REA project controls outside engines, records evidence, designs tools, and observes applications and firmware; what applies here | Completed; read from source at one commit |
 
 ## How to read the status
 

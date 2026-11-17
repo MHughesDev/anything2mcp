@@ -4,6 +4,8 @@ Written on 2026-11-16, after the owner decided to turn Web2MCP into Anything2MCP
 
 Nothing in this document has been built. It is an audit and a design. Where it proposes, it says so.
 
+**Since 2026-11-17** the architecture this plan proposes is written out as spec sections 53 to 66 ([index](../spec/README.md)), with decision records 0049 to 0054 and a fuller study of REA in [research note 16](../research/16-rea-methods.md). Where those sections and this plan differ, the sections win. This plan remains the place for the audit, the names, the order of work, and the questions for the owner.
+
 ## 0. How to read this
 
 Every statement of direction carries one of three marks.

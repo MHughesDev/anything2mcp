@@ -199,7 +199,7 @@ Things only the owner can do.
 ## Keeping it ready, and making it better
 
 - Build slowly and core first, by the [working method](working-method.md) and the slice order in [core first](core-first.md).
-- Test the design's bets as they come up; the [hypothesis register](../hypotheses/README.md) lists 28 of them, all open.
+- Test the design's bets as they come up; the [hypothesis register](../hypotheses/README.md) lists 30 of them, all open.
 - Run a design review round at the end of each phase with one of the [lenses](design-review-lenses.md). Lens 6 was run on 2026-11-16; lenses 7 and 8 were planned and not yet run.
 
 - Run `python3 tools/docs_audit.py` after every documentation change; it must report no findings.
