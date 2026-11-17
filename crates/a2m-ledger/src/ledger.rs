@@ -768,6 +768,28 @@ impl Store {
         // The commit has returned: the intents are on disk.
         Ok(stored.into_iter().map(IntentToken::issue).collect())
     }
+
+    /// Marks a record `verified` in a transaction of its own, committed
+    /// with a sync to disk: [`Ledger::mark_verified`], for a caller that
+    /// holds the proof of `acted` by reference. A transaction runs on the
+    /// store's own thread and takes only what it can own, so the proof's
+    /// two facts are carried in and the same proof is made there.
+    ///
+    /// # Errors
+    ///
+    /// What [`Ledger::mark_verified`] answers.
+    pub async fn store_verified(
+        &self,
+        token: &ActedToken,
+        read_back: ReadBack,
+    ) -> Result<(), Failure> {
+        let (record, epoch) = (token.record, token.epoch);
+        self.write(Durability::Synced, move |tx| {
+            tx.ledger()
+                .mark_verified(&ActedToken { record, epoch }, read_back)
+        })
+        .await
+    }
 }
 
 impl Ledger<'_, '_> {

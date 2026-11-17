@@ -57,6 +57,8 @@ Every route is generated from an action. There are two forms: the action route, 
 | `GET /api/v1/runs/{id}/events` | The event stream below, authorized as `run.get` |
 | `GET /api/v1/openapi.json` | Generated from the registry; served by `a2m-api`, not an action |
 
+The two aliases of `tool.call` are not served yet: the catalog gives `tool.call` no alias, and an action has at most one, so an operation or a pipeline is called through `POST /api/v1/actions/tool.call` for now ([`a2m-api`](../../architecture/crates/a2m-api.md)).
+
 - **Calls.** `POST /api/v1/operations/{name}/calls` starts a call and returns a result or a `run_id`. An `Idempotency-Key` header is accepted on every call whose effect is a write.
 - **Status codes** come from the response's exit class alone: 200 for success; 202 for a run that rests waiting for a person or is still running; 400 for malformed; 401 for no caller; 403 for `policy`; 409 for `stale`; 429 and 503 for `busy`, with a retry time; 500 for anything else. The body is always the full response, so a client never needs the status code to know what happened.
 - **Events.** A run's events are a server-sent stream. It starts with every stored event after the `Last-Event-ID` the client sent, then follows new ones. Each event's identifier is its sequence number in the ledger, so a reconnecting client misses nothing and sees nothing twice. The stream ends with the run's final state. Events pass the redactor before they are stored.

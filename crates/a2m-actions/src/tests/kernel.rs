@@ -443,9 +443,9 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
     };
     assert!(at("approval_bound") < at("intent"));
     assert!(at("intent") < at("acted"));
-    // The read-back is compared by the ledger and recorded as the read that
-    // settled the record: see `InProcessControl::verified`.
-    assert!(at("acted") < at("reconcile_read"));
+    // The read-back is compared by the ledger and recorded as what verified
+    // the record.
+    assert!(at("acted") < at("verified"));
     assert_eq!(kinds.last(), Some(&"state_changed"));
 
     // An approval is used once: resuming again writes nothing more.

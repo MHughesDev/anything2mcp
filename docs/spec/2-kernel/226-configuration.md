@@ -293,6 +293,27 @@ What the other packs would configure, from their sections:
 | Stream ([section 309](../3-packs/309-the-stream-pack.md)) | The ceiling on every wait, which a channel's `max` may not pass; the size of a discovery sample |
 | Device ([section 310](../3-packs/310-the-device-pack.md)) | Whether serial ports may be listed at all; a floor under every link's `min_gap` and a ceiling on frames per run; the firmware inspection provider, off |
 
+The settings the built packs declare so far, as their manifests state them. Each is a whole number; each pack's design and manifest give its bounds.
+
+| Key | What it bounds | Default |
+| --- | --- | --- |
+| `packs.http.max_response_bytes` | The bytes of one response read before the driver stops | 8000000 |
+| `packs.command.max_timeout_ms` | The longest one start of a program may run, whatever a target states; lower is safer | 600000 |
+| `packs.command.max_output_bytes` | The bytes kept of each output stream; lower is safer | 16777216 |
+| `packs.data.max_rows` | The most rows a statement's `max_rows` may ask for | 1000 |
+| `packs.data.result_bytes` | The bytes of text one statement's result may hold | 4000000 |
+| `packs.file.max_bytes` | The bytes one file may have | 16777216 |
+| `packs.file.max_rows` | The rows one part of a file may have | 200000 |
+| `packs.file.max_cells` | The values one file may have | 2000000 |
+| `packs.file.max_cell_bytes` | The bytes one value may have | 65536 |
+| `packs.stream.wait_ceiling_seconds` | The longest any wait for a message may last; a channel or binding that asks for more does not compile | 60 |
+| `packs.stream.sample_count` | The messages of one channel a discovery looks at, taking none | 5 |
+| `packs.stream.idle_links` | The open connections to one broker kept ready between runs of one session | 2 |
+| `packs.device.reply_within_ms` | How long a reply may take when a map states no pace | 1000 |
+| `packs.device.min_gap_ms` | The least time between two frames when a map states no pace | 50 |
+| `packs.mcp.max_message_bytes` | The bytes of one answer from an upstream server that are read | 4194304 |
+| `packs.mcp.max_tools` | The tools of one upstream server's list that are read | 500 |
+
 ## Configuring a target
 
 What a system is, and how it must be treated, is configured in its target files, not in settings: versioned, reviewed, published, and bundled like the rest, so that it is the same in every profile ([section 205](205-target-files.md)).

@@ -127,6 +127,20 @@ Rules for every driver:
 
 The columns are the modes of the first four packs. Every further pack adds a column in its own design: the command, data, file, stream, and device packs each state the verbs they offer and how each lowers into steps.
 
+The verbs each built pack registers, as its manifest declares them. A pack's design says how each lowers into steps.
+
+| Mode | Pack | Verbs registered |
+| --- | --- | --- |
+| `http` | `a2m-pack-http` | `read`, `list`, `search`, `create`, `update`, `upsert`, `delete`, `submit`, `call` |
+| `cli` | `a2m-pack-command` | `read`, `list`, `search`, `create`, `update`, `delete`, `call` |
+| `sql` | `a2m-pack-data` | `read`, `list`, `search`, `create`, `update`, `delete` |
+| `file` | `a2m-pack-file` | `read`, `list`, `update`, `create`, `delete` |
+| `stream` | `a2m-pack-stream` | `read`, `list`, `await`, `publish`, `take` |
+| `device` | `a2m-pack-device` | `read`, `update`, `submit` |
+| `mcp` | `a2m-pack-mcp` | `read`, `list`, `search`, `create`, `update`, `upsert`, `delete`, `download`, `submit`, `call` |
+
+The `http` column above also offers `upload` and `download`; the HTTP pack does not register them yet.
+
 ## Widget drivers and platform profiles
 
 Both are the web pack's knowledge and live in its section: [widget drivers](../spec/3-packs/301-the-web-pack.md#widget-drivers) and [platform profiles](../spec/3-packs/301-the-web-pack.md#platform-profiles).
@@ -220,6 +234,30 @@ The design of [`a2m-sched`](../architecture/crates/a2m-sched.md) gives the inter
 - **`LockTicket`** is taken before the ledger is asked for a record lock, so that a wait cannot miss a release.
 - **`SchedSettings`** holds the limits and their defaults. Nothing in the crate sleeps: `sweep` ends every wait whose moment has come.
 
+## Engine interface
+
+The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the interface in full. The main types:
+
+- **`Engine`**, made from **`EngineDeps`**, carries out a job through `run_job`, and a discovery through `discover`, for the runner that holds the job's lease.
+- **`JobSpec`** names the plan, the tool, the input, and the job's **`JobKind`**: a preview, an execute, a try, a reconcile, a check after a loss, a canary, or a discovery. The job ends as a **`JobOutcome`**.
+- **`Control`** is everything the engine asks of the kernel around it: the plan, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`.
+
+## Action registry interface
+
+The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the interface in full ([decision 0094](../decisions/0094-the-action-layers-interface-as-building-it-settled-it.md)). The main types:
+
+- **`ActionRegistry`** holds every action of the catalog as data, built or not.
+- **`Kernel`** is the handle every front door holds. Its `dispatch` takes a **`Request`** and gives a **`Response`**: it checks the input, the health state, and the person need, records one policy decision, runs the handler, and redacts the result.
+- **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves a diff; no action reaches it.
+- The faces are data generated from the registry: `command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, and **`McpResultFace`**.
+
+## REST router
+
+The design of [`a2m-api`](../architecture/crates/a2m-api.md) gives the interface in full ([decision 0116](../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). The main items:
+
+- **`router`** builds the routes from a `Kernel` and **`ApiSettings`**; every route calls the same `dispatch`.
+- **`status_of`** is the one table from a response to an HTTP status. **`openapi`** generates the OpenAPI 3.1 document, and **`served_routes`** lists what the router serves.
+
 ## Data model
 
 The same schema runs on SQLite and Postgres. Column-level definitions for the run, ledger, scheduling, and evidence tables are in the [ledger schema](ledger-schema.md).
@@ -260,22 +298,22 @@ Delivery is at-least-once. A job whose lease ends without a result is treated as
 
 ## Failure codes
 
-Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them. The codes of `a2m-ledger` are listed in [its design](../architecture/crates/a2m-ledger.md).
+Every failure carries a class, a stable code, a plain sentence, and a next step. The classes are closed. The codes below are examples: each crate names the codes it can produce, and its design in [the architecture](../architecture/README.md) lists them. The codes of `a2m-ledger` are listed in [its design](../architecture/crates/a2m-ledger.md). The rows include the codes of `a2m-engine`, `a2m-actions`, `a2m-api`, and `a2m-pack-web-browser`. Each pack's own codes, those of `a2m-pack-http`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device`, and `a2m-pack-mcp`, are listed in its design and its manifest, and are not repeated here.
 
 | Class | Example codes |
 | --- | --- |
-| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled`, `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture` |
-| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch`, `draft_conflict`, `registration_conflict`, `target_unreadable`, `formula_without_value`, `source_too_large`, `source_malformed`, `source_encoding_unsupported`, `source_protected`, `source_reader_unknown`, `source_definition_invalid`, `key_not_unique`, `auth_provider_unknown`, `auth_provider_duplicate`, `auth_settings_invalid`, `credential_missing`, `tls_not_enabled`, `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `file_unavailable`, `provider_ambiguous`, `mode_unknown`, `not_registered`, `kind_owner_missing`, `kind_owner_conflict`, `provider_duplicate`, `pack_settings_invalid`, `program_not_found` |
+| `policy` | `not_granted`, `identity_not_allowed`, `effect_too_high`, `approval_missing`, `approval_stale`, `approval_refused`, `limit_exceeded`, `kill_switch_on`, `policy_evaluation_failed`, `presence_required`, `surface_not_declared`, `lease_superseded`, `runner_not_enrolled`, `effect_not_declared`, `signature_invalid`, `intent_missing`, `read_only_posture`, `plan_unverified`, `record_limit_exceeded`, `sandbox_read_only`, `intent_token_missing`, `person_required`, `caller_not_verified`, `setting_protected`, `setting_locked`, `caller_missing`, `password_read_refused` |
+| `input` | `lint_failed`, `policy_tests_failed`, `decision_not_found`, `path_not_allowed`, `file_type_mismatch`, `schema_invalid`, `source_template_unknown`, `value_out_of_range`, `expression_invalid`, `expression_type_error`, `value_unparsable`, `value_absent`, `expression_cost_exceeded`, `plan_expression_unloadable`, `trace_holds_secret`, `telemetry_settings_invalid`, `vault_passphrase_mismatch`, `draft_conflict`, `registration_conflict`, `target_unreadable`, `formula_without_value`, `source_too_large`, `source_malformed`, `source_encoding_unsupported`, `source_protected`, `source_reader_unknown`, `source_definition_invalid`, `key_not_unique`, `auth_provider_unknown`, `auth_provider_duplicate`, `auth_settings_invalid`, `credential_missing`, `tls_not_enabled`, `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `file_unavailable`, `provider_ambiguous`, `mode_unknown`, `not_registered`, `kind_owner_missing`, `kind_owner_conflict`, `provider_duplicate`, `pack_settings_invalid`, `program_not_found`, `job_invalid`, `input_invalid`, `action_not_built`, `client_action`, `settings_invalid`, `action_registry_invalid`, `body_too_large`, `content_type_unsupported`, `query_invalid`, `path_field_conflict`, `idempotency_key_invalid`, `route_not_found`, `method_not_allowed`, `body_timed_out`, `route_conflict`, `address_invalid` |
 | `session_expired` | `needs_login`, `needs_mfa`, `device_required`, `headroom_short`, `lease_stale`, `credential_refused` |
 | `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
-| `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared` |
+| `drift` | `locator_not_found`, `fingerprint_mismatch`, `response_schema_mismatch`, `upstream_tool_changed`, `binding_drifted` |
+| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `runner_protocol_unsupported`, `unexpected_response`, `session_move_illegal`, `handshake_failed`, `undeclared_code`, `unexpected_absent`, `step_kind_unknown`, `reconcile_too_late`, `finding_not_declared`, `expect_failed`, `field_not_read_back`, `no_read_back`, `output_unexpected`, `commit_skipped`, `browser_not_owned` |
 | `rejected` | `app_validation_error` |
 | `mismatch` | `read_back_differs` |
-| `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match` |
+| `possible_commit` | `no_confirmation`, `runner_lost`, `ambiguous_match`, `cannot_reconcile` |
 | `stale` | `changed_since_preview`, `version_conflict` |
-| `transient` | `timeout`, `connection_lost`, `upstream_unavailable` |
-| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed` |
+| `transient` | `timeout`, `connection_lost`, `upstream_unavailable`, `prepare_timed_out`, `engine_fault` |
+| `busy` | `queue_full`, `record_locked`, `session_in_use`, `runner_unavailable`, `caller_queue_full`, `resource_in_use`, `resource_order`, `rate_limited`, `on_hold`, `storage_full`, `engine_degraded`, `randomness_unavailable`, `provider_unavailable`, `cleanup_incomplete`, `subsystem_limit`, `shutting_down`, `start_failed`, `no_binding`, `run_time_exceeded`, `blocked_by_parent`, `evidence_not_stored`, `no_rate_budget`, `job_kind_not_built`, `lease_too_short`, `request_timed_out`, `browser_unavailable` |
 
 ## Command line
 
@@ -321,7 +359,7 @@ Each operating system's own conventions are followed. `A2M_HOME` overrides all o
 | Local channel and lock file | A named pipe carrying the user's identifier | A per-user runtime directory | The user's runtime directory |
 | Pinned browsers and caches | Local application data | Caches | The user's cache directory |
 
-Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<identity>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
+Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<target>/<environment>/<kind>-<digest>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
 
 ## REST endpoints
 
@@ -336,6 +374,8 @@ Inside the data directory: `store/` for the database with `blobs/` for evidence 
 | `GET /api/v1/sessions` | Session status for the caller |
 | `POST /api/v1/actions/{noun}.{verb}` | Run an authoring or admin action from the registry |
 | `GET /api/v1/openapi.json` | The generated API description |
+
+The two aliases of `tool.call`, `/operations/{name}/calls` and `/pipelines/{name}/runs`, are not served yet: the catalog gives `tool.call` no alias, so for now an operation or a pipeline is called through `POST /api/v1/actions/tool.call`.
 
 ## Plug-in protocol
 

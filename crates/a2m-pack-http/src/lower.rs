@@ -42,6 +42,13 @@ const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "delete", "submit",
 /// How long a step may take when the target states no `request` timeout.
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
+/// The time limit of a step that judges or reads an answer already held.
+/// It sends nothing and waits for nothing, so it does not take a request's
+/// limit: the engine sums a binding's step limits to decide whether a
+/// job's lease leaves time for a write, and five request limits would
+/// pass the lease of the in-process runner.
+const HELD_ANSWER_TIMEOUT_MS: u32 = 1_000;
+
 fn binding_part() -> JsonSchema {
     JsonSchema::object()
         .required("endpoint", JsonSchema::name())
@@ -125,6 +132,11 @@ impl<'a> Lower<'a, '_> {
     }
 
     fn step(&self, kind: StepKind, found: &Found<'_>, fails_as: FailsAs) -> Step {
+        let timeout_ms = if kind == REQUEST {
+            self.timeout_ms
+        } else {
+            HELD_ANSWER_TIMEOUT_MS
+        };
         Step {
             kind,
             refers_to: Some(PackRef {
@@ -132,7 +144,7 @@ impl<'a> Lower<'a, '_> {
                 entry: found.name.to_owned(),
             }),
             args: Vec::new(),
-            timeout_ms: self.timeout_ms,
+            timeout_ms,
             fails_as,
             commits: false,
             lookup: false,

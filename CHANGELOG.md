@@ -22,6 +22,17 @@ Nothing usable yet. The project is in its foundation phase.
 - The policy engine: nothing is allowed unless a rule allows it, a write needs a person's approval unless a pre-approval rule covers it, and a kill switch stops everything, a workspace, a target, or an operation.
 - Sessions: one renewer for each session, and built-in sign-in providers for keys, tokens, basic and digest credentials, client certificates, and OAuth.
 - A test application with a web interface, a JSON interface, a control interface, and injectable faults.
+- The engine loop: a tool runs as a read, or as a verified write that records its intent first and reads the value back. A resume reads before it writes, so a write whose answer was lost is never sent twice.
+- The action registry: the first 26 of its actions are served, through one dispatcher that records a policy decision for every call. Settings load in layers, with presets; an unknown key is refused, and no layer above the installation can loosen a protected setting.
+- The REST interface: every action at one route, five resource aliases, and a generated OpenAPI 3.1 document.
+- The HTTP pack: tools over a JSON interface, with verified writes. An OpenAPI description can be imported to draft endpoint entries. HTTPS is not in this build.
+- The command pack: a program can be a target. Arguments are typed, and no shell is used.
+- The data pack: the `sql` mode over an embedded database file.
+- The file pack: named places in delimited text, JSON, and workbooks. A write replaces the whole file in one step.
+- The stream pack: bounded reads, a look that takes nothing, and keyed publishes. No standard broker protocol is in this build yet.
+- The device pack: points over a Modbus TCP link, with ranges enforced before a frame is sent.
+- The MCP pack: an upstream MCP server is reached through a mapping file, and a changed upstream tool is detected as drift.
+- The browser engine: it starts an installed Chrome, Edge, or Chromium over the debugging pipe, locates elements by role and name, and has an observing tab that cannot write.
 - Continuous checks on Windows, macOS, and Linux: formatting, lints, build, tests, a closed list of dependency licences, and a documentation audit.
 - A release workflow that builds the pip package repeatably and publishes it with short-lived credentials, from a version tag or a manual start.
 - The design: a specification of 59 sections in seven parts, 95 decision records, 18 research notes, and a register of 40 hypotheses.

@@ -453,34 +453,19 @@ impl Control for InProcessControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
-            // The store runs a transaction on its own thread and so takes
-            // only what it can own, and the proof of `acted` is borrowed.
-            // The ledger's `settle` makes the same comparison of digests
-            // under the same lease for a record that is `acted`, and takes
-            // the record by name.
             let record = token.record();
-            let fence = Fence {
-                run: record.run,
-                epoch: token.epoch(),
-            };
-            let settled = self
+            let marked = self
                 .kernel
                 .store()?
-                .write(Durability::Synced, move |tx| {
-                    tx.ledger()
-                        .settle(&fence, record, Reconciled::Landed(read_back))
-                })
+                .store_verified(token, read_back)
                 .await
-                .map_err(|failure| self.redacted(failure))?;
-            self.freed(record).await;
-            match settled {
-                Settled::Verified => Ok(()),
-                _ => Err(codes::input(
-                    a2m_ledger::codes::LEDGER_STATE_UNEXPECTED,
-                    "The record was not marked verified.",
-                    "Resume the run; it reconciles the record first.",
-                )),
+                .map_err(|failure| self.redacted(failure));
+            // The ledger released the record's lock in the same
+            // transaction; a run waiting for it is told.
+            if marked.is_ok() {
+                self.freed(record).await;
             }
+            marked
         })
     }
 

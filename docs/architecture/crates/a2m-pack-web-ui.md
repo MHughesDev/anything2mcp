@@ -2,6 +2,8 @@
 
 The web pack's drivers and the knowledge they carry: the `ui`, `page_http`, and `site_tools` drivers, the widget drivers, platform profiles, screen models as a file kind, the auth providers that need a browser, and the drafting rules for observed interfaces. It is built on `a2m-pack-web-browser` and is called back by the engine and the session keeper.
 
+Built so far: the `ui` driver for reads and verified writes, the `screens/` file kind, and the `ui` lowering. Everything else on this page is the design of what follows, and the build order says which is which.
+
 ## Facts
 
 | | |
@@ -9,7 +11,7 @@ The web pack's drivers and the knowledge they carry: the `ui`, `page_http`, and 
 | Side | Pack: web |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5, and `a2m-pack-web-browser` |
-| Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-expr` (field-type host functions for widget formatting), `a2m-files` (file-kind, lowering, lint, and drafting registration), `a2m-auth` (`AuthProvider`, `SessionLease`), `a2m-provider` (`Driver`, `Discoverer`, `SandboxPort`, `Manifest`, `PackContext`, registration), `a2m-telemetry`, `a2m-pack-web-browser`. Outside: `tokio`, `serde`, `serde_json` |
+| Depends on | `a2m-core` (with `Plan` and `Step`), `a2m-files` (file-kind, lowering, and lint registration), `a2m-auth` (`SessionLease`, `CredentialSink`), `a2m-provider` (`Driver`, `Pack`, `PackContext`, registration), `a2m-telemetry` (`Acting`), `a2m-pack-web-browser`. Outside: `tokio`, `serde`, `serde_json`. `a2m-expr` is not used yet: formatting a date or a quantity for a control is not built |
 | Built in | Slice 1.1 (`ui` reads one field), 1.3 (registration with the compiler), 1.6 (read verbs, widget reads), 2.3 and 2.6 (auth providers), 3.3 onward (writes), 4.2 (`page_http`), 8.2 (`site_tools`), 8.4 (profiles, remaining widgets), 8.5 (edge cases) |
 | Carries out | Spec sections [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the web modes), [301](../../spec/3-packs/301-the-web-pack.md), [301](../../spec/3-packs/301-the-web-pack.md) (the interface rows), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) and [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (browser sign-in), [201](../../spec/2-kernel/201-archetypes-and-modes.md) (interface and request), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (drafting from an observed interface); the technical reference's [widget drivers](../../spec/3-packs/301-the-web-pack.md#widget-drivers) and [platform profile schema](../../spec/3-packs/301-the-web-pack.md#platform-profiles) |
 
@@ -27,38 +29,45 @@ It must never: decide whether something may happen; sign in or renew outside the
 
 ## What it registers
 
+As built. The manifest is `src/anything2mcp-provider.toml`; what is not built is not declared.
+
 | Registration | Content |
 | --- | --- |
-| Modes | `ui`, archetype interface. `page_http` and `site_tools`, archetype request |
-| Surface kinds | `web` |
-| Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe`, `token`, `request`, `validate`, `extract`, `call_tool`, each as a checked name |
-| Drivers | `UiDriver`, `PageHttpDriver`, `SiteToolsDriver` |
-| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)). Reads `endpoints/`, which `a2m-pack-http` owns, for the `page_http` lowering |
-| Binding fields | `ui`: `screen`, `verb`, `fields`, `action`. `page_http`: `endpoint`, `path_params`, `query`, `body`. `site_tools`: `tool`, `args` |
-| Verb lowerings | `ui`: each verb of the [verbs by mode](../../reference/technical-reference.md#verbs-by-mode) table into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe`. `page_http`: into `token`, `request`, `validate`, `extract`. `site_tools`: into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups |
-| Control names | Every control in the technical reference's table, as checked names. The widget drivers themselves are internal to this crate |
+| Provider | `web`, a pack |
+| Modes | `ui`, archetype interface, rank 60, four reads and one write at a time on a session. `page_http` and `site_tools` are not built |
+| Surface kinds | `web`, with the address key `origin` and the fields `viewport` (`width`, `height`), `color_scheme` (`light` or `dark`), and `reduced_motion`. `profile` is not accepted yet |
+| Step kinds | `goto`, `wait`, `read`, `set`, `invoke` ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)). `handle`, `upload`, `download`, `observe`, and the kinds of the other two modes are not built |
+| Drivers | `UiDriver`, over the `Browsers` of the cell the product crate hands the pack |
+| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml), [decision 0113](../../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)) |
+| Binding fields | `ui`: `screen`, `fields`, `action`, and `read_back` with a `screen` |
+| Verb lowerings | `ui`: `read`, `list`, `create`, `update`, `upsert`, `submit`, below. `open`, `search`, `delete`, `upload`, and `download` are not built |
+| Control names | `text`, `textarea`, `number`, `currency`, `measurement`, `select`, `checkbox`. The compiler refuses any other with `kernel.unknown_control` |
 | Lint rules | Below |
-| Drafting rules | Below |
-| Discoverers | One: screen matching, which sets a stored snapshot finding against the target's screen models. It reads findings through `SandboxPort`, not the page |
-| Auth providers | `form_login`, `sso_oidc`, `sso_saml`. All others are in `a2m-auth` |
+| Settings | `packs.web.max_read_chars` and `packs.web.max_snapshot_elements` |
+| Effects | Writes the root `profiles`; network to surfaces; sessions for `web` surfaces; a requirement that lists every path of the browser engine's `KNOWN_PLACES` |
+| Drafting rules, discoverers, auth providers | None yet |
 
 ### Lint rules
 
-Codes are stable once released.
+Codes are stable once released. A lint code is the pack's name, a dot, and the rule.
 
-| Code | Level | Rule |
-| --- | --- | --- |
-| `web_css_not_last` | Error | A `css` locator is allowed only last in a list |
-| `web_css_used` | Warning | Any `css` locator |
-| `web_generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile |
-| `web_no_fingerprint` | Error | A field or action with no fingerprint |
-| `web_commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted |
-| `web_variant_unhandled` | Error | A variant with no handling |
-| `web_frame_undeclared` | Error | A screen whose locators need a frame and declare none |
-| `web_profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` |
-| `web_signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified |
+| Code | Level | Rule | Built |
+| --- | --- | --- | --- |
+| `web.css_not_last` | Error | A `css` locator is allowed only last in a list | Yes |
+| `web.css_used` | Warning | Any `css` locator | Yes |
+| `web.no_fingerprint` | Error | A field, an action, or a table with no fingerprint | Yes |
+| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile | No: profiles |
+| `web.commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted | No |
+| `web.variant_unhandled` | Error | A variant with no handling | The schema requires a handling |
+| `web.frame_undeclared` | Error | A screen whose locators need a frame and declare none | No: frames |
+| `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` | No: profiles |
+| `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified | No: `page_http` |
+
+The file kind and the lowering refuse, under the same prefix: `locator_invalid`, `condition_invalid`, `within_and_section`, `read_not_fitting`, `column_unknown`, `reach_invalid`, `unknown_screen`, `unknown_field`, `unknown_action`, `placeholder_unbound`, `position_type`, `value_type`, `action_missing`, `read_acts`, `read_back_never_absent`, and `not_encodable`.
 
 ### Drafting rules
+
+Not built. As designed:
 
 | From a finding of kind | The drafter writes | Left as an open question |
 | --- | --- | --- |
@@ -69,32 +78,50 @@ Codes are stable once released.
 
 ## Interface
 
-A sketch.
+As built. The product crate makes one cell of browsers and hands a clone to this pack and to the web pack's discoverers, so that the two share one set of browsers:
 
 ```rust
-/// Called once by the product crate, with the pack context and the one `Browsers`,
-/// whose observer the product crate gives the probe.
-pub fn register(reg: &mut Registration, ctx: &PackContext, browsers: Browsers) -> Result<(), Failure>;
+// `SharedBrowsers` (Clone, Default) is the base crate's, exported again here.
 
-pub struct UiDriver { browsers: Browsers, widgets: Widgets }   // profiles come from the base
-impl Driver for UiDriver {                                  // mode and capabilities are in the manifest
-    async fn prepare(&self, ctx: &RunContext, lease: &SessionLease) -> Result<Prepared, Failure>;
-    async fn act(&self, p: &mut Prepared, step: &Step, input: &Values) -> Result<ActOutcome, Failure>;
-    async fn health(&self, surface: &Surface) -> Health;
-    async fn release(&self, p: Prepared);
-}
-// PageHttpDriver and SiteToolsDriver: the same trait, over the same Browsers.
+/// The pack. `Pack::register` builds the browsers from its context, or
+/// takes the ones the other half of the web pack built.
+pub fn pack(browsers: SharedBrowsers) -> WebUiPack;
+/// The one call the product crate makes.
+pub fn add_to(builder: &mut RegistryBuilder, browsers: SharedBrowsers);
 
-/// Inside the crate. A control's driver, over the base's element handle.
-pub(crate) trait WidgetDriver: Send + Sync {
-    fn control(&self) -> &'static str;                        // a name in the technical reference
-    async fn set(&self, tab: &ActTab, el: &Element, v: &Value, ty: &FieldType) -> Result<Dispatch, WidgetError>;
-    async fn read(&self, tab: &ActTab, el: &Element, ty: &FieldType) -> Result<Value, WidgetError>;
-}
-
-pub struct SsoInProfile;  impl AuthProvider for SsoInProfile { /* sign_in, is_signed_in, detect_expiry, refresh, sign_out, inject */ }
-pub struct FormLogin;     impl AuthProvider for FormLogin { /* the same */ }
+pub const UI_MODE: &str = "ui";
+pub const ADDRESS_KEY: &str = "origin";
+pub const PACK: &str = "web";
+pub const SCREEN_KIND: FileKindName;                  // `screen`
+pub const WEB_SURFACE: SurfaceKind;                   // `web`
+pub const CONTROLS: &[&str];
+pub const GOTO, WAIT, READ, SET, INVOKE: StepKind;
+pub mod codes;                                        // every failure code, and `ALL`
 ```
+
+The host's roots must hold a folder named `profiles` that may be written. The driver, the file kind, the lowering, the compiled screens, and the widget rules are private.
+
+### The steps
+
+| Step | Refers to | Arguments | Does |
+| --- | --- | --- | --- |
+| `goto` | A screen | `reach.<placeholder>` for each placeholder of its address | Builds the address from the surface's origin and the screen's path, each value one percent-encoded segment, and sends the tab there. A page that ends on another origin is `policy`, `surface_not_declared` |
+| `wait` | A screen | None | Waits, on the base's observer, until the screen's `ready` holds or one of its variants shows. A variant `absent` is the outcome absent, for a lookup; a variant `stop` is `rejected`. In a write binding it keeps a snapshot |
+| `read` | A screen | None | For each output, finds the field of its name and reads it by its control's rule, as the text the page shows; for a list, reads the screen's table by its headings |
+| `set` | A screen | `value` | Finds the field and sets it by its control's rule |
+| `invoke` | A screen | None | Finds the action, clicks it, and waits until the page shows the action's `confirm` or a variant. Marked as the commit point when the action says `commits`. Keeps a snapshot |
+
+`read`, `set`, and `invoke` each find their element through the field's or action's locators in order, and check its fingerprint. A locator that matches several elements, and a match that fails its fingerprint, stop the step; a later locator is tried only when an earlier one matches nothing.
+
+### Control rules
+
+| Control | Set | Read |
+| --- | --- | --- |
+| `text`, `textarea`, `number`, `currency`, `measurement` | Fill; when the control does not hold the text, type it key by key; when it still does not, the element's own setter. The control is asked what it holds after each. A password input is filled once and never asked | The value, as text |
+| `select` | Choose the option with the stored code | The selected code |
+| `checkbox` | Bring to the state asked for | The live checked state |
+
+A value reaches a control as text, a code, a whole number, an exact number, or a truth value. A date, a time, and a quantity shown in another unit need the field type's format, which is not built: the compiler refuses the binding with `web.value_type`.
 
 What the kernel gives this crate:
 
@@ -108,7 +135,7 @@ What the kernel gives this crate:
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
-| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
+| `ui` | A new acting tab in the session's browser, with the target's fixed environment | `goto`, `wait`, `set` through the control's rule, `invoke` | The action's declared `confirm`, inside the committing `invoke`; the confirm list is empty | The fields again after the screen is reached afresh. `prefer: response` is not built |
 | `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` with `fetch` from inside the page | Status and response schema | The endpoint the binding names |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
@@ -118,8 +145,8 @@ What the kernel gives this crate:
 | --- | --- | --- |
 | 1 | A driver for its verbs, no retries inside | The three drivers above. A widget driver's escalation from fill to typing to the native setter is one strategy in one step, chosen by the control, not a retry |
 | 2 | A read-back rule for every write | As in the table above |
-| 3 | Each identity strategy | `natural` and `composite`: `reach` built from the key. `stamped`: write the stamp field, then find the record through a list screen. `find`: a search screen, with the declared `settle`. `none`: the write is `irreversible` |
-| 4 | A test stand | The test application, cases 1 to 27; `site_tools` needs a page that registers tools, which is a new case |
+| 3 | Each identity strategy | `natural` and `composite`: `reach` built from the key; built. `stamped`: write the stamp field, then find the record through a list screen; not built. `find`: a search screen, with the declared `settle`; not built. `none`: the write is `irreversible` |
+| 4 | A test stand | The test application, cases 1 to 27; `site_tools` needs a page that registers tools, which is a new case. As built, the application has cases 1 to 4: its line-item form and its tables. A page with a password, a check box, and a select is served by the test that needs it |
 | 5 | A discoverer | Snapshots and capture are in `a2m-pack-web-probe`; screen matching is here |
 | 6 | Failures mapped | Below |
 | 7 | Effects and hazards | Starts the browser, by path and digest, through the supervisor its context scopes; reads and writes the profile root and a staging folder for files; network to the target's declared web surfaces for what the engine itself sends; holds sessions for `web` surfaces; changes a person's screen only for a sign-in window. Hazards come from operations, not from the driver |
@@ -129,59 +156,84 @@ What the kernel gives this crate:
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-provider` | `register`, and the drivers, auth providers, and discoverer it registers |
-| `a2m-engine`, through the registry | The three drivers, only |
-| `a2m-auth`, the session keeper, through the registry | The three auth providers, only |
-| `a2m-files`, through the gathered set | Schemas, lowerings, lint rules, drafting rules |
+| `anything2mcp` | `add_to`, or `pack`, with the `SharedBrowsers` cell it also gives the web pack's discoverers |
+| `a2m-provider` | `Pack::register`, and the driver it registers |
+| `a2m-engine`, through the registry | The `ui` driver, only |
+| `a2m-files`, through the gathered set | The `web` surface kind, the `screens/` schema, the `ui` lowering, the lint rules, and the control names |
 
-It uses `a2m-pack-web-browser` for every page, and `a2m-expr` for formatting a value for a widget and normalizing what it reads.
+It uses `a2m-pack-web-browser` for every page. What it reads it returns as the page shows it; the engine normalizes it by the field type.
 
 ## State
 
 | State | Where |
 | --- | --- |
 | Prepared tabs of runs in flight | Memory, released by `release` |
-| Session state of a browser sign-in | Sealed by the base, held by the keeper in the store; never here |
+| A browser's session | The browser's own data directory, in the base's profile root; never here |
 
 ## Failures
 
-| Class | Codes |
-| --- | --- |
-| `drift` | `locator_not_found`, `fingerprint_mismatch`, `locator_ambiguous` (new), `response_schema_mismatch` for `page_http`, `upstream_tool_changed` for `site_tools` |
-| `unknown_variant` | `unexpected_dialog`, `unexpected_page`, `unexpected_status`, `unknown_platform` (new: a surface's profile is `auto` and no profile matched) |
-| `rejected` | `app_validation_error`: a declared variant with handling `stop` that shows a validation message |
-| `possible_commit` | `no_confirmation`: a commit point was sent, or its sending is unknown, and its confirmation did not arrive |
-| `stale` | `version_conflict` |
-| `edge_blocked` | `challenge_page`, `rate_limited_by_edge`, `forbidden_by_edge` |
-| `session_expired` | `needs_login`, reported through the lease, after the keeper has the signal |
-| `policy` | `surface_not_declared`: a navigation or in-page request to an origin the target did not declare |
-| `transient` | `timeout`, `connection_lost` before anything was sent |
+As built. Every failure says whether input reached the page.
+
+| Class | Code | When | Sent |
+| --- | --- | --- | --- |
+| `drift` | `locator_not_found` | No locator of a field, an action, or a table matches | Not sent |
+| `drift` | `locator_ambiguous` | A locator matches several elements | Not sent |
+| `drift` | `fingerprint_mismatch` | The element is not inside its section, the section does not show its text, or a table's headings or rows are not the declared ones | Not sent, or answered for a table |
+| `unknown_variant` | `unexpected_page` | A screen that is neither ready nor in a declared variant in the step's time; an element that is hidden, disabled, or covered; an answer of the browser no rule covers | Not sent, or answered |
+| `unknown_variant` | `unexpected_control` | The element cannot be operated or read as its control says; a text control that does not hold what it was given | Not sent; unknown once input reached it |
+| `unknown_variant` | `unknown_control` | The plan names a control this driver has no rule for | Not sent |
+| `unknown_variant` | `unexpected_dialog` | The page opened a dialog; none can be declared yet | As the base reports |
+| `unknown_variant` | `read_too_large` | A read longer than `max_read_chars` | Answered |
+| `unknown_variant` | `browser_not_owned` | The base's: what started is not a browser the engine can own | Not sent |
+| `rejected` | `app_validation_error` | The page shows a variant with handling `stop` | Answered |
+| `possible_commit` | `no_confirmation` | After the click of a committing action: the confirmation did not show in time, or the browser was lost. The handle makes every other doubtful failure of that step the same | Unknown |
+| `policy` | `surface_not_declared` | The surface's address is not one the run may reach, or the page ended on another origin | Not sent, or answered |
+| `policy` | `password_read_refused` | The base's: a password input was asked for its value | Not sent |
+| `policy` | `read_only_posture` | The contract's: a `set` or an `invoke` in a run that may only look | Not sent |
+| `busy` | `browser_unavailable` | The base's: no browser is installed | Not sent |
+| `input` | `step_not_usable` | A step or a payload this driver cannot carry out as written; a session whose provider hands over a credential to place | Not sent |
+| `input` | `address_invalid` | The surface's `origin` is more than a scheme, a host, and a port | Not sent |
+| `input` | `address_value_refused` | A value that cannot stand in one segment of a screen's address | Not sent |
+| `transient` | `timeout`, `connection_lost` | The contract's: the browser did not answer, or was lost, on a step that commits nothing | As the base reports |
+
+Not built: `edge_blocked` and its codes, `session_expired` through the lease, `stale`, `version_conflict`.
 
 ## Invariants
 
 | Must always hold | Proven by |
 | --- | --- |
-| An undeclared dialog or page stops the run | Test-application case 11 |
-| A crash after a commit point was sent is `possible_commit`, never `transient` | A fault test that kills the browser after `invoke` |
-| Every widget driver sets and reads back its control | Conformance group "Acting", cases 7, 9, 10 |
-| No driver calls an auth provider or renews | A test that the drivers hold no `AuthProvider`; the keeper's ten-runs-one-renewal test |
-| A form login with a stored credential is tried once | Package 2.6 test with a refused credential |
-| A drafted screen carries no field type and no action the snapshot did not state | Drafting tests in package E4 |
-| `ui` steps stay under 50 ms of overhead, `page_http` under 20 ms, on a warm tab | Benchmarks |
+| A registry with only this pack builds, with a stable digest; the manifest declares every code the pack produces, every step kind its lowering makes, and every known place of a browser | `tests/compile.rs` |
+| The fixture target compiles twice to the same bytes; locators are in the pack's section and in no step; the plan holds no address | `tests/compile.rs` |
+| An unknown control, an unknown key, a locator that matches in two ways, a selector that is not last, a missing fingerprint, an address that could leave the surface, and a binding that names what its screen lacks are refused with a file, a line, and a fix | `tests/compile.rs` |
+| A read gives what the form shows, and five runs do the same thing with the same result | `tests/driver.rs`, against the control interface |
+| A table is read by its declared headings; an empty table is an empty list; a record that is not there is absent; a value cannot leave its segment of the address | `tests/driver.rs` |
+| A changed screen is `drift`: a missing locator, an ambiguous one, a failed fingerprint. A control with no rule and a page with no rule are `unknown_variant` | `tests/driver.rs` |
+| A committing step without the ledger's token saves nothing. With it, one write is stored exactly once, with the values sent, and a value the application reformats compares equal under its field type and another does not | `tests/driver.rs`, with a real store and the control interface |
+| A refused write is `rejected`, answered, and stores nothing. A run that may only look touches no control. A surface the run may not reach is not opened | `tests/driver.rs` |
+| A browser lost after the committing click is `possible_commit`, never `transient`, and nothing is sent again | `tests/driver.rs`: the application holds the save, the browser is killed, the control interface counts |
+| A password on the page is never read, and is in no capture and no log; a snapshot masks it | `tests/driver.rs`, with a page the test serves |
+| No driver calls an auth provider or renews | The driver holds none; a lease is used for its profile only |
+| An undeclared dialog stops the run | The mapping is built; no test, because the test application opens no dialog |
+| `ui` steps stay under 50 ms of overhead on a warm tab | Not measured |
 
 ## Build order
 
-1. Slice 1.1: `UiDriver` with `goto`, `locate`, `read` for a text field; a hand-written plan.
-2. Slice 1.3: `register` with the `screens/` schema and the `ui` read lowerings.
-3. Slice 1.6: every read verb, variants, frames, the read half of each widget driver.
-4. Package 2.3: `SsoInProfile` as a person signing in in a visible window of the engine's own browser. Package 2.6: `form_login`, silent SSO, expiry rules.
-5. Slices 3.3 onward: `set`, `invoke`, `observe`, the write half of the Phase 3 widgets.
-6. Package 4.2: `PageHttpDriver`. Package E4: the drafting rules and screen matching.
-7. Package 8.4: platform profiles and the remaining widgets. Then `SiteToolsDriver`.
+1. Done: `UiDriver` with `goto`, `wait`, and `read` for a text field, through the handle.
+2. Done: the manifest, `pack` and `add_to`, the `web` surface kind, the `screens/` schema and its compilation, the `ui` lowerings for `read` and `list`, three lint rules, and the control names.
+3. Done in part: reads of text, value, checked state, and table rows; variants `absent` and `stop`. Not built: frames, `open` and `search`, a row by its key, attribute reads, the conditions `value`, `url`, `response`, and `profile_ready`.
+4. Done: `set` for text, select, and check box; `invoke` with the commit point, the confirmation inside it, and `possible_commit`; snapshots at the two checkpoints of a write; read-back from the page afresh.
+5. Not built, package 2.3 and 2.6: the auth providers. The base has no visible window and no export of a session's state yet, and the test application has no sign-in page, so neither the sign-in window nor `form_login` can be proven. Signs of expiry are not detected. A lease is used for the name of its profile; a provider that hands over a credential to place is refused.
+6. Not built: `PageHttpDriver` (package 4.2), `SiteToolsDriver`, platform profiles, the remaining controls, dialogs, uploads and downloads, `delete`, identity by a stamp or a search, the drafting rules and screen matching.
 
 ## Open points
 
 - **`screens/` is registered twice,** by this pack for `web` surfaces and by the desktop pack for `desktop` surfaces. Whether the shared parts should become the interface archetype's, in the kernel, is for the desktop pack to show.
+- **A fingerprint cannot name a role,** because the base cannot say what role an element has or whether two queries found one element ([decision 0113](../../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)).
+- **A failing step keeps no evidence.** A step failure carries no capture, so the snapshot of the page at a failure cannot be handed to the trace. What a step did travels as a capture named `acting`, because an outcome has no field for it.
+- **The lease does not say whose session it is.** The base keys a browser by target, environment, and identity; the lease gives a session and the name of a profile. The driver makes an account name from the profile's name. No test runs with a lease.
+- **A browser program named in a person's settings cannot be started,** because a scoped supervisor starts only what the manifest declares. The pack declares no such setting.
+- **Restricted fields are not masked in a snapshot.** The base masks passwords and what the redactor knows; the driver does not yet tell it which fields a target marks restricted.
 - How the `page_http` lowering is held to the `endpoints/` schema version it was written for, when `a2m-pack-http` changes it.
 - The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is.
 - Whether a validation message is always a declared variant, or the profile can name a generic one.
+- Whether a table whose cells hold a tab or a line break needs another way of reading than the text the page shows.

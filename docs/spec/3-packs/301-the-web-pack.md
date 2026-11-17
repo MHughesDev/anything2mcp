@@ -77,7 +77,7 @@ If the HTTP pack is not enabled, a `page_http` binding does not compile, and the
 | `submit` | Yes | Yes | If offered |
 | `call` | No | Yes | Yes |
 
-`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)).
+`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
 
 ## The driver, part by part
 
@@ -344,15 +344,15 @@ Codes are stable once released.
 
 | Code | Level | Rule |
 | --- | --- | --- |
-| `web_css_not_last` | Error | A `css` locator is allowed only last in a list |
-| `web_css_used` | Warning | Any `css` locator |
-| `web_generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile |
-| `web_no_fingerprint` | Error | A field or action with no fingerprint |
-| `web_commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted |
-| `web_variant_unhandled` | Error | A variant with no handling |
-| `web_frame_undeclared` | Error | A screen whose locators need a frame and declare none |
-| `web_profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` |
-| `web_signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified |
+| `web.css_not_last` | Error | A `css` locator is allowed only last in a list |
+| `web.css_used` | Warning | Any `css` locator |
+| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile |
+| `web.no_fingerprint` | Error | A field or action with no fingerprint |
+| `web.commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted |
+| `web.variant_unhandled` | Error | A variant with no handling |
+| `web.frame_undeclared` | Error | A screen whose locators need a frame and declare none |
+| `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` |
+| `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified |
 
 ## Drafting rules
 
