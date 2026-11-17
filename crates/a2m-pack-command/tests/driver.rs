@@ -1528,14 +1528,32 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
             "the draft states `{never}`:\n{draft}"
         );
     }
-    assert!(
-        drafted
-            .open_questions
-            .iter()
-            .any(|open| open.question.contains("read, write")),
-        "{:?}",
-        drafted.open_questions
-    );
+    // Every question keeps the product's sentence apart from the program's
+    // words, in the stored question too: the sentence names no command,
+    // and the command's words are the quoted part (decision 0193).
+    let effect = drafted
+        .open_questions
+        .iter()
+        .find(|open| open.question.contains("read, write") && open.question.contains("item set"))
+        .unwrap_or_else(|| panic!("{:?}", drafted.open_questions));
+    match a2m_files::StoredQuestion::read(&effect.stored()) {
+        a2m_files::StoredQuestion::Quoting { sentence, words } => {
+            assert!(sentence.contains("the quoted command"), "{sentence}");
+            assert!(!sentence.contains("item set"), "{sentence}");
+            assert_eq!(words, ["item set"]);
+        }
+        whole => panic!("the question was stored whole: {whole:?}"),
+    }
+    for open in &drafted.open_questions {
+        let quoting = open
+            .quoting
+            .as_ref()
+            .unwrap_or_else(|| panic!("a question in one piece: {}", open.question));
+        assert!(!quoting.words().is_empty(), "{open:?}");
+        for word in quoting.words() {
+            assert!(!quoting.sentence().contains(word.as_str()), "{open:?}");
+        }
+    }
     assert_eq!(control.invocations().unwrap().len(), starts.len());
 
     // In the sandbox a read may be tried only against a test environment.
