@@ -499,7 +499,7 @@ impl Site {
             .unwrap();
         let own = Own {
             base: Arc::new(format!("http://{}", listener.local_addr().unwrap())),
-            http: example_app::harness::client_builder().build().unwrap(),
+            http: reqwest::Client::new(),
         };
         let router = example_app::router().merge(own_pages(own.clone()));
         let server = tokio::spawn(async move {

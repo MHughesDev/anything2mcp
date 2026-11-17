@@ -9,7 +9,6 @@ members = [
     "targets/example-device",
     "targets/example-files",
     "targets/example-mcp",
-    "targets/example-nats",
     "bench",
 ]
 # Throwaway experiments are never part of the product or of its build.
@@ -31,11 +30,6 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "json
 # One SQLite for the whole workspace: the store, the data pack, and the test
 # stands all use this crate, because two crates that link SQLite cannot coexist.
 rusqlite = { version = "0.43.0", features = ["bundled"] }
-# The data pack's server store, behind its `postgres` feature and nowhere else
-# (decision 0168; research note 23). `runtime` is its TCP and socket connect.
-tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
-# The buffer type its value traits write into; already in its tree.
-bytes = { version = "1.12.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 # Exact decimals for business values, wrapped by a2m-core and named nowhere
 # else (decision 0068). No features: the wrapper writes its own text form.

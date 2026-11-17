@@ -25,6 +25,28 @@ async fn arrived(app: &TestApp) -> Vec<String> {
         .collect()
 }
 
+/// What arrived, once every one of `expected` has. A page that says it
+/// made a socket says the socket was made, not that the test application
+/// has seen it connect, so a test of what arrives waits for that, up to a
+/// deadline, and then compares the whole of what arrived.
+async fn arrived_all(app: &TestApp, expected: &[&str]) -> Vec<String> {
+    let started = std::time::Instant::now();
+    loop {
+        let now = arrived(app).await;
+        if expected
+            .iter()
+            .all(|name| now.iter().any(|one| one == name))
+        {
+            return now;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "not everything arrived: {now:?}, waiting for {expected:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// The test application under its other loopback name: to a browser,
 /// another origin and another site.
 fn other(app: &TestApp, path: &str) -> String {
@@ -386,10 +408,8 @@ async fn a_service_worker_is_locked_when_an_observed_page_wakes_it() {
         must(acting.page.as_the_page(poke, soon()).await),
         "post sent, socket made"
     );
-    assert_eq!(
-        arrived(&app).await,
-        ["escapes/service-post", "escapes/service-socket"]
-    );
+    let both = ["escapes/service-post", "escapes/service-socket"];
+    assert_eq!(arrived_all(&app, &both).await, both);
     drop(acting);
     app.reset().await.unwrap();
 
@@ -459,10 +479,8 @@ async fn a_shared_worker_an_acting_tab_keeps_running_is_out_of_reach_of_an_obser
         must(acting.page.as_the_page(&connect(false), soon()).await),
         "post sent, socket made"
     );
-    assert_eq!(
-        arrived(&app).await,
-        ["escapes/shared-post", "escapes/shared-socket"]
-    );
+    let both = ["escapes/shared-post", "escapes/shared-socket"];
+    assert_eq!(arrived_all(&app, &both).await, both);
     app.reset().await.unwrap();
 
     // A page that is only observed, of the same origin and in the same

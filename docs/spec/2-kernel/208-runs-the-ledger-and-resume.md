@@ -153,16 +153,6 @@ Only after every doubtful record is settled does any write run. Records in `plan
 
 **Records with no way to be found again cannot be read back,** so they cannot be reconciled. An operation that creates them is classed `irreversible`, is approved per run, and is never resumed automatically. A pipeline that creates such records avoids this by storing its own key in the system, such as a source id in a reference field; [section 209](209-record-identity-and-dependent-records.md) gives the ways.
 
-**What a binding offers as evidence.** Each write binding states it, and the engine holds the binding to it ([decision 0161](../../decisions/0161-the-plan-and-the-engine-after-the-packs-were-built.md)):
-
-| Evidence | What stands as proof that the write landed | The record ends |
-| --- | --- | --- |
-| `read_back` | The binding's read-back steps read the record; normalized, it must equal the intended values | `verified` |
-| `response` | The save's own answer, where it carries every intended field; otherwise the read-back | `verified` |
-| `acknowledged` | Nothing is read and nothing compared: the committing step's own answer is the only evidence there can be. Only for an operation declared `irreversible`, such as a queue take, a publish with no key, or a call to an irreversible tool | `acted`, never `verified`; the result and the diff say "accepted by the system, not read back" |
-
-A lost answer to an `acknowledged` save leaves the record in doubt; where the binding has no lookup, the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded before the save.
-
 **Who resumes.** A run stopped by the engine's own death is resumed by its caller with `run.resume`, never by the engine alone at its next start. A job whose lease ended without a result is treated as `possible_commit` and reconciled before anyone else gets it ([section 223](223-the-runner-protocol.md)).
 
 **Checking after a lost lease.** A later check reads every record the ledger says was verified in a run whose lease was lost, and reports any difference as evidence and an alert. It changes no state.

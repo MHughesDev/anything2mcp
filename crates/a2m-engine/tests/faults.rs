@@ -36,14 +36,37 @@ fn order() -> a2m_core::Values {
     a2m_core::Values::new().with("order_id", "A-100")
 }
 
-/// A scene whose engine gives a call to `Control` up after a short time.
-async fn impatient(tool: &str) -> Scene {
-    Scene::with_settings(
-        tool,
-        |_| {},
-        |settings| settings.control_timeout = Duration::from_millis(40),
-    )
-    .await
+/// Carries out a job in which one call to `Control` never answers, and
+/// shows that the engine's own limit is what ended it: the call hangs in
+/// the test's time (see `hang` in the shared helpers), every honest call is
+/// answered in real time under the engine's default limit, and the job ends
+/// no sooner than that limit after it began.
+async fn with_a_call_that_hangs(
+    scene: &Scene,
+    call: &'static str,
+    tool: &str,
+    input: a2m_core::Values,
+) -> JobOutcome {
+    *scene.control.faults.hangs_on.lock().unwrap() = Some(call);
+    let began = tokio::time::Instant::now();
+    let outcome = scene.work(JobKind::Execute, tool, input).await;
+    let limit = a2m_engine::EngineSettings::default().control_timeout;
+    assert!(
+        began.elapsed() >= limit,
+        "`{call}` was not ended by the engine's limit: {outcome:?}"
+    );
+    *scene.control.faults.hangs_on.lock().unwrap() = None;
+    outcome
+}
+
+/// The job was stopped because `call` was never answered.
+fn given_up(outcome: &JobOutcome, call: &str) {
+    assert_eq!(
+        failed_as(outcome),
+        (FailureClass::Busy, "control_unanswered".to_owned())
+    );
+    let message = outcome.failure().unwrap().message();
+    assert!(message.contains(&format!("`{call}`")), "{message}");
 }
 
 // ---- a write that was sent is in doubt until it is verified ----
@@ -493,29 +516,23 @@ async fn a_degraded_kernel_takes_reads_and_refuses_writes_before_anything_runs()
 
 #[tokio::test]
 async fn an_intent_that_is_never_acknowledged_is_given_up_and_nothing_is_sent() {
-    let scene = impatient(ITEM_UPSERT).await;
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     approved(&scene, ITEM_UPSERT, &rail()).await;
-    *scene.control.faults.hangs_on.lock().unwrap() = Some("intend");
-    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
-    assert_eq!(
-        failed_as(&outcome),
-        (FailureClass::Busy, "control_unanswered".to_owned())
-    );
+    let outcome = with_a_call_that_hangs(&scene, "intend", ITEM_UPSERT, rail()).await;
+    given_up(&outcome, "intend");
     assert_eq!(scene.hooks.count("put_item"), 0);
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn a_sent_write_whose_record_is_never_acknowledged_is_in_doubt() {
-    let scene = impatient(ITEM_UPSERT).await;
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     approved(&scene, ITEM_UPSERT, &rail()).await;
-    *scene.control.faults.hangs_on.lock().unwrap() = Some("acted");
-    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    let outcome = with_a_call_that_hangs(&scene, "acted", ITEM_UPSERT, rail()).await;
     assert_eq!(failed_as(&outcome).0, FailureClass::PossibleCommit);
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
     assert_ne!(scene.record_states().await, [RecordState::Verified]);
 
-    *scene.control.faults.hangs_on.lock().unwrap() = None;
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert!(completed(&outcome), "{outcome:?}");
@@ -524,13 +541,9 @@ async fn a_sent_write_whose_record_is_never_acknowledged_is_in_doubt() {
 
 #[tokio::test]
 async fn a_decision_that_never_comes_ends_the_job_before_a_driver_is_reached() {
-    let scene = impatient(ORDER_GET).await;
-    *scene.control.faults.hangs_on.lock().unwrap() = Some("decide");
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
-    assert_eq!(
-        failed_as(&outcome),
-        (FailureClass::Busy, "control_unanswered".to_owned())
-    );
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    let outcome = with_a_call_that_hangs(&scene, "decide", ORDER_GET, order()).await;
+    given_up(&outcome, "decide");
     assert!(scene.hooks.seen().iter().all(|entry| entry != "get_order"));
 }
 

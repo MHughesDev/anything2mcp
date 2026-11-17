@@ -114,11 +114,6 @@ level = "warning"
 summary = "A channel that is published to says who reads it."
 
 [[lint_rules]]
-code = "stream.protocol_unfit"
-level = "error"
-summary = "A channel states only what the wire protocol its surface speaks can carry."
-
-[[lint_rules]]
 code = "stream.untrusted_unmarked"
 level = "error"
 summary = "An output that holds text a broker returns is of a field type marked untrusted, or a field the channel's schema holds to an `enum`."
@@ -171,10 +166,6 @@ code = "surface_not_declared"
 [[failure_codes]]
 class = "policy"
 code = "scan_limit"
-
-[[failure_codes]]
-class = "policy"
-code = "transport_refused"
 
 [[failure_codes]]
 class = "policy"

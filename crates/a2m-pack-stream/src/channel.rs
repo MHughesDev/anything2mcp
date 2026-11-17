@@ -142,9 +142,6 @@ pub(crate) struct ChannelEntry {
     pub token_header: Option<String>,
     /// Whether the broker itself refuses a repeated token.
     pub broker_dedupe: bool,
-    /// How long the broker remembers a token, in milliseconds, as the file
-    /// states it: checked against what the broker reports, never longer.
-    pub dedupe_window_ms: Option<u32>,
     /// The wait of a binding that states none, in milliseconds.
     pub wait_default_ms: u32,
     /// The longest wait on this channel, in milliseconds.
@@ -178,7 +175,6 @@ pub(crate) fn code(rule: &'static str) -> LintCode {
         "publish_effect" => LintCode::fixed("stream.publish_effect"),
         "consumers_unknown" => LintCode::fixed("stream.consumers_unknown"),
         "untrusted_unmarked" => LintCode::fixed("stream.untrusted_unmarked"),
-        "protocol_unfit" => LintCode::fixed("stream.protocol_unfit"),
         _ => LintCode::fixed("stream.binding_invalid"),
     }
 }
@@ -297,22 +293,16 @@ pub(crate) fn read_channel(
 
     let subscription = doc.text("subscription").map(str::to_owned);
     match (own_subscription, &subscription) {
-        // On a log or a topic the run may read through a cursor or a
-        // subscription of its own, which the broker discards.
-        (true, None) if shape != Shape::Log && shape != Shape::Topic => wrong(
+        (true, None) if shape != Shape::Log => wrong(
             read_through_at,
             "The channel is read through the runtime's own subscription and names none.".to_owned(),
             "Add `subscription:` with the name of a subscription a person declared on the broker for the runtime. The runtime never creates one.",
         ),
-        // On a queue the runtime owns, the consumer a person made for the
-        // runtime's takes.
-        (false, Some(_)) if !(shape == Shape::Queue && ownership == Ownership::RuntimeOwned) => {
-            wrong(
-                doc.get("subscription").map_or(&doc.at, |field| &field.at),
-                "The channel names a subscription and is not read through one.".to_owned(),
-                "Add `own_subscription` to `read_through`, or remove `subscription`.",
-            );
-        }
+        (false, Some(_)) => wrong(
+            doc.get("subscription").map_or(&doc.at, |field| &field.at),
+            "The channel names a subscription and is not read through one.".to_owned(),
+            "Add `own_subscription` to `read_through`, or remove `subscription`.",
+        ),
         (_, Some(name)) if !is_wire_name(name) => wrong(
             doc.get("subscription").map_or(&doc.at, |field| &field.at),
             "The subscription's name is empty, too long, or holds a control character.".to_owned(),
@@ -361,28 +351,6 @@ pub(crate) fn read_channel(
         .and_then(|idempotency| idempotency.get("broker_dedupe"))
         .and_then(Located::as_bool)
         .unwrap_or(false);
-    let dedupe_window_ms = match idempotency.and_then(|idempotency| idempotency.get("window")) {
-        None => None,
-        Some(field) if !broker_dedupe => {
-            wrong(
-                &field.at,
-                "The file states how long the broker remembers a token, and says the broker refuses none.".to_owned(),
-                "Write `broker_dedupe: true` with the window, or remove `window`.",
-            );
-            None
-        }
-        Some(field) => match field.as_text().and_then(duration_ms) {
-            Some(ms) => Some(ms),
-            None => {
-                wrong(
-                    &field.at,
-                    "This is not a length of time.".to_owned(),
-                    "Write a whole number and a unit, such as `500ms`, `10s`, or `2m`.",
-                );
-                None
-            }
-        },
-    };
 
     let wait = doc.get("wait");
     let mut wait_ms = |key: &str, otherwise: u32| -> u32 {
@@ -446,7 +414,6 @@ pub(crate) fn read_channel(
             consumers,
             token_header,
             broker_dedupe,
-            dedupe_window_ms,
             wait_default_ms,
             wait_max_ms,
             browse_count: limit("browse_count", 100),
@@ -491,8 +458,7 @@ pub(crate) fn channel_schema() -> JsonSchema {
             "idempotency",
             JsonSchema::object()
                 .required("header", JsonSchema::text())
-                .optional("broker_dedupe", JsonSchema::bool())
-                .optional("window", JsonSchema::text()),
+                .optional("broker_dedupe", JsonSchema::bool()),
         )
         .optional(
             "wait",

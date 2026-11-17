@@ -497,7 +497,6 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
         person_at_terminal: false,
         person: None,
         key_store: None,
-        program: None,
     };
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let finished = run_with(&args, &host).await;
@@ -545,10 +544,7 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
     // The page shows the change itself, and the prompt this machine has.
-    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
-        .no_proxy()
-        .build()
-        .unwrap();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
     let page = http.get(&link).send().await.unwrap();
     assert_eq!(page.status().as_u16(), 200);
     assert_eq!(page.headers()["referrer-policy"], "same-origin");
@@ -659,10 +655,7 @@ async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its
 
     // The page says plainly that no presence prompt is available on this
     // machine, and why, before anything is pressed.
-    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
-        .no_proxy()
-        .build()
-        .unwrap();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
     let text = http.get(&link).send().await.unwrap().text().await.unwrap();
     assert!(
         text.contains("No presence prompt is available on this machine"),
@@ -745,22 +738,9 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
     )
     .unwrap();
     let link = connector.connect().await.unwrap();
-    // The folder as the command line encodes it: each byte that is not
-    // plain, such as Windows's `\\` and `:`, as a percent escape.
-    let folder: String = machine
-        .project
-        .path()
-        .to_str()
-        .unwrap()
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
-                char::from(byte).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect();
+    // The folder is named as the command line names it: a path on any
+    // system may hold what a header cannot carry as it is.
+    let folder = anything2mcp::wire::encode_path(machine.project.path()).unwrap();
     let request = axum::http::Request::builder()
         .method("POST")
         .uri(format!(
@@ -769,7 +749,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         ))
         .header("content-type", "application/json")
         .header("a2m-person-at-terminal", "true")
-        .header("a2m-project", folder.as_str())
+        .header(anything2mcp::wire::PROJECT_HEADER, folder)
         .body(axum::body::Body::from(r#"{"target": "example"}"#))
         .unwrap();
     let answer = link.send(request).await.unwrap();
@@ -789,7 +769,6 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         person_at_terminal: true,
         person: None,
         key_store: None,
-        program: None,
     };
     let args: Vec<String> = ["version", "publish", "example"]
         .iter()
@@ -800,6 +779,37 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
     let response: Json = serde_json::from_str(finished.stdout.trim()).unwrap();
     assert_eq!(response["error"]["code"], "person_required", "{response}");
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
+
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+}
+
+/// A project folder travels to the engine as the command line names it,
+/// whatever its path holds: here a space and a letter outside ASCII, as a
+/// Windows path holds `\` and `:`. The engine opened in no project, so the
+/// folder the command was run in reaches it only through the channel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_project_folder_whose_name_holds_a_space_and_a_letter_outside_ascii_reaches_the_engine() {
+    let app = TestApp::start().await.unwrap();
+    let folder = common::Folder::new("caf\u{e9} orders");
+    assert!(folder.path().to_str().unwrap().contains("caf\u{e9} orders"));
+    let machine =
+        Machine::in_folder("orders", &[(PLACEHOLDER, &app.url(""))], folder).with_passphrase();
+    let options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    assert!(options.project.is_none());
+    let local = LocalEngine::start(options, Arc::new(NoPrompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    let serving = tokio::spawn(local.serve());
+
+    let (linted, response) = command(&machine, &["draft", "lint", "example"]).await;
+    assert_eq!(linted.code, 0, "{linted:?}");
+    assert_eq!(response["result"]["ok"], true, "{response}");
 
     let (stop, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(stop.code, 0, "{stop:?}");

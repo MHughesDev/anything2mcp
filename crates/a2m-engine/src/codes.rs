@@ -76,12 +76,6 @@ pub const CONDITION_NOT_BOOLEAN: FailureCode = FailureCode::fixed("condition_not
 /// redactor removed.
 pub const ARGUMENT_MASKED: FailureCode = FailureCode::fixed("argument_masked");
 
-/// `busy`: the control plane keeps no captures; the capture was dropped.
-pub const CAPTURE_NOT_KEPT: FailureCode = FailureCode::fixed("capture_not_kept");
-/// `busy`: the control plane cannot end a record on the system's
-/// acknowledgement alone; the record stays `acted`, in doubt.
-pub const ACKNOWLEDGEMENT_NOT_KEPT: FailureCode = FailureCode::fixed("acknowledgement_not_kept");
-
 /// Every code of this crate with its class, for the test that holds them to
 /// the technical reference.
 pub const ALL: &[(FailureClass, &str)] = &[
@@ -115,8 +109,6 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::UnknownVariant, "driver_panicked"),
     (FailureClass::UnknownVariant, "condition_not_boolean"),
     (FailureClass::UnknownVariant, "argument_masked"),
-    (FailureClass::Busy, "capture_not_kept"),
-    (FailureClass::Busy, "acknowledgement_not_kept"),
 ];
 
 pub(crate) fn fail(

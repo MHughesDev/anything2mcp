@@ -1,6 +1,0 @@
-# Text the broker returns is untrusted: an output that holds it is of a
-# field type that says so.
-types:
-  broker_text:
-    base: text
-    untrusted: true

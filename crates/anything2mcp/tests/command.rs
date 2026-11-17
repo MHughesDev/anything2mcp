@@ -75,9 +75,6 @@ impl Bare {
             .current_dir(self.project.path())
             .env("A2M_HOME", self.home.path())
             .env_remove(anything2mcp::PASSPHRASE_VARIABLE)
-            // The engine runs inside each command: none is started and
-            // left running by a test of the command line.
-            .env(common::IN_PROCESS_VARIABLE, "true")
             .stdin(Stdio::null());
         if self.passphrase {
             command.env(anything2mcp::PASSPHRASE_VARIABLE, common::PASSPHRASE);
@@ -271,10 +268,7 @@ fn output_that_is_not_a_terminal_is_one_json_object_for_every_action() {
         let output = bare.run(&[&face.noun, &face.verb]);
         let json = object(&output);
         let code = output.status.code().unwrap();
-        // `engine start`, which this machine cannot carry out with no
-        // passphrase for its vault, ends as an engine not started.
-        let highest = if face.action == "engine.start" { 4 } else { 3 };
-        assert!((0..=highest).contains(&code), "{}: {code}", face.action);
+        assert!((0..=3).contains(&code), "{}: {code}", face.action);
         assert_eq!(json["ok"] == true, code == 0, "{}: {json}", face.action);
         if code == 0 {
             assert!(json["result"].is_object(), "{}: {json}", face.action);

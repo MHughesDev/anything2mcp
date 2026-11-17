@@ -16,7 +16,7 @@ use super::{Folder, Scene, failed, inputs};
 use crate::model::{Access, Isolation};
 use crate::names::codes;
 use crate::sqlite::Sqlite;
-use crate::store::{Bound, Conn, Opener, Refusal, RunLimits, StoreAt, Unseen};
+use crate::store::{Bound, Conn, Opener, Refusal, RunLimits, Unseen};
 
 fn limits() -> RunLimits {
     RunLimits {
@@ -44,7 +44,7 @@ fn a_connection_opens_no_other_file_and_leaves_none_behind() {
     let folder = Folder::new("guards");
     for access in [Access::ReadOnly, Access::ReadWrite] {
         for in_transaction in [false, true] {
-            let mut conn = Sqlite.open(&StoreAt::File(db.path().to_path_buf()), access).unwrap();
+            let mut conn = Sqlite.open(db.path(), access).unwrap();
             if in_transaction {
                 conn.begin(Isolation::Serializable, Duration::from_secs(5))
                     .unwrap();
@@ -99,7 +99,7 @@ fn a_connection_opens_no_other_file_and_leaves_none_behind() {
 fn a_reading_connection_runs_only_what_reads_and_returns_columns() {
     let db = TestDb::start().unwrap();
     let before = db.data_version().unwrap();
-    let mut conn = Sqlite.open(&StoreAt::File(db.path().to_path_buf()), Access::ReadOnly).unwrap();
+    let mut conn = Sqlite.open(db.path(), Access::ReadOnly).unwrap();
     conn.begin(Isolation::Serializable, Duration::from_secs(5))
         .unwrap();
     let conn = conn.as_mut();
@@ -127,7 +127,7 @@ fn only_an_absolute_path_is_opened() {
     for name in ["file:example.db?mode=rwc", "example.db"] {
         for access in [Access::ReadOnly, Access::ReadWrite] {
             assert_eq!(
-                Sqlite.open(&StoreAt::File(Path::new(name).to_path_buf()), access).err(),
+                Sqlite.open(Path::new(name), access).err(),
                 Some(Refusal::NotGuarded)
             );
         }
@@ -242,7 +242,7 @@ async fn a_trigger_named_in_another_case_than_its_table_stops_a_write() {
         .unwrap();
     // Discovery's account of the table names the trigger too.
     let catalog = Sqlite
-        .open(&StoreAt::File(scene.db.path().to_path_buf()), Access::ReadOnly)
+        .open(scene.db.path(), Access::ReadOnly)
         .unwrap()
         .catalog(crate::driver::CATALOG_TABLES)
         .unwrap();
@@ -349,7 +349,7 @@ async fn a_table_named_in_another_case_than_the_catalogs_is_the_same_table() {
 
     // A table the catalog does not hold at all is not "no trigger".
     let catalog = Sqlite
-        .open(&StoreAt::File(scene.db.path().to_path_buf()), Access::ReadOnly)
+        .open(scene.db.path(), Access::ReadOnly)
         .unwrap()
         .catalog(crate::driver::CATALOG_TABLES)
         .unwrap();

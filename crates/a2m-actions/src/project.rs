@@ -85,37 +85,104 @@ impl Places {
     }
 }
 
-/// A path with every link followed, in its ordinary form; as it is written
-/// when nothing is there.
-fn resolved(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).map_or_else(|_| path.to_path_buf(), |real| plain(&real))
-}
-
-/// On Windows a resolved path comes back in the verbatim form. This gives
-/// the ordinary form of the same path, so that two paths are compared in
-/// one form. Elsewhere a path has no prefix and comes back unchanged.
-fn plain(path: &Path) -> PathBuf {
-    use std::path::Prefix;
-    let mut components = path.components();
-    let start = match components.next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(letter) => format!("{}:\\", char::from(letter)),
-            Prefix::VerbatimUNC(server, share) => format!(
-                "\\\\{}\\{}\\",
-                server.to_string_lossy(),
-                share.to_string_lossy()
-            ),
+/// A path with every link followed, in the form the operating system gives
+/// a resolved path (on Windows, the verbatim form). Where the path does not
+/// exist, its nearest folder that does is resolved and the rest is joined
+/// as written. Every comparison of two paths in this file is between two
+/// paths in this form, so that a path in one form is never compared with
+/// one in another.
+fn real(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(found) = std::fs::canonicalize(at) {
+            let mut out = found;
+            out.extend(rest.iter().rev());
+            return out;
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name);
+                at = parent;
+            }
             _ => return path.to_path_buf(),
-        },
-        _ => return path.to_path_buf(),
-    };
-    let mut out = PathBuf::from(start);
-    for component in components {
-        if let Component::Normal(part) = component {
-            out.push(part);
         }
     }
-    out
+}
+
+/// The ordinary form of a resolved path, for handing on: on Windows a
+/// resolved path comes back in the verbatim form, which a person does not
+/// write and many programs do not take. Elsewhere a path has no prefix and
+/// comes back unchanged.
+fn plain(path: &Path) -> PathBuf {
+    if !cfg!(windows) {
+        return path.to_path_buf();
+    }
+    path.to_str()
+        .and_then(plain_text)
+        .map_or_else(|| path.to_path_buf(), PathBuf::from)
+}
+
+/// Whether a part of a path names a device on Windows, wherever it stands
+/// in a path and whatever follows its first dot.
+fn names_a_device(part: &str) -> bool {
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches(' ')
+        .to_lowercase();
+    let numbered = stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt"))
+        .is_some_and(|number| {
+            let mut chars = number.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        });
+    numbered
+        || matches!(
+            stem.as_str(),
+            "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
+        )
+}
+
+/// The ordinary form of a path written in Windows' verbatim form, worked
+/// out on the text alone so that it is the same on every system:
+/// `\\?\C:\x` is `C:\x`, and `\\?\UNC\server\share\x` is
+/// `\\server\share\x`. `None` when the text is not in one of those two
+/// forms, or when its ordinary form would name something else: a part that
+/// is `.` or `..`, ends with a dot or a space (both dropped from an ordinary
+/// path), holds a `/` (a separator in an ordinary path), or names a device.
+fn plain_text(text: &str) -> Option<String> {
+    let rest = text.strip_prefix(r"\\?\")?;
+    let (start, parts) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        let mut split = unc.splitn(3, '\\');
+        let server = split.next().filter(|part| !part.is_empty())?;
+        let share = split.next().filter(|part| !part.is_empty())?;
+        (format!(r"\\{server}\{share}\"), split.next().unwrap_or(""))
+    } else {
+        let bytes = rest.as_bytes();
+        let disk = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\';
+        if !disk {
+            return None;
+        }
+        (format!("{}\\", &rest[..2]), &rest[3..])
+    };
+    let names_the_same = parts.is_empty()
+        || parts.split('\\').all(|part| {
+            !part.is_empty()
+                && !part.ends_with('.')
+                && !part.ends_with(' ')
+                && !part.contains('/')
+                && !names_a_device(part)
+        });
+    names_the_same.then(|| format!("{start}{parts}"))
 }
 
 /// Whether a part of a path is hidden: its name starts with a dot.
@@ -124,7 +191,8 @@ fn hidden(part: &std::ffi::OsStr) -> bool {
 }
 
 /// Checks a project folder a front door stated, and gives it with every
-/// link followed. Touches the disk: call it off the async threads.
+/// link followed, in its ordinary form (see [`plain`]). Touches the disk:
+/// call it off the async threads.
 ///
 /// # Errors
 ///
@@ -138,7 +206,6 @@ pub(crate) fn check(
     let folder = std::fs::canonicalize(stated)
         .ok()
         .filter(|folder| folder.is_dir())
-        .map(|folder| plain(&folder))
         .ok_or("there is no such folder")?;
 
     // The engine's own folders: the store, the vault's files, the settings.
@@ -149,7 +216,7 @@ pub(crate) fn check(
         &paths.runtime,
         &paths.cache,
     ] {
-        let own = resolved(own);
+        let own = real(own);
         if folder.starts_with(&own) || own.starts_with(&folder) {
             return Err("it holds, or lies inside, one of the engine's own folders");
         }
@@ -161,8 +228,8 @@ pub(crate) fn check(
     let temporary = places
         .temp
         .as_ref()
-        .is_some_and(|temp| folder.starts_with(resolved(temp)));
-    if let Some(home) = places.home.as_ref().map(|home| resolved(home)) {
+        .is_some_and(|temp| folder.starts_with(real(temp)));
+    if let Some(home) = places.home.as_ref().map(|home| real(home)) {
         if home.starts_with(&folder) {
             return Err(
                 "it is the home folder or a folder above it, which holds the folders other programs keep their data in",
@@ -181,7 +248,7 @@ pub(crate) fn check(
         }
     }
     for program in &places.program {
-        let program = resolved(program);
+        let program = real(program);
         if program.starts_with(&folder) {
             return Err("it holds a folder other programs keep their data in");
         }
@@ -205,7 +272,7 @@ pub(crate) fn check(
     // and the project is held to the same rule: that is what keeps the
     // folder excused from the rules above.
     let mut kept = vec![folder.clone(), file.clone()];
-    if temporary && let Some(temp) = places.temp.as_ref().map(|temp| resolved(temp)) {
+    if temporary && let Some(temp) = places.temp.as_ref().map(|temp| real(temp)) {
         kept.extend(
             folder
                 .ancestors()
@@ -238,13 +305,13 @@ pub(crate) fn check(
     let allowed = roots.iter().any(|root| {
         root == PROJECT_ROOT_WORD || {
             let root = Path::new(root);
-            root.is_absolute() && folder.starts_with(resolved(root))
+            root.is_absolute() && folder.starts_with(real(root))
         }
     });
     if !allowed {
         return Err("it is not inside a folder the setting `files.allowed_roots` allows");
     }
-    Ok(folder)
+    Ok(plain(&folder))
 }
 
 /// Why an account other than this process's user may change the file or
@@ -308,7 +375,7 @@ pub(crate) fn source_path(path: &str) -> Result<(), &'static str> {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{Places, check, source_path};
+    use super::{Places, check, plain, plain_text, real, source_path};
     use crate::paths::{Env, OsFamily, Paths};
     use crate::settings::{Settings, SourceFile, Sources};
 
@@ -321,7 +388,8 @@ mod tests {
                 .join(format!("a2m-actions-project-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
-            Self(std::fs::canonicalize(&path).unwrap())
+            // Resolved and in the ordinary form, as `check` gives a folder.
+            Self(plain(&std::fs::canonicalize(&path).unwrap()))
         }
 
         /// A folder below this one that holds a project file.
@@ -519,6 +587,83 @@ mod tests {
         .unwrap();
         assert_eq!(check(&inside, &paths, &one, &places).unwrap(), inside);
         assert!(check(&outside, &paths, &one, &places).is_err());
+    }
+
+    #[test]
+    fn a_verbatim_path_is_given_back_in_its_ordinary_form_where_that_names_the_same() {
+        for (verbatim, ordinary) in [
+            (r"\\?\C:\Users\pat\work", r"C:\Users\pat\work"),
+            (r"\\?\d:\", r"d:\"),
+            (r"\\?\C:\Users\pat\.drafts\a.b", r"C:\Users\pat\.drafts\a.b"),
+            (r"\\?\C:\Users\Zoë Ann\work", r"C:\Users\Zoë Ann\work"),
+            (r"\\?\C:\console\nullish.txt", r"C:\console\nullish.txt"),
+            (r"\\?\UNC\server\share\work", r"\\server\share\work"),
+            (r"\\?\UNC\server\share", r"\\server\share\"),
+        ] {
+            assert_eq!(
+                plain_text(verbatim).as_deref(),
+                Some(ordinary),
+                "{verbatim}"
+            );
+        }
+        // Not in either form: left as it is.
+        for other in [
+            r"C:\Users\pat",
+            "/home/pat",
+            r"\\server\share\x",
+            r"\\?\Volume{0000}\x",
+            r"\\?\GLOBALROOT\Device\x",
+            r"\\?\C:",
+            r"\\?\CC:\x",
+            r"\\?\UNC\server",
+            r"\\?\UNC\\share\x",
+            r"\\.\C:\x",
+        ] {
+            assert_eq!(plain_text(other), None, "{other}");
+        }
+        // In the form, but the ordinary form would name something else.
+        for other in [
+            r"\\?\C:\a\..\b",
+            r"\\?\C:\a\.\b",
+            r"\\?\C:\a\b.",
+            r"\\?\C:\a\b ",
+            r"\\?\C:\a\\b",
+            r"\\?\C:\a\b/c",
+            r"\\?\C:\a\CON",
+            r"\\?\C:\a\nul.txt",
+            r"\\?\C:\a\Com1 .log",
+            "\\\\?\\C:\\a\\lpt\u{b9}",
+            r"\\?\UNC\server\share\aux",
+        ] {
+            assert_eq!(plain_text(other), None, "{other}");
+        }
+        // On every system but Windows a path is never changed.
+        if !cfg!(windows) {
+            let odd = Path::new(r"\\?\C:\x");
+            assert_eq!(plain(odd), odd);
+        }
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_is_resolved_up_to_its_nearest_folder_that_does() {
+        let root = Folder::new("real");
+        let real_root = std::fs::canonicalize(&root.0).unwrap();
+        let missing = root.0.join("not").join("yet");
+        assert_eq!(real(&missing), real_root.join("not").join("yet"));
+        assert_eq!(real(&root.0), real_root);
+        // Through a link, the link is followed.
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(root.0.join("there")).unwrap();
+            std::os::unix::fs::symlink(root.0.join("there"), root.0.join("link")).unwrap();
+            assert_eq!(
+                real(&root.0.join("link").join("later")),
+                real_root.join("there").join("later")
+            );
+        }
+        // Nothing of it exists: as it is written.
+        let nowhere = Path::new("no-such-relative-folder").join("x");
+        assert_eq!(real(&nowhere), nowhere);
     }
 
     #[test]

@@ -70,7 +70,7 @@ pub enum ApproveWrites { CallerConfirms, PersonEachRun, NamedApprover }   // sec
 pub enum WhitespaceRule { Collapse, Trim, Exact }
 pub enum DecimalMark { Point /* "." */, Comma /* "," */ }
 pub enum Rounding { HalfUp, HalfEven, HalfDown, Up, Down, Ceiling, Floor }
-pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey, CallerKey }
+pub enum DigestPurpose { BlobName, RestrictedValue, RecordKey }
 
 // Checked names: lowercase letters, digits, and underscores, starting with a letter. Each has
 // LONGEST, new, as_str, Display, FromStr, and serde that refuses a badly formed name. Each one

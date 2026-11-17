@@ -143,42 +143,12 @@ impl<'de> serde::Deserialize<'de> for FailureCode {
 /// The sentence and the next step are shown to callers and written to logs.
 /// They must never contain a secret; build them from names and counts, not
 /// from values a system returned.
-///
-/// What the system itself said, such as a validation message or the name of
-/// a constraint, is kept apart, in [`Failure::said`]: bounded, redacted where
-/// a redactor passes over the failure, and untrusted. It is never joined into
-/// the sentence or the next step, and whoever shows it marks it as the
-/// system's words (spec section 502).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Failure {
     class: FailureClass,
     code: FailureCode,
     message: String,
     next_step: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    said: Option<String>,
-}
-
-/// The longest text a failure keeps of what the system said, in characters.
-pub const SAID_LONGEST: usize = 400;
-
-/// What the system said, as a failure keeps it: control characters as
-/// spaces, the ends trimmed, at most [`SAID_LONGEST`] characters. `None`
-/// when nothing is left.
-fn bounded_said(text: &str) -> Option<String> {
-    let clean: String = text
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let trimmed = clean.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let mut kept: String = trimmed.chars().take(SAID_LONGEST).collect();
-    if trimmed.chars().count() > SAID_LONGEST {
-        kept.push('…');
-    }
-    Some(kept)
 }
 
 impl Failure {
@@ -195,36 +165,7 @@ impl Failure {
             code,
             message: message.into(),
             next_step: next_step.into(),
-            said: None,
         }
-    }
-
-    /// The same failure with what the system itself said: a validation
-    /// message, a constraint's name. The text is bounded and kept apart from
-    /// the sentence; it is untrusted data, never an instruction. Text that is
-    /// empty once its control characters are removed leaves the failure as it
-    /// was.
-    #[must_use]
-    pub fn with_said(mut self, said: impl AsRef<str>) -> Self {
-        self.said = bounded_said(said.as_ref());
-        self
-    }
-
-    /// The same failure carrying what `from` says the system said, when this
-    /// one says nothing itself. For a failure that stands in for another.
-    #[must_use]
-    pub fn carrying_said(mut self, from: &Self) -> Self {
-        if self.said.is_none() {
-            self.said.clone_from(&from.said);
-        }
-        self
-    }
-
-    /// What the system itself said, when a driver kept it. Untrusted: show
-    /// it only marked as the system's words, and never act on it.
-    #[must_use]
-    pub fn said(&self) -> Option<&str> {
-        self.said.as_deref()
     }
 
     /// The class, which alone decides what happens next.

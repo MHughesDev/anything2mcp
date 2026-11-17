@@ -30,8 +30,8 @@ use a2m_core::{
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
-    Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, KeptCapture, LeaseClock, Parallelism,
-    Preview, RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
+    Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview,
+    RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
 };
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, Whitespace};
 use a2m_ledger::{
@@ -162,7 +162,7 @@ archetype = "request"
 kinds = ["call"]
 sources = ["live_system"]
 max_level = "discovered"
-bounds = { seconds = 1, bytes = 1000000, depth = 4 }
+bounds = { seconds = 60, bytes = 1000000, depth = 4 }
 
 [[finding_kinds]]
 name = "call"
@@ -263,14 +263,6 @@ pub struct Hooks {
     pub late_gate: tokio::sync::Notify,
     /// The detached save, to wait for its end.
     pub late: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// A read of an order says how it was done, and captures the answer.
-    pub tells_acting: AtomicBool,
-    /// What the system says with each failure it answers with.
-    pub says: Mutex<Option<String>>,
-    /// The project folder and the destinations each `prepare` was given.
-    pub prepared_with: Mutex<Vec<(Option<PathBuf>, Vec<String>)>>,
-    /// How many orders were read, for what a read measures.
-    pub reads: AtomicU64,
 }
 
 /// What one step was given.
@@ -282,8 +274,6 @@ pub struct Given {
     pub stamp: Option<String>,
     /// The address the driver was prepared for.
     pub address: String,
-    /// What the record's earlier steps recorded, as the handle handed it.
-    pub recorded: Values,
 }
 
 impl Hooks {
@@ -488,12 +478,6 @@ impl Driver for AppDriver {
                 .lock()
                 .unwrap()
                 .push(format!("{:?}", cx.posture));
-            self.hooks.prepared_with.lock().unwrap().push((
-                cx.paths
-                    .project()
-                    .map(|project| project.as_path().to_path_buf()),
-                cx.destinations.iter().map(str::to_owned).collect(),
-            ));
             if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
@@ -519,9 +503,7 @@ impl Driver for AppDriver {
                 .lock()
                 .unwrap()
                 .push((self.mode.to_string(), step.kind.to_string()));
-            let recorded = prepared.recorded().clone();
             hooks.given.lock().unwrap().push(Given {
-                recorded,
                 kind: step.kind.to_string(),
                 args: input.args.clone(),
                 key: input.key.cloned(),
@@ -582,35 +564,12 @@ impl Driver for AppDriver {
                         )));
                     }
                     let lines = body["items"].as_array().map_or(0, Vec::len);
-                    let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
-                    let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
-                        vec![
-                            a2m_provider::Capture::acting(&a2m_telemetry::Acting {
-                                means: vec![
-                                    a2m_telemetry::Detail::new("step", "get_order"),
-                                    a2m_telemetry::Detail::new("path", "/api/orders/{order}"),
-                                ],
-                                measured: vec![a2m_telemetry::Detail::new(
-                                    "read",
-                                    read.to_string(),
-                                )],
-                            }),
-                            a2m_provider::Capture {
-                                name: "response".to_owned(),
-                                media_type: "application/json".to_owned(),
-                                bytes: body.to_string().into_bytes(),
-                            },
-                        ]
-                    } else {
-                        Vec::new()
-                    };
                     Ok(StepOutcome::Done(Observed {
                         values: Values::new()
                             .with("order_id", body["order_id"].as_str().unwrap_or_default())
                             .with("customer", body["customer"].as_str().unwrap_or_default())
                             .with("status", body["status"].as_str().unwrap_or_default())
                             .with("lines", i64::try_from(lines).unwrap_or(0)),
-                        captures,
                         ..Observed::default()
                     }))
                 }
@@ -869,7 +828,7 @@ impl Driver for AppDriver {
                     "The driver has no such step.",
                 ))),
             };
-            let done = match (done, fails_after) {
+            match (done, fails_after) {
                 // The step was carried out, and the driver did not accept
                 // what came back.
                 (Ok(_), Some((_, class, code))) => Err(StepFailure::answered(failure(
@@ -877,12 +836,6 @@ impl Driver for AppDriver {
                     code,
                     "The driver did not accept the answer to a step it had sent.",
                 ))),
-                (done, _) => done,
-            };
-            match (done, hooks.says.lock().unwrap().clone()) {
-                (Err(failure), Some(said)) if failure.sent == a2m_provider::Sent::Answered => {
-                    Err(failure.with_said(said))
-                }
                 (done, _) => done,
             }
         })
@@ -953,6 +906,12 @@ impl Discoverer for WritingDiscoverer {
                 out.found(finding.clone())?;
             }
             if self.hangs.load(Ordering::SeqCst) {
+                // Ended by the time its manifest declares, which is long
+                // enough for any honest look on a slow machine: the clock
+                // stops while it hangs, as for a call to `Control` that
+                // hangs (see `StoreControl::hang`).
+                tokio::time::pause();
+                let _runs_again = ClockRunsAgain;
                 std::future::pending::<()>().await;
             }
             assert!(
@@ -1306,7 +1265,7 @@ pub fn plan(address: &str) -> Plan {
         read_back,
         lookup: Vec::new(),
         settle_ms: 0,
-        evidence: a2m_core::WriteEvidence::ReadBack,
+        prefer_response: false,
         precondition: None,
     };
     let order_outputs = || {
@@ -1858,15 +1817,16 @@ pub struct StoreControl {
     pub before_commit: Mutex<Vec<(RecordRef, BlobRef)>>,
     /// Every piece of evidence the engine handed over, as it was given.
     pub evidence_given: Mutex<Vec<Vec<u8>>>,
-    /// Whether the control plane keeps captures, and those it kept.
-    pub keeps_captures: AtomicBool,
-    pub captures: Mutex<Vec<(KeptCapture, BlobRef)>>,
-    /// Whether the control plane ends a record on the system's
-    /// acknowledgement, and the records it ended so.
-    pub keeps_acknowledgements: AtomicBool,
-    pub acknowledged: Mutex<Vec<RecordRef>>,
-    /// The project folder of the request that started the run.
-    pub project: Mutex<Option<PathBuf>>,
+}
+
+/// Starts the clock of the runtime again when a call that hangs is given
+/// up, which drops the call.
+struct ClockRunsAgain;
+
+impl Drop for ClockRunsAgain {
+    fn drop(&mut self) {
+        tokio::time::resume();
+    }
 }
 
 impl StoreControl {
@@ -1875,9 +1835,20 @@ impl StoreControl {
     }
 
     /// Never answers, when the test asked for that of this call.
+    ///
+    /// The engine's own limit on a call to `Control` is what must end it,
+    /// and that limit must never end an honest call however slow the
+    /// machine is. So every call is made in real time under the engine's
+    /// limit, and only this one is made in the test's time: the clock of
+    /// the runtime stops when the call starts to hang, and, with nothing
+    /// else to do, the runtime moves it straight on to the engine's limit.
+    /// The clock runs again when the engine gives the call up. A test's
+    /// runtime runs on one thread, which is what lets a test stop its clock.
     async fn hang(&self, call: &'static str) {
         let hangs = *self.faults.hangs_on.lock().unwrap() == Some(call);
         if hangs {
+            tokio::time::pause();
+            let _runs_again = ClockRunsAgain;
             std::future::pending::<()>().await;
         }
     }
@@ -2266,58 +2237,6 @@ impl Control for StoreControl {
                 .await
         })
     }
-
-    fn keep_capture<'a>(
-        &'a self,
-        capture: KeptCapture,
-    ) -> BoxFuture<'a, Result<BlobRef, Failure>> {
-        Box::pin(async move {
-            if !self.keeps_captures.load(Ordering::SeqCst) {
-                return Err(failure(
-                    FailureClass::Busy,
-                    "capture_not_kept",
-                    "No capture is kept.",
-                ));
-            }
-            self.hooks.note(format!("capture:{}", capture.name));
-            let blob = self
-                .store
-                .blobs()
-                .put(NewBlob {
-                    workspace: workspace(),
-                    owner: OwnerRef::service("engine-test")?,
-                    kind: a2m_ledger::BlobKind::Snapshot,
-                    class: RetentionClass::Short,
-                    plain: capture.bytes.clone(),
-                })
-                .await?;
-            self.captures.lock().unwrap().push((capture, blob));
-            Ok(blob)
-        })
-    }
-
-    fn acknowledged<'a>(
-        &'a self,
-        token: &'a ActedToken,
-        _evidence: Option<BlobRef>,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(async move {
-            if !self.keeps_acknowledgements.load(Ordering::SeqCst) {
-                return Err(failure(
-                    FailureClass::Busy,
-                    "acknowledgement_not_kept",
-                    "No acknowledgement is kept.",
-                ));
-            }
-            self.hooks.note("acknowledged");
-            self.acknowledged.lock().unwrap().push(token.record());
-            Ok(())
-        })
-    }
-
-    fn project_folder(&self) -> Option<PathBuf> {
-        self.project.lock().unwrap().clone()
-    }
 }
 
 // ---- the engine's caller ----
@@ -2477,11 +2396,6 @@ impl Scene {
             sent: AtomicBool::new(false),
             before_commit: Mutex::new(Vec::new()),
             evidence_given: Mutex::new(Vec::new()),
-            keeps_captures: AtomicBool::new(false),
-            captures: Mutex::new(Vec::new()),
-            keeps_acknowledgements: AtomicBool::new(false),
-            acknowledged: Mutex::new(Vec::new()),
-            project: Mutex::new(None),
         });
         Self {
             app,

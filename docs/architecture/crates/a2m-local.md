@@ -81,21 +81,6 @@ impl Connector {
     /// It starts nothing: when no engine answers it fails with busy / engine_unreachable.
     pub async fn connect(&self) -> Result<Link, Failure>;
 }
-// Start on demand (decision 0165): the client takes the start lock, looks again, starts
-// `start` detached, and waits for the channel to answer, all within `patience`.
-pub struct Launch {
-    pub program: PathBuf, pub args: Vec<String>, pub cwd: PathBuf,
-    pub environment: BTreeMap<String, String>, // the whole environment; nothing else is passed on
-    pub log: PathBuf,                          // standard output and error, appended
-    pub input: Option<Secret>,                 // written once to standard input, then closed
-}
-impl Launch { pub fn log_of(paths: &Paths) -> PathBuf; }   // `engine.log` in the log directory
-pub enum Started { Found(Link), Launched(Link), Refused(Failure) } // Refused: no process could be started
-impl Connector {
-    pub async fn connect_or_start(&self, paths: &Paths, start: &Launch, patience: Duration)
-        -> Result<Started, Failure>;
-}
-pub const START_LOCK_NAME: &str; pub const ENGINE_LOG_NAME: &str; pub const STARTED_LINE: &str;
 pub struct Link { /* an HTTP/1.1 connection over the channel; the engine's hello */ }
 impl Link {
     pub fn engine_version(&self) -> Version;
@@ -183,15 +168,15 @@ On Windows the pipe's name also carries a short digest of the runtime directory'
 | Step | What happens | Detail |
 | --- | --- | --- |
 | Find | The client connects to the fixed path from `Paths` | No answer, or a refused connection on a stale socket, means not running |
-| Start | The client takes the start lock, checks again, and starts the same program's `serve`, detached: on macOS and Linux in a session of its own, on Windows with no console, in a process group of its own, and out of the caller's job where the job allows it. Its environment, folder, and standard streams are what the product's `Launch` says ([decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md)) | A second client arriving at once waits on the start lock and then connects. A refused start is `Started::Refused`, and the caller may run the engine inside itself |
-| Ready | The engine binds the channel, which takes the engine lock, then opens the kernel, and answers a hello only once `Kernel::open` has returned, in whatever health state | The client waits on the channel answering its hello, up to a fixed deadline (30 seconds for an engine it started), then exits with code 4 |
+| Start | The client takes the start lock, checks again, and starts the same program in the solo profile's `serve`, detached | A second client arriving at once waits on the start lock and then connects |
+| Ready | The engine binds the channel only after `Kernel::open` has returned, in whatever health state | The client waits on the channel becoming connectable, up to a fixed deadline, then exits with code 4 |
 | Version | A newer client asks an older engine to drain and restart. If runs are active, the client reports that and leaves the engine alone | An older client reaching a newer engine is served while the local API version matches; otherwise it is told to upgrade |
 | Idle stop | After `engine.idle_stop_minutes` with no connections and `IdleHolds::busy` false, the engine saves sessions to the vault, closes the kernel, and exits | A waiting page and a run in hand are idle holds: the product's hold asks `Kernel::runs_in_hand`. The keeper's keep-alive window is to be one |
 | Stop | `Channel::serve` returns the engine lock, still held; the product closes the kernel and then drops it | No second engine opens the store while the first still writes to it |
 | Crash | The engine lock is an operating-system lock, so it is released when the process dies | The next start sets orphaned runs to `stopped`, as `Kernel::open` describes |
 | In process | A command that finds no engine takes the engine lock in the same step and holds it until its kernel has closed; `--in-process` is refused while an engine answers | The product crate opens the kernel inside the command, with no channel. A second command waits a bounded time for the lock; `serve` is refused at its bind |
 
-Two locks are used. The engine lock is held by the engine for its whole life and proves one engine per user and per data directory. It is two operating-system file locks taken together, one in the runtime directory and one in the data directory, because two runtime directories can lead to one data directory and two engines on one store must never run. The start lock is held by a client only while it starts the engine, so two clients never start two; it is a file lock in the runtime directory, `start.lock`, taken without waiting and looked at again every 25 ms while the channel is looked at too. No lock is judged by a file merely existing.
+Two locks are used. The engine lock is held by the engine for its whole life and proves one engine per user and per data directory. It is two operating-system file locks taken together, one in the runtime directory and one in the data directory, because two runtime directories can lead to one data directory and two engines on one store must never run. The start lock is held by a client only while it starts the engine, so two clients never start two; it is a file lock in the runtime directory, and is not built yet. No lock is judged by a file merely existing.
 
 The `engine.*` actions are carried out here, in the client end, because they act on the process: `engine.start` runs the start procedure; `engine.stop` asks the engine to drain; `engine.status` reports `not running` when nothing answers and otherwise dispatches; `engine.logs` reads the log directory from `Paths`.
 
@@ -200,8 +185,7 @@ The `engine.*` actions are carried out here, in the client end, because they act
 | Rule | How it is held |
 | --- | --- |
 | No approve command, tool, or route | The registry has no such action, and the router has no route to `ApprovalDesk`; `a2m-actions` tests both |
-| The loopback listener carries no API | It serves the approval page, the stored diff it was opened for, and two presses: approve and decline; and the page of a person's act, what the desk holds for it, and two presses: carry out and decline. Nothing else answers |
-| A person's act is carried out only from its page | A press of Carry out raises the presence prompt; only its success reaches `ApprovalDesk::carry_out`, with a proof given for that act. A press without the page's value, from another origin, with the prompt not passed, a second press, or a press after the window does nothing |
+| The loopback listener carries no API | It serves the page, the stored diff it was opened for, and two presses: approve and decline. Nothing else answers |
 | One prompt at a time | The surface holds one lock while a prompt is up. A second press, or a protected setting meanwhile, raises nothing: the page answers 503, and `confirm_presence` fails with `busy`/`prompt_busy` |
 | No prompt but a page's while a page waits | `confirm_presence` fails with `busy`/`prompt_busy` while any page waits, so no dialog comes up that the person reading a page could take for its own. The page says to answer a prompt only right after one's own press, and shows the twelve characters a prompt that carries words shows. polkit's dialog carries none, so on Linux a program that holds another waiting page's link can still press it first; the person's press is then told that another prompt is up (section 503 states the limit) |
 | A prompt ends with the window | `ask` is given the end of the page's approval window; the prompt is cancelled then and the answer is a dismissal. The surface keeps the window itself too: an answer that comes back at or after the deadline is a dismissal, whatever it says. A press is carried out in a task of its own, so a browser that goes away leaves no page marked as pressed |
@@ -305,7 +289,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 | `policy` | `peer_not_allowed` | An engine owned by another user. A connection from another user is closed unread, so that client sees `connection_lost` |
 | `policy` | `presence_failed` | The person dismissed or failed the prompt, or none can be raised on this machine; the message gives the reason |
 | `busy` | `prompt_busy` | A presence prompt is already up, and one is raised at a time |
-| `busy` | `engine_unreachable` | Nothing answers on the channel; or an engine started on demand ended before it answered, or did not answer within the deadline, with the log to read; the command exits with code 4 |
+| `busy` | `engine_unreachable` | Nothing answers on the channel; the command exits with code 4 |
 | `busy` | `channel_unavailable` | A directory, a lock file, the channel, or the loopback listener cannot be opened |
 | `input` | `hello_invalid` | A connection's first request was not a well-formed hello |
 | `input` | `local_api_mismatch` | The client and the engine speak different versions of the local API |
@@ -315,8 +299,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 
 | Must always hold | Proven by |
 | --- | --- |
-| Two clients started at the same moment produce one engine | Built: two clients at once share one engine, and a second engine on the same data directory is refused; and in the product crate, `two_commands_at_once_start_one_engine`: two commands with no engine running start one, as the log's one start line and one ready line show |
-| An engine started on demand holds none of its caller's handles and none of its credentials | Built, in the product crate: `a_command_with_no_engine_starts_one_detached_and_is_answered`: the command's output is read to its end while the engine runs, and on Linux the engine is in a session of its own, in its data directory, with the passphrase in neither its environment nor its arguments |
+| Two clients started at the same moment produce one engine | Built: two clients at once share one engine, and a second engine on the same data directory is refused. Not built: the start on demand, so no test starts clients against no engine |
 | A different user is refused, before any byte is read | Built: an engine that expects another user closes this user's connection unread, and the service sees nothing. Not built: a test run as a second account in CI |
 | A client refuses an engine owned by someone else | Built: a client that expects another user's engine sends nothing. Not built: a socket or pipe planted by another account |
 | A crashed engine leaves no lock that blocks the next start | Built: a stale socket is not an engine and the next engine binds over it; a dropped lock is free. Not built: a test that kills an engine process |
@@ -336,9 +319,8 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 
 1. Done: `Paths` from `a2m-actions`, the engine lock, and the socket on Linux and macOS with the peer check and the client's check of the owner. Two clients share one engine. Run on Linux only; the macOS code is compiled and linted, not run.
 2. Written, not run: the named pipe on Windows, with both checks. It is compiled and linted for Windows through a crate that holds only the operating-system module, because the whole crate's tree compiles SQLite. CI must show its tests and the channel's tests passing on Windows. Hypothesis H-06 is not yet measured.
-3. Partly done: the hello with the version exchange, the idle stop, the engine lock held by a command that runs the engine inside itself ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)), and start on demand under the start lock, detached on each system ([decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md)), run on Linux; the Windows start is compiled, not run. Not built: the drain and restart of an older engine, `engine.logs`, rotation of the engine's log, and the 30 ms and cold-start numbers of spec section 222.
+3. Partly done: the hello with the version exchange, the idle stop, and the engine lock held by a command that runs the engine inside itself ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)). Not built: start on demand and the start lock, the drain and restart of an older engine, the `engine.*` actions of the client end, and the 30 ms and cold-start numbers of spec section 222.
 4. Done: the loopback listener and the approval page, which shows the stored change through `ApprovalDesk::preview`, with the prompt behind an interface. Not built: the words above the records for uploads, sends, and anything irreversible.
-4a. Done ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)): the page of a person's act an agent asked for, such as a publish, served by `ask_person_act` on the same listener at `/act/<code>`. It shows what `ApprovalDesk::person_act` reads back: the action, its summary, every input field as text, who asked, and for a publish what each tool may do. A press of Carry out raises the presence prompt, one at a time with every other; only a proof from it, made with `PresenceProof::for_act`, goes to `ApprovalDesk::carry_out`, and the answer page says what the act came to. Decline and silence call `ApprovalDesk::decline_act`. The page has the approval page's guard, headers, one-time value, and window. Tests: `a_persons_act_an_agent_asks_for_is_carried_out_once_from_its_page` and `a_persons_act_nobody_carries_out_ends_with_its_window_and_nothing_is_done`, through the real loopback page.
 5. Done: the presence prompt's interface as [decision 0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) gives it: availability asked at run time with a kind and a reason, a deadline on every ask, one prompt at a time, and the name of the prompt that answered.
 6. Done, with what only a prepared machine can show: the Linux prompt over polkit. Run here: the whole mapping against a made-up authority; the real bus code against an address where nothing listens; and the real bus code against a real polkit on a bus of the test's own, for the cases that need nothing installed (no polkit on the bus, and no policy file). Not run anywhere yet: the cases that need the policy file installed and a test account, which the CI job prepares (below). Never run: a dialog on a real desktop, under Wayland and under X11, which needs a person once.
 7. Written, not run: the macOS and Windows prompts ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). Run here, on Linux: their whole mapping against a made-up system. Compiled and linted for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`, tests included, through a scratch crate that holds only `presence.rs`, its files, and their tests, because the whole crate's tree compiles SQLite. CI on macOS and Windows is the first compile of the whole crate and the first run of the real `available()`; the real `ask` needs a person once on each.
@@ -357,7 +339,7 @@ It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health
 
 ## Open points
 
-- Settled by [decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md): the pipe, the peer checks, and the locks need no new crate. Settled by [decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md): starting a detached process on each system, with no new crate; `setsid` between fork and exec is the crate's one `unsafe` block for it.
+- Settled by [decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md): the pipe, the peer checks, and the locks need no new crate. Still open from research brief 26: starting a detached process on each system.
 - Settled by [research note 20](../../research/20-operating-system-user-presence-checks.md) and decisions [0133](../../decisions/0133-the-presence-prompt-on-each-operating-system-and-what-it-is-said-to-prove.md) and [0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md): which presence prompts a background process can raise, and the Linux one as built; [decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md), the macOS and Windows ones as written. Still open: how the policy file reaches a machine that installed the product through pip or npm, which carry one binary; whether a desktop's polkit agent closes its dialog when the check is cancelled; the hand check on a desktop; and on macOS and Windows the hand checks listed under the presence prompt, of which the one most likely to change the design is whether the Windows prompt comes to the front.
 - How `doctor.run` learns the presence check: a method on `PersonSurface` that the dispatcher's `doctor.run` asks, most likely.
 - The record of an approval names the prompt only once the policy engine's `PresenceCheck` has the three names.

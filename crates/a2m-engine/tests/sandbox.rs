@@ -126,8 +126,11 @@ async fn a_discoverer_that_tries_to_write_is_stopped_and_nothing_is_stored() {
 async fn a_discoverer_that_never_ends_is_ended_by_its_declared_bound_and_its_findings_stand() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     scene.discoverer.hangs.store(true, Ordering::SeqCst);
+    let began = tokio::time::Instant::now();
     let outcome = scene.discover("app").await;
     assert!(completed(&outcome), "{outcome:?}");
+    // Ended by the time its manifest declares, and not sooner.
+    assert!(began.elapsed() >= std::time::Duration::from_secs(60));
     assert_eq!(
         discovered(&scene),
         [(

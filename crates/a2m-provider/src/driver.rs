@@ -17,7 +17,6 @@ use a2m_core::{
     RecordKey, Redact, RunId, Step, StepKind, SurfacePlan, TargetName, Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
-use a2m_telemetry::Acting;
 
 use crate::BoxFuture;
 use crate::codes;
@@ -152,8 +151,6 @@ impl fmt::Debug for PrepareContext<'_> {
 pub struct Prepared {
     state: Box<dyn Any + Send>,
     guard: Option<Guard>,
-    /// What the record's earlier steps recorded, for the step being acted.
-    recorded: Values,
 }
 
 /// What the handle remembers of the context a `Prepared` was made in.
@@ -171,24 +168,7 @@ impl Prepared {
         Self {
             state: Box::new(state),
             guard: None,
-            recorded: Values::new(),
         }
-    }
-
-    /// What the earlier steps of the record this step belongs to returned
-    /// in [`Observed::for_reconcile`], by name: within a pass, and on a
-    /// resume what the engine stored before the record's commit point. A
-    /// read-back, a lookup, or a reconcile read uses it to find the record
-    /// by a message id, a log position, a file's digest, or a frame built
-    /// before the save. Empty for a step of no record, and for a record
-    /// whose steps recorded nothing.
-    ///
-    /// The handle sets it for each step, just before the driver's `act` is
-    /// called, and empties it after; outside `act` it is empty. A driver
-    /// that holds its state borrowed reads this first.
-    #[must_use]
-    pub fn recorded(&self) -> &Values {
-        &self.recorded
     }
 
     /// The driver's state, when it is a `T`.
@@ -204,11 +184,9 @@ impl Prepared {
     /// The `Prepared` itself, when its state is not a `T`.
     pub fn into_state<T: Any>(self) -> Result<Box<T>, Self> {
         let guard = self.guard;
-        self.state.downcast::<T>().map_err(|state| Self {
-            state,
-            guard,
-            recorded: Values::new(),
-        })
+        self.state
+            .downcast::<T>()
+            .map_err(|state| Self { state, guard })
     }
 }
 
@@ -236,11 +214,6 @@ pub struct StepInput<'a> {
 
 /// Something a step kept as evidence: a response, a screenshot, a file. It
 /// has passed the redactor before it left `act`.
-///
-/// One name is the contract's own: a capture named [`Capture::ACTING`], of
-/// the media type `application/json`, is how the step was done, an
-/// [`Acting`], which the engine puts in the step's trace record and does not
-/// keep as evidence. Make it with [`Capture::acting`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
     /// A short name, such as `response`.
@@ -249,31 +222,6 @@ pub struct Capture {
     pub media_type: String,
     /// Its bytes, already redacted.
     pub bytes: Vec<u8>,
-}
-
-impl Capture {
-    /// The name of the capture that says how a step was done.
-    pub const ACTING: &'static str = "acting";
-
-    /// The capture that says how the step was done: `means`, which the
-    /// trace's signature covers, so two runs that did the same thing give
-    /// the same signature; and `measured`, which it does not. Each detail's
-    /// name is the pack's own fixed word.
-    #[must_use]
-    pub fn acting(acting: &Acting) -> Self {
-        Self {
-            name: Self::ACTING.to_owned(),
-            media_type: "application/json".to_owned(),
-            // Two lists of names and texts always encode.
-            bytes: serde_json::to_vec(acting).unwrap_or_default(),
-        }
-    }
-
-    /// Whether this is the capture that says how the step was done.
-    #[must_use]
-    pub fn is_acting(&self) -> bool {
-        self.name == Self::ACTING && self.media_type == "application/json"
-    }
 }
 
 /// What a step observed.
@@ -289,19 +237,6 @@ pub struct Observed {
     pub for_reconcile: Values,
     /// Evidence, already redacted.
     pub captures: Vec<Capture>,
-}
-
-impl Observed {
-    /// How the step was done, from its [`Capture::ACTING`] capture; `None`
-    /// when it has none, or when that capture is not an [`Acting`] once the
-    /// redactor has passed over it.
-    #[must_use]
-    pub fn acting(&self) -> Option<Acting> {
-        self.captures
-            .iter()
-            .find(|capture| capture.is_acting())
-            .and_then(|capture| serde_json::from_slice(&capture.bytes).ok())
-    }
 }
 
 /// How a step ended when it did not fail.
@@ -361,16 +296,6 @@ impl StepFailure {
             failure,
             sent: Sent::Unknown,
         }
-    }
-
-    /// The same failure with what the system itself said: its validation
-    /// message, the name of the constraint it broke. Bounded, redacted by
-    /// the handle, and carried to the run's failure as untrusted data, kept
-    /// apart from the sentence (see [`Failure::with_said`]).
-    #[must_use]
-    pub fn with_said(mut self, said: impl AsRef<str>) -> Self {
-        self.failure = self.failure.with_said(said);
-        self
     }
 }
 
@@ -608,38 +533,6 @@ impl DriverHandle {
         input: &StepInput<'_>,
         authority: Authority<'_>,
     ) -> Result<StepOutcome, StepFailure> {
-        self.act_recorded(prepared, step, input, authority, &Values::new())
-            .await
-    }
-
-    /// As [`DriverHandle::act`], with what the record's earlier steps
-    /// recorded, which the driver reads through [`Prepared::recorded`]
-    /// while it acts.
-    ///
-    /// # Errors
-    ///
-    /// As [`DriverHandle::act`].
-    pub async fn act_recorded(
-        &self,
-        prepared: &mut Prepared,
-        step: &Step,
-        input: &StepInput<'_>,
-        authority: Authority<'_>,
-        recorded: &Values,
-    ) -> Result<StepOutcome, StepFailure> {
-        prepared.recorded = recorded.clone();
-        let result = self.act_checked(prepared, step, input, authority).await;
-        prepared.recorded = Values::new();
-        result
-    }
-
-    async fn act_checked(
-        &self,
-        prepared: &mut Prepared,
-        step: &Step,
-        input: &StepInput<'_>,
-        authority: Authority<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
         if !self.facts.steps.contains(&step.kind) {
             return Err(refused(codes::unknown_variant(
                 codes::STEP_KIND_UNKNOWN,
@@ -821,8 +714,7 @@ impl DriverHandle {
                 codes::NO_CONFIRMATION,
                 failure.message().to_owned(),
                 "Reconcile the record: read it back before anything is written again.",
-            )
-            .carrying_said(&failure);
+            );
         }
         StepFailure { failure, sent }
     }

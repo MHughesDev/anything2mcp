@@ -38,7 +38,6 @@ consumers: outside                # outside | none | unknown; default unknown
 idempotency:
   header: idempotency-token       # where the record's token travels, if consumers honour it
   broker_dedupe: false            # whether the broker itself refuses a repeated token
-  # window: 2m                    # with broker_dedupe: how long the broker remembers one
 wait:
   default: 10s
   max: 60s                        # the compiler refuses a wait above the target's ceiling
@@ -52,12 +51,12 @@ limits:
 | `shape` | `retained`: the broker keeps the last value per key. `log`: the broker keeps messages in order, each at a position it reports. `queue`: a message is delivered to one reader and removed when acknowledged. `topic`: every open subscription gets a copy, and nothing is kept |
 | `role` | `state`: the latest value for a key is the record, and a newer one supersedes it. `events`: each message is a thing that happened and is acted on by whoever reads it. A judgment the developer makes; never drafted |
 | `read_through` | How the runtime reads without taking from others: a subscription of its own, the broker's browse, both, or not at all. `list` uses the browse and `await` the subscription |
-| `subscription` | The runtime's own subscription. On a log or a topic it may be left out: the run then reads through a cursor or a subscription of its own, which the broker discards. On a queue the runtime owns, the consumer a person made for the runtime's takes |
+| `subscription` | The runtime's own subscription. On a log it may be left out: the run then reads through a cursor of its own, which the broker discards |
 | `ownership` | `runtime_owned` only when the target declares that nothing else reads this queue |
 | `consumers` | Who reads what is published. `unknown` is treated as `outside` |
 | `wait` | Default and largest wait for this channel; the settings hold a ceiling for all ([section 226](../2-kernel/226-configuration.md)) |
 
-The surface kind `broker` takes one `address`, a `protocol`, and a `rate`, as other surfaces do. The protocols are `nats`, the NATS client protocol with JetStream ([record 0167](../../decisions/0167-the-stream-pack-speaks-nats-with-jetstream-through-a-client-of-its-own.md)), and `example-broker/1`, the test broker's own. Over `nats` a channel that keeps messages has the address `STREAM/subject`, and a topic is a bare subject; the compiler refuses under `stream.protocol_unfit` what the protocol cannot carry. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression. No body may have a field named `message_meta`: that is the name under which a result holds what the broker says about a message, and a message that uses it is refused when it is read and never sent.
+The surface kind `broker` takes one `address`, a `protocol`, and a `rate`, as other surfaces do. A binding of mode `stream` names a `channel`, a `verb`, and for a publish a `key`, `headers`, and `body`, each a map of name to expression. No body may have a field named `message_meta`: that is the name under which a result holds what the broker says about a message, and a message that uses it is refused when it is read and never sent.
 
 ```yaml
 operation: example_order_status_set
@@ -125,7 +124,7 @@ Brokers deliver at least once. A publish whose acknowledgement was lost may have
 
 | What the target offers | How a publish is made safe to resume |
 | --- | --- |
-| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Such a broker may remember a token only within a window: the channel file states it as `idempotency.window`, and the driver stops with `shape_changed` where the broker reports a shorter one. The refusal is never the proof: a resume reconciles first, by the scan on a log, which finds the message however long ago it was stored. Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
+| The broker refuses a repeated token (`broker_dedupe: true`) | The record's idempotency token from the ledger travels in the declared header. A resend is refused by the broker, and the driver reports the message first stored. Such a broker may remember a token only within a window; after it, a resume must reconcile by scanning (note 22). Identity `stamped` where the channel also keeps what was sent; on a queue or a topic the operation declares no identity, because nothing can be read back |
 | A `retained` state channel | Identity `natural` by the key. Reconcile reads `latest`: the intended value means it landed; the value seen before means it did not; anything else is `stale` |
 | A `log` with positions | Identity `stamped`. Reconcile scans from the position recorded at intent, on the partitions the key maps to, for the token. Found means it landed. Not found with `complete` coverage of that range means it did not. A look that says more is held and gives no place to go on from, or says that was all while the log's own end lies further on, has not covered the range: it is `unexpected_reply`, never "not found" |
 | Consumers that ignore a repeated token, declared | Recorded and shown at approval; it does not change the class. The runtime cannot see a consumer |
@@ -147,7 +146,7 @@ Reading a queue removes messages that others expected. The pack's rules:
 
 **Identity strategies.** A record is a message, or the value for a key. `natural` by key on a state channel; `stamped` with the token where the broker keeps messages; `find` is not offered, because a lookup over a flow is the bounded scan above and is written as `stamped`; `none` everywhere else.
 
-**Sessions and secrets.** A broker session is a signed-in connection: a user name and password, a token, or a client certificate, held in the vault and injected when the connection opens. The neutral auth providers of `a2m-auth` cover the first two; a certificate provider is the pack's, if the neutral set lacks one. A wire protocol presents what it can carry, and a session that holds a credential it cannot carry is stopped with `credential_not_carried` before a connection opens; `nats` carries a token or a user and password, `example-broker/1` one token. Plain TCP goes only to this machine's loopback address and to a server that does not ask for TLS; anything else is `transport_refused`, before anything is sent. The session keeper renews; the driver reports signs of expiry, such as an authorization refusal on a connection that worked a moment ago. No credential is ever a message header the caller can see: of a message's headers a result holds only the one the channel declares for correlation. A message body is checked by the redactor before it is stored, and a broker's words are redacted before they are cut for a failure's sentence.
+**Sessions and secrets.** A broker session is a signed-in connection: a user name and password, a token, or a client certificate, held in the vault and injected when the connection opens. The neutral auth providers of `a2m-auth` cover the first two; a certificate provider is the pack's, if the neutral set lacks one. A wire protocol presents what it can carry, and a session that holds a credential it cannot carry is stopped with `credential_not_carried` before a connection opens; the first protocol carries one token. The session keeper renews; the driver reports signs of expiry, such as an authorization refusal on a connection that worked a moment ago. No credential is ever a message header the caller can see: of a message's headers a result holds only the one the channel declares for correlation. A message body is checked by the redactor before it is stored, and a broker's words are redacted before they are cut for a failure's sentence.
 
 **Text from a message is untrusted.** An output of an operation bound through this mode that is or holds text must be of a field type marked `untrusted` ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)), unless the channel's schema holds the field of that name to an `enum`. The compiler refuses the rest under `stream.untrusted_unmarked`.
 
@@ -193,7 +192,7 @@ These strains are contained in the pack, and none needs a kernel change. One may
 | Class | Codes | When |
 | --- | --- | --- |
 | `input` | `schema_invalid`, `value_out_of_range`, `message_too_large`, `protocol_unknown`, `credential_not_carried` | The message fails its schema or the size limit, the surface names a protocol this build does not speak, or the session holds a credential the protocol cannot present; nothing is sent |
-| `policy` | `ack_not_owned`, `surface_not_declared`, `scan_limit`, `take_too_large`, `transport_refused` | A `take` on a shared queue; a broker address not declared; a log longer than a scan for a record's token may read; a message taken that is too large to record before it is acknowledged; plain text to an address off this machine, or to a server that asks for TLS |
+| `policy` | `ack_not_owned`, `surface_not_declared`, `scan_limit`, `take_too_large` | A `take` on a shared queue; a broker address not declared; a log longer than a scan for a record's token may read; a message taken that is too large to record before it is acknowledged |
 | `session_expired` | `needs_login` | The broker refuses the credentials |
 | `rejected` | `broker_refused` | The broker refuses the message, with its reason |
 | `drift` | `channel_missing`, `shape_changed`, `response_schema_mismatch`, `position_out_of_range` | The channel is gone, its shape or key changed, a message fails its schema, or a position is no longer held |
@@ -207,7 +206,7 @@ Codes not already in the technical reference are proposed.
 
 ## The test stand
 
-A small broker in the test application family ([test application](../../plan/test-application.md)), written in Rust, on a local port. It exists at `targets/example-broker` ([README](../../../targets/example-broker/README.md)). It speaks a small line-delimited JSON protocol of its own, written before a first standard protocol was chosen, and stays as the pack's second way in. It holds four channels: retained, log, queue, and a plain topic that keeps nothing.
+A small broker in the test application family ([test application](../../plan/test-application.md)), written in Rust, on a local port. It exists at `targets/example-broker` ([README](../../../targets/example-broker/README.md)). It speaks a small line-delimited JSON protocol of its own, because this section names no first protocol; that open point stays open for the pack. It holds four channels: retained, log, queue, and a plain topic that keeps nothing.
 
 | Control call | Reports or does |
 | --- | --- |
@@ -218,11 +217,9 @@ A small broker in the test application family ([test application](../../plan/tes
 
 A test that a publish happened once asks Received, never the pack's own read.
 
-A second stand, `targets/example-nats` ([README](../../../targets/example-nats/README.md)), speaks the part of the NATS client protocol and the JetStream interface the pack's client uses, with the same kind of control interface and faults, and a clock a test moves to cross a duplicate window. It was written from the same documents and source as the client, so one test also runs the client against a real server when `A2M_TEST_NATS` names one; record 0167 says what only that test can show.
-
 ## What it needs from outside
 
-The client of the first standard protocol is the pack's own, on Tokio, and adds no crate (record 0167). Still needed, each an outside crate to be verified: TLS for that client, and readers for any binary schema format beyond JSON. Needs no process of its own.
+Stated as needs, each an outside crate to be verified: a client for the chosen broker protocol, asynchronous on Tokio, under a licence on the closed list, on all three operating systems; readers for any binary schema format beyond JSON. Needs no process of its own.
 
 ## Build order
 
@@ -236,7 +233,7 @@ The client of the first standard protocol is the pack's own, on Tokio, and adds 
 
 ## Open points
 
-- Settled: the first standard protocol is NATS with JetStream, through a client of the pack's own ([record 0167](../../decisions/0167-the-stream-pack-speaks-nats-with-jetstream-through-a-client-of-its-own.md)), as [research note 22](../../research/22-stream-wire-protocol.md) recommended. MQTT 5 may come second, for retained and topic channels. A protocol is one interface inside the pack, and [record 0104](../../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) says what it must offer.
+- Which protocol first. One with a small open specification, retained values per key, and correlation fields in the message is the likely start; a log with positions may need a second protocol. [Research note 22](../../research/22-stream-wire-protocol.md) recommends NATS with JetStream first, through a small client of the pack's own, and MQTT 5 later for retained and topic channels; this is the research's recommendation, not yet a decision. A protocol is one interface inside the pack, and [record 0104](../../decisions/0104-a-wire-protocol-is-one-interface-inside-the-stream-pack-and-the-first-standard-one-is-still-to-be-chosen.md) says what it must offer.
 - Whether waits need their own count in the scheduler's budgets.
 - Whether a transactional publish across several channels is one commit point. Not offered until a target needs it.
 - Triggers: whether a matching message may start a run. Still not designed.

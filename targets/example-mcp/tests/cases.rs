@@ -173,22 +173,22 @@ struct HttpClient {
 }
 
 impl HttpClient {
-    fn new(stand: &HttpStand) -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            http: example_app::harness::client_builder().build()?,
+    fn new(stand: &HttpStand) -> Self {
+        Self {
+            http: reqwest::Client::new(),
             url: stand.url(),
             session: None,
             token: None,
             revision: None,
             next_id: 1,
-        })
+        }
     }
 
-    fn with_token(stand: &HttpStand, token: &str) -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
+    fn with_token(stand: &HttpStand, token: &str) -> Self {
+        Self {
             token: Some(token.to_owned()),
-            ..Self::new(stand)?
-        })
+            ..Self::new(stand)
+        }
     }
 
     async fn send(&self, message: &Value) -> Result<reqwest::Response, reqwest::Error> {
@@ -250,7 +250,7 @@ impl HttpClient {
 }
 
 async fn ready(stand: &HttpStand) -> Result<HttpClient, Box<dyn Error>> {
-    let mut client = HttpClient::new(stand)?;
+    let mut client = HttpClient::new(stand);
     client.handshake().await?;
     Ok(client)
 }
@@ -338,7 +338,7 @@ fn stdio_a_write_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
 async fn http_a_create_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
     let stand = HttpStand::start().await?;
     let control = stand.control();
-    let mut client = HttpClient::new(&stand)?;
+    let mut client = HttpClient::new(&stand);
     let hello = client.handshake().await?;
     assert_eq!(hello["result"]["protocolVersion"], HANDSHAKE_REVISION);
     // No stream is opened over HTTP, so the stand does not claim to send the notice.
@@ -510,7 +510,7 @@ async fn http_revisions_sessions_and_the_request_with_no_handshake() -> Outcome 
     let control = stand.control();
 
     // With no session and no revision named, a request is refused.
-    let mut bare = HttpClient::new(&stand)?;
+    let mut bare = HttpClient::new(&stand);
     let (status, answer) = bare.request("tools/list", Value::Null).await?;
     assert_eq!(
         (status, &answer["error"]["code"]),
@@ -888,7 +888,7 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     control.accept_token("token-of-ada", "ada")?;
     control.accept_token("token-of-ben", "ben")?;
 
-    let mut nobody = HttpClient::new(&stand)?;
+    let mut nobody = HttpClient::new(&stand);
     let message = nobody.message("initialize", initialize_params(HANDSHAKE_REVISION));
     let refused = nobody.send(&message).await?;
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
@@ -901,7 +901,7 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     let document: Value = nobody.http.get(&metadata).send().await?.json().await?;
     assert_eq!(document["resource"], stand.url());
 
-    let stranger = HttpClient::with_token(&stand, "token-of-nobody")?;
+    let stranger = HttpClient::with_token(&stand, "token-of-nobody");
     let refused = stranger.send(&message).await?;
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
     let challenge = refused.headers()["www-authenticate"].to_str()?;
@@ -910,9 +910,9 @@ async fn http_a_bearer_token_is_required_when_the_stand_is_told_to_ask() -> Outc
     assert_eq!(control.request_count("initialize")?, 0);
 
     // Two identities, each on its own session.
-    let mut ada = HttpClient::with_token(&stand, "token-of-ada")?;
+    let mut ada = HttpClient::with_token(&stand, "token-of-ada");
     ada.handshake().await?;
-    let mut ben = HttpClient::with_token(&stand, "token-of-ben")?;
+    let mut ben = HttpClient::with_token(&stand, "token-of-ben");
     ben.handshake().await?;
     ada.call("orders_get", json!({"order_id": "A-100"})).await?;
     ben.call("orders_get", json!({"order_id": "A-102"})).await?;

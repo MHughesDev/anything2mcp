@@ -302,8 +302,6 @@ It produces every class through the loop. `possible_commit`, `ambiguous_match` i
 | `busy` | `no_rate_budget` | No rate budget was granted for a surface |
 | `busy` | `job_kind_not_built` | The job asks for something this engine does not carry out yet: a binding that saves more than once in one call, a source whose reader is `operation` |
 | `busy` | `control_unanswered` | A call to `Control` was not answered within the time the engine waits |
-| `busy` | `capture_not_kept` | `Control::keep_capture` by default: the control plane keeps no captures, and the capture is dropped; the run goes on |
-| `busy` | `acknowledgement_not_kept` | `Control::acknowledged` by default: a record whose only evidence is the system's acknowledgement cannot be ended, and stays in doubt |
 | `unknown_variant` | `driver_panicked` | A provider's code panicked in a step that commits nothing, in preparing, or in discovery |
 | `transient` | `prepare_timed_out` | A driver was not ready within the time preparing may take |
 | `session_expired` | `needs_login` | The session ended and could not be had again |

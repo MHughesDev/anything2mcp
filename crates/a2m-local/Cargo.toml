@@ -36,7 +36,7 @@ objc2-local-authentication = { workspace = true, features = ["LAContext", "LAErr
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT"] }
 windows-future.workspace = true
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 a2m-actions = { path = "../a2m-actions", features = ["testing"] }

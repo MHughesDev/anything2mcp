@@ -1214,10 +1214,7 @@ async fn a_message_too_large_to_record_is_given_back_and_never_acknowledged() {
     let take = &scene.binding("example_order_work_take").act;
     let none = Values::new();
     // The queue holds one message, larger than the channel file allows.
-    // It still refuses a repeated token in the header the file declares.
-    let mut spec = ChannelSpec::new(WORK, Shape::Queue)
-        .key_field("order_id")
-        .dedupe_header(example_broker::SEED_DEDUPE_HEADER);
+    let mut spec = ChannelSpec::new(WORK, Shape::Queue).key_field("order_id");
     spec.max_body_bytes = 200_000;
     scene.broker.declare_channel(spec);
     let mut outside = scene.broker.client("outside").await.unwrap();

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::time::Duration;
 
+use a2m_core::Secret;
 use a2m_provider::{Deadline, Sent};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -16,8 +17,8 @@ use tokio::net::TcpStream;
 use crate::channel::Shape;
 use crate::json::Json;
 use crate::wire::{
-    ChannelFacts, Credential, Delivered, Link, Message, Opened, Outgoing, Page, Protocol, Receipt,
-    Wire, WireError, WireErrorKind,
+    ChannelFacts, Delivered, Link, Message, Opened, Outgoing, Page, Protocol, Receipt, Wire,
+    WireError, WireErrorKind,
 };
 
 /// The protocol's name, as a surface states it.
@@ -55,14 +56,10 @@ impl Protocol for ExampleProtocol {
         NAME
     }
 
-    fn carries(&self, credential: &Credential) -> bool {
-        matches!(credential, Credential::Token(_))
-    }
-
     fn connect<'a>(
         &'a self,
         address: &'a str,
-        credential: Option<&'a Credential>,
+        token: Option<&'a Secret>,
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>> {
         Box::pin(async move {
@@ -86,18 +83,8 @@ impl Protocol for ExampleProtocol {
                 broken: false,
             };
             let mut fields = vec![("client", Json::text(CLIENT))];
-            match credential {
-                Some(Credential::Token(token)) => {
-                    fields.push(("token", Json::text(token.expose())))
-                }
-                Some(Credential::UserPassword { .. }) => {
-                    return Err(error(
-                        WireErrorKind::Unfit,
-                        Sent::NotSent,
-                        "the protocol carries one token and nothing else",
-                    ));
-                }
-                None => {}
+            if let Some(token) = token {
+                fields.push(("token", Json::text(token.expose())));
             }
             let reply = link.request("hello", fields, deadline).await?;
             if reply.get("protocol").and_then(Json::as_str) != Some(NAME) {
@@ -336,9 +323,6 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
             .filter(|schema| !schema.is_null())
             .cloned(),
         dedupe_header: text_of(value.get("dedupe_header")),
-        // The test broker remembers a token for as long as it holds the
-        // message, and states no window.
-        dedupe_window_ms: None,
         held: number_of(value, "held")?.unwrap_or(0),
         start: number_of(value, "start")?,
         end: number_of(value, "end")?,

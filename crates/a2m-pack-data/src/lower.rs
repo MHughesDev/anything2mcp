@@ -325,18 +325,9 @@ impl Lowering for SqlLowering {
             ));
         };
         let name = named.as_text().unwrap_or_default();
-        // The statement is in the section of its surface's kind: a store in
-        // a file, or one on a server.
-        let section = crate::names::surface_kinds()
-            .iter()
-            .filter_map(|kind| cx.section(&STATEMENT, kind))
-            .filter_map(|(index, section)| Some((index, section.payload.decode::<Section>().ok()?)))
-            .find(|(_, held)| held.statements.contains_key(name))
-            .or_else(|| {
-                cx.section(&STATEMENT, &DATABASE).and_then(|(index, section)| {
-                    Some((index, section.payload.decode::<Section>().ok()?))
-                })
-            });
+        let section = cx
+            .section(&STATEMENT, &DATABASE)
+            .and_then(|(index, section)| Some((index, section.payload.decode::<Section>().ok()?)));
         let Some((section, statements)) = section else {
             return fail(problem(
                 &lint::UNKNOWN_STATEMENT,

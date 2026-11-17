@@ -10,6 +10,7 @@
 //! every statement it compiles, refuses whatever is not a plain read or,
 //! on a writer, a change to rows.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -23,7 +24,7 @@ use rusqlite::{Connection, ErrorCode, MAIN_DB, OpenFlags, ffi};
 use crate::model::{Access, Isolation};
 use crate::store::{
     Bound, Catalog, Cell, ColumnInfo, CommitFailed, Conn, ForeignKey, Interrupter, Opener, Ran,
-    Refusal, RunLimits, Shape, StoreAt, TableInfo,
+    Refusal, RunLimits, Shape, TableInfo,
 };
 
 /// The embedded store.
@@ -43,25 +44,15 @@ impl Opener for Sqlite {
         Some(format!("\"{}\"", identifier.replace('"', "\"\"")))
     }
 
-    fn placeholder(&self, _position: usize) -> String {
-        "?".to_owned()
-    }
-
-    fn dialect(&self) -> crate::shape::Dialect {
-        crate::shape::Dialect::Embedded
+    fn placeholder(&self) -> &'static str {
+        "?"
     }
 
     fn returns_assigned_key(&self) -> bool {
         true
     }
 
-    fn open(&self, at: &StoreAt, access: Access) -> Result<Box<dyn Conn>, Refusal> {
-        #[cfg(feature = "postgres")]
-        let StoreAt::File(file) = at else {
-            return Err(Refusal::NotGuarded);
-        };
-        #[cfg(not(feature = "postgres"))]
-        let StoreAt::File(file) = at;
+    fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal> {
         // The bundled engine is built to read a name that begins `file:` as
         // an address that may carry options, such as the right to create,
         // whether or not the URI flag is given. So only an absolute path is
@@ -389,8 +380,6 @@ impl SqliteConn {
             unique,
             foreign_keys: foreign_keys.into_iter().map(|(_, key)| key).collect(),
             triggers,
-            rules: Vec::new(),
-            generated: Vec::new(),
         })
     }
 }
@@ -426,7 +415,7 @@ impl Conn for SqliteConn {
         Ok(Shape {
             params: statement.parameter_count(),
             columns: statement.column_names().map(str::to_owned).collect(),
-            reads_only: Some(statement.readonly()),
+            reads_only: statement.readonly(),
         })
     }
 

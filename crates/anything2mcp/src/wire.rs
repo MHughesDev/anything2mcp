@@ -1,6 +1,8 @@
 //! What a command and the local engine agree on beyond the REST interface:
 //! one request header that only the local channel carries. Both ends are
 //! in this crate, so the name and the encoding are written once, here.
+//! They are public so that a caller written in Rust, and this crate's own
+//! tests, name a folder exactly as the command line does.
 //!
 //! The header is read from nothing but the local channel, whose other end
 //! is a process of the engine's own user. No header says whether a person
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 /// The request header that carries the project folder a command was run
 /// in, percent-encoded. The engine's handlers check the folder before any
 /// use.
-pub(crate) const PROJECT_HEADER: &str = "a2m-project";
+pub const PROJECT_HEADER: &str = "a2m-project";
 
 fn plain(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/')
@@ -20,7 +22,8 @@ fn plain(byte: u8) -> bool {
 
 /// A folder's path as a header carries it. `None` for a path that is not
 /// text: it could not be read back as the same path.
-pub(crate) fn encode_path(path: &Path) -> Option<String> {
+#[must_use]
+pub fn encode_path(path: &Path) -> Option<String> {
     let text = path.to_str()?;
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
@@ -35,7 +38,8 @@ pub(crate) fn encode_path(path: &Path) -> Option<String> {
 
 /// The path a header carries. `None` when an escape is broken or the
 /// bytes are not text.
-pub(crate) fn decode_path(text: &str) -> Option<PathBuf> {
+#[must_use]
+pub fn decode_path(text: &str) -> Option<PathBuf> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;

@@ -14,7 +14,6 @@ use a2m_telemetry::SystemClock;
 use serde_json::json;
 
 use super::parse::{Globals, Tree};
-use super::start::{self, PASSPHRASE_FROM_STDIN};
 use super::{Finished, Host, client, project_of, render, stopped};
 use crate::engine::EngineOptions;
 use crate::local::{LocalEngine, program_version};
@@ -144,17 +143,12 @@ async fn serve(
     host: &Host,
     json: bool,
 ) -> Result<Finished, Stopped> {
-    let mut passphrase_on_stdin = false;
-    for word in rest {
-        if word == PASSPHRASE_FROM_STDIN && !passphrase_on_stdin {
-            passphrase_on_stdin = true;
-            continue;
-        }
+    if let Some(extra) = rest.first() {
         return Err((
             malformed(
                 format!(
-                    "`{PROGRAM} serve` takes no argument but `{PASSPHRASE_FROM_STDIN}`, and `{}` was given.",
-                    super::shown(word)
+                    "`{PROGRAM} serve` takes no argument, and `{}` was given.",
+                    super::shown(extra)
                 ),
                 format!("Run `{PROGRAM} serve`. Its settings are in the settings files."),
             ),
@@ -163,24 +157,12 @@ async fn serve(
     }
     let failed = |failure| (failure, ExitClass::Failed);
     let paths = paths_of(host).map_err(failed)?;
-    let mut environment = host.environment.clone();
-    if passphrase_on_stdin {
-        // A started engine is given the vault's passphrase here, on a pipe
-        // only it reads, and never in its environment (decision 0165). What
-        // is read stays in this process's memory, as a passphrase from the
-        // environment does.
-        let read = tokio::task::spawn_blocking(read_passphrase)
-            .await
-            .map_err(|_| failed(passphrase_unreadable()))?
-            .map_err(failed)?;
-        environment.insert(crate::PASSPHRASE_VARIABLE.to_owned(), read);
-    }
     let clock = Arc::new(SystemClock::new());
     // The person surface of the options is replaced by the local engine's
     // own; the terminal's stands here only because the options need one.
     let mut options = EngineOptions::of_machine(
         paths,
-        environment,
+        host.environment.clone(),
         Arc::new(TerminalSurface::new(
             Arc::new(ProcessTerminal),
             Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>,
@@ -231,45 +213,6 @@ async fn serve(
     Ok(render::render(&response, tree, json))
 }
 
-/// The most a passphrase given on standard input may hold.
-const PASSPHRASE_LIMIT: u64 = 4096;
-
-fn passphrase_unreadable() -> Failure {
-    // Nothing of what was read is in the message.
-    Failure::new(
-        FailureClass::Input,
-        codes::SCHEMA_INVALID,
-        format!(
-            "`{PASSPHRASE_FROM_STDIN}` was given, and standard input did not hold a passphrase: text of at most {PASSPHRASE_LIMIT} bytes."
-        ),
-        format!("Give the passphrase on standard input, or start `{PROGRAM} serve` without the flag."),
-    )
-}
-
-/// The vault's passphrase, read from standard input to its end, without
-/// one line ending at its end.
-fn read_passphrase() -> Result<String, Failure> {
-    use std::io::Read;
-    let mut text = String::new();
-    let read = std::io::stdin()
-        .lock()
-        .take(PASSPHRASE_LIMIT + 1)
-        .read_to_string(&mut text);
-    if read.is_err() || text.len() as u64 > PASSPHRASE_LIMIT {
-        return Err(passphrase_unreadable());
-    }
-    if text.ends_with('\n') {
-        text.pop();
-        if text.ends_with('\r') {
-            text.pop();
-        }
-    }
-    if text.is_empty() {
-        return Err(passphrase_unreadable());
-    }
-    Ok(text)
-}
-
 /// The toolset `bridge` was asked for: `use` unless `--toolset` names the
 /// other built-in one.
 fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
@@ -310,10 +253,9 @@ fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
 
 /// `bridge`: copies MCP messages between standard input and output and
 /// the local engine's MCP endpoint, until input ends. Standard output is
-/// written by the proxy alone. A request sent while no engine runs starts
-/// one on demand; where none may be started, it is answered with an error
-/// that names the failure, and the next one is carried as soon as an
-/// engine answers.
+/// written by the proxy alone. No engine is started: a request sent while
+/// none runs is answered with an error that names the failure, and the
+/// next one is carried as soon as an engine answers.
 async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finished, Stopped> {
     let toolset = toolset_of(rest).map_err(|failure| (failure, ExitClass::Malformed))?;
     let failed = |failure| (failure, ExitClass::Failed);
@@ -324,32 +266,19 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
         ClientLabel::mcp(BRIDGE_LABEL),
     )
     .map_err(failed)?;
-    let folder =
-        project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
-    // When nothing answers, an engine is started on demand for the request
-    // that finds none, and again after one has stopped (decision 0165).
-    // Where none may be started, one look now tells a person who starts the
-    // bridge by hand at once; the client learns it with its first request.
-    let starts = Arc::new(Starts {
-        program: host.program.clone(),
-        paths: paths.clone(),
-        environment: host.environment.clone(),
-        project: folder.clone(),
-    });
-    match connector.connect().await {
-        Err(failure) if *failure.code() == a2m_local::codes::ENGINE_UNREACHABLE => {
-            if let Err(why) = starts.plan() {
-                say(told(&why).trim_end());
-            }
-        }
-        Err(failure) => say(told(&failure).trim_end()),
-        Ok(_) => {}
+    // One look now, so that a person who starts the bridge by hand learns
+    // at once that nothing answers. The client learns it with its first
+    // request.
+    if let Err(failure) = connector.connect().await {
+        say(told(&failure).trim_end());
     }
     // The project folder the bridge was started in, or was given with
     // `--project`, named to the engine on every request, as a command names
     // it. The engine checks the folder before any action uses it; nothing
     // an MCP message says can name one.
-    let project = folder.and_then(|folder| {
+    let project = project_of(globals, host)
+        .map_err(|failure| (failure, ExitClass::Malformed))?
+        .and_then(|folder| {
         let named = wire::encode_path(&folder)
             .and_then(|text| axum::http::HeaderValue::from_str(&text).ok());
         if named.is_none() {
@@ -361,24 +290,12 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
     });
     let upstream = move |mut request: a2m_mcp::HttpRequest| {
         let connector = connector.clone();
-        let starts = Arc::clone(&starts);
         if let Some(project) = &project {
             request
                 .headers_mut()
                 .insert(wire::PROJECT_HEADER, project.clone());
         }
-        async move {
-            // A request is sent only once an engine answers, so nothing is
-            // sent twice: a start happens before the request is written.
-            if let Err(failure) = connector.connect().await {
-                if *failure.code() != a2m_local::codes::ENGINE_UNREACHABLE {
-                    return Err(failure);
-                }
-                let launch = starts.plan()?;
-                client::start(&connector, &starts.paths, &launch).await?;
-            }
-            client::carry(&connector, request).await
-        }
+        async move { client::carry(&connector, request).await }
     };
     let copied = stdio_proxy(upstream, &toolset, tokio::io::stdin(), tokio::io::stdout()).await;
     Ok(Finished {
@@ -388,28 +305,6 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
             .err()
             .map_or_else(String::new, |failure| told(&failure)),
     })
-}
-
-/// What the bridge needs to start an engine on demand.
-struct Starts {
-    program: Option<std::path::PathBuf>,
-    paths: Paths,
-    environment: std::collections::BTreeMap<String, String>,
-    project: Option<std::path::PathBuf>,
-}
-
-impl Starts {
-    /// How an engine is started now, or why none may be. The settings
-    /// are read each time, because they may change while the bridge runs.
-    fn plan(&self) -> Result<a2m_local::Launch, Failure> {
-        start::plan_for(
-            self.program.as_deref(),
-            &self.environment,
-            &self.paths,
-            self.project.as_deref(),
-            false,
-        )
-    }
 }
 
 #[cfg(test)]

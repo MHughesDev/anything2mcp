@@ -87,45 +87,16 @@ mod os {
             }
         }
 
-        /// Makes a new file of that name for reading and writing. It fails
-        /// when anything stands at the name, a link included.
+        /// Makes a new file of that name for writing. It fails when
+        /// anything stands at the name, a link included.
         pub(in super::super) fn create_new(&self, name: &OsStr) -> io::Result<File> {
             let handle = openat(
                 &self.0,
                 name,
-                OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::from_raw_mode(0o666),
             )?;
             Ok(File::from(handle))
-        }
-
-        /// Opens the file of that name for writing, and changes nothing in
-        /// it: no new file, no truncation. A link there is not followed.
-        pub(in super::super) fn open_for_write(&self, name: &OsStr) -> io::Result<File> {
-            let handle = openat(
-                &self.0,
-                name,
-                OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-                Mode::empty(),
-            )?;
-            Ok(File::from(handle))
-        }
-
-        /// The device and the file number of what stands at the name. A link
-        /// is not followed.
-        pub(in super::super) fn identity(&self, name: &OsStr) -> io::Result<(u64, u128)> {
-            let found = statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW)?;
-            #[allow(
-                clippy::useless_conversion,
-                reason = "the width of these fields differs between operating systems"
-            )]
-            Ok((u64::from(found.st_dev), u128::from(found.st_ino)))
-        }
-
-        /// Writes the folder's list of names to the disk, so that a name
-        /// just given survives a power cut.
-        pub(in super::super) fn sync(&self) -> io::Result<()> {
-            Ok(rustix::fs::fsync(&self.0)?)
         }
 
         /// Makes a new folder of that name. It fails when anything stands
@@ -156,53 +127,6 @@ mod os {
         pub(in super::super) fn remove(&self, name: &OsStr) -> io::Result<()> {
             Ok(unlinkat(&self.0, name, AtFlags::empty())?)
         }
-    }
-}
-
-#[cfg(windows)]
-mod windows {
-    use std::fs::File;
-    use std::io;
-    use std::os::windows::io::AsRawHandle as _;
-
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-
-    /// The volume's serial number and the file's index, from an open
-    /// handle.
-    #[allow(unsafe_code)] // one call into the operating system, explained below
-    pub(super) fn identity(file: &File) -> io::Result<(u64, u128)> {
-        let mut info = BY_HANDLE_FILE_INFORMATION {
-            dwFileAttributes: 0,
-            ftCreationTime: windows_sys::Win32::Foundation::FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
-            },
-            ftLastAccessTime: windows_sys::Win32::Foundation::FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
-            },
-            ftLastWriteTime: windows_sys::Win32::Foundation::FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
-            },
-            dwVolumeSerialNumber: 0,
-            nFileSizeHigh: 0,
-            nFileSizeLow: 0,
-            nNumberOfLinks: 0,
-            nFileIndexHigh: 0,
-            nFileIndexLow: 0,
-        };
-        // SAFETY: the handle is the open file's own and stays open for the
-        // call, which only writes the structure it is given, a structure
-        // of plain numbers owned by this frame.
-        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
-        if ok == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let index = (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow);
-        Ok((u64::from(info.dwVolumeSerialNumber), index))
     }
 }
 
@@ -259,11 +183,11 @@ mod os {
             }
         }
 
-        /// Makes a new file of that name for reading and writing. It fails
-        /// when anything stands at the name, a link included.
+        /// Makes a new file of that name for writing. It fails when
+        /// anything stands at the name, a link included.
         pub(in super::super) fn create_new(&self, name: &OsStr) -> io::Result<File> {
             let mut options = fs::OpenOptions::new();
-            options.read(true).write(true).create_new(true);
+            options.write(true).create_new(true);
             #[cfg(windows)]
             {
                 use std::os::windows::fs::OpenOptionsExt as _;
@@ -276,52 +200,6 @@ mod os {
         /// at the name, a link included.
         pub(in super::super) fn create_dir(&self, name: &OsStr) -> io::Result<()> {
             fs::create_dir(self.0.join(name))
-        }
-
-        /// Opens the file of that name for writing, and changes nothing in
-        /// it: no new file, no truncation. A link there is opened itself, and
-        /// the caller has refused one before.
-        pub(in super::super) fn open_for_write(&self, name: &OsStr) -> io::Result<File> {
-            let mut options = fs::OpenOptions::new();
-            options.write(true);
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::OpenOptionsExt as _;
-                options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-            }
-            options.open(self.0.join(name))
-        }
-
-        /// The volume and the file identifier of what stands at the name.
-        #[cfg(windows)]
-        pub(in super::super) fn identity(&self, name: &OsStr) -> io::Result<(u64, u128)> {
-            use std::os::windows::fs::OpenOptionsExt as _;
-            let mut options = fs::OpenOptions::new();
-            // Neither read nor write: the file's information alone, of the
-            // link itself where one stands.
-            options
-                .access_mode(0)
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-            let file = options.open(self.0.join(name))?;
-            super::windows::identity(&file)
-        }
-
-        /// No identity can be had of a file on this system.
-        #[cfg(not(windows))]
-        pub(in super::super) fn identity(&self, _name: &OsStr) -> io::Result<(u64, u128)> {
-            Err(io::Error::from(io::ErrorKind::Unsupported))
-        }
-
-        /// Writes the folder's list of names to the disk. Windows keeps a
-        /// folder's names in its file system's journal and gives no handle
-        /// to a folder that could be flushed, so there is nothing more to do.
-        #[allow(
-            clippy::unnecessary_wraps,
-            clippy::unused_self,
-            reason = "the same call as on the other systems, where it can fail"
-        )]
-        pub(in super::super) fn sync(&self) -> io::Result<()> {
-            Ok(())
         }
 
         /// Gives the file `from` the name `to`, both in this folder. What

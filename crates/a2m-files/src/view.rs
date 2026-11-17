@@ -153,26 +153,6 @@ pub(crate) fn env_type() -> ValueType {
     ])
 }
 
-/// The type of `current` in a binding's steps: what the read of the record
-/// gave, by the operation's inputs, each of which may be missing.
-pub(crate) fn current_type(inputs: &[InputInfo]) -> ValueType {
-    ValueType::Record(
-        inputs
-            .iter()
-            .map(|input| a2m_core::FieldOf::optional(input.plan.name.clone(), input.plan.ty.clone()))
-            .collect(),
-    )
-}
-
-/// The type of `record` in a binding's steps: the record's key in the
-/// system, its parts as text.
-pub(crate) fn record_type() -> ValueType {
-    ValueType::Record(vec![a2m_core::FieldOf::optional(
-        "key",
-        ValueType::List(Box::new(ValueType::Text)),
-    )])
-}
-
 /// The type of `input` for a list of inputs.
 pub(crate) fn input_type(inputs: &[InputInfo]) -> ValueType {
     ValueType::Record(
@@ -513,11 +493,8 @@ impl<'a> LowerContext<'a> {
     }
 
     /// Checks an expression written in the binding and puts it in the plan.
-    /// It may read `input`, the operation's inputs; `env`; `current`, what
-    /// the engine's last read of the record gave, by the operation's inputs,
-    /// null when the record does not exist; and `record`, whose `key` is the
-    /// record's key in the system, its parts as text, null when it has none
-    /// yet. `expected` is the type the place needs, when it needs one.
+    /// It may read `input`, the operation's inputs, and `env`. `expected` is
+    /// the type the place needs, when it needs one.
     ///
     /// # Errors
     ///

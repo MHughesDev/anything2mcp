@@ -21,11 +21,8 @@ use a2m_ledger::{
     Reconciled, RecordIntent, RecordRef, RetentionClass, Settled,
 };
 use a2m_provider::{BoxFuture, DiscoveryReport};
-use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
-use std::path::PathBuf;
+use a2m_telemetry::{ChoiceReason, FinishedTrace};
 use std::sync::Arc;
-
-use crate::codes;
 
 /// The question the engine asks at guard: may this call happen. The
 /// implementation turns it into a request to the policy engine, which
@@ -92,28 +89,6 @@ pub struct Evidence {
     /// How long it is kept.
     pub class: RetentionClass,
     /// The content.
-    pub bytes: Vec<u8>,
-}
-
-/// A step's capture, to keep as evidence of the run: tied to the run (the
-/// implementation's own), to the record when the step belongs to one, and
-/// to the step by its pass, phase, and position. Its bytes have passed the
-/// redactor and the run's capture level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptCapture {
-    /// The commit point the step belongs to, when it belongs to one.
-    pub record: Option<RecordRef>,
-    /// The pass of the trace the step was carried out in.
-    pub pass: u32,
-    /// The step's phase.
-    pub phase: Phase,
-    /// The step's position in its phase, from 0.
-    pub step: u32,
-    /// The capture's name, as the driver gave it, redacted.
-    pub name: String,
-    /// Its media type.
-    pub media_type: String,
-    /// Its bytes, redacted.
     pub bytes: Vec<u8>,
 }
 
@@ -327,63 +302,4 @@ pub trait Control: Send + Sync {
 
     /// Stores a piece of evidence and gives its name.
     fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>>;
-
-    /// Keeps a step's capture as evidence of the run, tied to the run, the
-    /// record, and the step, and gives its name. The trace record of the
-    /// step names it. A capture taken before a committing step is kept
-    /// before that step is sent; one that cannot be kept is dropped, and
-    /// the run goes on: a capture is evidence, never what a write depends
-    /// on.
-    ///
-    /// By default the control plane keeps no captures, and says so with
-    /// `busy`, `capture_not_kept`.
-    fn keep_capture<'a>(
-        &'a self,
-        capture: KeptCapture,
-    ) -> BoxFuture<'a, Result<BlobRef, Failure>> {
-        let _ = capture;
-        Box::pin(async move {
-            Err(codes::fail(
-                FailureClass::Busy,
-                codes::CAPTURE_NOT_KEPT,
-                "The control plane keeps no captures, so the step's capture was dropped.",
-                "Nothing to do; the run goes on without it.",
-            ))
-        })
-    }
-
-    /// Ends a record whose binding's only evidence is the system's own
-    /// acknowledgement (`acknowledged`): the save was sent and answered, and
-    /// nothing can be read back or compared. The record stays `acted`, is
-    /// never called verified, and its lock is released; a result and a
-    /// diff that show it say "accepted by the system, not read back".
-    /// `evidence` names what the save's answer showed, when it was kept.
-    ///
-    /// By default the control plane cannot, and says so with `busy`,
-    /// `acknowledgement_not_kept`: the record stays `acted`, in doubt, and
-    /// the run stops for reconcile.
-    fn acknowledged<'a>(
-        &'a self,
-        token: &'a ActedToken,
-        evidence: Option<BlobRef>,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        let _ = (token, evidence);
-        Box::pin(async move {
-            Err(codes::fail(
-                FailureClass::Busy,
-                codes::ACKNOWLEDGEMENT_NOT_KEPT,
-                "The system accepted the write, and the control plane cannot end a record on an acknowledgement alone, so it stays in doubt.",
-                "Look at the system; the run stops until the record is settled.",
-            ))
-        })
-    }
-
-    /// The project folder of the request that started the run, as the
-    /// control plane checked it: a full path to a folder that exists and is
-    /// none of the engine's own. A pack resolves a file of the project
-    /// against it, never against the folder the engine was started in.
-    /// `None` when the run has none, and by default.
-    fn project_folder(&self) -> Option<PathBuf> {
-        None
-    }
 }

@@ -52,27 +52,6 @@ pub(crate) enum WireErrorKind {
     PositionOutOfRange,
     /// An answer the protocol has no rule for.
     Unexpected,
-    /// The connection would carry the session where this build does not
-    /// send it: plain text to an address that is not this machine's own,
-    /// or to a server that asks for TLS.
-    Transport,
-    /// The protocol cannot carry what the step would send: an address, a
-    /// key, or a header it has no form for.
-    Unfit,
-}
-
-/// The session's credential, as a wire protocol presents it when a
-/// connection opens. It is used for that and kept nowhere.
-pub(crate) enum Credential {
-    /// One token.
-    Token(Secret),
-    /// A user name and a password.
-    UserPassword {
-        /// The user's name; not a secret.
-        user: String,
-        /// The password.
-        password: Secret,
-    },
 }
 
 /// A failed call, with whether the request left and what the broker said.
@@ -101,9 +80,6 @@ pub(crate) struct ChannelFacts {
     pub schema: Option<Json>,
     /// The header whose repeated value the broker refuses.
     pub dedupe_header: Option<String>,
-    /// How long the broker remembers a token, in milliseconds; nothing when
-    /// it does not say, which a broker that forgets none may leave out.
-    pub dedupe_window_ms: Option<u64>,
     /// How many messages it holds now.
     pub held: u64,
     /// A log's first held position.
@@ -195,15 +171,12 @@ pub(crate) trait Protocol: Send + Sync {
     /// The protocol's name, as a surface states it.
     fn name(&self) -> &'static str;
 
-    /// Whether the protocol can present this credential.
-    fn carries(&self, credential: &Credential) -> bool;
-
-    /// Opens a connection and presents the session's credential, when there
-    /// is one. The credential is used for this and kept nowhere.
+    /// Opens a connection and presents the session's token, when there is
+    /// one. The token is used for this and kept nowhere.
     fn connect<'a>(
         &'a self,
         address: &'a str,
-        credential: Option<&'a Credential>,
+        token: Option<&'a Secret>,
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>>;
 }

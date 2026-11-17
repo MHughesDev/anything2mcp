@@ -29,27 +29,6 @@ vocabulary! {
 }
 
 vocabulary! {
-    /// What a write binding offers as the evidence that its write landed
-    /// (spec section 208). A plan states it for each binding; the engine
-    /// holds the binding to it.
-    #[derive(Default)]
-    pub enum WriteEvidence: "write evidence" {
-        /// The binding's read-back steps read the record, and what they read
-        /// is compared with what was intended.
-        #[default]
-        ReadBack => "read_back",
-        /// The save's own answer carries the stored values, and they are
-        /// compared with what was intended.
-        Response => "response",
-        /// Nothing can be read back and nothing compared: the committing
-        /// step's own answer is the only evidence there can be. Only for an
-        /// operation declared `irreversible`; the record ends `acted`, and is
-        /// never called verified.
-        Acknowledged => "acknowledged",
-    }
-}
-
-vocabulary! {
     /// How much of what could have been looked at was looked at (spec section
     /// 218). Where it is not stated it is `unknown`, the weakest claim.
     #[derive(Default)]

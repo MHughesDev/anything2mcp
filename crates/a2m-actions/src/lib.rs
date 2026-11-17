@@ -18,7 +18,6 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 6.
 
-mod acts;
 mod bounds;
 mod catalog;
 pub mod codes;
@@ -29,7 +28,6 @@ mod events;
 mod faces;
 mod handlers;
 mod health;
-pub mod init;
 mod keeper;
 mod kernel;
 mod paths;
@@ -42,7 +40,6 @@ pub mod settings;
 mod signals;
 mod tools;
 
-pub use acts::{ACTS_KEPT, ACTS_WAITING, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS, ShownField};
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
 pub use def::{
@@ -85,7 +82,6 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod audit;
-    mod authoring;
     mod kernel;
     mod keys;
     mod runs;

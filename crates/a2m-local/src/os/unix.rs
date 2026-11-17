@@ -178,33 +178,3 @@ pub(crate) fn kept(path: &Path) -> io::Result<Kept> {
     }
     Ok(Kept::Private)
 }
-
-/// Starts `command` detached from this process's terminal and process
-/// group: in a session of its own, so that no signal of the terminal this
-/// program was started at reaches it, and it has no controlling terminal.
-/// Its standard streams are what `command` sets; every other handle this
-/// program opens is closed on exec.
-#[allow(
-    unsafe_code,
-    reason = "one system call between fork and exec; why it is sound is said where it is made"
-)]
-pub(crate) fn spawn_detached(command: &mut std::process::Command) -> io::Result<std::process::Child> {
-    use std::os::unix::process::CommandExt;
-    // SAFETY: the closure runs in the child between fork and exec, where
-    // only calls that are safe in a signal handler may be made. It makes
-    // one: `setsid`, which is such a call; rustix makes it as a bare system
-    // call or through the C library's own `setsid`, allocating nothing and
-    // taking no lock. The child is not a process group leader, because it
-    // was just forked, so the call can succeed; when it fails the error is
-    // the operating system's, and the start fails with it. The test
-    // `a_command_with_no_engine_starts_one_detached_and_is_answered` of
-    // the product crate reads the started engine's session.
-    unsafe {
-        command.pre_exec(|| {
-            rustix::process::setsid()
-                .map(|_| ())
-                .map_err(io::Error::from)
-        });
-    }
-    command.spawn()
-}

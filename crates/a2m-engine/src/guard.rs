@@ -25,7 +25,7 @@ use a2m_provider::BoxFuture;
 
 use crate::codes;
 use crate::control::{
-    Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview, SessionWant,
+    Clearance, Control, EngineEvent, Evidence, GuardQuestion, Preview, SessionWant,
 };
 
 /// A future whose panic is caught: `None` when it panicked.
@@ -171,24 +171,5 @@ impl Control for Timed<'_> {
 
     fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(self.within("evidence", self.inner.evidence(blob)))
-    }
-
-    fn keep_capture<'a>(
-        &'a self,
-        capture: KeptCapture,
-    ) -> BoxFuture<'a, Result<BlobRef, Failure>> {
-        Box::pin(self.within("keep_capture", self.inner.keep_capture(capture)))
-    }
-
-    fn acknowledged<'a>(
-        &'a self,
-        token: &'a ActedToken,
-        evidence: Option<BlobRef>,
-    ) -> BoxFuture<'a, Result<(), Failure>> {
-        Box::pin(self.within("acknowledged", self.inner.acknowledged(token, evidence)))
-    }
-
-    fn project_folder(&self) -> Option<std::path::PathBuf> {
-        self.inner.project_folder()
     }
 }
