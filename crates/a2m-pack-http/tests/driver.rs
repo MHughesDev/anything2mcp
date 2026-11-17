@@ -601,6 +601,10 @@ async fn no_input_changes_where_a_request_goes() {
         "A-100%0d%0aHost: other.example.test",
         "A-100?x=1#y",
         "@other",
+        "%2e%2e",
+        "..%2fadmin",
+        "%5c%5cother.example.test",
+        "A-100;x=1",
     ] {
         let order = Values::new().with("order_id", odd);
         let read = scene
@@ -655,4 +659,250 @@ async fn no_input_changes_where_a_request_goes() {
         DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
     );
     assert_eq!(scene.handle().health(&scene.surface), DriverHealth::Ready);
+}
+
+/// The classes after which the ledger takes a record as settled, so that
+/// nothing reconciles it. No failure of a write that was sent may be one of
+/// them, unless it is the application's own verdict.
+fn settled(failure: &StepFailure) -> bool {
+    matches!(
+        failure.failure.class(),
+        FailureClass::Policy | FailureClass::Input | FailureClass::Stale
+    )
+}
+
+/// Saves one new line item of the order `A-102`, with a fault switched on
+/// for the save when one is given, and gives how the save ended: the
+/// failure of its commit step, or of its confirm. Whatever the driver said,
+/// the application is asked what it stored: the write is there once,
+/// reading the record back finds it, and nothing was followed or sent again.
+async fn saved_under(
+    app: &TestApp,
+    scene: &Scene,
+    code: &str,
+    fault: Option<FaultKind>,
+) -> StepFailure {
+    let write = write_of("A-102", code).await;
+    let (handle, mut prepared) = scene
+        .try_prepare(None, Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    let inputs = item("A-102", code, "Corner post", 3, "150.5");
+    let before = write
+        .run(scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
+    assert!(before.absent, "{code}");
+    if let Some(fault) = fault {
+        app.set_fault(&Fault::once(fault).on_paths("/api/orders/A-102/items"))
+            .await
+            .unwrap();
+    }
+    let failure = match write
+        .run(scene, &handle, &mut prepared, "act", &inputs)
+        .await
+    {
+        Err(failure) => failure,
+        Ok(_) => write
+            .run(scene, &handle, &mut prepared, "confirm", &inputs)
+            .await
+            .unwrap_err(),
+    };
+    app.clear_faults().await.unwrap();
+    assert_eq!(app.write_count("A-102", code).await.unwrap(), 1, "{code}");
+    let found = write
+        .run(scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
+    assert_eq!(found.values.get("quantity"), Some(&Value::Int(3)), "{code}");
+    assert_eq!(app.write_count("A-102", code).await.unwrap(), 1, "{code}");
+    handle.release(prepared, true).await;
+    failure
+}
+
+#[tokio::test]
+async fn a_write_whose_answer_is_not_the_applications_verdict_is_in_doubt_and_never_settled() {
+    let (app, scene) = scene().await;
+    let in_doubt = |failure: &StepFailure, what: &str| {
+        assert_eq!(
+            class_and_code(failure),
+            (FailureClass::PossibleCommit, "no_confirmation"),
+            "{what}"
+        );
+        assert_eq!(failure.sent, Sent::Unknown, "{what}");
+    };
+
+    // The application makes the write and answers with a redirect to another
+    // origin, as a posted form often is. The redirect is not followed, and
+    // the write is in doubt: it is never reported as refused by policy,
+    // which the ledger takes as "nothing was written".
+    for (code, location) in [
+        ("L-901", "http://other.example.test/done?token=PLANTED"),
+        ("L-902", "//other.example.test/done"),
+        ("L-903", "/\\other.example.test/done"),
+    ] {
+        let fault = FaultKind::RedirectAfterCommit {
+            location: location.to_owned(),
+        };
+        let doubt = saved_under(&app, &scene, code, Some(fault)).await;
+        in_doubt(&doubt, location);
+        // The address the system named is not quoted in the failure.
+        let message = doubt.failure.message();
+        assert!(
+            !message.contains("other.example") && !message.contains("PLANTED"),
+            "{message}"
+        );
+    }
+
+    // A redirect within the surface is a status like any other. The
+    // endpoint does not declare it, so the confirm stops, in a class the
+    // ledger keeps in doubt.
+    let fault = FaultKind::RedirectAfterCommit {
+        location: "/api/orders/A-102".to_owned(),
+    };
+    let within = saved_under(&app, &scene, "L-904", Some(fault)).await;
+    assert_eq!(
+        class_and_code(&within),
+        (FailureClass::UnknownVariant, "unexpected_status")
+    );
+    assert_eq!(within.sent, Sent::Answered);
+    assert!(!settled(&within), "{within}");
+
+    // An answer to a write that is larger than its endpoint allows was not
+    // read: the write is in doubt.
+    let folder = Folder::new("small");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let plan = compile_changed(&registry, "example", "endpoints/line_items.yaml", |text| {
+        text.replacen("effect: write", "effect: write\nmax_response_bytes: 8", 1)
+    })
+    .unwrap()
+    .plan;
+    let small = Scene::over(folder, registry, plan, &app.url(""));
+    let large = saved_under(&app, &small, "L-905", None).await;
+    in_doubt(&large, "an answer over the limit");
+
+    // A step that was to judge a write's answer and cannot be carried out
+    // leaves the write in doubt too: its verdict was never read.
+    let write = write_of("A-102", "L-906").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(None, Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    let inputs = item("A-102", "L-906", "Corner post", 3, "150.5");
+    for list in ["read_back", "act"] {
+        write
+            .run(&scene, &handle, &mut prepared, list, &inputs)
+            .await
+            .unwrap();
+    }
+    let binding = scene.binding("example_line_item_upsert");
+    let mut bent = binding.confirm.clone();
+    bent[0].refers_to.clone_from(&binding.read_back[0].refers_to);
+    let record = Some((&write.token, record(&write.fence, 0), &write.key));
+    let unread = scene
+        .run(&handle, &mut prepared, &bent, &inputs, record, LONG)
+        .await
+        .unwrap_err();
+    in_doubt(&unread, "a confirm that cannot be carried out");
+    assert_eq!(app.write_count("A-102", "L-906").await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn a_write_that_was_not_sent_keeps_its_version_and_one_with_no_version_read_is_refused() {
+    let app = TestApp::start().await.unwrap();
+    let upstream = app.url("").trim_start_matches("http://").to_owned();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let scene = Scene::new("example", &format!("http://127.0.0.1:{port}"));
+    let up = link(listener, upstream.clone(), false);
+
+    // The record is read, and its version with it.
+    let write = write_of("A-100", "L-102").await;
+    let (handle, mut prepared) = scene
+        .try_prepare(None, Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    let inputs = item("A-100", "L-102", "Right rail", 9, "150.5");
+    let before = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
+    assert!(!before.absent);
+
+    // The system cannot be reached: the first attempt of the write is not
+    // sent, which is what the engine tries again.
+    up.abort();
+    let _ = up.await;
+    let unsent = write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&unsent),
+        (FailureClass::Transient, "connection_lost")
+    );
+    assert_eq!(unsent.sent, Sent::NotSent);
+
+    // Meanwhile someone else changes the record.
+    let other = serde_json::json!(
+        {"description": "Right rail", "quantity": 7, "length_in": "150.5", "version": 1}
+    );
+    let changed = app
+        .http()
+        .put(app.url("/api/orders/A-100/items/L-102"))
+        .json(&other)
+        .send()
+        .await
+        .unwrap();
+    assert!(changed.status().is_success());
+
+    // The system is back, and the write is tried again. It still carries
+    // the version that was read, so the application refuses it, and the
+    // other caller's change is not overwritten.
+    let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+    link(listener, upstream, false);
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
+    let stale = write
+        .run(&scene, &handle, &mut prepared, "confirm", &inputs)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&stale),
+        (FailureClass::Stale, "version_conflict")
+    );
+    let message = stale.failure.message();
+    assert!(
+        message.contains("Version 1 was sent; the record is at 2."),
+        "{message}"
+    );
+    let stored = app.stored_item("A-100", "L-102").await.unwrap().unwrap();
+    assert_eq!((stored.quantity, stored.version), (7, 2));
+    assert_eq!(app.write_count("A-100", "L-102").await.unwrap(), 1);
+    handle.release(prepared, false).await;
+
+    // A write whose endpoint sends a version, in a pass that read none for
+    // the record, is refused by the driver before anything is sent.
+    let direct = Scene::new("example", &app.url(""));
+    let write = write_of("A-100", "L-101").await;
+    let (handle, mut prepared) = direct
+        .try_prepare(None, Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    let inputs = item("A-100", "L-101", "Left rail", 5, "150.5");
+    let refused = write
+        .run(&direct, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Stale, "version_not_read")
+    );
+    assert_eq!(refused.sent, Sent::NotSent);
+
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0);
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    assert_eq!((stored.quantity, stored.version), (2, 1));
 }
