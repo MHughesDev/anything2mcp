@@ -85,17 +85,17 @@ fn not_made(failure: Failure) -> StepFailure {
 /// Gives the temporary file the old file's owner, group, and permission
 /// bits, through its own handle, and looks that it has them.
 ///
-/// On Unix a `false` stops the save by name: the old file carries a
-/// set-user, set-group, or sticky bit, which is never copied onto a file
-/// the engine wrote, or the system refuses the owner or the group to the
-/// engine's user. On Windows the answer is always `false`: only the
-/// read-only mark is kept, and the new file takes the access list its
-/// folder passes down, as the pack's design states. A file marked
-/// read-only is never replaced, so the save goes on there.
+/// A `false` stops the save by name, unsent, on every system. On Unix the
+/// old file carries a set-user, set-group, or sticky bit, which is never
+/// copied onto a file the engine wrote, or the system refuses the owner or
+/// the group to the engine's user. On Windows the new file takes the access
+/// list its folder passes down, and the answer is `true` only where the old
+/// file, opened itself, has that very owner and list: a file with an access
+/// list of its own is never replaced with a wider one (decisions 0193 and
+/// 0194).
 fn keep(temporary: &mut Temporary) -> Result<(), StepFailure> {
     match temporary.keep_owner_and_mode() {
         Ok(true) => Ok(()),
-        Ok(false) if cfg!(windows) => Ok(()),
         Ok(false) | Err(_) => Err(not_kept()),
     }
 }
@@ -104,7 +104,7 @@ fn not_kept() -> StepFailure {
     stop(
         codes::METADATA_NOT_KEPT,
         "The old file's owner, group, or permissions cannot be carried to the new file. Nothing was written.",
-        "Check who owns the folder and the file, whether the engine's user may give a file to that owner and group, and whether the file carries a set-user, set-group, or sticky bit.",
+        "Check who owns the folder and the file, whether the engine's user may give a file to that owner and group, whether the file carries a set-user, set-group, or sticky bit, and, on Windows, whether the file has an access list of its own rather than its folder's.",
     )
 }
 
