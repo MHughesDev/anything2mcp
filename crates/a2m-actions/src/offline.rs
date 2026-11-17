@@ -99,6 +99,20 @@ pub(crate) struct TestOutcome {
     pub(crate) detail: Json,
 }
 
+impl Fixture {
+    /// A fixture held in memory: recorded answers and the files a step or
+    /// a source reads, as `fixture.record` makes one before it writes
+    /// anything.
+    pub(crate) fn recorded(answers: Vec<RecordedAnswer>) -> Self {
+        Self {
+            answers,
+            requests: Vec::new(),
+            files: Vec::new(),
+            held: Vec::new(),
+        }
+    }
+}
+
 impl TestOutcome {
     fn failed(detail: Json) -> Self {
         Self {
@@ -834,34 +848,76 @@ pub(crate) async fn run_test(
     test: &TestPlan,
     fixture: Option<Result<Fixture, Json>>,
 ) -> TestOutcome {
+    run_test_with_result(engine, plan, plan_hash, world, test, fixture)
+        .await
+        .0
+}
+
+/// As [`run_test`], with the tool's result against the fixture, as plain
+/// JSON: what `fixture.record` writes as a recorded test's expectation.
+pub(crate) async fn run_test_with_result(
+    engine: &Engine,
+    plan: &Arc<Plan>,
+    plan_hash: Digest,
+    world: &OfflineWorld,
+    test: &TestPlan,
+    fixture: Option<Result<Fixture, Json>>,
+) -> (TestOutcome, Json) {
+    let outcome = run_one(engine, plan, plan_hash, world, test, fixture).await;
+    (outcome.0, outcome.1.unwrap_or(Json::Null))
+}
+
+async fn run_one(
+    engine: &Engine,
+    plan: &Arc<Plan>,
+    plan_hash: Digest,
+    world: &OfflineWorld,
+    test: &TestPlan,
+    fixture: Option<Result<Fixture, Json>>,
+) -> (TestOutcome, Option<Json>) {
+    let outcome = run_body(engine, plan, plan_hash, world, test, fixture).await;
+    match outcome {
+        Ok((outcome, got)) => (outcome, Some(got)),
+        Err(outcome) => (outcome, None),
+    }
+}
+
+async fn run_body(
+    engine: &Engine,
+    plan: &Arc<Plan>,
+    plan_hash: Digest,
+    world: &OfflineWorld,
+    test: &TestPlan,
+    fixture: Option<Result<Fixture, Json>>,
+) -> Result<(TestOutcome, Json), TestOutcome> {
     let Some(tool) = plan.tools.get(test.tool.get()) else {
-        return TestOutcome::failed(
+        return Err(TestOutcome::failed(
             json!({"reason": "The test names a tool the plan does not hold."}),
-        );
+        ));
     };
     if test.kind != TestKind::Offline {
-        return TestOutcome {
+        return Err(TestOutcome {
             state: "not_run",
             detail: json!({"reason": "A live test runs against a test record of a system, and is not run here."}),
-        };
+        });
     }
     let fixture = match fixture {
         Some(Ok(fixture)) => fixture,
         Some(Err(wrong)) => {
-            return TestOutcome::failed(
+            return Err(TestOutcome::failed(
                 json!({"reason": "The fixture cannot be used.", "fixture_problem": wrong}),
-            );
+            ));
         }
         None => {
-            return TestOutcome::failed(json!({"reason": "The offline test names no fixture."}));
+            return Err(TestOutcome::failed(json!({"reason": "The offline test names no fixture."})));
         }
     };
     let (input, source) = match source_of(plan, test, &fixture) {
         Ok(found) => found,
         Err(wrong) => {
-            return TestOutcome::failed(
+            return Err(TestOutcome::failed(
                 json!({"reason": "The test's source cannot be used.", "fixture_problem": wrong}),
-            );
+            ));
         }
     };
     let write = writes(plan, test);
@@ -871,21 +927,21 @@ pub(crate) async fn run_test(
     // expects nothing to be sent.
     let nothing_sent = expected.get(SENT).and_then(Json::as_u64) == Some(0);
     if write && !nothing_sent && fixture.requests.is_empty() {
-        return TestOutcome {
+        return Err(TestOutcome {
             state: "not_run",
             detail: json!({
                 "reason": format!("A test of a write must record what its save is sent: add `<step>{REQUEST_SUFFIX}` to its fixture, or, for a test that expects the record to hold the intended values already, write `sent: 0` in its `expect`."),
             }),
-        };
+        });
     }
     let ledger = if write {
         match open_ledger(plan, plan_hash, test, tool, world).await {
             Ok(ledger) => Some(ledger),
             Err(failure) => {
-                return TestOutcome::failed(json!({
+                return Err(TestOutcome::failed(json!({
                     "reason": "The test's own ledger could not be opened.",
                     "failure": {"class": failure.class().to_string(), "code": failure.code().to_string(), "message": failure.message()},
-                }));
+                })));
             }
         }
     } else {
@@ -971,7 +1027,7 @@ pub(crate) async fn run_test(
         if !fixture.files.is_empty() {
             detail["not_answers"] = untrusted(fixture.files.clone());
         }
-        return TestOutcome::failed(detail);
+        return Err(TestOutcome::failed(detail));
     }
     let differs = differences(&expected, &got, &facts);
     if write {
@@ -988,18 +1044,21 @@ pub(crate) async fn run_test(
             if !differs.is_empty() {
                 detail["differences"] = json!(differs);
             }
-            return TestOutcome::failed(detail);
+            return Ok((TestOutcome::failed(detail), got));
         }
     }
     if differs.is_empty() {
-        TestOutcome {
-            state: "passed",
-            detail,
-        }
+        Ok((
+            TestOutcome {
+                state: "passed",
+                detail,
+            },
+            got,
+        ))
     } else {
         detail["reason"] = json!("The result is not the one the test states.");
         detail["differences"] = json!(differs);
-        TestOutcome::failed(detail)
+        Ok((TestOutcome::failed(detail), got))
     }
 }
 

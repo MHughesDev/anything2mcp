@@ -314,7 +314,7 @@ fn no_http_client_of_the_workspace_takes_a_proxy_from_the_environment() {
     let root = repository();
     // Helpers whose owner has still to add `.no_proxy()`: listed so that the
     // rule holds everywhere else today, and removed once the line is added.
-    let owed = ["targets/example-app/src/harness.rs"];
+    let owed: [&str; 0] = [];
     let helpers = [
         root.join("crates")
             .join("a2m-auth")

@@ -122,18 +122,19 @@ pub struct TestApp {
 /// made without a provider installed for the process.
 pub fn client_builder() -> reqwest::ClientBuilder {
     #[cfg(feature = "tls")]
-    {
+    let builder = {
         // With no configuration, reqwest is handed something it does not
         // know, and `build` returns an error instead of stopping the process.
         match crate::tls::plain_client_config() {
             Some(config) => reqwest::Client::builder().tls_backend_preconfigured(config),
             None => reqwest::Client::builder().tls_backend_preconfigured(()),
         }
-    }
+    };
     #[cfg(not(feature = "tls"))]
-    {
-        reqwest::Client::builder()
-    }
+    let builder = reqwest::Client::builder();
+    // No client of the workspace takes a proxy from the environment
+    // (decision 0197): the harness asks the application on this machine.
+    builder.no_proxy()
 }
 
 impl TestApp {

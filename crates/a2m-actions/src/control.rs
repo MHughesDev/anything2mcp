@@ -621,6 +621,11 @@ impl Control for InProcessControl {
         self.caller.project.clone()
     }
 
+    fn step_observed(&self, step: &a2m_core::Step, observed: Option<&a2m_core::Values>) {
+        // Kept only for a trial a fixture is being recorded from.
+        crate::fixture::observed(&self.kernel, self.run.input_hash, step, observed);
+    }
+
     fn other_records(
         &self,
         operation: &a2m_core::OperationName,

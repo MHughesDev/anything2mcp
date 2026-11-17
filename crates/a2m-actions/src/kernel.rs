@@ -216,6 +216,10 @@ pub(crate) struct Inner {
     pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
     /// The drafted plans of trials, newest last, the newest [`DRAFTS_KEPT`].
     pub(crate) drafts: Mutex<Vec<KeptDraft>>,
+    /// The trials a fixture is being recorded from, by the digest that
+    /// makes each the run it is, with what each step observed, in memory
+    /// alone until it is scrubbed (decision 0196).
+    pub(crate) recordings: Mutex<BTreeMap<Digest, crate::fixture::Recording>>,
     pub(crate) runner: crate::runner::RunnerState,
     pub(crate) signals: Arc<RunSignals>,
     /// The person's acts that wait on a page, and what became of the last
@@ -515,6 +519,7 @@ impl Kernel {
                 places: crate::project::Places::of_process(),
                 plans: Mutex::new(BTreeMap::new()),
                 drafts: Mutex::new(Vec::new()),
+                recordings: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
                 signals,
                 acts: Arc::clone(&acts),
