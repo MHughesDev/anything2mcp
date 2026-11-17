@@ -161,4 +161,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0155 | [Four packs state what saves, what writes, and when their guard lifts](0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md) | Accepted (design decision) |
 | 0156 | [The clients are generated from the served document, and reach Windows by the pipe](0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md) | Accepted (design decision) |
 | 0157 | [TLS is switched on with the provider stated in each client](0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md) | Accepted (design decision) |
+| 0158 | [The product crate and the local engine after their safety audit](0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md) | Accepted (design decision) |
 | 0159 | [A lost answer is a write in doubt at the doors and in the clients](0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md) | Accepted (design decision) |

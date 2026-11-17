@@ -135,7 +135,7 @@ fn not_an_answer() -> Failure {
         FailureClass::PossibleCommit,
         local_codes::ANSWER_LOST,
         "The engine had the request, and its answer could not be read: what it asked may have been done, and a write may have started a run.",
-        "Do not run the command again before you know what became of it: a second run of it may start a second run and write twice. Find it first with `anything2mcp run list`.",
+        "Do not run the command again: a second run of it may start a second run and write twice. Find this command's run first in your recent runs (`anything2mcp run list`), or tell the person that the answer was lost so that they can check.",
     )
 }
 

@@ -81,7 +81,7 @@ pub(crate) fn answer_lost() -> Failure {
         FailureClass::PossibleCommit,
         ANSWER_LOST,
         "The engine may have had the request, and its answer was lost: what it asked may have been done, and a write may have started a run.",
-        "Do not send it again before you know what became of it: a second request may start a second run and write twice. Find it first in your recent runs (`anything2mcp run list`).",
+        "Do not send it again: a second request may start a second run and write twice. Find this request's run first in your recent runs (`anything2mcp run list`), or tell the person that the answer was lost so that they can check.",
     )
 }
 

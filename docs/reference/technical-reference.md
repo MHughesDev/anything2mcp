@@ -349,7 +349,7 @@ On a local machine no command approves a write; see spec section 222. On a serve
 | Transport | Unix domain socket (macOS, Linux); named pipe (Windows) |
 | Access | Per-user directory or access list, plus a check of the connecting user on every connection |
 | Protocol | HTTP carrying the `/api/v1` REST API and the MCP endpoint |
-| What a command adds | Two request headers, read from the local channel alone: `A2M-Project`, the project folder it was run in, percent-encoded; and `A2M-Person-At-Terminal: true` when a person is at its terminal. Every REST answer carries its exit class in the header `A2M-Exit-Class` ([decision 0131](../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)) |
+| What a command adds | One request header, read from the local channel alone: `A2M-Project`, the project folder it was run in, percent-encoded. No header says a person is at the caller's terminal: every caller of the channel is an agent ([decision 0158](../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)). Every REST answer carries its exit class in the header `A2M-Exit-Class` ([decision 0131](../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)) |
 | Start | On demand, guarded by a lock file; `--in-process` for single-command use |
 | Stop | After 30 minutes idle by default; session state saved to the vault |
 | Version skew | A newer client asks an older engine to drain and restart |

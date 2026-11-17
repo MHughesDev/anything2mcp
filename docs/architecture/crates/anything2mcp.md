@@ -2,7 +2,7 @@
 
 The product: the one program, and the only code that names a pack. It reads the settings, fills the provider registry with one call per first-party pack, opens the kernel, and runs a command line that is generated from the action registry apart from a few process commands. `a2m` is the same program under a short name.
 
-**As built today** ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md), [decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)): `serve` runs the local engine in the foreground, a command is its thin client when one runs, and `bridge` is the stdio proxy an MCP client starts. Nothing starts an engine on demand yet: with no engine a command runs one inside its own process, and the bridge answers with the named failure until one runs. The server and runner roles are not joined, so `runner` is named and answers that it is not built. Nine providers are registered: `web` and `web_probe`, `http`, `mcp`, `command`, `data`, `file`, `stream`, and `device`. The end-to-end proofs of the whole product live in this crate's `tests/`.
+**As built today** ([decision 0119](../../decisions/0119-the-product-crate-as-building-it-settled-it.md), [decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md), and after its safety audit [decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)): `serve` runs the local engine in the foreground, a command is its thin client when one runs, and `bridge` is the stdio proxy an MCP client starts. Nothing starts an engine on demand yet: with no engine a command runs one inside its own process, and the bridge answers with the named failure until one runs. The server and runner roles are not joined, so `runner` is named and answers that it is not built. Nine providers are registered: `web` and `web_probe`, `http`, `mcp`, `command`, `data`, `file`, `stream`, and `device`. The end-to-end proofs of the whole product live in this crate's `tests/`.
 
 ## Facts
 
@@ -34,7 +34,9 @@ As built.
 ```rust
 // main.rs and bin/a2m.rs: both call the same function, so the two names behave identically.
 pub mod cli {
-    pub fn run(args: impl IntoIterator<Item = String>) -> ExitCode;
+    /// The program's main. Unsafe to call: it removes the vault's passphrase from
+    /// the process environment, which is sound only before any other thread starts.
+    pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode;
     /// The same with the process's surroundings as data, for a test.
     pub async fn run_with(args: &[String], host: &Host) -> Finished;
     /// One command line on an engine that is open already.
@@ -49,7 +51,8 @@ pub struct EngineOptions { paths, project, environment, flags, place, key_store,
 impl EngineOptions { pub fn of_machine(paths: Paths, environment, person: Arc<dyn PersonSurface>) -> Self; }
 pub struct Engine { /* the kernel, and the one caller a process on this machine is */ }
 impl Engine {
-    pub async fn open(options: EngineOptions) -> Result<Engine, Failure>;   // only the settings can fail
+    /// With the store on disk, takes the engine lock and holds it until `close`.
+    pub async fn open(options: EngineOptions) -> Result<Engine, Failure>;   // settings, the lock, the caller
     pub fn kernel(&self) -> &Kernel;
     pub fn caller(&self, door: FrontDoor, is_agent: bool) -> Caller;
     pub fn request(&self, action: &str, input: Json, caller: Caller) -> Request;   // in the project folder
@@ -87,7 +90,7 @@ Joining a pack's own crates is the only other thing this crate does with a pack:
 
 **What the host gives the packs.** The supervisor, the redactor and telemetry of the prepared kernel, and four named roots: `project` and `files`, both the project folder (the default of `files.allowed_roots`); `command_runs`, a folder under the data directory; and `profiles`, the data directory's own. A root whose folder does not exist is left out, and a pack that needs it learns so when it checks a path.
 
-**The vault's root key on this machine.** `vault.backend`, which only the installation's settings file can set, chooses: the operating system's key store, or, written `passphrase`, a key derived from the passphrase in the environment variable `A2M_VAULT_PASSPHRASE`, with its salt kept in the data directory. A key store that does not answer is not a failure to start: the kernel opens `degraded`, reads go on, nothing is written, and `doctor.run` gives the way out. A Linux machine has no key store this build can reach, so the passphrase route is the one there.
+**The vault's root key on this machine.** `vault.backend`, which only the installation's settings file can set, chooses: the operating system's key store, under an entry named for the installation (`local-` and sixteen hexadecimal characters of the digest of the data directory's path, so that two installations never share a root), or, written `passphrase`, a key derived from the passphrase in the environment variable `A2M_VAULT_PASSPHRASE`, with its salt kept in the data directory. The program copies its environment at start and then removes the passphrase from the process environment, before any thread starts, so that no process it starts can inherit it; the environment the process was started with stays readable to a program of the same user (`/proc/<pid>/environ` on Linux), as its memory does. A key store that does not answer is not a failure to start: the kernel opens `degraded`, reads go on, nothing is written, and `doctor.run` gives the way out. A Linux machine has no key store this build can reach, so the passphrase route is the one there.
 
 **The person at the local engine.** `LocalSurface` of `a2m-local`, made from the presence prompt this build has for the machine, the approval window `policy.approval_window_minutes`, and the engine's clock and randomness. It is the only holder of the approval desk. On Linux the prompt is polkit, once an administrator has installed its policy file; on macOS and Windows none is built, so through the program no approval is recorded there and no person's act is carried out by a served engine ([decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md)). A host that embeds `LocalEngine`, and a test, give their own prompt.
 
@@ -121,8 +124,8 @@ The router is the REST router of `a2m-api` and the MCP endpoint of `a2m-mcp` for
 
 | What | How |
 | --- | --- |
-| The caller | The `Peer` the channel put on the request is given to `Kernel::verify_caller`; the caller that comes back goes on the request. A request with no peer is refused. A stopped engine names nobody and answers its own status |
-| Agent or person | An MCP client and an SDK are agents. The command line is an agent unless it sends `A2M-Person-At-Terminal: true`, which it does when its input and error output are a terminal. This stops a mistake; the presence prompt is what proves a person |
+| The caller | The `Peer` the channel put on the request is given to `Kernel::verify_caller`; the caller that comes back goes on the request. A request with no peer is refused. An engine whose store never opened (`engine_degraded`) names nobody and answers its own status; any other refusal is the answer |
+| Agent or person | Every caller is an agent. Nothing a caller says of itself, its label or a header, makes it a person for any decision: a person's act asked through the channel is refused `person_required` and raises no prompt, a pre-approval rule that asks for a caller who is no agent is never met, and the decision records an agent. The label names the door, for the audit log. A person is shown only by the presence prompt, raised from a press on an approval page |
 | The project folder | The command sends the folder it was run in as `A2M-Project`, percent-encoded; it goes on the request as the `ProjectFolder` of `a2m-api`. The handlers check it before any use. An MCP request carries none yet |
 | `engine.stop` | Sent to the dispatcher, so that the policy engine decides and the decision is recorded. When the dispatcher answers that the action is the client end's, this process stops serving |
 
@@ -130,9 +133,9 @@ The router is the REST router of `a2m-api` and the MCP endpoint of `a2m-mcp` for
 
 ### The thin client, as built
 
-A command looks for the engine with `Connector`. When one answers, each action is sent to `POST /api/v1/actions/<name>` with its input as the body, the project folder and the terminal's state as the two headers above, and `--idempotency-key` as `Idempotency-Key`. The answer's body is the response, and its header `A2M-Exit-Class` gives the exit code; both go to the same renderer as a response made in this process. A shortcut's steps go one after another on the one connection, and the first that is not a success ends them. The client holds no engine logic.
+A command looks for the engine with `Connector`. When one answers, each action is sent to `POST /api/v1/actions/<name>` with its input as the body, the project folder as the header above, and `--idempotency-key` as `Idempotency-Key`. An answer lost after the request may have reached the engine is `possible_commit`/`answer_lost`, `retry_safe: false`, with a fix that says not to run the command again and to find its run first; only a failure before anything was sent (`connection_lost`) is safe to run again. A body with the channel's own four parts is shown as that failure. The answer's body is the response, and its header `A2M-Exit-Class` gives the exit code; both go to the same renderer as a response made in this process. A shortcut's steps go one after another on the one connection, and the first that is not a success ends them. The client holds no engine logic.
 
-When nothing answers and nobody holds the engine lock, the command runs the engine in its own process. When the lock is held and nothing answers, an engine is starting or closing: the command looks again for up to twenty seconds, then ends with `busy`, `engine_unreachable`, and exit code 4. `--in-process` skips the engine and is refused, `busy`, `engine_running`, while one runs.
+When nothing answers, the command takes the engine lock in the same step and runs the engine in its own process, holding the lock until its kernel has closed: no `serve` and no second command opens the store meanwhile. When the lock is held and nothing answers, a `serve` is starting or closing, or another command runs the engine inside itself: the command looks again at the channel and the lock for up to twenty seconds, then ends with `busy`, `engine_unreachable`, and exit code 4. `--in-process` skips the engine and is refused, `busy`, `engine_running`, while one runs. In one process the caller is the process itself, and whether a person is at its terminal is what it sees of itself; that is no proof of a person and is never carried over the channel.
 
 ### The bridge, as built
 
@@ -149,7 +152,7 @@ The command tree is built from the action registry each time the program starts.
 | Process commands | `serve`, `bridge [--toolset use\|build]`, and `runner`, which is not built | Here; they start a role and are not actions |
 | Global flags | `--json`, `--project`, `--in-process`, `--idempotency-key`, `--help`, `--version` | Here |
 
-A command finds its project by looking for `anything2mcp.toml` in the current directory and then each parent, or takes `--project`. It sends the project's path in the `Request`; the engine checks it against the allowed roots before using it.
+A command finds its project by looking for `anything2mcp.toml` in the current directory and then each parent, or takes `--project`. The walk looks only in folders that only the user or the administrator can change, and stops at the first that others can, so a shared folder such as the system's temporary folder is never looked in, nor anything above it; a project file, found or named, that others can change is refused `input`/`path_not_allowed`. Who may change a path is `kept_by` of `a2m-local`: on macOS and Linux the owner is the user or the administrator, nobody else may write, and a group may only when it is the user's primary group. On Windows this build reads no owner, so the walk looks in the working folder, and above it only inside the user's profile folder. It sends the project's path in the `Request`; the engine checks it against the allowed roots before using it.
 
 **The parser** is our own, over the command faces: no outside crate. The rules, all of them:
 
@@ -160,7 +163,7 @@ A command finds its project by looking for `anything2mcp.toml` in the current di
 - A shortcut dispatches its actions in turn and stops at the first that is not a success; the response printed is the last one dispatched. A shortcut of one action also takes that action's flags; one of several takes its one argument and nothing else. `init` has no action beneath it and says what to do instead.
 - Help is text built from the same data: `--help` alone lists every noun with its verbs, the shortcuts, the process commands, and the global flags; `<noun> --help` lists a noun's commands; `<noun> <verb> --help` gives the usage line, the summary, and every argument.
 
-**Output.** With `--json`, or whenever standard output is not a terminal, exactly one JSON object on standard output, as [the output contract](../../reference/technical-reference.md#command-output-contract) says: the response, whether it succeeded or failed. At a terminal the result is printed as indented lines, laid out from the same JSON without looking at what it holds, with the next command to run. Warnings, and a failure with its class, code, message, and next step, go to standard error in both forms. No prompt is ever shown when output is not a terminal. A caller whose input and error output are not a terminal is taken to be an agent. The exit code comes from the response's exit class alone:
+**Output.** Text a system returned is never obeyed by the terminal: text for a terminal and all of standard error write every control character but line end and tab, and every mark that turns the direction of text, as a visible escape such as `\u{1b}`; JSON escapes the same characters as `\u` escapes, the encoder doing those below a space. With `--json`, or whenever standard output is not a terminal, exactly one JSON object on standard output, as [the output contract](../../reference/technical-reference.md#command-output-contract) says: the response, whether it succeeded or failed. At a terminal the result is printed as indented lines, laid out from the same JSON without looking at what it holds, with the next command to run. Warnings, and a failure with its class, code, message, and next step, go to standard error in both forms. No prompt is ever shown when output is not a terminal. A caller whose input and error output are not a terminal is taken to be an agent. The exit code comes from the response's exit class alone:
 
 | Exit class | Code |
 | --- | --- |
@@ -206,7 +209,9 @@ One file of its own: the salt of the passphrase route, `vault-salt` in the data 
 | `policy` | `caller_missing` | A request that reached the local engine's router with no peer of the channel |
 | `input` | `settings_invalid` | Passed through from the loader: the settings file or an environment variable does not load, or would weaken a guardrail, with the setting and its layer named |
 | `busy` | `key_store_unreachable` | The reason a kernel is degraded when this machine's key store does not answer or no passphrase was given; never raised to a caller by this crate |
-| `busy` | `engine_unreachable` | Raised by `a2m-local` when nothing answers, and here for an engine that holds the lock and never answered; exit code 4. The bridge passes it to its caller as error -32000 |
+| `busy` | `engine_unreachable` | Raised by `a2m-local` when nothing answers, and here for a lock held for the whole wait, by an engine that never answered or by another command that runs the engine inside itself; exit code 4. The bridge passes it to its caller as error -32000 |
+| `possible_commit` | `answer_lost` | Raised by `a2m-local`, and here for an answer that cannot be read: the request may have reached the engine; exit code 4, `retry_safe: false` |
+| `input` | `path_not_allowed` | A project file, or its folder, that others can change |
 
 ## Invariants
 
@@ -222,11 +227,15 @@ One file of its own: the salt of the passphrase route, `vault-salt` in the data 
 | A secret is in no output and in nothing on disk | The two tests of `signed_in_read.rs`; the passphrase, in `verified_write.rs` |
 | An unconfigured engine opens no outside connection | Not tested here: the CI test of spec section 605 |
 | A command prints and ends the same through the engine and in one process | `two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_leaves_nothing`: five commands, each run both ways, give the same exit code and the same object |
-| One engine per data directory | The same test: a second `serve` and a command with `--in-process` are refused with `engine_running` while one serves |
+| One engine per data directory | The same test: a second `serve` and a command with `--in-process` are refused with `engine_running` while one serves; and `a_command_that_runs_the_engine_itself_holds_its_lock_and_no_second_engine_opens_the_store`: while a command runs the engine inside itself, a second command waits and is refused by name, `serve` is refused, and a third runs once the first has gone |
+| An answer lost after the request was sent is never said to be safe to repeat | `an_answer_lost_through_the_served_engine_is_a_write_in_doubt_and_never_safe_to_retry`: the engine dies while a write's answer is held back; the command ends `answer_lost`, `retry_safe: false`, and the stand holds one write |
+| Nothing a caller says makes it a person | `a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises_no_prompt` |
+| A project file others can change is not taken | `a_project_file_that_others_can_change_is_never_taken_as_a_project` (macOS and Linux) |
+| Text a system returned is not obeyed by the terminal | `text_a_system_returned_reaches_a_terminal_as_text_and_is_never_obeyed` |
 | A stopped engine leaves no process and no socket | The same test: after `engine stop` the process ends with code 0, the runtime directory holds the lock file alone, and the lock is free |
 | Standard output of the bridge is protocol messages alone | `a_bridge_answers_with_the_failure_until_an_engine_runs_and_then_reads_in_both_revisions`: every line is a JSON-RPC message, with no engine and with one; and `the_exit_code_follows_the_failure` for a malformed `bridge` |
 | Every action command can be sent to the engine | `every_action_command_has_the_rest_route_a_thin_client_sends_it_to` |
-| Nothing reached through the channel approves | `a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_written_once`: resuming through the engine leaves the run resting until the page is answered and the presence prompt is passed |
+| Nothing reached through the channel approves | `a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_written_once`: resuming through the engine leaves the run resting until the page is answered, in a real browser, and the presence prompt is passed; a press from `Origin: null` or another origin raises nothing |
 
 ### The end-to-end proofs
 
@@ -241,7 +250,7 @@ Each goes from target files in a project folder, through lint, publish, and a to
 | Every other pack | `other_packs.rs` | One read each through `device`, `stream`, `mcp`, `file`, `sql`, and `ui`, against each pack's stand |
 
 | The local engine | `local_engine.rs`, through the real program | `serve` as a child process on a temporary data directory: two commands at once read through it, holding no passphrase themselves; a second engine is refused; `engine stop` ends it. A read through `bridge`, by raw protocol messages over its standard streams, in 2026-07-28 and in 2025-11-25, and on the `build` toolset's endpoint; a bridge started with no engine answers with the failure and carries the next request once an engine runs |
-| The verified write, served | `local_engine.rs`, in the test's process | The same `LocalEngine` that `serve` starts, with the real channel, `LocalSurface`, both routers, and the kernel: a write called through the thin client rests with a link; the test opens the page over loopback and presses Approve; the prompt is raised once; `run resume` completes; the test application holds one write. It is not run through the binary, because the program ships no presence prompt and nothing was added to it for a test |
+| The verified write, served | `local_engine.rs`, in the test's process | The same `LocalEngine` that `serve` starts, with the real channel, `LocalSurface`, both routers, and the kernel: a write called through the thin client rests with a link; a real browser (the web pack's browser engine, `A2M_TEST_BROWSER`) opens the page and presses Approve; the prompt is raised once; `run resume` completes; the test application holds one write. It is not run through the binary, because the program ships no presence prompt and nothing was added to it for a test |
 
 Not proven: a pipeline over a sheet; a write through any mode but `http`; the web pack's sign-in; anything of the local engine on Windows or macOS, where the tests are written to run and have not run. CI must show `local_engine.rs` passing there; the named pipe has never carried a request.
 
@@ -260,7 +269,7 @@ Not proven: a pipeline over a sheet; a write through any mode but `http`; the we
 ## Open points
 
 - Start on demand. Until `a2m-local` builds it, a command with no engine runs one inside itself, and the bridge needs `serve` to have been started ([decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)).
-- A person's act, such as `version publish`, cannot be done while an engine runs where no presence prompt can be raised (macOS, Windows, and a Linux machine without the policy file or a desktop session): the served engine asks its presence prompt, and `--in-process` is refused. Today a person stops the engine, publishes in one process at a terminal, and starts it again. The operating system's prompt, package 3.6, ends this.
+- A person's act, such as `version publish`, cannot be done through a served engine on any system: every caller of the channel is an agent ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md)), and `--in-process` is refused while one runs. Today a person stops the engine, publishes in one process at a terminal, and starts it again. The way out is a page for a person's act, as for an approval: the dispatcher hands a person's act asked by an agent to the person surface for a link, and a press on that page raises the prompt.
 - Settled by [decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md): `Channel::serve` hands the engine lock back, and `LocalEngine::serve` drops it after the kernel has closed.
 - A call that arrives over MCP carries no project folder, so the build toolset's actions on a project's files answer `path_not_allowed` through the bridge. The folder needs a place that both `a2m-api` and `a2m-mcp` can read, which is `a2m-actions`.
 - Settled: a run in hand holds an idle engine open, through `Kernel::runs_in_hand`. A run that rests for a sign-in nobody makes holds it open for as long as it rests.
