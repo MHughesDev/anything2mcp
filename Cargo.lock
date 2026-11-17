@@ -6,9 +6,11 @@ version = 4
 name = "a2m-actions"
 version = "0.0.1"
 dependencies = [
+ "a2m-actions",
  "a2m-auth",
  "a2m-core",
  "a2m-engine",
+ "a2m-expr",
  "a2m-files",
  "a2m-ledger",
  "a2m-policy",
@@ -16,6 +18,8 @@ dependencies = [
  "a2m-sched",
  "a2m-telemetry",
  "a2m-vault",
+ "example-app",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

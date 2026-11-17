@@ -23,8 +23,17 @@ serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
 
+[features]
+# A way for the tests of the crates above this one to have a published tool
+# without the compiler: `Kernel::publish_plan`. Never part of the product.
+testing = []
+
 [dev-dependencies]
+a2m-actions = { path = ".", features = ["testing"] }
+a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
+example-app = { path = "../../targets/example-app" }
+reqwest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
