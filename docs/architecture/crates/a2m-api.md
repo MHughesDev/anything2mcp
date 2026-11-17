@@ -73,7 +73,16 @@ The aliases in the technical reference map onto actions as follows. Each is the 
 | `GET /api/v1/openapi.json` | Generated from the registry; served by this crate, not an action |
 | `GET /api/v1/runs/{id}/events` | The event stream below; reading a run's events is authorized as `run.get` |
 
-A request is turned into a `Request` with the caller, the toolset if the route names one, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen by `status_of` from the exit class and the failure class: 200 for success, 202 for a run that rests waiting for a person, 400 for malformed, 401 for no caller, 403 for `policy`, 409 for `stale`, 503 for `busy`, 500 for anything else, and the door's own codes for 404, 405, 408, 413, and 415 ([decision 0116](../../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). A still-running run is 200. A `Retry-After` time for `busy` is not sent yet: the response carries none. The body is always the full `Response`, so a client never needs the status code to know what happened.
+A request is turned into a `Request` with the caller, the toolset if the route names one, and the `Idempotency-Key` header as the idempotency key; it is accepted on every call whose effect is a write. The `Response` becomes JSON with a status code chosen by `status_of` from the exit class and the failure class: 200 for success, 202 for a run that rests waiting for a person, 400 for malformed, 401 for no caller, 403 for `policy`, 409 for `stale`, 503 for `busy`, 500 for anything else, and the door's own codes for 404, 405, 408, 413, and 415 ([decision 0116](../../decisions/0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md)). A still-running run is 200.
+
+What a caller that sends too much, or too slowly, sees:
+
+| Request | Answer |
+| --- | --- |
+| A body over the limit (1 MiB by default), up to four times the limit | 413 `body_too_large`, always: the door reads and discards the rest (for at most 5 s) before it answers |
+| Any other refusal before the body is read (no caller, a bad header, a query on a POST, no such route), with a body up to four times the limit | That refusal, always, after the same draining |
+| A body declared or found longer than four times the limit | 413 `body_too_large`, or the connection closed while the client is still writing; nothing is dispatched in either case |
+| A body that stops arriving | 408 `body_timed_out` when `body_timeout` (30 s) is up; a client still writing then may see the connection closed instead | A `Retry-After` time for `busy` is not sent yet: the response carries none. The body is always the full `Response`, so a client never needs the status code to know what happened.
 
 The `/api/v1/admin/...` row of the technical reference is not a separate surface: the admin actions are reached by their action routes. See the open points.
 

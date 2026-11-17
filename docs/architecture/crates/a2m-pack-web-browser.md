@@ -46,7 +46,7 @@ pub use Deadline;                             // the provider contract's, re-exp
 pub struct BrowserSettings {
     pub program: Option<PathBuf>,         // a program a person named in settings
     pub known_digests: Vec<Digest>,       // not empty: a program with another digest is closed
-    pub launch_deadline: Duration,        // 30 s
+    pub launch_deadline: Duration,        // 120 s: a ceiling for a cold machine, not a budget
     pub close_deadline: Duration,         // 10 s
     pub call_deadline: Duration,          // 30 s: opening a tab, answering an intercepted request
     pub max_message_bytes: usize,         // 64 MiB: a larger message closes the link
@@ -143,7 +143,7 @@ pub const MASK: &str;                                      // what a snapshot sh
 /// Whether a request reached the page. The crate above decides what that means for a write.
 pub enum Dispatch { Sent, NotSent, Unknown }
 pub enum Reason { NotVisible, Disabled, NotEditable, Obscured, WrongControl, NoSuchOption }
-pub enum LaunchReason { NotInstalled, Supervisor(Failure), NotOwned(String), DataDirectory(Failure) }
+pub enum LaunchReason { NotInstalled, Supervisor(Failure), NotOwned(String), NoAnswer(String), DataDirectory(Failure) }
 pub struct RequestShape { pub method: String, pub address: String }
 pub enum BrowserError {
     NotFound, Ambiguous { count: usize }, NotActionable(Reason),
@@ -176,6 +176,8 @@ Contracts that the signatures do not show:
 - **The DevTools connection is a pipe, and a foreign link.** The browser is started with its protocol on an inherited pipe, not a port, as section 204 asks. The protocol is fixed by someone else, so there is no handshake of ours in it: the engine owns a browser by the digest of the program the supervisor started, when settings list known digests, and by its answer to the first request over the pipe, which only its owner holds. A program that does not answer, or speaks another protocol version, is closed. A message is JSON ended by a NUL byte; one that is too large, is not a protocol message, or answers a request that was never made closes the link, and every pending request fails saying whether it had been written. Handing the pipe to the child is the supervisor's: this crate states descriptors 3 and 4, and the Windows argument, as data.
 - **A browser is found, never fetched.** A program named in settings, then a fixed list of known places per operating system. No search path, no registry, no environment variable, and no download. A program named in settings that is not there is not replaced by another. Only the program is used; its own profile is never named.
 - **The launch arguments are a fixed list.** It never holds `--no-sandbox` or a flag that hides automation, and it does hold `--enable-automation`, which tells the page and a person that the browser is automated. The data directory keeps its own key: the operating system's key store, where a person's own browser keeps its key, is never asked.
+- **One browser starts at a time in the whole process,** from the start of the program to its first answer, whichever `Browsers` asks. Browsers that start cold at the same moment each take many times longer than one after the other: four at once on a hosted Windows machine each took more than 30 seconds, and three at once a minute later took under 9. The launch deadline is 120 seconds for the same reason, and a browser that is silent to that deadline is `transient`, `timeout`, not "not a browser": silence proves only slowness.
+- **A dialog is answered when the tab has heard it close.** `answer_dialog` returns after the browser's event, not only its reply, so the next call is not told a dialog is still open.
 - **The environment is cleared.** The supervisor passes nothing but the few variables an operating system needs to start a program at all, listed as data.
 - **A data directory is a checked path:** `profiles/<target>/<environment>/<kind>-<digest of the identity>`, made by joining to the profile root, links followed, before anything starts. An identity can be any text, so its part is a digest.
 - **Only what a person can perceive is located.** An element that is not laid out, or is hidden, matches no query. So `Visible` is "at least one match" and `Hidden` is "no match".
@@ -232,7 +234,8 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 | `LaunchFailed(NotInstalled)` | `busy` | `browser_unavailable` |
 | `LaunchFailed(Supervisor(_))` | The supervisor's own | For a program the manifest does not declare: `policy`, `effect_not_declared`. Also its limits and its start failures |
 | `LaunchFailed(DataDirectory(_))` | The checked path's own | `input`, `path_not_allowed`; `policy`, `effect_not_declared` for a root the manifest does not declare |
-| `LaunchFailed(NotOwned(_))` | `unknown_variant` | `browser_not_owned` |
+| `LaunchFailed(NotOwned(_))`: the pipe ended or carried something else, another protocol version, or an unknown digest | `unknown_variant` | `browser_not_owned` |
+| `LaunchFailed(NoAnswer(_))`: the pipe stayed open and nothing answered before the launch deadline | `transient` | `timeout` |
 | `Crashed` or `Disconnected` with `NotSent` | `transient` | `connection_lost` |
 | `Timeout` with `NotSent` | `transient` | `timeout` |
 | `PasswordField` | `policy` | `password_read_refused` |
@@ -254,6 +257,7 @@ The base returns `BrowserError`. The crates above map it, knowing what the step 
 | No password, and no value the redactor knows, leaves the crate in a read, a title, or a snapshot | A test with a planted secret and two kinds of password input |
 | A write through the page is stored once, with the values sent | A test that fills and saves the test application's form, and asks its control interface |
 | A browser killed during a call reports whether the request was sent, and nothing is left | A test that kills the browser while a write is held by the test application: the call says `Sent`, a later call says `NotSent`, the next `open` starts afresh, and no process names the data directory |
+| Browsers asked for at once, from several sets, start one after the other and all answer | A test that opens six at once and counts the starts under way |
 | With no browser, the failure is `busy`, `browser_unavailable`; a test that needs a browser fails with it and never skips | A test with a program that is not there |
 | The launch arguments never hold `--no-sandbox` or a flag that hides automation, and the browser reports itself as automated | A test over the fixed list; a test that asks the page |
 | The browser budgets of section 225 hold | Not measured in this crate yet. The spike measured 26 to 33 ms for a warm tab and 0.35 to 0.40 s for a cold start on Linux, headless |
@@ -268,7 +272,7 @@ A test finds its browser as the product does: in the known places. Two variables
 
 1. Done: slice 0.4, in `spikes/browser-base/`, not here: each candidate base against launching, reading, waiting, intercepting, and a killed browser. [Decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md), [research note 17](../../research/17-browser-engine-base.md).
 2. Done: the typed protocol module, and the protocol client over two byte streams, tested against a scripted peer with no browser.
-3. Done: the browser finder; launch through the scoped supervisor with the fixed arguments and a checked data directory; `Browsers::new`, `open`, `list`, `close`, `shutdown`; ownership by digest and by the answer over the pipe. Run on Linux and macOS. On Windows the first run failed in the supervisor's pipes (see the open points); the next run proves the handoff or refutes it.
+3. Done: the browser finder; launch through the scoped supervisor with the fixed arguments and a checked data directory; `Browsers::new`, `open`, `list`, `close`, `shutdown`; ownership by digest and by the answer over the pipe. Run on Linux, macOS, and Windows.
 4. Done: `ActTab` and `Look`: `goto` on a protocol event, the helper in an isolated world, `locate` by every `By` with exactly one or a failure, `within`, open shadow roots, `read`, every `Primitive`, `snapshot`.
 5. Done: `input` with `Dispatch` reported, `answer_dialog`, and `fetch` from inside the page.
 6. Done: `Observer` and `ObserveTab` with its interception, the worker rule, and the refusal of sockets.
@@ -278,7 +282,7 @@ A test finds its browser as the product does: in the known places. Two variables
 
 ## Open points
 
-- The Windows handoff of the pipe ran for the first time on the hosted machine and failed: the browser was found and started, and no request reached it in 30 seconds. The engine's ends of the two named pipes had never been connected, and the runtime neither writes nor reads such an end. The supervisor now connects them when it makes them, and has a test of the pipes without a child. Whether the browser then takes the two handles is what the next run on Windows shows; the failure now says whether the request was written and whether the pipe ended. Decision 0070 says what follows if it does not work. macOS ran and passed, with the variables passed there. The variables passed on Windows are still reasoned, not proven.
+- The Windows handoff of the pipe is proven: the hosted Windows machine started browsers over the two inherited handles once the supervisor connected its ends of the pipes. macOS passed too. On that Windows run the first four browsers, started at the same moment on a cold machine, each took more than the 30 seconds then allowed; hence one start at a time and the longer ceiling. How long one cold start alone takes there has not been measured. The variables passed on Windows are the ones that worked; whether fewer would do is not known.
 - The first browser version that takes `--remote-debugging-io-pipes` is not known, so the minimum browser version is not set, and the version a browser reports is not compared with anything.
 - The fixed list of known places was written from what the hosted build machines and the common installers use. It has not been collected from a primary source, and per-person installs, which have no fixed path, are not on it.
 - The supervisor digests the program before every start. A browser program is about 300 MB, and digesting it is most of a cold start in an unoptimized build. Whether the digest of an unchanged file may be remembered is the supervisor's question.
