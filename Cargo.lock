@@ -330,6 +330,7 @@ version = "0.0.1"
 dependencies = [
  "a2m-auth",
  "a2m-core",
+ "a2m-expr",
  "a2m-files",
  "a2m-ledger",
  "a2m-provider",
@@ -518,6 +519,7 @@ dependencies = [
  "a2m-api",
  "a2m-auth",
  "a2m-core",
+ "a2m-files",
  "a2m-local",
  "a2m-mcp",
  "a2m-pack-command",

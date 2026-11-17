@@ -66,7 +66,7 @@
     table: "table", tr: "row", td: "cell", th: "columnheader", ul: "list", ol: "list",
     li: "listitem", form: "form", fieldset: "group", dialog: "dialog", option: "option",
     progress: "progressbar", output: "status", img: "img", article: "article",
-    summary: "button", hr: "separator", p: "paragraph",
+    summary: "button", hr: "separator", p: "paragraph", dt: "term", dd: "definition",
   };
 
   function roleOf(el) {

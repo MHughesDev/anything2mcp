@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, Finding,
-    FindingKind, LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
+    Coverage, Digest, EvidenceLevel, Failure, FailureClass, FailureCode, Finding, FindingKind,
+    LimitationCode, PackPayload, ProducedBy, Source, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,

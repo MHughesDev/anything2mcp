@@ -1107,8 +1107,10 @@ impl<'a> Compiler<'a> {
         };
         let docs: Vec<&Located<Doc>> = self.sources.docs_of(k::TYPES).collect();
         let mut defined: BTreeMap<String, Place> = BTreeMap::new();
-        let complete_built_ins: Vec<&str> =
-            types::built_ins().into_iter().map(|(name, _)| name).collect();
+        let complete_built_ins: Vec<&str> = types::built_ins()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         for doc in docs {
             if !self.fits(schema, doc) {
                 continue;

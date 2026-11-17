@@ -124,7 +124,9 @@ pub(crate) fn assemble(
         })
         .map(|row| {
             json!({
-                "question": row.question,
+                // The whole question is kept as the system's words: a
+                // pack's question may quote them (decisions 0171, 0180).
+                "question": {"untrusted": row.question},
                 "scope": row.scope,
                 "why_it_matters": row.why_it_matters,
                 "settled_by_what": row.settled_by_what,

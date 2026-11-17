@@ -170,7 +170,7 @@ Where no such look exists, no sample is taken and coverage is `unknown`. The sco
 
 | From a finding about | The drafter writes | It leaves to the developer |
 | --- | --- | --- |
-| A listed channel with a schema | A channel file, with shape, key, and schema; a `read` or `list` operation | `role`, `consumers`, `ownership`, every correlation field |
+| A listed channel with a schema | A channel file, with shape, key, schema, and the duplicate window the broker states; a `read` of a retained key, whose outputs are the plain fields the broker's schema states, text as `untrusted_text`, or else a `list`, whose outputs are `count` and `more`. The channel finding carries the schema's plain fields, because a drafting rule sees one finding at a time ([decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) | `role`, `consumers`, `ownership`, every correlation field, and the key of a retained channel the broker does not name; a read's outputs where the broker holds no schema the pack reads |
 | A sampled shape with no schema | A schema marked `inferred` and an open question | Confirming the schema; every operation |
 
 The drafter never writes a publish, a `take`, or a subscription name.

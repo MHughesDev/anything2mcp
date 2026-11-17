@@ -448,6 +448,7 @@ impl WebSnapshot {
         let (mut pages, start) = Pages::new(scope)?;
         let mut out = Once::new(out);
         let tab = core.tab(scope).await?;
+        let mut seen = Vec::new();
         while let Some((address, depth, focused)) = pages.next(core.max_pages, scope) {
             let arrival: Arrival = core.arrive(&tab, &address, &start, scope).await?;
             if depth == 0 {
@@ -488,11 +489,79 @@ impl WebSnapshot {
                 }
             }
             limitations.extend(refused_note(&tab.blocked()));
+            seen.push((
+                arrival.ended,
+                screen::found(&snapshot, &arrival.title),
+                limitations,
+            ));
+        }
+        Self::give(core, kinds, scope, &seen, &mut out)?;
+        Ok(pages.report)
+    }
+
+    /// The `screen` findings of the pages looked at, in the order they
+    /// were looked at: one for each page, and one for each group of pages
+    /// that show one screen at addresses that differ in one segment, in
+    /// place of those pages' own (screen matching).
+    fn give(
+        core: &Core,
+        kinds: &Kinds,
+        scope: &DiscoveryScope<'_>,
+        seen: &[(Place, Json, Vec<(LimitationCode, String)>)],
+        out: &mut Once<'_>,
+    ) -> Result<(), Failure> {
+        let listed: Vec<(&str, &str, &Json)> = seen
+            .iter()
+            .map(|(place, found, _)| (place.origin.as_str(), place.path.as_str(), found))
+            .collect();
+        let groups = screen::matched(&listed);
+        for (at, (place, found, limitations)) in seen.iter().enumerate() {
+            let (subject, found, limitations) = match groups
+                .iter()
+                .find(|group| group.pages.contains(&at))
+            {
+                // Given once, where its first page was looked at.
+                Some(group) if group.pages.iter().min() != Some(&at) => continue,
+                Some(group) => {
+                    let first = &seen[group.pages[0]];
+                    let mut fields = first.1.as_object().cloned().unwrap_or_default();
+                    fields.insert(
+                        "pages".to_owned(),
+                        Json::Array(
+                            group
+                                .pages
+                                .iter()
+                                .map(|page| Json::from(seen[*page].0.path.as_str()))
+                                .collect(),
+                        ),
+                    );
+                    let found = Json::Object(crate::shape::sorted(fields));
+                    let mut limitations = first.2.clone();
+                    limitations.push((
+                            LimitationCode::Sampled,
+                            format!(
+                                "Matched from {} pages whose addresses differ in one segment and whose tables and labelled values are the same; the snapshot is of the first.",
+                                group.pages.len()
+                            ),
+                        ));
+                    let pattern = Place {
+                        origin: place.origin.clone(),
+                        path: group.pattern.clone(),
+                        query: BTreeMap::new(),
+                    };
+                    (pattern.subject(scope.redact)?, found, limitations)
+                }
+                None => (
+                    place.subject(scope.redact)?,
+                    found.clone(),
+                    limitations.clone(),
+                ),
+            };
             out.found(&core.finding(
                 scope,
-                arrival.ended.subject(scope.redact)?,
+                subject,
                 &kinds.screen,
-                &screen::found(&snapshot, &arrival.title),
+                &found,
                 &Claim {
                     level: EvidenceLevel::Discovered,
                     limitations,
@@ -500,7 +569,7 @@ impl WebSnapshot {
                 },
             )?)?;
         }
-        Ok(pages.report)
+        Ok(())
     }
 }
 

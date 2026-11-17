@@ -136,8 +136,7 @@ fn plain_name(text: &str, fallback: &str) -> String {
 /// a column declared `NUMERIC` may hold a float, so it is a question there.
 fn field_type(column: &ColumnFound, store: &str) -> Option<&'static str> {
     let declared = column.declared_type.to_ascii_uppercase();
-    if store == "postgres" && exact_scale(&declared).is_some_and(|scale| scale <= DECIMAL_PLACES)
-    {
+    if store == "postgres" && exact_scale(&declared).is_some_and(|scale| scale <= DECIMAL_PLACES) {
         Some("decimal")
     } else if declared.contains("INT") {
         Some("integer")

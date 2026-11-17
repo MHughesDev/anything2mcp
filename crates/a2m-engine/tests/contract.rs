@@ -443,6 +443,7 @@ fn replay_of(answers: Vec<(&str, a2m_provider::Recorded)>) -> std::sync::Arc<a2m
                 name: name.to_owned(),
                 args: None,
                 answer,
+                repeats: false,
             })
             .collect(),
     )

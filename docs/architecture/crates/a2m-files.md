@@ -165,7 +165,7 @@ These are data, with the serde form `a2m-sources` reads ([decision 0087](../../d
 | --- | --- | --- |
 | `header` | 9 | The compiler's version, the target, the version the caller gave, and the digest of the sorted list of source paths and file digests. No timestamp, no absolute path |
 | `surfaces`, `environments` | 2 and 3 | A surface's address is the value of its kind's address key; the other fields its pack added are its payload. `production` is added when the target does not declare it |
-| `field_types` | 3 | The built-in types, then the target's; each carries its normalizer as a `PlanExpr`, built from the field type through `a2m-expr`. A target's type of a built-in's name takes its place |
+| `field_types` | 3 | The built-in types, then the target's; each carries its normalizer as a `PlanExpr`, built from the field type through `a2m-expr`. A target's type of a complete built-in's name is refused, `kernel.built_in_type_redefined`, at lint and at compile, so that no target can take the untrusted mark off `untrusted_text`; `money` and `choice`, which need more, are completed by a target's type of their name ([decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) |
 | `expressions` | 4 and 5 | Every expression once, as canonical text with its type; steps and bindings refer to them by index |
 | `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's step lists are the lowering's, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one payload for each surface kind that has documents; the kernel wraps it with the owner's name, stores and hashes it, and never decodes it. Sections are in order of file kind, then surface kind |

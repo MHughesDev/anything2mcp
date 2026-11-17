@@ -1,28 +1,39 @@
-//! The drafting rules from a snapshot of a screen to a screen model and
-//! a read over it (spec section 402, decision 0183).
+//! The drafting rules from a snapshot of a screen to screen models and
+//! reads over them (spec section 402, decisions 0183 and 0187).
 //!
 //! A `screen` finding of the web pack's discoverers holds the structure of
-//! one page: each element's role and depth, and the accessible name of a
-//! role whose name is structure, such as a table or a column header. What
-//! fills the page is kept as a type only. From it these rules draft, for
-//! each table the page names and the snapshot can tell apart, one screen
-//! that reads the table by its headings, and one `list` operation over it
-//! whose outputs are the table's columns, as lists.
+//! one page, or of several pages that show one screen at addresses that
+//! differ in one segment: then its subject's path holds that segment as a
+//! placeholder, `/orders/{order_id}`, and the finding names the pages it
+//! was seen on. It keeps each element's role and depth, and the accessible
+//! name of a role whose name is structure, such as a table, a column
+//! header, a term of a description list, or a definition the page labels.
+//! What fills the page is kept as a type only. From it these rules draft:
 //!
-//! What they never draft: a field, an action, or anything that could
-//! write, whatever the page holds; a table with no name, or whose name
-//! another table of the page shares (that is an open question naming
-//! both); a column whose heading another column shares; a type other than
-//! `untrusted_text`, since what a cell holds is a sample nobody stated the
-//! type of; an example; a test. The screen's address is the page's own
-//! path, as observed: joining the pages of one screen into one address
-//! with placeholders is screen matching, which is not built.
+//! - for each table the page names and the snapshot can tell apart, one
+//!   screen that reads the table by its headings, and one `list` read over
+//!   it whose outputs are the table's columns, as lists;
+//! - for the labelled values of the page, each a definition labelled by a
+//!   term of the same name, one screen whose fields locate them, and one
+//!   `get` read whose outputs they are.
+//!
+//! A placeholder of the address is the read's input and key, of type
+//! `text`; the driver refuses a value that is not one plain segment before
+//! the tab is sent anywhere.
+//!
+//! What they never draft: a field that is set, an action, or anything that
+//! could write, whatever the page holds; a table with no name, or whose
+//! name another table of the page shares (that is an open question naming
+//! both); a column whose heading another column shares; a labelled value
+//! whose label another term shares (an open question, apart); a type other
+//! than `untrusted_text`, since what a cell holds is a sample nobody stated
+//! the type of; an example; a test.
 
 use a2m_core::{Failure, FailureClass, FileKindName, Finding, FindingKind, OperationName, Subject};
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
 use serde_json::Value as Json;
 
-use crate::screens::{SCREEN_KIND, unreserved};
+use crate::screens::SCREEN_KIND;
 
 /// Whether `text` is a name a screen, an output, or a column may have.
 fn is_name(text: &str, longest: usize) -> bool {
@@ -219,22 +230,29 @@ fn snake(text: &str) -> String {
     out.trim_end_matches('_').to_owned()
 }
 
-/// The page's path, when every segment of it can stand in a screen's
-/// address as written.
-fn plain_path(finding: &Finding) -> Option<&str> {
+/// The page's address as a screen's `reach` holds it: its path, the names
+/// of its placeholders, in order, and the words of its plain segments, when
+/// every segment is one a screen's address can hold as written.
+fn reach_of(finding: &Finding) -> Option<(&str, Vec<String>, String)> {
     let Subject::Address(address) = finding.subject() else {
         return None;
     };
     let path = address.path();
-    let rest = path.strip_prefix('/')?;
-    let plain = rest.is_empty()
-        || rest.split('/').all(|segment| {
-            !segment.is_empty()
-                && segment != "."
-                && segment != ".."
-                && segment.chars().all(unreserved)
-        });
-    plain.then_some(path)
+    let segments = crate::screens::parse_reach(path).ok()?;
+    let mut holes = Vec::new();
+    let mut words = Vec::new();
+    for segment in segments {
+        match segment {
+            crate::model::Segment::Hole(name) => {
+                if holes.contains(&name) {
+                    return None;
+                }
+                holes.push(name);
+            }
+            crate::model::Segment::Literal(text) => words.push(text),
+        }
+    }
+    Some((path, holes, snake(&words.join("_"))))
 }
 
 /// The origin of the finding's page.
@@ -279,6 +297,133 @@ fn locator(role: &str, name: &str) -> DraftValue {
     ])
 }
 
+/// What a drafted read takes: the placeholders of its screen's address,
+/// each an input of type `text`, and together its key.
+fn keyed(doc: &mut Vec<(&'static str, DraftValue)>, holes: &[String]) {
+    match holes {
+        [] => {}
+        [only] => doc.push(("key", DraftValue::text(only))),
+        many => doc.push((
+            "key",
+            DraftValue::List(many.iter().map(|hole| DraftValue::text(hole)).collect()),
+        )),
+    }
+    doc.push((
+        "inputs",
+        DraftValue::Map(
+            holes
+                .iter()
+                .map(|hole| {
+                    (
+                        hole.clone(),
+                        DraftValue::map(vec![("type", DraftValue::text("text"))]),
+                    )
+                })
+                .collect(),
+        ),
+    ));
+}
+
+/// The part of the page the element at `at` is in: the nearest element
+/// above it whose role marks out a part of a page and that is the one of
+/// its role and name on the page. And whether a table holds it.
+fn section_of(elements: &[Element], at: usize) -> (Option<(String, String)>, bool) {
+    let named = |role: &str, name: &str| {
+        elements
+            .iter()
+            .filter(|one| one.role == role && one.name.as_deref().unwrap_or("") == name)
+            .count()
+    };
+    let mut above = Vec::new();
+    let mut depth = elements[at].depth;
+    for parent in elements[..at].iter().rev() {
+        if parent.depth < depth {
+            above.push(parent);
+            depth = parent.depth;
+        }
+    }
+    let in_table = above
+        .iter()
+        .any(|parent| matches!(parent.role.as_str(), "table" | "grid" | "treegrid"));
+    let section = above
+        .iter()
+        .find(|parent| {
+            SECTION_ROLES.contains(&parent.role.as_str())
+                && named(&parent.role, parent.name.as_deref().unwrap_or("")) == 1
+        })
+        .map(|parent| (parent.role.clone(), parent.name.clone().unwrap_or_default()));
+    (section, in_table)
+}
+
+/// One labelled value: a definition the page labels with the name one of
+/// its terms has.
+struct Labelled {
+    output: String,
+    label: String,
+    section: (String, String),
+}
+
+/// The labelled values of the page, and the labels that cannot be told
+/// apart: a name two terms share, or that two definitions have.
+fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
+    let named = |role: &str, name: &str| {
+        elements
+            .iter()
+            .filter(|one| one.role == role && one.name.as_deref() == Some(name))
+            .count()
+    };
+    let mut values: Vec<Labelled> = Vec::new();
+    let mut shared: Vec<String> = Vec::new();
+    for (at, one) in elements.iter().enumerate() {
+        let Some(label) = one.name.as_deref().filter(|name| !name.trim().is_empty()) else {
+            continue;
+        };
+        if one.role != "term" || shared.iter().any(|known| known == label) {
+            continue;
+        }
+        if named("term", label) > 1 || named("definition", label) > 1 {
+            shared.push(label.to_owned());
+            continue;
+        }
+        let Some(value) = elements
+            .iter()
+            .position(|other| other.role == "definition" && other.name.as_deref() == Some(label))
+        else {
+            continue;
+        };
+        let (Some(section), false) = section_of(elements, value) else {
+            continue;
+        };
+        // A term and its value in different parts of the page are not one.
+        if section_of(elements, at).0.as_ref() != Some(&section) {
+            continue;
+        }
+        let output = snake(label);
+        if !is_name(&output, LONGEST) || values.iter().any(|known| known.output == output) {
+            continue;
+        }
+        values.push(Labelled {
+            output,
+            label: label.to_owned(),
+            section,
+        });
+    }
+    (values, shared)
+}
+
+fn values_field(locate: DraftValue, section: &(String, String)) -> DraftValue {
+    DraftValue::map(vec![
+        ("type", DraftValue::text(UNTRUSTED_TEXT)),
+        ("control", DraftValue::text("text")),
+        ("read", DraftValue::text("text")),
+        ("locate", locate),
+        (
+            "fingerprint",
+            DraftValue::map(vec![("section", locator(&section.0, &section.1))]),
+        ),
+    ])
+}
+
 fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     let mut out = Drafts {
         screens: Vec::new(),
@@ -289,15 +434,20 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     };
     // A tool is named after its target, and a screen is on one of its
     // surfaces; with neither there is nothing to draft.
-    let (Some(target), Some(path), Some(origin)) =
-        (cx.target(), plain_path(finding), origin(finding))
+    let (Some(target), Some((path, holes, page)), Some(origin)) =
+        (cx.target(), reach_of(finding), origin(finding))
     else {
         return Ok(out);
     };
     let Some(surface) = surface(cx, origin) else {
         return Ok(out);
     };
-    let page = snake(path);
+    let reach = || DraftValue::map(vec![("url", DraftValue::text(path))]);
+    let seen = if holes.is_empty() {
+        format!("the page `{path}`")
+    } else {
+        format!("the pages `{path}`")
+    };
     let mut drafted: Vec<String> = Vec::new();
     for table in tables(&elements) {
         let words = snake(&table.name);
@@ -321,7 +471,8 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             continue;
         }
         // A heading two columns share, or two headings that give one
-        // name, cannot say which column is which.
+        // name, cannot say which column is which. A column may not have
+        // the name of an input.
         let mut columns = Vec::new();
         for heading in &table.headers {
             let column = snake(heading);
@@ -337,7 +488,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                     .filter(|other| snake(other) == column)
                     .count()
                     == 1;
-            if alone && is_name(&column, LONGEST) {
+            if alone && is_name(&column, LONGEST) && !holes.contains(&column) {
                 columns.push((column, heading.clone()));
             }
         }
@@ -354,10 +505,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         let screen = DraftValue::map(vec![
             ("screen", DraftValue::text(&name)),
             ("surface", DraftValue::text(&surface)),
-            (
-                "reach",
-                DraftValue::map(vec![("url", DraftValue::text(path))]),
-            ),
+            ("reach", reach()),
             (
                 "ready",
                 DraftValue::map(vec![("visible", locator("table", &table.name))]),
@@ -421,10 +569,12 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 )
             })
             .collect();
-        let doc = DraftValue::map(vec![
+        let mut doc = vec![
             ("operation", DraftValue::text(&operation)),
             ("effect", DraftValue::text("read")),
-            ("inputs", DraftValue::Map(Vec::new())),
+        ];
+        keyed(&mut doc, &holes);
+        doc.extend([
             ("outputs", DraftValue::Map(outputs)),
             (
                 "bindings",
@@ -437,13 +587,130 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Lists the rows of one table of the page `{path}`, each column as the page shows it. Drafted by rule from one snapshot; its name is provisional."
+                    "Lists the rows of one table of {seen}, each column as the page shows it. Drafted by rule from a snapshot; its name is provisional."
                 )),
             ),
         ]);
         out.operations.push(DraftDoc {
             path: RelPath::new(&format!("operations/{name}_list.yaml"))?,
-            body: doc,
+            body: DraftValue::map(doc),
+        });
+    }
+
+    // The labelled values, as one screen and one read; a label that cannot
+    // be told apart is a question apart, so that the others compile.
+    let (values, shared) = labelled(&elements);
+    let name = if page.is_empty() {
+        "values".to_owned()
+    } else {
+        format!("{page}_values")
+    };
+    let operation = format!(
+        "{}_{}_get",
+        target.as_str(),
+        if page.is_empty() { "page" } else { &page }
+    );
+    let fits = is_name(&format!("{name}_undecided"), LONGEST)
+        && OperationName::new(&operation).is_ok()
+        && !drafted.contains(&name);
+    let values: Vec<Labelled> = values
+        .into_iter()
+        .filter(|value| !holes.contains(&value.output))
+        .collect();
+    if fits && let Some(first) = values.first() {
+        let fields = values
+            .iter()
+            .map(|value| {
+                (
+                    value.output.clone(),
+                    values_field(
+                        DraftValue::List(vec![locator("definition", &value.label)]),
+                        &value.section,
+                    ),
+                )
+            })
+            .collect();
+        out.screens.push(DraftDoc {
+            path: RelPath::new(&format!("screens/{name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("screen", DraftValue::text(&name)),
+                ("surface", DraftValue::text(&surface)),
+                ("reach", reach()),
+                (
+                    "ready",
+                    DraftValue::map(vec![("visible", locator("definition", &first.label))]),
+                ),
+                ("fields", DraftValue::Map(fields)),
+            ]),
+        });
+        let outputs = values
+            .iter()
+            .map(|value| {
+                (
+                    value.output.clone(),
+                    DraftValue::map(vec![("type", DraftValue::text(UNTRUSTED_TEXT))]),
+                )
+            })
+            .collect();
+        let mut doc = vec![
+            ("operation", DraftValue::text(&operation)),
+            ("effect", DraftValue::text("read")),
+        ];
+        keyed(&mut doc, &holes);
+        doc.extend([
+            ("outputs", DraftValue::Map(outputs)),
+            (
+                "bindings",
+                DraftValue::List(vec![DraftValue::map(vec![
+                    ("mode", DraftValue::text(crate::UI_MODE)),
+                    ("verb", DraftValue::text("read")),
+                    ("screen", DraftValue::text(&name)),
+                ])]),
+            ),
+            (
+                "description",
+                DraftValue::text(&format!(
+                    "Reads the labelled values of {seen}, each as the page shows it beside its label. Drafted by rule from a snapshot; its name is provisional."
+                )),
+            ),
+        ]);
+        out.operations.push(DraftDoc {
+            path: RelPath::new(&format!("operations/{name}_get.yaml"))?,
+            body: DraftValue::map(doc),
+        });
+    }
+    let undecided: Vec<(String, DraftValue)> = shared
+        .iter()
+        .filter(|label| is_name(&snake(label), LONGEST))
+        .map(|label| {
+            let question = cx.open_question(&format!(
+                "{seen} shows more than one value labelled `{label}`, so none of them can be located by its label alone. Which does this field read, and what tells it apart?"
+            ));
+            let section = elements
+                .iter()
+                .position(|one| one.role == "term" && one.name.as_deref() == Some(label))
+                .and_then(|at| section_of(&elements, at).0);
+            let field = match section {
+                Some(section) => values_field(question, &section),
+                None => question,
+            };
+            (snake(label), field)
+        })
+        .collect();
+    if fits && !undecided.is_empty() {
+        let undecided_name = format!("{name}_undecided");
+        out.screens.push(DraftDoc {
+            path: RelPath::new(&format!("screens/{undecided_name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("screen", DraftValue::text(&undecided_name)),
+                ("surface", DraftValue::text(&surface)),
+                ("reach", reach()),
+                (
+                    "ready",
+                    cx.open_question("What shows that the page is ready?"),
+                ),
+                ("fields", DraftValue::Map(undecided)),
+            ]),
         });
     }
     Ok(out)

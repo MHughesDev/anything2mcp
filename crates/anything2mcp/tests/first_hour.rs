@@ -38,9 +38,6 @@ use common::{Folder, IN_PROCESS_VARIABLE, PASSPHRASE, Surface, USER};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
 
-/// How long one step may take before the test fails by name.
-const PATIENCE: Duration = Duration::from_secs(180);
-
 /// The reads the scout drafts from the test application's published
 /// description and proves by calling them.
 const PROVEN: [&str; 5] = [
@@ -53,6 +50,8 @@ const PROVEN: [&str; 5] = [
 
 /// The read this developer makes usable, tests, and publishes.
 const READ: &str = "example_api_orders_get";
+/// Its input: an order the test application holds from its seed.
+const ORDER_INPUT: &str = r#"{"order_id": "A-100"}"#;
 
 /// A presence prompt that a person passes, and that counts.
 struct Passed(AtomicU32);
@@ -151,37 +150,60 @@ impl Desk {
         assert_eq!(written["result"]["written"], true, "{file}: {written}");
     }
 
-    /// Follows a run until it rests or ends, as its `next` says.
-    async fn follow(&self, run: &str) -> Json {
-        let give_up = Instant::now() + PATIENCE;
-        loop {
-            let got = self.ok(&["run", "get", run]).await;
-            let status = got["result"]["status"].as_str().unwrap_or_default();
-            if !matches!(status, "queued" | "validating" | "running") {
-                return got;
-            }
-            assert!(Instant::now() < give_up, "the run {run} did not end: {got}");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+    /// Asks to publish, as the developer's agent does, and carries the
+    /// publish out as the person: the page is read, Carry out is pressed
+    /// from the page's own origin, and the presence prompt is passed, for
+    /// the `presses`-th time.
+    async fn publish_as_a_person(&self, prompt: &Passed, presses: u32) {
+        let (code, asked) = self.run(&["publish", "example"]).await;
+        assert_eq!(code, Some(3), "{asked}");
+        assert_eq!(asked["result"]["state"], "needs_person", "{asked}");
+        let link = asked["result"]["link"].as_str().unwrap().to_owned();
+        let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let page = http.get(&link).send().await.unwrap();
+        assert_eq!(page.status().as_u16(), 200);
+        let text = page.text().await.unwrap();
+        assert!(text.contains("version.publish") && text.contains(READ), "{text}");
+        let marker = "name=\"once\" value=\"";
+        let from = text.find(marker).unwrap() + marker.len();
+        let once = &text[from..from + text[from..].find('"').unwrap()];
+        let origin = &link[..link.find("/act/").unwrap()];
+        let pressed = http
+            .post(format!("{link}/confirm"))
+            .header("origin", origin)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(format!("once={once}"))
+            .send()
+            .await
+            .unwrap();
+        let status = pressed.status().as_u16();
+        let said = pressed.text().await.unwrap();
+        assert_eq!(status, 200, "{said}");
+        assert!(said.contains("was carried out as you, once"), "{said}");
+        assert_eq!(prompt.0.load(Ordering::SeqCst), presses);
     }
 
-    /// Runs the scout to its end: each call continues the last scout
-    /// until it has finished.
-    async fn scout(&self, fresh: bool) -> Json {
-        let give_up = Instant::now() + PATIENCE;
-        let mut args = vec!["scout", "run", "example", "--wait-seconds", "20"];
+    /// Runs the scout and continues it, as its `next` says, at most
+    /// `calls` times; gives the last answer, with its report once the
+    /// scout has finished.
+    async fn scout(&self, fresh: bool, calls: usize) -> Json {
+        let mut args = vec!["scout", "run", "example", "--wait-seconds", "10"];
         if fresh {
             args.push("--fresh");
         }
-        loop {
-            let scouted = self.ok(&args).await;
+        let mut scouted = Json::Null;
+        for _ in 0..calls {
+            scouted = self.ok(&args).await;
             if scouted["result"].get("report_hash").is_some() {
-                return scouted;
+                break;
             }
             assert_eq!(scouted["result"]["state"], "working", "{scouted}");
-            assert!(Instant::now() < give_up, "the scout did not end: {scouted}");
             args.truncate(5);
         }
+        scouted
     }
 }
 
@@ -190,6 +212,13 @@ impl Desk {
 /// number.
 const SEED_ENDPOINT: &str = "endpoint: order_get\nsurface: api\nmethod: GET\npath: \"/api/orders/{order_id}\"\nauth: none\neffect: read\nheaders: {accept: \"application/json\"}\nresponses: {absent: [404]}\nresponse_schema:\n  type: object\n  required: [order_id, customer, status]\n  properties:\n    order_id: {type: string}\n    customer: {type: string}\n    status: {type: string, enum: [draft, submitted]}\n";
 const SEED_OPERATION: &str = "operation: example_order_get\ntitle: Get an order\neffect: read\nkey: order_id\ninputs:\n  order_id: {type: identifier, description: \"Order number shown in the application\"}\noutputs:\n  status: {type: identifier}\n  customer: {type: text}\nexamples:\n  - {order_id: \"A-100\"}\nbindings:\n  - mode: http\n    verb: read\n    endpoint: order_get\ndescription: >\n  Reads the status and the customer of one order.\n";
+
+/// The offline test a developer writes for the read once the publish
+/// asks for one, with a fixture of synthetic values that match the test
+/// application's seed: the answer the read's endpoint gives for A-100.
+const FIXTURE: &str = "scrubbed: true\nnote: \"Synthetic data, written by hand for the imaginary target.\"\n";
+const FIXTURE_ANSWER: &str = r#"{"order_id":"A-100","customer":"Example Customer One","status":"draft","items":[]}"#;
+const OFFLINE_TEST: &str = "test: example_api_orders_get\nkind: offline\nfixture: api_orders_get\ninputs: {order_id: \"A-100\"}\nexpect: {status: draft, customer: \"Example Customer One\"}\n";
 
 /// The target file a developer writes once `target add` has made it: the
 /// one surface, the test application's address, and a test environment.
@@ -268,7 +297,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     desk.write("target.yaml", &target_file(&app.url(""))).await;
 
     // 3. The scout and its report.
-    let first = desk.scout(false).await;
+    let first = desk.scout(false, 3).await;
     let surfaces = &first["result"]["content"]["surfaces"];
     let ended = &surfaces[0]["ended"];
     // The named stop of today: a target that declares only its surface
@@ -287,15 +316,145 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     desk.write("endpoints/orders.yaml", SEED_ENDPOINT).await;
     desk.write("operations/orders.yaml", SEED_OPERATION).await;
 
-    let scouted = desk.scout(true).await;
-    println!("{scouted}");
-    let again = desk.scout(true).await;
-    println!("{}", again["result"]["report_hash"]);
+    let scouted = desk.scout(true, 3).await;
+    // The named stop of today: the scout drafts the reads of the published
+    // description and checks that they compile, and its try stage then
+    // never ends. Each continuation submits the trials again, they
+    // complete, and the scout still answers that a trial has not ended
+    // (decision 0179's stage 6; the package that is changing the scout's
+    // try stage and its report lifts it). When it lifts, the report is
+    // asserted here: the five reads in `PROVEN` proven at level `executed`,
+    // `example_api_stock_get` tried and not proven, and a second scout
+    // giving the same `report_hash`.
+    assert_eq!(scouted["result"]["stage"], "try", "{scouted}");
+    assert_eq!(
+        scouted["result"]["why"], "A trial has not ended yet.",
+        "{scouted}"
+    );
+    let _ = (PROVEN, tried as fn(&Json, bool) -> Vec<String>);
+    // What it drafted is in the target's folder: an endpoint and a read
+    // for each read the description states.
+    let drafted = files_of(&desk.project.path().join("targets").join("example"));
+    for file in ["operations/api_orders_get.yaml", "endpoints/get_order.yaml"] {
+        assert!(
+            drafted.iter().any(|path| path.replace('\\', "/").ends_with(file)),
+            "{file} in {drafted:?}"
+        );
+    }
+
+    // 4. The drafted read made usable: linted, and tried in the sandbox.
+    let linted = desk.ok(&["lint", "example"]).await;
+    assert_eq!(linted["result"]["ok"], true, "{linted}");
+    assert!(
+        linted["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(READ)),
+        "{linted}"
+    );
+    let tried = desk
+        .ok(&[
+            "draft", "try", "example", "--tool", READ, "--input", ORDER_INPUT,
+        ])
+        .await;
+    assert_eq!(tried["result"]["status"], "completed", "{tried}");
+    let held = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(tried["result"]["result"]["customer"], held.customer.as_str(), "{tried}");
+
+    // 5. Its tests. Nothing drafted one: an observed answer is business
+    // data until a fixture is scrubbed, and `fixture.record` is not built.
+    // The gates refuse every operation that has no offline test.
+    let untested = desk.ok(&["test", "example"]).await;
+    let problems = &untested["result"]["gates"][0]["problems"];
+    assert!(
+        problems.as_array().unwrap().iter().any(|problem| {
+            problem["code"] == "kernel.operation_without_test"
+                && problem["file"] == Json::Null
+                && problem["at"]["file"] == "operations/api_orders_get.yaml"
+        }),
+        "{untested}"
+    );
+    // The developer keeps the one read this hour is for. No command removes
+    // a draft file, so they do it in their editor: every other drafted
+    // file, and the read written by hand before the scout.
+    let folder = desk.project.path().join("targets").join("example");
+    for path in files_of(&folder) {
+        let name = path.replace('\\', "/");
+        if !["target.yaml", "endpoints/get_order.yaml", "operations/api_orders_get.yaml"]
+            .iter()
+            .any(|kept| name.ends_with(&format!("/{kept}")))
+        {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+    // And writes its offline test, with a fixture of synthetic values that
+    // match the application's seed, as the refusal's fix says.
+    desk.write("fixtures/api_orders_get/fixture.yaml", FIXTURE).await;
+    desk.write("fixtures/api_orders_get/get_order.json", FIXTURE_ANSWER)
+        .await;
+    desk.write("tests/api_orders_get.yaml", OFFLINE_TEST).await;
+    let tested = desk.ok(&["test", "example"]).await;
+    assert_eq!(tested["result"]["passed"], true, "{tested}");
+    assert_eq!(tested["result"]["gates"][1]["state"], "passed", "{tested}");
+
+    // 6. The publish, asked for by the developer's agent, waits for a
+    // person on the engine's page; the person reads it, presses Carry out,
+    // and passes the presence prompt.
+    desk.publish_as_a_person(&prompt, 1).await;
+    // 7. The published tool, called by an agent, reads what the
+    // application holds.
+    let (code, refused) = desk.run(&["call", READ, "--input", ORDER_INPUT]).await;
+    // The named stop of today: a drafted binding is `draft`, and a
+    // published binding that is `draft` may not act (`busy`/`no_binding`).
+    // Nothing turns a tried draft binding into a verified one: `binding
+    // promote` takes a `shadow` binding, and the scout's proof of a read
+    // does not reach the file. It lifts when a read proven at `executed`
+    // is drafted, or promoted, as verified (the scout's package and the
+    // action registry's, decision 0179). Until then the developer, a
+    // person, marks the binding verified in their editor, tests again, and
+    // publishes the next version.
+    assert_eq!(code, Some(1), "{refused}");
+    assert_eq!(refused["error"]["code"], "no_binding", "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("is `draft` and may not act"),
+        "{refused}"
+    );
+    let operation = folder.join("operations").join("api_orders_get.yaml");
+    let text = std::fs::read_to_string(&operation).unwrap();
+    let marked = text.replacen("    verb: \"read\"\n", "    verb: \"read\"\n    status: \"verified\"\n", 1);
+    assert_ne!(marked, text, "{text}");
+    std::fs::write(&operation, marked).unwrap();
+    let tested = desk.ok(&["test", "example"]).await;
+    assert_eq!(tested["result"]["passed"], true, "{tested}");
+    desk.publish_as_a_person(&prompt, 2).await;
+
+    let called = desk
+        .ok(&["call", READ, "--input", ORDER_INPUT])
+        .await;
+    assert_eq!(called["result"]["status"], "completed", "{called}");
+    let read = &called["result"]["result"];
+    assert_eq!(read["customer"], held.customer.as_str(), "{called}");
+    assert_eq!(read["order_id"], held.order_id.as_str(), "{called}");
+    assert_eq!(
+        read["status"],
+        serde_json::to_value(held.status).unwrap(),
+        "{called}"
+    );
+    // Nothing in the hour wrote to the application.
+    assert!(app.writes().await.unwrap().is_empty());
+    assert_eq!(app.stored_order("A-100").await.unwrap().unwrap(), held);
 
     let elapsed = began.elapsed();
-    println!("the first hour took {:.1} s", elapsed.as_secs_f64());
+    // The target is a first tool in under ten minutes.
+    println!(
+        "the first hour, from an empty folder to a published read called, took {:.1} s",
+        elapsed.as_secs_f64()
+    );
+    assert!(elapsed < Duration::from_secs(600), "{elapsed:?}");
     let (code, _) = desk.run(&["engine", "stop"]).await;
     assert_eq!(code, Some(0));
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
-    let _ = (tried, files_of, READ, PROVEN);
 }

@@ -391,14 +391,18 @@ fn acting(means: Vec<Detail>, measured: Vec<Detail>) -> Capture {
     Capture::acting(&Acting { means, measured })
 }
 
-/// The value of one placeholder as one segment of an address.
+/// The value of one placeholder as one segment of an address. The form of
+/// every placeholder is the same: one plain segment, of letters, digits,
+/// `-`, `.`, `_`, and `~`, not made of dots only. A value of any other form
+/// is refused before the tab is sent anywhere, never encoded: an input
+/// cannot change where a request goes (decision 0187).
 fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
     let refused = |why: &str| {
         StepFailure::not_sent(fail(
             FailureClass::Input,
             codes::ADDRESS_VALUE_REFUSED,
             format!("The value for `{name}` cannot stand in the screen's address: {why}."),
-            "Give a value that is one segment of an address.",
+            "Give a value that is one segment of an address: letters, digits, `-`, `.`, `_`, and `~`.",
         ))
     };
     let text = match value {
@@ -407,21 +411,39 @@ fn segment(name: &str, value: Option<&Value>) -> Result<String, StepFailure> {
         Some(_) => return Err(refused("it is not text or a whole number")),
         None => return Err(refused("it was not given")),
     };
-    if text.is_empty() || text == "." || text == ".." {
-        return Err(refused("it is empty, or a segment made of dots"));
+    if text.is_empty() || text.chars().all(|c| c == '.') {
+        return Err(refused("it is empty, or made of dots only"));
     }
     if text.len() > 512 {
         return Err(refused("it is longer than 512 bytes"));
     }
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if unreserved(char::from(byte)) {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
+    if !text.chars().all(unreserved) {
+        return Err(refused(
+            "it holds a character that is not a letter, a digit, `-`, `.`, `_`, or `~`",
+        ));
     }
-    Ok(out)
+    Ok(text)
+}
+
+/// Whether a made path is the screen's own pattern: one segment for each
+/// of the pattern's, each literal as written, each placeholder one plain
+/// segment.
+fn within_pattern(path: &str, reach: &[Segment]) -> bool {
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let made: Vec<&str> = if rest.is_empty() {
+        Vec::new()
+    } else {
+        rest.split('/').collect()
+    };
+    made.len() == reach.len()
+        && made.iter().zip(reach).all(|(made, part)| match part {
+            Segment::Literal(text) => made == text,
+            Segment::Hole(_) => {
+                !made.is_empty() && !made.chars().all(|c| c == '.') && made.chars().all(unreserved)
+            }
+        })
 }
 
 /// A value as a text control takes it. Only the forms that need no field
@@ -745,8 +767,16 @@ impl Session {
         if path.is_empty() {
             path.push('/');
         }
-        let address =
-            Address::new(&format!("{}{path}", self.origin)).map_err(StepFailure::not_sent)?;
+        // The made address is held to the surface's origin and the
+        // screen's own pattern before the tab hears of it.
+        let made = format!("{}{path}", self.origin);
+        if !within_pattern(&path, &screen.reach) || !made.starts_with(&format!("{}/", self.origin))
+        {
+            return Err(StepFailure::not_sent(codes::surface_not_declared(
+                "The address made for the screen",
+            )));
+        }
+        let address = Address::new(&made).map_err(StepFailure::not_sent)?;
         let what = format!("the screen `{name}`");
         let loaded = self
             .tab
@@ -1574,18 +1604,41 @@ mod tests {
         let text = |text: &str| Value::Text(text.to_owned());
         assert_eq!(segment("id", Some(&text("A-100"))).unwrap(), "A-100");
         assert_eq!(segment("id", Some(&Value::Int(7))).unwrap(), "7");
-        assert_eq!(
-            segment("id", Some(&text("a/b?c#d e"))).unwrap(),
-            "a%2Fb%3Fc%23d%20e"
-        );
         for refused in [
             Some(text("")),
             Some(text("..")),
+            Some(text("...")),
+            Some(text("a/b")),
+            Some(text("a\\b")),
+            Some(text("a?b=1")),
+            Some(text("a#b")),
+            Some(text("%2e%2e")),
+            Some(text("a%2Fb")),
+            Some(text("https:x")),
+            Some(text("a b")),
+            Some(text("a\u{0}b")),
+            Some(text("a\nb")),
+            Some(text("\u{e9}")),
             Some(Value::Bool(true)),
             None,
         ] {
             let failure = segment("id", refused.as_ref()).unwrap_err();
             assert_eq!(failure.failure.code(), &codes::ADDRESS_VALUE_REFUSED);
+            assert_eq!(failure.sent, a2m_provider::Sent::NotSent);
+        }
+        let reach = [
+            Segment::Literal("orders".to_owned()),
+            Segment::Hole("order_id".to_owned()),
+        ];
+        assert!(within_pattern("/orders/A-100", &reach));
+        for outside in [
+            "/orders",
+            "/orders/A-100/x",
+            "/other/A-100",
+            "/orders/..",
+            "orders/A",
+        ] {
+            assert!(!within_pattern(outside, &reach), "{outside}");
         }
     }
 

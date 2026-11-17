@@ -1494,6 +1494,12 @@ fn facts_values(facts: &ChannelFacts) -> Values {
         .with("key_field", text(&facts.key_field))
         .with("dedupe_header", text(&facts.dedupe_header))
         .with(
+            "dedupe_window_ms",
+            facts.dedupe_window_ms.map_or(Value::Null, |ms| {
+                Value::Int(i64::try_from(ms).unwrap_or(i64::MAX))
+            }),
+        )
+        .with(
             "schema",
             facts
                 .schema

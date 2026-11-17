@@ -115,20 +115,36 @@ impl DraftingRule for ChannelDraft {
                 "key",
                 DraftValue::map(vec![("field", DraftValue::text(field))]),
             ));
+        } else if shape == Shape::Retained {
+            // A retained channel keeps one value per key, and the broker
+            // does not say which field of a message the key is.
+            body.push((
+                "key",
+                cx.open_question(&format!(
+                    "Which field of a message on `{}` is its key? The broker keeps one value per key and does not say.",
+                    found.channel
+                )),
+            ));
         }
         if text("look") == Some("browse") {
             body.push(("read_through", DraftValue::text("browse")));
         }
         if let Some(header) = text("dedupe_header") {
             // The broker states both: the header, and that it refuses a
-            // repeat of its value.
-            body.push((
-                "idempotency",
-                DraftValue::map(vec![
-                    ("header", DraftValue::text(header)),
-                    ("broker_dedupe", DraftValue::Bool(true)),
-                ]),
-            ));
+            // repeat of its value; and, where it says, for how long.
+            let mut idempotency = vec![
+                ("header", DraftValue::text(header)),
+                ("broker_dedupe", DraftValue::Bool(true)),
+            ];
+            if let Some(ms) = found
+                .json
+                .get("dedupe_window_ms")
+                .and_then(Json::as_u64)
+                .filter(|ms| *ms > 0 && u32::try_from(*ms).is_ok())
+            {
+                idempotency.push(("window", DraftValue::text(&format!("{ms}ms"))));
+            }
+            body.push(("idempotency", DraftValue::map(idempotency)));
         }
         Ok(vec![DraftDoc {
             path: path("channels", &found.word)?,
@@ -350,9 +366,10 @@ impl DraftingRule for ReadDraft {
                     ),
                     (
                         "description",
-                        DraftValue::text(
-                            "Reads the last value the broker holds for one key of the channel.",
-                        ),
+                        DraftValue::text(&format!(
+                            "Reads the last value the broker holds for one key of the channel `{}`.",
+                            found.channel
+                        )),
                     ),
                 ],
             )
@@ -366,9 +383,10 @@ impl DraftingRule for ReadDraft {
                     ("bindings", binding("list", Vec::new())),
                     (
                         "description",
-                        DraftValue::text(
-                            "Lists what the channel holds now, without taking anything.",
-                        ),
+                        DraftValue::text(&format!(
+                            "Lists what the channel `{}` holds now, without taking anything: how many messages one look returns, and whether it holds more.",
+                            found.channel
+                        )),
                     ),
                 ],
             )

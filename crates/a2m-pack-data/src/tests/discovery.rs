@@ -353,8 +353,17 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
         );
         assert_eq!(result.get("more"), Some(&a2m_core::Value::Bool(more)));
         let read = rows.iter().take(usize::try_from(max_rows).unwrap());
-        for column in ["order_id", "item_code", "quantity", "unit_price", "length_in"] {
-            let list = result.get(column).and_then(a2m_core::Value::as_list).unwrap();
+        for column in [
+            "order_id",
+            "item_code",
+            "quantity",
+            "unit_price",
+            "length_in",
+        ] {
+            let list = result
+                .get(column)
+                .and_then(a2m_core::Value::as_list)
+                .unwrap();
             let expected: Vec<a2m_core::Value> =
                 read.clone().map(|row| stored(row.get(column))).collect();
             assert_eq!(list, expected.as_slice(), "{column}");

@@ -1034,7 +1034,7 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
         let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
         assert_eq!(result.get("more"), Some(&Value::Bool(more)));
         let read = &stored[..usize::try_from(max_rows).unwrap()];
-        let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().clone();
+        let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
         let text_of = |at: usize| -> Vec<Value> {
             read.iter()
                 .map(|row| Value::from(row[at].as_deref().unwrap()))

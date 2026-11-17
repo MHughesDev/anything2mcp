@@ -84,7 +84,7 @@ Field types say how a value is formatted, normalized, compared, and classified. 
 | `sensitivity` | `public`, `internal`, or `restricted` |
 | `untrusted` | True for free text that came from the application |
 
-Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`, and `untrusted_text`, which is `text` marked untrusted, the type a drafted output of the system's text takes ([decision 0179](../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)). A `url` input accepts only destinations the operation declares. A `file` input is a blob reference on a server and a path inside an allowed root on one machine ([spec section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)). A target adds its own by extending one of them.
+Built-in types: `text`, `integer`, `decimal`, `money`, `date`, `datetime`, `time`, `boolean`, `choice`, `length_ft_in`, `length_metric`, `percent`, `email`, `phone`, `identifier`, `url`, `file`, and `untrusted_text`, which is `text` marked untrusted, the type a drafted output of the system's text takes ([decision 0179](../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)). A `url` input accepts only destinations the operation declares. A `file` input is a blob reference on a server and a path inside an allowed root on one machine ([spec section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md)). A target adds its own by extending one of them, under a name of its own: a target's type named as a built-in is refused (`kernel.built_in_type_redefined`), but for `money` and `choice`, which a target completes ([decision 0182](../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)).
 
 ## `screens/*.yaml`
 
@@ -285,7 +285,7 @@ A fixture folder holds a marker file stating that it was scrubbed, `fixture.yaml
 
 | File | What it holds |
 | --- | --- |
-| `<name>.json` | The answer of each step named `<name>`: the entry of the pack's file the step refers to (a call, an endpoint, a statement, a document, an upstream tool, or the last part of an entry such as `surface/tool`), or, for a step that refers to none, its kind. An object of the values the step observed; `null` for a record that is absent; or a list of those, given in order to the steps of that name, each once. An exact number is written as text |
+| `<name>.json` | The answer of each step named `<name>`: the entry of the pack's file the step refers to (a call, an endpoint, a statement, a document, an upstream tool, or the last part of an entry such as `surface/tool`), or, for a step that refers to none, its kind. An object of the values the step observed, or `null` for a record that is absent, which answers every step of that name; or a list of those, given in order to the steps of that name, each once. An exact number is written as text |
 | `<name>.request.json` | For a committing step: the values the engine must send it, by argument name, an object or a list in the order the saves are sent. Compared field by field with what was sent; a save sent with no recorded request fails the test |
 | Any other file | A file a step or a source reads. A pipeline's source is named by the test's input `source`, a file of this folder, read through the checked paths |
 

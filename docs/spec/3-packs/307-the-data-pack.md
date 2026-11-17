@@ -127,7 +127,7 @@ The request archetype's existing steps are HTTP's. The pack adds its own, fixed 
 | Verb | Lowers to | Commit point |
 | --- | --- | --- |
 | `read` | `begin` read-only, `execute`, `fetch` with `one_or_none` | None |
-| `list`, `search` | `begin` read-only, `execute`, `fetch` up to `max_rows` | None |
+| `list`, `search` | `begin` read-only, `execute`, `fetch` up to `max_rows`. The rows come back as records under `rows`, each field also as a list of its values in row order, and `more`; an operation's list outputs are read from the lists ([decision 0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md)) | None |
 | `create` | `begin`, `execute` an insert, `expect_rows` 1, `fetch` any key the store assigned, `commit` | `commit` |
 | `update` | `begin`, `execute` an update with the key predicate and the guard, `expect_rows` 1, `commit` | `commit` |
 | `upsert` | Decided at the preview by reading ([section 209](../2-kernel/209-record-identity-and-dependent-records.md)), then as `create` or `update` | `commit` |
@@ -216,7 +216,7 @@ The discoverer reads the store's own catalog, through the SQL standard's informa
 
 | The drafter writes | It leaves to the developer |
 | --- | --- |
-| One record kind per table with a declared key; field types from column types, with places and scale where the store states them and no unit | Units, business names, choice codes the store does not enumerate |
+| One record kind per table with a declared key; field types from column types, with places and scale where the store states them and no unit. A server's `numeric(p,s)` is `decimal` where the built-in type keeps its scale; the embedded engine's `NUMERIC` may hold a float and stays a question | Units, business names, choice codes the store does not enumerate |
 | A `read` statement by key for each such table and a list of its rows in the order of its key, bounded by the pack's row limit, and a read operation over each, provisional names from the table's words ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)) | Joins, which tables matter |
 | Nothing for tables without a key, beyond an open question | Every write, its strategy, and whether the route is supported beneath an application |
 

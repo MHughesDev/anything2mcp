@@ -21,9 +21,8 @@ use crate::codes;
 use crate::kind::document_name;
 use crate::model::{
     Change, DOCUMENT_KIND, DocumentSpec, Expect, Format, LOCATE, MODE, OPEN, PlaceSpec, READ,
-    RecordSpec,
-    SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST, VERB_READ,
-    VERB_UPDATE, field_arg, key_arg,
+    RecordSpec, SAVE, SET, SURFACE_KIND, Section, StepSpec, VERB_CREATE, VERB_DELETE, VERB_LIST,
+    VERB_READ, VERB_UPDATE, field_arg, key_arg,
 };
 
 /// A binding that names a document, a record kind, or a field the target

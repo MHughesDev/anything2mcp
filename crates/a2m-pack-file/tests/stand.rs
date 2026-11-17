@@ -1709,7 +1709,10 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     questioned.dedup();
     assert_eq!(
         questioned,
-        ["operations/adjustments_get.yaml", "operations/stock_get.yaml"]
+        [
+            "operations/adjustments_get.yaml",
+            "operations/stock_get.yaml"
+        ]
     );
     let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
     assert!(
@@ -1722,10 +1725,7 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     // compiler names the file and the question.
     let held = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
     let question = held.find("kernel.open_question").unwrap();
-    assert!(
-        question.at.file.as_str().ends_with("_get.yaml"),
-        "{held:?}"
-    );
+    assert!(question.at.file.as_str().ends_with("_get.yaml"), "{held:?}");
     // Set aside, as the scout sets aside a draft that holds a question,
     // the documents and the lists compile.
     for file in &questioned {
@@ -1752,7 +1752,10 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
         (seed::STOCK_CSV, "example_stock_list"),
         (seed::ADJUSTMENTS_CSV, "example_adjustments_list"),
     ] {
-        let observed = scene.read_operation(operation, &Values::new()).await.unwrap();
+        let observed = scene
+            .read_operation(operation, &Values::new())
+            .await
+            .unwrap();
         let result = common::outputs_of(&scene.plan, operation, last_values(&observed));
         let plan = scene
             .plan
@@ -1791,7 +1794,11 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
         .read_operation("example_adjustments_list", &Values::new())
         .await
         .unwrap();
-    let result = common::outputs_of(&scene.plan, "example_adjustments_list", last_values(&observed));
+    let result = common::outputs_of(
+        &scene.plan,
+        "example_adjustments_list",
+        last_values(&observed),
+    );
     let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
     assert_eq!(
         column("amount"),

@@ -570,7 +570,10 @@ fn read_list(
         })
         .collect();
     let mut values = Values::new()
-        .with(ROWS, Value::List(rows.into_iter().map(Value::Record).collect()))
+        .with(
+            ROWS,
+            Value::List(rows.into_iter().map(Value::Record).collect()),
+        )
         .with(TRUNCATED, found.table.rows.len() > limit);
     for (name, list) in lists {
         values.insert(name, list);

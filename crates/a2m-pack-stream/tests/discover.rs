@@ -264,3 +264,103 @@ async fn drafts_state_what_the_broker_stated_and_leave_the_judgments_open() {
     let after: Vec<String> = written.iter().map(|path| read(path)).collect();
     assert_eq!(before, after);
 }
+
+#[tokio::test]
+async fn the_drafted_reads_return_what_the_broker_holds() {
+    let mut scene = Scene::start().await;
+    let (findings, _, _) = discover(&scene).await;
+    let root = scene.folder.path().join("drafted-reads");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        common::fixture_root().path().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    // The read of a retained key states the fields the broker's schema
+    // states, but the key; a look states what every look returns. No read
+    // holds a question here: the broker holds a schema for the channel.
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .all(|question| question.file.as_str().starts_with("channels/")),
+        "{:?}",
+        report.open_questions
+    );
+    let get =
+        std::fs::read_to_string(root.join("operations").join("orders_status_get.yaml")).unwrap();
+    assert!(
+        get.contains("status:") && get.contains("untrusted_text"),
+        "{get}"
+    );
+    // A person answers the one judgment each channel leaves open.
+    common::answer_roles(&root);
+    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("the drafts do not compile:\n{problems}"),
+    };
+    let before = scene.broker.truth();
+
+    let (handle, mut prepared) = scene.reading().await;
+    let steps = scene.binding("example_orders_status_get").act.clone();
+    let observed = common::done(
+        common::read(
+            &handle,
+            &mut prepared,
+            &steps,
+            &Values::new().with("key", "A-100"),
+        )
+        .await
+        .unwrap(),
+    );
+    let result = common::outputs_of(&scene.plan, "example_orders_status_get", &observed);
+    let held = &before.channels["example.orders.status"].retained["A-100"];
+    assert_eq!(
+        result.get("status").and_then(a2m_core::Value::as_text),
+        held.body["status"].as_str()
+    );
+    // Its text is marked untrusted.
+    let operation = scene
+        .plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == "example_orders_status_get")
+        .unwrap();
+    assert!(operation.outputs.iter().all(|output| {
+        output
+            .field_type
+            .is_some_and(|index| scene.plan.field_types[index.get()].untrusted)
+    }));
+
+    for (operation, address) in [
+        ("example_orders_events_list", "example.orders.events"),
+        ("example_orders_work_list", "example.orders.work"),
+    ] {
+        let steps = scene.binding(operation).act.clone();
+        let observed = common::done(
+            common::read(&handle, &mut prepared, &steps, &Values::new())
+                .await
+                .unwrap(),
+        );
+        let result = common::outputs_of(&scene.plan, operation, &observed);
+        let contents = &before.channels[address];
+        let holds = contents.log.len() + contents.queue.len();
+        assert_eq!(
+            result.get("count"),
+            Some(&a2m_core::Value::Int(i64::try_from(holds).unwrap())),
+            "{operation}"
+        );
+        assert_eq!(result.get("more"), Some(&a2m_core::Value::Bool(false)));
+    }
+    handle.release(prepared, false).await;
+
+    // Only looks: nothing published, delivered, or acknowledged, and every
+    // channel holds what it held.
+    let after = scene.broker.truth();
+    assert_eq!(after.received, before.received);
+    assert!(after.deliveries.is_empty() && after.acknowledgements.is_empty());
+    assert_eq!(after.channels, before.channels);
+}

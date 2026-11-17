@@ -273,6 +273,77 @@ pub async fn read(
     Ok(last.expect("a binding has a step"))
 }
 
+/// What a read returns through the engine: each output the operation
+/// declares, taken by its name from what the last step observed and
+/// normalized by its field type, as the engine's own shaping does. A value
+/// the step gave that no output declares is not returned; an output the
+/// step gave no value for stops the test, as it stops a read in the engine.
+pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
+    let operation = plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == operation)
+        .unwrap();
+    let mut out = Values::new();
+    for output in &operation.outputs {
+        let raw = observed
+            .get(&output.name)
+            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        let value = match output
+            .field_type
+            .and_then(|index| plan.field_types[index.get()].normalizer)
+        {
+            Some(index) => {
+                a2m_expr::Normalizer::load(plan.expression(index).unwrap())
+                    .unwrap()
+                    .normalize(raw)
+                    .unwrap()
+                    .normalized
+            }
+            None => raw.clone(),
+        };
+        assert!(
+            value.is_null() || value.has_type(&output.ty),
+            "the output `{}` is not a {}: {value:?}",
+            output.name,
+            output.ty.name()
+        );
+        out.insert(output.name.clone(), value);
+    }
+    out
+}
+
+/// A drafted target folder with the judgments each channel file leaves
+/// open answered as a person who knows the example's messages would: a
+/// retained value is the latest state for its key, every other message is
+/// a thing that happened, and a key the broker does not name is the
+/// order's number.
+pub fn answer_roles(root: &Path) {
+    let channels = root.join("channels");
+    for entry in std::fs::read_dir(&channels).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let role = if text.contains("shape: \"retained\"") {
+            "state"
+        } else {
+            "events"
+        };
+        let answered: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.starts_with("role:") {
+                    format!("role: \"{role}\"")
+                } else if line.starts_with("key: {open_question") {
+                    "key:\n  field: \"order_id\"".to_owned()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, answered.join("\n") + "\n").unwrap();
+    }
+}
+
 pub fn done(outcome: StepOutcome) -> Values {
     match outcome {
         StepOutcome::Done(observed) => observed.values,

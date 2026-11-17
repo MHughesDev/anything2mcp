@@ -58,6 +58,54 @@ fn compile_target(
     a2m_files::compile(&sources, set, mode, version)
 }
 
+/// Compiles what of a target's drafts can compile, for observing and
+/// trying them: every file but those `held_back` names and those that hold
+/// a drafter's open question, which keep their whole kind from compiling
+/// (decision 0180). Gives the plan and the files left out, in order. Never
+/// used to publish: a publish compiles every file.
+pub(crate) fn compile_what_can(
+    kernel: &Kernel,
+    folder: &std::path::Path,
+    held_back: &[String],
+) -> Result<(Compiled, Vec<String>), Diagnostics> {
+    let set = kernel.providers().compiler_set();
+    let root = TargetRoot::new(folder);
+    let sources = a2m_files::load(&root, set)?;
+    let compile = |left_out: &std::collections::BTreeSet<String>| {
+        let files = sources
+            .files
+            .iter()
+            .filter(|file| !left_out.contains(file.path.as_str()))
+            .cloned()
+            .collect();
+        a2m_files::compile(
+            &a2m_files::Sources::from_files(root.clone(), files),
+            set,
+            CompileMode::Draft,
+            a2m_files::DRAFT_VERSION,
+        )
+    };
+    let mut left_out: std::collections::BTreeSet<String> = held_back.iter().cloned().collect();
+    match compile(&left_out) {
+        Ok(compiled) => Ok((compiled, left_out.into_iter().collect())),
+        Err(problems) => {
+            let questioned: Vec<String> = problems
+                .iter()
+                .filter(|problem| {
+                    problem.code.as_str()
+                        == format!("kernel.{}", a2m_files::codes::OPEN_QUESTION)
+                })
+                .map(|problem| problem.at.file.as_str().to_owned())
+                .collect();
+            if questioned.iter().all(|file| left_out.contains(file)) {
+                return Err(problems);
+            }
+            left_out.extend(questioned);
+            compile(&left_out).map(|compiled| (compiled, left_out.into_iter().collect()))
+        }
+    }
+}
+
 /// Runs work that waits on the disk, or that computes for long, on a
 /// thread that may wait: never on an async thread.
 pub(crate) async fn off_thread<T: Send + 'static>(

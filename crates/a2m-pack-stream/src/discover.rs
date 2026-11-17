@@ -253,6 +253,14 @@ impl Discoverer for BrokerLook {
                     ("shape", text_json(facts.get("shape"))),
                     ("key_field", text_json(facts.get("key_field"))),
                     ("dedupe_header", text_json(facts.get("dedupe_header"))),
+                    (
+                        "dedupe_window_ms",
+                        facts
+                            .get("dedupe_window_ms")
+                            .and_then(Value::as_int)
+                            .and_then(|ms| u64::try_from(ms).ok())
+                            .map_or(Json::Null, Json::number),
+                    ),
                     ("subscriptions", Json::List(subscriptions)),
                     ("look", Json::text(look)),
                     ("schema", Json::Bool(schema.is_some())),

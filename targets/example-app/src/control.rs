@@ -42,6 +42,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/auth/sessions/revoke", post(revoke_sessions))
         .route("/auth/revoke", post(revoke))
         .route("/traps", get(trap_writes))
+        .route("/seen", get(seen))
 }
 
 /// Exactly what is stored for an order's delivery details, or `null`, and how many
@@ -91,6 +92,12 @@ async fn revoke(State(state): State<AppState>, Json(revoke): Json<Revoke>) -> St
 /// How many times each trap page's write arrived, by name.
 async fn trap_writes(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"writes": state.lock().await.trap_writes}))
+}
+
+/// The method and path of every request the application received since the
+/// last reset, outside this interface, oldest first.
+async fn seen(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({"seen": state.lock().await.seen}))
 }
 
 /// Restores the seed data and clears every fault, counter, and setting.

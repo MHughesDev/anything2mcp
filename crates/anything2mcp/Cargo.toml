@@ -49,6 +49,9 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
 
 [dev-dependencies]
+# The web pack's drafting, from a probe's finding to a compiled read, in
+# the one crate that names both web crates.
+a2m-files = { path = "../a2m-files" }
 # The person of a test opens the approval page over loopback.
 reqwest.workspace = true
 # And presses it in a real browser: the browser engine of the web pack, with

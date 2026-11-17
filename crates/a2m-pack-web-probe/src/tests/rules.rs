@@ -370,3 +370,57 @@ fn a_page_that_cannot_be_read_puts_none_of_its_text_in_the_message() {
         assert!(!format!("{failure:?}").contains(planted));
     }
 }
+
+#[test]
+fn pages_of_one_screen_are_matched_only_when_one_segment_differs_and_nothing_else() {
+    use crate::screen::{Matched, matched};
+    let screen = |table: &str, heading: &str| {
+        serde_json::json!({"format": "1", "title": "", "cut": false, "elements": [
+            {"depth": 0, "role": "main", "name": ""},
+            {"depth": 1, "role": "heading", "name": heading},
+            {"depth": 1, "role": "table", "name": table},
+            {"depth": 2, "role": "row"},
+            {"depth": 3, "role": "columnheader", "name": "Code"},
+        ]})
+    };
+    let origin = "http://127.0.0.1:4010";
+    let lines = screen("Lines", "Order A-1");
+    let other_heading = screen("Lines", "Order B-2");
+    let other_table = screen("Parts", "Order C-3");
+    let mut cut = screen("Lines", "x");
+    cut["cut"] = serde_json::Value::Bool(true);
+    let nothing = serde_json::json!({"format": "1", "title": "", "cut": false, "elements": [
+        {"depth": 0, "role": "main", "name": ""},
+    ]});
+    // A heading that names the record does not keep two pages apart.
+    assert_eq!(
+        matched(&[
+            (origin, "/orders/A-1", &lines),
+            (origin, "/orders/B-2", &other_heading),
+            (origin, "/orders/C-3", &other_table),
+            (origin, "/orders/D-4", &cut),
+            (origin, "/orders/E-5", &nothing),
+            (origin, "/orders/F-6", &nothing),
+            ("http://127.0.0.1:4011", "/orders/G-7", &lines),
+        ]),
+        [Matched {
+            pattern: "/orders/{order_id}".to_owned(),
+            pages: vec![0, 1],
+        }]
+    );
+    // Two segments that differ are not one screen; nor is one page.
+    assert!(matched(&[(origin, "/a/1", &lines), (origin, "/b/2", &lines)]).is_empty());
+    assert!(matched(&[(origin, "/orders/A-1", &lines)]).is_empty());
+    // A page two groups would hold is in neither.
+    let groups = matched(&[
+        (origin, "/orders/A-1/items/L-1", &lines),
+        (origin, "/orders/A-1/items/L-2", &lines),
+        (origin, "/orders/A-2/items/L-1", &lines),
+    ]);
+    assert!(groups.is_empty(), "{groups:?}");
+    // With no plain word before it, the placeholder is `key`.
+    assert_eq!(
+        matched(&[(origin, "/A-1", &lines), (origin, "/B-2", &lines)])[0].pattern,
+        "/{key}"
+    );
+}

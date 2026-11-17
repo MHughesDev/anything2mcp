@@ -767,7 +767,10 @@ fn a_target_cannot_redefine_a_complete_built_in_type_and_may_complete_an_incompl
         "types:\n  money:\n    base: money\n    currency: USD\n",
     ));
     let problems = problems_with(&completed, &set, CompileMode::Publish);
-    assert!(problems.find("kernel.built_in_type_redefined").is_none(), "{problems}");
+    assert!(
+        problems.find("kernel.built_in_type_redefined").is_none(),
+        "{problems}"
+    );
     assert!(!problems.has_errors(), "{problems}");
 }
 

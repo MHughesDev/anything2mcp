@@ -12,7 +12,8 @@
 //! of every step: the entry of the pack's file the step refers to, when it
 //! refers to one, and otherwise its kind; and, when the answer names them,
 //! the values of the step's arguments. Answers for one name are given in the
-//! order they were recorded, each once. A step no answer is left for is a
+//! order they were recorded, each once, except one recorded as repeating,
+//! which answers every step of its name (decision 0180). A step no answer is left for is a
 //! named failure of the test, `unknown_variant`, `fixture_no_answer`, and
 //! nothing is sent anywhere (rule 7).
 
@@ -49,6 +50,10 @@ pub struct RecordedAnswer {
     pub args: Option<Values>,
     /// The answer.
     pub answer: Recorded,
+    /// Whether it answers every step of its name, as often as one is
+    /// asked, rather than one step once: a fixture's answer written as one
+    /// value, not a list (decision 0180).
+    pub repeats: bool,
 }
 
 /// Whether an answer of this name is for the step: the name is the entry
@@ -146,7 +151,7 @@ impl Replay {
         }
         let mut answers = self.answers.lock().unwrap_or_else(PoisonError::into_inner);
         let found = answers.iter_mut().find(|(answer, used)| {
-            !*used
+            (!*used || answer.repeats)
                 && answers_to(&answer.name, step)
                 && answer.args.as_ref().is_none_or(|wanted| {
                     wanted

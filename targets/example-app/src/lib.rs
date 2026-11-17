@@ -53,7 +53,13 @@ pub(crate) struct Inner {
     pub(crate) auth: AuthState,
     pub(crate) deliveries: Deliveries,
     pub(crate) trap_writes: BTreeMap<String, u64>,
+    /// The method and path of every request the application received, outside
+    /// the control interface, oldest first, up to [`SEEN_KEPT`].
+    pub(crate) seen: Vec<String>,
 }
+
+/// How many requests the application remembers having received.
+const SEEN_KEPT: usize = 10_000;
 
 impl Default for Inner {
     fn default() -> Self {
@@ -64,6 +70,7 @@ impl Default for Inner {
             auth: AuthState::default(),
             deliveries: Deliveries::default(),
             trap_writes: BTreeMap::new(),
+            seen: Vec::new(),
         }
     }
 }
@@ -93,11 +100,29 @@ pub fn router() -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             faults::apply,
-        ));
+        ))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), seen));
     Router::new()
         .merge(application)
         .nest("/__control", control::routes())
         .with_state(state)
+}
+
+/// Remembers the method and path of a request, without its query, before
+/// anything else answers it.
+async fn seen(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    {
+        let mut inner = state.lock().await;
+        if inner.seen.len() < SEEN_KEPT {
+            let line = format!("{} {}", request.method(), request.uri().path());
+            inner.seen.push(line);
+        }
+    }
+    next.run(request).await
 }
 
 /// Serves a new application on the given listener until the task is stopped.

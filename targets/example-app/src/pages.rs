@@ -102,7 +102,8 @@ async fn order_detail(State(state): State<AppState>, Path(order_id): Path<String
         }
     };
     let body = format!(
-        "<h1>Order {id}</h1>\n<dl>\n<dt>Customer</dt><dd>{}</dd>\n<dt>Status</dt><dd>{}</dd>\n</dl>\n\
+        "<h1>Order {id}</h1>\n<dl>\n<dt id=\"order-customer\">Customer</dt><dd aria-labelledby=\"order-customer\">{}</dd>\n\
+         <dt id=\"order-status\">Status</dt><dd aria-labelledby=\"order-status\">{}</dd>\n</dl>\n\
          <table>\n<caption>Line items</caption>\n\
          <thead><tr><th>Item code</th><th>Description</th><th>Quantity</th><th>Length (in)</th></tr></thead>\n\
          <tbody>\n{rows}</tbody>\n</table>\n{add}",

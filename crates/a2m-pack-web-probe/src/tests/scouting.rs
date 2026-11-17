@@ -575,3 +575,71 @@ async fn a_page_that_shows_an_order_gives_the_screen_the_web_pack_drafts_from_th
     assert!(site.writes().await.is_empty());
     bench.end().await;
 }
+
+/// Where the screen finding of the pages that show one order each, matched
+/// into one screen, is kept as data for the web pack's drafting rules.
+fn shared_orders_screen() -> std::path::PathBuf {
+    shared_order_screen().with_file_name("orders_screen.json")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_pages_of_one_screen_give_one_screen_with_a_placeholder_the_same_twice() {
+    let site = Site::start().await;
+    let bench = Bench::new("orders-screen", no_secrets());
+    let start = site.url("/");
+    let look = Look {
+        paths: vec!["/orders/A-100", "/orders/A-101"],
+        depth: Some(0),
+        ..Look::default()
+    };
+    let first = must(bench.run("web_snapshot", &start, &look).await);
+    check(&first);
+    let again = must(bench.run("web_snapshot", &start, &look).await);
+    assert_eq!(again.ids(), first.ids());
+    // The list of orders is a screen of its own; the two pages of an
+    // order are one, and neither is given apart.
+    assert_eq!(
+        first.paths(),
+        ["screen /orders", "screen /orders/{order_id}"],
+        "{:#?}",
+        first.paths()
+    );
+    let (finding, found) = first.one("screen", "/orders/{order_id}");
+    assert_eq!(found["pages"], json!(["/orders/A-100", "/orders/A-101"]));
+    assert!(
+        finding
+            .limitations()
+            .iter()
+            .any(|one| one.code == LimitationCode::Sampled)
+    );
+    // The labels of the values are kept, and the values are not.
+    assert_eq!(names_of(&found, "term"), ["Customer", "Status"]);
+    assert_eq!(names_of(&found, "definition"), ["Customer", "Status"]);
+    for order in ["A-100", "A-101"] {
+        let stored = site.stored_order(order).await;
+        let customer = stored["customer"].as_str().unwrap();
+        assert!(!found.to_string().contains(customer), "{found}");
+    }
+    assert!(!found.to_string().contains("Draft"), "{found}");
+    let text = std::fs::read_to_string(shared_orders_screen()).unwrap_or_default();
+    let shared: Json = serde_json::from_str(&text).unwrap_or(Json::Null);
+    let wanted = json!({"kind": "screen", "path": "/orders/{order_id}", "found": finding.found()});
+    assert_eq!(
+        shared,
+        wanted,
+        "write this into {}:\n{}",
+        shared_orders_screen().display(),
+        serde_json::to_string_pretty(&wanted).unwrap()
+    );
+
+    // One page of an order alone is no pattern: it is drafted as it is.
+    let alone = Look {
+        paths: vec!["/orders/A-100"],
+        depth: Some(0),
+        ..Look::default()
+    };
+    let one = must(bench.run("web_snapshot", &start, &alone).await);
+    assert_eq!(one.paths(), ["screen /orders", "screen /orders/A-100"]);
+    assert!(site.writes().await.is_empty());
+    bench.end().await;
+}

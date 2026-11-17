@@ -931,6 +931,115 @@ async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
     assert_eq!(scene.stand.stream(SEED_WORK).unwrap().consumers.len(), 1);
 }
 
+#[tokio::test]
+async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
+    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
+
+    struct Kept(Vec<Finding>);
+    impl FindingSink for Kept {
+        fn found(&mut self, finding: Finding) -> Result<(), Failure> {
+            self.0.push(finding);
+            Ok(())
+        }
+    }
+
+    let mut scene = Scene::start().await;
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("broker").unwrap(),
+        archetype: Archetype::Stream,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let (handle, prepared) = scene.try_prepare(Posture::Discovery, None).await.unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(20)),
+        paths: &CheckedPaths::none(),
+        redact: &Planted,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+
+    let folder = Folder::new("nats-drafted-reads");
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        nats_root().path().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    // A stream states no key and holds no schema: a look at each, which
+    // states what every look returns, and no read of one key.
+    let lists: Vec<&str> = report
+        .written
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("operations/"))
+        .collect();
+    assert_eq!(
+        lists,
+        [
+            "operations/orders_events_list.yaml",
+            "operations/orders_status_list.yaml",
+            "operations/orders_work_list.yaml"
+        ]
+    );
+    common::answer_roles(&root);
+    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("the drafts do not compile:\n{problems}"),
+    };
+    let held: Vec<(String, usize)> = [SEED_EVENTS, SEED_STATUS, SEED_WORK]
+        .iter()
+        .map(|stream| ((*stream).to_owned(), scene.stand.messages(stream).len()))
+        .collect();
+    let (handle, mut prepared) = scene.reading().await;
+    for ((operation, (stream, count)), _) in [
+        "example_orders_events_list",
+        "example_orders_status_list",
+        "example_orders_work_list",
+    ]
+    .iter()
+    .zip(&held)
+    .zip(0..)
+    {
+        let steps = scene.binding(operation).act.clone();
+        let observed = done(
+            read(&handle, &mut prepared, &steps, &Values::new())
+                .await
+                .unwrap(),
+        );
+        let result = common::outputs_of(&scene.plan, operation, &observed);
+        assert_eq!(
+            result.get("count"),
+            Some(&Value::Int(i64::try_from(*count).unwrap())),
+            "{operation} over {stream}"
+        );
+        assert_eq!(result.get("more"), Some(&Value::Bool(false)));
+    }
+    handle.release(prepared, false).await;
+    // The server: no consumer made, nothing delivered, acknowledged, or
+    // received; every stream holds what it held.
+    assert!(scene.stand.deliveries().is_empty());
+    assert!(scene.stand.acknowledgements().is_empty());
+    assert!(scene.stand.received().is_empty());
+    for (stream, count) in &held {
+        assert_eq!(scene.stand.messages(stream).len(), *count);
+    }
+    assert_eq!(scene.stand.stream(SEED_WORK).unwrap().consumers.len(), 1);
+}
+
 // ---- 6. the protocol is one interface; its limits are the compiler's ----
 
 #[tokio::test]

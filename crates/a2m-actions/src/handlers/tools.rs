@@ -1800,21 +1800,20 @@ pub(crate) async fn plan_to_observe(
     if let Ok(folder) = call.project_folder() {
         let folder = folder.to_path_buf();
         let named = target.clone();
-        let present = super::build::off_thread(move || {
+        let kernel_for = kernel.clone();
+        let compiled = super::build::off_thread(move || {
             let target_folder = super::build::target_folder(&folder, &named)?;
-            Ok(target_folder.is_dir().then_some(folder))
+            if !target_folder.is_dir() {
+                return Ok(None);
+            }
+            // A draft that holds an open question does not keep the rest
+            // of the target from being observed (decision 0180).
+            super::build::compile_what_can(&kernel_for, target_folder.as_path(), &[])
+                .map(|(compiled, _)| Some(compiled))
+                .map_err(Failure::from)
         })
         .await?;
-        if let Some(folder) = present {
-            let compiled = super::build::compile_in(
-                kernel,
-                folder,
-                target,
-                a2m_files::CompileMode::Draft,
-                a2m_files::DRAFT_VERSION,
-            )
-            .await?
-            .map_err(Failure::from)?;
+        if let Some(compiled) = compiled {
             let plan = std::sync::Arc::new(compiled.plan);
             kernel.keep_draft(target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
             return Ok((compiled.encoded.hash, plan));
@@ -2108,7 +2107,11 @@ handler!(
             .map(|row| {
                 json!({
                     "id": row.id.to_string(),
-                    "question": row.question,
+                    // A question a pack drafted may quote the system's own
+                    // words, and the stored question does not tell them
+                    // apart from the pack's: the whole text is the
+                    // system's, kept under the mark (decisions 0171, 0180).
+                    "question": {"untrusted": row.question},
                     "scope": row.scope,
                     "why_it_matters": row.why_it_matters,
                     "settled_by_what": row.settled_by_what,

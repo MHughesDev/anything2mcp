@@ -422,9 +422,7 @@ mod tests {
             assert_eq!(mode & 0o077, 0);
         }
         temporary.write(b"the new bytes").unwrap();
-        assert!(
-            holds_what_was_built(&mut temporary, Digest::of(b"the new bytes"), 1024).is_ok()
-        );
+        assert!(holds_what_was_built(&mut temporary, Digest::of(b"the new bytes"), 1024).is_ok());
         let other =
             holds_what_was_built(&mut temporary, Digest::of(b"other bytes"), 1024).unwrap_err();
         assert_eq!(other.sent, Sent::NotSent);

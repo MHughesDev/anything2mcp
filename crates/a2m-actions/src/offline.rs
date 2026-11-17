@@ -418,8 +418,9 @@ fn answer_items(file: &str, json: Json) -> Result<Vec<Recorded>, Json> {
 /// one file per step it answers, named after what the step refers to: the
 /// entry of the pack's file, such as a call or an endpoint, or, for a step
 /// that refers to none, its kind. The file is `<name>.json`: an object of
-/// the values the step observed; `null` for a record that is absent; or a
-/// list of those, given in order to the steps of that name. A committing
+/// the values the step observed, or `null` for a record that is absent,
+/// which answers every step of that name; or a list of those, given in
+/// order to the steps of that name, each once. A committing
 /// step also has `<name>.request.json`: the values it must be sent, an
 /// object, or a list of objects in the order the steps are sent. Any other
 /// file is one a step or a source reads.
@@ -485,11 +486,15 @@ pub(crate) fn read_fixture(folder: CheckedPath) -> Result<Fixture, Json> {
             }
             continue;
         }
+        // One value answers every step of its name; a list answers them in
+        // order, each once.
+        let repeats = !json.is_array();
         for answer in answer_items(&file, json)? {
             fixture.answers.push(RecordedAnswer {
                 name: stem.to_owned(),
                 args: None,
                 answer,
+                repeats,
             });
         }
     }

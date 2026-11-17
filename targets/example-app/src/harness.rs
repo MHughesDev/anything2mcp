@@ -90,6 +90,11 @@ struct DeliveryWrites {
 }
 
 #[derive(Deserialize)]
+struct Seen {
+    seen: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct TrapWrites {
     writes: BTreeMap<String, u64>,
 }
@@ -396,6 +401,16 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn trap_writes(&self) -> Result<BTreeMap<String, u64>, HarnessError> {
         Ok(self.ask::<TrapWrites>("/__control/traps").await?.writes)
+    }
+
+    /// The method and path of every request the application received since the
+    /// last reset, outside the control interface, oldest first, as `GET /orders`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn seen(&self) -> Result<Vec<String>, HarnessError> {
+        Ok(self.ask::<Seen>("/__control/seen").await?.seen)
     }
 
     /// Signs in as [`USERNAME`] through the sign-in form, and the one-time code step

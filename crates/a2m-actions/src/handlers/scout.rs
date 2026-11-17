@@ -774,7 +774,7 @@ async fn draft(
         let failing: BTreeMap<String, Vec<Json>> = report
             .kept_failing
             .iter()
-            .map(|(path, problems)| (path.as_str().to_owned(), problems_json(problems)))
+            .map(|(path, problems)| (path.as_str().to_owned(), marked_problems(problems)))
             .collect();
         let asked: Vec<(String, String, String, String)> = report
             .open_questions
@@ -799,9 +799,17 @@ async fn draft(
                 })
             })
             .collect();
+        // The drafts that hold an open question, each once: the try stage
+        // compiles without them (decision 0180).
+        let held_back: BTreeSet<String> = report
+            .open_questions
+            .iter()
+            .map(|open| open.file.as_str().to_owned())
+            .collect();
         Ok((
             json!({
                 "written": files,
+                "held_back": held_back,
                 "conflicts": paths(&report.conflicts),
                 "refused": report.refused.iter().map(|(path, why)| json!({"file": path.as_str(), "why": why})).collect::<Vec<_>>(),
                 "open_questions": report.open_questions.len(),
@@ -817,6 +825,7 @@ async fn drafted_tools(
     kernel: &Kernel,
     folder: PathBuf,
     written: Vec<String>,
+    held_back: Vec<String>,
 ) -> Result<Vec<(String, String)>, Failure> {
     let kernel = kernel.clone();
     off_thread(move || {
@@ -826,7 +835,9 @@ async fn drafted_tools(
         };
         let mut tools = Vec::new();
         for file in sources.of_kind("operation") {
-            if !written.iter().any(|path| path == file.path.as_str()) {
+            if !written.iter().any(|path| path == file.path.as_str())
+                || held_back.iter().any(|path| path == file.path.as_str())
+            {
                 continue;
             }
             for doc in &file.docs {
@@ -849,24 +860,49 @@ async fn try_reads(
     kernel: &Kernel,
     call: &Call,
     target: &TargetName,
+    folder: PathBuf,
     tools: &[(String, String)],
+    held_back: Vec<String>,
 ) -> Result<(Json, BTreeMap<String, Vec<String>>, bool), Failure> {
     let mut tried = Vec::new();
     let mut runs = BTreeMap::new();
-    let mut complete = true;
+    let complete = true;
+    let left_out = json!(held_back);
     if tools.is_empty() {
-        return Ok((json!({"tools": tried}), runs, complete));
+        return Ok((
+            json!({"tools": tried, "left_out": left_out}),
+            runs,
+            complete,
+        ));
     }
-    let project = call.project_folder()?.to_path_buf();
-    let compiled =
-        super::build::compile_in(kernel, project, target, CompileMode::Draft, DRAFT_VERSION)
-            .await?;
-    let Ok(compiled) = compiled else {
-        for (tool, file) in tools {
-            tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile."}));
-        }
-        return Ok((json!({"tools": tried}), runs, complete));
+    // What can compile is compiled: every file of the target but the
+    // drafts that hold an open question, since one such file keeps its
+    // whole kind from compiling (decision 0180).
+    let compiled = {
+        let kernel = kernel.clone();
+        off_thread(move || {
+            Ok(super::build::compile_what_can(
+                &kernel,
+                &folder,
+                &held_back,
+            ))
+        })
+        .await?
     };
+    let (compiled, left_out) = match compiled {
+        Ok((compiled, left_out)) => (compiled, json!(left_out)),
+        Err(problems) => {
+            for (tool, file) in tools {
+                tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile, without those that hold an open question."}));
+            }
+            return Ok((
+                json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),
+                runs,
+                complete,
+            ));
+        }
+    };
+    let mut complete = complete;
     let plan = Arc::new(compiled.plan);
     kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&plan));
     let environment = plan
@@ -949,14 +985,74 @@ async fn try_reads(
             "level": if state == "proven" { "executed" } else { "reconstructed" },
         });
         if let Some(first) = results.first() {
-            entry["result"] = untrusted(first["result"].clone());
+            // The shape of what the system answered, never its values: a
+            // list read may answer a thousand rows of the system's data.
+            entry["shape"] = shape_of(&first["result"]);
             if let Some(failure) = first.get("failure") {
                 entry["failure"] = failure.clone();
             }
         }
         tried.push(entry);
     }
-    Ok((json!({"tools": tried}), runs, complete))
+    Ok((
+        json!({"tools": tried, "left_out": left_out}),
+        runs,
+        complete,
+    ))
+}
+
+/// The problems of drafts as the scout reports them: a drafted file's
+/// values, and an open question, may quote the system's own words, so each
+/// problem's message is kept under `untrusted` (decisions 0171, 0180). The
+/// code, the place, and the fix are the product's.
+fn marked_problems(problems: &a2m_files::Diagnostics) -> Vec<Json> {
+    problems_json(problems)
+        .into_iter()
+        .map(|mut problem| {
+            if let Some(message) = problem.get_mut("message") {
+                *message = untrusted(message.take());
+            }
+            problem
+        })
+        .collect()
+}
+
+/// The shape of a tried read's result, never its values (spec section
+/// 218): each output's name and the kind of value it held, how many items
+/// a list held, whether `more` was said, and a digest of the whole result,
+/// so that two results can be told the same or not.
+fn shape_of(result: &Json) -> Json {
+    let kind = |value: &Json| match value {
+        Json::Null => "null",
+        Json::Bool(_) => "boolean",
+        Json::Number(_) => "number",
+        Json::String(_) => "text",
+        Json::Array(_) => "list",
+        Json::Object(_) => "record",
+    };
+    let outputs: Vec<Json> = result
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, value)| {
+            let mut shown = json!({"output": name, "kind": kind(value)});
+            if let Json::Array(items) = value {
+                shown["items"] = json!(items.len());
+                if let Some(first) = items.first() {
+                    shown["item_kind"] = json!(kind(first));
+                }
+            }
+            shown
+        })
+        .collect();
+    let digest = a2m_core::CanonicalJson::encode(result)
+        .map(|encoded| encoded.digest().to_string())
+        .unwrap_or_default();
+    json!({
+        "outputs": outputs,
+        "more": result.get("more").and_then(Json::as_bool),
+        "digest": digest,
+    })
 }
 
 /// What a scout says when it stops before its last stage.
@@ -1170,11 +1266,11 @@ handler!(
                     {
                         Ok(compiled) => json!({
                             "compiles": true,
-                            "problems": problems_json(&compiled.warnings),
+                            "problems": marked_problems(&compiled.warnings),
                             "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
                         }),
                         Err(problems) => {
-                            json!({"compiles": false, "problems": problems_json(&problems)})
+                            json!({"compiles": false, "problems": marked_problems(&problems)})
                         }
                     }
                 }
@@ -1196,9 +1292,16 @@ handler!(
                     .flatten()
                     .filter_map(|file| file["file"].as_str().map(str::to_owned))
                     .collect();
-                let tools = drafted_tools(kernel, folder.clone(), written).await?;
+                let held_back: Vec<String> = done[&4]["held_back"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|file| file.as_str().map(str::to_owned))
+                    .collect();
+                let tools =
+                    drafted_tools(kernel, folder.clone(), written, held_back.clone()).await?;
                 let (mut result, runs, complete) =
-                    try_reads(kernel, &call, &target, &tools).await?;
+                    try_reads(kernel, &call, &target, folder.clone(), &tools, held_back).await?;
                 if !complete {
                     return Ok(stopped(&target, id, 6, "A trial has not ended yet.", &done));
                 }
