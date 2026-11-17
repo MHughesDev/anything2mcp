@@ -217,7 +217,7 @@ These are ordinary actions, with all four faces.
 
 ### Limits
 
-- Every limit is a named setting with a unit ([section 226](226-settings.md)).
+- Every limit is a named setting with a unit ([section 226](226-configuration.md)).
 - A failure caused by a limit names the setting, its value, its bounds, and where it is changed.
 - A fixed ceiling says that it is fixed, so that nobody goes looking for a setting.
 - An agent cannot raise a protected limit. In this Anything2MCP differs from REA, where limits are editable through a tool.

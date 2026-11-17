@@ -70,13 +70,13 @@ Stages 1 to 9 are those of [section 46](../../spec/46-target-compiler-and-plan.m
 | 2 Validate | Kernel schemas, and the schema version | Schemas of the pack's file kinds, and of the fields its bindings add |
 | 3 Resolve | Names across files; placeholders to inputs; every name defined once | `FileKind::names` says which names a file of the kind defines, so the kernel can resolve to them without reading them |
 | 4 Type-check | Every expression, through `a2m-expr`, with the right `TypeEnv` for its place | `FileKind::expressions` lists the expressions inside the pack's own files |
-| 5 Analyze | Commit points counted from the lowered steps' `commits` flag; effect classes raised, never lowered; identity strategies; permission manifests; no cycles | `Lowering::identity` says whether each identity strategy is possible for a binding |
-| 6 Lint | Kernel rules | Registered `LintRule`s |
-| 7 Lower | Calls the lowering registered for the binding's mode and verb; a mode or verb nobody registered stops the compile | `Lowering::lower` |
+| 5 Lower | Calls the lowering registered for the binding's mode and verb; a mode or verb nobody registered stops the compile. A lowering that declared it reads another pack's kind is handed that kind's validated entries as data | `Lowering::lower` |
+| 6 Analyze | Commit points counted from the lowered steps' `commits` flag; effect classes raised, never lowered; identity strategies; permission manifests; no cycles | `Lowering::identity` says whether each identity strategy is possible for a binding |
+| 7 Lint | Kernel rules | Registered `LintRule`s |
 | 8 Describe | Tool names, descriptions, schemas, annotations; two tools that cannot be told apart are an error | None |
 | 9 Emit | The canonical encoding and the hash, both through `a2m-core` | None |
 
-Stage 7 runs before stage 5 counts commit points, although section 46 lists them the other way: the count is taken from the lowered steps, so it can never disagree with what runs.
+Lowering comes before analysis so that commit points are counted from the lowered steps, and the count can never disagree with what runs.
 
 ### The plan
 
@@ -87,18 +87,20 @@ Stage 7 runs before stage 5 counts commit points, although section 46 lists them
 | `header` | 9 | The compiler's version, the target, and the digest of the sorted list of source paths and file digests. No timestamp, no absolute path |
 | `surfaces`, `field_types` | 3 | Field types carry their normalizer as a `PlanExpr`, built from the field type through `a2m-expr` |
 | `expressions` | 4 | Every expression once, as canonical text with its type; steps and bindings refer to them by index |
-| `operations`, `bindings` | 5 and 7 | Bindings keep declared order. A binding's `act`, `confirm`, and `read_back` are the lowering's three step lists, unchanged |
+| `operations`, `bindings` | 5 and 6 | Bindings keep declared order. A binding's `act`, `confirm`, and `read_back` are the lowering's three step lists, unchanged |
 | `packs` | 3 | Each registered file kind's `compile` returns one `PackSection`; the kernel stores and hashes it and never decodes it |
-| `tools`, `manifests` | 8 and 5 | As section 46 says |
+| `tools`, `manifests` | 8 and 6 | As section 46 says |
 
 Encoding and hashing are `a2m-core`'s, so the compiler and the engine cannot disagree on either.
 
 ### What a pack registers
 
 ```rust
-/// A file kind the pack owns, such as `screens/`. One owner per kind; a second is refused.
+/// A file kind the pack owns, such as `screens/`, for the surface kinds it serves. One owner per
+/// file kind and surface kind; a second registration for the same pair is refused (decision 0062).
 pub trait FileKind: Send + Sync {
     fn name(&self) -> FileKindName;                 // checked name, such as `screen`
+    fn surface_kinds(&self) -> &[SurfaceKind];      // with `name`, the key it is registered under
     fn folder(&self) -> &str;                       // `screens/`
     fn schema(&self) -> &JsonSchema;                // published with the kernel's
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>>;   // what a document defines, for stage 3
@@ -110,6 +112,7 @@ pub trait FileKind: Send + Sync {
 pub trait Lowering: Send + Sync {
     fn mode(&self) -> Mode;
     fn verbs(&self) -> &[Verb];
+    fn reads(&self) -> &[(FileKindName, SurfaceKind)];   // kinds it reads and does not own; declared, never assumed
     fn step_kinds(&self) -> &[StepKind];            // every kind its steps may carry; the driver must know each
     fn binding_schema(&self) -> &JsonSchema;        // the fields this mode adds to a binding
     fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible;
@@ -132,13 +135,14 @@ pub trait DraftingRule: Send + Sync {
 }
 
 /// Everything every enabled pack registered. Built by `a2m-provider`; passed by `a2m-actions`.
-pub struct CompilerSet { /* file kinds, lowerings by (mode, verb), lint rules, drafting rules */ }
+pub struct CompilerSet { /* file kinds by (file kind, surface kind), lowerings by (mode, verb), readers, lint rules, drafting rules */ }
 impl CompilerSet {
-    pub fn builder() -> CompilerSetBuilder;         // refuses a kind, a (mode, verb), a lint code, or a
-}                                                   // (finding kind, file kind) registered twice
+    pub fn builder() -> CompilerSetBuilder;         // refuses a (file kind, surface kind), a (mode, verb), a lint code,
+}                                                   // or a (finding kind, file kind) registered twice; and a declared
+                                                    // read of a kind no enabled pack owns, when a binding needs it
 ```
 
-`ResolvedBinding`, `LowerContext`, `KindContext`, `ResolvedView`, and `DraftContext` are read-only views. A lowering sees its own binding, the operation's inputs and key, the field types, and its own pack's compiled sections; it cannot see another pack's. It makes expressions only through the context, which type-checks them and returns an `ExprRef`.
+`ResolvedBinding`, `LowerContext`, `KindContext`, `ResolvedView`, and `DraftContext` are read-only views. A lowering sees its own binding, the operation's inputs and key, the field types, and its own pack's compiled sections. Of another pack's kinds it sees only those it declared in `reads`, as validated entries, never as that pack's compiled section or code. It makes expressions only through the context, which type-checks them and returns an `ExprRef`.
 
 ### The drafter
 
@@ -182,7 +186,7 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 | `input` | `lint_failed` | Any error diagnostic |
 | `input` | `path_not_allowed` | The loader met a link or a reference outside the target folder |
 | `input` | `draft_conflict` | The drafter would overwrite a file the developer changed |
-| `input` | `registration_conflict` | Two packs registered the same kind, mode and verb, lint code, or drafting pair |
+| `input` | `registration_conflict` | Two packs registered the same file kind and surface kind, mode and verb, lint code, or drafting pair |
 
 ## Invariants
 

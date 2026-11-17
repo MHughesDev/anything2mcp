@@ -68,6 +68,11 @@ name = "file"
 archetype = "artifact"
 session = false                          # whether a session of the keeper is held on it
 
+[[reads]]                                # kinds owned by another pack that this provider reads; the compiler hands it the validated entries as data
+kind = "schemas"                         # a file kind or a finding kind
+of = "file_kinds"                        # "file_kinds" | "finding_kinds"
+surface_kind = "file"                    # the owner is the one pack that owns this kind for this surface kind
+
 [points]                                 # the extension points it fills; nothing else can be registered
 driver = ["sheet"]                       # modes it drives
 discoverer = ["sheet_structure"]         # each discoverer also supplies its describer
@@ -131,7 +136,17 @@ max_level = "discovered"
 vouches_for = ["live_system", "artifact"]
 ```
 
-Checks made when a manifest is read, each a named failure:
+A kind has one owning pack per surface kind, and another pack may declare that it reads it (decision 0062). The web pack's manifest, for instance, lets its `page_http` mode use the HTTP pack's endpoint catalog without owning it:
+
+```toml
+# In the web pack's manifest
+[[reads]]
+kind = "endpoints"                       # owned by the HTTP pack
+of = "file_kinds"
+surface_kind = "web_origin"
+```
+
+Checks made when a manifest is read, and when the registry is built, each a named failure:
 
 | Check | Failure |
 | --- | --- |
@@ -139,6 +154,8 @@ Checks made when a manifest is read, each a named failure:
 | `contract` is current or previous | `input`, `contract_unsupported` |
 | Every mode and surface kind has exactly one archetype; two providers that register one name agree on it | `input`, `mode_conflict` |
 | Every step kind, file kind, lint code, and finding kind is a well formed checked name, unique to its provider | `input`, `schema_invalid` |
+| Every kind a provider `reads` has exactly one enabled owner for that surface kind. If the owner is absent or disabled, the reader stays registered, the problem is listed, and any binding that needs the kind does not compile | `input`, `kind_owner_missing`, naming the kind, the surface kind, and the pack to enable |
+| No two enabled packs own one kind for one surface kind | `input`, `kind_owner_conflict` |
 | Every object registered matches a declared point, mode, or discoverer | `policy`, `effect_not_declared` |
 | A plug-in's signature verifies, or unsigned plug-ins are switched on by a person | `policy`, `signature_invalid` |
 | A discoverer's `max_level` is `inferred` or `discovered` | `input`, `manifest_invalid` |
@@ -399,6 +416,7 @@ Memory only: the registry snapshot; for each subsystem its place, count, state, 
 | --- | --- | --- |
 | `input` | `manifest_invalid`, `contract_unsupported`, `mode_conflict`, `path_not_allowed` | A manifest fails its checks; `Roots::check` refuses a path |
 | `input` | `provider_ambiguous`, `mode_unknown` | Two ready providers and no setting; a mode nobody registered |
+| `input` | `kind_owner_missing`, `kind_owner_conflict` | A kind a provider reads has no enabled owner; two enabled packs own one kind for one surface kind |
 | `policy` | `effect_not_declared`, `signature_invalid`, `intent_missing` | A registration or start beyond the manifest; a bad signature; a `commits` step without a token |
 | `busy` | `provider_unavailable`, `queue_full`, `cleanup_incomplete` | Not ready, with the availability state; a full subsystem queue; leftovers block a start |
 | `unknown_variant` | `handshake_failed`, `undeclared_code`, `unexpected_absent` | A subsystem fails its handshake; a driver invents a code; `Absent` from a step that is no lookup |

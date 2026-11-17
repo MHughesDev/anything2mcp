@@ -53,7 +53,7 @@ Nothing of the engine is built. No hypothesis has been tested; all 39 in the [re
 | [223](../2-kernel/223-the-runner-protocol.md). The runner protocol | Designed | Build it in Phase 7 | Let a runner that lost its lease write without reconciling |
 | [224](../2-kernel/224-when-the-engine-itself-fails.md). When the engine itself fails | Designed | Build each failure as a fault test | Write while the engine is degraded |
 | [225](../2-kernel/225-performance.md). Performance | Budgets set; none measured | Measure against them (package 1.7) | Treat a budget as a fact before it is measured |
-| [226](../2-kernel/226-settings.md). Settings | Designed; key names are drafts until the loader is written | Build the loader | Add a setting that weakens a guardrail |
+| [226](../2-kernel/226-configuration.md). Settings | Designed; key names are drafts until the loader is written | Build the loader | Add a setting that weakens a guardrail |
 | [301](../3-packs/301-the-web-pack.md). The web pack | Designed; the interface flavors and hard cases are a catalog, each built in Phase 8 | Build its interface mode from package 1.1 | Build a widget or platform rule without a test application case |
 | [302](../3-packs/302-the-web-pack-browser-engine.md). The web pack: the browser engine | Designed; its base waits on package 0.4 | Run the spike | Drive the user's own browser profile |
 | [303](../3-packs/303-the-http-pack.md). The HTTP pack | Designed in its crate design | Build it in Phase 4 | Write over a mined binding before it has passed shadow |
