@@ -69,6 +69,13 @@ saphyr-parser = "0.3.4"
 # Inflate for a workbook's package, the one outside crate of a2m-sources; the
 # csv, json, package, and XML readers are its own (decision 0086).
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+# The provider contract's outside crates (decision 0088): the manifest parser;
+# on Unix, the helper that places a pipe on a child's descriptors and the safe
+# system calls that end a process group; on Windows, the handle and job calls.
+toml = { version = "1.2.1", default-features = false, features = ["std", "serde", "parse"] }
+command-fds = { version = "0.3.3", features = ["tokio"] }
+rustix = { version = "1.1.6", default-features = false, features = ["std", "process"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
 
 # AGENTS.md: no unsafe without a stated reason and a test; no unwrap or expect
 # in library code outside tests. clippy.toml allows both inside tests.
