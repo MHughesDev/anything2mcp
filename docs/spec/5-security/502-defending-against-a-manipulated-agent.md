@@ -34,7 +34,7 @@ Sources and uploads take files. A manipulated agent must not be able to name any
 
 - Tool names and descriptions are written by the target's author and reviewed by a person. Text captured from the system never flows into them unreviewed.
 - Results are structured. Free text from the system sits only in fields marked untrusted, limited in length and stripped of markup.
-- A validation message from the system, returned with a `rejected` result, is such a field. A driver hands it over apart from the failure's own sentence, bounded and redacted, and every door shows it marked as the system's words, never joined into the product's message ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
+- A validation message from the system, returned with a `rejected` result, is such a field. A driver hands it over apart from the failure's own sentence, bounded and redacted, and every door shows it marked as the system's words, never joined into the product's message ([decision 0162](../../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)), with every character that can reorder, hide, or restyle shown text written as its escape: control characters and terminal escapes, bidirectional marks and isolates, invisible format characters, and line and paragraph separators ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - Snapshots and captures given to a building agent mark the system's text the same way.
 
 ## A manipulated building agent

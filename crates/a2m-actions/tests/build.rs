@@ -1838,6 +1838,14 @@ async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() 
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
     let target_dir = world.project.path().join("targets").join("example");
     std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    // The stand's rate is counted on the kernel's clock, which stands still
+    // here: the target states none, so that the trials are not held back.
+    let declared = std::fs::read_to_string(target_dir.join("target.yaml")).unwrap();
+    std::fs::write(
+        target_dir.join("target.yaml"),
+        declared.replace("    rate: {requests: 10, per_ms: 1000}\n", ""),
+    )
+    .unwrap();
     *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
         values: a2m_core::Values::new().with("note", "Kept by the stand"),
         ..a2m_provider::Observed::default()
@@ -1883,10 +1891,6 @@ async fn a_scouts_trials_are_made_once_end_by_name_and_take_a_key_from_a_list() 
         .await;
     assert!(report.ok, "{:?}", report.error);
     let report = report.result.unwrap();
-    if !report["report_hash"].is_string() {
-        let listed = world.call(&agent, "run.list", json!({"limit": 100})).await;
-        eprintln!("DEBUG {}", listed.result.unwrap());
-    }
     assert!(report["report_hash"].is_string(), "{report}");
     let tools = report["content"]["tried"]["tools"].as_array().unwrap();
     let of = |name: &str| {

@@ -34,7 +34,7 @@ A provider may also add actions to the registry, under its own name space. They 
 - Decide whether something may happen. Only the policy engine decides.
 - Sign in or renew. Only the session keeper does, calling the provider's auth provider.
 - Approve anything, or mark anything verified.
-- Write to the ledger. The engine writes; a driver returns outcomes.
+- Write to the ledger. The engine writes; a driver returns outcomes. A driver may ask, within a step, whether another record of its operation holds a value it recorded, and is told which record, or no, or that the engine cannot tell; it is never given another record's values ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - Read the vault. A secret reaches a provider only through injection, for one step.
 - Retry inside a step.
 

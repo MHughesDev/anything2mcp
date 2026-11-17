@@ -281,12 +281,12 @@ fn escaped(text: &str, keep: fn(char) -> bool) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// What the system said, made safe to carry in a door's data: every
-/// character [`said_hides`] names is written as its escape, except a line
-/// feed and a tab, which a door's encoding, such as JSON, carries as its
-/// own escapes. The one function every door passes the system's words
-/// through before it shows them, with [`said_cut`] and [`said_shown`]
-/// (decision 0193). Text with nothing to escape is returned as it is.
+/// What the system said, with every character [`said_hides`] names written
+/// as its escape, except a line feed and a tab, for a door that carries the
+/// text in an encoding of its own, such as JSON, and wants nothing in it to
+/// reorder, hide, or restyle what a reader is later shown. The stored
+/// failure and [`said_cut`] keep the text raw; this escapes it once, at the
+/// door (decision 0193). Text with nothing to escape is returned as it is.
 #[must_use]
 pub fn said_neutral(text: &str) -> Cow<'_, str> {
     escaped(text, |c| c == '\n' || c == '\t')
@@ -295,17 +295,12 @@ pub fn said_neutral(text: &str) -> Cow<'_, str> {
 /// What the system said, cut for display from text that was already
 /// redacted: its first `longest` characters, ending before a redaction mark
 /// that the cut would split, so that no part of a mark, and nothing a mark
-/// stands for, is shown as if it were text; then passed through
-/// [`said_neutral`], so that nothing in it can reorder, hide, or restyle
-/// what is shown. The `bool` says whether it was cut.
+/// stands for, is shown as if it were text. The text stays raw: nothing in
+/// it is escaped here; a door escapes it once, when it shows it, with
+/// [`said_shown`], [`said_quoted`], or [`said_neutral`]. The `bool` says
+/// whether it was cut.
 #[must_use]
-pub fn said_cut(redacted: &str, longest: usize) -> (Cow<'_, str>, bool) {
-    let (kept, cut) = cut_at(redacted, longest);
-    (said_neutral(kept), cut)
-}
-
-/// The first `longest` characters, never inside a redaction mark.
-fn cut_at(redacted: &str, longest: usize) -> (&str, bool) {
+pub fn said_cut(redacted: &str, longest: usize) -> (&str, bool) {
     let Some((mut at, _)) = redacted.char_indices().nth(longest) else {
         return (redacted, false);
     };
@@ -318,6 +313,31 @@ fn cut_at(redacted: &str, longest: usize) -> (&str, bool) {
     (&redacted[..at], true)
 }
 
+/// What the system said, for a door that shows it between straight quotes
+/// on a line of its own, from text that was already redacted: cut as
+/// [`said_cut`] cuts it, with `…` after a cut; every character
+/// [`said_hides`] names escaped (`\n`, `\u{1b}`, `\u{202e}`), and every
+/// quote and backslash escaped (`\"`, `\\`), each once. The door puts it
+/// between its quotes as it is (decision 0193).
+#[must_use]
+pub fn said_quoted(redacted: &str, longest: usize) -> String {
+    let (kept, cut) = said_cut(redacted, longest);
+    let mut shown = String::with_capacity(kept.len() + 8);
+    for c in kept.chars() {
+        if said_hides(c) && !c.is_control() {
+            shown.extend(c.escape_unicode());
+        } else if c.is_control() || c == '"' || c == '\\' {
+            shown.extend(c.escape_default());
+        } else {
+            shown.push(c);
+        }
+    }
+    if cut {
+        shown.push('…');
+    }
+    shown
+}
+
 /// What the system said, as a door shows it on a line of its own, from
 /// text that was already redacted: cut as [`said_cut`] cuts it, with `…`
 /// after a cut, and every character [`said_hides`] names escaped (`\n`,
@@ -327,7 +347,7 @@ fn cut_at(redacted: &str, longest: usize) -> (&str, bool) {
 /// it was cut.
 #[must_use]
 pub fn said_shown(redacted: &str, longest: usize) -> (String, bool) {
-    let (kept, cut) = cut_at(redacted, longest);
+    let (kept, cut) = said_cut(redacted, longest);
     let mut shown = escaped(kept, |_| false).into_owned();
     if cut {
         shown.push('…');
@@ -561,16 +581,19 @@ mod tests {
             for &c in *chars {
                 assert!(super::said_hides(c), "{class}: {:?}", c);
                 let text = format!("total{c}must be positive");
+                // Carried raw, escaped once where it is shown.
                 let (carried, cut) = super::said_cut(&text, super::SAID_LONGEST);
                 assert!(!cut);
-                assert!(!carried.contains(c), "{class}: {c:?} passed `said_cut`");
-                assert!(
-                    carried.contains(&c.escape_unicode().to_string())
-                        || carried.contains(&c.escape_default().to_string()),
-                    "{class}: {carried}"
-                );
+                assert_eq!(carried, text);
                 let (shown, _) = super::said_shown(&text, super::SAID_LONGEST);
                 assert!(!shown.contains(c), "{class}: {c:?} passed `said_shown`");
+                let quoted = super::said_quoted(&text, super::SAID_LONGEST);
+                assert!(!quoted.contains(c), "{class}: {c:?} passed `said_quoted`");
+                assert!(
+                    quoted.contains(&c.escape_unicode().to_string())
+                        || quoted.contains(&c.escape_default().to_string()),
+                    "{class}: {quoted}"
+                );
                 assert!(!super::said_neutral(&text).contains(c), "{class}");
             }
         }
@@ -588,12 +611,15 @@ mod tests {
         }
         // A door's data keeps a line feed and a tab, which its encoding
         // escapes; the line a command prints shows them escaped.
-        assert_eq!(super::said_cut("a\nb\tc", 400).0, "a\nb\tc");
+        assert_eq!(super::said_neutral("a\nb\tc\u{202e}"), "a\nb\tc\\u{202e}");
         assert_eq!(super::said_shown("a\nb\tc", 400).0, "a\\nb\\tc");
+        // Quotes and backslashes, for the quoted line, once each.
+        assert_eq!(
+            super::said_quoted("say \"no\" \\ \u{1b}[31m\u{2066}", 400),
+            "say \\\"no\\\" \\\\ \\u{1b}[31m\\u{2066}"
+        );
         // The cut is made before the escape: an escape is never split.
-        let (carried, cut) = super::said_cut("ab\u{202e}cd", 3);
-        assert!(cut);
-        assert_eq!(carried, "ab\\u{202e}");
+        assert_eq!(super::said_quoted("ab\u{202e}cd", 3), "ab\\u{202e}…");
     }
 
     /// A failure that arrives as data is held to the bound `with_said` keeps.

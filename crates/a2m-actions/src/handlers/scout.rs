@@ -991,7 +991,7 @@ async fn drafted_tools(
 /// for to its end, so that a call never leaves one behind it: an engine
 /// that runs inside a command ends with the command, and a trial it had
 /// claimed would wait out its lease before another engine could take it.
-pub(crate) const TRIAL_BOUND: Duration = Duration::from_secs(12);
+pub(crate) const TRIAL_BOUND: Duration = Duration::from_secs(120);
 
 /// What the scout tries a drafted read with.
 enum TryInput {

@@ -48,7 +48,7 @@ pub use effect::{EffectClass, Hazard};
 pub use evidence::{Coverage, EvidenceLevel, WriteEvidence};
 pub use failure::{
     Failure, FailureClass, FailureCode, SAID_CEILING, SAID_LONGEST, SAID_TOO_LONG, said_cut,
-    said_hides, said_neutral, said_shown,
+    said_hides, said_neutral, said_quoted, said_shown,
 };
 pub use finding::{
     Address, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation, LimitationCode,

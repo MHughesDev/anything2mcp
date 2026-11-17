@@ -68,7 +68,7 @@ A lost lease means the control plane does not know whether the last write was se
 
 1. The job is marked lost and the run stops with `possible_commit` and the code `runner_lost`.
 2. The record locks the run held are quarantined, so no other run can write those records.
-3. After the quarantine, a reconcile job with the next lease number reads back every record in doubt, as in [section 208](208-runs-the-ledger-and-resume.md).
+3. After the quarantine, a reconcile job with the next lease number reads back every record in doubt, as in [section 208](208-runs-the-ledger-and-resume.md). A reconcile that leaves a record in doubt is queued again only after a wait that doubles from five seconds to fifteen minutes, and a run stopped for a person, by any class but `possible_commit`, `transient`, or `busy`, is not queued again until someone resumes it ([decision 0193](../../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 4. If policy allows, the run then resumes on its own; otherwise it waits for a person.
 5. If the lost runner returns, it uploads what it journaled locally as late evidence. Late evidence is stored and shown, but changes no state.
 
