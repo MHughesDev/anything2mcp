@@ -657,6 +657,16 @@ handler!(
         let mut out = json!({"run_id": run.to_string(), "events": shown});
         if let (Some(trace), Json::Object(map)) = (row.trace, &mut out) {
             map.insert("trace".to_owned(), json!(format!("blob:{trace}")));
+            // The trace signature is the last line of the stored trace. A
+            // trace that cannot be opened or read is shown by its reference
+            // alone.
+            if let Ok(opened) = kernel.store()?.blobs().get(&trace).await
+                && let Ok(lines) = a2m_telemetry::read_trace(opened.expose())
+                && let Some(a2m_telemetry::TraceLine::End(end)) = lines.last()
+            {
+                map.insert("signature".to_owned(), json!(end.signature.to_string()));
+                map.insert("records".to_owned(), json!(end.records));
+            }
         }
         Ok(Output::ok(out))
     }

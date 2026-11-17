@@ -29,10 +29,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let first = stand("registry");
     let second = stand("registry");
     assert_eq!(first.registry.digest(), second.registry.digest());
-    assert_eq!(
-        first.registry.modes().collect::<Vec<_>>(),
-        vec![&ui_mode()]
-    );
+    assert_eq!(first.registry.modes().collect::<Vec<_>>(), vec![&ui_mode()]);
     let handle = first.registry.driver(&ui_mode()).unwrap();
     assert_eq!(handle.choice().provider.as_str(), "web");
     // Registering started nothing.
@@ -228,7 +225,11 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     assert!(bare.message.contains("`length_in`"), "{bare}");
 
     // An address that could leave the surface, and a placeholder with no input.
-    for bad in ["//other.example.test/orders", "/orders/../admin", "/orders?x=1"] {
+    for bad in [
+        "//other.example.test/orders",
+        "/orders/../admin",
+        "/orders?x=1",
+    ] {
         let reach = refused(
             form,
             |text| {

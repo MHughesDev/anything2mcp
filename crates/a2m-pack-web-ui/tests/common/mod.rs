@@ -81,8 +81,7 @@ impl Pack for TestPack {
     }
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
-        self.browsers
-            .get_or_create(cx, test_support::settings())?;
+        self.browsers.get_or_create(cx, test_support::settings())?;
         a2m_pack_web_ui::pack(self.browsers.clone()).register(cx, to)
     }
 }

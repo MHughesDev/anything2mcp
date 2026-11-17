@@ -120,3 +120,4 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0094 | [The action layer's interface, as building it settled it](0094-the-action-layers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0095 | [The settings loader and the in-process runner, as built](0095-the-settings-loader-and-the-in-process-runner-as-built.md) | Accepted (design decision) |
 | 0116 | [The REST router takes its caller from the mount and chooses its status in one table](0116-the-rest-router-takes-its-caller-from-the-mount-and-chooses-its-status-in-one-table.md) | Accepted (design decision) |
+| 0114 | [The web probe as built: three discoverers over an observing tab](0114-the-web-probe-as-built-three-discoverers-over-an-observing-tab.md) | Accepted (design decision) |

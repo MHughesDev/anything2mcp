@@ -560,7 +560,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .output(JsonSchema::object()
                 .required("run_id", text())
                 .required("events", list_of(any_map()))
-                .optional("trace", text()))
+                .optional("trace", text())
+                .optional("signature", text())
+                .optional("records", JsonSchema::int_between(0, i64::from(u32::MAX))))
             .done(),
         act("trace.export", "Export one run's evidence to a file in the project.", AUDITOR, No, "1", Trace)
             .pos("run_id", TEXT, RUN)

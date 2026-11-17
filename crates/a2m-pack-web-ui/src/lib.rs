@@ -14,7 +14,7 @@
 //! gives it the cell of browsers it also gives the web pack's discoverers,
 //! so that the two share one set of browsers:
 //!
-//! ```ignore
+//! ```text
 //! let browsers = a2m_pack_web_ui::SharedBrowsers::default();
 //! a2m_pack_web_ui::add_to(&mut builder, browsers.clone());
 //! ```

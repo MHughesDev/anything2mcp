@@ -22,7 +22,9 @@ pub enum Refused {
     Missing,
     /// It is a shell, an interpreter, or a script one of them would run.
     Script,
-    /// It, or the folder named, can be written by another user.
+    /// It, or the folder named, can be written by another user. The check is
+    /// built for Unix only so far, so nothing makes this elsewhere yet.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Writable(PathBuf),
 }
 

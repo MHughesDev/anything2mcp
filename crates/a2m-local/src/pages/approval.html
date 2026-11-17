@@ -23,7 +23,7 @@ button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer
 <dt>Started by</dt><dd>A program on this machine, acting for you (<code>{{started_by}}</code>)</dd>
 <dt>Hash of the change</dt><dd><code>{{diff_hash}}</code></dd>
 </dl>
-<p>This page does not show the changed records yet. Read them with <code>anything2mcp diff show</code> for this run and check that the hash there is the hash above. An approval is recorded for that exact change and no other.</p>
+<p>This page does not show the changed records yet. <code>anything2mcp run get</code> for this run names the stored change; check that the hash there is the hash above. An approval is recorded for that exact change and no other.</p>
 <p>Pressing Approve does not approve by itself: this machine then asks for proof that a person is present. This page closes {{minutes}} minutes after it was first asked for. No answer is a decline.</p>
 <div class="presses">
 <form method="post" action="/approve/{{code}}/approve">

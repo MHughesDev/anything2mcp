@@ -8,7 +8,7 @@ inputs:
 outputs:
   description: {type: text}
   quantity: {type: integer}
-  length_in: {type: length_ft_in}
+  length_in: {type: length_inches}
 bindings:
   - mode: ui
     verb: read
@@ -27,11 +27,11 @@ inputs:
   item_code: {type: identifier, description: "Item code, such as L-101"}
   description: {type: text, description: "What the item is"}
   quantity: {type: integer, description: "How many"}
-  length_in: {type: length_ft_in, description: "Length, in inches"}
+  length_in: {type: length_inches, description: "Length, in inches"}
 outputs:
   description: {type: text}
   quantity: {type: integer}
-  length_in: {type: length_ft_in}
+  length_in: {type: length_inches}
 bindings:
   - mode: ui
     verb: update

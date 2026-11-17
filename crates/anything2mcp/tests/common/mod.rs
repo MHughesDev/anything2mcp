@@ -283,6 +283,12 @@ impl World {
         self.run(args, false).await
     }
 
+    /// The standard output of a command that prints text, such as help.
+    pub async fn agent_text(&self, args: &[&str]) -> String {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        run_on(&self.engine, &args, true, true).await.stdout
+    }
+
     /// The same, and the command must succeed.
     pub async fn ok(&self, args: &[&str]) -> Json {
         let ran = self.agent(args).await;

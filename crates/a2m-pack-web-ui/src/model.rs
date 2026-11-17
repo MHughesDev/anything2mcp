@@ -143,7 +143,6 @@ impl Locator {
     pub(crate) fn query_inside(&self, section: &Locator) -> Query {
         Query::new(self.by()).within(section.query())
     }
-
 }
 
 /// What must also be true of a matched element.

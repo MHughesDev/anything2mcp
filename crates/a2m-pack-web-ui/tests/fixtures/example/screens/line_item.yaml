@@ -18,7 +18,7 @@ fields:
       - {role: textbox, name: Quantity}
     fingerprint: {section: {role: form, name: ""}, near_text: "Line Item Details"}
   length_in:
-    type: length_ft_in
+    type: length_inches
     control: measurement
     locate:
       - {role: textbox, name: Length}

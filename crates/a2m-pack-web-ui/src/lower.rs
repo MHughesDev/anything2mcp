@@ -385,10 +385,7 @@ impl<'a> Lower<'a, '_> {
                 "unknown_action",
                 Stage::Resolve,
                 &named.at,
-                format!(
-                    "The screen `{}` has no action named `{name}`.",
-                    found.name
-                ),
+                format!("The screen `{}` has no action named `{name}`.", found.name),
                 "Add the action to the screen, or correct its name.",
             );
             return None;

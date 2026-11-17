@@ -14,17 +14,16 @@ use a2m_core::{
 };
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Look,
-    PageEnvironment, Primitive, ProfileKey, RawValue, ReadWhat, Reason, SnapshotLimits,
-    Visibility,
+    PageEnvironment, Primitive, ProfileKey, RawValue, ReadWhat, Reason, SnapshotLimits, Visibility,
 };
 use a2m_provider::{
-    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext,
-    Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
+    StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, READ, REACH_ARG, SET, VALUE_ARG, WAIT};
+use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
 use crate::model::{
     Fingerprint, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows, Screen,
     ScreenSection, Segment, SetStep, SurfaceFields, WaitStep,
@@ -35,11 +34,15 @@ use crate::screens::{PACK, SCREEN_KIND, unreserved};
 pub(crate) struct UiDriver {
     browsers: Browsers,
     snapshots: SnapshotLimits,
+    /// Whether a browser program was found when the pack registered.
+    /// `health` answers from this, without looking at the machine again.
+    installed: bool,
 }
 
 impl UiDriver {
     pub(crate) fn new(browsers: Browsers, max_snapshot_elements: usize) -> Self {
         Self {
+            installed: browsers.availability() == a2m_core::Availability::Ready,
             browsers,
             snapshots: SnapshotLimits {
                 max_elements: max_snapshot_elements,
@@ -177,9 +180,7 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
         BrowserError::Ambiguous { count } => fail(
             FailureClass::Drift,
             codes::LOCATOR_AMBIGUOUS,
-            format!(
-                "A locator of {what} matches {count} elements, and exactly one must match."
-            ),
+            format!("A locator of {what} matches {count} elements, and exactly one must match."),
             "Make the locator more exact; the first of several is never picked.",
         ),
         BrowserError::NotActionable(
@@ -187,7 +188,9 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
         ) => fail(
             FailureClass::UnknownVariant,
             codes::UNEXPECTED_CONTROL,
-            format!("The element found for {what} cannot be operated as its control says: {reason}."),
+            format!(
+                "The element found for {what} cannot be operated as its control says: {reason}."
+            ),
             "Look at the page; correct the field's `control`, or declare the state the page is in.",
         ),
         BrowserError::NotActionable(reason) => fail(
@@ -232,14 +235,14 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
             format!("What {what} shows is longer than the limit of {limit} characters."),
             "Raise `packs.web.max_read_chars`, or read a smaller part of the page.",
         ),
-        BrowserError::Unexpected(_) | BrowserError::PasswordField | BrowserError::LaunchFailed(_) => {
-            fail(
-                FailureClass::UnknownVariant,
-                codes::UNEXPECTED_PAGE,
-                format!("The browser answered in a way no rule covers, at {what}."),
-                "Report this to the web pack's author.",
-            )
-        }
+        BrowserError::Unexpected(_)
+        | BrowserError::PasswordField
+        | BrowserError::LaunchFailed(_) => fail(
+            FailureClass::UnknownVariant,
+            codes::UNEXPECTED_PAGE,
+            format!("The browser answered in a way no rule covers, at {what}."),
+            "Report this to the web pack's author.",
+        ),
     };
     match error {
         // The page was read, and what it holds is the answer.
@@ -462,11 +465,7 @@ impl Session {
         })
     }
 
-    async fn goto(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
+    async fn goto(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         let (name, screen) = self.screen(step)?;
         let mut path = String::new();
         for part in &screen.reach {
@@ -518,11 +517,7 @@ impl Session {
         }))
     }
 
-    async fn wait(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
+    async fn wait(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         let (name, screen) = self.screen(step)?;
         let payload: WaitStep = step
             .payload
@@ -589,11 +584,7 @@ impl Session {
         }
     }
 
-    async fn read(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
+    async fn read(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         let (name, screen) = self.screen(step)?;
         let payload: ReadStep = step
             .payload
@@ -653,7 +644,9 @@ impl Session {
                 StepFailure::answered(fail(
                     FailureClass::Drift,
                     codes::FINGERPRINT_MISMATCH,
-                    format!("The headings or the rows of {what} are not the ones the screen declares."),
+                    format!(
+                        "The headings or the rows of {what} are not the ones the screen declares."
+                    ),
                     "Look at the page and correct the `header` of the screen's `rows`.",
                 ))
             })?;
@@ -669,18 +662,16 @@ impl Session {
                     .filter_map(|row| row.get(position))
                     .map(|cell| Value::Text(cell.clone()))
                     .collect();
-                observed.values.insert(item.output.clone(), Value::List(column));
+                observed
+                    .values
+                    .insert(item.output.clone(), Value::List(column));
             }
         }
         observed.captures.push(acting(means, Vec::new()));
         Ok(StepOutcome::Done(observed))
     }
 
-    async fn set(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
+    async fn set(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         self.read_only(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: SetStep = step
@@ -771,25 +762,21 @@ impl Session {
                 Err(BrowserError::PasswordField) => return Ok(name),
                 Err(error) => {
                     // Input reached the page before this read failed.
-                    return Err(StepFailure::unknown(
-                        browser_failure(&error, what).failure,
-                    ));
+                    return Err(StepFailure::unknown(browser_failure(&error, what).failure));
                 }
             }
         }
         Err(StepFailure::unknown(fail(
             FailureClass::UnknownVariant,
             codes::UNEXPECTED_CONTROL,
-            format!("{what} does not hold the text it was given, by filling, by typing, or by its own setter."),
+            format!(
+                "{what} does not hold the text it was given, by filling, by typing, or by its own setter."
+            ),
             "Look at the page; the control changes what is typed into it, and its field needs another `control`.",
         )))
     }
 
-    async fn invoke(
-        &self,
-        step: &Step,
-        input: &StepInput<'_>,
-    ) -> Result<StepOutcome, StepFailure> {
+    async fn invoke(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         self.read_only(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: InvokeStep = step
@@ -1107,9 +1094,10 @@ impl Driver for UiDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        match self.browsers.availability() {
-            a2m_core::Availability::Ready => DriverHealth::Ready,
-            _ => DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE),
+        if self.installed {
+            DriverHealth::Ready
+        } else {
+            DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE)
         }
     }
 
@@ -1159,7 +1147,12 @@ mod tests {
             segment("id", Some(&text("a/b?c#d e"))).unwrap(),
             "a%2Fb%3Fc%23d%20e"
         );
-        for refused in [Some(text("")), Some(text("..")), Some(Value::Bool(true)), None] {
+        for refused in [
+            Some(text("")),
+            Some(text("..")),
+            Some(Value::Bool(true)),
+            None,
+        ] {
             let failure = segment("id", refused.as_ref()).unwrap_err();
             assert_eq!(failure.failure.code(), &codes::ADDRESS_VALUE_REFUSED);
         }
@@ -1186,7 +1179,10 @@ mod tests {
         };
         let cell = |text: &str| text.to_owned();
         assert_eq!(
-            parse_rows("All orders\nOrder\tCustomer\nA-100\tAcme\nA-101\t Beta \n", &rows),
+            parse_rows(
+                "All orders\nOrder\tCustomer\nA-100\tAcme\nA-101\t Beta \n",
+                &rows
+            ),
             Some(vec![
                 vec![cell("A-100"), cell("Acme")],
                 vec![cell("A-101"), cell("Beta")],
