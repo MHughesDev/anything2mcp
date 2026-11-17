@@ -54,6 +54,56 @@ const NEVER: &[&str] = &[
 /// The words that change data.
 const WRITES: &[&str] = &["insert", "update", "delete", "into"];
 
+/// Whose rules of quoting and whose words a statement is read by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Dialect {
+    /// The embedded engine: quotes `'`, `"`, `` ` ``, and `[ ]`.
+    Embedded,
+    /// The server store, PostgreSQL: quotes `'` and `"` only. A text with
+    /// escapes (`E'...'`, `U&'...'`) and a text in dollar quotes are refused,
+    /// because where they end is read differently by a reader that does not
+    /// parse them, and a word could hide there.
+    Server,
+}
+
+/// The words no statement for the server store may hold outside quotes: none
+/// can be part of one read or one keyed write. `SET` is among them except in
+/// an update, whose assignments it opens.
+const NEVER_SERVER: &[&str] = &[
+    "copy",
+    "do",
+    "call",
+    "listen",
+    "notify",
+    "unlisten",
+    "create",
+    "alter",
+    "drop",
+    "grant",
+    "revoke",
+    "truncate",
+    "vacuum",
+    "lock",
+    "prepare",
+    "execute",
+    "deallocate",
+    "discard",
+    "reset",
+    "begin",
+    "commit",
+    "rollback",
+    "savepoint",
+    "load",
+    "set_config",
+    "current_setting",
+    "dblink",
+];
+
+/// The beginnings of names that no statement for the server store may hold:
+/// the server's own functions and catalog (`pg_`), its large objects
+/// (`lo_`), and the functions that run a statement given as text.
+const NEVER_SERVER_PREFIX: &[&str] = &["pg_", "lo_", "query_to_", "cursor_to_", "dblink_"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Token<'a> {
     /// A bare word: a keyword, a name, or a function.
@@ -89,9 +139,13 @@ fn after_quoted(bytes: &[u8], at: usize, close: u8) -> Option<usize> {
 }
 
 /// The statement's tokens. Quoted text and comments give none.
-fn tokens(text: &str) -> Result<Vec<Token<'_>>, Wrong> {
+fn tokens(text: &str, dialect: Dialect) -> Result<Vec<Token<'_>>, Wrong> {
     const OPEN: Wrong =
         Wrong::Form("The statement holds a quote or a comment that is never closed.");
+    const ESCAPED: Wrong = Wrong::Form(
+        "The statement holds a text with escapes or in dollar quotes. Write a text in plain single quotes, or bind it as a parameter.",
+    );
+    let server = dialect == Dialect::Server;
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut at = 0;
@@ -110,8 +164,32 @@ fn tokens(text: &str) -> Result<Vec<Token<'_>>, Wrong> {
                 let close = rest.windows(2).position(|pair| pair == b"*/").ok_or(OPEN)?;
                 at += 2 + close + 2;
             }
-            b'\'' | b'"' | b'`' => at = after_quoted(bytes, at, byte).ok_or(OPEN)?,
-            b'[' => at = after_quoted(bytes, at, b']').ok_or(OPEN)?,
+            b'\'' | b'"' => {
+                // `E'...'` and `U&'...'` read a backslash as an escape.
+                let escaped = at > 0
+                    && match found.last() {
+                        Some(Token::Word(word)) => {
+                            word.eq_ignore_ascii_case("e")
+                                && text
+                                    .as_bytes()
+                                    .get(at - 1)
+                                    .is_some_and(u8::is_ascii_alphabetic)
+                        }
+                        Some(Token::Other) => text.as_bytes().get(at - 1) == Some(&b'&'),
+                        _ => false,
+                    };
+                if server && escaped {
+                    return Err(ESCAPED);
+                }
+                at = after_quoted(bytes, at, byte).ok_or(OPEN)?;
+            }
+            b'`' if !server => at = after_quoted(bytes, at, byte).ok_or(OPEN)?,
+            b'[' if !server => at = after_quoted(bytes, at, b']').ok_or(OPEN)?,
+            // A parameter is `$` and a number; anything else after `$` opens
+            // a text in dollar quotes.
+            b'$' if server && !next.is_some_and(|next| next.is_ascii_digit()) => {
+                return Err(ESCAPED);
+            }
             b';' => {
                 found.push(Token::End);
                 at += 1;
@@ -152,9 +230,17 @@ fn is(word: &str, among: &[&str]) -> bool {
     among.iter().any(|known| word.eq_ignore_ascii_case(known))
 }
 
-/// Holds a statement's text to the form its declaration states.
+/// Holds a statement's text to the form its declaration states, by the
+/// embedded engine's rules.
+#[cfg(test)]
 pub(crate) fn check(text: &str, does: Does) -> Result<(), Wrong> {
-    let tokens = tokens(text)?;
+    check_in(text, does, Dialect::Embedded)
+}
+
+/// Holds a statement's text to the form its declaration states, by the
+/// rules of the dialect given.
+pub(crate) fn check_in(text: &str, does: Does, dialect: Dialect) -> Result<(), Wrong> {
+    let tokens = tokens(text, dialect)?;
     // One statement: nothing follows the first `;` but more of them.
     if let Some(end) = tokens.iter().position(|token| *token == Token::End)
         && tokens.iter().skip(end).any(|token| *token != Token::End)
@@ -169,6 +255,18 @@ pub(crate) fn check(text: &str, does: Does) -> Result<(), Wrong> {
             continue;
         };
         let called = tokens.get(position + 1) == Some(&Token::Open);
+        if dialect == Dialect::Server
+            && (is(word, NEVER_SERVER)
+                || NEVER_SERVER_PREFIX.iter().any(|start| {
+                    word.get(..start.len())
+                        .is_some_and(|part| part.eq_ignore_ascii_case(start))
+                })
+                || (word.eq_ignore_ascii_case("set") && does != Does::Update))
+        {
+            return Err(Wrong::Form(
+                "The statement copies, calls, or runs another statement, reads or changes a setting, changes the schema or the rights, takes a lock, listens or notifies, or ends its transaction. No statement of a plan may.",
+            ));
+        }
         if is(word, NEVER)
             || word
                 .get(..7)
@@ -208,8 +306,84 @@ pub(crate) fn check(text: &str, does: Does) -> Result<(), Wrong> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Wrong, check};
+    use super::{Dialect, Wrong, check, check_in};
     use crate::model::Does;
+
+    fn server(text: &str, does: Does) -> Result<(), Wrong> {
+        check_in(text, does, Dialect::Server)
+    }
+
+    #[test]
+    fn the_server_store_takes_one_plain_read_and_the_writes_the_pack_writes() {
+        for text in [
+            "SELECT a, b FROM t WHERE k = $1",
+            "SELECT a FROM t WHERE note = 'it''s; DROP TABLE t' AND k = $2",
+            "WITH recent AS (SELECT a FROM t) SELECT a FROM recent -- set role x\n",
+            "SELECT \"set\", \"copy\", \"pg_x\" FROM t /* COPY t TO PROGRAM */",
+            "SELECT a[1] FROM t",
+        ] {
+            assert_eq!(server(text, Does::Read), Ok(()), "{text}");
+        }
+        assert_eq!(
+            server("UPDATE \"t\" SET \"a\" = $1 WHERE \"k\" = $2", Does::Update),
+            Ok(())
+        );
+        assert_eq!(
+            server(
+                "INSERT INTO \"t\" (\"a\") VALUES ($1) RETURNING \"k\"",
+                Does::Insert
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_server_store_refuses_what_its_read_only_transaction_does_not_stop() {
+        for text in [
+            "SELECT 1; SET ROLE x",
+            "SET ROLE x",
+            "SELECT set_config('role', 'x', false)",
+            "SELECT current_setting('data_directory')",
+            "SELECT pg_read_file('x')",
+            "SELECT pg_catalog.pg_sleep(1)",
+            "SELECT lo_import('x')",
+            "SELECT query_to_xml('SET ROLE x', true, true, '')",
+            "SELECT dblink('x', 'y')",
+            "COPY t TO STDOUT",
+            "DO $$ BEGIN END $$",
+            "CALL p()",
+            "LISTEN x",
+            "NOTIFY x",
+            "GRANT SELECT ON t TO PUBLIC",
+            "CREATE TABLE x (a int)",
+            "ALTER TABLE t ADD COLUMN b int",
+            "DROP TABLE t",
+            "TRUNCATE t",
+            "LOCK TABLE t",
+            "PREPARE p AS SELECT 1",
+            "EXECUTE p",
+            "DISCARD ALL",
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+            "SELECT 1 FROM t WHERE a = $$ ' $$ OR pg_sleep(1) IS NULL",
+            "SELECT $tag$ ' $tag$",
+            "SELECT E'\\' ' , pg_read_file('x') --'",
+            "SELECT U&'\\0041'",
+            "SELECT a FROM t WHERE k = $1 FOR UPDATE",
+        ] {
+            assert!(server(text, Does::Read).is_err(), "{text}");
+        }
+        // `SET` opens an update's assignments and nothing else.
+        assert!(server("INSERT INTO t (a) VALUES ($1); SET ROLE x", Does::Insert).is_err());
+        assert!(
+            server(
+                "DELETE FROM t WHERE k = $1 AND set_config('a', 'b', true) = 'b'",
+                Does::Delete
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn a_read_is_one_select_and_a_write_is_what_its_verb_states() {

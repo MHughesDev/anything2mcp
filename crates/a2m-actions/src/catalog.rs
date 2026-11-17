@@ -64,6 +64,16 @@ fn run_output() -> JsonSchema {
         .optional("repeated", JsonSchema::bool())
 }
 
+/// A published version, as `version.publish` returns it.
+fn published() -> JsonSchema {
+    JsonSchema::object()
+        .required("target", text())
+        .required("version", text())
+        .required("plan_hash", text())
+        .required("tools", list_of(text()))
+        .required("current", JsonSchema::bool())
+}
+
 /// One run of a listing: what a caller needs to decide what to do next.
 fn listed_run() -> JsonSchema {
     JsonSchema::object()
@@ -302,7 +312,11 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("publish.request", "Submit a target's drafts for a person's review. Publishing itself is a person's act.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
+            .opt("version", TEXT, "The version's label. The next number when left out.")
             .writes()
+            .output(published())
+            .asks_a_person()
+            .example(r#"{"target": "example"}"#)
             .done(),
         // Providers and discovery.
         act("provider.list", "Every pack and provider: installed, enabled, ready, or what it lacks and how to get it.", VIEWER, Build, "Stage B", List)
@@ -360,6 +374,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("finding.describe", "One finding in full, with its evidence references.", BUILDER, Build, "Stage E", Inspect)
             .pos("finding", TEXT, "The finding's identifier.")
+            .req("target", TEXT, TARGET)
             .done(),
         act("unknown.list", "The open questions about a target.", BUILDER, Build, "Stage E", List)
             .pos("target", TEXT, TARGET)
@@ -380,14 +395,10 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("version.publish", "Publish a target's drafts as an immutable version, compiled to a plan. A person's act, never an agent's.", PUBLISHER, No, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
+            .opt("plan_hash", TEXT, "The hash of the plan the drafts must compile to. A publish shown to a person on a page carries the one they read.")
             .writes()
             .person(PersonNeed::Presence)
-            .output(JsonSchema::object()
-                .required("target", text())
-                .required("version", text())
-                .required("plan_hash", text())
-                .required("tools", list_of(text()))
-                .required("current", JsonSchema::bool()))
+            .output(published())
             .example(r#"{"target": "example"}"#)
             .done(),
         act("binding.promote", "Promote a shadow binding to verified. A person's act.", PUBLISHER, No, "4", Change)

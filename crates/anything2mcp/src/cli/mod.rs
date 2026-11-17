@@ -8,17 +8,19 @@
 //! `bridge` the stdio proxy of an MCP client; `runner` is named and not
 //! built.
 //!
-//! A command is a thin client when a local engine runs: it sends each
-//! action over the local channel and renders the answer. When none runs
-//! it runs the engine inside its own process: it opens the kernel,
-//! dispatches, and closes. Nothing starts an engine on demand yet
-//! (decision 0131). `--in-process` asks for the second form by name, and
-//! is refused while an engine runs.
+//! A command is a thin client of the local engine: it sends each action
+//! over the local channel and renders the answer. When none runs it starts
+//! one on demand, detached, and then talks to it (decision 0165). With
+//! `engine.in_process` on, or where the start is refused, it runs the
+//! engine inside its own process instead: it opens the kernel, dispatches,
+//! and closes. `--in-process` asks for that form by name, and is refused
+//! while an engine runs.
 
 mod client;
 mod parse;
 mod process;
 mod render;
+mod start;
 
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read, Write};
@@ -59,6 +61,11 @@ pub struct Host {
     pub person: Option<Arc<dyn PersonSurface>>,
     /// Where the vault's root key is kept. `None` is this machine's own.
     pub key_store: Option<Arc<dyn KeyStore>>,
+    /// The program a client starts, as `serve`, when it finds no engine:
+    /// this program's own file. `None` starts nothing, and a command runs
+    /// the engine inside itself: a host that embeds the command line, and a
+    /// test, are no program to start (decision 0165).
+    pub program: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Host {
@@ -83,6 +90,7 @@ impl Host {
             person_at_terminal: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
             person: None,
             key_store: None,
+            program: std::env::current_exe().ok(),
         }
     }
 }
@@ -440,7 +448,18 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Ok(project) => project,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Malformed, json),
     };
-    let lock = match client::find(&paths, ClientLabel::CommandLine).await {
+    if steps.len() == 1 && steps[0].action == START_ACTION && !globals.in_process {
+        return start_engine(&tree, &paths, host, project.as_deref(), json).await;
+    }
+    // No engine is started for `--in-process`, which asks for none, nor for
+    // the engine's status or its stop, which mean the engine that runs.
+    let wants_engine = !globals.in_process && !NO_START.contains(&action.as_str());
+    let launch = || {
+        wants_engine
+            .then(|| start::plan(host, &paths, project.as_deref(), false).ok())
+            .flatten()
+    };
+    let (lock, refused) = match client::find(&paths, ClientLabel::CommandLine, launch).await {
         Ok(client::Found::Engine(_)) if globals.in_process => {
             return stopped(
                 &tree,
@@ -460,10 +479,12 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
                 client::run_steps(&link, &tree, &globals, steps, json, project.as_deref()).await;
             return after_steps(finished, stop.as_ref(), &tree, json);
         }
-        // No engine runs, and nothing starts one on demand yet: the
-        // command runs the engine inside its own process, holding the
-        // engine lock it was handed until the kernel has closed.
-        Ok(client::Found::Nothing(lock)) => lock,
+        // No engine runs and none was started: `engine.in_process` is on,
+        // no passphrase was given for a vault that needs one, or the
+        // machine refused the start. The command runs the engine inside
+        // its own process, holding the engine lock it was handed until the
+        // kernel has closed.
+        Ok(client::Found::Nothing(lock, refused)) => (lock, refused),
         Err(failure) => return client::not_reached(&tree, &action, &failure, json),
     };
     let clock = Arc::new(SystemClock::new());
@@ -497,7 +518,70 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     )
     .await;
     engine.close().await;
-    after_steps(finished, stop.as_ref(), &tree, json)
+    let mut finished = after_steps(finished, stop.as_ref(), &tree, json);
+    if let Some(refused) = refused {
+        finished.stderr.insert_str(
+            0,
+            &render::visible(&format!(
+                "{PROGRAM}: no engine could be started on demand, so this command ran the engine inside itself: {}\n",
+                refused.message()
+            )),
+        );
+    }
+    finished
+}
+
+/// The action that starts the local engine, carried out here, in the
+/// client end.
+const START_ACTION: &str = "engine.start";
+
+/// The actions for which no engine is started on demand: they ask about,
+/// or stop, the engine that runs.
+const NO_START: [&str; 2] = ["engine.status", "engine.stop"];
+
+/// `engine start`: starts the local engine, detached, when none answers,
+/// whatever `engine.in_process` says, and says whether it started one.
+async fn start_engine(
+    tree: &Tree,
+    paths: &Paths,
+    host: &Host,
+    project: Option<&Path>,
+    json: bool,
+) -> Finished {
+    let not_reached = |failure: &Failure| client::not_reached(tree, START_ACTION, failure, json);
+    let started = async {
+        let connector = a2m_local::Connector::new(
+            paths,
+            crate::local::program_version()?,
+            ClientLabel::CommandLine,
+        )?;
+        match connector.connect().await {
+            Ok(link) => return Ok((link, false)),
+            Err(failure) if *failure.code() == a2m_local::codes::ENGINE_UNREACHABLE => {}
+            Err(failure) => return Err(failure),
+        }
+        let launch = start::plan(host, paths, project, true)?;
+        client::start(&connector, paths, &launch).await
+    };
+    match started.await {
+        Ok((link, started)) => {
+            let response = a2m_actions::Response {
+                ok: true,
+                action: START_ACTION.to_owned(),
+                result: Some(serde_json::json!({
+                    "started": started,
+                    "engine_version": link.engine_version().to_string(),
+                })),
+                error: None,
+                warnings: Vec::new(),
+                next: None,
+                exit: ExitClass::Succeeded,
+                decision: None,
+            };
+            render::render(&response, tree, json)
+        }
+        Err(failure) => not_reached(&failure),
+    }
 }
 
 /// Takes the vault's passphrase out of this process's environment, once

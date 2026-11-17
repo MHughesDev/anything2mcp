@@ -16,7 +16,10 @@ use std::time::Duration;
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
-use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, HANDLE, HANDLE_FLAG_INHERIT,
+    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
@@ -24,9 +27,13 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
     TokenUser,
 };
+use windows_sys::Win32::System::Console::{
+    GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+};
 use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS, GetCurrentProcess,
+    OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 use super::{ConnectError, PeerId, Place};
@@ -306,6 +313,53 @@ pub(crate) async fn connect(place: &Place, expected: &str) -> Result<ClientStrea
     match server_user(&pipe) {
         Ok(user) if user == expected => Ok(pipe),
         Ok(_) | Err(_) => Err(ConnectError::NotOurs),
+    }
+}
+
+/// Makes this process's own standard handles not inheritable. Windows
+/// hands a new process every inheritable handle of its parent, not only
+/// the three it is given, so without this an engine started by a command
+/// would hold the command's own output open, and whoever reads it would
+/// wait for the engine to end. The standard library still gives a child
+/// that inherits a standard stream a copy made for it.
+#[allow(unsafe_code)] // two calls into the operating system; each is explained where it is made
+fn keep_standard_handles() {
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: `GetStdHandle` takes one of the three constants and
+        // returns a handle of this process, null, or the invalid value; it
+        // writes nothing of ours.
+        let handle = unsafe { GetStdHandle(which) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        // SAFETY: the handle is this process's own, from the call above;
+        // the call changes only its inherit flag. A handle that does not
+        // take the flag, such as some console handles, makes it fail, which
+        // changes nothing and is not this start's failure.
+        unsafe {
+            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+        }
+    }
+}
+
+/// Starts `command` detached from this process's console and process
+/// group: with no console, in a process group of its own, and out of this
+/// process's job where the job allows it, so that closing the terminal or
+/// the job that started the client does not end the engine. Where the job
+/// does not allow it, the engine is started inside it.
+pub(crate) fn spawn_detached(
+    command: &mut std::process::Command,
+) -> io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    keep_standard_handles();
+    let detached = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    command.creation_flags(detached | CREATE_BREAKAWAY_FROM_JOB);
+    match command.spawn() {
+        Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) => {
+            command.creation_flags(detached);
+            command.spawn()
+        }
+        started => started,
     }
 }
 

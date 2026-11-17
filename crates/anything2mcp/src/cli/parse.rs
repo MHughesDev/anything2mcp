@@ -406,19 +406,22 @@ impl Tree {
 fn help_process(word: &str) -> String {
     let (usage, about) = match word {
         "serve" => (
-            format!("{PROGRAM} serve"),
+            format!("{PROGRAM} serve [--passphrase-from-stdin]"),
             "Runs the local engine in the foreground: the one process that holds the store, \
              serves commands and MCP clients over the local channel of this machine, and shows \
              the page on which a person answers a write that waits.\nIt stops when asked (`anything2mcp engine stop`, or the terminal's \
              interrupt) and after `engine.idle_stop_minutes` with nothing to do.\nA second engine \
-             on the same data directory is refused.",
+             on the same data directory is refused.\nA command that finds no engine starts this \
+             one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
+             standard input, to its end, instead of from the environment.",
         ),
         "bridge" => (
             format!("{PROGRAM} bridge [--toolset use|build]"),
             "The program an MCP client starts: it copies MCP messages between its standard \
              input and output and the local engine's MCP endpoint.\nStandard output carries \
-             protocol messages and nothing else.\nIt starts no engine: until one runs \
-             (`anything2mcp serve`), every request is answered with an error that says so.\nThe \
+             protocol messages and nothing else.\nA request that finds no engine starts one; \
+             where none may be started (`engine.in_process`), it is answered with an error \
+             that says to run `anything2mcp serve`.\nThe \
              project folder is the one it is started in, or the one `--project` names.",
         ),
         _ => (

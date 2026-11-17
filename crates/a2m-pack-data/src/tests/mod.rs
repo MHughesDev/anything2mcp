@@ -15,6 +15,8 @@ mod discovery;
 mod guards;
 mod reads;
 mod registration;
+#[cfg(feature = "postgres")]
+mod server;
 mod writes;
 
 use std::path::{Path, PathBuf};
@@ -110,7 +112,7 @@ pub(crate) fn mode() -> a2m_core::Mode {
 
 // ---- a real store, for real intent tokens ----
 
-struct Counted(AtomicU64);
+pub(crate) struct Counted(AtomicU64);
 
 impl RandomSource for Counted {
     fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
@@ -123,11 +125,11 @@ impl RandomSource for Counted {
     }
 }
 
-fn counted() -> Arc<Counted> {
+pub(crate) fn counted() -> Arc<Counted> {
     Arc::new(Counted(AtomicU64::new(0)))
 }
 
-async fn ledger() -> Store {
+pub(crate) async fn ledger() -> Store {
     let config = StoreConfig::in_memory()
         .with_clock(Arc::new(ManualClock::starting_at(
             Timestamp::from_unix_millis(1_800_000_000_000),
@@ -145,7 +147,7 @@ async fn ledger() -> Store {
 
 /// A write run with one record planned, approved, and running, and the
 /// intent token of that record.
-async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
+pub(crate) async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRef, IntentToken) {
     let workspace = WorkspaceId::from_bytes([1; 16]);
     let intended = Digest::of(b"intended");
     let planned_key = key.clone();
@@ -310,16 +312,7 @@ impl Scene {
     /// A step's arguments, evaluated from the operation's inputs as the
     /// engine evaluates them.
     pub(crate) fn args(&self, step: &Step, inputs: &Values) -> Values {
-        let input = Value::Record(inputs.clone());
-        step.args
-            .iter()
-            .map(|arg| {
-                let expr = self.plan.expression(arg.value).unwrap();
-                let program = a2m_expr::Program::load(expr).unwrap();
-                let bindings = a2m_expr::Bindings::new().with("input", &input);
-                (arg.name.clone(), program.evaluate(&bindings).unwrap())
-            })
-            .collect()
+        args_of(&self.plan, step, inputs)
     }
 
     pub(crate) async fn prepare(&self, posture: Posture) -> Run<'_> {
@@ -337,7 +330,7 @@ impl Scene {
         let handle = self.handle();
         let prepared = self.try_prepare(&handle, posture, fence).await.unwrap();
         Run {
-            scene: self,
+            plan: &self.plan,
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
@@ -384,10 +377,25 @@ impl Scene {
     }
 }
 
+/// A step's arguments, evaluated from the operation's inputs as the engine
+/// evaluates them.
+pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+    let input = Value::Record(inputs.clone());
+    step.args
+        .iter()
+        .map(|arg| {
+            let expr = plan.expression(arg.value).unwrap();
+            let program = a2m_expr::Program::load(expr).unwrap();
+            let bindings = a2m_expr::Bindings::new().with("input", &input);
+            (arg.name.clone(), program.evaluate(&bindings).unwrap())
+        })
+        .collect()
+}
+
 /// What a committing step carries: the commit point, its key, and the
 /// ledger's token for it.
 pub(crate) struct Write {
-    _store: Store,
+    pub(crate) _store: Store,
     pub(crate) record: RecordRef,
     pub(crate) key: RecordKey,
     pub(crate) token: IntentToken,
@@ -395,9 +403,9 @@ pub(crate) struct Write {
 
 /// One prepared driver, released when the test says so.
 pub(crate) struct Run<'a> {
-    scene: &'a Scene,
+    pub(crate) plan: &'a Plan,
     pub(crate) handle: DriverHandle,
-    prepared: Option<Prepared>,
+    pub(crate) prepared: Option<Prepared>,
     /// How long each step is given.
     pub(crate) wait: Duration,
 }
@@ -409,7 +417,7 @@ impl Run<'_> {
         step: &Step,
         inputs: &Values,
     ) -> Result<StepOutcome, StepFailure> {
-        let args = self.scene.args(step, inputs);
+        let args = args_of(self.plan, step, inputs);
         self.step_with(step, &args, None).await
     }
 
@@ -444,7 +452,7 @@ impl Run<'_> {
     ) -> Result<StepOutcome, StepFailure> {
         let mut last = None;
         for step in steps {
-            let args = self.scene.args(step, inputs);
+            let args = args_of(self.plan, step, inputs);
             last = Some(
                 self.step_with(step, &args, write.filter(|_| step.commits))
                     .await?,

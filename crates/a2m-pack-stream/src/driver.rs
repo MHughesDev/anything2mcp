@@ -34,7 +34,7 @@ use crate::names::{
     STEP_CHANNELS, STEP_DESCRIBE, STEP_LATEST, STEP_PUBLISH, STEP_SCAN, STEP_SUBSCRIBE,
 };
 use crate::wire::{
-    ChannelFacts, Link, Message, Outgoing, Protocol, Receipt, WireError, WireErrorKind,
+    ChannelFacts, Credential, Link, Message, Outgoing, Protocol, Receipt, WireError, WireErrorKind,
 };
 
 /// How many pages a scan of a log reads before it says it cannot tell.
@@ -64,24 +64,51 @@ type PoolKey = (String, String, Option<(String, u64)>);
 /// about a message. No body may have a field of this name.
 const MESSAGE_META: &str = "message_meta";
 
-/// Where the session's token is put: into the one `hello` that opens a
-/// connection. It is dropped, and so wiped, when that is sent.
+/// Where the session's credentials are put while a connection opens.
 ///
-/// A wire protocol is given one token and nothing else. Anything more that
-/// a session's provider places (a second header, a cookie, a client
-/// identity, a user and password) cannot be presented, and a connection
-/// opened without it would not be the session's: the sink remembers that,
-/// and `prepare` stops.
+/// A wire protocol presents one token, or a user and a password, and
+/// nothing else. The neutral providers place either as one header: a
+/// token as the header's value (a `Bearer ` before it is dropped), a user
+/// and a password as the value of the `Basic` scheme, which is read back
+/// into its two parts. Anything more that a provider places (a second
+/// header, a cookie, a client identity, a challenge scheme) cannot be
+/// presented, and a connection opened without it would not be the
+/// session's: the sink remembers that, and `prepare` stops.
 #[derive(Default)]
-struct TokenSink {
-    token: Option<Secret>,
+struct CredentialPlaced {
+    header: Option<Secret>,
     not_carried: bool,
 }
 
-impl CredentialSink for TokenSink {
+impl CredentialPlaced {
+    /// The one credential placed, as a protocol presents it; `Err` when
+    /// what was placed is more than one, or not one this pack can read.
+    fn credential(&self) -> Result<Option<Credential>, ()> {
+        if self.not_carried {
+            return Err(());
+        }
+        let Some(value) = &self.header else {
+            return Ok(None);
+        };
+        let value = value.expose();
+        if let Some(pair) = value.strip_prefix("Basic ") {
+            let decoded = crate::nats_wire::base64_decode(pair.trim()).ok_or(())?;
+            let decoded = String::from_utf8(decoded).map_err(|_| ())?;
+            let (user, password) = decoded.split_once(':').ok_or(())?;
+            return Ok(Some(Credential::UserPassword {
+                user: user.to_owned(),
+                password: Secret::new(password),
+            }));
+        }
+        let token = value.strip_prefix("Bearer ").unwrap_or(value);
+        Ok(Some(Credential::Token(Secret::new(token))))
+    }
+}
+
+impl CredentialSink for CredentialPlaced {
     fn header(&mut self, _name: &str, value: &Secret) {
-        if self.token.is_none() {
-            self.token = Some(Secret::new(value.expose()));
+        if self.header.is_none() {
+            self.header = Some(Secret::new(value.expose()));
         } else {
             self.not_carried = true;
         }
@@ -229,6 +256,16 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
             "The log no longer holds the position the run was to read from.".to_owned(),
             "Start from a position the log still holds; its retention has passed the one given.",
         ),
+        WireErrorKind::Transport => (
+            codes::TRANSPORT_REFUSED,
+            format!("The connection to {what} was not opened: {}.", error.detail),
+            "Reach the broker on this machine's loopback address, or use a build that speaks TLS to it.",
+        ),
+        WireErrorKind::Unfit => (
+            codes::VALUE_OUT_OF_RANGE,
+            format!("The wire protocol cannot carry what the step would send to {what}: {}.", error.detail),
+            "Correct the value or the channel file; nothing was sent.",
+        ),
         WireErrorKind::Unexpected => (
             codes::UNEXPECTED_REPLY,
             format!(
@@ -254,10 +291,13 @@ fn doubtful(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailure {
         | WireErrorKind::ChannelMissing
         | WireErrorKind::NotSupported
         | WireErrorKind::Refused
-        | WireErrorKind::TooLarge => error.sent != Sent::Unknown,
+        | WireErrorKind::TooLarge
+        | WireErrorKind::Transport
+        | WireErrorKind::Unfit
+        // A consumer that is gone acknowledged nothing.
+        | WireErrorKind::SubscriptionMissing => error.sent != Sent::Unknown,
         // A refusal that belongs to no write, and an answer of no rule.
-        WireErrorKind::SubscriptionMissing
-        | WireErrorKind::SubscriptionInUse
+        WireErrorKind::SubscriptionInUse
         | WireErrorKind::PositionOutOfRange
         | WireErrorKind::Unexpected => error.sent == Sent::NotSent,
     };
@@ -399,6 +439,23 @@ impl Run {
             && reported != declared
         {
             return Err(changed("the broker takes the key from another field"));
+        }
+        if entry.broker_dedupe {
+            // The file says the broker refuses a repeated token. Where the
+            // broker says otherwise, a resumed publish could store twice.
+            if facts.dedupe_header.is_none() || facts.dedupe_header != entry.token_header {
+                return Err(changed(
+                    "the broker does not refuse a repeated token in the header the file declares",
+                ));
+            }
+            if let (Some(declared), Some(reported)) =
+                (entry.dedupe_window_ms, facts.dedupe_window_ms)
+                && reported < u64::from(declared)
+            {
+                return Err(changed(
+                    "the broker remembers a token for less time than the file's `idempotency.window`",
+                ));
+            }
         }
         self.checked.insert(name.to_owned());
         Ok(())
@@ -720,11 +777,10 @@ impl StreamDriver {
         let from = position_arg(input)?;
         run.check_shape(&*self.redact, &name, &entry, input.deadline)
             .await?;
-        let subscription = if detail.take {
-            None
-        } else {
-            entry.subscription.as_deref()
-        };
+        // On a queue the runtime owns, the consumer a person made for its
+        // takes; elsewhere the runtime's own subscription, or one the broker
+        // discards with the connection.
+        let subscription = entry.subscription.as_deref();
         let opened = run
             .link()?
             .subscribe(&entry.address, subscription, from, input.deadline)
@@ -1234,7 +1290,7 @@ impl Driver for StreamDriver {
                     schemas = section.payload.decode().map_err(StepFailure::not_sent)?;
                 }
             }
-            let mut sink = TokenSink::default();
+            let mut sink = CredentialPlaced::default();
             let session = match lease {
                 Some(lease) => {
                     lease.apply(&mut sink).map_err(StepFailure::not_sent)?;
@@ -1242,25 +1298,29 @@ impl Driver for StreamDriver {
                 }
                 None => None,
             };
-            if sink.not_carried {
+            let credential = sink
+                .credential()
+                .ok()
+                .filter(|credential| credential.as_ref().is_none_or(|c| protocol.carries(c)));
+            let Some(credential) = credential else {
                 // A connection opened without part of the session's
                 // credentials would not be the session's connection.
                 return Err(stopped(
                     Sent::NotSent,
                     codes::CREDENTIAL_NOT_CARRIED,
                     format!(
-                        "The session of the surface `{}` holds a credential the wire protocol `{}` cannot present: it carries one token and nothing else.",
+                        "The session of the surface `{}` holds a credential the wire protocol `{}` cannot present.",
                         surface.name,
                         protocol.name()
                     ),
                     "Sign in to the target with a provider that gives one token, or use a protocol that carries this credential.",
                 ));
-            }
+            };
             let key: PoolKey = (surface.address.clone(), protocol.name().to_owned(), session);
             let link = match self.take_idle(&key) {
                 Some(link) => link,
                 None => protocol
-                    .connect(&surface.address, sink.token.as_ref(), cx.deadline)
+                    .connect(&surface.address, credential.as_ref(), cx.deadline)
                     .await
                     .map_err(|error| wire_failure(&*self.redact, &error, "open a connection"))?,
             };
@@ -1380,25 +1440,46 @@ mod tests {
     #[test]
     fn a_credential_the_protocol_cannot_present_is_remembered_and_never_dropped_silently() {
         let secret = Secret::new("secret-for-tests-one");
-        let mut token = TokenSink::default();
-        token.header("authorization", &secret);
-        assert!(token.token.is_some() && !token.not_carried);
+        let mut token = CredentialPlaced::default();
+        token.header("authorization", &Secret::new("Bearer secret-for-tests-one"));
+        assert!(
+            matches!(token.credential(), Ok(Some(Credential::Token(t))) if t.expose() == "secret-for-tests-one")
+        );
 
-        let mut second = TokenSink::default();
+        // `example-user:secret-for-tests-one`, as the neutral basic holder places it.
+        let mut basic = CredentialPlaced::default();
+        basic.header(
+            "Authorization",
+            &Secret::new("Basic ZXhhbXBsZS11c2VyOnNlY3JldC1mb3ItdGVzdHMtb25l"),
+        );
+        assert!(matches!(
+            basic.credential(),
+            Ok(Some(Credential::UserPassword { user, password }))
+                if user == "example-user" && password.expose() == "secret-for-tests-one"
+        ));
+        assert!(crate::example_wire::ExampleProtocol.carries(&Credential::Token(Secret::new("x"))));
+        assert!(
+            !crate::example_wire::ExampleProtocol.carries(&Credential::UserPassword {
+                user: "example-user".to_owned(),
+                password: Secret::new("x"),
+            })
+        );
+
+        let mut second = CredentialPlaced::default();
         second.header("authorization", &secret);
         second.header("x-other", &secret);
-        assert!(second.not_carried);
+        assert!(second.credential().is_err());
 
-        let mut password = TokenSink::default();
+        let mut password = CredentialPlaced::default();
         password.challenge_credential(ChallengeScheme::Digest, "example-user", &secret);
-        assert!(password.not_carried && password.token.is_none());
+        assert!(password.credential().is_err());
 
-        let mut identity = TokenSink::default();
+        let mut identity = CredentialPlaced::default();
         identity.tls_identity(b"certificate", &secret);
-        assert!(identity.not_carried);
+        assert!(identity.credential().is_err());
 
-        let mut cookie = TokenSink::default();
+        let mut cookie = CredentialPlaced::default();
         cookie.cookie("broker.example.test", "session", &secret);
-        assert!(cookie.not_carried);
+        assert!(cookie.credential().is_err());
     }
 }

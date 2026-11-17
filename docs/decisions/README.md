@@ -164,3 +164,12 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0158 | [The product crate and the local engine after their safety audit](0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md) | Accepted (design decision) |
 | 0159 | [A lost answer is a write in doubt at the doors and in the clients](0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md) | Accepted (design decision) |
 | 0160 | [An idempotency key gives back its run, and `run.list` shows a caller's own runs](0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md) | Accepted (design decision) |
+| 0161 | [The plan and the engine after the packs were built](0161-the-plan-and-the-engine-after-the-packs-were-built.md) | Accepted (design decision) |
+| 0162 | [The provider contract's second pass: what a step is handed, and what it hands back](0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md) | Accepted (design decision) |
+| 0163 | [A person's act an agent asks for is carried out on a page of the person surface](0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md) | Accepted (design decision) |
+| 0164 | [The authoring actions served through the engine](0164-the-authoring-actions-served-through-the-engine.md) | Accepted (design decision) |
+| 0165 | [A client starts the engine on demand, detached, and gives it the passphrase on a pipe](0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md) | Accepted (design decision) |
+| 0166 | [HTTPS in the product: trust roots at engine start, and one maker of clients](0166-https-in-the-product-trust-roots-at-engine-start-and-one-maker-of-clients.md) | Accepted (design decision) |
+| 0167 | [The stream pack speaks NATS with JetStream, through a client of its own](0167-the-stream-pack-speaks-nats-with-jetstream-through-a-client-of-its-own.md) | Accepted (design decision) |
+| 0168 | [The data pack reaches a server database with the guarantees of an embedded file](0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md) | Accepted (design decision) |
+| 0169 | [The first release is for one machine](0169-the-first-release-is-for-one-machine.md) | Accepted (owner decision) |

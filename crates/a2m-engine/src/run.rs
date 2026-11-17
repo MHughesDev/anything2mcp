@@ -13,16 +13,18 @@ use a2m_core::{
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_provider::{
-    Authority, CheckedPaths, Deadline, Destinations, DriverHandle, DriverHealth, Observed, Posture,
-    PrepareContext, Prepared, ProgramRef, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, DriverHealth, Observed,
+    Posture, PrepareContext, Prepared, ProgramRef, RootName, Roots, Sent, StepFailure, StepInput,
+    StepOutcome, SurfaceRef,
 };
 use a2m_telemetry::{
-    ChoiceReason, PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
+    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, ChoiceReason, OfferedArtifact,
+    PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
 };
 
 use crate::codes;
 use crate::compare::Field;
-use crate::control::{Control, EngineEvent, PassedOver, SessionWant};
+use crate::control::{Control, EngineEvent, KeptCapture, PassedOver, SessionWant};
 use crate::engine::Engine;
 use crate::guard::caught;
 use crate::job::{Directive, JobSpec, KernelHealth};
@@ -50,6 +52,9 @@ impl From<Failure> for Stop {
 struct Held {
     mode: Mode,
     surface: SurfaceIndex,
+    /// The addresses the context was prepared to reach: the running
+    /// operation's own. A context is used again only for the same.
+    destinations: Destinations,
     surface_ref: SurfaceRef,
     handle: DriverHandle,
     prepared: Prepared,
@@ -74,8 +79,16 @@ pub(crate) struct Candidate {
 #[derive(Clone, Copy)]
 pub(crate) struct RecordCx<'s> {
     pub record: RecordRef,
-    pub key: &'s RecordKey,
+    /// The record's key as the ledger holds it, which may be its place in
+    /// the run: for the trace, never for a step.
+    pub ledger_key: &'s RecordKey,
+    /// The record's key in the system: from its key inputs, or the key the
+    /// system assigned. `None` while it has none; never the engine's own
+    /// name for the record in the run.
+    pub key: Option<&'s RecordKey>,
     pub stamp: Option<&'s str>,
+    /// What the record's earlier steps returned for reconcile.
+    pub recorded: &'s Values,
 }
 
 /// One step to carry out.
@@ -119,7 +132,6 @@ pub(crate) struct Run<'a> {
     begins: Option<PassInfo>,
     held: Vec<Held>,
     next_serial: u64,
-    destinations: Destinations,
     paths: CheckedPaths,
     /// The time on the engine's clock at which the run's own time limit
     /// passes.
@@ -162,12 +174,19 @@ impl<'a> Run<'a> {
                 .with("name", environment.name.as_str())
                 .with("kind", environment.kind.as_str()),
         );
-        let mut addresses: Vec<String> = Vec::new();
-        for (position, surface) in plan.surfaces.iter().enumerate() {
-            addresses.push(address_of(environment, position, &surface.address));
-        }
-        for operation in &plan.operations {
-            addresses.extend(operation.manifest.destinations.iter().cloned());
+        // The project folder of the request that started the run, checked
+        // once more as a root: a pack resolves a file of the project against
+        // it, and never against the folder the engine was started in.
+        let mut paths = CheckedPaths::none();
+        if let Some(folder) = control.project_folder() {
+            let mut roots = Roots::none();
+            let project = RootName::new("project").ok().and_then(|name| {
+                roots.add(name.clone(), &folder, Access::Write).ok()?;
+                roots.folder(&name, Access::Write).ok()
+            });
+            if let Some(project) = project {
+                paths = paths.with_project(project);
+            }
         }
         Self {
             engine,
@@ -187,11 +206,32 @@ impl<'a> Run<'a> {
             begins: None,
             held: Vec::new(),
             next_serial: 0,
-            destinations: Destinations::new(addresses),
-            paths: CheckedPaths::none(),
+            paths,
             time_limit: None,
             loaded,
         }
+    }
+
+    /// The addresses a context prepared for `operation` may reach: the
+    /// target's surfaces at this environment, and what the operation's own
+    /// permission manifest adds. Never another operation's.
+    fn destinations_of(&self, operation: &OperationName) -> Destinations {
+        let plan = &self.loaded.plan;
+        let environment = &plan.environments[self.env_position];
+        let mut addresses: Vec<String> = plan
+            .surfaces
+            .iter()
+            .enumerate()
+            .map(|(position, surface)| address_of(environment, position, &surface.address))
+            .collect();
+        if let Some(found) = plan
+            .operations
+            .iter()
+            .find(|found| &found.name == operation)
+        {
+            addresses.extend(found.manifest.destinations.iter().cloned());
+        }
+        Destinations::new(addresses)
     }
 
     /// Tells the control plane the run has moved, and remembers it.
@@ -453,10 +493,12 @@ impl<'a> Run<'a> {
         writes: bool,
     ) -> Result<usize, Failure> {
         let posture = self.posture_for(writes);
+        let destinations = self.destinations_of(operation);
         if let Some(position) = self.held.iter().position(|held| {
             held.mode == binding.mode
                 && held.surface == binding.surface
                 && held.posture == posture
+                && held.destinations == destinations
                 && !held.poisoned
         }) {
             self.begin_pass(operation, candidate.reason, Duration::ZERO, Duration::ZERO);
@@ -493,7 +535,7 @@ impl<'a> Run<'a> {
             posture,
             deadline,
             redact: self.engine.deps.redact.as_ref(),
-            destinations: &self.destinations,
+            destinations: &destinations,
             paths: &self.paths,
             supervisor: &supervisor,
         };
@@ -527,6 +569,7 @@ impl<'a> Run<'a> {
         self.held.push(Held {
             mode: binding.mode.clone(),
             surface: binding.surface,
+            destinations,
             surface_ref,
             handle: candidate.handle.clone(),
             prepared,
@@ -654,10 +697,12 @@ impl<'a> Run<'a> {
             let input = StepInput {
                 args: &args,
                 record: cx.record.map(|record| record.record),
-                key: cx.record.map(|record| record.key),
+                key: cx.record.and_then(|record| record.key),
                 stamp: cx.record.and_then(|record| record.stamp),
                 deadline,
             };
+            let empty = Values::new();
+            let recorded = cx.record.map_or(&empty, |record| record.recorded);
             let started = self.engine.deps.clock.elapsed();
             let held = &mut self.held[cx.held];
             let result = if cx.step.commits {
@@ -665,11 +710,13 @@ impl<'a> Run<'a> {
                 // runs to its end whatever the deadline says. The deadline
                 // is the driver's to keep.
                 let authority = cx.token.map_or(Authority::Read, Authority::Write);
-                let acting =
-                    caught(
-                        held.handle
-                            .act(&mut held.prepared, cx.step, &input, authority),
-                    );
+                let acting = caught(held.handle.act_recorded(
+                    &mut held.prepared,
+                    cx.step,
+                    &input,
+                    authority,
+                    recorded,
+                ));
                 match acting.await {
                     Some(result) => result,
                     None => {
@@ -688,11 +735,13 @@ impl<'a> Run<'a> {
                     }
                 }
             } else {
-                let acting =
-                    caught(
-                        held.handle
-                            .act(&mut held.prepared, cx.step, &input, Authority::Read),
-                    );
+                let acting = caught(held.handle.act_recorded(
+                    &mut held.prepared,
+                    cx.step,
+                    &input,
+                    Authority::Read,
+                    recorded,
+                ));
                 match tokio::time::timeout_at(deadline.at(), acting).await {
                     Ok(Some(result)) => result,
                     Ok(None) => {
@@ -717,7 +766,8 @@ impl<'a> Run<'a> {
                 }
             };
             let took = self.engine.deps.clock.elapsed().saturating_sub(started);
-            self.traced(&cx, &result, took);
+            let artifacts = self.keep_captures(&cx, &result).await;
+            self.traced(&cx, &result, took, artifacts);
             match result {
                 Err(failure)
                     if failure.failure.class() == FailureClass::Transient
@@ -736,12 +786,77 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Keeps what a step captured, as the run's capture level says: each
+    /// capture passes the redactor and the trace's own check, is kept as
+    /// evidence through `Control`, and is named in the step's trace record.
+    /// This happens before the step after it is sent, so what was captured
+    /// before a committing step is kept before the save. A capture that
+    /// cannot be kept is dropped and the run goes on. The capture that says
+    /// how the step was done goes into the trace record, not here.
+    async fn keep_captures(
+        &mut self,
+        cx: &StepCx<'_>,
+        result: &Result<StepOutcome, StepFailure>,
+    ) -> Vec<ArtifactRef> {
+        let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = result else {
+            return Vec::new();
+        };
+        let mut kept = Vec::new();
+        for capture in &observed.captures {
+            if capture.is_acting() {
+                continue;
+            }
+            let Some(trace) = self.trace.as_mut() else {
+                break;
+            };
+            let kind = if capture.media_type.starts_with("image/") {
+                ArtifactKind::Screenshot
+            } else {
+                ArtifactKind::Exchange
+            };
+            // Bytes that are text are redacted once more; an image cannot
+            // be, and arrives with no report of what was masked, so the
+            // trace's own check drops it.
+            let redact = &self.engine.deps.redact;
+            let bytes = match std::str::from_utf8(&capture.bytes) {
+                Ok(text) => redact.redact(text).into_bytes(),
+                Err(_) => capture.bytes.clone(),
+            };
+            let ArtifactOutcome::Kept(artifact) = trace.artifact(OfferedArtifact {
+                kind,
+                at: CapturePoint::Step,
+                bytes,
+                masked: None,
+            }) else {
+                continue;
+            };
+            let keeping = KeptCapture {
+                record: cx.record.map(|record| record.record),
+                pass: self.pass,
+                phase: cx.phase,
+                step: u32::try_from(cx.position).unwrap_or(u32::MAX),
+                name: redact.redact(&capture.name),
+                media_type: capture.media_type.clone(),
+                bytes: artifact.bytes,
+            };
+            if let Ok(blob) = self.control.keep_capture(keeping).await {
+                kept.push(ArtifactRef {
+                    kind: artifact.kind,
+                    at: artifact.at,
+                    blob: blob.digest(),
+                });
+            }
+        }
+        kept
+    }
+
     /// Writes the record of one step into the trace.
     fn traced(
         &mut self,
         cx: &StepCx<'_>,
         result: &Result<StepOutcome, StepFailure>,
         took: Duration,
+        artifacts: Vec<ArtifactRef>,
     ) {
         let begins = self.begins.take().map(|info| {
             let held = &self.held[cx.held];
@@ -774,6 +889,10 @@ impl<'a> Run<'a> {
                 }
             }
         }
+        let acting = match result {
+            Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) => observed.acting(),
+            Err(_) => None,
+        };
         let outcome = match result {
             Ok(_) => TraceOutcome::Done,
             Err(failure) => TraceOutcome::Failed {
@@ -786,14 +905,14 @@ impl<'a> Run<'a> {
             phase: cx.phase,
             step: u32::try_from(cx.position).unwrap_or(u32::MAX),
             kind: cx.step.kind.clone(),
-            record: cx.record.map(|record| record.key.clone()),
+            record: cx.record.map(|record| record.ledger_key.clone()),
             begins,
             took,
             locating: None,
-            acting: None,
+            acting,
             values,
             outcome,
-            artifacts: Vec::new(),
+            artifacts,
         });
     }
 
@@ -908,9 +1027,8 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
     if observed.assigned_key.is_some() {
         all.assigned_key = observed.assigned_key;
     }
-    // A step's captures are not kept: nothing of them is stored, shown, or
-    // held beyond the step. Keeping one needs a place in the trace for it,
-    // which the provider contract does not give yet.
+    // A step's captures were kept, as the run's capture level says, when
+    // the step ended; nothing of them is held beyond it.
     drop(observed.captures);
 }
 

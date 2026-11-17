@@ -1,7 +1,6 @@
 //! Writes against the stand. Each is proven by what the stand stored and by
 //! how many times the row was written, never by the pack's own read alone.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -17,6 +16,7 @@ use crate::model::{Access, Isolation};
 use crate::names::codes;
 use crate::store::{
     Bound, Catalog, CommitFailed, Conn, Interrupter, Opener, Ran, Refusal, RunLimits, Shape,
+    StoreAt,
 };
 
 const LINE: [&str; 2] = ["A-100", "L-101"];
@@ -709,15 +709,18 @@ impl Opener for LossyStore {
     fn quote(&self, identifier: &str) -> Option<String> {
         crate::sqlite::Sqlite.quote(identifier)
     }
-    fn placeholder(&self) -> &'static str {
-        crate::sqlite::Sqlite.placeholder()
+    fn placeholder(&self, position: usize) -> String {
+        crate::sqlite::Sqlite.placeholder(position)
+    }
+    fn dialect(&self) -> crate::shape::Dialect {
+        crate::sqlite::Sqlite.dialect()
     }
     fn returns_assigned_key(&self) -> bool {
         true
     }
-    fn open(&self, file: &Path, access: Access) -> Result<Box<dyn Conn>, Refusal> {
+    fn open(&self, at: &StoreAt, access: Access) -> Result<Box<dyn Conn>, Refusal> {
         Ok(Box::new(LosesAnswer {
-            inner: crate::sqlite::Sqlite.open(file, access)?,
+            inner: crate::sqlite::Sqlite.open(at, access)?,
             armed: Arc::clone(&self.armed),
         }))
     }

@@ -18,6 +18,7 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: layers 1 to 6.
 
+mod acts;
 mod bounds;
 mod catalog;
 pub mod codes;
@@ -28,6 +29,7 @@ mod events;
 mod faces;
 mod handlers;
 mod health;
+pub mod init;
 mod keeper;
 mod kernel;
 mod paths;
@@ -42,6 +44,7 @@ mod tools;
 
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
+pub use acts::{ACTS_KEPT, ACTS_WAITING, PersonActAsk, PersonActId, SHOWN_VALUE_CHARS, ShownField};
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
     HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
@@ -82,6 +85,7 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod audit;
+    mod authoring;
     mod kernel;
     mod keys;
     mod runs;

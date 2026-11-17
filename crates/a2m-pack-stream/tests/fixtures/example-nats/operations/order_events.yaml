@@ -1,0 +1,70 @@
+operation: example_order_events_list
+title: List order events
+effect: read
+inputs:
+  from: {type: integer, description: "The position to start at", required: false, default: 0}
+outputs:
+  count: {type: integer}
+bindings:
+  - mode: stream
+    verb: list
+    channel: orders.events
+    from: input.from
+description: >
+  Lists the order events the log holds from a position, a page at a time.
+---
+operation: example_order_event_await
+title: Wait for an event of an order
+effect: read
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  from: {type: integer, description: "The position to wait from"}
+outputs:
+  arrived: {type: boolean}
+bindings:
+  - mode: stream
+    verb: await
+    channel: orders.events
+    key: {order_id: input.order_id}
+    from: input.from
+    wait: 1s
+    on_nothing: answer
+description: >
+  Waits a short time for the next event of one order, from a position in the log.
+---
+operation: example_order_event_needed
+title: Wait for an event of an order, and fail without one
+effect: read
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  arrived: {type: boolean}
+bindings:
+  - mode: stream
+    verb: await
+    channel: orders.events
+    key: {order_id: input.order_id}
+    wait: 1s
+    on_nothing: fail
+description: >
+  Waits a short time for the next event of one order, and stops when none comes.
+---
+operation: example_order_event_record
+title: Record an event of an order
+effect: irreversible
+hazard: sends_outside
+identity: {strategy: stamped}
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  event: {type: text, description: "What happened"}
+outputs:
+  position: {type: integer}
+bindings:
+  - mode: stream
+    verb: publish
+    channel: orders.events
+    key: {order_id: input.order_id}
+    body: {order_id: input.order_id, event: input.event}
+    read_back: {channel: orders.events}
+description: >
+  Appends one event to the order log, where others read it. It cannot be recalled.

@@ -1,6 +1,6 @@
 # The data pack's test stand
 
-One database file of the embedded SQL engine, holding the schema of an imaginary order-entry system named `example`. The data pack is proven against this file and never against a real store. [Spec section 307](../../docs/spec/3-packs/307-the-data-pack.md) lists the cases a stand for the pack must show, and the [test application plan](../../docs/plan/test-application.md) gives the rules for every stand. This is the embedded stand of roadmap package G1. The server stand that section 307 also asks for is not built.
+One database file of the embedded SQL engine, holding the schema of an imaginary order-entry system named `example`. The data pack is proven against this file and never against a real store. [Spec section 307](../../docs/spec/3-packs/307-the-data-pack.md) lists the cases a stand for the pack must show, and the [test application plan](../../docs/plan/test-application.md) gives the rules for every stand. This is the embedded stand of roadmap package G1. The server stand that section 307 also asks for is its server side, under "The server side" below.
 
 ## Using it in a test
 
@@ -135,3 +135,35 @@ The numbers are those of the stand table in spec section 307. All ten are shown;
 - **A change between a guard's check and its write inside one statement.** The stand changes a row when a test tells it to, between two calls of the code under test.
 - **A column of floating type.** The schema has none, on purpose. The pack's rule for such columns has no case here yet.
 - **Who made a write, beyond the control interface or not.** The engine has no identities.
+
+## The server side
+
+`example_db::server::TestServer` is a real PostgreSQL server with the same system's schema in the server's own types, for the data pack's server store ([decision 0168](../../docs/decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md)). It uses no client library: its control queries run the server's own client, `psql`, so a write is never proven through the library the code under test uses.
+
+```rust
+use example_db::server::{TestServer, RelayFault, APP_ROLE, APP_PASSWORD};
+
+let Some(server) = TestServer::start()? else { return Ok(()) };   // None: no server here; the test says it skipped
+let address = server.address();      // the relay on 127.0.0.1, at a port the system picked
+let database = server.database();    // a new database for this test
+// ... the code under test signs in as APP_ROLE with APP_PASSWORD ...
+let row = server.stored_row("order_lines", &[("order_id", "A-100"), ("item_code", "L-101")])?;
+let count = server.write_count("order_lines", &["A-100", "L-101"])?;
+server.arm(RelayFault::LoseCommitAnswer);
+```
+
+**How a test gets a server, in this order.**
+
+1. `A2M_TEST_POSTGRES` names a running server, in the server's own form: `host=127.0.0.1 port=5432 user=postgres password=...`, for a role that may make roles and databases. Every operating system.
+2. Otherwise, where the server's programs are found (`A2M_POSTGRES_BIN`, `pg_config --bindir`, or the newest `/usr/lib/postgresql/<n>/bin`) and Unix sockets exist, the stand runs `initdb` in a new folder under the temporary folder and starts the server listening on a Unix socket in that folder only, never on a network port. The server refuses to run as the administrator account; a test that runs as that account starts every program of the server through `setpriv` as the account `postgres`, which owns the folder. The server is stopped and the folder removed when the `TestServer` is dropped.
+3. Otherwise `start` gives `None`. With `A2M_REQUIRE_POSTGRES=1` it gives an error instead.
+
+**The CI lines.** Linux runners have the programs: set `A2M_REQUIRE_POSTGRES: "1"` and nothing else. macOS runners have no server: `brew install postgresql@16` and `A2M_POSTGRES_BIN: /opt/homebrew/opt/postgresql@16/bin`, or let the server tests skip and write the gap in the journal. Windows runners carry a stopped server: start it and name it, for example `pg_ctl start -D "$env:PGDATA" -w` and `A2M_TEST_POSTGRES: "host=127.0.0.1 port=5432 user=postgres password=root"`. The macOS and Windows lines were not run from here.
+
+| Object | What it is |
+| --- | --- |
+| Roles | `example_owner` owns the tables (and may sign in, to show a refusal); `example_app` may read and write their rows and owns nothing; `stand_admin` is the superuser of a server of the stand's own |
+| Tables | As above, with `numeric(12, 4)` lengths and `numeric(12, 2)` prices, `date`, `timestamptz` `submitted_at`, a `timestamp` with no zone `entered_at`, and a `real` `discount` on `orders`, so that a type with no rule can be shown. `shipments` takes its key from an identity column |
+| Triggers | `order_lines_bump_version` raises the version before each update; `orders_record_status_change`; the stand's own `stand_log_order_lines` and `stand_log_shipments`, which write `stand.write_log` through a function that runs as its owner |
+| The relay | Passes every byte between the code under test and the server. `arm(LoseCommitAnswer)`: the next `COMMIT` reaches the server and its answer is dropped, and both sides close. `arm(DropCommit)`: the next `COMMIT` never reaches the server |
+| Control | `query`, `value`, `execute` (as the administrator, as another program would), `stored_row`, `write_count`, `writes`, `connections_of(role)`, `terminate(role)`, `hold_lock(table, predicate)` |

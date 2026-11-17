@@ -720,6 +720,204 @@ impl CheckedPath {
             .map_err(|_| self.unavailable("cannot be removed"))
     }
 
+    /// Why a file could not be used, told apart: `busy`/`file_locked`,
+    /// `busy`/`storage_full`, `input`/`file_access_denied`,
+    /// `input`/`file_missing`, and `input`/`file_unavailable` for anything
+    /// else. `doing` says what was being done, as in "cannot be renamed".
+    fn io_failure(&self, error: &std::io::Error, doing: &str) -> Failure {
+        use std::io::ErrorKind;
+        let raw = error.raw_os_error();
+        #[cfg(windows)]
+        let (locked, full) = (
+            // A sharing or a lock violation.
+            matches!(raw, Some(32 | 33)),
+            // The disk or the handle's disk is full.
+            matches!(raw, Some(39 | 112)),
+        );
+        #[cfg(not(windows))]
+        let (locked, full) = (
+            matches!(
+                error.kind(),
+                ErrorKind::ResourceBusy | ErrorKind::WouldBlock | ErrorKind::ExecutableFileBusy
+            ),
+            matches!(
+                error.kind(),
+                ErrorKind::StorageFull | ErrorKind::QuotaExceeded
+            ),
+        );
+        let _ = raw;
+        if locked {
+            codes::busy(
+                codes::FILE_LOCKED,
+                format!("The file `{self}` {doing}: another program holds it."),
+                "Close the program that holds the file, then call again.",
+            )
+        } else if full {
+            codes::busy(
+                codes::STORAGE_FULL,
+                format!("The file `{self}` {doing}: the disk is full."),
+                "Free space on the disk, then call again.",
+            )
+        } else if matches!(
+            error.kind(),
+            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
+        ) {
+            codes::input(
+                codes::FILE_ACCESS_DENIED,
+                format!("The file `{self}` {doing}: the engine's user may not write it."),
+                "Let the engine's user write the file and its folder, or name another file.",
+            )
+        } else if error.kind() == ErrorKind::NotFound {
+            codes::input(
+                codes::FILE_MISSING,
+                format!("The file `{self}` {doing}: it, or its folder, is not there."),
+                "Check that the file and its folder exist.",
+            )
+        } else {
+            self.unavailable(doing)
+        }
+    }
+
+    /// Begins a verified save of the file: a new, empty temporary file in
+    /// the same folder, under a name of 128 random bits, made only where
+    /// nothing stands, never through a link, and handed back open for
+    /// reading and writing. The caller writes, flushes, reads back and
+    /// checks, and then puts it in place with [`Temporary::replace`], each a
+    /// call of its own; dropped before that, it is removed.
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`effect_not_declared` for a path checked for reading;
+    /// `input`/`path_not_allowed`, also where a link stands at the name;
+    /// and the failures of [`CheckedPath::may_write`]'s kinds: locked, full,
+    /// denied, missing.
+    pub fn create_temporary(&self) -> Result<Temporary, Failure> {
+        self.writable()?;
+        let (folder, name) = self.place()?;
+        let folder = self.folder_now(folder)?.ok_or_else(|| {
+            codes::input(
+                codes::FILE_MISSING,
+                format!("The file `{self}` cannot be saved: its folder is not there."),
+                "Check that the file's folder exists.",
+            )
+        })?;
+        if matches!(folder.kind(name), Ok(EntryKind::Link)) {
+            return Err(self.through_a_link());
+        }
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| {
+            self.unavailable(
+                "cannot be saved: the operating system gave no random name for its new file",
+            )
+        })?;
+        let mut temporary = String::from(".a2m-new-");
+        for byte in random {
+            temporary.push_str(&format!("{byte:02x}"));
+        }
+        let temporary = std::ffi::OsString::from(temporary);
+        let file = folder
+            .create_new(&temporary)
+            .map_err(|error| self.io_failure(&error, "cannot be saved"))?;
+        Ok(Temporary {
+            target: self.clone(),
+            folder,
+            name: temporary,
+            file: Some(file),
+        })
+    }
+
+    /// Writes the list of names of the folder that holds the file to the
+    /// disk, so that a file just put in place keeps its name through a power
+    /// cut. On Windows the file system journals the names itself, and this
+    /// does nothing more.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed`; the kinds of [`CheckedPath::io_failure`].
+    pub fn flush_folder(&self) -> Result<(), Failure> {
+        let (folder, _) = self.place()?;
+        let folder = self.folder_now(folder)?.ok_or_else(|| {
+            codes::input(
+                codes::FILE_MISSING,
+                format!("The folder of `{self}` is not there."),
+                "Check that the file's folder exists.",
+            )
+        })?;
+        folder
+            .sync()
+            .map_err(|error| self.io_failure(&error, "cannot have its folder flushed"))
+    }
+
+    /// The file's identity, the same for as long as the file is the same
+    /// file whatever is written in it, and different for a file put in its
+    /// place: the device and the file number on Linux and macOS, the volume
+    /// and the file identifier on Windows. A link at the name is the link's
+    /// own identity, and is not followed.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_missing`, `input`/`file_access_denied`,
+    /// `input`/`path_not_allowed`, `input`/`file_unavailable`.
+    pub fn identity(&self) -> Result<FileIdentity, Failure> {
+        let (folder, name) = self.place()?;
+        let folder = self.folder_now(folder)?.ok_or_else(|| {
+            codes::input(
+                codes::FILE_MISSING,
+                format!("The file `{self}` is not there."),
+                "Check that the file exists.",
+            )
+        })?;
+        let (device, file) = folder
+            .identity(name)
+            .map_err(|error| self.io_failure(&error, "cannot be looked at"))?;
+        Ok(FileIdentity { device, file })
+    }
+
+    /// Whether the engine's user may write the file now. Nothing is written,
+    /// made, or cut short: the file is opened for writing and closed. `false`
+    /// when the user may not, or the file system is read only.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_missing`; `busy`/`file_locked` where another program
+    /// holds it; `input`/`path_not_allowed`, also where a link stands at the
+    /// name or the path is no regular file; `policy`/`effect_not_declared`
+    /// for a path checked for reading.
+    pub fn may_write(&self) -> Result<bool, Failure> {
+        self.writable()?;
+        let (folder, name) = self.place()?;
+        let folder = self.folder_now(folder)?.ok_or_else(|| {
+            codes::input(
+                codes::FILE_MISSING,
+                format!("The file `{self}` is not there."),
+                "Check that the file exists.",
+            )
+        })?;
+        match folder.kind(name) {
+            Ok(EntryKind::File) => {}
+            Ok(EntryKind::Absent) => {
+                return Err(codes::input(
+                    codes::FILE_MISSING,
+                    format!("The file `{self}` is not there."),
+                    "Check that the file exists.",
+                ));
+            }
+            Ok(EntryKind::Link) => return Err(self.through_a_link()),
+            Ok(_) => return Err(refuse(&self.relative, "it is not a regular file")),
+            Err(error) => return Err(self.io_failure(&error, "cannot be looked at")),
+        }
+        match folder.open_for_write(name) {
+            Ok(file) => {
+                drop(file);
+                Ok(true)
+            }
+            Err(error) => match self.io_failure(&error, "cannot be written") {
+                denied if denied.code() == &codes::FILE_ACCESS_DENIED => Ok(false),
+                other => Err(other),
+            },
+        }
+    }
+
     /// The entries of the folder, in order of name, each checked. An entry
     /// whose name is not a form a path may take, or that links outside the
     /// root, is left out and counted.
@@ -751,11 +949,145 @@ impl CheckedPath {
     }
 }
 
+/// What makes a file the same file: the same for as long as it is that file,
+/// whatever is written in it, and different for a file put in its place.
+/// Compared, never shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileIdentity {
+    device: u64,
+    file: u128,
+}
+
+/// A temporary file of a verified save, open for reading and writing, in
+/// the folder of the file it will replace. Made by
+/// [`CheckedPath::create_temporary`]. Each step of the save is a call of its
+/// own, so the caller checks what it wrote before anything is replaced:
+/// [`Temporary::write`], [`Temporary::flush`], [`Temporary::read_back`],
+/// then [`Temporary::replace`], then [`CheckedPath::flush_folder`]. Dropped
+/// before it replaced anything, it is removed.
+pub struct Temporary {
+    target: CheckedPath,
+    folder: place::Folder,
+    name: std::ffi::OsString,
+    file: Option<fs::File>,
+}
+
+impl fmt::Debug for Temporary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Temporary")
+            .field("target", &self.target)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Temporary {
+    /// The file the save will replace.
+    #[must_use]
+    pub fn target(&self) -> &CheckedPath {
+        &self.target
+    }
+
+    fn open(&mut self) -> Result<&mut fs::File, Failure> {
+        let target = &self.target;
+        self.file
+            .as_mut()
+            .ok_or_else(|| target.unavailable("cannot be saved: its temporary file was closed"))
+    }
+
+    /// Appends bytes to the temporary file.
+    ///
+    /// # Errors
+    ///
+    /// `busy`/`storage_full`, `input`/`file_access_denied`, and the other
+    /// kinds of a failed write.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), Failure> {
+        use std::io::Write as _;
+        let target = self.target.clone();
+        self.open()?
+            .write_all(bytes)
+            .map_err(|error| target.io_failure(&error, "cannot be saved"))
+    }
+
+    /// Writes what the temporary file holds to the disk.
+    ///
+    /// # Errors
+    ///
+    /// As [`Temporary::write`].
+    pub fn flush(&mut self) -> Result<(), Failure> {
+        let target = self.target.clone();
+        self.open()?
+            .sync_all()
+            .map_err(|error| target.io_failure(&error, "cannot be flushed"))
+    }
+
+    /// What the temporary file holds, from its start, when it has at most
+    /// `max_bytes` bytes: for the caller's check before it replaces the
+    /// target.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`file_unavailable`, also when it is larger.
+    pub fn read_back(&mut self, max_bytes: u64) -> Result<Vec<u8>, Failure> {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let target = self.target.clone();
+        let file = self.open()?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| target.io_failure(&error, "cannot be read back"))?;
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|error| target.io_failure(&error, "cannot be read back"))?;
+        file.seek(SeekFrom::End(0))
+            .map_err(|error| target.io_failure(&error, "cannot be read back"))?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(target.unavailable("is larger than the limit for reading it back"));
+        }
+        Ok(bytes)
+    }
+
+    /// Gives the temporary file the target's name. What stands at the name
+    /// is replaced, and nothing else: a link at the name is refused, and not
+    /// followed. Then flush the folder with [`CheckedPath::flush_folder`].
+    ///
+    /// # Errors
+    ///
+    /// `input`/`path_not_allowed` where a link stands at the name;
+    /// `busy`/`file_locked` where another program holds the target; and the
+    /// other kinds of a failed rename. The temporary file is removed.
+    pub fn replace(mut self) -> Result<(), Failure> {
+        drop(self.file.take());
+        let Some(name) = self.target.named.file_name().map(std::ffi::OsStr::to_owned) else {
+            return Err(self.target.unavailable("is a root and not a file"));
+        };
+        if matches!(self.folder.kind(&name), Ok(EntryKind::Link)) {
+            return Err(self.target.through_a_link());
+        }
+        self.folder
+            .rename(&self.name, &name)
+            .map_err(|error| self.target.io_failure(&error, "cannot be replaced"))?;
+        // The name now belongs to the target: nothing is left to remove.
+        self.name.clear();
+        Ok(())
+    }
+}
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        if !self.name.is_empty() {
+            // Nothing is left behind when a save does not finish.
+            let _ = self.folder.remove(&self.name);
+        }
+    }
+}
+
 /// Every file a run may touch, each already checked, by the name the plan
-/// gives it. A driver resolves none itself.
+/// gives it, and the project folder of the request that started the run. A
+/// driver resolves none itself.
 #[derive(Debug, Clone, Default)]
 pub struct CheckedPaths {
     paths: BTreeMap<String, CheckedPath>,
+    project: Option<CheckedPath>,
 }
 
 impl CheckedPaths {
@@ -779,6 +1111,39 @@ impl CheckedPaths {
     /// Every name and path, in order of name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &CheckedPath)> {
         self.paths.iter().map(|(name, path)| (name.as_str(), path))
+    }
+
+    /// The same, with the project folder of the request that started the
+    /// run: the folder itself, checked as a root. A file of the project is a
+    /// [`CheckedPath::join`] below it.
+    #[must_use]
+    pub fn with_project(mut self, project: CheckedPath) -> Self {
+        self.project = Some(project);
+        self
+    }
+
+    /// The project folder of the request that started the run, when it
+    /// had one.
+    #[must_use]
+    pub fn project(&self) -> Option<&CheckedPath> {
+        self.project.as_ref()
+    }
+
+    /// The project folder, for a pack that resolves a file against the
+    /// caller's project.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`project_folder_missing` when the run has none: never the
+    /// folder the engine was started in.
+    pub fn project_folder(&self) -> Result<&CheckedPath, Failure> {
+        self.project.as_ref().ok_or_else(|| {
+            codes::input(
+                codes::PROJECT_FOLDER_MISSING,
+                "The run names a file of the project, and the call that started it came with no project folder.",
+                "Call the tool from inside the project, through a door that states its folder.",
+            )
+        })
     }
 }
 

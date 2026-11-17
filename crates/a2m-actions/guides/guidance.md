@@ -18,11 +18,11 @@ Anything2MCP puts deterministic, verified tools over an existing system. You dra
 1. Add a target: `target.add`. Name the surfaces, the places the system can be reached.
 2. Probe it: `target.probe`, then `auth.detect`. A person signs in with `session.login`. You cannot.
 3. Look: `scout.run`, `discover.run`, `screen.snapshot`, or `capture.start` and `capture.stop`. All of these only read.
-4. Draft the target files with `draft.write`. Read them back with `draft.read`.
+4. Draft the target files with `draft.write`. Read them back with `draft.read`. A file that does not read as its kind is not written; one that does is written, and the lint of the whole target comes back with it.
 5. Lint: `draft.lint`. Fix every problem, then lint again.
-6. Test offline: `test.run` against fixtures.
-7. Try a draft: `draft.try`. It runs in the sandbox, and writes go only to the test records the target declares.
-8. Ask for review: `publish.request`. A person reads the summary and publishes.
+6. Try a drafted read: `draft.try`. It runs in the sandbox and only reads. A drafted write is not tried yet.
+7. Test: `test.run` runs the publish gates as far as they are built: the schema and lint gate, and a list of the offline tests that wait for a replay of their fixtures. It never reports a pass yet.
+8. Ask for review: `publish.request`. The answer is `needs_person` with a link. Give the person the link and stop. On that page the person reads exactly what will be published, and carries it out with the computer's own prompt. Call `publish.request` again afterwards to be told what was done.
 
 `target.status` says where a target stands and what to do next. States, in order: `added`, `signed_in`, `explored`, `drafted`, `tried`, `tested`, `published`. If you lose your place, ask for the status.
 
@@ -30,7 +30,7 @@ Anything2MCP puts deterministic, verified tools over an existing system. You dra
 
 - The runtime does the mechanical work: identify, read, compare, check.
 - You draft. You name tools, choose which endpoints matter, and say how a record is found again.
-- A person signs in, approves a write, and publishes.
+- A person signs in, approves a write, and publishes. A person's act you ask for, such as a publish, answers `needs_person` with a link to the page where the person does it.
 - There is no approve tool, command, or route. Do not look for one. When a run says `needs_approval`, tell the person and stop.
 
 ## Where each kind of knowledge goes

@@ -185,6 +185,15 @@ pub(crate) struct SurfaceFields {
     /// The named root the store's file is in.
     #[serde(default)]
     pub root: Option<String>,
+    /// A server store's port.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// A server store's database.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// The one schema of a server store that statements are read in.
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 /// The pack's details of one step. Which fields are set depends on the
