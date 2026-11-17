@@ -19,6 +19,8 @@ Nothing in this document has been built. It is an audit and a design. Where it p
 
 Sections 2.4, 5, and 9 and appendix A below describe the rename as something still to do, and are kept as the record of what was planned. The marks **Proposed** and **Open** on anything in that table no longer apply.
 
+**The order of work now lives in the [roadmap](roadmap.md),** which lists every package through version 1.0 with its state. Section 7 below is kept as the reasoning behind stages A to F. The arrangement of the code is in [the architecture](../architecture/README.md).
+
 ## 0. How to read this
 
 Every statement of direction carries one of three marks.

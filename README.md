@@ -71,7 +71,7 @@ The [catalog of surface kinds](docs/spec/62-catalog-of-surface-kinds.md) has the
 - Continuous checks on three operating systems: formatting, lints, build, tests, a closed list of dependency licences, and an audit that keeps the documents and the crates consistent with each other.
 - The design: 67 sections, the decisions behind them, the research they rest on, and a register of the bets still to be tested.
 
-What comes next is in the [long-term plan](docs/plan/anything2mcp-master-plan.md). Progress is in the [changelog](CHANGELOG.md) and, session by session, in the [journal](docs/journal/README.md).
+What comes next is in the [roadmap](docs/plan/roadmap.md). Progress is in the [changelog](CHANGELOG.md) and, session by session, in the [journal](docs/journal/README.md).
 
 ## Installing
 
@@ -91,7 +91,8 @@ npm install -g anything2mcp
 | See the whole design | [The specification](docs/spec/README.md) |
 | See what was decided and why | [Decision records](docs/decisions/README.md) |
 | Check what is researched and what is a guess | [Research notes](docs/research/README.md) and [the hypotheses](docs/hypotheses/README.md) |
-| Know the plan | [The long-term plan](docs/plan/anything2mcp-master-plan.md) |
+| See how the code fits together | [The architecture](docs/architecture/README.md), with one design per crate |
+| Know the plan | [The roadmap](docs/plan/roadmap.md): every work package to version 1.0 |
 | See what it should feel like when finished | [The walkthrough](docs/reference/walkthrough.md) |
 | Build it | [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) |
 

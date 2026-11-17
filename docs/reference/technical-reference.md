@@ -4,26 +4,28 @@ This file holds the engineering detail behind the [system design](../spec/README
 
 ## Crate layering
 
-Crates depend only downward, which keeps build times short and the core small. A crate may depend only on the layers its row names, never on a crate in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge ([decision 0045](../decisions/0045-the-workspace-starts-with-every-crate-and-the-audit-enforces-the-layering.md), [decision 0056](../decisions/0056-one-name-everywhere-anything2mcp.md)).
+Crates depend only downward, which keeps build times short and the core small. A crate may depend only on the layers its row names, never on a crate in its own layer. `tools/docs_audit.py` reads this table, compares it with the crates on disk, and refuses any other edge. The reasoning behind each layer, and which crate defines each interface, are in [the architecture](../architecture/README.md) ([decision 0061](../decisions/0061-the-layers-are-redrawn-so-that-every-needed-dependency-is-allowed.md)).
 
-Layers 1 to 6 are the kernel. Layers 7 and 8 are the packs ([spec section 55](../spec/55-kernel-and-packs.md)).
+Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 55](../spec/55-kernel-and-packs.md)).
 
 | Layer | Crates | May depend on |
 | --- | --- | --- |
 | 1. Types | `a2m-core` | Nothing internal |
-| 2. Foundations | `a2m-files`, `a2m-expr`, `a2m-vault`, `a2m-telemetry` | Layer 1 |
-| 3. Services | `a2m-ledger`, `a2m-policy`, `a2m-auth`, `a2m-sources`, `a2m-provider` | Layers 1 to 2 |
-| 4. Engine | `a2m-engine`, `a2m-sched` | Layers 1 to 3 |
-| 5. Actions | `a2m-actions` | Layers 1 to 4 |
-| 6. Roles | `a2m-runner`, `a2m-mcp`, `a2m-api`, `a2m-local` | Layers 1 to 5 |
-| 7. Pack bases | `a2m-pack-web-browser` | Layers 1 to 3 |
-| 8. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop` | Layers 1 to 3, and the base of its own pack |
-| 9. Product | `anything2mcp` | Everything |
+| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry` | Layer 1 |
+| 3. Stores | `a2m-files`, `a2m-ledger` | Layers 1 to 2 |
+| 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Layers 1 to 3 |
+| 5. Contract | `a2m-provider` | Layers 1 to 4 |
+| 6. Engine | `a2m-engine`, `a2m-sched` | Layers 1 to 5 |
+| 7. Actions | `a2m-actions` | Layers 1 to 6 |
+| 8. Roles | `a2m-runner`, `a2m-mcp`, `a2m-api`, `a2m-local` | Layers 1 to 7 |
+| 9. Pack bases | `a2m-pack-web-browser` | Layers 1 to 5 |
+| 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop` | Layers 1 to 5, and the base of its own pack |
+| 11. Product | `anything2mcp` | Everything |
 
 Three rules follow from the table, and the audit states each one by name when it is broken:
 
 - **A kernel crate never depends on a pack crate.** The engine reaches a driver through the registry in `a2m-provider`, never by naming a pack.
-- **A pack crate sees only the kernel's first three layers.** It cannot call the engine, the scheduler, the action registry, or a front door. It registers what it offers and is called.
+- **A pack crate sees the kernel up to the contract, and nothing above it.** It cannot call the engine, the scheduler, the action registry, or a front door. It registers what it offers and is called.
 - **A pack crate depends on another pack crate only when that crate is the base of its own pack.** The pack is the third word of the name: `a2m-pack-web-ui` may use `a2m-pack-web-browser`, and `a2m-pack-http` may not.
 
 Only the product crate names packs, and it does nothing else with them than hand them to the registry.

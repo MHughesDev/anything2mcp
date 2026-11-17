@@ -9,7 +9,7 @@ Follow the eight steps in `docs/plan/working-method.md`. This is the checklist f
 
 ## Before writing code
 
-1. **Frame.** State the slice in one sentence, taken from `docs/plan/core-first.md`. List the hypotheses it tests from `docs/hypotheses/README.md`. Confirm that the slice before this one is proven; if it is not, stop and finish that first.
+1. **Frame.** State the slice in one sentence, taken from `docs/plan/roadmap.md`. Read the design of each crate it touches in `docs/architecture/crates/`; build the first unbuilt step of its build order. List the hypotheses it tests from `docs/hypotheses/README.md`. Confirm that the slice before this one is proven; if it is not, stop and finish that first.
 2. **Read** only the spec sections and references the slice needs. Check `docs/research/11-open-research.md` for a brief that should be run first.
 3. **Question.** Name at least one alternative to the documented design for this slice, and say in a few lines why the documented design is or is not still the better bet. If the alternative looks better, test it with the `test-hypothesis` skill or record the change of design as a decision; do not quietly build either.
 4. **Plan.** List the crates touched, which side of the kernel boundary each piece falls on, the interfaces added, and the tests that will prove the slice. Write the plan in the pull request or the journal, then build. Nobody has to approve it.
@@ -24,7 +24,7 @@ Follow the eight steps in `docs/plan/working-method.md`. This is the checklist f
 ## After building
 
 9. **Reflect.** What did this show about the design? Write hypothesis results. Correct sections that turned out wrong. Add a decision record for any decision made or changed. Add new hypotheses for doubts that came up.
-10. **Ship and report.** Push, open the pull request, and merge it when every check is green. Report what works, the numbers, what changed in the design, and what is next.
+10. **Ship and report.** Mark the package `done` in `docs/plan/roadmap.md`, and change what it unblocks to `ready`. Push, open the pull request, and merge it when every check is green. Report what works, the numbers, what changed in the design, and what is next.
 
 ## Limits
 

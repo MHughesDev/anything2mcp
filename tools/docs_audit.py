@@ -344,6 +344,23 @@ def main():
                 note("names", f"{rel}:{i}: `{found_name.group(0)}` is an earlier name; "
                               "the product is Anything2MCP, its crates are a2m-*")
 
+    # 16. Every crate has a design in docs/architecture/crates/, every design names a crate that
+    #     exists, and each design states the layer the layering table gives (decision 0061).
+    designs_dir = docs / "architecture" / "crates"
+    if designs_dir.is_dir():
+        designs = {f.stem: f.read_text(encoding="utf-8") for f in sorted(designs_dir.glob("*.md"))}
+        for c in sorted(set(on_disk) - set(designs)):
+            note("designs", f"crates/{c} has no design at docs/architecture/crates/{c}.md")
+        for c in sorted(set(designs) - set(on_disk)):
+            note("designs", f"docs/architecture/crates/{c}.md describes a crate that does not exist")
+        for c, text in sorted(designs.items()):
+            if not text.startswith(f"# `{c}`\n"):
+                note("designs", f"docs/architecture/crates/{c}.md must begin with the heading # `{c}`")
+            stated = re.search(r"^\| Layer \| (\d+)", text, re.M)
+            if c in layer and (not stated or int(stated.group(1)) != layer[c]):
+                note("designs", f"docs/architecture/crates/{c}.md must state layer {layer[c]} in its Facts table, "
+                                f"as the layering table does")
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
           f"{len(actions)} actions, {len(briefs)} open research briefs, {len(on_disk)} crates")

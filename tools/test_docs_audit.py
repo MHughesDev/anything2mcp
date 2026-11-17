@@ -58,25 +58,25 @@ class AuditCatches(unittest.TestCase):
 
     def test_a_dependency_on_a_higher_layer_is_refused(self):
         self.depend("a2m-core", "a2m-engine")
-        self.assert_finding("layering", "a2m-core (layer 1) depends on a2m-engine (layer 4)")
+        self.assert_finding("layering", "a2m-core (layer 1) depends on a2m-engine (layer 6)")
 
     def test_a_dependency_inside_a_layer_is_refused(self):
-        self.depend("a2m-auth", "a2m-ledger")
-        self.assert_finding("layering", "a2m-auth (layer 3) depends on a2m-ledger (layer 3)")
+        self.depend("a2m-auth", "a2m-policy")
+        self.assert_finding("layering", "a2m-auth (layer 4) depends on a2m-policy (layer 4)")
 
     def test_a_kernel_crate_that_depends_on_a_pack_is_refused(self):
         self.depend("a2m-engine", "a2m-pack-http")
-        self.assert_finding("layering", "a2m-engine (layer 4) depends on a2m-pack-http (layer 8)",
+        self.assert_finding("layering", "a2m-engine (layer 6) depends on a2m-pack-http (layer 10)",
                             "a kernel crate never depends on a pack crate")
 
     def test_a_pack_that_depends_on_the_engine_is_refused(self):
         self.depend("a2m-pack-http", "a2m-engine")
-        self.assert_finding("layering", "a2m-pack-http (layer 8) depends on a2m-engine (layer 4)",
-                            "allows layers 1 to 3")
+        self.assert_finding("layering", "a2m-pack-http (layer 10) depends on a2m-engine (layer 6)",
+                            "allows layers 1 to 5")
 
     def test_a_pack_that_depends_on_another_pack_is_refused(self):
         self.depend("a2m-pack-http", "a2m-pack-web-browser")
-        self.assert_finding("layering", "a2m-pack-http (layer 8) depends on a2m-pack-web-browser (layer 7)",
+        self.assert_finding("layering", "a2m-pack-http (layer 10) depends on a2m-pack-web-browser (layer 9)",
                             "only when that crate is the base of its own pack")
 
     def test_a_pack_that_depends_on_its_own_base_and_the_kernel_is_allowed(self):
@@ -84,6 +84,19 @@ class AuditCatches(unittest.TestCase):
         self.depend("a2m-pack-web-ui", "a2m-provider")
         code, out = self.audit()
         self.assertEqual(code, 0, out)
+
+    def test_the_edges_the_design_needs_are_allowed(self):
+        for crate, on in [("a2m-files", "a2m-expr"), ("a2m-policy", "a2m-ledger"), ("a2m-auth", "a2m-ledger"),
+                          ("a2m-provider", "a2m-auth"), ("a2m-provider", "a2m-sources"),
+                          ("a2m-engine", "a2m-provider"), ("a2m-sched", "a2m-ledger"),
+                          ("a2m-pack-http", "a2m-provider"), ("a2m-pack-web-browser", "a2m-auth")]:
+            self.depend(crate, on)
+        code, out = self.audit()
+        self.assertEqual(code, 0, out)
+
+    def test_the_engine_and_the_scheduler_may_not_depend_on_each_other(self):
+        self.depend("a2m-engine", "a2m-sched")
+        self.assert_finding("layering", "a2m-engine (layer 6) depends on a2m-sched (layer 6)")
 
     def test_the_product_crate_may_depend_on_everything(self):
         self.depend("anything2mcp", "a2m-engine")
@@ -150,6 +163,23 @@ class AuditCatches(unittest.TestCase):
         record.write_text(record.read_text(encoding="utf-8") + "\nWeb" + "2MCP was the first name.\n", encoding="utf-8")
         code, out = self.audit()
         self.assertEqual(code, 0, out)
+
+    def test_a_crate_without_a_design_is_refused(self):
+        (self.root / "docs" / "architecture" / "crates" / "a2m-expr.md").unlink()
+        self.assert_finding("designs", "crates/a2m-expr has no design")
+
+    def test_a_design_without_a_crate_is_refused(self):
+        folder = self.root / "docs" / "architecture" / "crates"
+        (folder / "a2m-extra.md").write_text("# `a2m-extra`\n", encoding="utf-8")
+        self.assert_finding("designs", "a2m-extra.md describes a crate that does not exist")
+
+    def test_a_design_that_states_the_wrong_layer_is_refused(self):
+        design = self.root / "docs" / "architecture" / "crates" / "a2m-core.md"
+        text = design.read_text(encoding="utf-8")
+        changed = text.replace("| Layer | 1", "| Layer | 2", 1)
+        self.assertNotEqual(text, changed)
+        design.write_text(changed, encoding="utf-8")
+        self.assert_finding("designs", "a2m-core.md must state layer 1")
 
     def test_a_broken_link_is_refused(self):
         page = self.root / "docs" / "README.md"
