@@ -3,10 +3,12 @@
 //! [`LocalSurface`] is the only holder of the approval desk. It shows a
 //! waiting write on a page served from a listener on the loopback address,
 //! which exists only while a page is waiting, on a random port, at an
-//! address that holds a one-time code. The page carries a one-time value
-//! of its own; a press without it does nothing. A press of Approve raises
-//! the presence prompt, and only the prompt's success reaches the desk,
-//! for the change the page showed and no other. Silence is a decline.
+//! address that holds a one-time code. The page shows the stored change
+//! itself, read through the desk, and carries a one-time value of its
+//! own; a press without it does nothing. A press of Approve raises the
+//! presence prompt, and only the prompt's success reaches the desk, for
+//! the change the page showed and no other. One prompt is up at a time,
+//! and it ends with the page's window. Silence is a decline.
 //!
 //! The listener is not a front door: it answers its page and two presses,
 //! and nothing else.
@@ -17,8 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use a2m_actions::{
-    ApprovalAsk, ApprovalDesk, BoxFuture, PersonSurface, PresenceAsk, PresenceProof, SessionAsk,
-    SignInAsk, SurfaceLink,
+    ApprovalAsk, ApprovalDesk, ApprovalPreview, BoxFuture, PersonSurface, PresenceAsk,
+    PresenceProof, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Digest, Failure, PrincipalId, RunId};
@@ -34,9 +36,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::codes;
-use crate::presence::{PresenceKind, PresencePrompt, PromptAnswer, PromptText};
+use crate::presence::{Availability, PresencePrompt, PromptAnswer, PromptName, PromptText};
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
@@ -46,6 +49,12 @@ const ANSWER_PAGE: &str = include_str!("pages/answer.html");
 const CODE_BYTES: usize = 16;
 /// The most a press may send: one short field.
 const PRESS_LIMIT: usize = 256;
+/// The most records of one change a page shows. A change with more cannot
+/// be read in full here, so it cannot be approved here either.
+const RECORDS_SHOWN: usize = 2_000;
+/// How many characters of the hash of a change the page shows beside
+/// Approve, and a prompt that carries words repeats.
+const SHORT_HASH: usize = 12;
 /// How many answered changes are remembered. An older one that is asked
 /// about again gets a new page, which the desk then refuses to act on.
 const ANSWERED_KEPT: usize = 256;
@@ -80,6 +89,11 @@ struct Page {
     pressed: bool,
     /// The window ended while a press was being carried out.
     ended: bool,
+    /// Whether the page served last showed every record of the change.
+    whole: bool,
+    /// The end of the approval window: the page goes then, and a prompt
+    /// raised for it is cancelled then.
+    deadline: Instant,
     timer: JoinHandle<()>,
 }
 
@@ -127,6 +141,9 @@ struct Inner {
     window: Duration,
     state: Mutex<Waiting>,
     waiting: watch::Sender<usize>,
+    /// Held while a prompt is up. One prompt at a time: a person never
+    /// answers a prompt that was raised for another change.
+    prompting: tokio::sync::Mutex<()>,
 }
 
 /// The person surface on one machine. Cheap to clone; every clone is the
@@ -179,6 +196,42 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// `template` with each `{{name}}` replaced by its value, in one pass, so
+/// that nothing inside a value is ever taken for a place to fill. The
+/// values are markup the caller made: text from anywhere else was escaped
+/// first.
+fn fill(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len() + 1024);
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let name = &after[..end];
+        if let Some((_, value)) = values.iter().find(|(key, _)| *key == name) {
+            out.push_str(value);
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The first characters of a hash, as the page shows them beside Approve.
+fn short(diff_hash: Digest) -> String {
+    diff_hash.to_string().chars().take(SHORT_HASH).collect()
+}
+
+/// The check an approval is recorded with. The policy engine's list of
+/// checks has one word for every prompt an operating system owns; when it
+/// has a word for each, this is the one place that maps them.
+const fn recorded_check(_prompt: PromptName) -> PresenceCheck {
+    PresenceCheck::OsPrompt
+}
+
 /// A page: the status, the fixed headers that keep it to itself, and the
 /// text.
 fn page(status: StatusCode, html: String) -> Response {
@@ -202,9 +255,10 @@ fn page(status: StatusCode, html: String) -> Response {
 fn answer(status: StatusCode, title: &str, detail: &str) -> Response {
     page(
         status,
-        ANSWER_PAGE
-            .replace("{{title}}", &escape(title))
-            .replace("{{detail}}", &escape(detail)),
+        fill(
+            ANSWER_PAGE,
+            &[("title", &escape(title)), ("detail", &escape(detail))],
+        ),
     )
 }
 
