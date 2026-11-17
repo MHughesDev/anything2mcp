@@ -10,6 +10,9 @@ use a2m_provider::StepFailure;
 pub const APP_VALIDATION_ERROR: FailureCode = FailureCode::fixed("app_validation_error");
 /// `stale`: the version sent with a write is no longer the record's.
 pub const VERSION_CONFLICT: FailureCode = FailureCode::fixed("version_conflict");
+/// `stale`: a write that sends a record's version as a precondition, in a
+/// pass that read no version for the record. Nothing is sent.
+pub const VERSION_NOT_READ: FailureCode = FailureCode::fixed("version_not_read");
 /// `drift`: the body of an accepted answer does not fit the declared shape.
 pub const RESPONSE_SCHEMA_MISMATCH: FailureCode = FailureCode::fixed("response_schema_mismatch");
 /// `unknown_variant`: a status the endpoint does not declare.
@@ -31,12 +34,16 @@ pub const TLS_NOT_ENABLED: FailureCode = FailureCode::fixed("tls_not_enabled");
 pub const AUTH_SCHEME_NOT_BUILT: FailureCode = FailureCode::fixed("auth_scheme_not_built");
 /// `input`: a published description that cannot be read.
 pub const DESCRIPTION_UNREADABLE: FailureCode = FailureCode::fixed("description_unreadable");
+/// `input`: a published description that is larger, deeper, or wider once
+/// its references are followed than the import reads.
+pub const DESCRIPTION_TOO_LARGE: FailureCode = FailureCode::fixed("description_too_large");
 
 /// Every code of this pack with its one class, as the manifest declares
 /// them. A test holds the two lists together.
 pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Rejected, "app_validation_error"),
     (FailureClass::Stale, "version_conflict"),
+    (FailureClass::Stale, "version_not_read"),
     (FailureClass::Drift, "response_schema_mismatch"),
     (FailureClass::UnknownVariant, "unexpected_status"),
     (FailureClass::UnknownVariant, "response_too_large"),
@@ -47,6 +54,7 @@ pub const ALL: &[(FailureClass, &str)] = &[
     (FailureClass::Input, "tls_not_enabled"),
     (FailureClass::Input, "auth_scheme_not_built"),
     (FailureClass::Input, "description_unreadable"),
+    (FailureClass::Input, "description_too_large"),
 ];
 
 pub(crate) fn failure(
@@ -86,6 +94,19 @@ pub(crate) fn surface_not_declared(what: &str) -> Failure {
         SURFACE_NOT_DECLARED,
         format!("{what} is not one of the addresses this run may reach."),
         "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.",
+    )
+}
+
+/// A write whose endpoint sends the record's version, in a pass that read
+/// none for the record. Nothing was sent.
+pub(crate) fn version_not_read(endpoint: &str) -> Failure {
+    failure(
+        FailureClass::Stale,
+        VERSION_NOT_READ,
+        format!(
+            "The endpoint `{endpoint}` sends the record's version with a write, and no version of the record was read in this pass; nothing was sent."
+        ),
+        "Preview the change again, so that the record is read before it is written.",
     )
 }
 

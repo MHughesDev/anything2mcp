@@ -6,7 +6,9 @@
 //! 0080). Every change of state is one compare-and-set on the session's
 //! state and epoch, written in one transaction with its timeline event and
 //! its saved state, so that two keepers on one store cannot both win a
-//! renewal.
+//! renewal. A lease, a passed check, and a restore are written only while
+//! the session's epoch is the one they were made for, so none of them is
+//! recorded for credentials that were replaced or ended meanwhile.
 
 use a2m_core::{
     DecisionId, Failure, RunId, RunnerId, SessionId, SessionState, Timestamp, WorkspaceId,
@@ -219,18 +221,28 @@ impl SessionStore {
             .await
     }
 
-    /// Notes a use or a passed check, and appends its event.
+    /// Notes a use, a passed check, or a restore, and appends its event,
+    /// only if the session's epoch is still the one the event names.
+    /// `false` when the session was renewed or ended first; nothing is
+    /// written then.
     pub(crate) async fn note(
         &self,
-        id: SessionId,
         used_at: Option<Timestamp>,
         checked_at: Option<Timestamp>,
         confirmed: bool,
         event: SessionEvent,
-    ) -> Result<(), Failure> {
+    ) -> Result<bool, Failure> {
         self.store
             .write(Durability::Relaxed, move |tx| {
-                tables::note(tx, id, used_at, checked_at, confirmed, &event)
+                tables::note(
+                    tx,
+                    event.session,
+                    event.epoch,
+                    used_at,
+                    checked_at,
+                    confirmed,
+                    &event,
+                )
             })
             .await
     }

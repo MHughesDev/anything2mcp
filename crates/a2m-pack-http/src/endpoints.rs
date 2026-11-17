@@ -12,7 +12,7 @@ use a2m_files::{
 use crate::shape::{Kind, Shape};
 use crate::template::{
     Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
-    VersionSink, VersionSource, parse_path,
+    VersionSink, VersionSource, is_connection_header, parse_path,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -230,10 +230,7 @@ pub(crate) fn template_of(
             );
             continue;
         }
-        if matches!(
-            name.as_str(),
-            "host" | "content-length" | "transfer-encoding" | "connection"
-        ) {
+        if is_connection_header(&name) {
             refuse(
                 "header_invalid",
                 &entry.key.at,
@@ -402,11 +399,11 @@ pub(crate) fn template_of(
     .into_iter()
     .flatten()
     {
-        if !is_header_name(name) {
+        if !is_header_name(name) || is_connection_header(name) {
             refuse(
                 "version_invalid",
                 &version_doc.map_or_else(|| doc.at.clone(), |v| v.at.clone()),
-                "A version rule's header is not a header's name.".to_owned(),
+                "A version rule's header is not a header's name, or is one the connection sets.".to_owned(),
                 "Write the header's name, such as `if-match`.",
             );
         }
@@ -414,13 +411,13 @@ pub(crate) fn template_of(
 
     let idempotency_header = doc.get("idempotency_header").and_then(|written| {
         let name = written.as_text().unwrap_or_default().to_ascii_lowercase();
-        if is_header_name(&name) {
+        if is_header_name(&name) && !is_connection_header(&name) {
             Some(name)
         } else {
             refuse(
                 "header_invalid",
                 &written.at,
-                "The idempotency header is not a header's name.".to_owned(),
+                "The idempotency header is not a header's name, or is one the connection sets.".to_owned(),
                 "Write the header's name, such as `Idempotency-Key`.",
             );
             None

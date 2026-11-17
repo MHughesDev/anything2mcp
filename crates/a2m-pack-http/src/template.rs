@@ -256,6 +256,11 @@ pub(crate) struct BodyField {
 pub(crate) struct RequestStep {
     pub query: Vec<String>,
     pub body: Vec<BodyField>,
+    /// For a write whose endpoint sends the record's version: the endpoint
+    /// whose read of the record supplies it. A version read through any
+    /// other endpoint is the version of something else.
+    #[serde(default)]
+    pub version_from: Option<String>,
 }
 
 /// The type a value taken out of an answer must have.
@@ -345,6 +350,16 @@ pub(crate) fn parse_path(text: &str) -> Result<(Vec<Segment>, bool), String> {
         }
     }
     Ok((segments, trailing_slash))
+}
+
+/// Whether a header is one the connection sets. No endpoint, idempotency
+/// token, or version may write one: `host` decides which system a request
+/// on the surface's connection is for, and the others its framing.
+pub(crate) fn is_connection_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host" | "content-length" | "transfer-encoding" | "connection"
+    )
 }
 
 const fn is_unreserved(byte: u8) -> bool {
@@ -547,6 +562,18 @@ pub(crate) fn build(
         headers.push((header.clone(), text));
     }
 
+    // The compiler refuses a header the connection sets; a plan that holds
+    // one all the same is refused here, where it would be sent.
+    if let Some((name, _)) = headers
+        .iter()
+        .find(|(name, _)| is_connection_header(name))
+    {
+        return Err(unusable(format!(
+            "the header `{}` is set by the connection, and no endpoint may write it",
+            codes::shown(name)
+        )));
+    }
+
     Ok(Built {
         method: template.method,
         path,
@@ -684,6 +711,59 @@ mod tests {
         }
         assert_eq!(with(Value::Int(7)).unwrap().path, "/api/orders/7/items");
         assert!(with(Value::List(Vec::new())).is_err());
+
+        // Dot segments and separators that are already encoded, a second
+        // `//`, a user name, a matrix parameter: none is decoded by this
+        // pack, so each is encoded once more and stays one segment.
+        let cases = [
+            ("%2e%2e", "%252e%252e"),
+            (".%2e", ".%252e"),
+            ("..%2fadmin", "..%252fadmin"),
+            ("%5c%5cevil.example", "%255c%255cevil.example"),
+            ("user:pw@evil.example", "user%3Apw%40evil.example"),
+            ("a;b=c", "a%3Bb%3Dc"),
+            ("..;", "..%3B"),
+            ("\u{ff0f}evil", "%EF%BC%8Fevil"),
+        ];
+        for (value, encoded) in cases {
+            let built = with(Value::from(value)).unwrap();
+            assert_eq!(
+                built.path,
+                format!("/api/orders/{encoded}/items"),
+                "{value}"
+            );
+        }
+        for bad in ["//evil.example", "\\\\evil.example", "a/..", "/"] {
+            let failure = with(Value::from(bad)).unwrap_err();
+            assert_eq!(failure.code(), &codes::PATH_VALUE_REFUSED, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_header_the_connection_sets_is_refused_where_it_would_be_sent() {
+        // The compiler refuses these; a plan that holds one all the same
+        // never reaches the connection with it.
+        let args = Values::new();
+        let step = RequestStep::default();
+        for name in ["host", "content-length", "transfer-encoding", "connection"] {
+            let mut written = template("/api/items", Method::Get);
+            written
+                .headers
+                .insert(name.to_owned(), "other.example.test".to_owned());
+            let mut stamped = template("/api/items", Method::Get);
+            stamped.idempotency_header = Some(name.to_owned());
+            let mut versioned = template("/api/items", Method::Get);
+            versioned.version.send = Some(super::VersionSink::Header(name.to_owned()));
+            let version = crate::json::Json::Text("7".to_owned());
+            let extras = Extras {
+                stamp: Some("stamp-1"),
+                version: Some(&version),
+            };
+            for template in [written, stamped, versioned] {
+                let failure = build(&template, &step, &args, extras).unwrap_err();
+                assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "{name}");
+            }
+        }
     }
 
     #[test]
@@ -691,6 +771,7 @@ mod tests {
         let template = template("/api/items", Method::Put);
         let step = RequestStep {
             query: vec!["q".to_owned(), "skipped".to_owned()],
+            version_from: None,
             body: vec![
                 BodyField {
                     name: "description".to_owned(),

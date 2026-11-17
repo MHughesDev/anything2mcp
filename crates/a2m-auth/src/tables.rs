@@ -254,30 +254,39 @@ pub(crate) fn advance(
     Ok(true)
 }
 
-/// Notes a use or a passed check, and appends its event. A check that
-/// confirmed the credential clears the count of unconfirmed attempts. It
-/// changes neither the state nor the epoch, so it needs no compare-and-set.
+/// Notes a use, a passed check, or a restore, and appends its event, only
+/// if the session's epoch is still `epoch`: the credentials the note is
+/// about are still the session's. `false` when the session was renewed or
+/// ended first; nothing is written then. A check that confirmed the
+/// credential clears the count of unconfirmed attempts. A note changes
+/// neither the state nor the epoch.
 pub(crate) fn note(
     tx: &mut Tx<'_>,
     id: SessionId,
+    epoch: u64,
     used_at: Option<Timestamp>,
     checked_at: Option<Timestamp>,
     confirmed: bool,
     event: &SessionEvent,
-) -> Result<(), Failure> {
-    tx.tables(OWNER).execute(
+) -> Result<bool, Failure> {
+    let changed = tx.tables(OWNER).execute(
         "UPDATE sessions SET last_used_at = COALESCE(?2, last_used_at),
                 checked_at = COALESCE(?3, checked_at),
                 stored_attempts = CASE WHEN ?4 = 1 THEN 0 ELSE stored_attempts END
-         WHERE id = ?1",
+         WHERE id = ?1 AND epoch = ?5",
         &[
             SqlValue::from(id.to_string()),
             SqlValue::from(used_at),
             SqlValue::from(checked_at),
             SqlValue::from(confirmed),
+            number(epoch),
         ],
     )?;
-    insert_event(tx, event)
+    if changed == 0 {
+        return Ok(false);
+    }
+    insert_event(tx, event)?;
+    Ok(true)
 }
 
 /// A session's saved state, sealed.

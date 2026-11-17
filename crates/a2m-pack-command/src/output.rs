@@ -1,7 +1,7 @@
 //! From what a program printed to typed values, by the one form its command
 //! declares. Anything the form does not cover is a failure, never a guess.
 
-use a2m_core::{Decimal, Value, Values};
+use a2m_core::{Decimal, Redact, Value, Values};
 
 use crate::json::{self, Json};
 use crate::model::{JsonField, JsonKind, Matching, Output};
@@ -163,13 +163,69 @@ pub fn parse(text: &str, form: &Output) -> Result<Parsed, Unparsed> {
     }
 }
 
+/// Reads standard output by its declared form, so that no value holds a
+/// secret: the text is redacted whole before it is read, and every value
+/// again after. The second pass is for a form that decodes what it reads:
+/// a JSON text written with escapes is not the secret until it is decoded.
+///
+/// # Errors
+///
+/// Why the output is not of the form.
+pub fn read(redact: &dyn Redact, text: &str, form: &Output) -> Result<Parsed, Unparsed> {
+    Ok(match parse(&redact.redact(text), form)? {
+        Parsed::Record(values) => Parsed::Record(redact.redact_values(&values)),
+        Parsed::Rows(rows) => Parsed::Rows(
+            rows.iter()
+                .map(|values| redact.redact_values(values))
+                .collect(),
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use a2m_core::{Decimal, Value};
+    use a2m_core::{Decimal, Redact, Value};
 
-    use super::{Parsed, parse};
+    use super::{Parsed, parse, read};
+
+    /// A redactor that knows one made-up secret.
+    struct Planted;
+
+    impl Redact for Planted {
+        fn redact(&self, text: &str) -> String {
+            text.replace("secret-for-tests-0001", a2m_core::REDACTED)
+        }
+    }
+
+    #[test]
+    fn a_secret_that_decoding_puts_together_is_in_no_value() {
+        let form = Output::Json {
+            lines: false,
+            fields: BTreeMap::from([(
+                "note".to_owned(),
+                JsonField {
+                    kind: JsonKind::Text,
+                    required: true,
+                },
+            )]),
+        };
+        // As printed, and with one character written as an escape.
+        for printed in [
+            r#"{"note":"it is secret-for-tests-0001"}"#,
+            r#"{"note":"it is secret-for-tests-0001"}"#,
+        ] {
+            let Ok(Parsed::Record(values)) = read(&Planted, printed, &form) else {
+                panic!("{printed} was not read");
+            };
+            assert_eq!(
+                values.get("note"),
+                Some(&Value::from(format!("it is {}", a2m_core::REDACTED))),
+                "{printed}"
+            );
+        }
+    }
     use crate::model::{JsonField, JsonKind, Matching, Output};
 
     fn json(lines: bool) -> Output {

@@ -92,6 +92,10 @@ class = "stale"
 code = "version_conflict"
 
 [[failure_codes]]
+class = "stale"
+code = "version_not_read"
+
+[[failure_codes]]
 class = "drift"
 code = "response_schema_mismatch"
 
@@ -130,6 +134,10 @@ code = "auth_scheme_not_built"
 [[failure_codes]]
 class = "input"
 code = "description_unreadable"
+
+[[failure_codes]]
+class = "input"
+code = "description_too_large"
 
 [effects]
 network = "surfaces"

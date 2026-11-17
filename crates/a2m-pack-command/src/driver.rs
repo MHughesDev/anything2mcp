@@ -25,11 +25,11 @@ use a2m_provider::{
 
 use crate::args::{self, Given};
 use crate::codes::{
-    self, AMBIGUOUS_MATCH, APP_VALIDATION_ERROR, FILE_KIND, LIMIT_EXCEEDED, NEEDS_LOGIN,
-    OUTPUT_UNPARSED, PACK, PROGRAM_BUSY, PROGRAM_DIGEST_CHANGED, PROGRAM_MISSING,
+    self, AMBIGUOUS_MATCH, APP_VALIDATION_ERROR, CLEANUP_INCOMPLETE, FILE_KIND, LIMIT_EXCEEDED,
+    NEEDS_LOGIN, OUTPUT_UNPARSED, PACK, PROGRAM_BUSY, PROGRAM_DIGEST_CHANGED, PROGRAM_MISSING,
     PROGRAM_PATH_UNSAFE, PROGRAM_VERSION_UNSUPPORTED, READ_ONLY_POSTURE, RECORD_ABSENT,
     SCHEMA_INVALID, SURFACE_KIND, UNEXPECTED_EXIT_STATUS, UNEXPECTED_PROMPT, UPSTREAM_UNAVAILABLE,
-    VERSION_CONFLICT, answered, not_sent, possible_commit, shown,
+    VERSION_CONFLICT, answered, not_sent, not_usable, possible_commit, shown,
 };
 use crate::model::{
     Command, Effect, ExitMeaning, Limits, Probe, Program, Section, StepPayload, VersionCheck,
@@ -44,6 +44,8 @@ pub(crate) const RUNS_ROOT: &str = "command_runs";
 pub(crate) const SUBSYSTEM: &str = "command";
 /// How long a help or version form may run.
 const PROBE_LIMIT_MS: u32 = 10_000;
+/// How many names are tried for a run's folder before the run is refused.
+const FOLDER_TRIES: u32 = 64;
 
 /// The driver of the `cli` mode.
 pub(crate) struct CliDriver {
@@ -59,6 +61,9 @@ pub(crate) struct CliDriver {
 /// How the last start of a program ended, kept between its three steps.
 struct Last {
     command: String,
+    /// Whether the command writes: a step that cannot read how such a start
+    /// ended leaves a write in doubt.
+    writes: bool,
     finished: Finished,
     /// What `expect` made of the exit status: `Some(true)` for `ok`,
     /// `Some(false)` for `absent`.
@@ -132,22 +137,56 @@ fn digest_changed(path: &Path, why: &str) -> StepFailure {
     )
 }
 
-/// The failure a step raises when the plan does not hold together for it.
-fn as_written(step: &Step, what: &str) -> StepFailure {
-    StepFailure::not_sent(Failure::new(
-        step.fails_as.class,
-        step.fails_as.code.clone(),
-        format!(
-            "The `{}` step cannot be done as written: {what}.",
-            step.kind
-        ),
-        "Compile the target again with the pack that is enabled now.",
-    ))
+/// The failure of a step that reads how a start ended and cannot be done
+/// as written. When the last start was of a command that writes, nothing
+/// confirms that write, and the failure says so instead.
+fn unconfirmed(session: &Session, failure: StepFailure) -> StepFailure {
+    if session.last.as_ref().is_some_and(|last| last.writes) {
+        possible_commit("the step that confirms it cannot be done as the plan wrote it")
+    } else {
+        failure
+    }
+}
+
+/// A program whose process group could not be ended has not finished:
+/// what it started may still be running, and still writing.
+fn left_running(finished: &Finished, writes: bool) -> Option<StepFailure> {
+    if finished.cleanup.complete {
+        return None;
+    }
+    Some(if writes {
+        possible_commit("left something running that could not be ended")
+    } else {
+        answered(
+            FailureClass::Busy,
+            CLEANUP_INCOMPLETE,
+            "The program ended, and something it started could not be ended.",
+            "End what the program left running; new starts on the surface wait until then.",
+        )
+    })
+}
+
+/// Whether the supervisor kept less of standard output than was written.
+fn stdout_cut(finished: &Finished) -> bool {
+    finished.stdout_bytes > finished.stdout.len() as u64
 }
 
 impl CliDriver {
     fn text(&self, bytes: &[u8]) -> String {
         self.redact.redact(&String::from_utf8_lossy(bytes))
+    }
+
+    /// What a program said on standard error, as a failure may quote it.
+    ///
+    /// The whole text is redacted first. Control characters are then taken
+    /// out, which can join the two halves of a secret that one of them
+    /// divided, so the text is redacted again. The cut comes last: a cut
+    /// before the redactor would leave part of a secret that no redactor
+    /// can match.
+    fn said(&self, stderr: &str) -> String {
+        let whole = self.redact.redact(stderr.trim());
+        let clean: String = whole.chars().filter(|c| !c.is_control()).collect();
+        shown(&self.redact.redact(&clean))
     }
 
     fn capture(&self, name: &str, bytes: &[u8]) -> Capture {
@@ -166,6 +205,7 @@ impl CliDriver {
         program: Option<&Program>,
         limits: Limits,
         deadline: Deadline,
+        writes: bool,
     ) -> Result<Finished, StepFailure> {
         let allowed_ms = u64::from(limits.timeout_ms)
             .min(self.max_timeout_ms)
@@ -209,7 +249,10 @@ impl CliDriver {
             stdin: None,
         };
         match session.supervisor.run(spec, link).await {
-            Ok(finished) => Ok(finished),
+            Ok(finished) => match left_running(&finished, writes) {
+                Some(failure) => Err(failure),
+                None => Ok(finished),
+            },
             Err(ConnFailure {
                 failure,
                 ran: Ran::Unknown,
@@ -263,7 +306,7 @@ impl CliDriver {
             ..Limits::default()
         };
         let finished = self
-            .start(session, check.args.clone(), None, limits, deadline)
+            .start(session, check.args.clone(), None, limits, deadline, false)
             .await?;
         let unsupported = |why: &str| {
             answered(
@@ -276,7 +319,7 @@ impl CliDriver {
                 "Install a supported version, or check the target's files against this one and add it to `program.version.supported`.",
             )
         };
-        match reported_version(check, &finished) {
+        match reported_version(check, &finished, &self.text(&finished.stdout)) {
             Some(version) if check.supported.contains(&version) => Ok(version),
             Some(_) => Err(unsupported(
                 "reports a version the target's files were not written for",
@@ -329,20 +372,7 @@ impl CliDriver {
             ));
         }
 
-        // A fresh, empty folder for this run.
-        let number = self.next_folder.fetch_add(1, Ordering::Relaxed);
-        let run: String = cx
-            .run
-            .to_string()
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .collect();
-        let workdir = self
-            .roots
-            .folder(&self.runs_root, Access::Write)
-            .and_then(|root| root.join(&format!("{run}-{}-{number}", std::process::id())))
-            .and_then(|folder| folder.create_dir_all().map(|()| folder))
-            .map_err(StepFailure::not_sent)?;
+        let workdir = self.fresh_folder(cx)?;
 
         let test_environment = cx
             .plan
@@ -374,6 +404,48 @@ impl CliDriver {
             }
         }
         Ok(session)
+    }
+
+    /// Makes the run's own folder: one that was not there before, and
+    /// that holds nothing.
+    ///
+    /// The name is the run, this process, and a count that starts again
+    /// with each engine, so an earlier engine with the same process number
+    /// may have left a folder of the same name. Such a folder is never
+    /// used, emptied, or removed: the next name is taken.
+    fn fresh_folder(&self, cx: &PrepareContext<'_>) -> Result<CheckedPath, StepFailure> {
+        let run: String = cx
+            .run
+            .to_string()
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
+        let root = self
+            .roots
+            .folder(&self.runs_root, Access::Write)
+            .map_err(StepFailure::not_sent)?;
+        for _ in 0..FOLDER_TRIES {
+            let number = self.next_folder.fetch_add(1, Ordering::Relaxed);
+            let folder = root
+                .join(&format!("{run}-{}-{number}", std::process::id()))
+                .map_err(StepFailure::not_sent)?;
+            if folder.exists() {
+                continue;
+            }
+            folder.create_dir_all().map_err(StepFailure::not_sent)?;
+            let empty = folder
+                .list()
+                .is_ok_and(|(entries, left_out)| entries.is_empty() && left_out == 0);
+            if empty {
+                return Ok(folder);
+            }
+        }
+        Err(StepFailure::not_sent(Failure::new(
+            FailureClass::Input,
+            a2m_provider::codes::FILE_UNAVAILABLE,
+            "No empty folder could be made for the run: every name tried was already taken.",
+            "Remove what earlier runs left under the command pack's `command_runs` root.",
+        )))
     }
 
     async fn probe(
@@ -443,10 +515,24 @@ impl CliDriver {
         let shown_elements = elements.clone();
         // A bare environment: nothing of the file's `env` is given.
         let finished = self
-            .start(session, elements, None, limits, input.deadline)
+            .start(session, elements, None, limits, input.deadline, false)
             .await?;
+        // Output the supervisor cut is not shown at all: the cut was made
+        // before the redactor could see the text, and may have divided a
+        // secret. `truncated` says that it happened.
+        let stdout = if stdout_cut(&finished) {
+            String::new()
+        } else {
+            self.text(&finished.stdout)
+        };
+        let version = match (probe, &program.version) {
+            (Probe::Version, Some(check)) => {
+                reported_version(check, &finished, &stdout).map(|version| (check, version))
+            }
+            _ => None,
+        };
         let mut values = Values::new()
-            .with("stdout", self.text(&finished.stdout))
+            .with("stdout", stdout)
             .with(
                 "elements",
                 shown_elements
@@ -459,11 +545,10 @@ impl CliDriver {
         if let Exit::Code(code) = finished.exit {
             values.insert("exit", i64::from(code));
         }
-        if let (Probe::Version, Some(check)) = (probe, &program.version)
-            && let Some(version) = reported_version(check, &finished)
-        {
+        if let Some((check, version)) = version {
             values.insert("pattern", check.stdout.clone());
-            values.insert("version", self.redact.redact(&version));
+            // Read from text that was redacted whole.
+            values.insert("version", version);
         }
         Ok(StepOutcome::Done(Observed {
             values,
@@ -477,6 +562,8 @@ impl CliDriver {
         step: &Step,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
+        // Whatever this start comes to, no later step reads an earlier one.
+        session.last = None;
         let payload: StepPayload = step.payload.decode().map_err(StepFailure::not_sent)?;
         let key_params = match payload {
             StepPayload::Probe { program, probe } => {
@@ -499,6 +586,26 @@ impl CliDriver {
         }
         let (name, command, program) = found(session, step)?;
         let name = name.to_owned();
+        // A command that writes is started only by the step the plan marks
+        // as a commit point, for a record the ledger holds an intent for.
+        // The handle lets such a step through only with the ledger's token;
+        // the compiler's word that the plan is so is not relied on here.
+        let writes = command.effect != Effect::Read;
+        if writes && !step.commits {
+            return Err(not_usable(&format!(
+                "the command `{name}` writes, and the step is not marked as a commit point"
+            )));
+        }
+        if !writes && step.commits {
+            return Err(not_usable(&format!(
+                "the step is marked as a commit point, and the command `{name}` is declared `read`"
+            )));
+        }
+        if writes && input.record.is_none() {
+            return Err(not_usable(&format!(
+                "the command `{name}` writes, and the step belongs to no record of the ledger"
+            )));
+        }
         let elements = args::elements(
             command,
             &Given {
@@ -508,10 +615,16 @@ impl CliDriver {
                 stamp: input.stamp,
             },
         )?;
-        let writes = command.effect != Effect::Read;
         let limits = command.limits;
         let finished = self
-            .start(session, elements, Some(program), limits, input.deadline)
+            .start(
+                session,
+                elements,
+                Some(program),
+                limits,
+                input.deadline,
+                writes,
+            )
             .await?;
         let over = [
             ("stdout", finished.stdout_bytes, limits.stdout_bytes),
@@ -539,6 +652,7 @@ impl CliDriver {
         ];
         session.last = Some(Last {
             command: name,
+            writes,
             finished,
             done: None,
         });
@@ -549,9 +663,13 @@ impl CliDriver {
     }
 
     fn expect(&self, session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailure> {
-        let (name, command, program) = found(session, step)?;
+        let (name, command, program) =
+            found(session, step).map_err(|failure| unconfirmed(session, failure))?;
         let Some(last) = session.last.as_ref().filter(|last| last.command == name) else {
-            return Err(as_written(step, "its program was not started first"));
+            return Err(unconfirmed(
+                session,
+                not_usable("its program was not started first"),
+            ));
         };
         let writes = command.effect != Effect::Read;
         let stdout = String::from_utf8_lossy(&last.finished.stdout);
@@ -578,9 +696,9 @@ impl CliDriver {
             Exit::Code(code) => command.exits.get(&code.to_string()).copied(),
             Exit::Killed => None,
         };
-        // What the program said on standard error, cut, cleaned, and
-        // redacted. It is untrusted text and is marked as such.
-        let said = self.redact.redact(&shown(stderr.trim()));
+        // What the program said on standard error: redacted, cleaned, and
+        // only then cut. It is untrusted text and is marked as such.
+        let said = self.said(&stderr);
         let own = |class, code, what: &str, next: &str| {
             answered(
                 class,
@@ -680,14 +798,22 @@ impl CliDriver {
     }
 
     fn parse(&self, session: &Session, step: &Step) -> Result<StepOutcome, StepFailure> {
-        let (name, command, _) = found(session, step)?;
-        let one = match step.payload.decode().map_err(StepFailure::not_sent)? {
+        let (name, command, _) =
+            found(session, step).map_err(|failure| unconfirmed(session, failure))?;
+        let one = match step
+            .payload
+            .decode()
+            .map_err(|failure| unconfirmed(session, StepFailure::not_sent(failure)))?
+        {
             StepPayload::Command { one, .. } => one,
             StepPayload::Probe { .. } => false,
         };
         let last = session.last.as_ref().filter(|last| last.command == name);
         let Some((last, done)) = last.and_then(|last| last.done.map(|done| (last, done))) else {
-            return Err(as_written(step, "its program's exit was not checked first"));
+            return Err(unconfirmed(
+                session,
+                not_usable("its program's exit was not checked first"),
+            ));
         };
         if !done {
             return Ok(StepOutcome::Absent(Observed::default()));
@@ -710,9 +836,10 @@ impl CliDriver {
         let Ok(text) = std::str::from_utf8(&last.finished.stdout) else {
             return Err(unparsed("it is not UTF-8"));
         };
-        // Redacted before it is read, so no value can hold a secret.
-        let text = self.redact.redact(text);
-        let parsed = output::parse(&text, &command.output).map_err(|why| unparsed(&why))?;
+        // Redacted before it is read and again after: reading can put a
+        // secret together that the program printed in pieces.
+        let parsed = output::read(self.redact.as_ref(), text, &command.output)
+            .map_err(|why| unparsed(&why))?;
         let values = match parsed {
             Parsed::Record(values) => values,
             Parsed::Rows(mut rows) if one => match rows.len() {
@@ -773,15 +900,18 @@ fn passed(program: Option<&Program>) -> Vec<String> {
 }
 
 /// The version a finished version command reported, when it ended as
-/// declared and its output matches the declared pattern.
-fn reported_version(check: &VersionCheck, finished: &Finished) -> Option<String> {
-    if !matches!(finished.exit, Exit::Code(code) if check.exits.contains(&code)) {
+/// declared and its output matches the declared pattern. `text` is its
+/// standard output, redacted whole: the version is a piece of it, and a
+/// piece is never taken from text the redactor has not seen.
+fn reported_version(check: &VersionCheck, finished: &Finished, text: &str) -> Option<String> {
+    if !matches!(finished.exit, Exit::Code(code) if check.exits.contains(&code))
+        || stdout_cut(finished)
+    {
         return None;
     }
-    let text = String::from_utf8_lossy(&finished.stdout);
     let line = text
         .strip_suffix('\n')
-        .map_or(&*text, |line| line.strip_suffix('\r').unwrap_or(line));
+        .map_or(text, |line| line.strip_suffix('\r').unwrap_or(line));
     pattern::whole(&check.stdout)
         .ok()?
         .captures(line)?
@@ -799,18 +929,18 @@ fn found<'a>(
         .refers_to
         .as_ref()
         .map(|reference| reference.entry.as_str())
-        .ok_or_else(|| as_written(step, "it refers to no command"))?;
+        .ok_or_else(|| not_usable("it refers to no command"))?;
     let command = session
         .section
         .commands
         .get(entry)
-        .ok_or_else(|| as_written(step, "the plan holds no command of that name"))?;
+        .ok_or_else(|| not_usable("the plan holds no command of that name"))?;
     let program = session
         .section
         .programs
         .get(command.program as usize)
         .filter(|program| program.surface == session.surface)
-        .ok_or_else(|| as_written(step, "its command belongs to another surface"))?;
+        .ok_or_else(|| not_usable("its command belongs to another surface"))?;
     Ok((entry, command, program))
 }
 
@@ -843,7 +973,7 @@ impl Driver for CliDriver {
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
             let Some(session) = prepared.state::<Session>() else {
-                return Err(as_written(step, "the driver was not prepared for it"));
+                return Err(not_usable("the driver was not prepared for it"));
             };
             if step.kind == codes::SPAWN {
                 self.spawn(session, step, input).await
@@ -852,7 +982,7 @@ impl Driver for CliDriver {
             } else if step.kind == codes::PARSE {
                 self.parse(session, step)
             } else {
-                Err(as_written(step, "the mode has no step of that kind"))
+                Err(not_usable("the mode has no step of that kind"))
             }
         })
     }

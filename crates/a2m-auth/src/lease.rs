@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    DecisionId, Failure, PrincipalId, REDACTED, RunId, RunnerId, Secret, SessionId, SessionState,
-    Timestamp,
+    DecisionId, Failure, PrincipalId, REDACTED, Redact, RunId, RunnerId, Secret, SessionId,
+    SessionState, Timestamp,
 };
 use a2m_vault::Vault;
 
@@ -102,7 +102,8 @@ pub struct SessionGrant {
 /// holds only to place them into a driver's client.
 ///
 /// A lease is a snapshot, not a promise. It is good while the session's
-/// epoch is the one it names. A driver that sees a sign of expiry asks
+/// epoch is the one it names and the session has not ended. A driver that
+/// sees a sign of expiry asks
 /// [`SessionLease::detect_expiry`], stops its step with `session_expired`,
 /// and leaves the report to the engine; it never renews.
 pub struct SessionLease {
@@ -161,22 +162,26 @@ impl SessionLease {
     ///
     /// `session_expired`/`device_required` when this process does not hold
     /// the session's credentials; `session_expired`/`lease_stale` when the
-    /// credentials were replaced or ended after the lease was granted; the
-    /// provider's failure when its material lacks a part.
+    /// credentials were replaced after the lease was granted, or the session
+    /// was ended, whatever is held; the provider's failure, with every
+    /// registered secret masked, when its material lacks a part.
     pub fn apply(&self, sink: &mut dyn CredentialSink) -> Result<(), Failure> {
         let bound = self.bound.as_ref().ok_or_else(failure::device_required)?;
+        // The home runner's own word on the session: the credentials at the
+        // lease's epoch, and no end at a later one. An end is remembered
+        // there, so credentials that reach the runner after it, by a restore
+        // that was slow, are neither held nor placed.
         let held = bound
             .live
-            .held(self.grant.session)
+            .usable(self.grant.session, self.grant.epoch)
             .ok_or_else(failure::lease_stale)?;
-        if held.epoch != self.grant.epoch {
-            return Err(failure::lease_stale());
-        }
         let mut registering = Registering {
             sink,
             vault: &bound.vault,
         };
-        held.provider.inject(&held.material, &mut registering)
+        held.provider
+            .inject(&held.material, &mut registering)
+            .map_err(|failure| bound.vault.redactor().redact_failure(&failure))
     }
 
     /// Whether something the driver observed is a sign that the session has
