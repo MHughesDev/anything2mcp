@@ -304,7 +304,11 @@ impl Lowering for McpLowering {
         }
         let tool = tool_doc.as_text().unwrap_or_default();
         let Some(found) = find_tool(mappings, &surface_name, tool) else {
-            return Err(Diagnostics::from(unmapped(&tool_doc.at, tool, &surface_name)));
+            return Err(Diagnostics::from(unmapped(
+                &tool_doc.at,
+                tool,
+                &surface_name,
+            )));
         };
         let entry = tool_entry(found.entry);
         let operation = cx.operation();

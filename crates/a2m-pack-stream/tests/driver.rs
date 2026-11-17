@@ -506,7 +506,7 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
     // Stored, and no confirmation ever comes: the step's own time limit
     // ends the wait, and it is the same possible commit.
     scene.broker.set_fault(Fault::once(FaultKind::StoreThenSilent));
-    let write = ledger.write("A-100").await;
+    let write = ledger.write("A-100 again").await;
     let (handle, mut prepared) = scene
         .try_prepare(Posture::Live, Some(write.fence))
         .await
@@ -554,7 +554,10 @@ async fn a_resumed_publish_with_the_records_token_delivers_one_message() {
     handle.release(prepared, false).await;
 
     // The run is resumed and sends the same record again, with its token.
-    let again = ledger.write("A-102").await;
+    // (The test's ledger keeps the first run's lock on the record, as a
+    // real one would until reconcile; the second token is under a name of
+    // its own.)
+    let again = ledger.write("A-102 resumed").await;
     let (handle, mut prepared) = scene
         .try_prepare(Posture::Live, Some(again.fence))
         .await

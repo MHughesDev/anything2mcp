@@ -239,6 +239,13 @@ async fn on_store<T: Send + 'static>(
     joined.ok()
 }
 
+/// Closes a connection that will not be used again, on a blocking thread:
+/// closing a file is input and output too. The store rolls back whatever
+/// the connection left open.
+fn close(conn: Box<dyn Conn>) {
+    drop(tokio::task::spawn_blocking(move || drop(conn)));
+}
+
 /// The moment a step must be done by: its own time limit or the caller's
 /// deadline, whichever is first.
 fn until(step: &Step, input: &StepInput<'_>) -> Deadline {
@@ -286,8 +293,12 @@ impl Session {
             .await;
             match back {
                 Some((conn, false)) => *slot = Some(conn),
-                // Still open, or not returned: in doubt, so closed.
-                _ => self.lost = true,
+                // Still open: in doubt, so closed and never used again.
+                Some((conn, true)) => {
+                    close(conn);
+                    self.lost = true;
+                }
+                None => self.lost = true,
             }
         }
     }
@@ -679,6 +690,7 @@ impl Session {
                         })?;
                         // The key is known before the commit point, so that a
                         // lost answer to `commit` can be reconciled by it.
+                        let values = redact.redact_values(&values);
                         Ok(StepOutcome::Done(Observed {
                             values: values.clone(),
                             assigned_key: Some(key),
@@ -752,7 +764,10 @@ impl Session {
                 Err(self.answered(refused(refusal, access)).await)
             }
             // The connection is in doubt: it is closed, never used again.
-            Some((_, Err(CommitFailed::Unknown))) | None => {
+            in_doubt @ (Some((_, Err(CommitFailed::Unknown))) | None) => {
+                if let Some((conn, _)) = in_doubt {
+                    close(conn);
+                }
                 self.lost = true;
                 self.open = None;
                 self.ran = None;

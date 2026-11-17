@@ -70,7 +70,12 @@ impl Scene {
     async fn read(&self, step: &Step, args: Values) -> Result<StepOutcome, StepFailure> {
         let (handle, mut prepared) = self.prepared().await;
         let result = handle
-            .act(&mut prepared, step, &input(&args, None, None, None), Authority::Read)
+            .act(
+                &mut prepared,
+                step,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
             .await;
         handle.release(prepared, result.is_err()).await;
         result
@@ -78,7 +83,8 @@ impl Scene {
 
     async fn get(&self, order: &str) -> Result<StepOutcome, StepFailure> {
         let step = steps(&self.plan, "example_order_get").act;
-        self.read(&step, Values::new().with("order_id", order)).await
+        self.read(&step, Values::new().with("order_id", order))
+            .await
     }
 
     fn calls_to(&self, tool: &str) -> usize {
@@ -102,7 +108,11 @@ fn failed(outcome: Result<StepOutcome, StepFailure>) -> (FailureClass, String, S
     )
 }
 
-fn code(class: FailureClass, code: &a2m_core::FailureCode, sent: Sent) -> (FailureClass, String, Sent) {
+fn code(
+    class: FailureClass,
+    code: &a2m_core::FailureCode,
+    sent: Sent,
+) -> (FailureClass, String, Sent) {
     (class, code.as_str().to_owned(), sent)
 }
 
@@ -248,7 +258,11 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
         .await;
     assert_eq!(
         failed(rejected),
-        code(FailureClass::Rejected, &codes::APP_VALIDATION_ERROR, Sent::Answered)
+        code(
+            FailureClass::Rejected,
+            &codes::APP_VALIDATION_ERROR,
+            Sent::Answered
+        )
     );
     assert_eq!(control.write_count("A-101").unwrap(), 0);
 }
@@ -350,7 +364,11 @@ async fn a_changed_tool_is_drift_and_the_call_does_not_reach_the_stand() {
         control.set_drift(drift.clone()).unwrap();
         assert_eq!(
             failed(scene.get("A-100").await),
-            code(FailureClass::Drift, &codes::UPSTREAM_TOOL_CHANGED, Sent::NotSent),
+            code(
+                FailureClass::Drift,
+                &codes::UPSTREAM_TOOL_CHANGED,
+                Sent::NotSent
+            ),
             "{drift:?}"
         );
         control.clear_drift().unwrap();
@@ -417,8 +435,16 @@ async fn only_mapped_tools_are_reachable() {
     // Arguments that do not fit the pinned input schema never leave.
     let get = steps(&scene.plan, "example_order_get").act;
     assert_eq!(
-        failed(scene.read(&get, Values::new().with("order_id", 100_i64)).await),
-        code(FailureClass::Input, &codes::ARGUMENTS_INVALID, Sent::NotSent)
+        failed(
+            scene
+                .read(&get, Values::new().with("order_id", 100_i64))
+                .await
+        ),
+        code(
+            FailureClass::Input,
+            &codes::ARGUMENTS_INVALID,
+            Sent::NotSent
+        )
     );
     assert!(control.calls().unwrap().is_empty());
     assert_eq!(control.request_count("tools/call").unwrap(), 0);
@@ -431,7 +457,9 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     let on_get = |kind: FaultKind| Fault::once(kind).on_tool("orders_get");
 
     for shape in [Malformed::NotJson, Malformed::NotAResponse] {
-        control.set_fault(on_get(FaultKind::Malformed { shape })).unwrap();
+        control
+            .set_fault(on_get(FaultKind::Malformed { shape }))
+            .unwrap();
         let (class, code, _) = failed(scene.get("A-100").await);
         assert_eq!(
             (class, code.as_str()),
@@ -455,13 +483,23 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
         .unwrap();
     assert_eq!(
         failed(scene.get("A-100").await),
-        code(FailureClass::Transient, &codes::UPSTREAM_UNAVAILABLE, Sent::Answered)
+        code(
+            FailureClass::Transient,
+            &codes::UPSTREAM_UNAVAILABLE,
+            Sent::Answered
+        )
     );
 
-    control.set_fault(on_get(FaultKind::ResultOffSchema)).unwrap();
+    control
+        .set_fault(on_get(FaultKind::ResultOffSchema))
+        .unwrap();
     assert_eq!(
         failed(scene.get("A-100").await),
-        code(FailureClass::Drift, &codes::RESPONSE_SCHEMA_MISMATCH, Sent::Answered)
+        code(
+            FailureClass::Drift,
+            &codes::RESPONSE_SCHEMA_MISMATCH,
+            Sent::Answered
+        )
     );
 
     // Text added to a result to steer an agent is not among the values.
@@ -476,7 +514,11 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     let mut slow = steps(&scene.plan, "example_order_get").act;
     slow.timeout_ms = 200;
     assert_eq!(
-        failed(scene.read(&slow, Values::new().with("order_id", "A-100")).await),
+        failed(
+            scene
+                .read(&slow, Values::new().with("order_id", "A-100"))
+                .await
+        ),
         code(FailureClass::Transient, &codes::TIMEOUT, Sent::Unknown)
     );
     control.clear_faults().unwrap();
@@ -488,11 +530,20 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     let get = steps(&scene.plan, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let gone = handle
-        .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
         .await;
     assert_eq!(
         failed(gone),
-        code(FailureClass::Transient, &codes::CONNECTION_LOST, Sent::Answered)
+        code(
+            FailureClass::Transient,
+            &codes::CONNECTION_LOST,
+            Sent::Answered
+        )
     );
     handle.release(prepared, true).await;
     done(scene.get("A-100").await);
@@ -501,7 +552,11 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
 #[tokio::test]
 async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let scene = scene().await;
-    let secure = surface(&scene.plan, "orders", Some("https://orders.example.test/mcp"));
+    let secure = surface(
+        &scene.plan,
+        "orders",
+        Some("https://orders.example.test/mcp"),
+    );
     let refused = prepare(
         &scene.registry,
         &scene.plan,
@@ -513,7 +568,11 @@ async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     .await
     .unwrap_err();
     assert_eq!(
-        (refused.failure.class(), refused.failure.code(), refused.sent),
+        (
+            refused.failure.class(),
+            refused.failure.code(),
+            refused.sent
+        ),
         (FailureClass::Input, &codes::TLS_NOT_ENABLED, Sent::NotSent)
     );
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
@@ -523,7 +582,10 @@ async fn an_https_upstream_is_refused_because_tls_is_not_built() {
         DriverHealth::Unavailable(codes::TLS_NOT_ENABLED)
     );
     assert_eq!(handle.health(&scene.surface), DriverHealth::Ready);
-    assert_eq!(scene.stand.control().request_count("initialize").unwrap(), 0);
+    assert_eq!(
+        scene.stand.control().request_count("initialize").unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -546,7 +608,12 @@ async fn the_revision_with_no_handshake_is_spoken_when_the_surface_states_it() {
     let args = Values::new().with("order_id", "A-102");
     let read = done(
         handle
-            .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
             .await,
     );
     assert_eq!(read.values.get("reference"), Some(&Value::from("REF-102")));
@@ -595,7 +662,12 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
         .unwrap();
         observed.push(done(
             handle
-                .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+                .act(
+                    &mut prepared,
+                    &get,
+                    &input(&args, None, None, None),
+                    Authority::Read,
+                )
                 .await,
         ));
         handle.release(prepared, false).await;
@@ -618,7 +690,11 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
         .collect();
     assert_eq!(
         callers,
-        [Some("ada".to_owned()), Some("bob".to_owned()), Some("ada".to_owned())]
+        [
+            Some("ada".to_owned()),
+            Some("bob".to_owned()),
+            Some("ada".to_owned())
+        ]
     );
 
     // The system's answer holds a secret: the stand is told, by a plain
@@ -660,10 +736,19 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     .unwrap();
     let read = done(
         handle
-            .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+            .act(
+                &mut prepared,
+                &get,
+                &input(&args, None, None, None),
+                Authority::Read,
+            )
             .await,
     );
-    assert!(!everything(&read).contains("PLANTED"), "{}", everything(&read));
+    assert!(
+        !everything(&read).contains("PLANTED"),
+        "{}",
+        everything(&read)
+    );
     for earlier in &observed {
         assert!(!everything(earlier).contains("PLANTED"));
     }
@@ -672,11 +757,20 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     // failure names no token.
     control.revoke_token("PLANTED-token-of-ada").unwrap();
     let failure = handle
-        .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
         .await
         .unwrap_err();
     assert_eq!(
-        (failure.failure.class(), failure.failure.code(), failure.sent),
+        (
+            failure.failure.class(),
+            failure.failure.code(),
+            failure.sent
+        ),
         (
             FailureClass::SessionExpired,
             &a2m_auth::codes::NEEDS_LOGIN,

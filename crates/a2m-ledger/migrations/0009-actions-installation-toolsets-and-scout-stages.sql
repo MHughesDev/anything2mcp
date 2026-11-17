@@ -45,3 +45,19 @@ CREATE TABLE actions_targets (
     first_published_at INTEGER NOT NULL,
     PRIMARY KEY (workspace_id, target)
 ) STRICT;
+
+-- What a run was called with, kept so that the runner that claims its job
+-- can fill the job: the stored input, and the verified facts about the
+-- caller that policy is asked with at guard. Keyed by what makes a run the
+-- same run (ledger rule 6), so that it is written before the run is
+-- admitted. `caller` is JSON of names and flags, never a credential.
+CREATE TABLE actions_run_calls (
+    workspace_id TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    target_version TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    input_ref TEXT NOT NULL,
+    caller TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, principal_id, tool_name, target_version, input_hash)
+) STRICT;

@@ -11,7 +11,9 @@ mod common;
 
 use a2m_core::{Archetype, FailureClass, Values};
 use a2m_provider::{Manifest, SurfaceDescription};
-use common::{Folder, compile, compiled_fixture, fixture_root, registry, shown, steps, write_target};
+use common::{
+    Folder, compile, compiled_fixture, fixture_root, registry, shown, steps, write_target,
+};
 use example_mcp::harness::HttpStand;
 
 #[test]
@@ -24,7 +26,11 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let names = a2m_pack_mcp::Names::new().unwrap();
     assert_eq!(one.archetype(&names.mode), Some(Archetype::Request));
     assert_eq!(one.modes().collect::<Vec<_>>(), [&names.mode]);
-    assert!(one.surface_kind(&a2m_pack_mcp::SURFACE_KIND).unwrap().session);
+    assert!(
+        one.surface_kind(&a2m_pack_mcp::SURFACE_KIND)
+            .unwrap()
+            .session
+    );
     let handle = one.driver(&names.mode).unwrap();
     assert_eq!(handle.choice().provider.as_str(), a2m_pack_mcp::PACK);
     let providers: Vec<String> = one
@@ -121,7 +127,8 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
 async fn the_fixture_pins_are_the_stands_definitions() {
     let stand = HttpStand::start().await.unwrap();
     let pins = common::listed_pins(&stand.url()).await;
-    let mapping = std::fs::read_to_string(fixture_root().join("mappings").join("orders.yaml")).unwrap();
+    let mapping =
+        std::fs::read_to_string(fixture_root().join("mappings").join("orders.yaml")).unwrap();
     let wrong: Vec<String> = pins
         .iter()
         .filter(|(tool, _)| tool != "orders_delete")
@@ -172,8 +179,14 @@ fn what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix() {
     assert_eq!(unpinned.at.file.as_str(), "mappings/orders_local.yaml");
 
     // A local server program with no digest.
-    let problems = problems_after("target.yaml", "    digest: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n", "");
-    let unpinned = problems.find("mcp.program_unpinned").expect("program_unpinned");
+    let problems = problems_after(
+        "target.yaml",
+        "    digest: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n",
+        "",
+    );
+    let unpinned = problems
+        .find("mcp.program_unpinned")
+        .expect("program_unpinned");
     assert_eq!(unpinned.at.file.as_str(), "target.yaml");
 
     // A write with no mapped read tool.
@@ -202,17 +215,25 @@ fn what_the_mapping_does_not_allow_is_refused_with_a_file_a_line_and_a_fix() {
         "    records: orders\n    retries: 3",
     );
     let in_file = |problems: &a2m_files::Diagnostics, file: &str| {
-        problems
-            .iter()
-            .any(|problem| problem.at.file.as_str() == file && problem.at.line > 1 && !problem.fix.is_empty())
+        problems.iter().any(|problem| {
+            problem.at.file.as_str() == file && problem.at.line > 1 && !problem.fix.is_empty()
+        })
     };
-    assert!(in_file(&problems, "mappings/orders.yaml"), "{}", shown(&problems));
+    assert!(
+        in_file(&problems, "mappings/orders.yaml"),
+        "{}",
+        shown(&problems)
+    );
     let problems = problems_after(
         "operations/order_get.yaml",
         "    tool: orders_get",
         "    tool: orders_get\n    retry: true",
     );
-    assert!(in_file(&problems, "operations/order_get.yaml"), "{}", shown(&problems));
+    assert!(
+        in_file(&problems, "operations/order_get.yaml"),
+        "{}",
+        shown(&problems)
+    );
 
     // An operation that states less than the tool it calls.
     let problems = problems_after(

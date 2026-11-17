@@ -163,9 +163,10 @@ fn protocol_error(code: i64, data: &Json, method: &str, tool: Option<&str>) -> S
             "The upstream server does not serve the protocol revision the surface states; {}.",
             listed_revisions(data)
         )),
-        (INVALID_PARAMS, Some(tool)) if method == "tools/call" => {
-            codes::tool_changed(tool, "is no longer accepted by the server as its mapping pins it")
-        }
+        (INVALID_PARAMS, Some(tool)) if method == "tools/call" => codes::tool_changed(
+            tool,
+            "is no longer accepted by the server as its mapping pins it",
+        ),
         _ => codes::unexpected(format!(
             "The upstream server answered `{method}` with the protocol error {code}, which the mapping does not foresee."
         )),
@@ -338,7 +339,12 @@ impl StdioLink {
         }
     }
 
-    async fn request(&self, id: u64, message: &Json, deadline: Deadline) -> Result<Json, StepFailure> {
+    async fn request(
+        &self,
+        id: u64,
+        message: &Json,
+        deadline: Deadline,
+    ) -> Result<Json, StepFailure> {
         if self.shared.lost.load(Ordering::SeqCst) {
             return Err(StepFailure::not_sent(codes::connection_lost(
                 "before the request was sent",
@@ -412,10 +418,9 @@ impl Drop for StdioLink {
     fn drop(&mut self) {
         self.reader.abort();
         // A link dropped without `close` still ends its program.
-        if let (Some((supervisor, id)), Ok(runtime)) = (
-            self.take_subsystem(),
-            tokio::runtime::Handle::try_current(),
-        ) {
+        if let (Some((supervisor, id)), Ok(runtime)) =
+            (self.take_subsystem(), tokio::runtime::Handle::try_current())
+        {
             runtime.spawn(async move {
                 let _ = supervisor.stop(id).await;
             });
@@ -518,8 +523,8 @@ impl HttpLink {
                     .map(str::to_owned)
             };
             let session = header("mcp-session-id");
-            let event_stream = header("content-type")
-                .is_some_and(|kind| kind.starts_with("text/event-stream"));
+            let event_stream =
+                header("content-type").is_some_and(|kind| kind.starts_with("text/event-stream"));
             let mut bytes = Vec::new();
             if !event_stream {
                 while let Some(chunk) = response.chunk().await? {
@@ -544,9 +549,9 @@ impl HttpLink {
             Ok(Ok(None)) => Err(StepFailure::unknown(codes::unexpected(
                 "The upstream server's answer is longer than the limit `max_message_bytes`.",
             ))),
-            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(
-                codes::unavailable("The upstream server could not be reached at its address."),
-            )),
+            Ok(Err(error)) if error.is_connect() => Err(StepFailure::not_sent(codes::unavailable(
+                "The upstream server could not be reached at its address.",
+            ))),
             Ok(Err(_)) => Err(StepFailure::unknown(codes::connection_lost(
                 "after the request was sent and before its answer came",
             ))),
@@ -621,7 +626,12 @@ impl HttpLink {
         }
     }
 
-    async fn notify(&self, message: &Json, revision: Revision, deadline: Deadline) -> Result<(), StepFailure> {
+    async fn notify(
+        &self,
+        message: &Json,
+        revision: Revision,
+        deadline: Deadline,
+    ) -> Result<(), StepFailure> {
         let exchange = self.post(message, revision, None, deadline).await?;
         match self.status_failure(exchange.status) {
             Some(failure) => Err(failure),
@@ -783,7 +793,12 @@ impl Client {
         }
     }
 
-    async fn notify(&self, method: &str, params: Json, deadline: Deadline) -> Result<(), StepFailure> {
+    async fn notify(
+        &self,
+        method: &str,
+        params: Json,
+        deadline: Deadline,
+    ) -> Result<(), StepFailure> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
         match &self.link {
             Link::Stdio(link) => link.notify(&message).await,
@@ -861,8 +876,10 @@ impl Client {
             Some(kind) => kind.as_str() == Some("complete"),
         };
         let content = raw.get("content").map(|content| content.as_array());
-        let (true, Some(blocks)) = (complete && raw.is_object(), content.unwrap_or(Some(&Vec::new())).cloned())
-        else {
+        let (true, Some(blocks)) = (
+            complete && raw.is_object(),
+            content.unwrap_or(Some(&Vec::new())).cloned(),
+        ) else {
             return Err(not_a_response());
         };
         let texts = blocks
@@ -874,7 +891,10 @@ impl Client {
         Ok(ToolResult {
             is_error: raw.get("isError").and_then(Json::as_bool) == Some(true),
             texts,
-            structured: raw.get("structuredContent").filter(|s| !s.is_null()).cloned(),
+            structured: raw
+                .get("structuredContent")
+                .filter(|s| !s.is_null())
+                .cloned(),
             raw,
         })
     }

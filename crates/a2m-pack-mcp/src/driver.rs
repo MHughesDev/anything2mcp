@@ -96,9 +96,7 @@ fn pin_of(entry: &ToolEntry, listed: Option<&ToolDefinition>) -> Pin {
     match (entry.digest.as_deref().and_then(parse_digest), listed) {
         (None, _) => Pin::Unpinned,
         (Some(_), None) => Pin::Gone,
-        (Some(pinned), Some(definition)) if definition_digest(definition) == pinned => {
-            Pin::Matches
-        }
+        (Some(pinned), Some(definition)) if definition_digest(definition) == pinned => Pin::Matches,
         (Some(_), Some(_)) => Pin::Changed,
     }
 }
@@ -490,8 +488,9 @@ impl McpDriver {
             }
             match &result.structured {
                 None => Values::new(),
-                Some(Json::Object(members)) => members_from_json(members)
-                    .ok_or_else(|| doubt(codes::schema_mismatch(tool)))?,
+                Some(Json::Object(members)) => {
+                    members_from_json(members).ok_or_else(|| doubt(codes::schema_mismatch(tool)))?
+                }
                 Some(_) => return Err(doubt(codes::schema_mismatch(tool))),
             }
         };

@@ -196,7 +196,10 @@ pub(crate) struct CallPayload {
 fn tool_schema() -> JsonSchema {
     JsonSchema::object()
         .optional("digest", JsonSchema::text())
-        .required("effect", JsonSchema::words(&["read", "write", "irreversible"]))
+        .required(
+            "effect",
+            JsonSchema::words(&["read", "write", "irreversible"]),
+        )
         .optional("read_back", JsonSchema::text())
         .optional("untrusted_fields", JsonSchema::list(JsonSchema::text()))
         .optional("result", JsonSchema::words(&["structured", "text"]))

@@ -531,8 +531,8 @@ async fn nothing_is_written_where_nothing_may_be() {
                 Sent::NotSent
             )
         );
-        // And a write statement run inside a read-only transaction is
-        // refused by the store.
+        // And a write statement inside a read-only transaction is refused
+        // by the driver before it is sent.
         run.step(&binding.read_back[0], &Values::new())
             .await
             .unwrap();

@@ -96,7 +96,12 @@ async fn a_local_server_program_is_started_by_the_supervisor_and_read_and_writte
     let get = steps(&scene.plan, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let Ok(StepOutcome::Done(read)) = handle
-        .act(&mut prepared, &get, &input(&args, None, None, None), Authority::Read)
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            Authority::Read,
+        )
         .await
     else {
         panic!("the read was not done");
@@ -197,5 +202,8 @@ async fn a_program_whose_digest_is_not_the_pinned_one_is_not_started() {
     .await
     .unwrap_err();
     assert_eq!(refused.sent, Sent::NotSent);
+    // The supervisor's refusal: the program on disk is not the one the
+    // plan declares.
+    assert_eq!(refused.failure.class(), FailureClass::Policy);
     assert!(scene.stand.control().connections().unwrap().is_empty());
 }

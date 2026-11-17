@@ -151,7 +151,9 @@ impl Discoverer for McpTools {
 
             let surface = scope.surface.surface.name.as_str();
             let seen = listing.get("server").filter(|server| !server.is_null());
-            let mapped = listing.get("mapped_server").filter(|server| !server.is_null());
+            let mapped = listing
+                .get("mapped_server")
+                .filter(|server| !server.is_null());
             out.found(finding(
                 &self.names.upstream_server,
                 &json!({
@@ -306,10 +308,7 @@ impl Describer for McpDescriber {
             }
         }
         data.insert("tools", a2m_core::Value::List(names));
-        data.insert(
-            "tool_count",
-            i64::try_from(tools.len()).unwrap_or(i64::MAX),
-        );
+        data.insert("tool_count", i64::try_from(tools.len()).unwrap_or(i64::MAX));
         Description {
             text,
             data,

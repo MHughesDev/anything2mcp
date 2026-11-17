@@ -149,7 +149,7 @@ impl CliDriver {
         Capture {
             name: name.to_owned(),
             media_type: "text/plain; charset=utf-8".to_owned(),
-            bytes: self.text(bytes).into_bytes(),
+            bytes: bytes.to_vec(),
         }
     }
 
@@ -640,11 +640,7 @@ impl CliDriver {
                     "Sign the program in again.",
                 ));
             }
-            None if writes => {
-                return Err(possible_commit(
-                    "ended with a status nothing declares, or by a signal",
-                ));
-            }
+
             None => {
                 return Err(answered(
                     FailureClass::UnknownVariant,

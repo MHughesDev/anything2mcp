@@ -231,7 +231,12 @@ pub async fn prepare(
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
     let handle = registry.driver(&mode).unwrap();
-    let programs = surface.surface.programs.iter().map(ProgramRef::from).collect();
+    let programs = surface
+        .surface
+        .programs
+        .iter()
+        .map(ProgramRef::from)
+        .collect();
     let supervisor = handle.supervisor(programs);
     let destinations = Destinations::new([surface.surface.address.clone()]);
     let cx = PrepareContext {
@@ -498,12 +503,16 @@ impl Sessions {
         };
         let reference = CredentialRef::new(&format!("vault://example/{account}/token")).unwrap();
         self.credentials
-            .put(&key.workspace, &key.identity, &reference, &Secret::new(token))
+            .put(
+                &key.workspace,
+                &key.identity,
+                &reference,
+                &Secret::new(token),
+            )
             .await
             .unwrap();
-        let entry = Arc::new(
-            AuthEntry::new(a2m_pack_mcp::auth_provider()).credential("token", reference),
-        );
+        let entry =
+            Arc::new(AuthEntry::new(a2m_pack_mcp::auth_provider()).credential("token", reference));
         self.keeper
             .sign_in(&key, Arc::clone(&entry), None)
             .await

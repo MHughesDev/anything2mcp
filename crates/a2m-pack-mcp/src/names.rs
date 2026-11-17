@@ -1,8 +1,6 @@
 //! The names the pack registers.
 
-use a2m_core::{
-    Failure, FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Verb,
-};
+use a2m_core::{Failure, FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Verb};
 use a2m_provider::DiscovererName;
 
 /// The pack's name: the owner of its file kind, its lint codes, and its
