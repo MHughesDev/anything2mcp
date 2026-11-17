@@ -310,27 +310,30 @@ impl ModbusTcp {
 }
 
 impl Link for ModbusTcp {
+    fn frame(&mut self, request: &Request) -> Option<Vec<u8>> {
+        let transaction = self.transaction.wrapping_add(1);
+        let bytes = pdu(request).and_then(|pdu| frame(transaction, self.unit, &pdu))?;
+        // The reply is matched against the frame built last.
+        self.transaction = transaction;
+        Some(bytes)
+    }
+
     fn send<'a>(
         &'a mut self,
-        request: &'a Request,
+        frame: &'a [u8],
         within: Duration,
-    ) -> BoxFuture<'a, Result<Vec<u8>, SendError>> {
+    ) -> BoxFuture<'a, Result<(), SendError>> {
         Box::pin(async move {
             let Some(stream) = self.stream.as_mut() else {
                 return Err(SendError::NotSent);
             };
-            let transaction = self.transaction.wrapping_add(1);
-            let bytes = pdu(request)
-                .and_then(|pdu| frame(transaction, self.unit, &pdu))
-                .ok_or(SendError::NotSent)?;
-            self.transaction = transaction;
             let sent = tokio::time::timeout(within, async {
-                stream.write_all(&bytes).await?;
+                stream.write_all(frame).await?;
                 stream.flush().await
             })
             .await;
             match sent {
-                Ok(Ok(())) => Ok(bytes),
+                Ok(Ok(())) => Ok(()),
                 // Some of the frame may have left: nothing says how much.
                 Ok(Err(_)) | Err(_) => {
                     self.stream = None;

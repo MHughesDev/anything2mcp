@@ -15,7 +15,7 @@ kind = "pack"
 name = "device"
 archetype = "device"
 verbs = ["read", "update", "submit"]
-steps = ["open", "write_frame", "read_frame", "expect"]
+steps = ["open", "build_frame", "write_frame", "read_frame", "expect"]
 rank = 60
 intent_window = 1
 session_reads = 1
@@ -86,8 +86,24 @@ class = "policy"
 code = "surface_not_declared"
 
 [[failure_codes]]
+class = "policy"
+code = "device_serial_not_declared"
+
+[[failure_codes]]
+class = "policy"
+code = "discovery_identifies_only"
+
+[[failure_codes]]
+class = "policy"
+code = "frame_budget_exceeded"
+
+[[failure_codes]]
 class = "unknown_variant"
 code = "device_identity_mismatch"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "physical_not_built"
 
 [[failure_codes]]
 class = "unknown_variant"
@@ -130,10 +146,21 @@ min = 10
 max = 60000
 doc = "How long a reply may take when a map states no pace."
 
+# Four frames a second at most. A person who knows the device can take
+# more may lower the gap.
 [[settings]]
 key = "min_gap_ms"
 type = "int"
-default = 50
+default = 250
 min = 0
 max = 60000
 doc = "The least time between two frames when a map states no pace."
+
+# Every frame counts: identification, reads, and writes.
+[[settings]]
+key = "max_frames_per_run"
+type = "int"
+default = 100
+min = 1
+max = 100000
+doc = "The most frames one run may send on one link."
