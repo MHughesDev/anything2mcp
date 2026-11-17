@@ -125,3 +125,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0113 | [A screen's fingerprint is a section, absent is a variant, and a table is read by its headings](0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md) | Accepted (design decision) |
 | 0115 | [The MCP endpoint as built: checks in front of the SDK, and a redactor on the way out](0115-the-mcp-endpoint-as-built-checks-in-front-of-the-sdk-and-a-redactor-on-the-way-out.md) | Accepted (design decision) |
 | 0117 | [The local channel and the person surface on one machine, as built](0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md) | Accepted (design decision) |
+| 0120 | [The desktop pack stands on each system's own interface, through thin bindings](0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md) | Accepted (design decision) |
+| 0130 | [The MCP protocol layer is our own, because the SDK brings an unmaintained crate](0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md) | Accepted (design decision) |
