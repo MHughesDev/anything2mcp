@@ -260,7 +260,12 @@ impl<'a> Run<'a> {
             }
         };
         for (position, binding) in operation.bindings.iter().enumerate() {
-            if self.job.pin.as_ref().is_some_and(|pin| pin != &binding.mode) {
+            if self
+                .job
+                .pin
+                .as_ref()
+                .is_some_and(|pin| pin != &binding.mode)
+            {
                 continue;
             }
             let no_binding = |why: String| {
@@ -374,7 +379,10 @@ impl<'a> Run<'a> {
                 codes::fail(
                     FailureClass::Busy,
                     codes::NO_BINDING,
-                    format!("The operation `{}` has no binding that may act.", operation.name),
+                    format!(
+                        "The operation `{}` has no binding that may act.",
+                        operation.name
+                    ),
                     "Verify a binding of the operation and publish the target again.",
                 )
             }));
@@ -519,7 +527,10 @@ impl<'a> Run<'a> {
                 return Err(codes::fail(
                     FailureClass::Busy,
                     codes::NO_RATE_BUDGET,
-                    format!("No rate budget was granted for the surface `{}`.", surface.name),
+                    format!(
+                        "No rate budget was granted for the surface `{}`.",
+                        surface.name
+                    ),
                     "Call the tool again later.",
                 ));
             }
@@ -551,7 +562,9 @@ impl<'a> Run<'a> {
     pub async fn step(&mut self, cx: StepCx<'_>) -> Result<Option<StepOutcome>, StepFailure> {
         let loaded = Arc::clone(&self.loaded);
         if let Some(when) = cx.step.when
-            && !loaded.holds(when, cx.scope).map_err(StepFailure::not_sent)?
+            && !loaded
+                .holds(when, cx.scope)
+                .map_err(StepFailure::not_sent)?
         {
             return Ok(None);
         }
@@ -625,7 +638,12 @@ impl<'a> Run<'a> {
     }
 
     /// Writes the record of one step into the trace.
-    fn traced(&mut self, cx: &StepCx<'_>, result: &Result<StepOutcome, StepFailure>, took: Duration) {
+    fn traced(
+        &mut self,
+        cx: &StepCx<'_>,
+        result: &Result<StepOutcome, StepFailure>,
+        took: Duration,
+    ) {
         let begins = self.begins.take().map(|info| {
             let held = &self.held[cx.held];
             PassStart {
@@ -793,11 +811,7 @@ fn session_usable(state: SessionState) -> bool {
     )
 }
 
-fn address_of(
-    environment: &a2m_core::EnvironmentPlan,
-    surface: usize,
-    default: &str,
-) -> String {
+fn address_of(environment: &a2m_core::EnvironmentPlan, surface: usize, default: &str) -> String {
     environment
         .addresses
         .iter()

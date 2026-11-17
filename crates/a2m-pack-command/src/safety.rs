@@ -152,7 +152,8 @@ mod tests {
     fn a_script_and_a_file_others_can_write_are_refused() {
         use std::os::unix::fs::PermissionsExt as _;
 
-        let folder = std::env::temp_dir().join(format!("a2m-pack-command-safety-{}", std::process::id()));
+        let folder =
+            std::env::temp_dir().join(format!("a2m-pack-command-safety-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let script = folder.join("example-tool");
         std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
@@ -162,7 +163,9 @@ mod tests {
         let open = folder.join("example-open");
         std::fs::write(&open, [0x7f, b'E', b'L', b'F']).unwrap();
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
-        assert!(matches!(check(&open), Err(Refused::Writable(path)) if path.ends_with("example-open")));
+        assert!(
+            matches!(check(&open), Err(Refused::Writable(path)) if path.ends_with("example-open"))
+        );
 
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(check(&open), Err(Refused::Missing), "it cannot be run");

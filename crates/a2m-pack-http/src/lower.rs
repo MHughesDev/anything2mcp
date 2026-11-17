@@ -243,7 +243,10 @@ impl<'a> Lower<'a, '_> {
                             "position_type",
                             Stage::TypeCheck,
                             &entry.value.at,
-                            format!("The query value `{}` is not one text, number, or truth value.", entry.key.value),
+                            format!(
+                                "The query value `{}` is not one text, number, or truth value.",
+                                entry.key.value
+                            ),
                             "Give a value that is one query value.",
                         );
                     }
@@ -274,7 +277,9 @@ impl<'a> Lower<'a, '_> {
             }
             for entry in body.entries() {
                 let name = &entry.key.value;
-                let Some(kind) = shape.and_then(|shape| shape.properties.get(name)).map(|p| p.kind)
+                let Some(kind) = shape
+                    .and_then(|shape| shape.properties.get(name))
+                    .map(|p| p.kind)
                 else {
                     if shape.is_some() {
                         self.refuse(
@@ -345,7 +350,10 @@ impl<'a> Lower<'a, '_> {
                 Some(VersionSink::Body(field)) => Some(field.as_str()),
                 _ => None,
             };
-            for required in shape.map(|shape| shape.required.as_slice()).unwrap_or_default() {
+            for required in shape
+                .map(|shape| shape.required.as_slice())
+                .unwrap_or_default()
+            {
                 let written = payload.body.iter().any(|field| field.name == *required);
                 if !written && sent_version != Some(required.as_str()) {
                     self.refuse(
@@ -425,12 +433,19 @@ impl<'a> Lower<'a, '_> {
                 }
             };
             let stars = path.iter().filter(|part| *part == "*").count();
-            let shape = found.template.response.at_path(&path).map(|(shape, _)| shape);
+            let shape = found
+                .template
+                .response
+                .at_path(&path)
+                .map(|(shape, _)| shape);
             let fits = shape.is_some_and(|shape| match take {
                 Take::Text => matches!(shape.kind, Kind::String | Kind::Any),
                 Take::Int => matches!(shape.kind, Kind::Integer | Kind::Any),
                 Take::Decimal => {
-                    matches!(shape.kind, Kind::Number | Kind::Integer | Kind::String | Kind::Any)
+                    matches!(
+                        shape.kind,
+                        Kind::Number | Kind::Integer | Kind::String | Kind::Any
+                    )
                 }
                 Take::Bool => matches!(shape.kind, Kind::Boolean | Kind::Any),
             });
@@ -620,7 +635,10 @@ impl Lowering for HttpLowering {
                             "effect_mismatch",
                             Stage::Analyze,
                             reader.at,
-                            format!("The record is read back through `{}`, which is marked `write`.", reader.name),
+                            format!(
+                                "The record is read back through `{}`, which is marked `write`.",
+                                reader.name
+                            ),
                             "Name an endpoint marked `read`.",
                         );
                     }

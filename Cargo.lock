@@ -8,6 +8,7 @@ version = "0.0.1"
 dependencies = [
  "a2m-auth",
  "a2m-core",
+ "a2m-engine",
  "a2m-files",
  "a2m-ledger",
  "a2m-policy",

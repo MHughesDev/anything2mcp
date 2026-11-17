@@ -181,7 +181,10 @@ impl Discoverer for HttpSurface {
                     .collect();
                 let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
                 let found = Json::Object(vec![
-                    ("format".to_owned(), Json::Text(ENDPOINT_FOUND_FORMAT.to_owned())),
+                    (
+                        "format".to_owned(),
+                        Json::Text(ENDPOINT_FOUND_FORMAT.to_owned()),
+                    ),
                     ("method".to_owned(), Json::Text(method.to_owned())),
                     ("path".to_owned(), Json::Text(root.clone())),
                     ("status".to_owned(), Json::Number(status.to_string())),
@@ -231,8 +234,8 @@ impl HttpDescription {
         // Braces are part of a template; anything else that is not plain
         // makes the address the surface's root, and the path stays in what
         // was found.
-        let address = Address::new(&origin.text, &path)
-            .or_else(|_| Address::new(&origin.text, "/"))?;
+        let address =
+            Address::new(&origin.text, &path).or_else(|_| Address::new(&origin.text, "/"))?;
         Ok(Finding::about(
             Subject::Address(address),
             self.kind.clone(),
@@ -286,12 +289,11 @@ impl Discoverer for HttpDescription {
                     .unwrap_or(DEFAULT_DESCRIPTION_PATH);
                 let answer = ReadClient::new(port, scope).get(path).await?;
                 let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
-                let body = answer
-                    .get("body")
-                    .and_then(Value::as_text)
-                    .ok_or_else(|| {
-                        unreadable(&format!("the surface answered the request for it with status {status}"))
-                    })?;
+                let body = answer.get("body").and_then(Value::as_text).ok_or_else(|| {
+                    unreadable(&format!(
+                        "the surface answered the request for it with status {status}"
+                    ))
+                })?;
                 if u64::try_from(body.len()).unwrap_or(u64::MAX) > scope.bounds.bytes {
                     return Err(unreadable("it is larger than the discovery may read"));
                 }

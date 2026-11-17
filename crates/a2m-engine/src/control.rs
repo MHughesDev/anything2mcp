@@ -191,10 +191,7 @@ impl EngineEvent {
     pub const fn must_be_acknowledged(&self) -> bool {
         matches!(
             self,
-            Self::Moved(_)
-                | Self::BeforeCommit { .. }
-                | Self::Result(_)
-                | Self::Discovered { .. }
+            Self::Moved(_) | Self::BeforeCommit { .. } | Self::Result(_) | Self::Discovered { .. }
         )
     }
 }
@@ -231,14 +228,16 @@ pub trait Control: Send + Sync {
 
     /// Relays a driver's sign that the session has ended to the keeper. The
     /// engine never renews; it asks for a lease again afterwards.
-    fn report_expiry<'a>(&'a self, lease: &'a SessionLease, sign: ExpirySign)
-    -> BoxFuture<'a, ()>;
+    fn report_expiry<'a>(&'a self, lease: &'a SessionLease, sign: ExpirySign) -> BoxFuture<'a, ()>;
 
     /// A rate budget of up to `want` requests on the surface, waiting
     /// through the scheduler up to its limit. Answers how many were
     /// granted, at least one.
-    fn rate<'a>(&'a self, surface: &'a SurfaceName, want: u32)
-    -> BoxFuture<'a, Result<u32, Failure>>;
+    fn rate<'a>(
+        &'a self,
+        surface: &'a SurfaceName,
+        want: u32,
+    ) -> BoxFuture<'a, Result<u32, Failure>>;
 
     /// Stores what the preview found: the commit points and the diff.
     fn store_preview<'a>(&'a self, preview: &'a Preview) -> BoxFuture<'a, Result<(), Failure>>;
@@ -272,9 +271,13 @@ pub trait Control: Send + Sync {
 
     /// Marks a record `verified`, with what was read back and its evidence.
     /// The ledger compares the digests itself and releases the lock.
+    ///
+    /// The proof is given up, as the intent token is in `acted`: the store
+    /// runs its transaction elsewhere and must own what it is handed. When
+    /// the call fails the record stays `acted`, and reconcile settles it.
     fn verified<'a>(
         &'a self,
-        token: &'a ActedToken,
+        token: ActedToken,
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>>;
 

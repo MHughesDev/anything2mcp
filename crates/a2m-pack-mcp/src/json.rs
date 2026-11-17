@@ -449,6 +449,19 @@ mod tests {
         }))
         .unwrap();
         assert!(search.takes_free_text());
-        assert!(!definition("x").marked_read_only() || !definition("x").takes_free_text());
+        // A closed list of values, or more than one property, is not it.
+        let of = |properties: serde_json::Value| {
+            ToolDefinition::from_listed(&json!({
+                "name": "orders_list",
+                "inputSchema": {"type": "object", "properties": properties}
+            }))
+            .unwrap()
+        };
+        assert!(!of(json!({"status": {"type": "string", "enum": ["draft"]}})).takes_free_text());
+        assert!(
+            !of(json!({"query": {"type": "string"}, "limit": {"type": "integer"}}))
+                .takes_free_text()
+        );
+        assert!(!of(json!({"limit": {"type": "integer"}})).takes_free_text());
     }
 }

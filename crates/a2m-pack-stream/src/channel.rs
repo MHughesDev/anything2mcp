@@ -40,7 +40,9 @@ macro_rules! words {
 
             /// The value a word names.
             pub(crate) fn from_word(word: &str) -> Option<Self> {
-                match word { $( $word => Some(Self::$variant), )+ _ => None }
+                [ $( Self::$variant ),+ ]
+                    .into_iter()
+                    .find(|value| value.as_str() == word)
             }
         }
     };
@@ -218,7 +220,13 @@ pub(crate) fn read_channel(
 ) -> Result<ChannelEntry, Vec<Diagnostic>> {
     let mut problems = Vec::new();
     let mut wrong = |at: &Place, message: String, fix: &str| {
-        problems.push(problem("channel_invalid", Stage::Validate, at, message, fix));
+        problems.push(problem(
+            "channel_invalid",
+            Stage::Validate,
+            at,
+            message,
+            fix,
+        ));
     };
     let word = |key: &str| doc.text(key).unwrap_or_default();
     let shape = Shape::from_word(word("shape")).unwrap_or(Shape::Topic);
@@ -318,7 +326,8 @@ pub(crate) fn read_channel(
     if ownership == Ownership::RuntimeOwned && shape != Shape::Queue {
         wrong(
             doc.get("ownership").map_or(&doc.at, |field| &field.at),
-            "Only a queue can be owned by the runtime: on any other shape nothing is taken.".to_owned(),
+            "Only a queue can be owned by the runtime: on any other shape nothing is taken."
+                .to_owned(),
             "Remove `ownership`, or correct `shape`.",
         );
     }
@@ -332,7 +341,8 @@ pub(crate) fn read_channel(
     {
         wrong(
             &idempotency.at,
-            "The idempotency header's name is empty, too long, or holds a control character.".to_owned(),
+            "The idempotency header's name is empty, too long, or holds a control character."
+                .to_owned(),
             "Write the header exactly as the broker or its consumers read it.",
         );
     }
@@ -629,8 +639,8 @@ impl MessageSchema {
                 continue;
             };
             let found = value.type_name();
-            let fits = found == rule.ty.as_str()
-                || (rule.ty == JsonType::Number && found == "integer");
+            let fits =
+                found == rule.ty.as_str() || (rule.ty == JsonType::Number && found == "integer");
             if !fits {
                 return Err(format!(
                     "the field `{name}` is a JSON {found}, and the schema needs a {}",
@@ -663,10 +673,9 @@ impl MessageSchema {
     /// optional `enum` of texts.
     pub(crate) fn from_registered(schema: &Json) -> Option<Self> {
         let map = schema.as_object()?;
-        if map
-            .keys()
-            .any(|key| !["type", "required", "properties", "additionalProperties"].contains(&key.as_str()))
-            || map.get("type")?.as_str()? != "object"
+        if map.keys().any(|key| {
+            !["type", "required", "properties", "additionalProperties"].contains(&key.as_str())
+        }) || map.get("type")?.as_str()? != "object"
         {
             return None;
         }
@@ -719,7 +728,11 @@ pub(crate) fn read_schema(doc: &Located<Doc>) -> Result<MessageSchema, Vec<Diagn
         .map(|list| list.items().iter().collect())
         .unwrap_or_default();
     let mut fields = BTreeMap::new();
-    for entry in doc.get("properties").map(Located::entries).unwrap_or_default() {
+    for entry in doc
+        .get("properties")
+        .map(Located::entries)
+        .unwrap_or_default()
+    {
         let name = entry.key.value.clone();
         let allowed: Vec<String> = entry
             .value
@@ -770,10 +783,7 @@ pub(crate) fn read_schema(doc: &Located<Doc>) -> Result<MessageSchema, Vec<Diagn
     if problems.is_empty() {
         Ok(MessageSchema {
             fields,
-            closed: doc
-                .get("additional_properties")
-                .and_then(Located::as_bool)
-                == Some(false),
+            closed: doc.get("additional_properties").and_then(Located::as_bool) == Some(false),
         })
     } else {
         Err(problems)

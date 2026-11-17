@@ -3,7 +3,7 @@
 //! run's evidence and discovery's findings use this one builder. Which
 //! screen models match is added by the crate that knows screen models.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use a2m_core::Redact;
@@ -60,8 +60,8 @@ pub struct SnapshotElement {
     pub role: String,
     /// The accessible name.
     pub name: String,
-    /// The value, where the element has one. A password's value is masked
-    /// by the browser before it reaches the tree.
+    /// The value, where the element has one. The value of a password
+    /// input is [`MASK`].
     pub value: Option<String>,
     /// Its states, in a fixed order.
     pub states: Vec<ElementState>,
@@ -84,6 +84,9 @@ pub struct Snapshot {
     /// Whether deeper content was cut to fit the limit.
     pub cut: bool,
 }
+
+/// What stands in a snapshot for the value of a password input.
+pub const MASK: &str = "••••";
 
 /// Roles that carry no meaning of their own; their children are kept.
 const TRANSPARENT: &[&str] = &["", "none", "generic", "RootWebArea", "presentation"];
@@ -114,6 +117,7 @@ impl Snapshot {
         address: String,
         title: String,
         nodes: &[AxNode],
+        masked: &BTreeSet<i64>,
         limits: &SnapshotLimits,
         redact: &dyn Redact,
     ) -> Self {
@@ -176,7 +180,16 @@ impl Snapshot {
                         .as_ref()
                         .map(|value| value.text())
                         .filter(|value| !value.is_empty())
-                        .map(|value| redact.redact(&value)),
+                        .map(|value| {
+                            let password = node
+                                .backend_dom_node_id
+                                .is_some_and(|number| masked.contains(&number));
+                            if password {
+                                MASK.to_owned()
+                            } else {
+                                redact.redact(&value)
+                            }
+                        }),
                     states,
                     level: property("level").and_then(|level| level.parse().ok()),
                     depth,
@@ -270,7 +283,7 @@ mod tests {
             {"nodeId":"3","parentId":"1","ignored":true,"role":{"value":"none"},"childIds":["6","7","8"]},
             {"nodeId":"6","parentId":"3","role":{"value":"LabelText"},"childIds":["10"]},
             {"nodeId":"10","parentId":"6","role":{"value":"StaticText"},"name":{"value":"Item code"}},
-            {"nodeId":"7","parentId":"3","role":{"value":"textbox"},"name":{"value":"Item code"},"value":{"value":"L-101"},
+            {"nodeId":"7","parentId":"3","backendDOMNodeId":70,"role":{"value":"textbox"},"name":{"value":"Item code"},"value":{"value":"L-101"},
              "properties":[{"name":"required","value":{"value":true}},{"name":"invalid","value":{"value":"false"}}]},
             {"nodeId":"8","parentId":"3","role":{"value":"paragraph"},"name":{"value":""},"childIds":["11"]},
             {"nodeId":"11","parentId":"8","role":{"value":"StaticText"},"name":{"value":"inches"}},
@@ -288,6 +301,7 @@ mod tests {
             "https://app.example.com/orders/A-100".to_owned(),
             "Order A-100".to_owned(),
             &tree(),
+            &BTreeSet::new(),
             &SnapshotLimits::default(),
             &NoSecrets,
         );
@@ -309,9 +323,12 @@ mod tests {
             String::new(),
             String::new(),
             &tree(),
+            &BTreeSet::from([70]),
             &SnapshotLimits { max_elements: 4 },
             &NoSecrets,
         );
+        // The node the engine was told is a password input shows no value.
+        assert_eq!(snapshot.elements[1].value.as_deref(), Some(MASK));
         assert!(snapshot.cut);
         let roles: Vec<&str> = snapshot.elements.iter().map(|e| e.role.as_str()).collect();
         assert_eq!(roles, ["heading", "textbox", "paragraph", "button"]);

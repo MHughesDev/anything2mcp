@@ -95,7 +95,10 @@ fn captures(compiled: &regex::Regex, text: &str) -> Option<Values> {
 pub fn parse(text: &str, form: &Output) -> Result<Parsed, Unparsed> {
     match form {
         Output::Ignored => Ok(Parsed::Record(Values::new())),
-        Output::Json { lines: true, fields } => lines(text)
+        Output::Json {
+            lines: true,
+            fields,
+        } => lines(text)
             .into_iter()
             .map(|line| {
                 let document = json::parse(line).map_err(|why| format!("a line is {why}"))?;
@@ -198,9 +201,15 @@ mod tests {
         );
         assert_eq!(values.get("note"), Some(&Value::Null));
         // A list of documents, and one document a line, are rows.
-        let listed = parse("[{\"sku\":\"A\",\"quantity\":1},{\"sku\":\"B\",\"quantity\":2}]", &json(false));
+        let listed = parse(
+            "[{\"sku\":\"A\",\"quantity\":1},{\"sku\":\"B\",\"quantity\":2}]",
+            &json(false),
+        );
         assert!(matches!(listed, Ok(Parsed::Rows(rows)) if rows.len() == 2));
-        let by_line = parse("{\"sku\":\"A\",\"quantity\":1}\n{\"sku\":\"B\",\"quantity\":2}\n", &json(true));
+        let by_line = parse(
+            "{\"sku\":\"A\",\"quantity\":1}\n{\"sku\":\"B\",\"quantity\":2}\n",
+            &json(true),
+        );
         assert!(matches!(by_line, Ok(Parsed::Rows(rows)) if rows.len() == 2));
         assert_eq!(parse("", &json(true)), Ok(Parsed::Rows(Vec::new())));
         for drifted in [

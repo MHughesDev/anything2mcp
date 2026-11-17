@@ -93,15 +93,24 @@ impl Scene {
         }
     }
 
-    async fn prepare(&self, posture: Posture, fence: Option<Fence>) -> Result<Prepared, StepFailure> {
+    async fn prepare(
+        &self,
+        posture: Posture,
+        fence: Option<Fence>,
+    ) -> Result<Prepared, StepFailure> {
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
         });
         // As the engine will: the programs the published plan declares.
-        let supervisor = self
-            .handle
-            .supervisor(self.surface.surface.programs.iter().map(ProgramRef::from).collect());
+        let supervisor = self.handle.supervisor(
+            self.surface
+                .surface
+                .programs
+                .iter()
+                .map(ProgramRef::from)
+                .collect(),
+        );
         let cx = PrepareContext {
             run: fence.run,
             epoch: fence.epoch,
@@ -165,9 +174,19 @@ impl Scene {
     async fn read(&self, operation: &str, args: &Values) -> Result<StepOutcome, StepFailure> {
         let mut prepared = self.live().await;
         let result = self
-            .run(&mut prepared, &self.binding(operation).act, args, With::default())
+            .run(
+                &mut prepared,
+                &self.binding(operation).act,
+                args,
+                With::default(),
+            )
             .await;
-        assert!(self.handle.release(prepared, result.is_err()).await.complete);
+        assert!(
+            self.handle
+                .release(prepared, result.is_err())
+                .await
+                .complete
+        );
         result
     }
 
@@ -199,7 +218,11 @@ fn failed(outcome: Result<StepOutcome, StepFailure>) -> StepFailure {
 
 fn is(failure: &StepFailure, class: FailureClass, code: &a2m_core::FailureCode, sent: Sent) {
     assert_eq!(
-        (failure.failure.class(), failure.failure.code(), failure.sent),
+        (
+            failure.failure.class(),
+            failure.failure.code(),
+            failure.sent
+        ),
         (class, code, sent),
         "{failure}"
     );
@@ -231,7 +254,11 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
         item.values.get("name"),
         Some(&Value::from("Étiquette « fragile »"))
     );
-    assert!(item.values.get("note").is_some_and(|note| note.as_text().is_some()));
+    assert!(
+        item.values
+            .get("note")
+            .is_some_and(|note| note.as_text().is_some())
+    );
 
     // A table: rows of text by column.
     let listed = done(scene.read("example_item_list", &Values::new()).await);
@@ -253,18 +280,37 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
     let starts = scene.starts();
     assert_eq!(starts[0].args, ["item", "show", "SK-1003", "--format=json"]);
     assert_eq!(starts[2].args, ["item", "list", "--location", "B01"]);
-    let names: Vec<&str> = starts[0]
+    for declared in [
+        "ANYTHING2MCP_OWNER_MARK",
+        "EXAMPLE_CLI_HOME",
+        "LC_ALL",
+        "TZ",
+    ] {
+        assert!(starts[0].env.contains_key(declared), "{declared}");
+    }
+    let undeclared: Vec<&String> = starts[0]
         .env
         .keys()
-        .map(String::as_str)
-        .filter(|name| !name.eq_ignore_ascii_case("SystemRoot"))
+        .filter(|name| {
+            ![
+                "ANYTHING2MCP_OWNER_MARK",
+                "EXAMPLE_CLI_HOME",
+                "LC_ALL",
+                "TZ",
+            ]
+            .contains(&name.as_str())
+                && !name.eq_ignore_ascii_case("SystemRoot")
+        })
         .collect();
-    assert_eq!(
-        names,
-        ["ANYTHING2MCP_OWNER_MARK", "EXAMPLE_CLI_HOME", "LC_ALL", "TZ"]
-    );
+    assert!(undeclared.is_empty(), "{undeclared:?}");
     let runs = scene.folder.path().join("runs");
-    assert!(std::path::Path::new(&starts[0].cwd).starts_with(&runs), "{}", starts[0].cwd);
+    let folder_of = |cwd: &str| {
+        std::path::Path::new(cwd)
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+    };
+    assert_eq!(folder_of(&starts[0].cwd).as_deref(), Some("runs"));
     assert_ne!(starts[0].cwd, starts[1].cwd);
     assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 0);
 
@@ -280,7 +326,12 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
         for step in &scene.binding("example_item_get").act {
             let one = done(
                 scene
-                    .run(&mut prepared, std::slice::from_ref(step), &sku("SK-1001"), With::default())
+                    .run(
+                        &mut prepared,
+                        std::slice::from_ref(step),
+                        &sku("SK-1001"),
+                        With::default(),
+                    )
                     .await,
             );
             all.captures.extend(one.captures);
@@ -297,17 +348,36 @@ async fn each_output_form_is_read_and_five_runs_of_one_read_are_the_same() {
 async fn arguments_arrive_exactly_and_no_input_becomes_an_option() {
     let scene = Scene::new();
     let text = "a b; $(reboot) `x` \"q\" 'r' | > é 日本\n--yes %PATH% ^& *";
-    done(scene.read("example_echo_text", &Values::new().with("text", text)).await);
+    done(
+        scene
+            .read("example_echo_text", &Values::new().with("text", text))
+            .await,
+    );
     let dashed = "--home=/elsewhere";
-    done(scene.read("example_echo_text", &Values::new().with("text", dashed)).await);
+    done(
+        scene
+            .read("example_echo_text", &Values::new().with("text", dashed))
+            .await,
+    );
     let starts = scene.starts();
-    assert_eq!(starts[0].args, ["echo", &format!("--text={text}"), "--", text]);
-    assert_eq!(starts[1].args, ["echo", &format!("--text={dashed}"), "--", dashed]);
+    assert_eq!(
+        starts[0].args,
+        ["echo", &format!("--text={text}"), "--", text]
+    );
+    assert_eq!(
+        starts[1].args,
+        ["echo", &format!("--text={dashed}"), "--", dashed]
+    );
 
     // A value that breaks its param's pattern is refused, and nothing starts.
     for bad in ["SK-1001 --yes", "--help", "SK-1001\nitem remove", ""] {
         let refused = failed(scene.read("example_item_get", &sku(bad)).await);
-        is(&refused, FailureClass::Input, &codes::SCHEMA_INVALID, Sent::NotSent);
+        is(
+            &refused,
+            FailureClass::Input,
+            &codes::SCHEMA_INVALID,
+            Sent::NotSent,
+        );
         assert!(!refused.failure.message().contains("--yes"));
     }
     assert_eq!(scene.starts().len(), 2);
@@ -331,7 +401,12 @@ async fn slow_output_is_read_and_a_ceiling_a_time_limit_and_a_child_are_held() {
         }))
         .unwrap();
     let over = failed(scene.read("example_stock_report", &report).await);
-    is(&over, FailureClass::Policy, &codes::LIMIT_EXCEEDED, Sent::Answered);
+    is(
+        &over,
+        FailureClass::Policy,
+        &codes::LIMIT_EXCEEDED,
+        Sent::Answered,
+    );
     assert!(over.failure.message().contains("limits.stdout"), "{over}");
 
     // A read that outlives its time, with a child that would outlive it:
@@ -344,7 +419,9 @@ async fn slow_output_is_read_and_a_ceiling_a_time_limit_and_a_child_are_held() {
         }))
         .unwrap();
     let mut prepared = scene.live().await;
-    let endless = Values::new().with("rows", 100_000_i64).with("pause", 200_i64);
+    let endless = Values::new()
+        .with("rows", 100_000_i64)
+        .with("pause", 200_i64);
     let late = failed(
         scene
             .run(
@@ -358,9 +435,18 @@ async fn slow_output_is_read_and_a_ceiling_a_time_limit_and_a_child_are_held() {
             )
             .await,
     );
-    is(&late, FailureClass::Transient, &codes::TIMEOUT, Sent::Unknown);
+    is(
+        &late,
+        FailureClass::Transient,
+        &codes::TIMEOUT,
+        Sent::Unknown,
+    );
     scene.handle.release(prepared, true).await;
-    scene.stand.control().wait_until_no_children(WITHIN).unwrap();
+    scene
+        .stand
+        .control()
+        .wait_until_no_children(WITHIN)
+        .unwrap();
     assert!(scene.registry.supervisor().leftovers().is_empty());
 
     // A program that exits and leaves a child: the child is ended too.
@@ -372,7 +458,11 @@ async fn slow_output_is_read_and_a_ceiling_a_time_limit_and_a_child_are_held() {
         }))
         .unwrap();
     done(scene.read("example_item_list", &Values::new()).await);
-    scene.stand.control().wait_until_no_children(WITHIN).unwrap();
+    scene
+        .stand
+        .control()
+        .wait_until_no_children(WITHIN)
+        .unwrap();
 }
 
 // ---- what a read's failure is: C9, C10, drift, exits ----
@@ -386,30 +476,68 @@ async fn a_read_that_cannot_be_done_as_written_fails_by_name() {
 
     fault(FaultKind::prompt());
     let asked = failed(get().await);
-    is(&asked, FailureClass::UnknownVariant, &codes::UNEXPECTED_PROMPT, Sent::Answered);
+    is(
+        &asked,
+        FailureClass::UnknownVariant,
+        &codes::UNEXPECTED_PROMPT,
+        Sent::Answered,
+    );
 
     fault(FaultKind::stop(StopPoint::Start, StopHow::Exit { code: 9 }));
     let undeclared = failed(get().await);
-    is(&undeclared, FailureClass::UnknownVariant, &codes::UNEXPECTED_EXIT_STATUS, Sent::Answered);
+    is(
+        &undeclared,
+        FailureClass::UnknownVariant,
+        &codes::UNEXPECTED_EXIT_STATUS,
+        Sent::Answered,
+    );
 
     fault(FaultKind::stop(StopPoint::Start, StopHow::Abort));
     let aborted = failed(get().await);
-    is(&aborted, FailureClass::UnknownVariant, &codes::UNEXPECTED_EXIT_STATUS, Sent::Answered);
+    is(
+        &aborted,
+        FailureClass::UnknownVariant,
+        &codes::UNEXPECTED_EXIT_STATUS,
+        Sent::Answered,
+    );
 
     fault(FaultKind::Drift);
     let drifted = failed(get().await);
-    is(&drifted, FailureClass::Drift, &codes::OUTPUT_UNPARSED, Sent::Answered);
+    is(
+        &drifted,
+        FailureClass::Drift,
+        &codes::OUTPUT_UNPARSED,
+        Sent::Answered,
+    );
     fault(FaultKind::Drift);
     let drifted = failed(scene.read("example_item_list", &Values::new()).await);
-    is(&drifted, FailureClass::Drift, &codes::OUTPUT_UNPARSED, Sent::Answered);
+    is(
+        &drifted,
+        FailureClass::Drift,
+        &codes::OUTPUT_UNPARSED,
+        Sent::Answered,
+    );
 
-    fault(FaultKind::stop(StopPoint::Start, StopHow::Exit { code: 75 }));
+    fault(FaultKind::stop(
+        StopPoint::Start,
+        StopHow::Exit { code: 75 },
+    ));
     let later = failed(get().await);
-    is(&later, FailureClass::Transient, &codes::UPSTREAM_UNAVAILABLE, Sent::Answered);
+    is(
+        &later,
+        FailureClass::Transient,
+        &codes::UPSTREAM_UNAVAILABLE,
+        Sent::Answered,
+    );
 
     fault(FaultKind::RequireSession);
     let signed_out = failed(get().await);
-    is(&signed_out, FailureClass::SessionExpired, &codes::NEEDS_LOGIN, Sent::Answered);
+    is(
+        &signed_out,
+        FailureClass::SessionExpired,
+        &codes::NEEDS_LOGIN,
+        Sent::Answered,
+    );
 }
 
 // ---- prepare: C12 ----
@@ -437,19 +565,39 @@ async fn another_version_and_another_build_are_refused_before_anything_runs() {
     let before = scene.stand.control().invocations().unwrap().len();
     let changed = failed(
         scene
-            .run(&mut prepared, &scene.binding("example_item_get").act, &sku("SK-1001"), With::default())
+            .run(
+                &mut prepared,
+                &scene.binding("example_item_get").act,
+                &sku("SK-1001"),
+                With::default(),
+            )
             .await,
     );
-    is(&changed, FailureClass::Drift, &codes::PROGRAM_DIGEST_CHANGED, Sent::NotSent);
+    is(
+        &changed,
+        FailureClass::Drift,
+        &codes::PROGRAM_DIGEST_CHANGED,
+        Sent::NotSent,
+    );
     scene.handle.release(prepared, true).await;
     let rebuilt = scene.prepare(Posture::Live, None).await.unwrap_err();
-    is(&rebuilt, FailureClass::Drift, &codes::PROGRAM_DIGEST_CHANGED, Sent::NotSent);
+    is(
+        &rebuilt,
+        FailureClass::Drift,
+        &codes::PROGRAM_DIGEST_CHANGED,
+        Sent::NotSent,
+    );
     assert_eq!(scene.stand.control().invocations().unwrap().len(), before);
 
     // A program that is not there.
     std::fs::remove_file(scene.stand.program()).unwrap();
     let missing = scene.prepare(Posture::Live, None).await.unwrap_err();
-    is(&missing, FailureClass::Drift, &codes::PROGRAM_MISSING, Sent::NotSent);
+    is(
+        &missing,
+        FailureClass::Drift,
+        &codes::PROGRAM_MISSING,
+        Sent::NotSent,
+    );
 }
 
 // ---- writes: C3 to C8, and the faults of every write ----
@@ -484,20 +632,48 @@ async fn a_write_is_made_once_and_read_back_and_a_stored_value_that_differs_is_s
     // Without the ledger's token the handle refuses, and nothing starts.
     let no_token = failed(
         scene
-            .run(&mut prepared, &binding.act, &set("SK-1001", 12), With { token: None, ..with })
+            .run(
+                &mut prepared,
+                &binding.act,
+                &set("SK-1001", 12),
+                With {
+                    token: None,
+                    ..with
+                },
+            )
             .await,
     );
-    is(&no_token, FailureClass::Policy, &a2m_provider::codes::INTENT_MISSING, Sent::NotSent);
+    is(
+        &no_token,
+        FailureClass::Policy,
+        &a2m_provider::codes::INTENT_MISSING,
+        Sent::NotSent,
+    );
     assert!(scene.starts().is_empty());
 
     // The write, its confirmation, and its read-back.
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1001", 12), with).await);
-    let confirmed = done(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await);
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1001", 12), with)
+            .await,
+    );
+    let confirmed = done(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    );
     assert_eq!(confirmed.values.get("quantity"), Some(&Value::from("12")));
-    let read = done(scene.run(&mut prepared, &binding.read_back, &sku("SK-1001"), with).await);
+    let read = done(
+        scene
+            .run(&mut prepared, &binding.read_back, &sku("SK-1001"), with)
+            .await,
+    );
     assert_eq!(read.values.get("quantity"), Some(&Value::Int(12)));
     // The stand's own file says the same, and that it was written once.
-    assert_eq!(control.stored_item("SK-1001").unwrap().unwrap().quantity, 12);
+    assert_eq!(
+        control.stored_item("SK-1001").unwrap().unwrap().quantity,
+        12
+    );
     assert_eq!(control.write_count("SK-1001").unwrap(), 1);
     assert_eq!(
         scene.starts()[0].args,
@@ -509,25 +685,69 @@ async fn a_write_is_made_once_and_read_back_and_a_stored_value_that_differs_is_s
     control
         .set_fault(&Fault::once(FaultKind::RoundQuantity { multiple: 10 }))
         .unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1001", 17), with).await);
-    let reported = done(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await);
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1001", 17), with)
+            .await,
+    );
+    let reported = done(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    );
     assert_eq!(reported.values.get("quantity"), Some(&Value::from("17")));
-    let stored = done(scene.run(&mut prepared, &binding.read_back, &sku("SK-1001"), with).await);
+    let stored = done(
+        scene
+            .run(&mut prepared, &binding.read_back, &sku("SK-1001"), with)
+            .await,
+    );
     assert_eq!(stored.values.get("quantity"), Some(&Value::Int(10)));
-    assert_eq!(control.stored_item("SK-1001").unwrap().unwrap().quantity, 10);
+    assert_eq!(
+        control.stored_item("SK-1001").unwrap().unwrap().quantity,
+        10
+    );
 
     // A refusal by the program's own rule: named, with its message marked
     // as untrusted, and nothing written.
     let writes = control.writes().unwrap().len();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1001", 99_999), with).await);
-    let rejected = failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await);
-    is(&rejected, FailureClass::Rejected, &codes::APP_VALIDATION_ERROR, Sent::Answered);
-    assert!(rejected.failure.message().contains("untrusted text"), "{rejected}");
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1001", 99_999), with)
+            .await,
+    );
+    let rejected = failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    );
+    is(
+        &rejected,
+        FailureClass::Rejected,
+        &codes::APP_VALIDATION_ERROR,
+        Sent::Answered,
+    );
+    assert!(
+        rejected.failure.message().contains("untrusted text"),
+        "{rejected}"
+    );
     // Another start holds the program's lock: busy, and nothing written.
     let held = control.hold_write_lock().unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1001", 5), with).await);
-    let busy = failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await);
-    is(&busy, FailureClass::Busy, &codes::PROGRAM_BUSY, Sent::Answered);
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1001", 5), with)
+            .await,
+    );
+    let busy = failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    );
+    is(
+        &busy,
+        FailureClass::Busy,
+        &codes::PROGRAM_BUSY,
+        Sent::Answered,
+    );
     drop(held);
     assert_eq!(control.writes().unwrap().len(), writes);
     assert!(scene.handle.release(prepared, false).await.complete);
@@ -548,12 +768,20 @@ async fn a_write_whose_result_nothing_confirms_is_a_possible_commit_and_is_not_m
         ..With::default()
     };
     let possible = |failure: &StepFailure| {
-        is(failure, FailureClass::PossibleCommit, &codes::NO_CONFIRMATION, Sent::Unknown);
+        is(
+            failure,
+            FailureClass::PossibleCommit,
+            &codes::NO_CONFIRMATION,
+            Sent::Unknown,
+        );
     };
 
     // The program commits, then hangs until it is killed at its time limit.
     control
-        .set_fault(&Fault::once(FaultKind::stop(StopPoint::AfterCommit, StopHow::Hang)))
+        .set_fault(&Fault::once(FaultKind::stop(
+            StopPoint::AfterCommit,
+            StopHow::Hang,
+        )))
         .unwrap();
     let hung = failed(
         scene
@@ -574,16 +802,31 @@ async fn a_write_whose_result_nothing_confirms_is_a_possible_commit_and_is_not_m
     // there, and reading the record back finds it.
     assert_eq!(scene.starts().len(), 1);
     assert_eq!(control.write_count("SK-1002").unwrap(), 1);
-    let found = done(scene.run(&mut prepared, &binding.read_back, &sku("SK-1002"), with).await);
+    let found = done(
+        scene
+            .run(&mut prepared, &binding.read_back, &sku("SK-1002"), with)
+            .await,
+    );
     assert_eq!(found.values.get("quantity"), Some(&Value::Int(7)));
 
     // Killed before the commit: the same answer, and the stand shows that
     // nothing was written. Only the read-back can tell the two apart.
     control
-        .set_fault(&Fault::once(FaultKind::stop(StopPoint::BeforeCommit, StopHow::Abort)))
+        .set_fault(&Fault::once(FaultKind::stop(
+            StopPoint::BeforeCommit,
+            StopHow::Abort,
+        )))
         .unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1002", 8), with).await);
-    possible(&failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await));
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1002", 8), with)
+            .await,
+    );
+    possible(&failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    ));
     assert_eq!(control.stored_item("SK-1002").unwrap().unwrap().quantity, 7);
 
     // An undeclared status after the commit, changed output, and a
@@ -594,18 +837,44 @@ async fn a_write_whose_result_nothing_confirms_is_a_possible_commit_and_is_not_m
             StopHow::Exit { code: 9 },
         )))
         .unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1002", 9), with).await);
-    possible(&failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await));
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1002", 9), with)
+            .await,
+    );
+    possible(&failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    ));
     assert_eq!(control.stored_item("SK-1002").unwrap().unwrap().quantity, 9);
 
     control.set_fault(&Fault::once(FaultKind::Drift)).unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1002", 10), with).await);
-    possible(&failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await));
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1002", 10), with)
+            .await,
+    );
+    possible(&failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    ));
 
-    control.set_fault(&Fault::once(FaultKind::prompt())).unwrap();
+    control
+        .set_fault(&Fault::once(FaultKind::prompt()))
+        .unwrap();
     let writes = control.write_count("SK-1002").unwrap();
-    done(scene.run(&mut prepared, &binding.act, &set("SK-1002", 11), with).await);
-    possible(&failed(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await));
+    done(
+        scene
+            .run(&mut prepared, &binding.act, &set("SK-1002", 11), with)
+            .await,
+    );
+    possible(&failed(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    ));
     assert_eq!(control.write_count("SK-1002").unwrap(), writes);
     scene.handle.release(prepared, true).await;
 }
@@ -623,19 +892,30 @@ async fn a_created_record_is_found_by_its_assigned_key_and_by_its_stamp() {
         token: Some(&token),
         ..With::default()
     };
-    let item = Values::new().with("name", "Spring washer").with("location", "A02");
+    let item = Values::new()
+        .with("name", "Spring washer")
+        .with("location", "A02");
 
     // Nothing carries the stamp yet.
-    let before = scene.run(&mut prepared, &binding.lookup, &Values::new(), with).await;
+    let before = scene
+        .run(&mut prepared, &binding.lookup, &Values::new(), with)
+        .await;
     assert!(matches!(before, Ok(StepOutcome::Absent(_))), "{before:?}");
 
     done(scene.run(&mut prepared, &binding.act, &item, with).await);
-    let created = done(scene.run(&mut prepared, &binding.confirm, &Values::new(), with).await);
+    let created = done(
+        scene
+            .run(&mut prepared, &binding.confirm, &Values::new(), with)
+            .await,
+    );
     // The key the program assigned is taken at once.
     let assigned = created.assigned_key.clone().unwrap();
     assert_eq!(assigned, key("SK-1004"));
     let stored = control.stored_item("SK-1004").unwrap().unwrap();
-    assert_eq!((stored.name.as_str(), stored.location.as_str()), ("Spring washer", "A02"));
+    assert_eq!(
+        (stored.name.as_str(), stored.location.as_str()),
+        ("Spring washer", "A02")
+    );
     assert_eq!(stored.reference.as_deref(), Some("a2m:run-1:0"));
     assert_eq!(control.write_count("SK-1004").unwrap(), 1);
 
@@ -656,14 +936,27 @@ async fn a_created_record_is_found_by_its_assigned_key_and_by_its_stamp() {
             .await,
     );
     assert_eq!(read.values.get("name"), Some(&Value::from("Spring washer")));
-    let found = done(scene.run(&mut prepared, &binding.lookup, &Values::new(), with).await);
+    let found = done(
+        scene
+            .run(&mut prepared, &binding.lookup, &Values::new(), with)
+            .await,
+    );
     assert_eq!(found.values.get("sku"), Some(&Value::from("SK-1004")));
 
     // The program makes a duplicate when the same add runs twice. If that
     // ever happened, the lookup says so and matches neither.
     done(scene.run(&mut prepared, &binding.act, &item, with).await);
-    let twice = failed(scene.run(&mut prepared, &binding.lookup, &Values::new(), with).await);
-    is(&twice, FailureClass::PossibleCommit, &codes::AMBIGUOUS_MATCH, Sent::Answered);
+    let twice = failed(
+        scene
+            .run(&mut prepared, &binding.lookup, &Values::new(), with)
+            .await,
+    );
+    is(
+        &twice,
+        FailureClass::PossibleCommit,
+        &codes::AMBIGUOUS_MATCH,
+        Sent::Answered,
+    );
 
     // A removed record reads back as absent.
     let remove = scene.binding("example_item_remove");
@@ -675,9 +968,19 @@ async fn a_created_record_is_found_by_its_assigned_key_and_by_its_stamp() {
         token: Some(&token),
         ..With::default()
     };
-    done(scene.run(&mut removing, &remove.act, &sku("SK-1004"), with).await);
-    done(scene.run(&mut removing, &remove.confirm, &Values::new(), with).await);
-    let gone = scene.run(&mut removing, &remove.read_back, &sku("SK-1004"), with).await;
+    done(
+        scene
+            .run(&mut removing, &remove.act, &sku("SK-1004"), with)
+            .await,
+    );
+    done(
+        scene
+            .run(&mut removing, &remove.confirm, &Values::new(), with)
+            .await,
+    );
+    let gone = scene
+        .run(&mut removing, &remove.read_back, &sku("SK-1004"), with)
+        .await;
     assert!(matches!(gone, Ok(StepOutcome::Absent(_))), "{gone:?}");
     assert!(control.stored_item("SK-1004").unwrap().is_none());
     scene.handle.release(prepared, false).await;
@@ -692,7 +995,10 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
     let scene = Scene::build(Arc::new(Planted(SECRET)), |files| {
         for (path, text) in files.iter_mut() {
             if path == "commands/inventory.yaml" {
-                *text = text.replace("TZ: UTC,", &format!("TZ: UTC, EXAMPLE_CLI_TOKEN: {SECRET},"));
+                *text = text.replace(
+                    "TZ: UTC,",
+                    &format!("TZ: UTC, EXAMPLE_CLI_TOKEN: {SECRET},"),
+                );
             }
         }
     });
@@ -717,7 +1023,10 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
     assert!(!printed.contains(SECRET));
     // The program did receive it, so the leak was real.
     assert_eq!(
-        scene.starts()[0].env.get("EXAMPLE_CLI_TOKEN").map(String::as_str),
+        scene.starts()[0]
+            .env
+            .get("EXAMPLE_CLI_TOKEN")
+            .map(String::as_str),
         Some(SECRET)
     );
     // What it printed around its output is not the declared form: the
@@ -727,7 +1036,187 @@ async fn a_secret_the_program_prints_reaches_no_value_capture_or_failure() {
             .run(&mut prepared, &steps[1..], &Values::new(), With::default())
             .await,
     );
-    is(&unparsed, FailureClass::Drift, &codes::OUTPUT_UNPARSED, Sent::Answered);
+    is(
+        &unparsed,
+        FailureClass::Drift,
+        &codes::OUTPUT_UNPARSED,
+        Sent::Answered,
+    );
     assert!(!format!("{unparsed:?}").contains(SECRET));
     scene.handle.release(prepared, true).await;
+}
+
+// ---- discovery and drafting ----
+
+struct Found(Vec<a2m_core::Finding>);
+
+impl a2m_provider::FindingSink for Found {
+    fn found(&mut self, finding: a2m_core::Finding) -> Result<(), a2m_core::Failure> {
+        self.0.push(finding);
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tries() {
+    use a2m_core::{Archetype, EvidenceLevel, LimitationCode, SurfaceKind};
+    use a2m_provider::{DescribeForm, DiscoveryScope, ReadOnlyPort, SurfaceDescription};
+
+    let mut scene = Scene::new();
+    let control = scene.stand.control().clone();
+    let seed = control.stored_items().unwrap();
+
+    // Where nothing may be written, a command is not started at all: a
+    // program cannot be made unable to write.
+    let mut prepared = scene.prepare(Posture::Discovery, None).await.unwrap();
+    let get = scene.binding("example_item_get").act.clone();
+    let refused = failed(
+        scene
+            .run(&mut prepared, &get, &sku("SK-1001"), With::default())
+            .await,
+    );
+    is(
+        &refused,
+        FailureClass::Policy,
+        &codes::READ_ONLY_POSTURE,
+        Sent::NotSent,
+    );
+
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("program").unwrap(),
+        archetype: Archetype::Command,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverers = scene.registry.discoverers_for(&description);
+    assert_eq!(discoverers.len(), 1);
+    let port = ReadOnlyPort::new(scene.handle.clone(), prepared);
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverers[0].declared().bounds,
+        deadline: Deadline::after(WITHIN),
+        paths: &CheckedPaths::none(),
+        redact: &NoSecrets,
+        focus: &Values::new(),
+    };
+    let mut found = Found(Vec::new());
+    let report = discoverers[0]
+        .discover(&port, &scope, &mut found)
+        .await
+        .unwrap();
+    assert!(report.bounds_hit.is_empty(), "{report:?}");
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+
+    // One finding for each command the help lists: seen, never run.
+    assert_eq!(found.0.len(), 9);
+    for finding in &found.0 {
+        assert_eq!(finding.level(), EvidenceLevel::Discovered);
+        assert!(
+            finding
+                .limitations()
+                .iter()
+                .any(|limitation| limitation.code == LimitationCode::NotExercised)
+        );
+    }
+    assert!(
+        found
+            .0
+            .iter()
+            .any(|finding| finding.found().contains("\"name\":\"item set\""))
+    );
+    let described = discoverers[0].describe(&found.0, DescribeForm::Summary);
+    assert!(described.text.contains("9 commands"), "{}", described.text);
+    assert_eq!(described.untrusted.len(), 9);
+
+    // The stand: only the declared help and version forms were started,
+    // with a bare environment, and nothing was written or changed.
+    let starts = control.invocations().unwrap();
+    assert!(starts.len() >= 11, "{}", starts.len());
+    for start in &starts {
+        assert!(
+            matches!(start.args[0].as_str(), "--version" | "--help" | "help"),
+            "{:?}",
+            start.args
+        );
+        assert!(
+            !start.env.contains_key("EXAMPLE_CLI_HOME"),
+            "{:?}",
+            start.env
+        );
+    }
+    assert!(control.writes().unwrap().is_empty());
+    assert_eq!(control.stored_items().unwrap(), seed);
+
+    // The drafter writes one file for each command, by rule: the digest
+    // and version seen, and an open question wherever the program did not
+    // say. It writes no effect, and tries nothing.
+    let target = Folder::new("draft");
+    for (path, text) in stand_files(&scene.stand) {
+        if path == "target.yaml" || path == "types.yaml" {
+            std::fs::write(target.path().join(&path), text).unwrap();
+        }
+    }
+    let root = a2m_files::TargetRoot::new(target.path());
+    let set = scene.registry.compiler_set();
+    let drafted = a2m_files::Drafter::new(set, &root).draft(&found.0).unwrap();
+    assert_eq!(drafted.written.len(), 9, "{drafted:?}");
+    assert!(
+        drafted.refused.is_empty() && drafted.conflicts.is_empty(),
+        "{drafted:?}"
+    );
+    assert!(drafted.not_covered.is_empty());
+    let draft =
+        std::fs::read_to_string(target.path().join("commands").join("item_set.yaml")).unwrap();
+    let digest = Digest::of(&std::fs::read(scene.stand.program()).unwrap());
+    assert!(draft.contains(&format!("sha256:{digest}")), "{draft}");
+    assert!(
+        draft.contains("--quantity") && draft.contains("if_version"),
+        "{draft}"
+    );
+    for never in [
+        "effect: read",
+        "effect: write",
+        "read_back",
+        "3:",
+        "pattern:",
+    ] {
+        assert!(
+            !draft.contains(never),
+            "the draft states `{never}`:\n{draft}"
+        );
+    }
+    assert!(
+        drafted
+            .open_questions
+            .iter()
+            .any(|open| open.question.contains("read, write")),
+        "{:?}",
+        drafted.open_questions
+    );
+    assert_eq!(control.invocations().unwrap().len(), starts.len());
+
+    // In the sandbox a read may be tried only against a test environment.
+    scene.surface.environment = Environment::new("live").unwrap();
+    let mut sandbox = scene
+        .prepare(
+            Posture::Sandbox {
+                test_records: false,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let refused = failed(
+        scene
+            .run(&mut sandbox, &get, &sku("SK-1001"), With::default())
+            .await,
+    );
+    is(
+        &refused,
+        FailureClass::Policy,
+        &codes::READ_ONLY_POSTURE,
+        Sent::NotSent,
+    );
+    scene.handle.release(sandbox, false).await;
 }

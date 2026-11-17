@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
+a2m-engine = { path = "../a2m-engine" }
 a2m-files = { path = "../a2m-files" }
 a2m-ledger = { path = "../a2m-ledger" }
 a2m-policy = { path = "../a2m-policy" }

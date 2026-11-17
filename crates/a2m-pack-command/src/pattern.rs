@@ -72,6 +72,10 @@ mod tests {
         assert!(ends_anchored(r"^a$"));
         assert!(!ends_anchored(r"^a\$"));
         assert!(ends_anchored(r"^a\\$"));
-        assert!(prompt(r"^Are you sure\?").unwrap().is_match("ok\nAre you sure? [y/N] "));
+        assert!(
+            prompt(r"^Are you sure\?")
+                .unwrap()
+                .is_match("ok\nAre you sure? [y/N] ")
+        );
     }
 }

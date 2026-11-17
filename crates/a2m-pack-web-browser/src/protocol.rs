@@ -206,8 +206,16 @@ pub(crate) struct ContextDestroyed {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Attached {
     pub session_id: String,
+    pub target_info: TargetInfo,
     #[serde(default)]
     pub waiting_for_debugger: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct TargetInfo {
+    /// `page`, `iframe`, `worker`, and so on.
+    #[serde(rename = "type")]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -475,6 +483,43 @@ pub(crate) struct ExceptionDetails {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetProperties<'a> {
+    pub object_id: &'a str,
+    pub own_properties: bool,
+}
+command!(GetProperties<'_>, "Runtime.getProperties" => Properties);
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Properties {
+    pub result: Vec<Property>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Property {
+    pub name: String,
+    pub value: Option<RemoteObject>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DescribeNode<'a> {
+    pub object_id: &'a str,
+}
+command!(DescribeNode<'_>, "DOM.describeNode" => DescribedNode);
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DescribedNode {
+    pub node: NodeDescription,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NodeDescription {
+    pub backend_node_id: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct RunIfWaiting {}
 command!(RunIfWaiting, "Runtime.runIfWaitingForDebugger" => Nothing);
 
@@ -509,6 +554,8 @@ pub(crate) struct AxNode {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub child_ids: Vec<String>,
+    #[serde(rename = "backendDOMNodeId")]
+    pub backend_dom_node_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

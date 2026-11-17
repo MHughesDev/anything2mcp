@@ -60,12 +60,24 @@ async fn write(
     let commit = binding.act.iter().position(|step| step.commits).unwrap();
     let run = async {
         let mut act = scene
-            .write(&handle, &mut prepared, &binding.act[..commit], values, &grant)
+            .write(
+                &handle,
+                &mut prepared,
+                &binding.act[..commit],
+                values,
+                &grant,
+            )
             .await?;
         between();
         act.extend(
             scene
-                .write(&handle, &mut prepared, &binding.act[commit..], values, &grant)
+                .write(
+                    &handle,
+                    &mut prepared,
+                    &binding.act[commit..],
+                    values,
+                    &grant,
+                )
                 .await?,
         );
         scene
@@ -119,7 +131,10 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
     // break inside a field, which the text type reads as one space, and an
     // empty field in quotes.
     let item = inputs(&[("item_code", text("EX-1003"))]);
-    let found = scene.read_operation("example_stock_get", &item).await.unwrap();
+    let found = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
     let values = last_values(&found);
     assert_eq!(values.get("on_hand"), Some(&Value::Int(40)));
     assert_eq!(values.get("description"), Some(&text("Panel two lines")));
@@ -127,7 +142,10 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
 
     // Text aimed at an agent is a value like any other.
     let item = inputs(&[("item_code", text("EX-1004"))]);
-    let found = scene.read_operation("example_stock_get", &item).await.unwrap();
+    let found = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
     assert_eq!(
         last_values(&found).get("note"),
         Some(&text(
@@ -137,7 +155,10 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
 
     // A key no row has: the lookup finds nothing, and says so.
     let item = inputs(&[("item_code", text("EX-9999"))]);
-    let found = scene.read_operation("example_stock_get", &item).await.unwrap();
+    let found = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
     assert!(matches!(found.last(), Some(StepOutcome::Absent(_))));
 
     // JSON: an element of a list by its key, and members of the root.
@@ -157,7 +178,10 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
 
     // A workbook: a row of a table the file defines, and a named cell.
     let item = inputs(&[("item_code", text("EX-1002"))]);
-    let found = scene.read_operation("example_price_get", &item).await.unwrap();
+    let found = scene
+        .read_operation("example_price_get", &item)
+        .await
+        .unwrap();
     assert_eq!(last_values(&found).get("unit_price"), Some(&decimal("10")));
     let found = scene
         .read_operation("example_discount_get", &Values::new())
@@ -174,7 +198,10 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
         .await
         .unwrap();
     let values = last_values(&found);
-    assert_eq!(values.get("rows").and_then(Value::as_list).unwrap().len(), 3);
+    assert_eq!(
+        values.get("rows").and_then(Value::as_list).unwrap().len(),
+        3
+    );
     assert_eq!(values.get("truncated"), Some(&Value::Bool(true)));
 
     // Nothing was written, anywhere, and nothing was left behind.
@@ -186,9 +213,15 @@ async fn a_value_is_read_from_a_named_place_in_each_format() {
 async fn five_runs_of_one_read_give_the_same_outcome() {
     let scene = Scene::new();
     let item = inputs(&[("item_code", text("EX-1002"))]);
-    let first = scene.read_operation("example_stock_get", &item).await.unwrap();
+    let first = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
     for _ in 0..4 {
-        let again = scene.read_operation("example_stock_get", &item).await.unwrap();
+        let again = scene
+            .read_operation("example_stock_get", &item)
+            .await
+            .unwrap();
         assert_eq!(again, first);
     }
     // The digest `open` reports is the digest of the bytes on disk.
@@ -212,10 +245,16 @@ async fn what_a_file_no_longer_is_stops_the_read_with_a_name() {
 
     // Two rows with one key.
     let result = scene.read_operation("example_duplicate_get", &item).await;
-    assert_eq!(failed(result), (FailureClass::Drift, "key_not_unique".to_owned()));
+    assert_eq!(
+        failed(result),
+        (FailureClass::Drift, "key_not_unique".to_owned())
+    );
 
     // A formula where the document declares a value.
-    scene.stand.set_fault(Fault::formula_at_declared_value()).unwrap();
+    scene
+        .stand
+        .set_fault(Fault::formula_at_declared_value())
+        .unwrap();
     let result = scene.read_operation("example_price_get", &item).await;
     assert_eq!(
         failed(result),
@@ -236,7 +275,10 @@ async fn what_a_file_no_longer_is_stops_the_read_with_a_name() {
         ))
         .unwrap();
     let result = scene.read_operation("example_price_get", &item).await;
-    assert_eq!(failed(result), (FailureClass::Policy, "file_protected".to_owned()));
+    assert_eq!(
+        failed(result),
+        (FailureClass::Policy, "file_protected".to_owned())
+    );
 
     // Another layout: a header got another name.
     scene
@@ -260,7 +302,10 @@ async fn what_a_file_no_longer_is_stops_the_read_with_a_name() {
         .set_fault(Fault::changed(seed::STOCK_CSV, Change::Whole(broken)))
         .unwrap();
     let result = scene.read_operation("example_stock_get", &item).await;
-    assert_eq!(failed(result), (FailureClass::Drift, "file_unreadable".to_owned()));
+    assert_eq!(
+        failed(result),
+        (FailureClass::Drift, "file_unreadable".to_owned())
+    );
 
     // The file is gone.
     scene
@@ -270,7 +315,10 @@ async fn what_a_file_no_longer_is_stops_the_read_with_a_name() {
         })
         .unwrap();
     let result = scene.read_operation("example_stock_get", &item).await;
-    assert_eq!(failed(result), (FailureClass::Drift, "file_missing".to_owned()));
+    assert_eq!(
+        failed(result),
+        (FailureClass::Drift, "file_missing".to_owned())
+    );
 
     // A link where the file was, pointing outside the root.
     let link = Fault::LinkOut {
@@ -372,7 +420,10 @@ async fn the_byte_order_mark_the_line_endings_and_the_quotes_survive() {
     let store = store().await;
     // A quoted number that holds a comma, in a file with a byte-order mark,
     // CRLF, and a last line that is not ended.
-    let values = inputs(&[("item_code", text("EX-1003")), ("unit_price", decimal("1300.5"))]);
+    let values = inputs(&[
+        ("item_code", text("EX-1003")),
+        ("unit_price", decimal("1300.5")),
+    ]);
     let written = write(&scene, &store, 1, "example_price_set", &values, || {})
         .await
         .unwrap();
@@ -383,7 +434,13 @@ async fn the_byte_order_mark_the_line_endings_and_the_quotes_survive() {
     assert_eq!(
         scene
             .stand
-            .stored_cells(seed::PRICE_LIST_CSV, ',', "item_code", "EX-1003", "unit_price")
+            .stored_cells(
+                seed::PRICE_LIST_CSV,
+                ',',
+                "item_code",
+                "EX-1003",
+                "unit_price"
+            )
             .unwrap(),
         ["1300.50"]
     );
@@ -484,7 +541,14 @@ async fn a_row_and_an_element_are_added_and_removed_and_nothing_else_moves() {
     let codes: Vec<&str> = rows.iter().map(|row| row[0].as_str()).collect();
     assert_eq!(
         codes,
-        ["item_code", "EX-1001", "EX-1003", "EX-1004", "EX-1005", "EX-1009"]
+        [
+            "item_code",
+            "EX-1001",
+            "EX-1003",
+            "EX-1004",
+            "EX-1005",
+            "EX-1009"
+        ]
     );
 
     // An element added to a JSON list, set apart as the last one is.
@@ -504,9 +568,16 @@ async fn a_row_and_an_element_are_added_and_removed_and_nothing_else_moves() {
 
     // An element removed: the list holds the others, in order.
     let values = inputs(&[("code", text("W1"))]);
-    write(&scene, &store, 5, "example_warehouse_remove", &values, || {})
-        .await
-        .unwrap();
+    write(
+        &scene,
+        &store,
+        5,
+        "example_warehouse_remove",
+        &values,
+        || {},
+    )
+    .await
+    .unwrap();
     let codes = scene
         .stand
         .stored_json_values(
@@ -545,7 +616,14 @@ async fn a_file_changed_after_it_was_read_is_stale_and_is_not_replaced() {
         );
         assert_eq!(failure.sent, Sent::NotSent);
         // The other writer's file is what is on disk; the pack wrote nothing.
-        assert_eq!(scene.stand.write_count(seed::STOCK_CSV).unwrap().content_changes, 0);
+        assert_eq!(
+            scene
+                .stand
+                .write_count(seed::STOCK_CSV)
+                .unwrap()
+                .content_changes,
+            0
+        );
         assert!(scene.stand.strays().unwrap().is_empty());
     }
 
@@ -565,7 +643,10 @@ async fn a_file_changed_after_it_was_read_is_stale_and_is_not_replaced() {
             .stored_cells(seed::STOCK_CSV, ',', "item_code", key, "on_hand")
             .unwrap()
     };
-    assert_eq!((cell("EX-1001"), cell("EX-1002")), (vec!["11".to_owned()], vec!["38".to_owned()]));
+    assert_eq!(
+        (cell("EX-1001"), cell("EX-1002")),
+        (vec!["11".to_owned()], vec!["38".to_owned()])
+    );
 }
 
 #[tokio::test]
@@ -578,7 +659,11 @@ async fn a_save_stopped_half_way_leaves_the_old_file_and_resumes_to_the_new_one(
     // What a save killed before the replace leaves: half of a temporary
     // file, under the name the record's token gives it.
     let stamp = "stamp-1-example_stock_set";
-    let token: String = Digest::of(stamp.as_bytes()).to_string().chars().take(16).collect();
+    let token: String = Digest::of(stamp.as_bytes())
+        .to_string()
+        .chars()
+        .take(16)
+        .collect();
     scene
         .stand
         .set_fault(Fault::PartialWrite {
@@ -589,8 +674,14 @@ async fn a_save_stopped_half_way_leaves_the_old_file_and_resumes_to_the_new_one(
     // The file at the path is the old one, whole: reconcile sees the digest
     // it had before the write.
     let item = inputs(&[("item_code", text("EX-1002"))]);
-    let seen = scene.read_operation("example_stock_get", &item).await.unwrap();
-    assert_eq!(for_reconcile(&seen).get("file_digest"), Some(&Value::from(old.clone())));
+    let seen = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
+    assert_eq!(
+        for_reconcile(&seen).get("file_digest"),
+        Some(&Value::from(old.clone()))
+    );
     assert_eq!(last_values(&seen).get("on_hand"), Some(&Value::Int(40)));
 
     // The same record, tried again: the leftover is replaced, the save
@@ -604,15 +695,37 @@ async fn a_save_stopped_half_way_leaves_the_old_file_and_resumes_to_the_new_one(
         for_reconcile(&written.act).get("intended_digest"),
         Some(&Value::from(new.clone()))
     );
-    assert_eq!(scene.stand.listing().unwrap().iter().filter(|name| name.contains(".a2m-")).count(), 0);
+    assert_eq!(
+        scene
+            .stand
+            .listing()
+            .unwrap()
+            .iter()
+            .filter(|name| name.contains(".a2m-"))
+            .count(),
+        0
+    );
 
     // The record of the save is lost and the run resumes: a new driver
     // opens the file and reports the intended digest, so the save landed
     // and is not sent again.
-    let seen = scene.read_operation("example_stock_get", &item).await.unwrap();
-    assert_eq!(for_reconcile(&seen).get("file_digest"), Some(&Value::from(new)));
+    let seen = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap();
+    assert_eq!(
+        for_reconcile(&seen).get("file_digest"),
+        Some(&Value::from(new))
+    );
     assert_eq!(last_values(&seen).get("on_hand"), Some(&Value::Int(38)));
-    assert_eq!(scene.stand.write_count(seed::STOCK_CSV).unwrap().content_changes, 1);
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        1
+    );
 }
 
 #[tokio::test]
@@ -621,27 +734,51 @@ async fn a_locked_or_protected_file_is_not_written() {
     let store = store().await;
     let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
     let untouched = |scene: &Scene| {
-        assert_eq!(scene.stand.write_count(seed::STOCK_CSV).unwrap().content_changes, 0);
+        assert_eq!(
+            scene
+                .stand
+                .write_count(seed::STOCK_CSV)
+                .unwrap()
+                .content_changes,
+            0
+        );
         assert!(scene.stand.strays().unwrap().is_empty());
     };
 
     // The lock signal is there before the write begins: busy, and a read
     // still works.
-    scene.stand.set_fault(Fault::lock_signal_for(seed::STOCK_CSV)).unwrap();
+    scene
+        .stand
+        .set_fault(Fault::lock_signal_for(seed::STOCK_CSV))
+        .unwrap();
     let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
-    assert_eq!(class_and_code(&failure), (FailureClass::Busy, "file_locked"));
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
     let item = inputs(&[("item_code", text("EX-1002"))]);
-    assert!(scene.read_operation("example_stock_get", &item).await.is_ok());
+    assert!(
+        scene
+            .read_operation("example_stock_get", &item)
+            .await
+            .is_ok()
+    );
     untouched(&scene);
     scene.stand.clear_faults().unwrap();
 
     // The lock signal appears after the file was read: busy at the save.
     let result = write(&scene, &store, 2, "example_stock_set", &values, || {
-        scene.stand.set_fault(Fault::lock_signal_for(seed::STOCK_CSV)).unwrap();
+        scene
+            .stand
+            .set_fault(Fault::lock_signal_for(seed::STOCK_CSV))
+            .unwrap();
     })
     .await;
     let failure = refused(result);
-    assert_eq!(class_and_code(&failure), (FailureClass::Busy, "file_locked"));
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
     assert_eq!(failure.sent, Sent::NotSent);
     untouched(&scene);
     scene.stand.clear_faults().unwrap();
@@ -654,7 +791,10 @@ async fn a_locked_or_protected_file_is_not_written() {
         })
         .unwrap();
     let failure = refused(write(&scene, &store, 3, "example_stock_set", &values, || {}).await);
-    assert_eq!(class_and_code(&failure), (FailureClass::Policy, "file_protected"));
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "file_protected")
+    );
     untouched(&scene);
     scene.stand.clear_faults().unwrap();
 
@@ -685,15 +825,29 @@ async fn a_file_held_without_sharing_is_busy() {
     let held = Fault::HeldWithoutSharing {
         file: seed::STOCK_CSV.to_owned(),
     };
-    if scene.stand.set_fault(held).is_err_and(|error| error.is_unsupported()) {
+    if scene
+        .stand
+        .set_fault(held)
+        .is_err_and(|error| error.is_unsupported())
+    {
         return;
     }
     let store = store().await;
     let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
     let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
-    assert_eq!(class_and_code(&failure), (FailureClass::Busy, "file_locked"));
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Busy, "file_locked")
+    );
     scene.stand.clear_faults().unwrap();
-    assert_eq!(scene.stand.write_count(seed::STOCK_CSV).unwrap().content_changes, 0);
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
     assert!(scene.stand.strays().unwrap().is_empty());
 }
 
@@ -702,7 +856,12 @@ async fn a_root_that_may_only_be_read_is_never_written() {
     let scene = Scene::with_access(Access::Read);
     let store = store().await;
     let item = inputs(&[("item_code", text("EX-1002"))]);
-    assert!(scene.read_operation("example_stock_get", &item).await.is_ok());
+    assert!(
+        scene
+            .read_operation("example_stock_get", &item)
+            .await
+            .is_ok()
+    );
     let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
     let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
     assert_eq!(
@@ -711,4 +870,146 @@ async fn a_root_that_may_only_be_read_is_never_written() {
     );
     assert!(scene.stand.observe().unwrap().is_empty());
     assert!(scene.stand.strays().unwrap().is_empty());
+}
+
+// ---- discovery and drafting ----
+
+struct Kept(Vec<a2m_core::Finding>);
+
+impl a2m_provider::FindingSink for Kept {
+    fn found(&mut self, finding: a2m_core::Finding) -> Result<(), a2m_core::Failure> {
+        self.0.push(finding);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_states() {
+    use a2m_core::{Archetype, EvidenceLevel, SurfaceKind};
+    use a2m_provider::{
+        CheckedPaths, Deadline, DescribeForm, DiscoveryScope, ReadOnlyPort, RootName,
+        SurfaceDescription,
+    };
+
+    let scene = Scene::new();
+    let surface = scene.surface("price_files");
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("file").unwrap(),
+        archetype: Archetype::Artifact,
+        address: "prices".to_owned(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let roots = common::roots(&scene.stand, Access::Read);
+    let mut paths = CheckedPaths::none();
+    for name in [
+        seed::STOCK_CSV,
+        seed::SETTINGS_JSON,
+        seed::PRICE_LIST_MACRO_WORKBOOK,
+        seed::BROKEN_CSV,
+        seed::TERMS_TEXT,
+    ] {
+        let path = roots
+            .check(&RootName::new("project").unwrap(), name, Access::Read)
+            .unwrap();
+        paths.insert(name, path);
+    }
+    let (handle, prepared) = scene.prepared(&surface, None, Posture::Discovery).await;
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(std::time::Duration::from_secs(30)),
+        paths: &paths,
+        redact: &a2m_core::NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    let report = discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    // A file that does not parse and a file of no known format: seen, and
+    // no finding made of either.
+    assert_eq!(report.dropped, 2);
+
+    // Nothing was written, consumed, or changed.
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert!(scene.stand.strays().unwrap().is_empty());
+    assert!(scene.stand.outside_untouched().unwrap());
+
+    let layouts: Vec<a2m_pack_file::LayoutFound> = kept
+        .0
+        .iter()
+        .filter(|finding| finding.kind().as_str() == a2m_pack_file::FILE_LAYOUT)
+        .map(|finding| {
+            assert_eq!(finding.level(), EvidenceLevel::Discovered);
+            serde_json::from_str(finding.found()).unwrap()
+        })
+        .collect();
+    assert_eq!(layouts.len(), 3);
+    let workbook = layouts
+        .iter()
+        .find(|found| found.format == a2m_pack_file::Format::Workbook)
+        .unwrap();
+    assert_eq!(workbook.sheets, ["Prices", "Notes"]);
+    assert_eq!(workbook.tables[0].name, "price_table");
+    assert!(workbook.formulas && workbook.macros && !workbook.signed);
+    // A key candidate is a guess from one file, and says so. No value of
+    // any file is in a finding.
+    let candidates: Vec<&a2m_core::Finding> = kept
+        .0
+        .iter()
+        .filter(|finding| finding.kind().as_str() == a2m_pack_file::FILE_KEY_CANDIDATE)
+        .collect();
+    assert!(!candidates.is_empty());
+    for candidate in &candidates {
+        assert_eq!(candidate.level(), EvidenceLevel::Inferred);
+        assert_eq!(candidate.limitations().len(), 2);
+    }
+    for finding in &kept.0 {
+        assert!(!finding.found().contains("Bracket") && !finding.found().contains("Ignore"));
+    }
+    let described = discoverer.describe(&kept.0, DescribeForm::Summary);
+    assert!(
+        described.text.starts_with("3 file(s) described"),
+        "{}",
+        described.text
+    );
+    assert!(!described.text.contains("stock.csv"));
+
+    // The drafter writes a document for each layout, with the file's own
+    // fingerprint, and leaves the key and every type as an open question.
+    let folder = std::env::temp_dir().join(format!("a2m-pack-file-draft-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let root = a2m_files::TargetRoot::new(&folder);
+    let drafted = a2m_files::Drafter::new(scene.registry.compiler_set(), &root)
+        .draft(&kept.0)
+        .unwrap();
+    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        written,
+        [
+            "documents/example_settings.yaml",
+            "documents/price_list_macro.yaml",
+            "documents/stock.yaml"
+        ]
+    );
+    assert!(drafted.refused.is_empty());
+    let questions = |file: &str| {
+        drafted
+            .open_questions
+            .iter()
+            .filter(|question| question.file.as_str() == file)
+            .count()
+    };
+    // One for the key, and one for the type of each of the four columns.
+    assert_eq!(questions("documents/stock.yaml"), 5);
+    let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
+    assert!(
+        stock.contains("rows: \"all\"") && stock.contains("item_code"),
+        "{stock}"
+    );
+    // Nothing is drafted for a write.
+    assert!(!stock.contains("writable"), "{stock}");
+    let _ = std::fs::remove_dir_all(&folder);
 }

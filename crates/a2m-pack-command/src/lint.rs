@@ -72,7 +72,11 @@ impl LintRule for WriteExitDeclared {
                     .any(|entry| entry.value.as_text() != Some("ok"))
             };
             let shared = declares(doc.get("program").and_then(|program| program.get("exits")));
-            for entry in doc.get("commands").map(Located::entries).unwrap_or_default() {
+            for entry in doc
+                .get("commands")
+                .map(Located::entries)
+                .unwrap_or_default()
+            {
                 let writes = entry.value.text("effect") != Some("read");
                 if writes && !shared && !declares(entry.value.get("exits")) {
                     found.push(Diagnostic::error(

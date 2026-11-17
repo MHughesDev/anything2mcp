@@ -2,6 +2,7 @@
 //! tab that may only observe. Everything that only looks is the [`Look`]
 //! trait, which both have; only [`ActTab`] has a method that acts.
 
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
 use crate::protocol::{
     AddBinding, AddScriptOnNewDocument, AttachToTarget, BypassServiceWorker, CallArgument,
     CallFunctionOn, CloseTarget, Command, ContinueRequest, CreateIsolatedWorld, CreateTarget,
-    DispatchKey, DispatchMouse, Evaluate, Evaluated, Event, EventKind, FailRequest, FetchEnable,
+    DescribeNode, DispatchKey, DispatchMouse, Evaluate, GetProperties, Evaluated, Event, EventKind, FailRequest, FetchEnable,
     GetFullAxTree, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable, PageEnable,
     RequestPattern, RunIfWaiting, RuntimeEnable, SetAutoAttach, SetDeviceMetrics,
     SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
@@ -904,14 +905,62 @@ impl Page {
         deadline: Deadline,
     ) -> Result<Snapshot, BrowserError> {
         let (address, title) = self.address_and_title(deadline).await?;
+        let masked = self.password_nodes(deadline).await?;
         let tree = self.call(&GetFullAxTree {}, deadline).await?;
         Ok(Snapshot::build(
             address,
             title,
             &tree.nodes,
+            &masked,
             limits,
             self.redact.as_ref(),
         ))
+    }
+
+    /// The nodes of the page's password inputs, by the browser's own
+    /// number for each, so that a snapshot masks exactly those. Their
+    /// values are not read.
+    async fn password_nodes(&self, deadline: Deadline) -> Result<BTreeSet<i64>, BrowserError> {
+        let listed = self
+            .in_world(
+                "function () { return __a2m.passwords(); }",
+                || Some(Vec::new()),
+                false,
+                false,
+                deadline,
+            )
+            .await?;
+        let mut nodes = BTreeSet::new();
+        let Some(list) = listed.result.object_id else {
+            return Err(BrowserError::Unexpected(
+                "the helper did not list the password inputs".to_owned(),
+            ));
+        };
+        if listed.result.description.as_deref() == Some("Array(0)") {
+            return Ok(nodes);
+        }
+        let entries = self
+            .call(
+                &GetProperties {
+                    object_id: &list,
+                    own_properties: true,
+                },
+                deadline,
+            )
+            .await?;
+        for entry in entries.result {
+            let element = entry
+                .value
+                .filter(|_| entry.name.parse::<usize>().is_ok())
+                .and_then(|value| value.object_id);
+            if let Some(element) = element {
+                let described = self
+                    .call(&DescribeNode { object_id: &element }, deadline)
+                    .await?;
+                nodes.insert(described.node.backend_node_id);
+            }
+        }
+        Ok(nodes)
     }
 
     // ---- acting ----
@@ -1232,27 +1281,53 @@ impl Page {
     /// Puts the lock on a worker or a frame that attached under an
     /// observing tab, then lets it run. When the lock cannot be put on,
     /// it is not let run, and that is reported.
-    async fn guard_child(&self, session: &str, waiting: bool) {
+    ///
+    /// A dedicated worker has no interception of its own to switch on: its
+    /// requests pass through its page's, which is already on (measured
+    /// against the browser of decision 0111). Every other kind must take
+    /// its own, or it stays stopped.
+    async fn guard_child(&self, session: &str, kind: &str, waiting: bool) {
         let deadline = Deadline::after(self.call_deadline);
         let client = &self.client;
-        let locked = client
-            .call(Some(session), &fetch_everything(), deadline)
+        let intercepted = match client.call(Some(session), &fetch_everything(), deadline).await {
+            Ok(_) => true,
+            Err(ClientError::Protocol { code, .. }) => kind == "worker" && code == METHOD_NOT_FOUND,
+            Err(_) => false,
+        };
+        // Workers of this one, and frames inside it, are locked the same way.
+        let nested = client
+            .call(
+                Some(session),
+                &SetAutoAttach {
+                    auto_attach: true,
+                    wait_for_debugger_on_start: true,
+                    flatten: true,
+                },
+                deadline,
+            )
+            .await;
+        let nested = match nested {
+            Ok(_) => true,
+            Err(ClientError::Protocol { code, .. }) => code == METHOD_NOT_FOUND,
+            Err(_) => false,
+        };
+        let _ = client
+            .call(Some(session), &AddBinding { name: REFUSED_BINDING }, deadline)
+            .await;
+        let sockets_refused = client
+            .call(
+                Some(session),
+                &Evaluate {
+                    expression: REFUSE_SOCKETS,
+                    context_id: None,
+                    return_by_value: true,
+                    await_promise: false,
+                },
+                deadline,
+            )
             .await
-            .is_ok()
-            && client
-                .call(
-                    Some(session),
-                    &Evaluate {
-                        expression: REFUSE_SOCKETS,
-                        context_id: None,
-                        return_by_value: true,
-                        await_promise: false,
-                    },
-                    deadline,
-                )
-                .await
-                .is_ok_and(|evaluated| evaluated.exception_details.is_none());
-        if !locked {
+            .is_ok_and(|evaluated| evaluated.exception_details.is_none());
+        if !(intercepted && nested && sockets_refused) {
             self.block("WORKER", "");
             return;
         }
@@ -1315,8 +1390,12 @@ impl Page {
             }
             EventKind::Attached(attached) => {
                 if self.safe.is_some() {
-                    self.guard_child(&attached.session_id, attached.waiting_for_debugger)
-                        .await;
+                    self.guard_child(
+                        &attached.session_id,
+                        &attached.target_info.kind,
+                        attached.waiting_for_debugger,
+                    )
+                    .await;
                 } else if attached.waiting_for_debugger {
                     let deadline = Deadline::after(self.call_deadline);
                     let _ = self
@@ -1388,14 +1467,8 @@ impl Page {
     }
 }
 
-/// An element of no tab, for the test of a call after the browser is gone.
-#[cfg(test)]
-pub(crate) fn stale_element() -> Element {
-    Element {
-        object: String::new(),
-        tab: 0,
-    }
-}
+/// The protocol's code for a method the target does not have.
+const METHOD_NOT_FOUND: i64 = -32601;
 
 const PREPARE_FOCUS: &str = "function () { const checked = __a2m.check(this, 'focus'); if (checked.ok) this.focus(); return checked; }";
 
@@ -1424,6 +1497,8 @@ fn gone(message: &str) -> bool {
         "Could not find object with given id",
         "Invalid remote object id",
         "Cannot find default execution context",
+        "Inspected target navigated or closed",
+        "Promise was collected",
     ]
     .iter()
     .any(|known| message.contains(known))

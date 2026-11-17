@@ -127,11 +127,7 @@ impl Loaded {
                 Ok(value) if value.has_type(&input.ty) => {
                     out.insert(input.name.clone(), value);
                 }
-                Ok(_) => problems.push(format!(
-                    "`{}` is not a {}",
-                    input.name,
-                    input.ty.name()
-                )),
+                Ok(_) => problems.push(format!("`{}` is not a {}", input.name, input.ty.name())),
                 Err(failure) => problems.push(format!(
                     "`{}` cannot be read as its type ({})",
                     input.name,

@@ -29,14 +29,21 @@ fn a_registry_with_only_the_stream_pack_builds_and_its_digest_is_stable() {
     assert_eq!(first.digest(), second.digest());
     assert_eq!(first.archetype(&mode()), Some(Archetype::Stream));
     let handle = first.driver(&mode()).unwrap();
-    assert_eq!(handle.choice().provider, ProviderName::new("stream").unwrap());
+    assert_eq!(
+        handle.choice().provider,
+        ProviderName::new("stream").unwrap()
+    );
     let broker = first
         .surface_kind(&SurfaceKind::new("broker").unwrap())
         .unwrap();
     assert!(broker.session);
     let set = first.compiler_set();
     assert_eq!(set.modes(), vec![&mode()]);
-    let verbs: Vec<&str> = set.verbs(&mode()).iter().map(|verb| verb.as_str()).collect();
+    let verbs: Vec<&str> = set
+        .verbs(&mode())
+        .iter()
+        .map(|verb| verb.as_str())
+        .collect();
     assert_eq!(verbs, ["await", "list", "publish", "read", "take"]);
     assert_eq!(set.file_kinds().count(), 2);
     assert_eq!(set.drafting_rules().count(), 3);
@@ -61,7 +68,7 @@ fn the_manifest_declares_every_code_the_driver_returns_and_no_other() {
         .collect();
     // The codes the provider contract and the session keeper define are
     // returned without being declared again.
-    let contract = ["timeout", "connection_lost", "no_confirmation", "needs_login"];
+    let contract = a2m_pack_stream::codes::CONTRACT_CODES;
     let returned: BTreeSet<(String, String)> = a2m_pack_stream::codes::ALL
         .iter()
         .filter(|(_, code)| !contract.contains(code))
@@ -69,7 +76,10 @@ fn the_manifest_declares_every_code_the_driver_returns_and_no_other() {
         .chain([("input".to_owned(), "payload_unreadable".to_owned())])
         .collect();
     assert_eq!(declared, returned);
-    assert_eq!(manifest.provider.version.to_string(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        manifest.provider.version.to_string(),
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 #[test]
@@ -132,14 +142,23 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         kinds(&take.bindings[0].act),
         ["subscribe", "await", "acknowledge"]
     );
-    let commits: Vec<bool> = take.bindings[0].act.iter().map(|step| step.commits).collect();
+    let commits: Vec<bool> = take.bindings[0]
+        .act
+        .iter()
+        .map(|step| step.commits)
+        .collect();
     assert_eq!(commits, [false, false, true]);
     assert_eq!(take.commit_points, 1);
 
     // Every step names its channel by reference, never by an argument.
     for operation in &plan.operations {
         for binding in &operation.bindings {
-            for step in binding.act.iter().chain(&binding.read_back).chain(&binding.lookup) {
+            for step in binding
+                .act
+                .iter()
+                .chain(&binding.read_back)
+                .chain(&binding.lookup)
+            {
                 assert!(step.refers_to.is_some(), "{}", operation.name);
                 assert!(step.args.iter().all(|arg| arg.name != "channel"));
             }
@@ -271,11 +290,16 @@ fn a_publish_must_declare_what_its_channel_makes_of_it() {
     // The token's header belongs to the ledger.
     let folder = Folder::new("token");
     let registry = registry(&folder);
-    let text = publish("effect: irreversible\nhazard: sends_outside\n", "orders.work")
-        + "    headers: {idempotency-token: input.order_id}\n";
+    let text = publish(
+        "effect: irreversible\nhazard: sends_outside\n",
+        "orders.work",
+    ) + "    headers: {idempotency-token: input.order_id}\n";
     let root = edited(&folder, "operations/extra.yaml", &text);
     let problems = compile(&registry, &root).expect_err("a caller's token compiles");
-    assert!(problems.find("stream.binding_invalid").is_some(), "{problems}");
+    assert!(
+        problems.find("stream.binding_invalid").is_some(),
+        "{problems}"
+    );
 }
 
 #[test]
@@ -285,12 +309,19 @@ fn a_take_compiles_only_on_a_queue_the_runtime_owns() {
 
     let folder = Folder::new("shared");
     let registry = registry(&folder);
-    let shared = std::fs::read_to_string(common::fixture_root().path().join("channels").join("orders.yaml"))
-        .unwrap()
-        .replace("ownership: runtime_owned", "ownership: shared");
+    let shared = std::fs::read_to_string(
+        common::fixture_root()
+            .path()
+            .join("channels")
+            .join("orders.yaml"),
+    )
+    .unwrap()
+    .replace("ownership: runtime_owned", "ownership: shared");
     let root = edited(&folder, "channels/orders.yaml", &shared);
     let problems = compile(&registry, &root).expect_err("a take on a shared queue compiles");
-    let found = problems.find("stream.ack_not_owned").expect("the rule's own code");
+    let found = problems
+        .find("stream.ack_not_owned")
+        .expect("the rule's own code");
     assert_eq!(found.at.file.as_str(), "operations/order_work.yaml");
 }
 

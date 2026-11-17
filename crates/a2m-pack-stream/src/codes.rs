@@ -63,10 +63,14 @@ codes! {
     SUBSCRIPTION_IN_USE = Busy, "subscription_in_use";
 }
 
-/// The codes the provider contract and the session keeper already define,
-/// which a manifest does not declare again.
-pub(crate) const CONTRACT_CODES: &[&str] =
-    &["timeout", "connection_lost", "no_confirmation", "needs_login"];
+/// The codes the provider contract and the session keeper already define.
+/// The driver returns them, and the manifest does not declare them again.
+pub const CONTRACT_CODES: &[&str] = &[
+    "timeout",
+    "connection_lost",
+    "no_confirmation",
+    "needs_login",
+];
 
 /// Text that came from a broker, cut and cleaned before it is put in a
 /// message. The handle redacts the whole failure afterwards.

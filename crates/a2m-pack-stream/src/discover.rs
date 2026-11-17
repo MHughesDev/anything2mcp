@@ -207,8 +207,8 @@ impl Discoverer for BrokerLook {
                                 .and_then(|count| u64::try_from(count).ok())
                                 .unwrap_or(0);
                             if sampled > 0 {
-                                let more =
-                                    sample.values.get("more").and_then(Value::as_bool) == Some(true);
+                                let more = sample.values.get("more").and_then(Value::as_bool)
+                                    == Some(true);
                                 shape_finding = Some((
                                     Json::object([
                                         ("address", Json::text(address)),
@@ -257,8 +257,9 @@ impl Discoverer for BrokerLook {
                 .build()?;
 
                 if let Some(schema) = schema.and_then(|text| Json::parse(text).ok()) {
-                    let found = Json::object([("address", Json::text(address)), ("schema", schema)])
-                        .to_line();
+                    let found =
+                        Json::object([("address", Json::text(address)), ("schema", schema)])
+                            .to_line();
                     bytes += u64::try_from(found.len()).unwrap_or(u64::MAX);
                     // A registered schema is a claim about messages, not an
                     // observation of one.

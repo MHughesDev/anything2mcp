@@ -111,7 +111,10 @@ impl DraftingRule for ChannelDraft {
             body.push(("schema", DraftValue::text(&found.word)));
         }
         if let Some(field) = text("key_field") {
-            body.push(("key", DraftValue::map(vec![("field", DraftValue::text(field))])));
+            body.push((
+                "key",
+                DraftValue::map(vec![("field", DraftValue::text(field))]),
+            ));
         }
         if text("look") == Some("browse") {
             body.push(("read_through", DraftValue::text("browse")));
@@ -284,7 +287,9 @@ impl DraftingRule for ReadDraft {
                     ),
                     (
                         "description",
-                        DraftValue::text("Reads the last value the broker holds for one key of the channel."),
+                        DraftValue::text(
+                            "Reads the last value the broker holds for one key of the channel.",
+                        ),
                     ),
                 ],
             )
@@ -298,7 +303,9 @@ impl DraftingRule for ReadDraft {
                     ("bindings", binding("list", Vec::new())),
                     (
                         "description",
-                        DraftValue::text("Lists what the channel holds now, without taking anything."),
+                        DraftValue::text(
+                            "Lists what the channel holds now, without taking anything.",
+                        ),
                     ),
                 ],
             )

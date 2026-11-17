@@ -31,10 +31,16 @@ fn a_registry_with_only_the_command_pack_builds_and_its_digest_is_stable() {
             .is_some()
     );
     let set = first.compiler_set();
-    let verbs: Vec<&str> = set.verbs(&mode).into_iter().map(|verb| verb.as_str()).collect();
+    let verbs: Vec<&str> = set
+        .verbs(&mode)
+        .into_iter()
+        .map(|verb| verb.as_str())
+        .collect();
     assert_eq!(
         verbs,
-        ["call", "create", "delete", "list", "read", "search", "update"]
+        [
+            "call", "create", "delete", "list", "read", "search", "update"
+        ]
     );
 
     // The manifest declares every code the driver can raise, each with its
@@ -154,8 +160,18 @@ fn refused(path: &str, from: &str, to: &str, code: &str) {
 fn a_file_that_breaks_a_rule_does_not_compile() {
     const FILE: &str = "commands/inventory.yaml";
     // A key the schema does not know, and a command with no declared effect.
-    refused(FILE, "  workdir: fresh", "  workdir: fresh\n  shell: true", "kernel.unknown_key");
-    refused(FILE, "  item_list:\n    effect: read\n", "  item_list:\n", "kernel.missing_field");
+    refused(
+        FILE,
+        "  workdir: fresh",
+        "  workdir: fresh\n  shell: true",
+        "kernel.unknown_key",
+    );
+    refused(
+        FILE,
+        "  item_list:\n    effect: read\n",
+        "  item_list:\n",
+        "kernel.missing_field",
+    );
     // Free text with no pattern and no closed list.
     refused(
         FILE,

@@ -45,7 +45,9 @@ fn chosen(scene: &Scene) -> Vec<(String, ChoiceReason)> {
 async fn a_read_is_guarded_chosen_prepared_acted_and_recorded() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     // The input is normalized by its field type before anything uses it.
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("  A-100 ")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("  A-100 "))
+        .await;
     assert!(completed(&outcome), "{outcome:?}");
 
     // Guard asked the one decider, about a read that writes nothing.
@@ -92,35 +94,52 @@ async fn a_read_is_guarded_chosen_prepared_acted_and_recorded() {
 #[tokio::test]
 async fn the_step_trace_is_sent_with_its_signature() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     assert!(completed(&outcome), "{outcome:?}");
     let traces = scene.control.traces.lock().unwrap().clone();
     assert_eq!(traces.len(), 1);
     let trace = &traces[0];
-    let text = String::from_utf8(trace.bytes().to_vec()).unwrap();
-    // One line per part of the call that happened, in order.
-    for part in ["guard", "choose", "prepare", "act", "record"] {
-        assert!(text.contains(part), "the trace has no `{part}`: {text}");
-    }
-    assert!(text.contains(ORDER_GET));
-    // The signature is over the bytes sent.
-    assert_eq!(trace.signature(), &Digest::of(trace.bytes()));
+    let text = String::from_utf8(trace.bytes.clone()).unwrap();
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    // A header that names the run, the plan, the engine, and the registry;
+    // one record for the step that reached the driver, which says which
+    // binding was chosen and why; and the end, with the signature.
+    assert_eq!(lines.len(), 3, "{text}");
+    assert_eq!(lines[0]["type"], "header");
+    assert_eq!(lines[0]["operation"], ORDER_GET);
+    assert_eq!(lines[0]["plan"], scene.plan_hash.to_string());
+    assert_eq!(lines[1]["phase"], "act");
+    assert_eq!(lines[1]["kind"], "get_order");
+    assert_eq!(lines[1]["begins"]["mode"], FIRST_MODE);
+    assert_eq!(lines[1]["begins"]["reason"], "first_in_order");
+    assert_eq!(lines[1]["outcome"]["state"], "done");
+    assert_eq!(lines[2]["type"], "end");
+    assert_eq!(lines[2]["signature"], trace.signature.to_string());
+    assert_eq!(trace.records, 1);
 }
 
 #[tokio::test]
 async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
     let mut scene = Scene::new(ORDER_GET, |_| {}).await;
     scene.plan_hash = Digest::of(b"another plan");
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
+    // Nothing unverified runs: the run fails, and is not merely rejected.
     let JobOutcome::Finished {
-        state: RunState::Rejected,
+        state: RunState::Failed,
         failure: Some(failure),
     } = &outcome
     else {
         panic!("{outcome:?}");
     };
-    assert_eq!(failure.class(), FailureClass::Input);
-    assert_eq!(failure.code().as_str(), "plan_hash_mismatch");
+    assert_eq!(failure.class(), FailureClass::Policy);
+    assert_eq!(failure.code().as_str(), "plan_unverified");
     // Nothing was asked of the decider or of a driver.
     assert!(scene.control.questions.lock().unwrap().is_empty());
     assert!(scene.hooks.seen().is_empty());
@@ -130,7 +149,9 @@ async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
 async fn a_refusal_at_guard_ends_the_run_before_a_driver_is_reached() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     scene.control.faults.denied.store(true, Ordering::SeqCst);
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     let failure = outcome.failure().expect("a refusal carries a failure");
     assert_eq!(failure.class(), FailureClass::Policy);
     assert_eq!(outcome.run_state(), Some(RunState::Failed));
@@ -159,7 +180,9 @@ async fn an_input_of_the_wrong_type_is_rejected() {
 async fn a_read_falls_to_the_next_binding_when_the_first_drifts() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     scene.hooks.first_mode_drifts.store(true, Ordering::SeqCst);
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     assert!(completed(&outcome), "{outcome:?}");
     let chosen = chosen(&scene);
     assert_eq!(chosen.len(), 2, "{chosen:?}");
@@ -174,10 +197,9 @@ async fn a_read_falls_to_the_next_binding_when_the_first_drifts() {
         .unwrap()
         .iter()
         .filter_map(|event| match event {
-            EngineEvent::BindingHealth { mode, failure, .. } => Some((
-                mode.to_string(),
-                failure.as_ref().map(|(class, _)| *class),
-            )),
+            EngineEvent::BindingHealth { mode, failure, .. } => {
+                Some((mode.to_string(), failure.as_ref().map(|(class, _)| *class)))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -194,7 +216,9 @@ async fn a_binding_known_to_have_drifted_is_passed_over() {
         a2m_core::OperationName::new(ORDER_GET).unwrap(),
         a2m_core::Mode::new(FIRST_MODE).unwrap(),
     ));
-    let outcome = scene.work(JobKind::Execute, ORDER_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, ORDER_GET, order("A-100"))
+        .await;
     assert!(completed(&outcome), "{outcome:?}");
     let chosen = chosen(&scene);
     assert_eq!(chosen.len(), 1, "{chosen:?}");
@@ -224,7 +248,9 @@ async fn a_transient_failure_of_a_read_is_tried_again_and_no_more_than_the_limit
 #[tokio::test]
 async fn a_surface_that_needs_a_sign_in_rests_the_run_in_needs_login() {
     let scene = Scene::new(SECURE_GET, |_| {}).await;
-    let outcome = scene.work(JobKind::Execute, SECURE_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, SECURE_GET, order("A-100"))
+        .await;
     let JobOutcome::Rests {
         state: RunState::NeedsLogin,
         failure: Some(failure),
@@ -246,9 +272,11 @@ async fn a_session_known_to_need_a_person_is_not_asked_for() {
     let scene = Scene::new(SECURE_GET, |_| {}).await;
     scene.conditions.lock().unwrap().sessions.push((
         SurfaceName::new("secure").unwrap(),
-        SessionState::NeedsLogin,
+        SessionState::NeedsPerson,
     ));
-    let outcome = scene.work(JobKind::Execute, SECURE_GET, order("A-100")).await;
+    let outcome = scene
+        .work(JobKind::Execute, SECURE_GET, order("A-100"))
+        .await;
     assert_eq!(outcome.run_state(), Some(RunState::NeedsLogin));
     assert!(scene.control.wants.lock().unwrap().is_empty());
     assert_eq!(scene.hooks.count("get_order"), 0);

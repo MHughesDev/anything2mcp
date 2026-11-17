@@ -14,9 +14,7 @@ use a2m_files::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::channel::{
-    ChannelEntry, Ownership, Role, Shape, duration_ms, problem, read_channel,
-};
+use crate::channel::{ChannelEntry, Ownership, Role, Shape, duration_ms, problem, read_channel};
 use crate::codes;
 use crate::names::{
     BROKER, CHANNEL, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE, STEP_LATEST, STEP_PUBLISH,
@@ -206,7 +204,11 @@ impl Work<'_, '_> {
         };
         let mut args = Vec::new();
         for entry in map.entries() {
-            if let Some(arg) = self.arg(format!("{prefix}{}", entry.key.value), &entry.value, expected) {
+            if let Some(arg) = self.arg(
+                format!("{prefix}{}", entry.key.value),
+                &entry.value,
+                expected,
+            ) {
                 args.push(arg);
             }
         }
@@ -272,7 +274,15 @@ impl Work<'_, '_> {
     }
 
     fn read(&mut self) -> Vec<Step> {
-        for key in ["headers", "body", "correlation", "from", "wait", "on_nothing", "read_back"] {
+        for key in [
+            "headers",
+            "body",
+            "correlation",
+            "from",
+            "wait",
+            "on_nothing",
+            "read_back",
+        ] {
             self.no_field(key);
         }
         if self.entry.shape != Shape::Retained {
@@ -292,7 +302,15 @@ impl Work<'_, '_> {
     }
 
     fn list(&mut self) -> Vec<Step> {
-        for key in ["key", "headers", "body", "correlation", "wait", "on_nothing", "read_back"] {
+        for key in [
+            "key",
+            "headers",
+            "body",
+            "correlation",
+            "wait",
+            "on_nothing",
+            "read_back",
+        ] {
             self.no_field(key);
         }
         if !self.entry.browse {
@@ -599,7 +617,13 @@ impl Lowering for StreamLowering {
     ) -> Result<Lowered, Diagnostics> {
         let unknown = |message: String, fix: &str| -> Diagnostics {
             let at = binding.field("channel").unwrap_or(binding.doc);
-            Diagnostics::from(problem("unknown_channel", Stage::Resolve, &at.at, message, fix))
+            Diagnostics::from(problem(
+                "unknown_channel",
+                Stage::Resolve,
+                &at.at,
+                message,
+                fix,
+            ))
         };
         let name = binding
             .field("channel")
@@ -621,7 +645,9 @@ impl Lowering for StreamLowering {
             cx.section_index(&CHANNEL, &BROKER),
         ) else {
             return Err(unknown(
-                format!("The channel `{name}` has problems of its own, so nothing can be bound to it."),
+                format!(
+                    "The channel `{name}` has problems of its own, so nothing can be bound to it."
+                ),
                 "Correct the channel file first.",
             ));
         };

@@ -17,15 +17,15 @@ use std::sync::{Arc, Mutex};
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
     ApprovalId, AuthPlan, AuthProviderName, BindingPlan, BindingStatus, CanonicalJson, Digest,
-    EffectClass, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, Epoch,
-    ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldBase, FieldFormat,
-    FieldTypeIndex, FieldTypePlan, Finding, Hazard, IdentityPlan, IdentityStrategy, InputIndex,
-    InputPlan, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT,
-    PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep,
-    Plan, PlanExpr, PlanHeader, PrincipalId, ProbePlan, RecordKey, RecordState, Rounding,
-    RunId, RunState, Sensitivity, SignInMode, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind,
-    SurfaceName, SurfacePlan, TargetName, TargetPlan, Timestamp, ToolAnnotations, ToolPlan,
-    ToolRuns, Value, ValueType, Values, Verb, Version, WhitespaceRule, WorkspaceId,
+    EffectClass, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, Epoch, ExprIndex,
+    FailsAs, Failure, FailureClass, FailureCode, FieldFormat, FieldTypeIndex, FieldTypePlan,
+    Finding, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, Mode, OperationIndex,
+    OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload, PermissionManifest,
+    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr, PlanHeader,
+    PrincipalId, ProbePlan, RecordKey, RecordState, Rounding, RunId, RunState, Sensitivity,
+    SignInMode, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
+    TargetName, TargetPlan, Timestamp, ToolAnnotations, ToolPlan, ToolRuns, Value, ValueType,
+    Values, Verb, Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
@@ -99,7 +99,12 @@ impl Drop for Folder {
 }
 
 pub fn failure(class: FailureClass, code: &'static str, message: &str) -> Failure {
-    Failure::new(class, FailureCode::fixed(code), message, "Look at the test.")
+    Failure::new(
+        class,
+        FailureCode::fixed(code),
+        message,
+        "Look at the test.",
+    )
 }
 
 pub const START: i64 = 1_800_000_000_000;
@@ -772,7 +777,22 @@ pub fn plan(address: &str) -> Plan {
     let description = expr(&mut plan, "input.description", ValueType::Text);
     let quantity = expr(&mut plan, "input.quantity", ValueType::Int);
     let length = expr(&mut plan, "input.length_in", ValueType::Decimal);
-    let current = expr(&mut plan, "current", ValueType::Null);
+    // What the record held when it was last read, as the driver read it.
+    let optional = |name: &str, ty: ValueType| a2m_core::FieldOf {
+        name: name.to_owned(),
+        ty,
+        required: false,
+    };
+    let current = expr(
+        &mut plan,
+        "current",
+        ValueType::Record(vec![
+            optional("description", ValueType::Text),
+            optional("quantity", ValueType::Int),
+            optional("length_in", ValueType::Text),
+            optional("version", ValueType::Int),
+        ]),
+    );
     let no_manifest = || PermissionManifest {
         surfaces: vec![SurfaceIndex::new(0)],
         uploads: Vec::new(),
@@ -781,7 +801,12 @@ pub fn plan(address: &str) -> Plan {
     };
     let binding = |mode: &str, surface: u32, act: Vec<Step>, read_back: Vec<Step>| BindingPlan {
         mode: Mode::new(mode).unwrap(),
-        verb: Verb::new(if read_back.is_empty() { "read" } else { "upsert" }).unwrap(),
+        verb: Verb::new(if read_back.is_empty() {
+            "read"
+        } else {
+            "upsert"
+        })
+        .unwrap(),
         status: BindingStatus::Verified,
         surface: SurfaceIndex::new(surface),
         act,
@@ -1196,7 +1221,10 @@ impl Control for StoreControl {
             }
             for intent in &intents {
                 if let Some(mode) = &intent.mode {
-                    self.modes.lock().unwrap().push((intent.record, mode.clone()));
+                    self.modes
+                        .lock()
+                        .unwrap()
+                        .push((intent.record, mode.clone()));
                 }
             }
             let tokens = self.store.store_intents(&self.fence(), intents).await?;
@@ -1230,19 +1258,14 @@ impl Control for StoreControl {
 
     fn verified<'a>(
         &'a self,
-        token: &'a ActedToken,
+        token: ActedToken,
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
             self.hooks.note("verified");
-            // The store's closure must own what it uses; the proof is
-            // borrowed, so the call is made on this thread's transaction.
-            let record = token.record();
-            let epoch = token.epoch();
-            let _ = (record, epoch);
             self.store
-                .write_with(token, move |tx, token| {
-                    tx.ledger().mark_verified(token, read_back)
+                .write(Durability::Synced, move |tx| {
+                    tx.ledger().mark_verified(&token, read_back)
                 })
                 .await
         })
@@ -1331,7 +1354,9 @@ impl Control for StoreControl {
                 && self
                     .faults
                     .evidence_full
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                        left.checked_sub(1)
+                    })
                     .is_ok()
             {
                 return Err(failure(
@@ -1405,8 +1430,12 @@ impl Scene {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(&TelemetrySettings::default(), Arc::clone(&redact), &logs)
-                .unwrap(),
+            telemetry: a2m_telemetry::start(
+                &TelemetrySettings::default(),
+                Arc::clone(&redact),
+                &logs,
+            )
+            .unwrap(),
         };
         let pack = AppPack {
             hooks: Arc::clone(&hooks),
@@ -1424,10 +1453,9 @@ impl Scene {
         let plan = Arc::new(plan);
         let tool_name = OperationName::new(tool).unwrap();
         let (effect, kind) = match plan.tool(&tool_name).map(|tool| tool.runs) {
-            Some(ToolRuns::Operation(index)) => (
-                plan.operation(index).unwrap().effect,
-                ToolKind::Operation,
-            ),
+            Some(ToolRuns::Operation(index)) => {
+                (plan.operation(index).unwrap().effect, ToolKind::Operation)
+            }
             Some(ToolRuns::Pipeline(index)) => {
                 (plan.pipeline(index).unwrap().effect, ToolKind::Pipeline)
             }
@@ -1632,7 +1660,13 @@ impl Scene {
     }
 
     pub fn last_result(&self) -> Values {
-        self.control.results.lock().unwrap().last().cloned().unwrap()
+        self.control
+            .results
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap()
     }
 }
 

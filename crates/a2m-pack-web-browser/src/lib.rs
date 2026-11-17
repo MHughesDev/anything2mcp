@@ -41,7 +41,7 @@ pub use browsers::{
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
-pub use snapshot::{ElementState, Snapshot, SnapshotElement, SnapshotLimits};
+pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use tab::{
     ActTab, By, DialogAnswer, Element, Input, Key, Loaded, Look, ObserveTab, PageEnvironment,
     PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests,

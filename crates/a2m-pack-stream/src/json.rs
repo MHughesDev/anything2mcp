@@ -484,7 +484,8 @@ mod tests {
 
     #[test]
     fn a_value_reads_and_writes_back_in_key_order_with_numbers_as_written() {
-        let text = r#" {"b":[1,2.50,-0,1e3],"a":"x\"\u00e9\ud83d\ude00\n","c":{"t":true,"n":null}} "#;
+        let text =
+            r#" {"b":[1,2.50,-0,1e3],"a":"x\"\u00e9\ud83d\ude00\n","c":{"t":true,"n":null}} "#;
         let value = Json::parse(text).unwrap();
         assert_eq!(
             value.to_line(),

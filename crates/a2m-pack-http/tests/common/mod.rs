@@ -20,8 +20,8 @@ use a2m_auth::{
 };
 use a2m_core::{
     AccountName, ApprovalId, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch,
-    Failure, Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact,
-    RunId, RunState, Secret, Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
+    Failure, Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId,
+    RunState, Secret, Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
@@ -329,8 +329,15 @@ impl Scene {
         inputs: &Values,
     ) -> Result<Ran, StepFailure> {
         let steps = &self.binding(operation).act;
-        self.run(handle, prepared, steps, inputs, None, Duration::from_secs(30))
-            .await
+        self.run(
+            handle,
+            prepared,
+            steps,
+            inputs,
+            None,
+            Duration::from_secs(30),
+        )
+        .await
     }
 }
 
@@ -541,7 +548,12 @@ impl Signed {
         };
         let reference = CredentialRef::new(&format!("vault://example/service/{role}")).unwrap();
         credentials
-            .put(&key.workspace, &key.identity, &reference, &Secret::new(secret))
+            .put(
+                &key.workspace,
+                &key.identity,
+                &reference,
+                &Secret::new(secret),
+            )
             .await
             .unwrap();
         let mut entry = AuthEntry::new(a2m_auth::ProviderName::new(provider).unwrap());

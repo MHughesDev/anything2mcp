@@ -192,7 +192,11 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
         ),
         // A write to a file an application may hold open, with no signal.
         (
-            &[("documents/stock.yaml", "records:", "may_be_open: true\nrecords:")],
+            &[(
+                "documents/stock.yaml",
+                "lock_signal: {sibling: stock.csv.lock}\n",
+                "",
+            )],
             "file.open_without_signal",
             "lock signal",
         ),

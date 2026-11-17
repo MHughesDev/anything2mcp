@@ -1,6 +1,6 @@
 # 308. The file pack
 
-The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It proposes one mode, `file`, which becomes real by a decision record when the pack is built ([record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it.
+The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it.
 
 A file is the simplest system there is to verify, because the whole of it can be read again after every write. It is also the easiest to damage without noticing, because a careless save rewrites everything the tool did not mean to touch. This section is mostly about the second point.
 
@@ -65,7 +65,7 @@ file: example-settings.json
 format: json
 records:
   warehouse:
-    path: [warehouses, {key: code, equals: input.code}]   # the element whose code is the input
+    path: [warehouses]             # a list; with a key, each element is one record
     key: [code]
     fields:
       code:   {path: [code], type: identifier}
@@ -105,10 +105,10 @@ bindings:
 | `fingerprint` | What identifies this layout, as for a source template. A file that does not match is `drift` |
 | `may_be_open`, `lock_signal` | Whether an application may hold the file open, and the sign that it does: a sibling file the target names, or the operating system's own refusal to share |
 | `records.<kind>` | One kind of named place: a `table` the file defines, or a `sheet` with a header row found by its text; a `cell` by defined name; a `path` in a structured file; `rows` of delimited text |
-| `key` | The fields that identify one row or element. Required for tables, rows, and paths with a selector |
+| `key` | The fields that identify one row or element. Required for tables, sheets, and rows. A path with a key leads to a list whose elements are the records; a path without one leads to a single record |
 | `fields` | Each field's place within the record (`header`, `path`) and its field type. `writable: true` marks a field a binding may set; nothing else is ever set |
 
-A key path is a list of typed segments, never a string to be split. A selector such as `{key: code, equals: input.code}` compares an input as a value; it cannot add a segment, leave the file, or name another element by position.
+A key path is a list of keys, never a string to be split, and no input reaches it. An element of a list is chosen by the record's key, as a row is: the binding gives each key field a value, and the driver compares it, typed, with what each element holds. An input cannot add a key to a path, leave the file, or name an element by position ([decision 0103](../../decisions/0103-the-file-pack-as-building-it-settled-it.md)).
 
 ## Verbs and steps
 
@@ -138,7 +138,7 @@ One save is one commit point. An operation whose input is a list of rows saves t
 
 No retries inside. The replace is the commit point: before it the old file is untouched, and after it the new file is whole. There is never a moment when the file at the path is a mixture of the two.
 
-**The intended digest is an output before the commit point.** It is known after `set` and before `save`, and the engine stores it before the commit point is acted, so that reconcile can compare digests. The driver interface has no place for this yet; the data pack needs the same for an assigned key ([section 307](307-the-data-pack.md)). Until it has, reconcile compares values alone, which section 208 already allows.
+**The intended digest is an output before the commit point.** It is known after `set` and before `save`. `set` returns it, with the digest the file had when it was read, among the step's values for reconcile, which the engine stores before the commit point is acted. Every `open` returns the digest of the file it read, so reconcile compares the three.
 
 ## A lost answer, and reconcile
 
@@ -163,7 +163,7 @@ A stop after the replace was called and before it was recorded is `possible_comm
 | Format | What must survive | Writable |
 | --- | --- | --- |
 | Delimited text, as in RFC 4180 | Delimiter, the quoting of each field, line endings, encoding and byte-order mark, the last line's ending, rows not named | Yes, first |
-| JSON, as in RFC 8259 | Key order, spacing, the spelling of every number, escapes. A file with a duplicate key is read-only | Yes, first |
+| JSON, as in RFC 8259 | Key order, spacing, the spelling of every number, escapes. A file with a duplicate key is not read at all: it is `file_unreadable` | Yes, first |
 | Workbook | Every part of the package not holding the place, byte for byte; within the sheet, formulas, styles, comments, validation lists, merged ranges, hidden rows and columns. A text value is written into the cell itself, so the shared table of strings is not touched | Yes, after the first two |
 | YAML, TOML | Comments, key order, quoting style, anchors, several documents in one file | Read-only until an editor passes the tests. A place reached through an alias is always read-only |
 | XML | Namespaces, comments, entity references, attribute order | Read-only at first |
@@ -197,7 +197,7 @@ The pack declares two effects, both `enforced`: it reads files, and writes files
 
 | Finding | Level |
 | --- | --- |
-| Sheets, tables the file defines and their headers, defined names, validation lists, formulas' presence, macro parts' presence, a signature's presence | `discovered`, source `artifact` read from a real file; the subject is the file by digest and format |
+| Sheets, tables the file defines and their headers, defined names, validation lists, formulas' presence, macro parts' presence, a signature's presence | `discovered`, source `live_system`: for this pack the file read from disk is the system itself; the subject is the file by digest and format |
 | The header row of a plain sheet, taken as its first filled row | `inferred` |
 | A column whose values are unique in this file, as a key candidate | `inferred`, with `sampled` and `single_variant` |
 | A key structure in a structured file, from the file itself | `inferred` |
@@ -217,11 +217,11 @@ The scout tries each drafted read five times. Opening a file for reading is a re
 
 | What goes wrong | Class | Code |
 | --- | --- | --- |
-| The path is outside an allowed root, a link leads out, the file is not a regular file with one link, or the folder is not writable | `policy` | `path_not_allowed` |
+| The path is outside an allowed root, a link leads out, the file is not a regular file with one link, or the folder is not writable | `input` | `path_not_allowed`, the provider contract's own code and class |
 | The file is missing; it does not parse; a named place is not found; two rows share a key | `drift` | `file_missing`, `file_unreadable`, `place_not_found`, `key_not_unique` (proposed; the last shared with section 307) |
 | The fingerprint does not match | `drift` | `fingerprint_mismatch` |
 | A formula where a value was declared | `unknown_variant` | `formula_at_place` (proposed) |
-| The file is encrypted, protected, or signed | `policy` | `file_protected` (proposed) |
+| The file is encrypted, protected, signed, or marked read-only | `policy` | `file_protected` |
 | The lock signal is present, or the system refuses to share the file | `busy` | `file_locked` (proposed) |
 | The disk or folder is full | `busy` | `storage_full` |
 | The untouched check fails, so the editor would change something else | `drift` | `round_trip_failed` (proposed). Nothing was written |
@@ -276,13 +276,13 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 | 5 | A discoverer that claims no more than it saw | The file's own structure as `discovered`; header and key guesses as `inferred` |
 | 6 | Failures mapped to the classes | Failures |
 | 7 | Effects and hazards | Identity, effects, hazards, and paths |
-| 8 | A decision record for the mode | `file`, written by the lead when H2 is built |
+| 8 | A decision record for the mode | `file`: [decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md) |
 
 ## Build order
 
 1. **H1.** The stand and its control interface, with its own tests on three operating systems.
-2. **H2.** Reads from delimited text and JSON, then from workbooks through `a2m-sources`, with positions added to its parsed form; the proof is a value read from a named place in each. Then the discoverer, the drafting rules, and the scout's tries.
-3. **H3.** Writes to delimited text and JSON: the patch editor, the untouched check, the replace, read-back, and reconcile by digest; the proof is case 3. Then workbooks with the formula rule, then YAML and TOML, each when an editor passes the round-trip tests.
+2. **H2.** Reads from delimited text and JSON, then from workbooks through `a2m-sources`, with positions added to its parsed form; the proof is a value read from a named place in each. Then the discoverer, the drafting rules, and the scout's tries. Done, except the drafted `list` reads and the scout's tries.
+3. **H3.** Writes to delimited text and JSON: the patch editor, the untouched check, the replace, read-back, and reconcile by digest; the proof is case 3. Done for `update`, `create`, and `delete` of one record; `upsert` and a list of rows in one save wait for the engine. Then workbooks with the formula rule, then YAML and TOML, each when an editor passes the round-trip tests: not built, and YAML, TOML, XML, and text documents are not read yet either.
 4. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the artifact archetype without bending it, for H-29.
 
 ## Open points

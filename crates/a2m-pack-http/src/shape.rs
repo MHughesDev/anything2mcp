@@ -101,7 +101,10 @@ impl Shape {
         if !matches!(doc.value, Doc::Map(_)) {
             return Err(problem(
                 &doc.at,
-                format!("A shape is a map with a `type`; this is a {}.", doc.value.kind()),
+                format!(
+                    "A shape is a map with a `type`; this is a {}.",
+                    doc.value.kind()
+                ),
             ));
         }
         let Some(kind_doc) = doc.get("type") else {
@@ -151,9 +154,9 @@ impl Shape {
                 }
                 "enum" if kind == Kind::String => {
                     for item in value.items() {
-                        let word = item.as_text().ok_or_else(|| {
-                            problem(&item.at, "`enum` lists texts.".to_owned())
-                        })?;
+                        let word = item
+                            .as_text()
+                            .ok_or_else(|| problem(&item.at, "`enum` lists texts.".to_owned()))?;
                         shape.one_of.push(word.to_owned());
                     }
                 }
@@ -232,9 +235,9 @@ impl Shape {
             ));
         }
         match json {
-            Json::Text(text) if !self.one_of.is_empty() && !self.one_of.contains(text) => {
-                Err(format!("{path} is not one of the texts the endpoint declares"))
-            }
+            Json::Text(text) if !self.one_of.is_empty() && !self.one_of.contains(text) => Err(
+                format!("{path} is not one of the texts the endpoint declares"),
+            ),
             Json::List(items) => {
                 let Some(shape) = &self.items else {
                     return Ok(());
@@ -309,13 +312,19 @@ properties:
         let shape = shape(ITEM).unwrap();
         let fits = |text: &str| shape.check(&Json::parse(text.as_bytes()).unwrap());
         assert_eq!(
-            fits(r#"{"item_code":"L-1","quantity":2,"length_in":null,"extra":true,"lines":[{"n":1.5}]}"#),
+            fits(
+                r#"{"item_code":"L-1","quantity":2,"length_in":null,"extra":true,"lines":[{"n":1.5}]}"#
+            ),
             Ok(())
         );
         let wrong = fits(r#"{"item_code":"PLANTED","quantity":"2"}"#).unwrap_err();
         assert!(wrong.contains("the body.quantity is a string"), "{wrong}");
         assert!(!wrong.contains("PLANTED"), "{wrong}");
-        assert!(fits(r#"{"quantity":2}"#).unwrap_err().contains("lacks `item_code`"));
+        assert!(
+            fits(r#"{"quantity":2}"#)
+                .unwrap_err()
+                .contains("lacks `item_code`")
+        );
         assert!(fits(r#"{"item_code":"L","quantity":2.5}"#).is_err());
         assert!(fits(r#"{"item_code":"L","quantity":2,"status":"other"}"#).is_err());
         let nested = fits(r#"{"item_code":"L","quantity":2,"lines":[{"n":1},{"n":"x"}]}"#);

@@ -485,7 +485,9 @@ pub(crate) fn build(
             None | Some(Value::Null) => {}
             Some(value) => {
                 let text = scalar_text(value).ok_or_else(|| {
-                    unusable(format!("the query value `{name}` is not one text or number"))
+                    unusable(format!(
+                        "the query value `{name}` is not one text or number"
+                    ))
                 })?;
                 add_query(name, &text);
             }
@@ -673,7 +675,11 @@ mod tests {
         ];
         for (value, encoded) in cases {
             let built = with(Value::from(value)).unwrap();
-            assert_eq!(built.path, format!("/api/orders/{encoded}/items"), "{value}");
+            assert_eq!(
+                built.path,
+                format!("/api/orders/{encoded}/items"),
+                "{value}"
+            );
             assert_eq!(built.path.matches('/').count(), 4, "{value}");
         }
         assert_eq!(with(Value::Int(7)).unwrap().path, "/api/orders/7/items");

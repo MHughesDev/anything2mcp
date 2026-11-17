@@ -81,9 +81,9 @@ pub(crate) fn looks_like_credential(text: &str) -> bool {
     }
     // A long run with no space that mixes letters and digits: a key.
     let dense = text.len() >= 24
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'/' | b'=' | b'.'));
+        && text.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'/' | b'=' | b'.')
+        });
     dense
         && text.bytes().any(|b| b.is_ascii_digit())
         && text.bytes().any(|b| b.is_ascii_alphabetic())
@@ -230,11 +230,16 @@ pub(crate) fn template_of(
             );
             continue;
         }
-        if matches!(name.as_str(), "host" | "content-length" | "transfer-encoding" | "connection") {
+        if matches!(
+            name.as_str(),
+            "host" | "content-length" | "transfer-encoding" | "connection"
+        ) {
             refuse(
                 "header_invalid",
                 &entry.key.at,
-                format!("The header `{name}` is set by the connection and cannot be written in an endpoint."),
+                format!(
+                    "The header `{name}` is set by the connection and cannot be written in an endpoint."
+                ),
                 "Remove the header.",
             );
             continue;
@@ -302,7 +307,10 @@ pub(crate) fn template_of(
             refuse(
                 "shape_invalid",
                 &written.at,
-                format!("A {} request carries no body, and the endpoint declares one.", method.word()),
+                format!(
+                    "A {} request carries no body, and the endpoint declares one.",
+                    method.word()
+                ),
                 "Remove `request_schema`, or correct the method.",
             );
         }
@@ -537,9 +545,10 @@ impl FileKind for EndpointKind {
                 Diagnostics::from(problem(
                     "not_encodable",
                     Stage::Lower,
-                    &docs
-                        .first()
-                        .map_or_else(|| Place::start_of(&a2m_files::RelPath::target_file()), |doc| doc.at.clone()),
+                    &docs.first().map_or_else(
+                        || Place::start_of(&a2m_files::RelPath::target_file()),
+                        |doc| doc.at.clone(),
+                    ),
                     failure.message().to_owned(),
                     "Keep every number in an endpoint whole.",
                 ))
@@ -734,7 +743,10 @@ impl LintRule for SignedEndpoint {
                     binding.get("read_back").and_then(|r| r.get("endpoint")),
                 ];
                 for endpoint in named.into_iter().flatten() {
-                    if endpoint.as_text().is_some_and(|name| signed.contains(&name)) {
+                    if endpoint
+                        .as_text()
+                        .is_some_and(|name| signed.contains(&name))
+                    {
                         out.push(problem(
                             "signed_endpoint",
                             Stage::Lint,
@@ -764,7 +776,13 @@ mod tests {
         ] {
             assert!(looks_like_credential(secret), "{secret}");
         }
-        for plain in ["application/json", "en-US", "draft", "2026-11-17", "no-cache"] {
+        for plain in [
+            "application/json",
+            "en-US",
+            "draft",
+            "2026-11-17",
+            "no-cache",
+        ] {
             assert!(!looks_like_credential(plain), "{plain}");
         }
     }

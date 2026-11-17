@@ -54,7 +54,10 @@ fn text_of(name: &str, param: &Param, value: &Value) -> Result<String, StepFailu
         return Err(unsafe_value(name, "it holds a NUL character"));
     }
     if !param.choices.is_empty() && !param.choices.contains(&text) {
-        return Err(invalid(name, "it is not one of the values the param allows"));
+        return Err(invalid(
+            name,
+            "it is not one of the values the param allows",
+        ));
     }
     if let Some(declared) = &param.pattern {
         let fits = pattern::whole(declared).is_ok_and(|compiled| compiled.is_match(&text));
@@ -132,7 +135,11 @@ pub fn elements(command: &Command, given: &Given<'_>) -> Result<Vec<String>, Ste
                 let spec = declared(param)?;
                 match given.value(param) {
                     Some(value) => {
-                        out.push(own_element(param, text_of(param, spec, value)?, options_ended)?);
+                        out.push(own_element(
+                            param,
+                            text_of(param, spec, value)?,
+                            options_ended,
+                        )?);
                     }
                     None if spec.required => return Err(missing(param)),
                     None => {}
@@ -227,11 +234,26 @@ mod tests {
             program: 0,
             effect: Effect::Read,
             params: BTreeMap::from([
-                ("sku".to_owned(), param(ParamKind::Text, true, false, Some(r"^[A-Z]{2}-\d{4}$"))),
-                ("name".to_owned(), param(ParamKind::Text, false, false, Some(r"^.{1,60}$"))),
-                ("quantity".to_owned(), param(ParamKind::Int, false, false, None)),
-                ("archived".to_owned(), param(ParamKind::Bool, false, false, None)),
-                ("tags".to_owned(), param(ParamKind::Text, false, true, Some(r"^[a-z]+$"))),
+                (
+                    "sku".to_owned(),
+                    param(ParamKind::Text, true, false, Some(r"^[A-Z]{2}-\d{4}$")),
+                ),
+                (
+                    "name".to_owned(),
+                    param(ParamKind::Text, false, false, Some(r"^.{1,60}$")),
+                ),
+                (
+                    "quantity".to_owned(),
+                    param(ParamKind::Int, false, false, None),
+                ),
+                (
+                    "archived".to_owned(),
+                    param(ParamKind::Bool, false, false, None),
+                ),
+                (
+                    "tags".to_owned(),
+                    param(ParamKind::Text, false, true, Some(r"^[a-z]+$")),
+                ),
             ]),
             args,
             exits: BTreeMap::new(),
@@ -261,13 +283,27 @@ mod tests {
     #[test]
     fn each_entry_becomes_exactly_its_elements() {
         let command = command(vec![
-            Arg::Literal { text: "item".to_owned() },
-            Arg::Value { param: "sku".to_owned() },
+            Arg::Literal {
+                text: "item".to_owned(),
+            },
+            Arg::Value {
+                param: "sku".to_owned(),
+            },
             flag("--name", "name", None),
             flag("--quantity", "quantity", Some("=")),
-            Arg::When { flag: "--archived".to_owned(), param: "archived".to_owned() },
-            Arg::Each { flag: "--tag".to_owned(), param: "tags".to_owned(), join: None },
-            Arg::Stamp { flag: "--ref".to_owned(), join: None },
+            Arg::When {
+                flag: "--archived".to_owned(),
+                param: "archived".to_owned(),
+            },
+            Arg::Each {
+                flag: "--tag".to_owned(),
+                param: "tags".to_owned(),
+                join: None,
+            },
+            Arg::Stamp {
+                flag: "--ref".to_owned(),
+                join: None,
+            },
         ]);
         let values = Values::new()
             .with("sku", "SK-1001")
@@ -280,8 +316,18 @@ mod tests {
         assert_eq!(
             elements(&command, &all).unwrap(),
             [
-                "item", "SK-1001", "--name", "a b; $HOME \"q\" 'r'", "--quantity=12",
-                "--archived", "--tag", "red", "--tag", "blue", "--ref", "a2m:01",
+                "item",
+                "SK-1001",
+                "--name",
+                "a b; $HOME \"q\" 'r'",
+                "--quantity=12",
+                "--archived",
+                "--tag",
+                "red",
+                "--tag",
+                "blue",
+                "--ref",
+                "a2m:01",
             ]
         );
         // An optional param that is absent gives no element at all.
@@ -306,8 +352,15 @@ mod tests {
 
     #[test]
     fn a_value_cannot_become_an_option_or_break_its_param() {
-        let positional = command(vec![Arg::Value { param: "name".to_owned() }]);
-        let after_marker = command(vec![Arg::EndOfOptions, Arg::Value { param: "name".to_owned() }]);
+        let positional = command(vec![Arg::Value {
+            param: "name".to_owned(),
+        }]);
+        let after_marker = command(vec![
+            Arg::EndOfOptions,
+            Arg::Value {
+                param: "name".to_owned(),
+            },
+        ]);
         let flagged = command(vec![flag("--name", "name", None)]);
         let joined = command(vec![flag("--name", "name", Some("="))]);
         let dashed = Values::new().with("name", "--yes");
@@ -319,14 +372,22 @@ mod tests {
             );
             assert!(!failure.message().contains("--yes"), "{failure}");
         }
-        assert_eq!(elements(&after_marker, &given(&dashed)).unwrap(), ["--", "--yes"]);
-        assert_eq!(elements(&joined, &given(&dashed)).unwrap(), ["--name=--yes"]);
+        assert_eq!(
+            elements(&after_marker, &given(&dashed)).unwrap(),
+            ["--", "--yes"]
+        );
+        assert_eq!(
+            elements(&joined, &given(&dashed)).unwrap(),
+            ["--name=--yes"]
+        );
 
         let nul = Values::new().with("name", "a\0b");
         let failure = elements(&joined, &given(&nul)).unwrap_err().failure;
         assert_eq!(failure.code(), &ARGUMENT_UNSAFE);
 
-        let sku = command(vec![Arg::Value { param: "sku".to_owned() }]);
+        let sku = command(vec![Arg::Value {
+            param: "sku".to_owned(),
+        }]);
         for bad in [
             Values::new().with("sku", "SK-1001\n--yes"),
             Values::new().with("sku", "sk-1001"),

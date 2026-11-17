@@ -67,7 +67,11 @@ fn part(text: &str, optional: bool) -> Option<UsagePart> {
     }
     let (flag, rest, joined) = match text.find(['=', ' ']) {
         None => (text, "", false),
-        Some(at) => (&text[..at], text[at + 1..].trim(), text.as_bytes()[at] == b'='),
+        Some(at) => (
+            &text[..at],
+            text[at + 1..].trim(),
+            text.as_bytes()[at] == b'=',
+        ),
     };
     let fine = flag.len() > 1
         && flag != "--"
@@ -132,7 +136,11 @@ impl DraftingRule for CommandFromFinding {
         FILE_KIND
     }
 
-    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, a2m_core::Failure> {
+    fn draft(
+        &self,
+        finding: &Finding,
+        cx: &DraftContext<'_>,
+    ) -> Result<Vec<DraftDoc>, a2m_core::Failure> {
         let found = CommandFound::read(finding)?;
         let name = slug(&found.name);
         let listed = &found.name;
@@ -150,7 +158,9 @@ impl DraftingRule for CommandFromFinding {
                 DraftValue::map(vec![
                     (
                         "args",
-                        DraftValue::List(version.args.iter().map(|a| DraftValue::text(a)).collect()),
+                        DraftValue::List(
+                            version.args.iter().map(|a| DraftValue::text(a)).collect(),
+                        ),
                     ),
                     (
                         "expect",
@@ -270,8 +280,9 @@ mod tests {
 
     #[test]
     fn a_usage_line_is_read_part_by_part_or_not_at_all() {
-        let parts = usage_parts("<sku> --quantity=<whole number> [--if-version <whole number>] [--yes]")
-            .unwrap();
+        let parts =
+            usage_parts("<sku> --quantity=<whole number> [--if-version <whole number>] [--yes]")
+                .unwrap();
         let part = |flag: Option<&str>, place: Option<&str>, joined, optional| UsagePart {
             flag: flag.map(str::to_owned),
             place: place.map(str::to_owned),
@@ -288,11 +299,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            usage_parts("--name <name> --location <code>").unwrap().len(),
+            usage_parts("--name <name> --location <code>")
+                .unwrap()
+                .len(),
             2
         );
         assert_eq!(usage_parts("").unwrap(), []);
-        for unknown in ["[<anything>...]", "<a>...", "(--x | --y)", "[--a [--b]]", "$(reboot)"] {
+        for unknown in [
+            "[<anything>...]",
+            "<a>...",
+            "(--x | --y)",
+            "[--a [--b]]",
+            "$(reboot)",
+        ] {
             assert_eq!(usage_parts(unknown), None, "{unknown}");
         }
         assert_eq!(slug("item show"), "item_show");

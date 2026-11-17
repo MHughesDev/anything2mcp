@@ -161,7 +161,7 @@
   }
 
   // Every rendered element a query matches, inside its scope when it has one.
-  // `null` when the scope itself is not exactly one element.
+  // When the scope itself is not exactly one element: how many it was.
   function find(query) {
     let root = document;
     if (query.within) {
@@ -179,7 +179,7 @@
 
   const count = (query) => {
     const found = find(query);
-    return Array.isArray(found) ? found.length : found.scope === 0 ? 0 : found.scope;
+    return Array.isArray(found) ? found.length : found.scope;
   };
 
   // The one element, or how many there were.
@@ -193,6 +193,12 @@
     el.localName === "input" &&
     ((el.getAttribute("type") || "").toLowerCase() === "password" ||
       /password/i.test(el.getAttribute("autocomplete") || ""));
+
+  const checkable = (el) =>
+    el.localName === "input" && ["checkbox", "radio"].includes((el.getAttribute("type") || "").toLowerCase());
+
+  // Every password input of the page, for the engine to mask in a snapshot.
+  const passwords = () => [...walk(document)].filter(isPassword);
 
   const stale = (el) => !(el instanceof Element) || !el.isConnected;
 
@@ -210,7 +216,7 @@
         value = "innerText" in el ? el.innerText : el.textContent;
         break;
       case "checked":
-        if (typeof el.checked === "boolean") return { flag: el.checked };
+        if (checkable(el)) return { flag: el.checked };
         if (el.hasAttribute("aria-checked")) return { flag: el.getAttribute("aria-checked") === "true" };
         return { absent: true };
       case "selected_text":
@@ -243,7 +249,7 @@
     if (disabled(el)) return { no: "disabled" };
     if (need === "edit" && !editable(el)) return { no: "not_editable" };
     if (need === "select" && el.localName !== "select") return { no: "wrong_control" };
-    if (need === "check" && typeof el.checked !== "boolean") return { no: "wrong_control" };
+    if (need === "check" && !checkable(el)) return { no: "wrong_control" };
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     const box = el.getBoundingClientRect();
     const x = Math.round(box.left + box.width / 2);
@@ -256,7 +262,7 @@
         (at.closest && at.closest("label") && at.closest("label").control === el);
       if (!hit || !passes(hit)) return { no: "obscured" };
     }
-    return { ok: true, x, y, checked: typeof el.checked === "boolean" ? el.checked : null };
+    return { ok: true, x, y, checked: checkable(el) ? el.checked : null };
   }
 
   // Focus and select what is there, so that inserted text replaces it.
@@ -384,5 +390,5 @@
 
   const page = () => ({ address: location.href, title: document.title });
 
-  globalThis.__a2m = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, page };
+  globalThis.__a2m = { locate, read, check, prepareFill, nativeSet, selectByValue, until, request, page, passwords };
 })();

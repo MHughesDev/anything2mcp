@@ -14,14 +14,10 @@ use std::time::Duration;
 
 use a2m_core::{REDACTED, Value, Values};
 use a2m_provider::{Authority, Posture, Sent, StepOutcome};
-use common::{
-    Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, text,
-};
+use common::{Ledger, PLANTED, Scene, done, failed, input, read, record, signature_of, text};
 use example_broker::client::Publish;
 use example_broker::faults::{Fault, FaultKind};
-use example_broker::model::{
-    ChannelSpec, DeliveryOutcome, Op, PublishOutcome, Shape, body_digest,
-};
+use example_broker::model::{ChannelSpec, DeliveryOutcome, Op, PublishOutcome, Shape, body_digest};
 use serde_json::json;
 
 const STATUS: &str = "example.orders.status";
@@ -106,9 +102,14 @@ async fn a_list_is_one_bounded_look_with_its_coverage() {
     let none = Values::new();
 
     let status = done(
-        read(&handle, &mut prepared, &scene.binding("example_order_status_list").act, &none)
-            .await
-            .unwrap(),
+        read(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_order_status_list").act,
+            &none,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(status.get("count"), Some(&Value::Int(2)));
     assert_eq!(text(&status, "coverage"), "complete");
@@ -117,18 +118,28 @@ async fn a_list_is_one_bounded_look_with_its_coverage() {
     // says it is partial and where the next begins.
     let events = &scene.binding("example_order_events_list").act;
     let first = done(
-        read(&handle, &mut prepared, events, &Values::new().with("from", 0_i64))
-            .await
-            .unwrap(),
+        read(
+            &handle,
+            &mut prepared,
+            events,
+            &Values::new().with("from", 0_i64),
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(first.get("count"), Some(&Value::Int(2)));
     assert_eq!(first.get("more"), Some(&Value::Bool(true)));
     assert_eq!(text(&first, "coverage"), "partial");
     assert_eq!(first.get("next"), Some(&Value::Int(2)));
     let rest = done(
-        read(&handle, &mut prepared, events, &Values::new().with("from", 2_i64))
-            .await
-            .unwrap(),
+        read(
+            &handle,
+            &mut prepared,
+            events,
+            &Values::new().with("from", 2_i64),
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(rest.get("count"), Some(&Value::Int(1)));
     assert_eq!(text(&rest, "coverage"), "complete");
@@ -140,16 +151,34 @@ async fn a_list_is_one_bounded_look_with_its_coverage() {
     // A position that is no whole number never reaches the broker.
     let before = scene.broker.requests().len();
     let refused = failed(
-        read(&handle, &mut prepared, events, &Values::new().with("from", "0; drop")).await,
+        read(
+            &handle,
+            &mut prepared,
+            events,
+            &Values::new().with("from", "0; drop"),
+        )
+        .await,
     );
-    assert_eq!(refused, ("input".to_owned(), "value_out_of_range".to_owned(), Sent::NotSent));
+    assert_eq!(
+        refused,
+        (
+            "input".to_owned(),
+            "value_out_of_range".to_owned(),
+            Sent::NotSent
+        )
+    );
     assert_eq!(scene.broker.requests().len(), before);
 
     // A queue is looked at, and every message stays where it was.
     let work = done(
-        read(&handle, &mut prepared, &scene.binding("example_order_work_list").act, &none)
-            .await
-            .unwrap(),
+        read(
+            &handle,
+            &mut prepared,
+            &scene.binding("example_order_work_list").act,
+            &none,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(work.get("count"), Some(&Value::Int(2)));
     assert!(scene.broker.deliveries().is_empty());
@@ -245,9 +274,7 @@ async fn a_wait_finds_what_arrives_through_the_runtimes_own_subscription() {
     let mut outside = scene.broker.client("outside").await.unwrap();
     for (order, status) in [("A-101", "shipped"), ("A-100", "submitted")] {
         outside
-            .publish(
-                &Publish::new(STATUS, json!({"order_id": order, "status": status})).key(order),
-            )
+            .publish(&Publish::new(STATUS, json!({"order_id": order, "status": status})).key(order))
             .await
             .unwrap();
     }
@@ -314,7 +341,12 @@ async fn a_publish_to_a_state_channel_is_one_message_and_reads_back() {
     // Without the record's intent token nothing is sent.
     let refused = failed(
         handle
-            .act(&mut prepared, &binding.act[0], &write.input(&args, None), Authority::Read)
+            .act(
+                &mut prepared,
+                &binding.act[0],
+                &write.input(&args, None),
+                Authority::Read,
+            )
             .await,
     );
     assert_eq!((refused.0.as_str(), refused.2), ("policy", Sent::NotSent));
@@ -364,7 +396,9 @@ async fn a_publish_to_a_state_channel_is_one_message_and_reads_back() {
     // value, which the engine compares as a mismatch.
     let mut outside = scene.broker.client("outside").await.unwrap();
     outside
-        .publish(&Publish::new(STATUS, json!({"order_id": "A-100", "status": "draft"})).key("A-100"))
+        .publish(
+            &Publish::new(STATUS, json!({"order_id": "A-100", "status": "draft"})).key("A-100"),
+        )
         .await
         .unwrap();
     let changed = done(
@@ -404,10 +438,22 @@ async fn a_message_that_does_not_fit_is_never_sent() {
     let publish = &scene.binding("example_order_status_set").act[0];
     let invalid = failed(
         handle
-            .act(&mut prepared, publish, &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                publish,
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await,
     );
-    assert_eq!(invalid, ("input".to_owned(), "schema_invalid".to_owned(), Sent::NotSent));
+    assert_eq!(
+        invalid,
+        (
+            "input".to_owned(),
+            "schema_invalid".to_owned(),
+            Sent::NotSent
+        )
+    );
 
     // A body over the channel's limit.
     let long = "x".repeat(70_000);
@@ -418,10 +464,22 @@ async fn a_message_that_does_not_fit_is_never_sent() {
     let notice = &scene.binding("example_order_notice_send").act[0];
     let large = failed(
         handle
-            .act(&mut prepared, notice, &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                notice,
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await,
     );
-    assert_eq!(large, ("input".to_owned(), "message_too_large".to_owned(), Sent::NotSent));
+    assert_eq!(
+        large,
+        (
+            "input".to_owned(),
+            "message_too_large".to_owned(),
+            Sent::NotSent
+        )
+    );
 
     // A moment has no declared form in a JSON message.
     let args = Values::new()
@@ -430,10 +488,22 @@ async fn a_message_that_does_not_fit_is_never_sent() {
         .with("body.text", a2m_core::Timestamp::from_unix_millis(5));
     let odd = failed(
         handle
-            .act(&mut prepared, notice, &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                notice,
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await,
     );
-    assert_eq!(odd, ("input".to_owned(), "value_out_of_range".to_owned(), Sent::NotSent));
+    assert_eq!(
+        odd,
+        (
+            "input".to_owned(),
+            "value_out_of_range".to_owned(),
+            Sent::NotSent
+        )
+    );
     assert!(scene.broker.received().is_empty());
 }
 
@@ -445,7 +515,9 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
     let args = status_args("A-100", "shipped");
 
     // Stored, then the connection drops before the confirmation.
-    scene.broker.set_fault(Fault::once(FaultKind::StoreThenDrop));
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenDrop));
     let write = ledger.write("A-100").await;
     let (handle, mut prepared) = scene
         .try_prepare(Posture::Live, Some(write.fence))
@@ -453,12 +525,21 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
         .unwrap();
     let lost = failed(
         handle
-            .act(&mut prepared, &binding.act[0], &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                &binding.act[0],
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await,
     );
     assert_eq!(
         lost,
-        ("possible_commit".to_owned(), "no_confirmation".to_owned(), Sent::Unknown)
+        (
+            "possible_commit".to_owned(),
+            "no_confirmation".to_owned(),
+            Sent::Unknown
+        )
     );
     // The driver sent it once and did not send it again.
     let received = scene.broker.received();
@@ -480,7 +561,9 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
 
     // The same sight with nothing stored: the connection drops first. It
     // is still a possible commit; reconcile shows the value seen before.
-    scene.broker.set_fault(Fault::once(FaultKind::DropBeforeStore));
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::DropBeforeStore));
     let write = ledger.write("A-101").await;
     let (handle, mut prepared) = scene
         .try_prepare(Posture::Live, Some(write.fence))
@@ -489,7 +572,12 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
     let args = status_args("A-101", "shipped");
     let dropped = failed(
         handle
-            .act(&mut prepared, &binding.act[0], &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                &binding.act[0],
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await,
     );
     assert_eq!(dropped.0, "possible_commit");
@@ -505,7 +593,9 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
 
     // Stored, and no confirmation ever comes: the step's own time limit
     // ends the wait, and it is the same possible commit.
-    scene.broker.set_fault(Fault::once(FaultKind::StoreThenSilent));
+    scene
+        .broker
+        .set_fault(Fault::once(FaultKind::StoreThenSilent));
     let write = ledger.write("A-100 again").await;
     let (handle, mut prepared) = scene
         .try_prepare(Posture::Live, Some(write.fence))
@@ -521,11 +611,18 @@ async fn a_lost_confirmation_is_a_possible_commit_and_never_a_second_message() {
     );
     assert_eq!(
         silent,
-        ("possible_commit".to_owned(), "no_confirmation".to_owned(), Sent::Unknown)
+        (
+            "possible_commit".to_owned(),
+            "no_confirmation".to_owned(),
+            Sent::Unknown
+        )
     );
     // A later step of the same run finds its connection given up.
     let after = failed(read(&handle, &mut prepared, &binding.read_back, &args).await);
-    assert_eq!((after.1.as_str(), after.2), ("connection_lost", Sent::NotSent));
+    assert_eq!(
+        (after.1.as_str(), after.2),
+        ("connection_lost", Sent::NotSent)
+    );
     assert_eq!(scene.broker.received().len(), 3);
 }
 
@@ -546,7 +643,12 @@ async fn a_resumed_publish_with_the_records_token_delivers_one_message() {
         .unwrap();
     let first = done(
         handle
-            .act(&mut prepared, publish, &write.input(&args, Some("tok-7")), write.authority())
+            .act(
+                &mut prepared,
+                publish,
+                &write.input(&args, Some("tok-7")),
+                write.authority(),
+            )
             .await
             .unwrap(),
     );
@@ -564,7 +666,12 @@ async fn a_resumed_publish_with_the_records_token_delivers_one_message() {
         .unwrap();
     let second = done(
         handle
-            .act(&mut prepared, publish, &again.input(&args, Some("tok-7")), again.authority())
+            .act(
+                &mut prepared,
+                publish,
+                &again.input(&args, Some("tok-7")),
+                again.authority(),
+            )
             .await
             .unwrap(),
     );
@@ -576,7 +683,10 @@ async fn a_resumed_publish_with_the_records_token_delivers_one_message() {
     assert_eq!(received.len(), 2);
     assert_eq!(received[0].headers["idempotency-token"], "tok-7");
     assert!(matches!(received[0].outcome, PublishOutcome::Stored { .. }));
-    assert!(matches!(received[1].outcome, PublishOutcome::Duplicate { .. }));
+    assert!(matches!(
+        received[1].outcome,
+        PublishOutcome::Duplicate { .. }
+    ));
     assert_eq!(scene.broker.queue(WORK).len(), 3);
 }
 
@@ -615,7 +725,12 @@ async fn a_publish_to_a_log_is_found_again_by_its_token() {
     stamped.stamp = Some("tok-9");
     let back = done(
         handle
-            .act(&mut prepared, &binding.read_back[0], &stamped, Authority::Read)
+            .act(
+                &mut prepared,
+                &binding.read_back[0],
+                &stamped,
+                Authority::Read,
+            )
             .await
             .unwrap(),
     );
@@ -663,7 +778,12 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         reason: format!("The quota is used up, says {PLANTED}."),
     }));
     let refused = handle
-        .act(&mut prepared, notice, &write.input(&args, None), write.authority())
+        .act(
+            &mut prepared,
+            notice,
+            &write.input(&args, None),
+            write.authority(),
+        )
         .await
         .unwrap_err();
     assert_eq!(
@@ -682,7 +802,12 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
     let subscribed = listener.subscribe(NOTICES).await.unwrap();
     done(
         handle
-            .act(&mut prepared, notice, &write.input(&args, None), write.authority())
+            .act(
+                &mut prepared,
+                notice,
+                &write.input(&args, None),
+                write.authority(),
+            )
             .await
             .unwrap(),
     );
@@ -692,7 +817,10 @@ async fn a_refusal_is_the_brokers_own_and_a_topic_keeps_nothing() {
         .unwrap();
     assert_eq!(heard.len(), 1);
     let received = scene.broker.received();
-    assert!(matches!(received[0].outcome, PublishOutcome::Refused { .. }));
+    assert!(matches!(
+        received[0].outcome,
+        PublishOutcome::Refused { .. }
+    ));
     assert!(matches!(received[1].outcome, PublishOutcome::Stored { .. }));
 }
 
@@ -706,7 +834,9 @@ async fn a_take_records_then_acknowledges_on_the_runtimes_own_queue() {
     // Taken and not acknowledged: the broker gives the message back when
     // the run lets go, and nothing is lost.
     let (handle, mut prepared) = scene.reading().await;
-    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none).await.unwrap()
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
     else {
         panic!("a message");
     };
@@ -730,15 +860,26 @@ async fn a_take_records_then_acknowledges_on_the_runtimes_own_queue() {
         .try_prepare(Posture::Live, Some(write.fence))
         .await
         .unwrap();
-    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none).await.unwrap()
+    let StepOutcome::Done(taken) = read(&handle, &mut prepared, &take[..2], &none)
+        .await
+        .unwrap()
     else {
         panic!("a message");
     };
-    let id = text(record(record(&taken.values, "message"), "message_meta"), "id").to_owned();
+    let id = text(
+        record(record(&taken.values, "message"), "message_meta"),
+        "id",
+    )
+    .to_owned();
     assert_eq!(taken.assigned_key, Some(common::key(&id)));
     let acknowledged = done(
         handle
-            .act(&mut prepared, &take[2], &write.input(&none, None), write.authority())
+            .act(
+                &mut prepared,
+                &take[2],
+                &write.input(&none, None),
+                write.authority(),
+            )
             .await
             .unwrap(),
     );
@@ -769,7 +910,11 @@ async fn a_system_that_changed_is_named_and_never_guessed_at() {
     let renamed = failed(read(&handle, &mut prepared, steps, &args).await);
     assert_eq!(
         renamed,
-        ("drift".to_owned(), "response_schema_mismatch".to_owned(), Sent::Answered)
+        (
+            "drift".to_owned(),
+            "response_schema_mismatch".to_owned(),
+            Sent::Answered
+        )
     );
 
     // An answer outside the protocol.
@@ -832,7 +977,9 @@ async fn a_broker_that_cannot_be_reached_or_refuses_the_session_is_named() {
     scene.broker.drop_connections();
     scene
         .broker
-        .wait_for(Duration::from_secs(10), |truth| truth.connections.is_empty())
+        .wait_for(Duration::from_secs(10), |truth| {
+            truth.connections.is_empty()
+        })
         .await
         .unwrap();
     let lost = failed(read(&handle, &mut prepared, &steps, &args).await);
@@ -860,7 +1007,10 @@ async fn a_broker_that_cannot_be_reached_or_refuses_the_session_is_named() {
     scene.destinations = a2m_provider::Destinations::new([closed]);
     let down = scene.try_prepare(Posture::Live, None).await.unwrap_err();
     assert_eq!(
-        (down.failure.class().to_string(), down.failure.code().as_str()),
+        (
+            down.failure.class().to_string(),
+            down.failure.code().as_str()
+        ),
         ("transient".to_owned(), "upstream_unavailable")
     );
 }
@@ -892,7 +1042,10 @@ async fn a_secret_in_what_the_broker_says_reaches_no_result() {
     assert!(!shown.contains(PLANTED), "{shown}");
     assert!(shown.contains(REDACTED));
     // The trace the engine would keep of it holds none either.
-    signature_of(&scene.binding("example_order_work_list").act[0].kind, &listed);
+    signature_of(
+        &scene.binding("example_order_work_list").act[0].kind,
+        &listed,
+    );
 }
 
 #[tokio::test]

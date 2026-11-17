@@ -35,8 +35,7 @@ impl Folder {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
-        // Resolved, so that a checked path under it is the path it names.
-        Self(std::fs::canonicalize(&path).unwrap())
+        Self(path)
     }
 
     pub fn path(&self) -> &Path {
@@ -121,7 +120,10 @@ pub fn stand_files(stand: &Stand) -> Vec<(String, String)> {
             if *path == "target.yaml" {
                 text = text
                     .replace("'/opt/example/bin/example-cli'", &quoted(stand.program()))
-                    .replace("'/opt/example-test/bin/example-cli'", &quoted(stand.program()));
+                    .replace(
+                        "'/opt/example-test/bin/example-cli'",
+                        &quoted(stand.program()),
+                    );
             }
             if *path == "commands/inventory.yaml" {
                 text = text.replace("'/var/lib/example/home'", &quoted(stand.home()));

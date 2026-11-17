@@ -123,7 +123,10 @@ fn key_of(
             codes::fail(
                 FailureClass::Input,
                 codes::INPUT_INVALID,
-                format!("`{}` is part of the record's key and has no value.", input.name),
+                format!(
+                    "`{}` is part of the record's key and has no value.",
+                    input.name
+                ),
                 "Give every input that is part of the key.",
             )
         })?;
@@ -166,14 +169,16 @@ fn outputs_of(
             }
             continue;
         };
-        let value = loaded.normalize(output.field_type, raw).map_err(|failure| {
-            unexpected(format!(
-                "The output `{}` of `{}` cannot be read as its type ({}).",
-                output.name,
-                operation.name,
-                failure.code()
-            ))
-        })?;
+        let value = loaded
+            .normalize(output.field_type, raw)
+            .map_err(|failure| {
+                unexpected(format!(
+                    "The output `{}` of `{}` cannot be read as its type ({}).",
+                    output.name,
+                    operation.name,
+                    failure.code()
+                ))
+            })?;
         if !value.is_null() && !value.has_type(&output.ty) {
             return Err(unexpected(format!(
                 "The output `{}` of `{}` is not a {}.",
@@ -367,15 +372,20 @@ fn read_source(run: &Run<'_>, loaded: &Loaded, runs: ToolRuns) -> Result<(Value,
 /// Carries out the tool the job names.
 pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<Done, Stop> {
     let loaded = Arc::clone(&run.loaded);
-    let tool = loaded.plan.tool(name).ok_or_else(|| {
-        codes::job_invalid(format!("The plan holds no tool named `{name}`."))
-    })?;
+    let tool = loaded
+        .plan
+        .tool(name)
+        .ok_or_else(|| codes::job_invalid(format!("The plan holds no tool named `{name}`.")))?;
     let (steps, declared) = shape(&loaded, tool.runs)?;
     let writing = steps.iter().any(|step| step.writes);
     let (effect, hazard, limits) = match tool.runs {
         ToolRuns::Operation(index) => {
             let found = operation(&loaded, index)?;
-            (found.effect, found.hazard, a2m_core::PipelineLimits::default())
+            (
+                found.effect,
+                found.hazard,
+                a2m_core::PipelineLimits::default(),
+            )
         }
         ToolRuns::Pipeline(index) => {
             let pipeline = loaded.plan.pipeline(index).ok_or_else(|| {
@@ -476,7 +486,10 @@ async fn read_steps_of(
                     return Err(Stop::Fail(codes::fail(
                         FailureClass::UnknownVariant,
                         codes::EXPECT_FAILED,
-                        format!("What the step `{}` expects of its result does not hold.", step.id),
+                        format!(
+                            "What the step `{}` expects of its result does not hold.",
+                            step.id
+                        ),
                         "Look at the record in the system; the tool runs only when its expectation holds.",
                     )));
                 }
@@ -509,19 +522,29 @@ async fn read_operation(
         let binding = &found.bindings[candidate.binding];
         let mut asked_again = false;
         let failure = loop {
-            match read_pass(run, loaded, found, binding, candidate, &scope, &fields, asked_again)
-                .await
+            match read_pass(
+                run,
+                loaded,
+                found,
+                binding,
+                candidate,
+                &scope,
+                &fields,
+                asked_again,
+            )
+            .await
             {
                 Ok(values) => return Ok(values),
                 Err((failure, held)) => {
                     // The session ended under the pass: tell the keeper,
                     // and ask for a lease once more.
-                    if failure.class() == FailureClass::SessionExpired && !asked_again {
-                        if let Some(held) = held {
-                            run.report_expiry(held).await;
-                            asked_again = true;
-                            continue;
-                        }
+                    if failure.class() == FailureClass::SessionExpired
+                        && !asked_again
+                        && let Some(held) = held
+                    {
+                        run.report_expiry(held).await;
+                        asked_again = true;
+                        continue;
                     }
                     if let Some(held) = held {
                         run.poison(held);
@@ -553,7 +576,10 @@ async fn read_operation(
     Err(Stop::Fail(codes::fail(
         FailureClass::Busy,
         codes::NO_BINDING,
-        format!("The operation `{}` has no binding that may act.", found.name),
+        format!(
+            "The operation `{}` has no binding that may act.",
+            found.name
+        ),
         "Verify a binding of the operation and publish the target again.",
     )))
 }
@@ -674,10 +700,7 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
             if run.job.kind == JobKind::Preview {
                 return Ok(Done::NeedsApproval);
             }
-            let reads_only = matches!(
-                run.job.kind,
-                JobKind::Reconcile | JobKind::VerifyAfterLoss
-            );
+            let reads_only = matches!(run.job.kind, JobKind::Reconcile | JobKind::VerifyAfterLoss);
             if !snapshot.cleared {
                 if reads_only {
                     // Nothing was ever written, so nothing is in doubt.
@@ -940,7 +963,14 @@ async fn read_record(
         stamp: record.stamp.as_deref(),
     };
     let read = run
-        .read_steps(held, Phase::ReadBack, steps, &mut scope, Some(cx), &record.fields)
+        .read_steps(
+            held,
+            Phase::ReadBack,
+            steps,
+            &mut scope,
+            Some(cx),
+            &record.fields,
+        )
         .await;
     match read {
         Ok(observed) => Ok(observed.map(|observed| observed.values)),
@@ -1038,7 +1068,10 @@ async fn preview_record(
         .iter()
         .filter_map(|field| {
             let proposed = record.intended.get(&field.name)?.clone();
-            let current = seen.as_ref().and_then(|seen| seen.get(&field.name)).cloned();
+            let current = seen
+                .as_ref()
+                .and_then(|seen| seen.get(&field.name))
+                .cloned();
             let restricted = field.sensitivity == a2m_core::Sensitivity::Restricted;
             let current_raw = raw
                 .as_ref()
@@ -1301,10 +1334,7 @@ async fn write_record(
 
     // Act.
     let mut scope = run.base.with_input(&record.inputs);
-    scope.current = record
-        .current
-        .clone()
-        .map_or(Value::Null, Value::Record);
+    scope.current = record.current.clone().map_or(Value::Null, Value::Record);
     let mut all = Observed::default();
     let mut token = Some(token);
     let mut acted: Option<ActedToken> = None;
@@ -1370,17 +1400,22 @@ async fn write_record(
                 None
             } else {
                 let kept = run.engine.deps.redact.redact_values(&observed.values);
-                store(run, BlobKind::Values, encode_values(&kept)?).await.ok()
+                store(run, BlobKind::Values, encode_values(&kept)?)
+                    .await
+                    .ok()
             };
             let Some(spent) = token.take() else {
                 continue;
             };
             match run
                 .control
-                .acted(spent, Acted {
-                    assigned_key,
-                    outputs,
-                })
+                .acted(
+                    spent,
+                    Acted {
+                        assigned_key,
+                        outputs,
+                    },
+                )
                 .await
             {
                 Ok(proof) => acted = Some(proof),
@@ -1413,7 +1448,14 @@ async fn write_record(
 
     // Confirm.
     let confirmed = run
-        .read_steps(held, Phase::Confirm, &binding.confirm, &mut scope, Some(cx), &record.fields)
+        .read_steps(
+            held,
+            Phase::Confirm,
+            &binding.confirm,
+            &mut scope,
+            Some(cx),
+            &record.fields,
+        )
         .await;
     match confirmed {
         Ok(Some(observed)) => {
@@ -1502,7 +1544,7 @@ async fn write_record(
     let after = store(run, BlobKind::Values, encode_values(&seen)?).await?;
     run.control
         .verified(
-            &acted,
+            acted,
             ReadBack {
                 digest: seen.digest(),
                 after: Some(after),

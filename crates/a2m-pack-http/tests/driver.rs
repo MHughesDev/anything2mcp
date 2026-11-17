@@ -55,17 +55,25 @@ async fn each_read_verb_reads_and_a_record_that_is_not_there_is_absent() {
         .await
         .unwrap();
     assert_eq!(read.values.get("status"), Some(&Value::from("draft")));
-    assert_eq!(read.values.get("customer"), Some(&Value::from("Example Customer One")));
+    assert_eq!(
+        read.values.get("customer"),
+        Some(&Value::from("Example Customer One"))
+    );
 
     let listed = scene
         .read(&handle, &mut prepared, "example_order_list", &Values::new())
         .await
         .unwrap();
-    let expected: Vec<Value> = ["A-100", "A-101", "A-102"].into_iter().map(Value::from).collect();
+    let expected: Vec<Value> = ["A-100", "A-101", "A-102"]
+        .into_iter()
+        .map(Value::from)
+        .collect();
     assert_eq!(listed.values.get("order_ids"), Some(&Value::List(expected)));
 
     // A length arrives as an exact number, never through a float.
-    let line = Values::new().with("order_id", "A-100").with("item_code", "L-101");
+    let line = Values::new()
+        .with("order_id", "A-100")
+        .with("item_code", "L-101");
     let read = scene
         .read(&handle, &mut prepared, "example_line_item_get", &line)
         .await
@@ -100,7 +108,12 @@ async fn five_runs_of_one_read_do_the_same_thing() {
             .unwrap();
         let acting: a2m_telemetry::Acting = serde_json::from_str(&read.capture("acting")).unwrap();
         // What was done names the template, never the value that filled it.
-        assert!(acting.means.iter().any(|detail| detail.value == "/api/orders/{order_id}"));
+        assert!(
+            acting
+                .means
+                .iter()
+                .any(|detail| detail.value == "/api/orders/{order_id}")
+        );
         means.push((acting.means, read.values));
         handle.release(prepared, false).await;
     }
@@ -146,7 +159,9 @@ impl Write {
             _ => &binding.read_back,
         };
         let write = Some((&self.token, record(&self.fence, 0), &self.key));
-        scene.run(handle, prepared, steps, inputs, write, LONG).await
+        scene
+            .run(handle, prepared, steps, inputs, write, LONG)
+            .await
     }
 }
 
@@ -161,22 +176,40 @@ async fn a_write_is_sent_once_confirmed_and_read_back_and_the_application_stored
         .await
         .unwrap();
     let inputs = item("A-102", "L-900", "Corner post", 3, "150.50");
-    let before = write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    let before = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     assert!(before.absent);
-    write.run(&scene, &handle, &mut prepared, "act", &inputs).await.unwrap();
-    write.run(&scene, &handle, &mut prepared, "confirm", &inputs).await.unwrap();
-    let after = write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "confirm", &inputs)
+        .await
+        .unwrap();
+    let after = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     handle.release(prepared, false).await;
 
     let stored = app.stored_item("A-102", "L-900").await.unwrap().unwrap();
-    assert_eq!((stored.quantity, stored.length_sixteenths, stored.version), (3, 2408, 1));
+    assert_eq!(
+        (stored.quantity, stored.length_sixteenths, stored.version),
+        (3, 2408, 1)
+    );
     assert_eq!(stored.description, "Corner post");
     assert_eq!(app.write_count("A-102", "L-900").await.unwrap(), 1);
     // The application stores sixteenths and shows `150.5`; what was sent as
     // `150.50` reads back as the same number, and not as another.
     let read_back = after.values.get("length_in").unwrap();
     assert_eq!(read_back, inputs.get("length_in").unwrap());
-    assert_ne!(read_back, &Value::Decimal(Decimal::parse("150.4375").unwrap()));
+    assert_ne!(
+        read_back,
+        &Value::Decimal(Decimal::parse("150.4375").unwrap())
+    );
     assert_eq!(after.values.get("quantity"), Some(&Value::Int(3)));
 
     // An existing record: the version read by the lookup goes back with
@@ -187,10 +220,19 @@ async fn a_write_is_sent_once_confirmed_and_read_back_and_the_application_stored
         .await
         .unwrap();
     let inputs = item("A-100", "L-101", "Left rail", 5, "150.5");
-    let before = write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    let before = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     assert_eq!(before.values.get("quantity"), Some(&Value::Int(2)));
-    write.run(&scene, &handle, &mut prepared, "act", &inputs).await.unwrap();
-    write.run(&scene, &handle, &mut prepared, "confirm", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "confirm", &inputs)
+        .await
+        .unwrap();
     handle.release(prepared, false).await;
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
     assert_eq!((stored.quantity, stored.version), (5, 2));
@@ -207,7 +249,10 @@ async fn a_write_without_the_ledgers_token_never_reaches_the_application() {
         .run(&handle, &mut prepared, act, &inputs, None, LONG)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Policy, "intent_missing"));
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Policy, "intent_missing")
+    );
     assert_eq!(refused.sent, Sent::NotSent);
 
     // The driver itself refuses an endpoint that writes from a step that
@@ -218,7 +263,10 @@ async fn a_write_without_the_ledgers_token_never_reaches_the_application() {
         .run(&handle, &mut prepared, &unmarked, &inputs, None, LONG)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Input, "step_not_usable"));
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Input, "step_not_usable")
+    );
     assert_eq!(refused.sent, Sent::NotSent);
     assert!(app.writes().await.unwrap().is_empty());
 }
@@ -234,12 +282,18 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     let inputs = item("A-102", "L-900", "Corner post", 0, "150.5");
-    write.run(&scene, &handle, &mut prepared, "act", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
     let refused = write
         .run(&scene, &handle, &mut prepared, "confirm", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Rejected, "app_validation_error"));
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Rejected, "app_validation_error")
+    );
     assert_eq!(refused.sent, Sent::Answered);
     assert_eq!(app.stored_item("A-102", "L-900").await.unwrap(), None);
 
@@ -251,7 +305,10 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     let inputs = item("A-100", "L-102", "Right rail", 9, "150.5");
-    write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     let other = serde_json::json!(
         {"description": "Right rail", "quantity": 7, "length_in": "150.5", "version": 1}
     );
@@ -263,15 +320,24 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     assert!(changed.status().is_success());
-    write.run(&scene, &handle, &mut prepared, "act", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
     let stale = write
         .run(&scene, &handle, &mut prepared, "confirm", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&stale), (FailureClass::Stale, "version_conflict"));
+    assert_eq!(
+        class_and_code(&stale),
+        (FailureClass::Stale, "version_conflict")
+    );
     assert_eq!(stale.sent, Sent::Answered);
     let message = stale.failure.message();
-    assert!(message.contains("Version 1 was sent; the record is at 2."), "{message}");
+    assert!(
+        message.contains("Version 1 was sent; the record is at 2."),
+        "{message}"
+    );
     let stored = app.stored_item("A-100", "L-102").await.unwrap().unwrap();
     assert_eq!((stored.quantity, stored.version), (7, 2));
 
@@ -282,12 +348,18 @@ async fn what_the_application_refuses_is_named_and_nothing_is_stored() {
         .await
         .unwrap();
     let inputs = item("A-101", "L-201", "Base plate", 2, "24");
-    write.run(&scene, &handle, &mut prepared, "act", &inputs).await.unwrap();
+    write
+        .run(&scene, &handle, &mut prepared, "act", &inputs)
+        .await
+        .unwrap();
     let closed = write
         .run(&scene, &handle, &mut prepared, "confirm", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&closed), (FailureClass::Rejected, "app_validation_error"));
+    assert_eq!(
+        class_and_code(&closed),
+        (FailureClass::Rejected, "app_validation_error")
+    );
 
     // The one write the application holds is the other caller's.
     assert_eq!(app.writes().await.unwrap().len(), 1);
@@ -311,7 +383,10 @@ async fn the_faults_of_the_application_are_each_named() {
         .read(&handle, &mut prepared, "example_stock_get", &stock)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&busy), (FailureClass::Transient, "upstream_unavailable"));
+    assert_eq!(
+        class_and_code(&busy),
+        (FailureClass::Transient, "upstream_unavailable")
+    );
     assert_eq!(busy.sent, Sent::Answered);
 
     // A status the endpoint does not declare is never guessed at.
@@ -322,14 +397,24 @@ async fn the_faults_of_the_application_are_each_named() {
         .read(&handle, &mut prepared, "example_order_get", &order)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&unknown), (FailureClass::UnknownVariant, "unexpected_status"));
+    assert_eq!(
+        class_and_code(&unknown),
+        (FailureClass::UnknownVariant, "unexpected_status")
+    );
 
     // An endpoint that does not answer in the step's time. The application
     // waits five seconds; the step is given a fraction of one.
     app.set_slow_ms(5_000).await.unwrap();
     let totals = &scene.binding("example_order_totals_get").act;
     let slow = scene
-        .run(&handle, &mut prepared, totals, &order, None, Duration::from_millis(300))
+        .run(
+            &handle,
+            &mut prepared,
+            totals,
+            &order,
+            None,
+            Duration::from_millis(300),
+        )
         .await
         .unwrap_err();
     assert_eq!(class_and_code(&slow), (FailureClass::Transient, "timeout"));
@@ -354,8 +439,14 @@ async fn the_faults_of_the_application_are_each_named() {
         .read(&handle, &mut prepared, "example_order_get", &order)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&drift), (FailureClass::Drift, "response_schema_mismatch"));
-    assert!(drift.failure.message().contains("the body.status"), "{drift}");
+    assert_eq!(
+        class_and_code(&drift),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    assert!(
+        drift.failure.message().contains("the body.status"),
+        "{drift}"
+    );
     // The message names the place and never the value found there.
     assert!(!drift.failure.message().contains("draft"), "{drift}");
 }
@@ -429,19 +520,28 @@ async fn a_write_whose_answer_is_lost_is_a_possible_commit_and_is_not_sent_again
         .await
         .unwrap();
     let inputs = item("A-102", "L-900", "Corner post", 3, "150.5");
-    let before = write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    let before = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     assert!(before.absent);
     let lost = write
         .run(&scene, &handle, &mut prepared, "act", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&lost), (FailureClass::PossibleCommit, "no_confirmation"));
+    assert_eq!(
+        class_and_code(&lost),
+        (FailureClass::PossibleCommit, "no_confirmation")
+    );
     assert_eq!(lost.sent, Sent::Unknown);
 
     // The application did store the write, exactly once: the driver sent
     // it once and did not try again. Reconcile is the engine's, by reading.
     assert_eq!(app.write_count("A-102", "L-900").await.unwrap(), 1);
-    let found = write.run(&scene, &handle, &mut prepared, "read_back", &inputs).await.unwrap();
+    let found = write
+        .run(&scene, &handle, &mut prepared, "read_back", &inputs)
+        .await
+        .unwrap();
     assert_eq!(found.values.get("quantity"), Some(&Value::Int(3)));
     assert_eq!(app.write_count("A-102", "L-900").await.unwrap(), 1);
     handle.release(prepared, true).await;
@@ -461,7 +561,10 @@ async fn a_write_whose_answer_is_lost_is_a_possible_commit_and_is_not_sent_again
         .run(&nowhere, &handle, &mut prepared, "act", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&unsent), (FailureClass::Transient, "connection_lost"));
+    assert_eq!(
+        class_and_code(&unsent),
+        (FailureClass::Transient, "connection_lost")
+    );
     assert_eq!(unsent.sent, Sent::NotSent);
 }
 
@@ -477,13 +580,22 @@ async fn no_input_changes_where_a_request_goes() {
             .read(&handle, &mut prepared, "example_order_get", &order)
             .await
             .unwrap_err();
-        assert_eq!(class_and_code(&refused), (FailureClass::Input, "path_value_refused"), "{bad:?}");
+        assert_eq!(
+            class_and_code(&refused),
+            (FailureClass::Input, "path_value_refused"),
+            "{bad:?}"
+        );
         assert_eq!(refused.sent, Sent::NotSent, "{bad:?}");
     }
     // A host, an encoded newline, a query: each stays one segment of the
     // path, the request still goes to the application, and the application
     // knows no such order.
-    for odd in ["other.example.test:80", "A-100%0d%0aHost: other.example.test", "A-100?x=1#y", "@other"] {
+    for odd in [
+        "other.example.test:80",
+        "A-100%0d%0aHost: other.example.test",
+        "A-100?x=1#y",
+        "@other",
+    ] {
         let order = Values::new().with("order_id", odd);
         let read = scene
             .read(&handle, &mut prepared, "example_order_get", &order)
@@ -502,20 +614,35 @@ async fn no_input_changes_where_a_request_goes() {
         .run(&scene, &writer, &mut writing, "act", &inputs)
         .await
         .unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Input, "path_value_refused"));
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Input, "path_value_refused")
+    );
     assert_eq!(refused.sent, Sent::NotSent);
     assert!(app.writes().await.unwrap().is_empty());
 
     // An address the run may not reach is refused when the driver prepares.
     let mut elsewhere = Scene::new("example", &app.url(""));
     elsewhere.destinations = Destinations::new(["http://other.example.test".to_owned()]);
-    let refused = elsewhere.try_prepare(None, None, Posture::Live).await.unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Policy, "surface_not_declared"));
+    let refused = elsewhere
+        .try_prepare(None, None, Posture::Live)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Policy, "surface_not_declared")
+    );
 
     // TLS is not in this build: an HTTPS surface is refused by name.
     let secure = Scene::new("example", "https://app.example.test");
-    let refused = secure.try_prepare(None, None, Posture::Live).await.unwrap_err();
-    assert_eq!(class_and_code(&refused), (FailureClass::Input, "tls_not_enabled"));
+    let refused = secure
+        .try_prepare(None, None, Posture::Live)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&refused),
+        (FailureClass::Input, "tls_not_enabled")
+    );
     assert_eq!(refused.sent, Sent::NotSent);
     assert_eq!(
         secure.handle().health(&secure.surface),

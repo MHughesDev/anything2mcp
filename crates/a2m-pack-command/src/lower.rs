@@ -45,7 +45,10 @@ impl CliLowering {
                 .optional("args", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("read_back", other())
                 .optional("lookup", other()),
-            verbs: VERBS.iter().filter_map(|verb| Verb::new(verb).ok()).collect(),
+            verbs: VERBS
+                .iter()
+                .filter_map(|verb| Verb::new(verb).ok())
+                .collect(),
             step_kinds: vec![SPAWN, EXPECT, PARSE],
         }
     }
@@ -80,7 +83,6 @@ struct Run<'a> {
 }
 
 /// The three steps of one run of a command.
-#[allow(clippy::too_many_lines)] // one step after another
 fn steps(
     run: &Run<'_>,
     index: SectionIndex,
@@ -168,7 +170,10 @@ fn steps(
         ));
         fine = false;
     }
-    if let Some(unknown) = key_params.iter().find(|param| !known.contains(param.as_str())) {
+    if let Some(unknown) = key_params
+        .iter()
+        .find(|param| !known.contains(param.as_str()))
+    {
         problems.push(problem(
             "param_unknown",
             &run.name.at,
@@ -288,7 +293,6 @@ impl Lowering for CliLowering {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // the checks of one binding, in order
     fn lower(
         &self,
         binding: &ResolvedBinding<'_>,
@@ -338,7 +342,8 @@ impl Lowering for CliLowering {
             let verb = binding.verb.as_str();
             let reads = matches!(verb, "read" | "list" | "search");
             let writes = matches!(verb, "create" | "update" | "delete");
-            if (reads && command.effect != Effect::Read) || (writes && command.effect == Effect::Read)
+            if (reads && command.effect != Effect::Read)
+                || (writes && command.effect == Effect::Read)
             {
                 problems.push(problem(
                     "effect_mismatch",

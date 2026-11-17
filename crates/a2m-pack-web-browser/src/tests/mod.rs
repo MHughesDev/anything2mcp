@@ -167,7 +167,20 @@ impl Stand {
         assert!(cleanup.complete, "{cleanup:?}");
         assert!(self.supervisor.list().is_empty());
         assert!(self.browsers.list().is_empty());
-        assert_eq!(processes_naming(&self.folder.0), Vec::<u32>::new());
+        // A process that was just ended takes a moment to disappear from
+        // the system's list: the test looks until it has, within a bound.
+        let started = std::time::Instant::now();
+        loop {
+            let left = processes_naming(&self.folder.0);
+            if left.is_empty() {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "processes are left: {left:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 }
 

@@ -95,7 +95,10 @@ impl Reader<'_> {
         let mut out = String::new();
         loop {
             let start = self.at;
-            while !matches!(self.bytes.get(self.at), None | Some(b'"' | b'\\' | 0..=0x1f)) {
+            while !matches!(
+                self.bytes.get(self.at),
+                None | Some(b'"' | b'\\' | 0..=0x1f)
+            ) {
                 self.at += 1;
             }
             out.push_str(
@@ -242,16 +245,24 @@ mod tests {
 
     #[test]
     fn a_document_reads_with_its_numbers_kept_as_text() {
-        let read = parse(r#" {"sku":"SK-1","n":12.50,"e":"\u00e9\ud83d\ude00\n","l":[1,null,true]} "#)
-            .unwrap();
+        let read =
+            parse(r#" {"sku":"SK-1","n":12.50,"e":"\u00e9\ud83d\ude00\n","l":[1,null,true]} "#)
+                .unwrap();
         let Json::Object(fields) = read else {
             panic!("not an object");
         };
-        assert_eq!(fields[1], ("n".to_owned(), Json::Number("12.50".to_owned())));
+        assert_eq!(
+            fields[1],
+            ("n".to_owned(), Json::Number("12.50".to_owned()))
+        );
         assert_eq!(fields[2].1, Json::Text("é😀\n".to_owned()));
         assert_eq!(
             fields[3].1,
-            Json::List(vec![Json::Number("1".to_owned()), Json::Null, Json::Bool(true)])
+            Json::List(vec![
+                Json::Number("1".to_owned()),
+                Json::Null,
+                Json::Bool(true)
+            ])
         );
     }
 

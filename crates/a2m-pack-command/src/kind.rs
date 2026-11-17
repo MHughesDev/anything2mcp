@@ -469,11 +469,7 @@ fn checked_pattern(
 
 fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> Program {
     let mut digests: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for entry in doc
-        .get("digests")
-        .map(Located::entries)
-        .unwrap_or_default()
-    {
+    for entry in doc.get("digests").map(Located::entries).unwrap_or_default() {
         let mut listed = Vec::new();
         for item in entry.value.items() {
             let parsed = item
@@ -496,7 +492,11 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         let expect = version.get("expect")?;
         let stdout = expect.get("stdout")?;
         let (text, compiled) = checked_pattern(stdout, true, found)?;
-        if !compiled.capture_names().flatten().any(|name| name == "version") {
+        if !compiled
+            .capture_names()
+            .flatten()
+            .any(|name| name == "version")
+        {
             found.bad(
                 "pattern_invalid",
                 &stdout.at,
@@ -586,12 +586,7 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
     }
 }
 
-fn param(
-    name: &str,
-    doc: &Located<Doc>,
-    cx: &KindContext<'_>,
-    found: &mut Found,
-) -> Option<Param> {
+fn param(name: &str, doc: &Located<Doc>, cx: &KindContext<'_>, found: &mut Found) -> Option<Param> {
     let type_doc = doc.get("type")?;
     let field_type = cx.target().field_type(type_doc.as_text()?)?;
     let (kind, choices) = match field_type.plan.base {
@@ -857,7 +852,6 @@ fn output(doc: &Located<Doc>, found: &mut Found) -> Option<Output> {
     }
 }
 
-#[allow(clippy::too_many_lines)] // one field after another, each a few lines
 fn command(
     name: &str,
     doc: &Located<Doc>,
@@ -921,7 +915,9 @@ fn command(
             found.bad(
                 "param_unused",
                 &doc.at,
-                format!("The command `{name}` declares the param `{unused}` and no argument carries it."),
+                format!(
+                    "The command `{name}` declares the param `{unused}` and no argument carries it."
+                ),
                 "Add an argument entry for the param, or remove it.",
             );
         }
@@ -948,7 +944,9 @@ fn command(
             "Declare one, usually `0: ok`, under the program's `exits`.",
         );
     }
-    let output = doc.get("output").and_then(|output| self::output(output, found));
+    let output = doc
+        .get("output")
+        .and_then(|output| self::output(output, found));
     let assigns = match doc.get("assigns").map(Located::entries) {
         None | Some([]) => None,
         Some([one]) => {
@@ -1030,9 +1028,12 @@ fn compile_file(
         } == shared
     });
     let index = u32::try_from(same.unwrap_or(section.programs.len())).unwrap_or(u32::MAX);
-    for entry in doc.get("commands").map(Located::entries).unwrap_or_default() {
-        if let Some(compiled) = command(&entry.key.value, &entry.value, index, &shared, cx, found)
-        {
+    for entry in doc
+        .get("commands")
+        .map(Located::entries)
+        .unwrap_or_default()
+    {
+        if let Some(compiled) = command(&entry.key.value, &entry.value, index, &shared, cx, found) {
             section.commands.insert(entry.key.value.clone(), compiled);
         }
     }

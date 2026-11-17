@@ -103,7 +103,9 @@ fn refused(why: &Refused, path: &Path) -> StepFailure {
         Refused::Script => not_sent(
             FailureClass::Policy,
             PROGRAM_PATH_UNSAFE,
-            format!("The program `{at}` is a shell, an interpreter, or a script that one of them would run."),
+            format!(
+                "The program `{at}` is a shell, an interpreter, or a script that one of them would run."
+            ),
             "Name a program that takes its arguments as data; a shell or a script is never started.",
         ),
         Refused::Writable(what) => not_sent(
@@ -135,7 +137,10 @@ fn as_written(step: &Step, what: &str) -> StepFailure {
     StepFailure::not_sent(Failure::new(
         step.fails_as.class,
         step.fails_as.code.clone(),
-        format!("The `{}` step cannot be done as written: {what}.", step.kind),
+        format!(
+            "The `{}` step cannot be done as written: {what}.",
+            step.kind
+        ),
         "Compile the target again with the pack that is enabled now.",
     ))
 }
@@ -149,7 +154,7 @@ impl CliDriver {
         Capture {
             name: name.to_owned(),
             media_type: "text/plain; charset=utf-8".to_owned(),
-            bytes: bytes.to_vec(),
+            bytes: self.text(bytes).into_bytes(),
         }
     }
 
@@ -173,15 +178,7 @@ impl CliDriver {
                 "Try again.",
             ));
         }
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut pass: Vec<String> = program
-            .map(|program| program.env_pass.clone())
-            .unwrap_or_default();
-        // A process on Windows cannot load its system libraries without it.
-        #[cfg(windows)]
-        if !pass.iter().any(|name| name.eq_ignore_ascii_case("SystemRoot")) {
-            pass.push("SystemRoot".to_owned());
-        }
+        let pass = passed(program);
         let set: Vec<(String, OsString)> = program
             .map(|program| {
                 program
@@ -241,9 +238,14 @@ impl CliDriver {
         }
         if failure.code() == &contract::EFFECT_NOT_DECLARED {
             let read = path.clone();
-            let now = joined(move || safety::digest_of(&read).ok()).await.flatten();
+            let now = joined(move || safety::digest_of(&read).ok())
+                .await
+                .flatten();
             if now != Some(session.digest) {
-                return digest_changed(&path, "changed after it was checked: its digest is another now");
+                return digest_changed(
+                    &path,
+                    "changed after it was checked: its digest is another now",
+                );
             }
         }
         StepFailure::not_sent(failure)
@@ -304,10 +306,9 @@ impl CliDriver {
 
         // The file itself: there, a program, and nobody else's to replace.
         let checked = path.clone();
-        let verdict = joined(move || {
-            safety::check(&checked).map(|()| safety::digest_of(&checked).ok())
-        })
-        .await;
+        let verdict =
+            joined(move || safety::check(&checked).map(|()| safety::digest_of(&checked).ok()))
+                .await;
         let digest = match verdict {
             Some(Ok(Some(digest))) => digest,
             Some(Err(why)) => return Err(refused(&why, &path)),
@@ -409,7 +410,9 @@ impl CliDriver {
                     .map(|command| command.split(' ').collect())
                     .unwrap_or_default();
                 let plain = |word: &&str| {
-                    word.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+                    word.chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphanumeric())
                         && word
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || "_.:-".contains(c))
@@ -446,7 +449,10 @@ impl CliDriver {
             .with("stdout", self.text(&finished.stdout))
             .with(
                 "elements",
-                shown_elements.into_iter().map(Value::from).collect::<Vec<Value>>(),
+                shown_elements
+                    .into_iter()
+                    .map(Value::from)
+                    .collect::<Vec<Value>>(),
             )
             .with("digest", session.digest.to_string())
             .with("truncated", finished.truncated());
@@ -561,7 +567,9 @@ impl CliDriver {
                 answered(
                     FailureClass::UnknownVariant,
                     UNEXPECTED_PROMPT,
-                    format!("The command `{name}` asked a question, and a program is never given a person to answer one."),
+                    format!(
+                        "The command `{name}` asked a question, and a program is never given a person to answer one."
+                    ),
                     "Add the argument that makes the command not ask, such as `--yes`, to its `args` in `commands/`.",
                 )
             });
@@ -577,7 +585,9 @@ impl CliDriver {
             answered(
                 class,
                 code,
-                format!("The command `{name}` {what}. Its own message, which is untrusted text: \"{said}\"."),
+                format!(
+                    "The command `{name}` {what}. Its own message, which is untrusted text: \"{said}\"."
+                ),
                 next,
             )
         };
@@ -640,7 +650,11 @@ impl CliDriver {
                     "Sign the program in again.",
                 ));
             }
-
+            None if writes => {
+                return Err(possible_commit(
+                    "ended with a status nothing declares, or by a signal",
+                ));
+            }
             None => {
                 return Err(answered(
                     FailureClass::UnknownVariant,
@@ -686,7 +700,9 @@ impl CliDriver {
                 answered(
                     FailureClass::Drift,
                     OUTPUT_UNPARSED,
-                    format!("The output of the command `{name}` is not of its declared form: {why}."),
+                    format!(
+                        "The output of the command `{name}` is not of its declared form: {why}."
+                    ),
                     "Compare what the program prints now with the command's `output` in `commands/`, and correct the file if the program changed.",
                 )
             }
@@ -707,7 +723,9 @@ impl CliDriver {
                     return Err(answered(
                         FailureClass::PossibleCommit,
                         AMBIGUOUS_MATCH,
-                        format!("The command `{name}` found more than one record where exactly one is the record written."),
+                        format!(
+                            "The command `{name}` found more than one record where exactly one is the record written."
+                        ),
                         "Find the records by hand, and decide which is the one that was written.",
                     ));
                 }
@@ -732,6 +750,26 @@ impl CliDriver {
             ..Observed::default()
         }))
     }
+}
+
+/// The names copied from the engine's own environment for one start.
+fn passed(program: Option<&Program>) -> Vec<String> {
+    let pass: Vec<String> = program
+        .map(|program| program.env_pass.clone())
+        .unwrap_or_default();
+    // A process on Windows cannot load its system libraries without it.
+    #[cfg(windows)]
+    let pass = {
+        let mut pass = pass;
+        if !pass
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("SystemRoot"))
+        {
+            pass.push("SystemRoot".to_owned());
+        }
+        pass
+    };
+    pass
 }
 
 /// The version a finished version command reported, when it ended as

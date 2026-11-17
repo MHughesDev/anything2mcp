@@ -206,7 +206,9 @@ impl ExampleLink {
         let answer = match tokio::time::timeout_at(deadline.at(), self.read_line()).await {
             Err(_) => return Err(timed_out()),
             Ok(Err(failed)) if failed.kind() == ErrorKind::InvalidData => {
-                return Err(unexpected("the broker's answer is longer than any answer may be"));
+                return Err(unexpected(
+                    "the broker's answer is longer than any answer may be",
+                ));
             }
             Ok(Err(_) | Ok(None)) => return Err(lost()),
             Ok(Ok(Some(answer))) => answer,
@@ -227,7 +229,10 @@ impl ExampleLink {
 
 /// The broker's refusal, as this pack names it.
 fn refusal(reply: &Json) -> WireError {
-    let code = reply.get("error").and_then(Json::as_str).unwrap_or_default();
+    let code = reply
+        .get("error")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
     let said = reply
         .get("message")
         .and_then(Json::as_str)
@@ -311,7 +316,10 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
             .and_then(Json::as_str)
             .and_then(Shape::from_word),
         key_field: text_of(value.get("key_field")),
-        schema: value.get("schema").filter(|schema| !schema.is_null()).cloned(),
+        schema: value
+            .get("schema")
+            .filter(|schema| !schema.is_null())
+            .cloned(),
         dedupe_header: text_of(value.get("dedupe_header")),
         held: number_of(value, "held")?.unwrap_or(0),
         start: number_of(value, "start")?,

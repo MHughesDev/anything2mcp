@@ -208,7 +208,7 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     tokio::time::timeout(Duration::from_secs(60), arrived).await.unwrap();
     // A second call, written and never answered, at the level of the link.
     let mut endless = tab.page.begin_endless().unwrap();
-    must(tab.locate(&textbox("Description"), soon()).await);
+    let description = must(tab.locate(&textbox("Description"), soon()).await);
     assert_eq!(endless.dispatch(), Dispatch::Sent);
 
     let running = stand.supervisor.list();
@@ -226,15 +226,12 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
         crate::client::ClientError::Closed { dispatch: Dispatch::Sent, .. }
     ));
     // A call after the kill was never sent, and that is transient.
-    let later = tab
-        .input(
-            &must_not_find(tab.locate(&textbox("Description"), soon()).await),
-            &Input::Click,
-            soon(),
-        )
-        .await
-        .unwrap_err();
+    let later = tab.input(&description, &Input::Click, soon()).await.unwrap_err();
     assert_eq!(later, BrowserError::Disconnected { dispatch: Dispatch::NotSent });
+    assert_eq!(
+        tab.locate(&textbox("Description"), soon()).await.unwrap_err(),
+        BrowserError::Disconnected { dispatch: Dispatch::NotSent }
+    );
     assert_eq!(later.failure().unwrap().code(), &codes::CONNECTION_LOST);
     assert_eq!(browser.health(), BrowserHealth::Exited);
 
@@ -248,12 +245,4 @@ async fn a_browser_killed_under_a_call_says_what_was_sent_and_leaves_no_process(
     must(again.locate(&textbox("Description"), soon()).await);
     drop((again, tab));
     stand.end().await;
-}
-
-/// After the kill a locate fails; the test still needs an element to act
-/// on, and any element of the dead tab will do.
-fn must_not_find(result: Result<crate::Element, BrowserError>) -> crate::Element {
-    let error = result.unwrap_err();
-    assert_eq!(error, BrowserError::Disconnected { dispatch: Dispatch::NotSent });
-    crate::tab::stale_element()
 }

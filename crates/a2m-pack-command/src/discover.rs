@@ -69,15 +69,14 @@ impl CommandFound {
     ///
     /// `input`/`finding_invalid` when the finding is not one of this pack's.
     pub fn read(finding: &Finding) -> Result<Self, Failure> {
-        written::from_text(finding.found())
-            .ok_or_else(|| {
-                Failure::new(
-                    FailureClass::Input,
-                    a2m_core::FailureCode::FINDING_INVALID,
-                    "A `command` finding does not hold what the command pack's discoverer writes.",
-                    "Run the discovery again with the version of the pack that is enabled.",
-                )
-            })
+        written::from_text(finding.found()).ok_or_else(|| {
+            Failure::new(
+                FailureClass::Input,
+                a2m_core::FailureCode::FINDING_INVALID,
+                "A `command` finding does not hold what the command pack's discoverer writes.",
+                "Run the discovery again with the version of the pack that is enabled.",
+            )
+        })
     }
 }
 
@@ -135,7 +134,9 @@ mod written {
 
 /// Whether a word of a command's name is plain: letters, digits, `_.:-`.
 fn plain(word: &str) -> bool {
-    word.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+    word.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
         && word
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_.:-".contains(c))
@@ -234,7 +235,10 @@ async fn run(
 }
 
 fn text<'a>(values: &'a Values, name: &str) -> &'a str {
-    values.get(name).and_then(Value::as_text).unwrap_or_default()
+    values
+        .get(name)
+        .and_then(Value::as_text)
+        .unwrap_or_default()
 }
 
 fn succeeded(values: &Values) -> bool {
@@ -243,7 +247,6 @@ fn succeeded(values: &Values) -> bool {
 }
 
 impl HelpDiscoverer {
-    #[allow(clippy::too_many_lines)] // one program after another, one form after another
     async fn look(
         &self,
         port: &dyn SandboxPort,
@@ -401,10 +404,7 @@ impl Describer for HelpDescriber {
                 "The program's help lists {} commands. None was run: whether a command reads or writes is not known until a person declares it.",
                 read.len()
             ),
-            data: Values::new().with(
-                "commands",
-                i64::try_from(read.len()).unwrap_or(i64::MAX),
-            ),
+            data: Values::new().with("commands", i64::try_from(read.len()).unwrap_or(i64::MAX)),
             untrusted,
         }
     }
@@ -422,12 +422,18 @@ mod tests {
             commands,
             [
                 ("item show".to_owned(), "Show one item.".to_owned()),
-                ("item set".to_owned(), "Set the quantity of one item.".to_owned()),
+                (
+                    "item set".to_owned(),
+                    "Set the quantity of one item.".to_owned()
+                ),
             ]
         );
         assert_eq!(dropped, 1);
         let own = "Usage: example-cli item show <sku> [--format <form>]\n\nShow one item.\n";
-        assert_eq!(usage_of(own, "item show").as_deref(), Some("<sku> [--format <form>]"));
+        assert_eq!(
+            usage_of(own, "item show").as_deref(),
+            Some("<sku> [--format <form>]")
+        );
         assert_eq!(usage_of(own, "item set"), None);
         assert_eq!(usage_of("no usage here", "item show"), None);
     }

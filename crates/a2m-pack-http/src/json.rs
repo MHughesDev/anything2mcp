@@ -270,9 +270,7 @@ impl Reader<'_> {
                 }
                 Some(b'\\') => {
                     self.at += 1;
-                    let escape = self
-                        .peek()
-                        .ok_or_else(|| self.error("text is cut short"))?;
+                    let escape = self.peek().ok_or_else(|| self.error("text is cut short"))?;
                     self.at += 1;
                     match escape {
                         b'"' => out.push('"'),
@@ -377,8 +375,8 @@ mod tests {
 
     #[test]
     fn a_number_keeps_its_text_and_never_becomes_a_float() {
-        let json = Json::parse(br#"{"a": 150.50, "b": 12, "c": 1e3, "d": 12345678901234567890}"#)
-            .unwrap();
+        let json =
+            Json::parse(br#"{"a": 150.50, "b": 12, "c": 1e3, "d": 12345678901234567890}"#).unwrap();
         assert_eq!(json.get("a"), Some(&Json::Number("150.50".to_owned())));
         assert!(!json.get("a").unwrap().is_whole());
         assert!(json.get("b").unwrap().is_whole());
@@ -387,7 +385,10 @@ mod tests {
             json.get("d").unwrap().scalar_text().as_deref(),
             Some("12345678901234567890")
         );
-        assert_eq!(json.to_text().replace(' ', ""), r#"{"a":150.50,"b":12,"c":1e3,"d":12345678901234567890}"#);
+        assert_eq!(
+            json.to_text().replace(' ', ""),
+            r#"{"a":150.50,"b":12,"c":1e3,"d":12345678901234567890}"#
+        );
     }
 
     #[test]

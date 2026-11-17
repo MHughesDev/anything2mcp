@@ -80,10 +80,22 @@ fn the_fixture_targets_compile_twice_to_the_same_bytes() {
     assert_eq!(kinds(&binding.act), ["request"]);
     assert!(binding.act[0].commits && !binding.act[0].lookup);
     assert_eq!(kinds(&binding.confirm), ["validate"]);
-    assert_eq!(kinds(&binding.read_back), ["request", "validate", "extract"]);
-    assert!(binding.read_back.iter().all(|step| step.lookup && !step.commits));
+    assert_eq!(
+        kinds(&binding.read_back),
+        ["request", "validate", "extract"]
+    );
+    assert!(
+        binding
+            .read_back
+            .iter()
+            .all(|step| step.lookup && !step.commits)
+    );
     // The plan holds the template, and no address: the origin is the surface's.
-    let section = plan.packs.iter().find(|section| section.pack == "http").unwrap();
+    let section = plan
+        .packs
+        .iter()
+        .find(|section| section.pack == "http")
+        .unwrap();
     let text = String::from_utf8(section.payload.as_bytes().to_vec()).unwrap();
     assert!(text.contains(r#"{"hole":"order_id"}"#), "{text}");
     assert!(!text.contains("127.0.0.1"), "{text}");
@@ -108,21 +120,38 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     let orders = "endpoints/orders.yaml";
 
     // A key the file kind does not know.
-    let unknown = refused(orders, |text| text.replacen("auth: none", "retries: 3", 1), "kernel.unknown_key");
+    let unknown = refused(
+        orders,
+        |text| text.replacen("auth: none", "retries: 3", 1),
+        "kernel.unknown_key",
+    );
     assert_eq!((unknown.at.file.as_str(), unknown.at.line), (orders, 5));
     assert!(!unknown.fix.is_empty());
 
     // A word in a shape that this pack does not check.
     let word = refused(
         orders,
-        |text| text.replacen("order_id: {type: string}", "order_id: {type: string, pattern: '^A'}", 1),
+        |text| {
+            text.replacen(
+                "order_id: {type: string}",
+                "order_id: {type: string, pattern: '^A'}",
+                1,
+            )
+        },
         "http.shape_invalid",
     );
     assert_eq!((word.at.file.as_str(), word.at.line), (orders, 14));
-    assert!(word.message.contains("`pattern`") && !word.fix.is_empty(), "{word}");
+    assert!(
+        word.message.contains("`pattern`") && !word.fix.is_empty(),
+        "{word}"
+    );
 
     // A path that names another host, and one that mixes a placeholder with text.
-    for bad in ["http://other.example.test/api/orders", "/api/orders-{order_id}", "/api/../admin"] {
+    for bad in [
+        "http://other.example.test/api/orders",
+        "/api/orders-{order_id}",
+        "/api/../admin",
+    ] {
         let path = refused(
             orders,
             |text| text.replacen("\"/api/orders\"", &format!("\"{bad}\""), 1),
@@ -214,7 +243,10 @@ fn the_lint_rules_find_what_they_name() {
 
     let signed = refused(
         orders,
-        |text| text.replacen("auth: none", "auth: none\nsigned: true", 2).replacen("signed: true", "", 1),
+        |text| {
+            text.replacen("auth: none", "auth: none\nsigned: true", 2)
+                .replacen("signed: true", "", 1)
+        },
         "http.signed_endpoint",
     );
     assert_eq!(signed.at.file.as_str(), "operations/orders.yaml");

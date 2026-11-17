@@ -108,7 +108,10 @@ impl Pack for HttpPack {
             Arc::new(discover::HttpDescriber),
         )?;
         to.discoverer(
-            Arc::new(discover::HttpDescription::new(cx.provider().clone(), clock)?),
+            Arc::new(discover::HttpDescription::new(
+                cx.provider().clone(),
+                clock,
+            )?),
             Arc::new(discover::HttpDescriber),
         )?;
         Ok(())

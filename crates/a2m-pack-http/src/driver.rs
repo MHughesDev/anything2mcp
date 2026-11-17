@@ -311,9 +311,10 @@ impl HttpDriver {
             }
             sections.insert(
                 position,
-                section.payload.decode::<EndpointSection>().map_err(|_| {
-                    codes::not_usable("its endpoints do not decode")
-                })?,
+                section
+                    .payload
+                    .decode::<EndpointSection>()
+                    .map_err(|_| codes::not_usable("its endpoints do not decode"))?,
             );
         }
 
@@ -432,7 +433,9 @@ fn lost(how: &Lost, commits: bool, endpoint: &str) -> StepFailure {
         (Lost::AfterSending, false) => StepFailure::unknown(failure_of(
             FailureClass::Transient,
             a2m_provider::codes::CONNECTION_LOST,
-            format!("The connection was lost before the endpoint `{endpoint}` had answered in full."),
+            format!(
+                "The connection was lost before the endpoint `{endpoint}` had answered in full."
+            ),
             "Run the tool again.",
         )),
         (Lost::TimedOut, false) => StepFailure::unknown(failure_of(
@@ -634,11 +637,10 @@ impl Session {
         if !signed_in {
             return None;
         }
-        let declared = self
-            .expiry
-            .declared_statuses
-            .iter()
-            .any(|(status, start)| *status == received.status && path.starts_with(start.as_str()));
+        let declared =
+            self.expiry.declared_statuses.iter().any(|(status, start)| {
+                *status == received.status && path.starts_with(start.as_str())
+            });
         let by_provider = self.expiry.provider_statuses.contains(&received.status)
             && !template.is_some_and(|template| template.answers.declares(received.status));
         (declared || by_provider).then(|| {
@@ -722,7 +724,10 @@ impl HttpDriver {
         };
         vec![
             json("acting", serde_json::to_vec(&acting).unwrap_or_default()),
-            json("exchange", serde_json::to_vec(&exchange).unwrap_or_default()),
+            json(
+                "exchange",
+                serde_json::to_vec(&exchange).unwrap_or_default(),
+            ),
         ]
     }
 
@@ -736,9 +741,9 @@ impl HttpDriver {
         let (name, template) = endpoint(session, step)?;
         let (name, template) = (name.to_owned(), template.clone());
         if template.surface != session.surface {
-            return Err(StepFailure::not_sent(codes::surface_not_declared(&format!(
-                "The surface of the endpoint `{name}`"
-            ))));
+            return Err(StepFailure::not_sent(codes::surface_not_declared(
+                &format!("The surface of the endpoint `{name}`"),
+            )));
         }
         // An endpoint that writes is sent only by a step the plan marks as
         // a commit point, which the handle lets through only with the
@@ -797,13 +802,7 @@ impl HttpDriver {
         if let Some(stop) = session.stopped_by(Some(&template), &built.path, &received) {
             return Err(StepFailure::answered(stop));
         }
-        let captures = self.captures(
-            &name,
-            &template.path_text(),
-            &built,
-            credentials,
-            &received,
-        );
+        let captures = self.captures(&name, &template.path_text(), &built, credentials, &received);
         let absent = step.lookup && template.answers.absent.contains(&received.status);
         if absent {
             session.versions.remove(&key);
@@ -900,7 +899,9 @@ fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailu
         return Err(answered(failure_of(
             FailureClass::Transient,
             codes::UPSTREAM_UNAVAILABLE,
-            format!("The endpoint `{name}` answered that the system is not available now, with status {status}.{wait}"),
+            format!(
+                "The endpoint `{name}` answered that the system is not available now, with status {status}.{wait}"
+            ),
             "Run the tool again later.",
         )));
     }
@@ -928,7 +929,9 @@ fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailu
         return Err(answered(failure_of(
             FailureClass::Stale,
             codes::VERSION_CONFLICT,
-            format!("The record was changed since it was read, and the endpoint `{name}` refused the write.{versions}"),
+            format!(
+                "The record was changed since it was read, and the endpoint `{name}` refused the write.{versions}"
+            ),
             "Preview the change again, so that it is made against the record as it is now.",
         )));
     }
@@ -936,14 +939,18 @@ fn validate(session: &mut Session, step: &Step) -> Result<StepOutcome, StepFailu
         return Err(answered(failure_of(
             FailureClass::Rejected,
             codes::APP_VALIDATION_ERROR,
-            format!("The system refused the request to the endpoint `{name}` with status {status}, in the shape the endpoint declares for a refusal."),
+            format!(
+                "The system refused the request to the endpoint `{name}` with status {status}, in the shape the endpoint declares for a refusal."
+            ),
             "Correct the input the system refused, then run the tool again.",
         )));
     }
     Err(answered(failure_of(
         FailureClass::UnknownVariant,
         codes::UNEXPECTED_STATUS,
-        format!("The endpoint `{name}` answered with status {status}, in a form the endpoint does not declare."),
+        format!(
+            "The endpoint `{name}` answered with status {status}, in a form the endpoint does not declare."
+        ),
         "Find out what the answer means, and declare it under the endpoint's `responses`.",
     )))
 }
@@ -1029,9 +1036,9 @@ impl HttpDriver {
         }
         let version = match &template.version.read {
             Some(VersionSource::Field(field)) => json.get(field).cloned(),
-            Some(VersionSource::Header(header)) => {
-                answer.header(header).map(|text| Json::Text(text.to_owned()))
-            }
+            Some(VersionSource::Header(header)) => answer
+                .header(header)
+                .map(|text| Json::Text(text.to_owned())),
             None => None,
         };
         if let Some(version) = version.filter(|version| *version != Json::Null) {
@@ -1118,10 +1125,11 @@ impl HttpDriver {
         if !schemes.is_empty() {
             values.insert("challenges", schemes);
         }
-        if (200..300).contains(&received.status) && received.body.len() <= MOST_PROBE_TEXT {
-            if let Ok(text) = String::from_utf8(received.body) {
-                values.insert("body", text);
-            }
+        if (200..300).contains(&received.status)
+            && received.body.len() <= MOST_PROBE_TEXT
+            && let Ok(text) = String::from_utf8(received.body)
+        {
+            values.insert("body", text);
         }
         Ok(StepOutcome::Done(Observed {
             values: self.redact.redact_values(&values),
@@ -1147,9 +1155,7 @@ impl Driver for HttpDriver {
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
             let Some(session) = prepared.state::<Session>() else {
-                return Err(codes::not_usable(
-                    "it was not prepared by the HTTP driver",
-                ));
+                return Err(codes::not_usable("it was not prepared by the HTTP driver"));
             };
             if step.kind == REQUEST {
                 self.request(session, step, input).await
@@ -1179,10 +1185,10 @@ impl Driver for HttpDriver {
         Box::pin(async move {
             // Dropping the state wipes the credentials held for the pass. A
             // poisoned client is not kept warm for the next one.
-            if let Ok(session) = prepared.into_state::<Session>() {
-                if poisoned {
-                    self.forget_client(&session.client_key);
-                }
+            if let Ok(session) = prepared.into_state::<Session>()
+                && poisoned
+            {
+                self.forget_client(&session.client_key);
             }
             Cleanup::complete()
         })
@@ -1201,9 +1207,15 @@ mod tests {
     #[test]
     fn an_address_is_taken_apart_once_and_https_is_refused_by_name() {
         let origin = Origin::of("http://127.0.0.1:4010").unwrap();
-        assert_eq!((origin.text.as_str(), origin.prefix.as_str()), ("http://127.0.0.1:4010", ""));
+        assert_eq!(
+            (origin.text.as_str(), origin.prefix.as_str()),
+            ("http://127.0.0.1:4010", "")
+        );
         let origin = Origin::of("http://app.example.test/v2/").unwrap();
-        assert_eq!((origin.text.as_str(), origin.prefix.as_str()), ("http://app.example.test", "/v2"));
+        assert_eq!(
+            (origin.text.as_str(), origin.prefix.as_str()),
+            ("http://app.example.test", "/v2")
+        );
         assert_eq!(
             Origin::of("https://app.example.test").unwrap_err().code(),
             &codes::TLS_NOT_ENABLED
@@ -1234,8 +1246,14 @@ mod tests {
         assert_eq!(taken(&json, &path("a.i"), Take::Int), Some(Value::Int(7)));
         assert_eq!(taken(&json, &path("a.f"), Take::Int), None);
         assert_eq!(taken(&json, &path("a.i"), Take::Text), None);
-        assert_eq!(taken(&json, &path("t"), Take::Bool), Some(Value::Bool(true)));
-        assert_eq!(taken(&json, &path("a.missing"), Take::Text), Some(Value::Null));
+        assert_eq!(
+            taken(&json, &path("t"), Take::Bool),
+            Some(Value::Bool(true))
+        );
+        assert_eq!(
+            taken(&json, &path("a.missing"), Take::Text),
+            Some(Value::Null)
+        );
         assert_eq!(
             taken(&json, &path("list.*.c"), Take::Text),
             Some(Value::List(vec![Value::from("x"), Value::from("y")]))

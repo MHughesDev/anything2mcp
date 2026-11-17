@@ -102,7 +102,11 @@ fn shape_of(root: &Json, schema: &Json, depth: usize) -> Option<Json> {
         Some(Json::List(kinds)) => {
             let named: Vec<&str> = kinds.iter().filter_map(Json::as_text).collect();
             nullable = nullable || named.contains(&"null");
-            match named.iter().filter(|kind| **kind != "null").collect::<Vec<_>>()[..] {
+            match named
+                .iter()
+                .filter(|kind| **kind != "null")
+                .collect::<Vec<_>>()[..]
+            {
                 [one] => (*one).to_owned(),
                 _ => "any".to_owned(),
             }
@@ -133,8 +137,11 @@ fn shape_of(root: &Json, schema: &Json, depth: usize) -> Option<Json> {
                         .is_some_and(|name| converted.iter().any(|(known, _)| known == name))
                 };
                 if let Some(Json::List(required)) = schema.get("required") {
-                    let required: Vec<Json> =
-                        required.iter().filter(|name| listed(name)).cloned().collect();
+                    let required: Vec<Json> = required
+                        .iter()
+                        .filter(|name| listed(name))
+                        .cloned()
+                        .collect();
                     if !required.is_empty() {
                         shape.push(("required".to_owned(), Json::List(required)));
                     }
@@ -148,10 +155,10 @@ fn shape_of(root: &Json, schema: &Json, depth: usize) -> Option<Json> {
             }
         }
         "string" => {
-            if let Some(Json::List(words)) = schema.get("enum") {
-                if words.iter().all(|word| matches!(word, Json::Text(_))) {
-                    shape.push(("enum".to_owned(), Json::List(words.clone())));
-                }
+            if let Some(Json::List(words)) = schema.get("enum")
+                && words.iter().all(|word| matches!(word, Json::Text(_)))
+            {
+                shape.push(("enum".to_owned(), Json::List(words.clone())));
             }
         }
         _ => {}
@@ -162,7 +169,10 @@ fn shape_of(root: &Json, schema: &Json, depth: usize) -> Option<Json> {
 /// The JSON schema of one body of the description, as a shape.
 fn body_shape(root: &Json, holder: &Json) -> Option<Json> {
     let holder = resolve(root, holder)?;
-    let schema = holder.get("content")?.get("application/json")?.get("schema")?;
+    let schema = holder
+        .get("content")?
+        .get("application/json")?
+        .get("schema")?;
     shape_of(root, schema, 0)
 }
 
@@ -427,7 +437,11 @@ impl DraftingRule for DescribedOperationRule {
                 })
             })
             .map_or_else(
-                || cx.open_question(&format!("Which `http` surface does the endpoint `{name}` live on?")),
+                || {
+                    cx.open_question(&format!(
+                        "Which `http` surface does the endpoint `{name}` live on?"
+                    ))
+                },
                 |entry| DraftValue::text(&entry.key.value),
             );
         let path = operation.template_path().map_or_else(
@@ -439,7 +453,11 @@ impl DraftingRule for DescribedOperationRule {
             |path| DraftValue::text(&path),
         );
         let statuses = |list: &[u16]| {
-            DraftValue::List(list.iter().map(|s| DraftValue::Int(i64::from(*s))).collect())
+            DraftValue::List(
+                list.iter()
+                    .map(|s| DraftValue::Int(i64::from(*s)))
+                    .collect(),
+            )
         };
         let mut responses = Vec::new();
         if !operation.ok.is_empty() {
@@ -529,20 +547,32 @@ mod tests {
         assert_eq!(found.len(), 2);
         let (get, put) = (&found[0], &found[1]);
         assert!(get.safe && !put.safe);
-        assert_eq!((get.ok.as_slice(), get.absent.as_slice()), (&[200][..], &[404][..]));
+        assert_eq!(
+            (get.ok.as_slice(), get.absent.as_slice()),
+            (&[200][..], &[404][..])
+        );
         assert_eq!(put.ok, vec![200, 201]);
         assert_eq!(get.name(), "get_order");
-        assert_eq!(get.template_path().as_deref(), Some("/api/orders/{order_id}"));
+        assert_eq!(
+            get.template_path().as_deref(),
+            Some("/api/orders/{order_id}")
+        );
         // A reference inside the document is followed; a rule this pack
         // does not check is left out of the shape.
         let response = get.response.as_ref().unwrap().to_text();
-        assert!(response.contains(r#""items":{"type":"array","items":{"type":"object""#), "{response}");
+        assert!(
+            response.contains(r#""items":{"type":"array","items":{"type":"object""#),
+            "{response}"
+        );
         assert!(response.contains(r#""nullable":true"#), "{response}");
         let request = put.request.as_ref().unwrap().to_text();
         assert!(!request.contains("maxLength"), "{request}");
         assert!(put.response.is_none());
         // What a finding carries reads back as what was found.
-        assert_eq!(DescribedOperation::from_found(&get.found()).as_ref(), Some(get));
+        assert_eq!(
+            DescribedOperation::from_found(&get.found()).as_ref(),
+            Some(get)
+        );
     }
 
     #[test]
@@ -563,7 +593,10 @@ mod tests {
     #[test]
     fn a_name_is_made_mechanically_from_the_systems_own_word() {
         assert_eq!(snake("getOrderById"), "get_order_by_id");
-        assert_eq!(snake("GET /api/orders/{orderId}"), "get_api_orders_order_id");
+        assert_eq!(
+            snake("GET /api/orders/{orderId}"),
+            "get_api_orders_order_id"
+        );
         assert_eq!(snake("Orders.List"), "orders_list");
     }
 }

@@ -1,6 +1,6 @@
 # 307. The data pack
 
-The data pack reaches data stores directly: relational databases first, and reads before writes; document and key-value stores later. It is a request pack ([section 201](../2-kernel/201-archetypes-and-modes.md)). It proposes one mode, `sql`, for relational stores. The mode becomes real by a decision record when the pack is built ([record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages G1 to G3 of the [roadmap](../../plan/roadmap.md) build it.
+The data pack reaches data stores directly: relational databases first, and reads before writes; document and key-value stores later. It is a request pack ([section 201](../2-kernel/201-archetypes-and-modes.md)). It brings one mode, `sql`, for relational stores, registered by [decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md). What is built so far, and what is not, is in the design of [`a2m-pack-data`](../../architecture/crates/a2m-pack-data.md). Packages G1 to G3 of the [roadmap](../../plan/roadmap.md) build it.
 
 The pack exists because a database is the plainest place to read many records, and because a write to one can be checked with exactly the same tool that made it: a query by key. It is also where an overlay can do the most damage, so most of this section is about what it refuses.
 
@@ -38,7 +38,7 @@ surface: orders_db                 # a database surface in target.yaml, with sta
 records:
   line_item:
     table: order_lines
-    key: [order_id, item_code]     # the columns that identify one row, parent first
+    key: [order_id, item_code]     # the fields that identify one row, parent first
     version: row_version           # optional: a column the store changes on every write
     fields:
       order_id:   {column: order_id,   type: identifier}
@@ -82,15 +82,17 @@ An operation binds to a statement like this:
 ```yaml
 bindings:
   - mode: sql
+    verb: update
     statement: line_item_update
     params: {order_id: input.order_id, item_code: input.item_code,
-             length: input.length, unit_price: input.unit_price}
+             length: input.length, unit_price: input.unit_price,
+             version: input.row_version}
     read_back: line_item_by_key
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `records.<kind>.table`, `key`, `fields` | One table or view, the columns that identify a row, and each column's field type. Units live in the field type and nowhere else |
+| `records.<kind>.table`, `key`, `fields` | One table or view, the fields that identify a row, and each column's field type. Units live in the field type and nowhere else ([decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md)) |
 | `version` | A column the store changes on every write. Sent back as a precondition, as an `ETag` is for HTTP ([section 208](../2-kernel/208-runs-the-ledger-and-resume.md)) |
 | `effect` (required) | `read` or `write`. A `read` runs only on a connection the store holds read-only (below) |
 | `form` | For writes: `table`, the pack writes the statement from `record`, `verb`, and `set`; or `statement`, hand-written `text` that must declare `hazard: data_elsewhere` |
@@ -104,7 +106,7 @@ bindings:
 
 **How parameters are bound.** Only through the database driver's own parameter binding, as a prepared statement. The text is a constant of the plan. Nothing an input holds is ever placed into it, and the compiler has no way to do so: there is no expression field in `text`. A `form: table` statement is written by the pack from identifiers checked against the store's catalog and quoted by the dialect's rule.
 
-**How the pack knows a statement's shape.** It asks the store. When a statement is checked, and again when a session starts, the driver prepares it without running it, and the store reports the number and types of its parameters and the names and types of its result columns. The compiler holds `params` and `fields` to that description; a difference at run time is `drift`. The pack never parses a statement to learn what it does.
+**How the pack knows a statement's shape.** It asks the store. When a statement is checked, and again when a session starts, the driver prepares it without running it, and the store reports the number and types of its parameters and the names and types of its result columns. The driver holds `params` and `fields` to that description the first time a session uses the statement, because the compiler has no connection; a difference is `drift`. The pack never parses a statement to learn what it does.
 
 ## How a read is proved a read
 
@@ -232,6 +234,7 @@ The scout tries each drafted read in the sandbox, read-only, five times. To have
 | The connection ends after `commit` was sent | `possible_commit` | `no_confirmation` |
 | Statement or lock wait timeout; serialization failure or deadlock, rolled back | `transient` | `timeout`; `serialization_failure` (proposed) |
 | Too many connections for the identity | `busy` | `session_in_use` |
+| An embedded store's lock is held by another connection for the whole time limit | `busy` | `store_locked` ([decision 0101](../../decisions/0101-what-the-data-pack-refuses-and-how-it-names-it.md)) |
 | A unique, check, not-null, or foreign-key constraint refuses the write | `rejected` | `constraint_violated` (proposed), the constraint's name as untrusted text |
 | The store denies a right; a read statement tried to write; the identity is administrative; the certificate does not verify | `policy` | `denied_by_store`, `read_statement_wrote`, `identity_is_administrator`, `server_identity_mismatch` (all proposed) |
 | A table, column, or parameter differs from the plan; a key matched more than one row | `drift` | `schema_changed`, `key_not_unique` (proposed) |
@@ -289,7 +292,7 @@ They wait. They fit the request archetype ([section 201](../2-kernel/201-archety
 | 5 | A discoverer that claims no more than it saw | The catalog as `discovered`; samples as `inferred` |
 | 6 | Failures mapped to the classes | Failures |
 | 7 | Effects and hazards | Effects and hazards |
-| 8 | A decision record for the mode | `sql`, written by the lead when G2 is built |
+| 8 | A decision record for the mode | `sql`: [decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) |
 
 ## Build order
 

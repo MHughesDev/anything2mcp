@@ -13,8 +13,7 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{
-    Failure, FailureClass, FailureCode, PackPayload, RecordKey, Redact, Secret, Step, Value,
-    Values,
+    Failure, FailureClass, FailureCode, PackPayload, RecordKey, Redact, Secret, Step, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
@@ -363,10 +362,7 @@ impl Run {
                     .with("id", message.id.as_str())
                     .with(
                         "key",
-                        message
-                            .key
-                            .as_deref()
-                            .map_or(Value::Null, Value::from),
+                        message.key.as_deref().map_or(Value::Null, Value::from),
                     )
                     .with("position", position_value(message.position))
                     .with("headers", headers),
@@ -512,7 +508,10 @@ impl StreamDriver {
             match message.body.as_object() {
                 Some(map) => {
                     for (name, value) in map {
-                        fields.entry(name.clone()).or_default().insert(value.type_name());
+                        fields
+                            .entry(name.clone())
+                            .or_default()
+                            .insert(value.type_name());
                     }
                 }
                 None => {
@@ -553,7 +552,9 @@ impl StreamDriver {
             return Err(stopped(
                 Sent::NotSent,
                 codes::VALUE_OUT_OF_RANGE,
-                format!("A scan of the channel `{name}` needs the record's token and the header it travels in."),
+                format!(
+                    "A scan of the channel `{name}` needs the record's token and the header it travels in."
+                ),
                 "Declare `idempotency.header` in the channel file, and give the operation the `stamped` identity.",
             ));
         };
@@ -588,7 +589,9 @@ impl StreamDriver {
         Err(stopped(
             Sent::Answered,
             codes::SCAN_LIMIT,
-            format!("The log `{name}` holds more than a scan may read, so the driver cannot say that the record's message is not there."),
+            format!(
+                "The log `{name}` holds more than a scan may read, so the driver cannot say that the record's message is not there."
+            ),
             "Look at the log by hand before anything is sent again, or shorten its retention.",
         ))
     }
@@ -608,7 +611,9 @@ impl StreamDriver {
             return Err(not_owned(&name));
         }
         if !detail.take && (entry.shape == Shape::Queue || !entry.own_subscription) {
-            return Err(wrong_plan("a wait on a channel that is not read through a subscription of the runtime's own"));
+            return Err(wrong_plan(
+                "a wait on a channel that is not read through a subscription of the runtime's own",
+            ));
         }
         if run.open.contains_key(&name) {
             return Ok(self.done(Values::new().with("position", Value::Null)));
@@ -733,7 +738,9 @@ impl StreamDriver {
                 return Err(stopped(
                     Sent::Answered,
                     codes::NOTHING_ARRIVED,
-                    format!("No message that matches arrived on the channel `{name}` within the wait."),
+                    format!(
+                        "No message that matches arrived on the channel `{name}` within the wait."
+                    ),
                     "Try again when the message is expected, or raise the wait where the channel allows.",
                 ));
             }
@@ -940,7 +947,9 @@ fn not_owned(name: &str) -> StepFailure {
     stopped(
         Sent::NotSent,
         codes::ACK_NOT_OWNED,
-        format!("The channel `{name}` is not a queue the target declares the runtime owns, so nothing on it is taken or acknowledged."),
+        format!(
+            "The channel `{name}` is not a queue the target declares the runtime owns, so nothing on it is taken or acknowledged."
+        ),
         "Look at the queue with `list`; declare `ownership: runtime_owned` only when nothing else reads it.",
     )
 }
@@ -951,7 +960,9 @@ fn not_owned(name: &str) -> StepFailure {
 fn discovery_address(run: &Run, detail: &StepDetail) -> Result<String, StepFailure> {
     match (&detail.address, run.posture) {
         (Some(address), Posture::Discovery | Posture::Sandbox { .. }) => Ok(address.clone()),
-        _ => Err(wrong_plan("a step names a channel outside the target's files")),
+        _ => Err(wrong_plan(
+            "a step names a channel outside the target's files",
+        )),
     }
 }
 
@@ -1010,7 +1021,10 @@ impl Driver for StreamDriver {
                 return Err(stopped(
                     Sent::NotSent,
                     codes::PROTOCOL_UNKNOWN,
-                    format!("The surface `{}` names a wire protocol this build does not speak.", surface.name),
+                    format!(
+                        "The surface `{}` names a wire protocol this build does not speak.",
+                        surface.name
+                    ),
                     "Use a protocol the stream pack lists, or a build that speaks this one.",
                 ));
             };
@@ -1018,7 +1032,10 @@ impl Driver for StreamDriver {
                 return Err(stopped(
                     Sent::NotSent,
                     codes::SURFACE_NOT_DECLARED,
-                    format!("The address of the surface `{}` is not one this run may reach.", surface.name),
+                    format!(
+                        "The address of the surface `{}` is not one this run may reach.",
+                        surface.name
+                    ),
                     "Declare the broker's address on a surface of the target, for this environment.",
                 ));
             }
@@ -1050,11 +1067,7 @@ impl Driver for StreamDriver {
                 }
                 None => None,
             };
-            let key: PoolKey = (
-                surface.address.clone(),
-                protocol.name().to_owned(),
-                session,
-            );
+            let key: PoolKey = (surface.address.clone(), protocol.name().to_owned(), session);
             let link = match self.take_idle(&key) {
                 Some(link) => link,
                 None => protocol
