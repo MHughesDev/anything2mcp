@@ -149,6 +149,29 @@ pub(crate) fn keep_run_call(
     Ok(())
 }
 
+/// Keeps the facts of whoever resumes a run, in place of those of whoever
+/// started it.
+pub(crate) fn rekeep_caller(
+    tx: &mut Tx<'_>,
+    run: &RunRow,
+    caller: &CallerFacts,
+) -> Result<(), Failure> {
+    tx.tables(Owner::Actions).execute(
+        "UPDATE actions_run_calls SET caller = ?6
+         WHERE workspace_id = ?1 AND principal_id = ?2 AND tool_name = ?3
+           AND target_version = ?4 AND input_hash = ?5",
+        &[
+            SqlValue::from(run.workspace.to_string()),
+            SqlValue::from(run.principal.to_string()),
+            SqlValue::from(run.tool_name.as_str()),
+            SqlValue::from(run.target_version.to_string()),
+            SqlValue::from(run.input_hash.to_string()),
+            SqlValue::from(caller.to_json().to_string()),
+        ],
+    )?;
+    Ok(())
+}
+
 fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
     let row = tx.tables(Owner::Actions).query_first(
         "SELECT input_ref, caller FROM actions_run_calls
@@ -176,6 +199,8 @@ pub(crate) struct RunnerState {
     changed: watch::Sender<u64>,
     budgets: Mutex<BTreeSet<String>>,
     modes: Mutex<BTreeMap<RunId, Vec<(RecordRef, Mode)>>>,
+    /// The runs a job of this loop is working on now.
+    in_hand: Mutex<BTreeSet<RunId>>,
 }
 
 impl Default for RunnerState {
@@ -186,6 +211,7 @@ impl Default for RunnerState {
             changed: watch::Sender::new(0),
             budgets: Mutex::new(BTreeSet::new()),
             modes: Mutex::new(BTreeMap::new()),
+            in_hand: Mutex::new(BTreeSet::new()),
         }
     }
 }
@@ -359,6 +385,11 @@ impl Kernel {
         self.inner.runner.changed.subscribe()
     }
 
+    /// Whether a job of this loop is working on the run now.
+    pub(crate) fn in_hand(&self, run: RunId) -> bool {
+        lock(&self.inner.runner.in_hand).contains(&run)
+    }
+
     /// Whether this is the first time the budget is seen in this process.
     pub(crate) fn note_budget(&self, key: &BudgetKey) -> bool {
         lock(&self.inner.runner.budgets).insert(key.as_str().to_owned())
@@ -373,6 +404,9 @@ impl Kernel {
             return;
         };
         let lease_ref = lease.lease_ref();
+        if let Some(run) = lease.run {
+            lock(&self.inner.runner.in_hand).insert(run);
+        }
         let end = match self.run_claimed(&lease, terms).await {
             Ok(end) => end,
             Err(failure) => JobEnd::Stopped {
@@ -382,6 +416,9 @@ impl Kernel {
             },
         };
         let _ = sched.finish(&lease_ref, end).await;
+        if let Some(run) = lease.run {
+            lock(&self.inner.runner.in_hand).remove(&run);
+        }
         self.run_changed();
     }
 

@@ -20,6 +20,7 @@
 
 mod catalog;
 pub mod codes;
+mod control;
 mod def;
 mod dispatch;
 mod faces;

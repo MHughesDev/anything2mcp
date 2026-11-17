@@ -310,7 +310,8 @@ impl Kernel {
             if !matches!(
                 row.state,
                 RunState::Queued | RunState::Validating | RunState::Running
-            ) {
+            ) && !self.in_hand(run)
+            {
                 return Ok(row);
             }
             tokio::select! {
@@ -566,7 +567,7 @@ impl Kernel {
                     row.state,
                     RunState::Queued | RunState::Validating | RunState::Running
                 )
-                && !self.has_open_job(run).await
+                && !self.in_hand(run)
             {
                 return Ok(row);
             }

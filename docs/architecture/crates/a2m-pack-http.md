@@ -76,7 +76,7 @@ Not built: the read operation drafted for each safe method, the OData key, and t
 ## Interface
 
 ```rust
-pub struct HttpPack;                                   // impl a2m_provider::Pack
+pub struct HttpPack;                                   // implements the provider contract's `Pack`
 pub fn add_to(builder: &mut RegistryBuilder);          // the one call the product crate makes
 
 pub const PACK: &str;                                  // "http"

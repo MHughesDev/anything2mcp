@@ -4,6 +4,7 @@
 mod machine;
 mod meta;
 mod provider;
+mod tools;
 
 use crate::def::HandlerFn;
 
@@ -34,6 +35,14 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "doctor.run" => machine::doctor_run,
         "provider.list" => provider::provider_list,
         "provider.describe" => provider::provider_describe,
+        "tool.search" => tools::tool_search,
+        "tool.describe" => tools::tool_describe,
+        "tool.call" => tools::tool_call,
+        "run.get" => tools::run_get,
+        "run.resume" => tools::run_resume,
+        "run.cancel" => tools::run_cancel,
+        "trace.show" => tools::trace_show,
+        "plan.show" => tools::plan_show,
         _ => return None,
     })
 }
