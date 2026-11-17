@@ -45,8 +45,10 @@ pub use surface::{LocalSurface, SurfaceParts};
 )]
 mod tests {
     mod channel;
+    mod local_authentication;
     #[cfg(target_os = "linux")]
     mod polkit;
     mod surface;
+    mod windows_hello;
     mod world;
 }

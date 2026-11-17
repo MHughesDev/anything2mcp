@@ -149,6 +149,26 @@ fn refused(path: &str, change: impl Fn(&str) -> String, code: &str) -> a2m_files
 }
 
 #[test]
+fn a_binding_is_held_to_the_least_effect_of_what_it_does() {
+    // A `submit` cannot be taken back, and an operation that says it only
+    // writes does not compile.
+    let ops = "operations/sign_in.yaml";
+    let submit = refused(
+        ops,
+        |text| text.replacen("effect: irreversible", "effect: write", 1),
+        "kernel.effect_lower_than_derived",
+    );
+    assert_eq!(submit.at.file.as_str(), ops);
+    // An update that names no read-back could never be found again: it is
+    // irreversible too.
+    refused(
+        "operations/line_items.yaml",
+        |text| text.replacen("    read_back: {screen: line_item}\n", "", 1),
+        "kernel.effect_lower_than_derived",
+    );
+}
+
+#[test]
 fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     let form = "screens/line_item.yaml";
 

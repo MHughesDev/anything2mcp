@@ -1,7 +1,8 @@
 //! The ways out of a tab's lock, each tried by a page of the test
 //! application: a page that moves the tab by itself, a download, a frame
-//! from another site, a window the page opens, a service worker, and a
-//! page on an origin the tab was not opened for. For each, the test
+//! from another site, a window the page opens, a service worker, a shared
+//! worker, a permission or a file asked for, and a page on an origin the
+//! tab was not opened for. For each, the test
 //! application's control interface says that nothing arrived.
 
 use crate::{
