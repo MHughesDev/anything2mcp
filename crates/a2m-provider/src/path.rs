@@ -720,9 +720,9 @@ impl CheckedPath {
             .map_err(|_| self.unavailable("cannot be removed"))
     }
 
-    /// Why a file could not be used, told apart: `busy`/`file_locked`,
-    /// `busy`/`storage_full`, `input`/`file_access_denied`,
-    /// `input`/`file_missing`, and `input`/`file_unavailable` for anything
+    /// Why a file could not be used, told apart: `busy`/`path_locked`,
+    /// `busy`/`disk_full`, `input`/`path_denied`,
+    /// `input`/`path_missing`, and `input`/`file_unavailable` for anything
     /// else. `doing` says what was being done, as in "cannot be renamed".
     fn io_failure(&self, error: &std::io::Error, doing: &str) -> Failure {
         use std::io::ErrorKind;
@@ -748,13 +748,13 @@ impl CheckedPath {
         let _ = raw;
         if locked {
             codes::busy(
-                codes::FILE_LOCKED,
+                codes::PATH_LOCKED,
                 format!("The file `{self}` {doing}: another program holds it."),
                 "Close the program that holds the file, then call again.",
             )
         } else if full {
             codes::busy(
-                codes::STORAGE_FULL,
+                codes::DISK_FULL,
                 format!("The file `{self}` {doing}: the disk is full."),
                 "Free space on the disk, then call again.",
             )
@@ -763,13 +763,13 @@ impl CheckedPath {
             ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
         ) {
             codes::input(
-                codes::FILE_ACCESS_DENIED,
+                codes::PATH_DENIED,
                 format!("The file `{self}` {doing}: the engine's user may not write it."),
                 "Let the engine's user write the file and its folder, or name another file.",
             )
         } else if error.kind() == ErrorKind::NotFound {
             codes::input(
-                codes::FILE_MISSING,
+                codes::PATH_MISSING,
                 format!("The file `{self}` {doing}: it, or its folder, is not there."),
                 "Check that the file and its folder exist.",
             )
@@ -796,7 +796,7 @@ impl CheckedPath {
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
             codes::input(
-                codes::FILE_MISSING,
+                codes::PATH_MISSING,
                 format!("The file `{self}` cannot be saved: its folder is not there."),
                 "Check that the file's folder exists.",
             )
@@ -838,7 +838,7 @@ impl CheckedPath {
         let (folder, _) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
             codes::input(
-                codes::FILE_MISSING,
+                codes::PATH_MISSING,
                 format!("The folder of `{self}` is not there."),
                 "Check that the file's folder exists.",
             )
@@ -856,13 +856,13 @@ impl CheckedPath {
     ///
     /// # Errors
     ///
-    /// `input`/`file_missing`, `input`/`file_access_denied`,
+    /// `input`/`path_missing`, `input`/`path_denied`,
     /// `input`/`path_not_allowed`, `input`/`file_unavailable`.
     pub fn identity(&self) -> Result<FileIdentity, Failure> {
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
             codes::input(
-                codes::FILE_MISSING,
+                codes::PATH_MISSING,
                 format!("The file `{self}` is not there."),
                 "Check that the file exists.",
             )
@@ -879,7 +879,7 @@ impl CheckedPath {
     ///
     /// # Errors
     ///
-    /// `input`/`file_missing`; `busy`/`file_locked` where another program
+    /// `input`/`path_missing`; `busy`/`path_locked` where another program
     /// holds it; `input`/`path_not_allowed`, also where a link stands at the
     /// name or the path is no regular file; `policy`/`effect_not_declared`
     /// for a path checked for reading.
@@ -888,7 +888,7 @@ impl CheckedPath {
         let (folder, name) = self.place()?;
         let folder = self.folder_now(folder)?.ok_or_else(|| {
             codes::input(
-                codes::FILE_MISSING,
+                codes::PATH_MISSING,
                 format!("The file `{self}` is not there."),
                 "Check that the file exists.",
             )
@@ -897,7 +897,7 @@ impl CheckedPath {
             Ok(EntryKind::File) => {}
             Ok(EntryKind::Absent) => {
                 return Err(codes::input(
-                    codes::FILE_MISSING,
+                    codes::PATH_MISSING,
                     format!("The file `{self}` is not there."),
                     "Check that the file exists.",
                 ));
@@ -912,7 +912,7 @@ impl CheckedPath {
                 Ok(true)
             }
             Err(error) => match self.io_failure(&error, "cannot be written") {
-                denied if denied.code() == &codes::FILE_ACCESS_DENIED => Ok(false),
+                denied if denied.code() == &codes::PATH_DENIED => Ok(false),
                 other => Err(other),
             },
         }
@@ -998,7 +998,7 @@ impl Temporary {
     ///
     /// # Errors
     ///
-    /// `busy`/`storage_full`, `input`/`file_access_denied`, and the other
+    /// `busy`/`disk_full`, `input`/`path_denied`, and the other
     /// kinds of a failed write.
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), Failure> {
         use std::io::Write as _;
@@ -1052,7 +1052,7 @@ impl Temporary {
     /// # Errors
     ///
     /// `input`/`path_not_allowed` where a link stands at the name;
-    /// `busy`/`file_locked` where another program holds the target; and the
+    /// `busy`/`path_locked` where another program holds the target; and the
     /// other kinds of a failed rename. The temporary file is removed.
     pub fn replace(mut self) -> Result<(), Failure> {
         drop(self.file.take());

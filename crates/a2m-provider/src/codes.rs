@@ -23,10 +23,10 @@ codes! {
     /// A file under a checked path could not be read or written.
     FILE_UNAVAILABLE = Input, "file_unavailable";
     /// A file, or the folder that holds it, is not there.
-    FILE_MISSING = Input, "file_missing";
+    PATH_MISSING = Input, "path_missing";
     /// The engine's user may not write the file, or the file system is read
     /// only.
-    FILE_ACCESS_DENIED = Input, "file_access_denied";
+    PATH_DENIED = Input, "path_denied";
     /// The run has no project folder, and a file of the project was asked
     /// for.
     PROJECT_FOLDER_MISSING = Input, "project_folder_missing";
@@ -69,9 +69,9 @@ codes! {
     /// A program could not be started by the operating system.
     START_FAILED = Busy, "start_failed";
     /// Another program holds the file, or a lock on it.
-    FILE_LOCKED = Busy, "file_locked";
+    PATH_LOCKED = Busy, "path_locked";
     /// The disk, or the user's share of it, is full.
-    STORAGE_FULL = Busy, "storage_full";
+    DISK_FULL = Busy, "disk_full";
     /// A subsystem failed its handshake.
     HANDSHAKE_FAILED = UnknownVariant, "handshake_failed";
     /// A driver returned a failure code nothing declares.

@@ -577,13 +577,13 @@ fn a_verified_save_is_made_in_steps_the_caller_checks_between() {
         .unwrap();
     assert_eq!(
         nowhere.create_temporary().unwrap_err().code(),
-        &codes::FILE_MISSING
+        &codes::PATH_MISSING
     );
     let absent = roots
         .check(&root("project"), "orders/none.txt", Access::Write)
         .unwrap();
-    assert_eq!(absent.may_write().unwrap_err().code(), &codes::FILE_MISSING);
-    assert_eq!(absent.identity().unwrap_err().code(), &codes::FILE_MISSING);
+    assert_eq!(absent.may_write().unwrap_err().code(), &codes::PATH_MISSING);
+    assert_eq!(absent.identity().unwrap_err().code(), &codes::PATH_MISSING);
     let read_only = roots
         .check(&root("project"), "orders/one.txt", Access::Read)
         .unwrap();

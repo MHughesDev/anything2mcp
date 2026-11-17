@@ -99,6 +99,13 @@ async fn a_read_over_https_is_trusted_through_the_authority_the_installation_nam
         .await
         .unwrap();
     let machine = Machine::new("orders", &[(PLACEHOLDER, &app.secure_url(""))]).with_passphrase();
+    {
+        let trust = a2m_auth::tls::Trust::with_named_roots(&[authority.pem().as_bytes()]).unwrap();
+        let client = a2m_auth::tls::client_builder(&trust).no_proxy().build().unwrap();
+        let got = client.get(app.secure_url("/api/orders/A-100")).send().await;
+        eprintln!("DEBUG direct: {:?}", got.as_ref().map(|r| r.status()));
+        if let Err(e) = &got { let mut s: Option<&dyn std::error::Error> = Some(e); while let Some(x) = s { eprintln!("DEBUG cause: {x}"); s = x.source(); } }
+    }
     let world = machine.open().await;
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);

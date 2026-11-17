@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          program=$(cargo test --locked -p a2m-local --lib --no-run --message-format=json \
+          program=$(cargo test --locked -p a2m-local --lib --no-run --message-format=json-render-diagnostics \
             | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "a2m_local") | .executable' \
             | tail -n 1)
           test -x "$program"
