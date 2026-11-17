@@ -1149,13 +1149,70 @@ mod tests {
         );
     }
 
+    /// Decision 0145: each setting the kernel hands in changes the answer,
+    /// under the loosest set, by a forbid that names it.
+    #[test]
+    fn each_policy_setting_is_a_forbid_that_changes_the_answer() {
+        let with = |change: fn(&mut Settings)| {
+            let mut set = loosest();
+            change(&mut set.compiled.layers.settings);
+            set
+        };
+        let agent = || {
+            let mut context = context(EffectClass::Write);
+            context.caller_is_agent = true;
+            context
+        };
+        // The ceiling for an agent: a write tool is refused to an agent under
+        // `read`, and allowed to a person.
+        let use_write = ask(
+            PrincipalRef::person(id(1)),
+            Question::UseTool,
+            tool("example_order_update"),
+            agent(),
+        );
+        assert_eq!(evaluate(&loosest().compiled, &use_write).answer, Answer::Allow);
+        let ceiling = with(|settings| settings.agent_effect_ceiling = EffectClass::Read);
+        let refused = evaluate(&ceiling.compiled, &use_write);
+        assert_eq!(refused.rules, ["limit.agent_effect_ceiling"]);
+        assert_eq!(refused.refusal.unwrap().code(), &EFFECT_TOO_HIGH);
+        let mut by_a_person = use_write.clone();
+        by_a_person.context.caller_is_agent = false;
+        assert_eq!(evaluate(&ceiling.compiled, &by_a_person).answer, Answer::Allow);
+
+        // Writes only to test records: a write that may proceed without a
+        // person is refused unless every record is a declared test record.
+        let unattended = ask(
+            PrincipalRef::person(id(1)),
+            Question::WriteWithoutPerson,
+            tool("example_order_update"),
+            context(EffectClass::Write),
+        );
+        assert_eq!(evaluate(&loosest().compiled, &unattended).answer, Answer::Allow);
+        let tests_only = with(|settings| settings.writes_outside_tests = false);
+        let refused = evaluate(&tests_only.compiled, &unattended);
+        assert_eq!(refused.rules, ["limit.writes_only_to_test_records"]);
+        assert_eq!(refused.refusal.unwrap().code(), &NOT_GRANTED);
+        let mut on_test_records = unattended.clone();
+        on_test_records.context.test_records = true;
+        assert_eq!(evaluate(&tests_only.compiled, &on_test_records).answer, Answer::Allow);
+
+        // Pre-approval off: no rule lets the write proceed, and the run
+        // waits for a person; it is not refused.
+        let off = with(|settings| settings.pre_approval = false);
+        let waits = evaluate(&off.compiled, &unattended);
+        assert_eq!(waits.answer, Answer::Deny);
+        assert_eq!(waits.rules, ["limit.no_pre_approval"]);
+        assert!(waits.refusal.is_none());
+    }
+
     #[test]
     fn the_version_covers_the_guardrails_the_layers_and_the_tests() {
         let base = local();
         // The guardrails' hash is pinned: a change to their text or revision
         // changes every version, and must be made on purpose.
         assert_eq!(guardrails_digest(), guardrails_digest());
-        assert_eq!(GUARDRAILS.len(), 5);
+        assert_eq!(GUARDRAILS.len(), 8);
 
         let mut layers = base.layers().clone();
         layers.settings.max_records_per_run = 10;
