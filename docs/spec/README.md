@@ -2,7 +2,7 @@
 
 The specification, one section per file. Read in order the first time; after that, open only the sections a task touches.
 
-Sections 1 to 38 were exported from the working design document on 2026-11-15. Sections 39 to 52 were added afterwards and refine sections 7, 10, 11, 15, 17, 18, 20, 22, 23, 25, 26, 28, and 29; where they differ, the later section wins. This folder is the master copy.
+Sections 1 to 38 were exported from the working design document on 2026-11-15. Sections 39 to 52 were added afterwards and refine sections 7, 10, 11, 15, 17, 18, 20, 22, 23, 25, 26, 28, and 29; where they differ, the later section wins. Sections 53 to 66 were added on 2026-11-17 and widen the design from applications to any existing system, as Anything2MCP; they refine sections 5, 6, 7, 26, 29, and 41, and win where they differ. This folder is the master copy.
 
 | # | Section | File |
 | --- | --- | --- |
@@ -58,5 +58,19 @@ Sections 1 to 38 were exported from the working design document on 2026-11-15. S
 | 50 | Record identity and dependent records | [50-record-identity-and-dependent-records.md](50-record-identity-and-dependent-records.md) |
 | 51 | Defending against a manipulated agent | [51-defending-against-a-manipulated-agent.md](51-defending-against-a-manipulated-agent.md) |
 | 52 | When the engine itself fails | [52-when-the-engine-itself-fails.md](52-when-the-engine-itself-fails.md) |
+| 53 | Anything2MCP: the universal runtime | [53-the-universal-runtime.md](53-the-universal-runtime.md) |
+| 54 | Interaction archetypes | [54-interaction-archetypes.md](54-interaction-archetypes.md) |
+| 55 | Kernel and packs | [55-kernel-and-packs.md](55-kernel-and-packs.md) |
+| 56 | The provider contract | [56-the-provider-contract.md](56-the-provider-contract.md) |
+| 57 | Supervising subsystems | [57-supervising-subsystems.md](57-supervising-subsystems.md) |
+| 58 | Discovery and findings | [58-discovery-and-findings.md](58-discovery-and-findings.md) |
+| 59 | The evidence ladder | [59-the-evidence-ladder.md](59-the-evidence-ladder.md) |
+| 60 | Overlaying tools on an existing system | [60-overlaying-tools-on-an-existing-system.md](60-overlaying-tools-on-an-existing-system.md) |
+| 61 | Effects, hazards, and consent | [61-effects-hazards-and-consent.md](61-effects-hazards-and-consent.md) |
+| 62 | Catalog of surface kinds | [62-catalog-of-surface-kinds.md](62-catalog-of-surface-kinds.md) |
+| 63 | Devices and firmware | [63-devices-and-firmware.md](63-devices-and-firmware.md) |
+| 64 | Rules for tools and capability discovery | [64-rules-for-tools-and-capability-discovery.md](64-rules-for-tools-and-capability-discovery.md) |
+| 65 | Python-first packaging | [65-python-first-packaging.md](65-python-first-packaging.md) |
+| 66 | Readiness of the universal design | [66-readiness-of-the-universal-design.md](66-readiness-of-the-universal-design.md) |
 
 Related: [technical reference](../reference/technical-reference.md) · [action catalog](../reference/action-catalog.md) · [file formats](../reference/file-formats.md) · [steps, snapshots, and diffs](../reference/steps-snapshots-and-diffs.md) · [ledger schema](../reference/ledger-schema.md) · [walkthrough](../reference/walkthrough.md) · [glossary](../reference/glossary.md) · [settings examples](../reference/settings-example.md) · [decision records](../decisions/README.md) · [research notes](../research/README.md)

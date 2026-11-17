@@ -55,6 +55,21 @@ This is a design draft. The list is settled action by action as each phase build
 | `version.diff` | Compare two versions and classify each change | Builder | No | 5 |
 | `publish.request` | Submit a version for human review | Builder | build | 5 |
 
+## Providers and discovery
+
+Added with spec sections 56, 58, and 64. Built with the stage of the [long-term plan](../plan/anything2mcp-master-plan.md) named.
+
+| Action | Purpose | Who | Listed | Phase |
+| --- | --- | --- | --- | --- |
+| `provider.list` | Every pack and provider: installed, enabled, ready, or what it lacks | Viewer | build | Stage B |
+| `provider.describe` | One provider's manifest, effects, and requirements | Viewer | No | Stage B |
+| `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B |
+| `component.list` | Outside programs providers need: found or not, with path and digest | Viewer | No | Stage B |
+| `discover.run` | Run the discoverers that suit a target's surfaces; returns findings | Builder | build | Stage E |
+| `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
+| `unknown.list` | The open questions about a target | Builder | build | Stage E |
+| `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E |
+
 ## Publishing and versions
 
 | Action | Purpose | Who | Listed | Phase |
