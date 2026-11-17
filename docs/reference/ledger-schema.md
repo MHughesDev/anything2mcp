@@ -290,6 +290,19 @@ As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and 
 | `actions_scouts` | One scout of one target by one person: when it started and finished, and its report's hash once the last stage is stored. Its identifier keys its stages in `actions_scout_stages` (column `run_id`); one with no `finished_at` is continued by the next `scout.run` ([decision 0170](../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)) | `scout_id` |
 | `actions_discovery_results` | What one discoverer reported in one discovery run: the surface, the identifiers of its findings as a JSON list, and as JSON its coverage, the bounds it reached, and what it dropped, or its failure's class and code. Written by the run's control in the transaction that stores the findings | `run_id`, `provider`, `discoverer` |
 
+## target_versions
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its plan, named by the plan's hash |
+| `version` | text | The version the plan's header states |
+| `plan` | bytes | The plan's canonical bytes |
+| `published_by`, `published_at` | text, ts | Who published it, and when |
+| `is_current` | bool | At most one current version per target, held by a unique partial index |
+| `gate_evidence` | text | The evidence of the publish gates the version passed, canonical JSON written once with the version: each gate that ran with its result, and the gates the documents name that did not run (spec section 403, [decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)). Null for a version stored before migration `0016` |
+
+As built by migrations `0003` and `0016-ledger-versions-keep-their-gate-evidence.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its plan, hash, version, target, or workspace, and every delete.
+
 ## audit
 
 Unchanged from the technical reference: an append-only, hash-chained log of who did what. Ledger events are evidence about runs; the audit log is the record of decisions and administration.

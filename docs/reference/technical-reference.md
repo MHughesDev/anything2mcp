@@ -113,7 +113,7 @@ Rules for every driver:
 - Every failure maps to exactly one failure class, and says whether the request was not sent, was answered, or is unknown.
 - No secret ever appears in a step's outcome or in a failure.
 - A driver is reached only through a handle that refuses a step that commits without the token the ledger gives for a recorded intent.
-- A step marked as a lookup may report that a record is absent. No other step may.
+- A step marked as a lookup may report that a record is absent. No other step may. "Absent" proves that a record with no key is not there only from steps whose kinds the mode lists in `absence_steps`; `DriverHandle::proves_absence(steps)` asks it ([decision 0185](../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)).
 - A step's outcome can carry values known before the commit point, such as a key the store assigned. The engine records them before the committing step runs.
 - A failure of a committing step that was answered with class `policy` or `input` leaves the handle as `possible_commit`, `no_confirmation`, and `Sent::Unknown`: those two classes say nothing was sent, and on a write that left they are not the system's verdict ([decision 0148](../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)).
 - The handle refuses a step that commits and is not marked, where the mode's manifest lists its kind in `commit_steps` (`policy`, `intent_missing`), and it lets no driver return a code in `codes::KERNEL_ONLY`, seven codes that state the kernel's bookkeeping. It redacts what a step returns, its values, its values for reconcile, and a capture whose bytes are text, as it does a failure.

@@ -27,20 +27,23 @@ use std::path::Path;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Environment, Epoch, Failure, Finding, Mode, NoSecrets, PackPayload, RunId,
+    Archetype, Environment, Epoch, Failure, Finding, Mode, NoSecrets, PackPayload, Plan, RunId,
     SurfaceKind, SurfaceName, SurfacePlan, TargetName, Value, Values,
 };
 use a2m_files::{CompileMode, DraftReport, Drafter, RelPath, TargetRoot};
 use a2m_provider::{
     Authority, BoxFuture, CheckedPaths, Deadline, Destinations, DiscoveryScope, FindingSink,
-    Posture, PrepareContext, SandboxPort, StepFailure, StepInput, StepOutcome, SurfaceDescription,
-    SurfaceRef,
+    Posture, PrepareContext, Registry, SandboxPort, StepFailure, StepInput, StepOutcome,
+    SurfaceDescription, SurfaceRef,
 };
 use common::{Folder, Machine};
 use example_app::harness::TestApp;
 
 const READ: &str = "example_orders_a_100_line_items_list";
 const PAGE: &str = "/orders/A-100";
+/// The reads drafted from the screen two orders' pages share.
+const BY_KEY: &str = "example_orders_line_items_list";
+const VALUES: &str = "example_orders_get";
 
 /// Keeps what a discoverer finds.
 struct Kept(Vec<Finding>);
@@ -113,24 +116,13 @@ fn files_of(root: &Path) -> Vec<(RelPath, Vec<u8>)> {
     out
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_pack() {
-    let app = TestApp::start().await.unwrap();
-    let origin = app.url("");
-    // An engine as the product opens it, for its registry: both web
-    // crates, joined by the one handle on their browsers.
-    let machine = Machine::new("pages", &[("http://127.0.0.1:4010", &origin)]);
-    // The browsers' profiles live in the data directory's own folder,
-    // which the product hands the web pack only when it exists.
-    std::fs::create_dir_all(a2m_actions::Paths::under(machine.home.path()).profiles).unwrap();
-    let world = machine.open().await;
-    let registry = world.engine.kernel().providers();
-
-    // 1. The probe looks at the one page, and no further.
+/// Hands `web_snapshot` the pages of `paths`, at depth 0, and keeps what
+/// it finds.
+async fn discover(registry: &Registry, origin: &str, paths: &[&str]) -> Vec<Finding> {
     let description = SurfaceDescription {
         kind: SurfaceKind::new("web").unwrap(),
         archetype: Archetype::Interface,
-        address: origin.clone(),
+        address: origin.to_owned(),
         facts: Values::new(),
     };
     let discoverer = registry
@@ -138,9 +130,15 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         .into_iter()
         .find(|handle| handle.declared().name.as_str() == "web_snapshot")
         .expect("the probe's snapshot discoverer is registered");
-    let surface = web_surface(&origin);
+    let surface = web_surface(origin);
     let mut focus = Values::new();
-    focus.insert("paths", vec![Value::from(PAGE)]);
+    focus.insert(
+        "paths",
+        paths
+            .iter()
+            .map(|path| Value::from(*path))
+            .collect::<Vec<_>>(),
+    );
     let mut bounds = discoverer.declared().bounds;
     bounds.depth = 0;
     let scope = DiscoveryScope {
@@ -156,20 +154,28 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         .discover(&NoPort, &scope, &mut kept)
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
-    // The start page, which leads to the list of orders, and the page
-    // asked for: one screen of the order's page.
-    let screens: Vec<&Finding> = kept
-        .0
+    kept.0
+}
+
+/// The `screen` findings whose subject is the address with `path`.
+fn screens_at<'a>(findings: &'a [Finding], path: &str) -> Vec<&'a Finding> {
+    findings
         .iter()
         .filter(|finding| {
             finding.kind().as_str() == "screen"
-                && matches!(finding.subject(), a2m_core::Subject::Address(at) if at.path() == PAGE)
+                && matches!(finding.subject(), a2m_core::Subject::Address(at) if at.path() == path)
         })
-        .collect();
-    assert_eq!(screens.len(), 1, "{:?}", kept.0);
+        .collect()
+}
 
-    // 2. Drafted from the findings into a target folder that holds only
-    // the target file.
+/// Drafts the findings into a target folder that holds only the target
+/// file, and compiles the drafts, leaving out each file that holds an open
+/// question.
+fn draft_and_compile(
+    machine: &Machine,
+    registry: &Registry,
+    findings: &[Finding],
+) -> (Folder, Plan) {
     let folder = Folder::new("web-drafts");
     std::fs::write(
         folder.path().join("target.yaml"),
@@ -179,13 +185,11 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     .unwrap();
     let root = TargetRoot::new(folder.path());
     let set = registry.compiler_set();
-    let report: DraftReport = Drafter::new(set, &root).draft(&kept.0).unwrap();
+    let report: DraftReport = Drafter::new(set, &root).draft(findings).unwrap();
     assert!(
         report.refused.is_empty() && report.conflicts.is_empty(),
         "{report:?}"
     );
-
-    // 3. Compiled, leaving out each file that holds an open question.
     let files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
         .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
@@ -195,11 +199,25 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     let plan = a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{problems:?}"))
         .plan;
+    (folder, plan)
+}
+
+/// Runs the `act` steps of a read's `ui` binding through the `ui` driver
+/// of the registry, prepared in a posture that may only look: its tab
+/// observes and cannot write. Every argument of a drafted read is
+/// `input.<name>`, evaluated here from `inputs` as the engine would.
+async fn read_through_ui(
+    registry: &Registry,
+    plan: &Plan,
+    origin: &str,
+    name: &str,
+    inputs: &Values,
+) -> Result<Values, StepFailure> {
     let read = plan
         .operations
         .iter()
-        .find(|operation| operation.name.as_str() == READ)
-        .unwrap_or_else(|| panic!("no `{READ}` among {:?}", report.written));
+        .find(|operation| operation.name.as_str() == name)
+        .unwrap_or_else(|| panic!("no `{name}` in the compiled plan"));
     assert_eq!(read.effect, a2m_core::EffectClass::Read);
     let ui = Mode::new("ui").unwrap();
     let binding = read
@@ -207,24 +225,21 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         .iter()
         .find(|binding| binding.mode == ui)
         .unwrap();
-
-    // 4. Read through the `ui` driver, in a run that may only look: its tab
-    // observes and cannot write.
     let handle = registry.driver(&ui).unwrap();
     let mut surface = plan.surfaces[binding.surface.get()].clone();
-    surface.address.clone_from(&origin);
+    surface.address = origin.to_owned();
     let surface = SurfaceRef {
         target: plan.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface,
     };
-    let destinations = Destinations::new([origin.clone()]);
+    let destinations = Destinations::new([origin.to_owned()]);
     let supervisor = handle.supervisor(Vec::new());
     let cx = PrepareContext {
         run: RunId::from_bytes([7; 16]),
         epoch: Epoch::new(1),
         surface: &surface,
-        plan: &plan,
+        plan,
         posture: Posture::Sandbox {
             test_records: false,
         },
@@ -241,9 +256,16 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     let mut values = Values::new();
     let mut failed = None;
     for step in &binding.act {
-        // The read takes no input: the page is the one order's.
-        assert!(step.args.is_empty(), "{step:?}");
-        let args = Values::new();
+        let mut args = Values::new();
+        for arg in &step.args {
+            let source = &plan.expression(arg.value).unwrap().source;
+            let input = source
+                .strip_prefix("input.")
+                .unwrap_or_else(|| panic!("a drafted read's argument is `{source}`"));
+            if let Some(value) = inputs.get(input) {
+                args.insert(arg.name.clone(), value.clone());
+            }
+        }
         let input = StepInput::new(&args, Deadline::after(Duration::from_secs(60)));
         match handle
             .act(&mut prepared, step, &input, Authority::Read)
@@ -265,45 +287,173 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
         handle.release(prepared, failed.is_some()).await.complete,
         "the driver did not release cleanly"
     );
-    if let Some(failure) = failed {
-        panic!("{failure}");
-    }
+    failed.map_or(Ok(values), Err)
+}
+
+/// One column of the order's line items, as the control interface holds it.
+fn column(
+    stored: &example_app::store::StoredOrder,
+    of: &dyn Fn(&example_app::store::StoredItem) -> String,
+) -> Value {
+    Value::List(
+        stored
+            .items
+            .values()
+            .map(|item| Value::from(of(item)))
+            .collect(),
+    )
+}
+
+/// An engine as the product opens it, for its registry: both web crates,
+/// joined by the one handle on their browsers.
+async fn product_engine(origin: &str) -> (Machine, common::World) {
+    let machine = Machine::new("pages", &[("http://127.0.0.1:4010", origin)]);
+    // The browsers' profiles live in the data directory's own folder,
+    // which the product hands the web pack only when it exists.
+    std::fs::create_dir_all(a2m_actions::Paths::under(machine.home.path()).profiles).unwrap();
+    let world = machine.open().await;
+    (machine, world)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_pack() {
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let (machine, world) = product_engine(&origin).await;
+    let registry = world.engine.kernel().providers();
+
+    // 1. The probe looks at the one page, and no further: one screen of
+    // the order's page.
+    let found = discover(registry, &origin, &[PAGE]).await;
+    assert_eq!(screens_at(&found, PAGE).len(), 1, "{found:?}");
+
+    // 2 and 3. Drafted and compiled.
+    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
+
+    // 4. Read through the `ui` driver. The read takes no input: the page
+    // is the one order's.
+    let values = read_through_ui(registry, &plan, &origin, READ, &Values::new())
+        .await
+        .unwrap_or_else(|failure| panic!("{failure}"));
 
     // 5. The same as what the application's control interface,
     // `/__control/orders/A-100`, says it holds, column by column.
     let stored = app.stored_order("A-100").await.unwrap().unwrap();
     assert_eq!(stored.items.len(), 3);
-    let column = |of: &dyn Fn(&example_app::store::StoredItem) -> String| {
-        Value::List(
-            stored
-                .items
-                .values()
-                .map(|item| Value::from(of(item)))
-                .collect(),
-        )
-    };
     assert_eq!(
         values.get("item_code"),
-        Some(&column(&|item| item.item_code.clone())),
+        Some(&column(&stored, &|item| item.item_code.clone())),
         "{values:?}"
     );
     assert_eq!(
         values.get("description"),
-        Some(&column(&|item| item.description.clone())),
+        Some(&column(&stored, &|item| item.description.clone())),
         "{values:?}"
     );
     assert_eq!(
         values.get("quantity"),
-        Some(&column(&|item| item.quantity.to_string())),
+        Some(&column(&stored, &|item| item.quantity.to_string())),
         "{values:?}"
     );
     assert_eq!(
         values.get("length_in"),
-        Some(&column(&|item| example_app::store::format_length_in(
-            item.length_sixteenths
-        ))),
+        Some(&column(&stored, &|item| {
+            example_app::store::format_length_in(item.length_sixteenths)
+        })),
         "{values:?}"
     );
+
+    // Nothing was written.
+    assert!(app.writes().await.unwrap().is_empty());
+    world.close().await;
+}
+
+/// The web pack's matched screens (decision 0187), proven in the product:
+/// two pages of one screen give one screen at the address with a
+/// placeholder; the reads drafted from it take the order's key, read the
+/// order the key names, and refuse a key that is not one plain segment
+/// before the application hears a request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() {
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let (machine, world) = product_engine(&origin).await;
+    let registry = world.engine.kernel().providers();
+
+    let found = discover(registry, &origin, &["/orders/A-100", "/orders/A-101"]).await;
+    assert_eq!(
+        screens_at(&found, "/orders/{order_id}").len(),
+        1,
+        "{found:?}"
+    );
+    for page in ["/orders/A-100", "/orders/A-101"] {
+        assert!(screens_at(&found, page).is_empty(), "{page}: {found:?}");
+    }
+
+    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
+    for name in [BY_KEY, VALUES] {
+        let read = plan
+            .operations
+            .iter()
+            .find(|operation| operation.name.as_str() == name)
+            .unwrap_or_else(|| panic!("no `{name}` in the compiled plan"));
+        let inputs: Vec<&str> = read
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect();
+        assert_eq!(inputs, ["order_id"], "{name}");
+    }
+
+    // The second order, read by its key, is what the control interface
+    // holds for it.
+    let key = Values::new().with("order_id", "A-101");
+    let stored = app.stored_order("A-101").await.unwrap().unwrap();
+    let lines = read_through_ui(registry, &plan, &origin, BY_KEY, &key)
+        .await
+        .unwrap_or_else(|failure| panic!("{failure}"));
+    assert_eq!(
+        lines.get("item_code"),
+        Some(&column(&stored, &|item| item.item_code.clone())),
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines.get("quantity"),
+        Some(&column(&stored, &|item| item.quantity.to_string())),
+        "{lines:?}"
+    );
+    let order = read_through_ui(registry, &plan, &origin, VALUES, &key)
+        .await
+        .unwrap_or_else(|failure| panic!("{failure}"));
+    assert_eq!(
+        order.get("customer"),
+        Some(&Value::from(stored.customer.clone())),
+        "{order:?}"
+    );
+    assert_eq!(
+        order.get("status"),
+        Some(&Value::from(format!("{:?}", stored.status))),
+        "{order:?}"
+    );
+
+    // A key that is not one plain segment is refused, unsent, and the
+    // application hears no request.
+    for refused in ["A-101/items/L-101", "..", "A-101?status=x", "%2e%2e"] {
+        let before = app.seen().await.unwrap();
+        let key = Values::new().with("order_id", refused);
+        for name in [BY_KEY, VALUES] {
+            let stopped = read_through_ui(registry, &plan, &origin, name, &key)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                (stopped.failure.class(), stopped.failure.code().as_str()),
+                (a2m_core::FailureClass::Input, "address_value_refused"),
+                "{refused:?}: {stopped}"
+            );
+            assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+        }
+        assert_eq!(app.seen().await.unwrap(), before, "{refused:?}");
+    }
 
     // Nothing was written.
     assert!(app.writes().await.unwrap().is_empty());

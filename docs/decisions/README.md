@@ -190,3 +190,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0180 | [A target's offline tests cover writes, and nothing is published unless they pass](0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md) | Accepted (design decision) |
 | 0184 | [The data and stream packs after their second safety audit](0184-the-data-and-stream-packs-after-their-second-safety-audit.md) | Accepted (design decision) |
 | 0188 | [Credentials over plain links, drafted workbooks, and published device maps](0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md) | Accepted (design decision) |
+| 0185 | [A record with no key is never proved absent by one look](0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md) | Accepted (design decision) |
+| 0190 | [The `page_http` mode reads from inside the page, in an observing tab](0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md) | Accepted (design decision) |

@@ -91,8 +91,11 @@ pub struct LintCode(/* owner and rule joined by one dot, 64 in all: kernel.no_fi
 impl LintCode { pub fn owner(&self) -> &str; pub fn rule(&self) -> &str; }
 pub struct InvalidName; pub struct UnknownName;               // both convert to Failure
 
-pub struct Failure { /* class, code, message, next_step; and `said`, what the system itself said, bounded and untrusted */ }
+pub struct Failure { /* class, code, message, next_step; and `said`, what the system itself said, whole and untrusted */ }
 // Failure::with_said(text), said(), carrying_said(&other): kept apart from the sentence, never joined into it; decision 0162
+// with_said keeps the text whole up to SAID_CEILING (64 KiB), above it SAID_TOO_LONG in its place: nothing is cut,
+// joined, or flattened before the redactor sees it. said_cut / said_shown(redacted, SAID_LONGEST) cut it for a door,
+// never inside a redaction mark, and said_shown escapes control characters; decision 0185
 pub struct Secret(/* prints as [redacted]; no Serialize, no Clone; wiped when dropped */);
 impl Secret { pub fn expose(&self) -> &str; }
 

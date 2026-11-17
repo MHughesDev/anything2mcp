@@ -48,10 +48,10 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 | --- | --- |
 | Surface kinds | `web` |
 | Modes | `ui`, archetype interface; `page_http` and `site_tools`, archetype request |
-| Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe` for `ui`; `token`, `request`, `validate`, `extract` for `page_http`; `call_tool` for `site_tools`. Each a checked name within its mode |
+| Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe` for `ui`; `goto`, `token`, and `request` for `page_http`, where `request` also checks the answer and gives its values, so no unchecked answer is held between steps ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)); `call_tool` for `site_tools`. Each a checked name within its mode |
 | Drivers | One per mode, sharing one `Browsers` |
-| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)). Reads `endpoints/`, which the HTTP pack owns ([section 303](303-the-http-pack.md)), for the `page_http` lowering |
-| Binding fields | `ui`: `screen`, `verb`, `fields`, `action`. `page_http`: `endpoint`, `path_params`, `query`, `body`. `site_tools`: `tool`, `args` |
+| File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)), and `page_requests/`, the `page_http` mode's entries, in the form of the endpoint catalog the HTTP pack owns ([section 303](303-the-http-pack.md)) with the page that makes each; the drafter lets a pack draft only its own kinds, so the two share one catalog only once that changes ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
+| Binding fields | `ui`: `screen`, `verb`, `fields`, `action`. `page_http`: `endpoint`; as built for reads, each placeholder takes the input of its name, and `path_params`, `query`, and `body` are not built. `site_tools`: `tool`, `args` |
 | Control names | Every control in the widget driver table below, as checked names |
 | Finding kinds | `surface`, `sign_in_method`, `screen`, `field`, `action`, `exchange`, `declared_tool`. It produces `endpoint` findings, a kind the HTTP pack owns |
 | Discoverers | Screen matching, in `a2m-pack-web-ui`; six in `a2m-pack-web-probe` (below) |
@@ -61,7 +61,7 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 
 `screens/` is also registered by the desktop pack, for surfaces of kind `desktop` ([section 305](305-the-desktop-pack.md)). Registration is keyed by file kind and surface kind, so the two do not collide.
 
-If the HTTP pack is not enabled, a `page_http` binding does not compile, and the probe's endpoint inference is not available and says why. The pack compiles the `endpoints/` entries it is handed into its own step payload; no request-template type is shared between packs.
+If the HTTP pack is not enabled, the probe's endpoint inference is not available and says why. The pack compiles its `page_requests/` entries into its own step payload; no request-template type is shared between packs.
 
 ## Verbs and how they lower
 
@@ -77,14 +77,14 @@ If the HTTP pack is not enabled, a `page_http` binding does not compile, and the
 | `submit` | Yes | Yes | If offered |
 | `call` | No | Yes | Yes |
 
-`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `token`, `request`, `validate`, and `extract`. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
+`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `goto`, `token`, and `request`; as built, a read is `goto` and `request`, and a write is refused. `site_tools` lowers into `call_tool`. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
 
 ## The driver, part by part
 
 | Mode | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
 | `ui` | A new acting tab in the session's browser, with the target's fixed environment; an observing tab for a run that may only look | `goto`, `locate`, `set` through the widget driver, `invoke` | The action's declared `confirm`, often an `observe`d response | The field again after the screen is reached afresh, or the save response with `prefer: response` |
-| `page_http` | An acting tab on the surface, at its declared ready page | `token` if declared, then `request` sent from inside the page | Status and response schema | The endpoint the binding names |
+| `page_http` | An observing tab in the session's profile, for a read in every posture; a tab that may write only for the write half, not built ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | `goto` the page that makes the request, which waits for its load; `token` if declared, then `request` sent from inside the page with GET alone for a read | Status and response schema, inside `request`, before any value is returned | The endpoint the binding names |
 | `site_tools` | An acting tab, and the list of tools the page registers, compared with the binding's tool and schema digest | `call_tool` with typed arguments | The tool's typed result | The read tool the binding names, or the `ui` field. Without one the write is `irreversible` |
 
 The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the-engine-loop.md)). For this pack they mean:

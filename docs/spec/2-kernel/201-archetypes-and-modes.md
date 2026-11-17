@@ -42,6 +42,7 @@ Every word that arrives with a pack is a registered name in the same way: a surf
 | `verbs` | The verbs the mode can carry out; the [verbs by mode](../../reference/technical-reference.md#verbs-by-mode) table collects them |
 | `steps` | The step kinds its lowerings may emit |
 | `commit_steps` | The step kinds that always save. A step of such a kind that is not marked as the commit point is refused before the driver sees it. May be left out |
+| `absence_steps` | The step kinds whose "absent", once the binding's settle time has passed, the provider states is authoritative: the record is not in the system. Only a lookup made of these alone may return a record with no key that is in doubt to `planned` ([section 208](208-runs-the-ledger-and-resume.md)); a read-back never does. Empty by default |
 | `rank` | Its default place in binding order when an operation states none. Lower is tried first |
 | `intent_window` | How many intents may be stored ahead of acting, by default ([section 208](208-runs-the-ledger-and-resume.md)) |
 | `session_reads`, `session_writes` | Parallel reads and writes per session, by default ([section 211](211-concurrency.md)) |
@@ -120,7 +121,7 @@ These are the modes of the four packs designed first ([section 202](202-kernel-a
 | Mode | Pack | Archetype | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ui` | Web ([section 301](../3-packs/301-the-web-pack.md)) | Interface | The browser engine drives a Chromium-family browser over the DevTools protocol, acting on elements by role, label, text, or test id; no pixel clicks | A browser session | Writes that must pass the system's own validation; systems with no usable traffic | Layout and label changes |
-| `page_http` | Web | Request | Requests sent from inside the signed-in page with the page's own session, cookies, and headers, described in the endpoint catalog that the HTTP pack owns | A browser session | Fast reads and proven writes without driving the interface | Front-end logic is skipped |
+| `page_http` | Web | Request | Requests sent from inside the signed-in page with the page's own session, cookies, and headers. Built for reads, described in the web pack's `page_requests/`, written in the endpoint catalog's form until the two share one ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | A browser session | Fast reads and proven writes without driving the interface | Front-end logic is skipped |
 | `site_tools` | Web | Request | Calls tools the site registers in the browser (WebMCP). It is the web pack's because it needs a tab that can act | A browser session | Sites that offer them | Early standard, few sites |
 | `http` | HTTP ([section 303](../3-packs/303-the-http-pack.md)) | Request | Requests sent directly from code, with no browser at run time | A session cookie or token from the session keeper | Bulk and high-volume work; servers without a browser | Undocumented endpoints change; bot defenses |
 | `api` | HTTP | Request | Calls generated from a published description: OpenAPI, a GraphQL schema, OData metadata, or gRPC reflection | A token or key | Systems with official APIs | Coverage gaps |

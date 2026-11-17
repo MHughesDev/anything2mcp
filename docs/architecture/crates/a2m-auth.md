@@ -241,7 +241,7 @@ Each is checked by `AuthProvider::check`, which refuses a setting or a credentia
 | `oauth_client_credentials` | `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` (`basic` or `body`) | `client_secret` | `Authorization: Bearer` and the access token |
 | `oauth_authorization_code` | `authorization_endpoint`, `token_endpoint`, `client_id`; optional `scope`, `audience`, `client_auth` | `client_secret`, optional | The same |
 
-A token endpoint must be an `https` address, or a loopback address. The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
+A token endpoint must be an `https` address, or `http` to a loopback address written as an IP address in `127.0.0.0/8` or `::1`; a name, `localhost` included, is not one, as in the packs (decision 0192). The authorization-code provider always uses a proof key (RFC 7636) and a state value, and exchanges nothing whose state is not its own. `totp` is not a provider of sessions: `SignInContext::one_time_code` computes the code (RFC 6238) from the role `totp_secret` and the settings `totp_digits`, `totp_period`, and `totp_algorithm`, for the provider that signs a dedicated account in.
 
 ## Used by, and uses
 

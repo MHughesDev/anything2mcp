@@ -197,7 +197,9 @@ pub enum Reconciled {
     NeverSent,                                // a `failed` record with no intent since it was planned, checked from its row
 }
 // RecordRow also carries `mode` (the binding its intent was stored for), `acted_at`, `reconciled_at`,
-// `acknowledged_at`, and `in_doubt()`, rule 5's question for one row, `acknowledged()`, and `ended_on()`.
+// `acknowledged_at`, `intent_seq` (the event that stored its current intent: what was recorded after it belongs
+// to this attempt; decision 0185) and `intent_at`, and `in_doubt()`, rule 5's question for one row,
+// `acknowledged()`, and `ended_on()`.
 pub struct AcknowledgedInDiff { /* record, diff blob; made only by Store::acknowledged_in_diff */ }
 pub struct RecordTally { pub verified: u32, pub unchanged: u32, pub acknowledged: u32, pub open: u32 }   // settled()
 pub enum Settled { Verified, Planned, Stale }

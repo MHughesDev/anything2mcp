@@ -3,7 +3,8 @@
 //! code with a link the person opens (with RFC 7636 proof keys).
 //!
 //! The token endpoint comes from the target's auth file and from nowhere
-//! else. It must be `https`, or a loopback address. Nothing an identity
+//! else. It must be `https`, or `http` to a loopback address written as an
+//! IP address; `localhost` is a name, not one (decision 0188). Nothing an identity
 //! service answers is put into a failure: only the standard's own error
 //! names are read, and each maps to a fixed sentence.
 
@@ -31,7 +32,8 @@ const AUTHORIZATION_CODE: &str = "oauth_authorization_code";
 const ANSWER_LIMIT: usize = 64 * 1024;
 
 /// Whether `url` is an address a credential may be sent to: `https`, or
-/// `http` to this machine. No user part, no spaces.
+/// `http` to a loopback address written as an IP address (`crate::link`).
+/// No user part, no spaces.
 fn endpoint_ok(url: &str) -> bool {
     let clean = url
         .bytes()
@@ -43,14 +45,16 @@ fn endpoint_ok(url: &str) -> bool {
     } else {
         return false;
     };
+    // The address as written must name a host: the parser would otherwise
+    // read `https:///token` as the host `token`.
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = if let Some(bracketed) = authority.strip_prefix('[') {
-        bracketed.split(']').next().unwrap_or_default()
-    } else {
-        authority.split(':').next().unwrap_or_default()
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
     };
-    let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1");
-    clean && !host.is_empty() && (secure || loopback)
+    clean
+        && !authority.is_empty()
+        && parsed.host_str().is_some_and(|host| !host.is_empty())
+        && (secure || crate::link::loopback(&parsed))
 }
 
 fn endpoint<'a>(entry: &'a AuthEntry, name: &str) -> Result<&'a str, Failure> {
@@ -60,7 +64,9 @@ fn endpoint<'a>(entry: &'a AuthEntry, name: &str) -> Result<&'a str, Failure> {
     } else {
         Err(failure::settings_invalid(
             entry.provider.as_str(),
-            &format!("the setting `{name}` is not an `https` address or a loopback address"),
+            &format!(
+                "the setting `{name}` is not an `https` address, nor `http` to a loopback address written as an IP address such as `127.0.0.1` (a name such as `localhost` is not one)"
+            ),
         ))
     }
 }
@@ -582,13 +588,20 @@ mod tests {
         for good in [
             "https://id.example.test/oauth/token",
             "http://127.0.0.1:8080/token",
-            "http://localhost/token",
+            "http://127.1/token",
             "http://[::1]:9000/token",
+            "https://localhost/token",
         ] {
             assert!(endpoint_ok(good), "{good}");
         }
         for bad in [
             "http://id.example.test/token",
+            // A name is not a loopback address (decision 0188), whatever
+            // the resolver makes of it.
+            "http://localhost/token",
+            "http://localhost./token",
+            "http://[::ffff:127.0.0.1]/token",
+            "http://0.0.0.0/token",
             "http://127.0.0.1.example.test/token",
             "https://user@id.example.test/token",
             "http://localhost@id.example.test/token",

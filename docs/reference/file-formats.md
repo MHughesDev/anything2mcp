@@ -156,7 +156,7 @@ There is no condition that waits for a length of time or for the network to go q
 
 ## `endpoints/*.yaml`
 
-Brought by the HTTP pack. The web pack's `page_http` mode reads it.
+Brought by the HTTP pack. The web pack's `page_http` mode reads entries of the same form, for reads, from a folder of its own, `page_requests/`: `endpoint`, `surface`, `method: GET`, `path`, `effect: read`, and `response_schema`, with one more field, `page`, the path of the page that makes the request ([decision 0190](../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)).
 
 | Field | Meaning |
 | --- | --- |
