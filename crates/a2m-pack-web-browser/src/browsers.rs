@@ -15,8 +15,8 @@ use a2m_provider::{
     ScopedSupervisor, SubsystemId, SubsystemKind,
 };
 
-use crate::client::Client;
-use crate::error::{BrowserError, LaunchReason, codes, input};
+use crate::client::{Client, ClientError, Why};
+use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
 use crate::launch;
 use crate::protocol::{CloseBrowser, GetVersion};
 use crate::tab::{ActTab, ObserveTab, PageEnvironment, Posture, SafeRequests, open_page};
@@ -204,6 +204,51 @@ impl Shared {
     }
 }
 
+/// Why the first request over the pipe had no answer, with the step that
+/// failed: whether the request could be written at all, whether the pipe
+/// ended, and what the program said. A start on a new operating system is
+/// diagnosed from this sentence alone.
+fn unanswered(error: &ClientError, waited: Duration, redact: &dyn Redact) -> String {
+    let written = |dispatch: &Dispatch| match dispatch {
+        Dispatch::Sent => "the first request was written to it",
+        Dispatch::NotSent => "the first request was never written to it",
+        Dispatch::Unknown => "the first request could not be written to it whole",
+    };
+    match error {
+        ClientError::Timeout { dispatch } => format!(
+            "it did not answer over its pipe within {} s, and its pipe stayed open; {}",
+            waited.as_secs(),
+            written(dispatch)
+        ),
+        ClientError::Closed { dispatch, why } => format!(
+            "its pipe {} before it answered; {}",
+            match why {
+                Why::Ended => "ended, so the program exited or closed it,",
+                Why::WriteFailed => "could not be written to",
+                Why::Malformed => "carried something that is not the protocol",
+                Why::Oversized => "carried a message over the size limit",
+                Why::Unanswered => "carried a reply to a request that was never made",
+                Why::ShutDown => "was closed by the engine",
+            },
+            written(dispatch)
+        ),
+        ClientError::Protocol { code, message } => {
+            let shown: String = message
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect();
+            format!(
+                "it refused the first request over its pipe with the code {code}: {}",
+                redact.redact(&shown)
+            )
+        }
+        ClientError::Shape { method } => {
+            format!("its answer to {method} over its pipe has another shape")
+        }
+    }
+}
+
 /// The engine's browsers. One per engine process; cheap to clone, and
 /// every clone is the same set, so that a profile is never opened by two
 /// browsers.
@@ -352,7 +397,11 @@ impl Browsers {
             {
                 Ok(version) if version.protocol_version == PROTOCOL_VERSION => Ok(version.product),
                 Ok(_) => Err("it speaks another version of the protocol".to_owned()),
-                Err(_) => Err("it did not answer over its pipe".to_owned()),
+                Err(error) => Err(unanswered(
+                    &error,
+                    shared.settings.launch_deadline,
+                    shared.redact.as_ref(),
+                )),
             }
         };
         let product = match owned {

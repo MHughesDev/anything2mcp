@@ -236,16 +236,7 @@ async fn a_process_killed_after_the_write_was_sent_leaves_no_duplicate_when_the_
     // without writing again.
     later.advance(Duration::from_secs(120));
     world.engine.kernel().tend().await;
-    let t0 = std::time::Instant::now();
-    let mut done = world.agent(&["run", "resume", &run]).await;
-    eprintln!("DEBUG first resume {:?}", t0.elapsed());
-    let tr = world.ok(&["trace", "show", &run]).await;
-    for e in tr["events"].as_array().unwrap() { eprintln!("DEBUG {} {} {} {}", e["seq"], e["lease"], e["kind"], e["detail"]); }
-    if done.result()["status"] == "stopped" {
-        // The reconcile was one job; going on from it is the next.
-        assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
-        done = world.agent(&["run", "resume", &run]).await;
-    }
+    let done = world.agent(&["run", "resume", &run]).await;
     assert_eq!(done.finished.code, 0, "{:?}", done.finished);
     assert_eq!(done.result()["status"], "completed");
     assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
