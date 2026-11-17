@@ -197,11 +197,8 @@ fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>, Failure> {
 pub(crate) struct RunnerState {
     pub(crate) task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
-    changed: watch::Sender<u64>,
     budgets: Mutex<BTreeSet<String>>,
     modes: Mutex<BTreeMap<RunId, Vec<(RecordRef, Mode)>>>,
-    /// The runs a job of this loop is working on now.
-    in_hand: Mutex<BTreeSet<RunId>>,
 }
 
 impl Default for RunnerState {
@@ -209,10 +206,8 @@ impl Default for RunnerState {
         Self {
             task: Mutex::new(None),
             engine: OnceLock::new(),
-            changed: watch::Sender::new(0),
             budgets: Mutex::new(BTreeSet::new()),
             modes: Mutex::new(BTreeMap::new()),
-            in_hand: Mutex::new(BTreeSet::new()),
         }
     }
 }
@@ -383,20 +378,12 @@ impl Kernel {
     /// Tells everyone who waits for a run that something about a run
     /// changed.
     pub(crate) fn run_changed(&self) {
-        self.inner
-            .runner
-            .changed
-            .send_modify(|count| *count = count.wrapping_add(1));
+        self.inner.signals.changed();
     }
 
     /// A receiver that is told whenever something about a run changed.
     pub(crate) fn run_watch(&self) -> watch::Receiver<u64> {
-        self.inner.runner.changed.subscribe()
-    }
-
-    /// Whether a job of this loop is working on the run now.
-    pub(crate) fn in_hand(&self, run: RunId) -> bool {
-        lock(&self.inner.runner.in_hand).contains(&run)
+        self.inner.signals.watch()
     }
 
     /// Whether this is the first time the budget is seen in this process.
@@ -413,9 +400,6 @@ impl Kernel {
             return;
         };
         let lease_ref = lease.lease_ref();
-        if let Some(run) = lease.run {
-            lock(&self.inner.runner.in_hand).insert(run);
-        }
         let end = match self.run_claimed(&lease, terms).await {
             Ok(end) => end,
             Err(failure) => JobEnd::Stopped {
@@ -424,10 +408,10 @@ impl Kernel {
                 in_doubt: false,
             },
         };
+        // The job is unfinished in the scheduler's own table until this
+        // commits, and that table is what a caller waiting for the run
+        // reads. It is told only afterwards.
         let _ = sched.finish(&lease_ref, end).await;
-        if let Some(run) = lease.run {
-            lock(&self.inner.runner.in_hand).remove(&run);
-        }
         self.run_changed();
     }
 

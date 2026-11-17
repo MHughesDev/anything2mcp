@@ -375,6 +375,11 @@ impl Control for InProcessControl {
                     }
                 })
                 .await?;
+            if matches!(cleared, Ok(Clearance::Cleared)) {
+                // The approval is used: the run no longer waits to be
+                // resumed.
+                self.kernel.inner.signals.forget(run);
+            }
             cleared.map_err(|failure| self.redacted(failure))
         })
     }
@@ -713,7 +718,10 @@ impl InProcessControl {
             .store()?
             .write(Durability::Synced, move |tx| {
                 let mut ledger = tx.ledger();
-                if ledger.run(run)?.state == to {
+                let state = ledger.run(run)?.state;
+                // A run that ended while the job was in hand, declined at
+                // the desk or cancelled, stays as it ended.
+                if state == to || state.is_final() {
                     return Ok(());
                 }
                 ledger.set_state(&fence, to, why.as_ref())

@@ -1,8 +1,9 @@
 //! The engine in this process: the settings, the kernel, the provider
 //! registry with every first-party pack, and the in-process runner loop.
 //!
-//! This is the library facade for a host that embeds the engine, and what
-//! a one-shot command opens. The order is fixed: settings, the store and
+//! This is the library facade for a host that embeds the engine, what a
+//! one-shot command opens, and what the local engine serves. The order is
+//! fixed: settings, the store and
 //! the vault ([`Kernel::prepare`]), the provider registry (built from the
 //! redactor and telemetry the first step made), the rest of the kernel
 //! ([`Kernel::open`]), and the runner loop.
@@ -163,6 +164,11 @@ fn sources(options: &EngineOptions) -> Result<Sources, Failure> {
         sources = sources.with_flag(key, value);
     }
     Ok(sources)
+}
+
+/// Loads the settings of a process from its sources.
+pub(crate) fn load_settings(options: &EngineOptions) -> Result<Settings, Failure> {
+    Settings::load(&sources(options)?)
 }
 
 fn root(roots: &mut Roots, name: &str, folder: &Path, make: bool) {
@@ -350,7 +356,14 @@ impl Engine {
     /// `input`/`settings_invalid`, `policy`/`setting_protected`, and
     /// `policy`/`setting_locked` when the settings do not load.
     pub async fn open(options: EngineOptions) -> Result<Self, Failure> {
-        let settings = Settings::load(&sources(&options)?)?;
+        let settings = load_settings(&options)?;
+        Ok(Self::open_loaded(options, settings).await)
+    }
+
+    /// Opens the engine with settings that are loaded already. The local
+    /// engine reads them first, because its person surface is made from
+    /// them.
+    pub(crate) async fn open_loaded(options: EngineOptions, settings: Settings) -> Self {
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,
@@ -382,12 +395,12 @@ impl Engine {
         // A kernel that is stopped or degraded runs no job. The reason is
         // kept for the caller who asks, and is in `engine.status` already.
         let runner_problem = kernel.start_runner_loop(RUNNER_SLOTS).await.err();
-        Ok(Self {
+        Self {
             kernel,
             principal,
             project: options.project,
             runner_problem,
-        })
+        }
     }
 
     /// The kernel, for a host that needs more than `dispatch`.
@@ -433,7 +446,12 @@ impl Engine {
     /// Closes the engine: the runner loop stops, sessions are saved, and
     /// the store is closed.
     pub async fn close(self) {
-        self.kernel.close(CloseReason::Asked).await;
+        self.close_because(CloseReason::Asked).await;
+    }
+
+    /// The same, with the reason the audit log is to hold.
+    pub(crate) async fn close_because(self, why: CloseReason) {
+        self.kernel.close(why).await;
     }
 }
 

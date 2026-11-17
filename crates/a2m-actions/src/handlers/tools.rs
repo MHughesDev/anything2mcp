@@ -11,7 +11,7 @@ use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, RunRow, 
 use a2m_policy::PrincipalKind;
 use a2m_sched::{
     Admitted, CancelOutcome, Enqueue, HealthState as SchedHealth, JobKind, JobRequirements,
-    Priority, SessionLimits, Submission,
+    Priority, Scheduler, SessionLimits, Submission,
 };
 use a2m_vault::OwnerRef;
 use serde_json::{Value as Json, json};
@@ -23,6 +23,7 @@ use crate::health::HealthState;
 use crate::kernel::Kernel;
 use crate::person::{ApprovalAsk, SignInAsk};
 use crate::runner::{CallerFacts, keep_run_call};
+use crate::signals::KeptLink;
 
 /// How long a call waits for its run to rest or end, when it does not say.
 const DEFAULT_WAIT_SECONDS: i64 = 60;
@@ -276,7 +277,7 @@ handler!(
             Admitted::New { run, .. } | Admitted::Existing { run } => run,
         };
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
-        run_output(kernel, &call, row).await
+        run_output(kernel, &call, row, Tell::Person).await
     }
 );
 
@@ -310,26 +311,43 @@ impl Kernel {
         }
     }
 
-    /// Waits until the run rests, stops, or ends, or until `wait` has
-    /// passed, and gives the run as it then stands. It waits on the runner's
-    /// own notice that a run changed, never on a timer alone.
+    /// The run, and whether the scheduler holds a job for it that is
+    /// waiting or leased, read in one transaction. A job a runner has
+    /// claimed is leased from the transaction of its claim to the one that
+    /// records how it ended, so nothing the runner does between the two is
+    /// taken for rest.
+    async fn run_and_work(&self, run: RunId) -> Result<(RunRow, bool), Failure> {
+        self.store()?
+            .read(move |tx| {
+                let row = tx.ledger().run(run)?;
+                let working = Scheduler::unfinished_job(tx, run)?.is_some();
+                Ok((row, working))
+            })
+            .await
+    }
+
+    /// Waits until the run has ended, or rests or has stopped with no job
+    /// waiting or in hand for it, or until `wait` has passed, and gives the
+    /// run as it then stands. It waits on the notice that a run changed,
+    /// never on a timer alone.
     pub(crate) async fn wait_for_rest(
         &self,
         run: RunId,
         wait: Duration,
     ) -> Result<RunRow, Failure> {
-        let store = self.store()?;
         let mut changed = self.run_watch();
         let give_up = tokio::time::sleep(wait);
         tokio::pin!(give_up);
         loop {
+            // The notice is marked seen before the look, so that a change
+            // between the look and the wait is not missed.
             changed.borrow_and_update();
-            let row = store.read(move |tx| tx.ledger().run(run)).await?;
-            if !matches!(
+            let (row, working) = self.run_and_work(run).await?;
+            let active = matches!(
                 row.state,
                 RunState::Queued | RunState::Validating | RunState::Running
-            ) && !self.in_hand(run)
-            {
+            );
+            if row.state.is_final() || !(active || working) {
                 return Ok(row);
             }
             tokio::select! {
@@ -344,9 +362,25 @@ impl Kernel {
     }
 }
 
+/// Whether an action may tell the run's person that the run waits for
+/// them. The actions that start or continue a run may; reading a run asks
+/// nobody anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tell {
+    /// `tool.call` and `run.resume`.
+    Person,
+    /// `run.get`.
+    Nobody,
+}
+
 /// The run as `tool.call`, `run.get`, and `run.resume` return it, with the
 /// next step for the state it is in.
-async fn run_output(kernel: &Kernel, call: &Call, row: RunRow) -> Result<Output, Failure> {
+async fn run_output(
+    kernel: &Kernel,
+    call: &Call,
+    row: RunRow,
+    tell: Tell,
+) -> Result<Output, Failure> {
     let store = kernel.store()?;
     let run = row.id;
     let events = store
@@ -425,46 +459,104 @@ async fn run_output(kernel: &Kernel, call: &Call, row: RunRow) -> Result<Output,
             Some(Next::new("run.get", again, "in a few seconds")),
         ),
         RunState::NeedsApproval => {
-            // The run's person is told, on a surface the caller cannot
-            // reach. The link may be given to an agent: following it is
-            // never an approval by itself.
-            if let Some(diff_hash) = row.diff_hash {
-                let asked = kernel
-                    .person()
-                    .ask_approval(ApprovalAsk {
-                        run: row.id,
-                        workspace: row.workspace,
-                        started_by: row.principal,
-                        tool: row.tool_name.to_string(),
-                        diff_hash,
-                        summary: format!("`{}` would write to `{}`.", row.tool_name, row.target),
-                    })
-                    .await;
-                if let Ok(link) = asked {
-                    out.insert("link".to_owned(), json!(link.url));
+            let signals = &kernel.inner.signals;
+            if row
+                .diff_hash
+                .is_some_and(|diff| signals.approved(row.id, &diff))
+            {
+                // A person approved this diff at the desk and the run was
+                // not resumed yet. Nobody is asked again; the next step is
+                // the caller's own.
+                out.insert("approved".to_owned(), json!(true));
+                (
+                    "A person approved the write. Nothing was written yet: resume the run to carry it out."
+                        .to_owned(),
+                    ExitClass::Succeeded,
+                    Some(Next::new("run.resume", again, "now")),
+                )
+            } else {
+                // The run's person is told, on a surface the caller cannot
+                // reach, by the call that rested the run and by no other.
+                // The link may be given to an agent: following it is never
+                // an approval by itself.
+                let link = match (tell, row.diff_hash) {
+                    (Tell::Person, Some(diff_hash)) => {
+                        let asked = kernel
+                            .person()
+                            .ask_approval(ApprovalAsk {
+                                run: row.id,
+                                workspace: row.workspace,
+                                started_by: row.principal,
+                                tool: row.tool_name.to_string(),
+                                diff_hash,
+                                summary: format!(
+                                    "`{}` would write to `{}`.",
+                                    row.tool_name, row.target
+                                ),
+                            })
+                            .await
+                            .ok();
+                        if let Some(link) = &asked {
+                            signals.keep_link(
+                                row.id,
+                                KeptLink {
+                                    state: row.state,
+                                    diff: Some(diff_hash),
+                                    link: link.clone(),
+                                },
+                            );
+                        }
+                        asked
+                    }
+                    _ => signals.link(row.id, row.state, row.diff_hash.as_ref()),
+                };
+                if let Some(link) = link {
+                    if let Some(url) = link.url {
+                        out.insert("link".to_owned(), json!(url));
+                    }
                     out.insert("person".to_owned(), json!(link.text));
                 }
+                (
+                    "The write waits for a person's approval. Nothing was written.".to_owned(),
+                    ExitClass::PersonNeeded,
+                    Some(Next::new("run.resume", again, "after the person approves")),
+                )
             }
-            (
-                "The write waits for a person's approval. Nothing was written.".to_owned(),
-                ExitClass::PersonNeeded,
-                Some(Next::new("run.resume", again, "after the person approves")),
-            )
         }
         RunState::NeedsLogin => {
-            let asked = kernel
-                .person()
-                .ask_sign_in(SignInAsk {
-                    session: None,
-                    workspace: row.workspace,
-                    target: row.target.clone(),
-                    environment: row.environment.clone(),
-                    identity: Identity::Person(row.principal),
-                    reason: a2m_auth::PersonReason::SignIn,
-                })
-                .await;
-            if let Ok(link) = asked {
-                out.insert("link".to_owned(), json!(link.url));
+            let signals = &kernel.inner.signals;
+            let link = match tell {
+                Tell::Person => {
+                    let asked = kernel
+                        .person()
+                        .ask_sign_in(SignInAsk {
+                            session: None,
+                            workspace: row.workspace,
+                            target: row.target.clone(),
+                            environment: row.environment.clone(),
+                            identity: Identity::Person(row.principal),
+                            reason: a2m_auth::PersonReason::SignIn,
+                        })
+                        .await
+                        .ok();
+                    if let Some(link) = &asked {
+                        signals.keep_link(
+                            row.id,
+                            KeptLink {
+                                state: row.state,
+                                diff: None,
+                                link: link.clone(),
+                            },
+                        );
+                    }
+                    asked
+                }
+                Tell::Nobody => signals.link(row.id, row.state, None),
+            };
+            if let Some(link) = link {
+                if let Some(url) = link.url {
+                    out.insert("link".to_owned(), json!(url));
+                }
                 out.insert("person".to_owned(), json!(link.text));
             }
             (
@@ -483,6 +575,17 @@ async fn run_output(kernel: &Kernel, call: &Call, row: RunRow) -> Result<Output,
                 .to_owned(),
             ExitClass::Failed,
             Some(Next::new("run.resume", again, "to continue the run")),
+        ),
+        // A person declined the write, or the approval window ended. The
+        // run is final: the same call again is a new run with a new diff.
+        RunState::Expired => (
+            "The write was not approved. Nothing was written.".to_owned(),
+            ExitClass::Failed,
+            Some(Next::new(
+                "tool.call",
+                json!({"tool": row.tool_name.as_str()}),
+                "with the same input, if the write is still wanted",
+            )),
         ),
         other => (
             format!("The run ended as `{other}`."),
@@ -513,7 +616,7 @@ handler!(
     run_get,
     |kernel, call| {
         let row = kernel.run_row(&call, run_id(&call)?).await?;
-        run_output(kernel, &call, row).await
+        run_output(kernel, &call, row, Tell::Nobody).await
     }
 );
 
@@ -533,7 +636,7 @@ handler!(
                 | RunState::NeedsInput
                 | RunState::Stopped
         ) {
-            return run_output(kernel, &call, row).await;
+            return run_output(kernel, &call, row, Tell::Nobody).await;
         }
         // The caller's facts are kept again, so that the guard's question
         // is asked about whoever resumes.
@@ -553,9 +656,6 @@ handler!(
         // going on from there is this call's own job, queued once the
         // other has ended.
         for last in [false, true] {
-            // A job in hand took its lease number before this call read
-            // the run, so its end, and not a later lease, is waited for.
-            let busy = kernel.in_hand(run);
             let queued = kernel
                 .sched()?
                 .enqueue(Enqueue {
@@ -573,59 +673,18 @@ handler!(
             };
             kernel.run_changed();
             let left = give_up.saturating_duration_since(tokio::time::Instant::now());
-            row = kernel
-                .wait_for_work(run, row.epoch, !own && busy, left)
-                .await?;
+            // The job, this call's own or the one that was there first, is
+            // unfinished in the scheduler's table from before this wait
+            // begins until its work has ended, so the wait cannot return in
+            // between.
+            row = kernel.wait_for_rest(run, left).await?;
             if own || last || row.state != RunState::Stopped || left.is_zero() {
                 break;
             }
         }
-        run_output(kernel, &call, row).await
+        run_output(kernel, &call, row, Tell::Person).await
     }
 );
-
-impl Kernel {
-    /// Waits, after a resume, until a new lease has worked on the run and
-    /// it rests, stops, or ends again. `busy` says a job was working on
-    /// the run when the resume came; its end is then the work waited for.
-    async fn wait_for_work(
-        &self,
-        run: RunId,
-        before: a2m_core::Epoch,
-        busy: bool,
-        wait: Duration,
-    ) -> Result<RunRow, Failure> {
-        let store = self.store()?;
-        let mut changed = self.run_watch();
-        let give_up = tokio::time::sleep(wait);
-        tokio::pin!(give_up);
-        loop {
-            changed.borrow_and_update();
-            let row = store.read(move |tx| tx.ledger().run(run)).await?;
-            let worked = busy || row.epoch != before;
-            if worked
-                && !matches!(
-                    row.state,
-                    RunState::Queued | RunState::Validating | RunState::Running
-                )
-                && !self.in_hand(run)
-            {
-                return Ok(row);
-            }
-            if row.state.is_final() {
-                return Ok(row);
-            }
-            tokio::select! {
-                alive = changed.changed() => {
-                    if alive.is_err() {
-                        return Ok(row);
-                    }
-                }
-                () = &mut give_up => return Ok(row),
-            }
-        }
-    }
-}
 
 handler!(
     /// `run.cancel`: stops a running or waiting run.

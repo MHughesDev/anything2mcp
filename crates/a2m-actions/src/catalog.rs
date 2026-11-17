@@ -58,6 +58,8 @@ fn run_output() -> JsonSchema {
         .optional("diff", any_map())
         .optional("trace", text())
         .optional("link", text())
+        .optional("person", text())
+        .optional("approved", JsonSchema::bool())
         .optional("events", JsonSchema::int())
 }
 
