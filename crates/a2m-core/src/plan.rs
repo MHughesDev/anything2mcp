@@ -379,8 +379,48 @@ pub struct SurfacePlan {
     pub stands: Option<Stands>,
     /// How many requests it accepts in a period.
     pub rate: Option<RatePlan>,
+    /// The programs its driver may start, in any environment of the target.
+    /// Empty for a surface that is not reached by starting a program. The
+    /// engine hands them to the supervisor and reads nothing else in them.
+    pub programs: Vec<DeclaredProgram>,
     /// What else its pack compiled about it.
     pub payload: PackPayload,
+}
+
+/// A program a surface's driver may start, as the target's files declare it.
+/// The supervisor starts no program for the surface's driver that is not
+/// declared, by the pack's manifest or here (spec section 204).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredProgram {
+    /// Its absolute path, as the target's file wrote it. Never a name to
+    /// search for. It is text, so that a plan compiled on one system can
+    /// name a program of another.
+    pub path: String,
+    /// The digest the file must have, when the target states one.
+    pub digest: Option<Digest>,
+}
+
+impl DeclaredProgram {
+    /// Whether `path` is absolute on some system this product runs on: it
+    /// starts at the root (`/opt/example/bin/tool`), at a drive
+    /// (`C:\example\tool.exe`, with either slash), or at a network share
+    /// (`\\server\share\tool.exe`). The answer is the same on every
+    /// machine, so the same files give the same plan. A path that holds a
+    /// NUL character is never one.
+    #[must_use]
+    pub fn is_absolute_path(path: &str) -> bool {
+        let bytes = path.as_bytes();
+        if bytes.contains(&0) {
+            return false;
+        }
+        match bytes {
+            [b'/', ..] => true,
+            [drive, b':', b'/' | b'\\', ..] => drive.is_ascii_alphabetic(),
+            [b'\\', b'\\', rest @ ..] => rest.first().is_some_and(|byte| *byte != b'\\'),
+            _ => false,
+        }
+    }
 }
 
 /// How many requests a surface accepts in a period.
@@ -1143,6 +1183,16 @@ impl Plan {
             if let Some(Stands::Beneath(owner)) = item.stands {
                 surface(owner)?;
             }
+            if item
+                .programs
+                .iter()
+                .any(|program| !DeclaredProgram::is_absolute_path(&program.path))
+            {
+                return Err(refused(
+                    FailureCode::PLAN_UNREADABLE,
+                    "The plan declares a program by a path that is not absolute.",
+                ));
+            }
         }
         let mut signed_in: Vec<SurfaceIndex> = Vec::new();
         for entry in &self.auth {
@@ -1470,6 +1520,16 @@ mod tests {
                         requests: 10,
                         per_ms: 1_000,
                     }),
+                    programs: vec![
+                        DeclaredProgram {
+                            path: "/opt/example/bin/example-tool".to_owned(),
+                            digest: Some(Digest::of(b"example-tool")),
+                        },
+                        DeclaredProgram {
+                            path: "C:\\example\\example-tool.exe".to_owned(),
+                            digest: None,
+                        },
+                    ],
                     payload: PackPayload::none(),
                 },
                 SurfacePlan {
@@ -1479,6 +1539,7 @@ mod tests {
                     same_session_as: Some(SurfaceIndex::new(0)),
                     stands: Some(Stands::Beneath(SurfaceIndex::new(0))),
                     rate: None,
+                    programs: vec![],
                     payload: PackPayload::none(),
                 },
             ],

@@ -725,6 +725,7 @@ impl<'a> Compiler<'a> {
                     same_session_as: None,
                     stands: None,
                     rate,
+                    programs: Vec::new(),
                     payload,
                 },
                 doc: doc.clone(),

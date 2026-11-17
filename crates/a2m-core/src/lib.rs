@@ -60,14 +60,14 @@ pub use kind::{Archetype, Mode};
 pub use name::{InvalidName, UnknownName};
 pub use plan::{
     AddressOverride, ApproveWrites, AuthPlan, AuthSetting, BindingPlan, CaptureLevel, Checkpoint,
-    CodeLabel, CredentialUse, DecimalMark, DecisionPoint, DriftRisk, EncodedPlan, EnvironmentIndex,
-    EnvironmentKind, EnvironmentPlan, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex,
-    FieldTypePlan, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, OperationIndex,
-    OperationPlan, OutputPlan, PLAN_FORMAT, PackRef, PackSection, PermissionManifest,
-    PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr, PlanHeader,
-    ProbePlan, RatePlan, SectionIndex, Sensitivity, SignInMode, SourcePlan, Stands, Step, StepArg,
-    SurfaceIndex, SurfacePlan, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex,
-    ToolPlan, ToolRuns, WhitespaceRule, ZoneRule,
+    CodeLabel, CredentialUse, DecimalMark, DecisionPoint, DeclaredProgram, DriftRisk, EncodedPlan,
+    EnvironmentIndex, EnvironmentKind, EnvironmentPlan, ExprIndex, FailsAs, FieldBase, FieldFormat,
+    FieldTypeIndex, FieldTypePlan, IdentityPlan, IdentityStrategy, InputIndex, InputPlan,
+    OperationIndex, OperationPlan, OutputPlan, PLAN_FORMAT, PackRef, PackSection,
+    PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep, Plan, PlanExpr,
+    PlanHeader, ProbePlan, RatePlan, SectionIndex, Sensitivity, SignInMode, SourcePlan, Stands,
+    Step, StepArg, SurfaceIndex, SurfacePlan, TargetPlan, TestKind, TestPlan, ToolAnnotations,
+    ToolIndex, ToolPlan, ToolRuns, WhitespaceRule, ZoneRule,
 };
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,
