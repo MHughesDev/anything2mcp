@@ -18,6 +18,7 @@ use super::{Finished, Host, client, project_of, render, stopped};
 use crate::engine::EngineOptions;
 use crate::local::{LocalEngine, program_version};
 use crate::person::{ProcessTerminal, TerminalSurface};
+use crate::wire;
 
 /// The line `serve` writes to standard error once the engine answers on
 /// the local channel. A program that starts `serve` waits for it.
@@ -65,7 +66,7 @@ pub(crate) async fn run(
         // Standard output of the bridge carries protocol messages and
         // nothing else, so what stops it is told on standard error alone.
         "bridge" => {
-            return bridge(rest, host)
+            return bridge(globals, rest, host)
                 .await
                 .unwrap_or_else(|(failure, exit)| Finished {
                     code: exit.exit_code(),
@@ -254,7 +255,7 @@ fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
 /// written by the proxy alone. No engine is started: a request sent while
 /// none runs is answered with an error that names the failure, and the
 /// next one is carried as soon as an engine answers.
-async fn bridge(rest: &[String], host: &Host) -> Result<Finished, Stopped> {
+async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finished, Stopped> {
     let toolset = toolset_of(rest).map_err(|failure| (failure, ExitClass::Malformed))?;
     let failed = |failure| (failure, ExitClass::Failed);
     let paths = paths_of(host).map_err(failed)?;
@@ -270,8 +271,27 @@ async fn bridge(rest: &[String], host: &Host) -> Result<Finished, Stopped> {
     if let Err(failure) = connector.connect().await {
         say(told(&failure).trim_end());
     }
-    let upstream = move |request| {
+    // The project folder the bridge was started in, or was given with
+    // `--project`, named to the engine on every request, as a command names
+    // it. The engine checks the folder before any action uses it; nothing
+    // an MCP message says can name one.
+    let project = project_of(globals, host).and_then(|folder| {
+        let named = wire::encode_path(&folder)
+            .and_then(|text| axum::http::HeaderValue::from_str(&text).ok());
+        if named.is_none() {
+            say(&format!(
+                "{PROGRAM}: the project folder's path is not text, so it is not named to the engine. Actions that work on project files will say that they need one."
+            ));
+        }
+        named
+    });
+    let upstream = move |mut request: a2m_mcp::HttpRequest| {
         let connector = connector.clone();
+        if let Some(project) = &project {
+            request
+                .headers_mut()
+                .insert(wire::PROJECT_HEADER, project.clone());
+        }
         async move { client::carry(&connector, request).await }
     };
     let copied = stdio_proxy(upstream, &toolset, tokio::io::stdin(), tokio::io::stdout()).await;

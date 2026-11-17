@@ -345,6 +345,16 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     if let Err(failure) = take_stdin(&mut steps).await {
         return stopped(&tree, &action, &failure, ExitClass::Malformed, json);
     }
+    if steps.is_empty() {
+        // A shortcut whose first step is not built: there is nothing to
+        // send, so no engine is looked for.
+        let nothing = Finished {
+            code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        return after_steps(nothing, stop.as_ref(), &tree, json);
+    }
     let env = Env {
         os: OsFamily::current(),
         vars: host.environment.clone(),

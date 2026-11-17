@@ -3,6 +3,7 @@ file: example-settings.json
 format: json
 fingerprint:
   keys: [target, schema_version, standard_discount, tax_rate, rounding, max_weight_kg, labels, warehouses, empty_list, empty_object, note]
+may_be_open: false
 records:
   warehouse:
     path: [warehouses]

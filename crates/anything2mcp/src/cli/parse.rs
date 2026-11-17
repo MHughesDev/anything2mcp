@@ -417,7 +417,8 @@ fn help_process(word: &str) -> String {
             "The program an MCP client starts: it copies MCP messages between its standard \
              input and output and the local engine's MCP endpoint.\nStandard output carries \
              protocol messages and nothing else.\nIt starts no engine: until one runs \
-             (`anything2mcp serve`), every request is answered with an error that says so.",
+             (`anything2mcp serve`), every request is answered with an error that says so.\nThe \
+             project folder is the one it is started in, or the one `--project` names.",
         ),
         _ => (
             format!("{PROGRAM} {word}"),

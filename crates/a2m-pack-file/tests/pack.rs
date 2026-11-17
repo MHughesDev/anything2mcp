@@ -141,7 +141,7 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
     // Each case: the changes, as a file, what is replaced, and what replaces
     // it; then the code of the diagnostic and a word its message holds.
     type Case<'a> = (&'a [(&'a str, &'a str, &'a str)], &'a str, &'a str);
-    let cases: [Case<'_>; 9] = [
+    let cases: [Case<'_>; 12] = [
         // An unknown key in a document is the kernel's schema check.
         (
             &[("documents/stock.yaml", "records:", "shape: wide\nrecords:")],
@@ -200,6 +200,24 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
             "file.open_without_signal",
             "lock signal",
         ),
+        // A write to a file whose document does not say whether an
+        // application may hold it open. Absent is not "no".
+        (
+            &[("documents/price_list.yaml", "may_be_open: false\n", "")],
+            "file.open_undeclared",
+            "does not say",
+        ),
+        // Text that may begin as a formula does, declared where no
+        // spreadsheet program opens the file as cells.
+        (
+            &[(
+                "documents/settings.yaml",
+                "type: cutoff, writable: true",
+                "type: cutoff, writable: true, may_begin_formula: true",
+            )],
+            "file.document_invalid",
+            "delimited text",
+        ),
         // A write to a format with no patch editor.
         (
             &[
@@ -224,6 +242,24 @@ fn what_the_pack_cannot_carry_out_is_refused_with_a_file_a_line_and_a_fix() {
                 "stands: alone\n  config_files:",
                 "stands: {beneath: config_files}\n  config_files:",
             )],
+            "file.beneath_application",
+            "beneath",
+        ),
+        // The same, with an authorization key that names no record.
+        (
+            &[
+                (
+                    "target.yaml",
+                    "stands: alone\n  config_files:",
+                    "stands: {beneath: config_files}\n  config_files:",
+                ),
+                ("target.yaml", "target: example\n", "target: example\nauthorization: \" \"\n"),
+                (
+                    "operations/stock_set.yaml",
+                    "effect: write",
+                    "effect: irreversible",
+                ),
+            ],
             "file.beneath_application",
             "beneath",
         ),

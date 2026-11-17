@@ -165,6 +165,29 @@ mod tests {
     use super::lines;
 
     #[test]
+    fn a_value_of_a_system_is_shown_as_the_result_carries_it() {
+        // An exact number and a calendar day come as text, a moment and a
+        // length of time as whole milliseconds. Each is printed as it
+        // is: nothing is rounded, and nothing is read as a float.
+        let mut out = String::new();
+        lines(
+            &json!({"result": {
+                "length_in": "150.50",
+                "price": "0.1",
+                "due": "2026-11-17",
+                "seen_at": 1_800_000_000_000_i64,
+                "took": 90_000,
+            }}),
+            0,
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            "result:\n  due: 2026-11-17\n  length_in: 150.50\n  price: 0.1\n  seen_at: 1800000000000\n  took: 90000\n"
+        );
+    }
+
+    #[test]
     fn a_result_is_laid_out_as_indented_lines() {
         let mut out = String::new();
         lines(
