@@ -292,16 +292,64 @@ fn pipeline() -> JsonSchema {
         )
 }
 
+/// The kinds of part a template's fingerprint is made of. They are the
+/// source readers' words; the compiler checks a file against them and passes
+/// the fingerprint on unread.
+pub const FINGERPRINT_PART_KINDS: &[&str] = &[
+    "date_system",
+    "sheet",
+    "header",
+    "merged",
+    "table",
+    "table_header",
+    "list",
+    "name",
+    "macros",
+];
+
+/// The reader name of a source whose rows are another operation's result.
+pub const OPERATION_READER: &str = "operation";
+
 fn source() -> JsonSchema {
+    let part = JsonSchema::object()
+        .required("kind", JsonSchema::words(FINGERPRINT_PART_KINDS))
+        .required("place", JsonSchema::text())
+        .required("value", JsonSchema::text());
+    let version = JsonSchema::object()
+        .required("version", JsonSchema::text())
+        .required(
+            "fingerprint",
+            JsonSchema::object()
+                .required("digest", JsonSchema::text())
+                .required("parts", JsonSchema::list(part)),
+        );
+    let field = JsonSchema::object()
+        .required("type", JsonSchema::field_type())
+        .optional("column", JsonSchema::text())
+        .optional("expression", JsonSchema::expression())
+        .optional("required", JsonSchema::bool());
     JsonSchema::object()
         .required("template", JsonSchema::name())
         .required("reader", JsonSchema::name())
-        .required("fingerprint", JsonSchema::map_of(JsonSchema::any()))
-        .optional("locate", JsonSchema::map_of(JsonSchema::any()))
-        .required("columns", JsonSchema::map_of(JsonSchema::text()))
-        .required("mapping", JsonSchema::map_of(JsonSchema::expression()))
+        .optional("versions", JsonSchema::list(version))
+        .optional(
+            "locate",
+            JsonSchema::either(vec![
+                JsonSchema::words(&["document"]),
+                JsonSchema::object().required("named", JsonSchema::text()),
+                JsonSchema::object().required("sheet", JsonSchema::text()),
+            ]),
+        )
+        .required("columns", JsonSchema::list(JsonSchema::text()))
+        .required("fields", JsonSchema::map_of(field))
+        .optional("key", JsonSchema::list(JsonSchema::name()))
         .optional("rows", JsonSchema::expression())
         .optional("missing", JsonSchema::list(JsonSchema::text()))
+        .optional("hidden", JsonSchema::words(&["reject", "include"]))
+        .optional(
+            "options",
+            JsonSchema::object().optional("delimiter", JsonSchema::text()),
+        )
 }
 
 fn test() -> JsonSchema {

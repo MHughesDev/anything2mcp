@@ -1723,82 +1723,239 @@ impl<'a> Compiler<'a> {
                     Stage::Resolve,
                     &template.at,
                     format!("The source template `{name}` is defined twice."),
-                    "Rename one of the two, with its version in the name.".to_owned(),
+                    "Rename one of the two.".to_owned(),
                 );
                 continue;
             }
-            let mut columns = Vec::new();
-            let mut fine = true;
-            for column in doc.get("columns").map(Located::entries).unwrap_or_default() {
-                if is_simple_name(&column.key.value) {
-                    columns.push(FieldOf::required(column.key.value.clone(), ValueType::Text));
-                } else {
-                    self.error(
-                        codes::NAME_MALFORMED,
-                        Stage::Validate,
-                        &column.key.at,
-                        format!("`{}` is not a column name.", shown(&column.key.value)),
-                        "Name the column in lowercase, and give the header's own words as its value.".to_owned(),
-                    );
-                    fine = false;
-                }
-            }
-            let env = type_env(&[("source", ValueType::Record(columns)), ("env", env_type())]);
-            let mut mapping = Vec::new();
-            let mut row = Vec::new();
-            for field in doc.get("mapping").map(Located::entries).unwrap_or_default() {
-                if !is_simple_name(&field.key.value) {
-                    self.error(
-                        codes::NAME_MALFORMED,
-                        Stage::Validate,
-                        &field.key.at,
-                        format!("`{}` is not a row field name.", shown(&field.key.value)),
-                        "Write one lowercase name, such as `code`.".to_owned(),
-                    );
-                    fine = false;
-                    continue;
-                }
-                match self.expr(&field.value, &env, None) {
-                    Some((value, ty)) => {
-                        row.push(FieldOf::required(field.key.value.clone(), ty));
-                        mapping.push(StepArg {
-                            name: field.key.value.clone(),
-                            value,
-                        });
-                    }
-                    None => fine = false,
-                }
-            }
-            let rows = match doc.get("rows") {
-                Some(rows) => {
-                    let checked = self.expr(rows, &env, Some(&ValueType::Bool));
-                    fine &= checked.is_some();
-                    checked.map(|(index, _)| index)
-                }
-                None => None,
-            };
-            let rest = part_of(doc, |key| {
-                ["fingerprint", "locate", "columns", "missing"].contains(&key)
-            });
-            let Ok(payload) = PackPayload::encode(&rest.to_json()) else {
-                continue;
-            };
-            if fine {
-                self.source_plans.insert(
-                    name.to_owned(),
-                    (
-                        SourcePlan {
-                            template: name.to_owned(),
-                            reader: doc.text("reader").unwrap_or_default().to_owned(),
-                            mapping,
-                            rows,
-                            payload,
-                        },
-                        ValueType::Record(row),
-                    ),
-                );
+            if let Some((plan, row)) = self.source(doc, name) {
+                self.source_plans.insert(name.to_owned(), (plan, row));
             }
         }
+    }
+
+    /// One source definition: the plan's source, whose payload is the shape
+    /// the source readers load (decision 0087), and the type of a row.
+    fn source(&mut self, doc: &Located<Doc>, name: &str) -> Option<(SourcePlan, ValueType)> {
+        let mut fine = true;
+        let reader = doc.text("reader").unwrap_or_default();
+        let texts = |key: &str| -> Vec<Located<String>> {
+            doc.get(key)
+                .map(Located::items)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|item| {
+                    item.as_text()
+                        .map(|text| Located::new(text.to_owned(), item.at.clone()))
+                })
+                .collect()
+        };
+        let twice = |this: &mut Self, what: &str, names: &[Located<String>]| {
+            let mut seen = BTreeSet::new();
+            let mut fine = true;
+            for name in names {
+                if !seen.insert(name.value.clone()) {
+                    this.error(
+                        codes::NAME_DEFINED_TWICE,
+                        Stage::Resolve,
+                        &name.at,
+                        format!("The {what} `{}` is listed twice.", shown(&name.value)),
+                        "Remove one of the two.".to_owned(),
+                    );
+                    fine = false;
+                }
+            }
+            fine
+        };
+        let columns = texts("columns");
+        fine &= twice(self, "column", &columns);
+        let versions: Vec<Located<String>> = doc
+            .get("versions")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|version| {
+                version
+                    .text("version")
+                    .map(|text| Located::new(text.to_owned(), version.at.clone()))
+            })
+            .collect();
+        fine &= twice(self, "template version", &versions);
+        if versions.is_empty() && reader != k::OPERATION_READER {
+            self.error(
+                codes::MISSING_FIELD,
+                Stage::Validate,
+                &doc.at,
+                format!("The source `{name}` is read from a file and knows no template version."),
+                "Add `versions:` with the version and the fingerprint of each form of the file; `anything2mcp source inspect` gives a file's fingerprint.".to_owned(),
+            );
+            fine = false;
+        }
+
+        // Row fields: a bare column is data; an expression goes to the plan.
+        let mut fields = Vec::new();
+        let mut bare = Vec::new();
+        let mut row = Vec::new();
+        let mut written: Vec<(String, &Located<Doc>)> = Vec::new();
+        for field in doc.get("fields").map(Located::entries).unwrap_or_default() {
+            let field_name = field.key.value.as_str();
+            if !is_simple_name(field_name) {
+                self.error(
+                    codes::NAME_MALFORMED,
+                    Stage::Validate,
+                    &field.key.at,
+                    format!("`{}` is not a row field name.", shown(field_name)),
+                    "Write one lowercase name, such as `code`.".to_owned(),
+                );
+                fine = false;
+                continue;
+            }
+            let Some(type_doc) = field.value.get("type") else {
+                continue;
+            };
+            let Some(type_name) = type_doc.as_text() else {
+                continue;
+            };
+            let Some((field_type, ty)) =
+                self.field_type(&Located::new(type_name.to_owned(), type_doc.at.clone()))
+            else {
+                fine = false;
+                continue;
+            };
+            let required = field
+                .value
+                .get("required")
+                .and_then(Located::as_bool)
+                .unwrap_or(true);
+            let column = field.value.get("column");
+            let expression = field.value.get("expression");
+            match (column, expression) {
+                (Some(column), None) => {
+                    let header = column.as_text().unwrap_or_default();
+                    if !columns.iter().any(|known| known.value == header) {
+                        let known: Vec<&str> =
+                            columns.iter().map(|known| known.value.as_str()).collect();
+                        let fix = fix_for_unknown(header, &known);
+                        self.error(
+                            codes::UNKNOWN_NAME,
+                            Stage::Resolve,
+                            &column.at,
+                            format!("The row field `{field_name}` reads the column `{}`, which `columns` does not list.", shown(header)),
+                            fix,
+                        );
+                        fine = false;
+                    }
+                    bare.push(if required {
+                        FieldOf::required(field_name, ty.clone())
+                    } else {
+                        FieldOf::optional(field_name, ty.clone())
+                    });
+                }
+                (None, Some(expression)) => written.push((field_name.to_owned(), expression)),
+                _ => {
+                    self.error(
+                        codes::MISSING_FIELD,
+                        Stage::Validate,
+                        &field.value.at,
+                        format!("The row field `{field_name}` needs one of `column` and `expression`, and has both or neither."),
+                        "Give the header of the column it is read from under `column`, or an expression over `row` under `expression`.".to_owned(),
+                    );
+                    fine = false;
+                }
+            }
+            row.push(if required {
+                FieldOf::required(field_name, ty)
+            } else {
+                FieldOf::optional(field_name, ty)
+            });
+            fields.push(serde_json::json!({
+                "name": field_name,
+                "field_type": field_type.get(),
+                "required": required,
+                "column": column.and_then(Located::as_text),
+            }));
+        }
+        if fields.is_empty() {
+            self.error(
+                codes::MISSING_FIELD,
+                Stage::Validate,
+                &doc.at,
+                format!("The source `{name}` has no row field."),
+                "Add a row field under `fields:` with its `type` and its `column`.".to_owned(),
+            );
+            fine = false;
+        }
+        // An expression reads `row`, the record of the fields that are bare
+        // columns, each already of its field type.
+        let env = type_env(&[("row", ValueType::Record(bare))]);
+        let mut mapping = Vec::new();
+        for (field_name, expression) in written {
+            match self.expr(expression, &env, None) {
+                Some((value, _)) => mapping.push(StepArg {
+                    name: field_name,
+                    value,
+                }),
+                None => fine = false,
+            }
+        }
+        let rows = match doc.get("rows") {
+            Some(rows) => {
+                let checked = self.expr(rows, &env, Some(&ValueType::Bool));
+                fine &= checked.is_some();
+                checked.map(|(index, _)| index)
+            }
+            None => None,
+        };
+        let key = texts("key");
+        for part in &key {
+            if !row.iter().any(|field| field.name == part.value) {
+                let known: Vec<&str> = row.iter().map(|field| field.name.as_str()).collect();
+                let fix = fix_for_unknown(&part.value, &known);
+                self.error(
+                    codes::UNKNOWN_NAME,
+                    Stage::Resolve,
+                    &part.at,
+                    format!("The key names `{}`, which is not a row field.", shown(&part.value)),
+                    fix,
+                );
+                fine = false;
+            }
+        }
+        let delimiter = doc.get("options").and_then(|options| options.get("delimiter"));
+        if let Some(delimiter) = delimiter
+            && delimiter.as_text().is_none_or(|text| text.chars().count() != 1)
+        {
+            self.error(
+                codes::UNKNOWN_VALUE,
+                Stage::Validate,
+                &delimiter.at,
+                "A delimiter is one character.".to_owned(),
+                "Write the one character that stands between fields, such as `\";\"`.".to_owned(),
+            );
+            fine = false;
+        }
+        let payload = serde_json::json!({
+            "versions": doc.get("versions").map_or_else(|| serde_json::json!([]), Located::to_json),
+            "locate": doc.get("locate").map_or_else(|| serde_json::json!("document"), Located::to_json),
+            "columns": columns.iter().map(|column| column.value.as_str()).collect::<Vec<_>>(),
+            "fields": fields,
+            "key": key.iter().map(|part| part.value.as_str()).collect::<Vec<_>>(),
+            "missing": texts("missing").iter().map(|text| text.value.as_str()).collect::<Vec<_>>(),
+            "hidden": doc.text("hidden").unwrap_or("reject"),
+            "options": {"delimiter": delimiter.and_then(Located::as_text)},
+        });
+        let payload = PackPayload::encode(&payload).ok()?;
+        fine.then(|| {
+            (
+                SourcePlan {
+                    template: name.to_owned(),
+                    reader: reader.to_owned(),
+                    mapping,
+                    rows,
+                    payload,
+                },
+                ValueType::Record(row),
+            )
+        })
     }
 
     // ---- pipelines/ ----
@@ -1839,7 +1996,7 @@ impl<'a> Compiler<'a> {
         {
             match self.source_plans.get(text).cloned() {
                 Some((plan, row)) => {
-                    if plan.reader != "operation" {
+                    if plan.reader != k::OPERATION_READER {
                         if let Some(taken) = inputs.iter().find(|input| input.plan.name == "source")
                         {
                             let at = taken.at.clone();
