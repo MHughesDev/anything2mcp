@@ -40,6 +40,7 @@ ACTIONS = (
     "discover.run",
     "docs.get",
     "doctor.run",
+    "draft.delete",
     "draft.lint",
     "draft.read",
     "draft.try",
@@ -205,6 +206,7 @@ class Actions:
         *,
         target: str,
         surface: Optional[str] = None,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The sign-in method of a surface, with evidence, and a recommended
@@ -217,6 +219,7 @@ class Actions:
             {
                 "target": target,
                 "surface": surface,
+                "wait_seconds": wait_seconds,
             },
             idempotency_key,
         )
@@ -227,9 +230,12 @@ class Actions:
         mode: str,
         target: str,
         tool: str,
+        run_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Promote a shadow binding to verified. A person's act.
+        """Make the first binding of a drafted operation verified, on the evidence
+        of its offline tests and a trial. For an operation that writes, a
+        person's act.
 
         The engine action is ``binding.promote``.
         """
@@ -239,6 +245,7 @@ class Actions:
                 "mode": mode,
                 "target": target,
                 "tool": tool,
+                "run_id": run_id,
             },
             idempotency_key,
         )
@@ -411,6 +418,27 @@ class Actions:
         """
         return self._action("doctor.run", {}, idempotency_key)
 
+    def draft_delete(
+        self,
+        *,
+        file: str,
+        target: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Remove one draft file of a target from the project; a published version
+        keeps its own copy.
+
+        The engine action is ``draft.delete``.
+        """
+        return self._action(
+            "draft.delete",
+            {
+                "file": file,
+                "target": target,
+            },
+            idempotency_key,
+        )
+
     def draft_lint(
         self,
         *,
@@ -540,13 +568,21 @@ class Actions:
         self,
         *,
         finding: str,
+        target: str,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """One finding in full, with its evidence references.
 
         The engine action is ``finding.describe``.
         """
-        return self._action("finding.describe", {"finding": finding}, idempotency_key)
+        return self._action(
+            "finding.describe",
+            {
+                "finding": finding,
+                "target": target,
+            },
+            idempotency_key,
+        )
 
     def finding_list(
         self,
@@ -798,6 +834,7 @@ class Actions:
         self,
         *,
         target: str,
+        version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Submit a target's drafts for a person's review. Publishing itself is a
@@ -805,7 +842,14 @@ class Actions:
 
         The engine action is ``publish.request``.
         """
-        return self._action("publish.request", {"target": target}, idempotency_key)
+        return self._action(
+            "publish.request",
+            {
+                "target": target,
+                "version": version,
+            },
+            idempotency_key,
+        )
 
     def run_cancel(
         self,
@@ -969,6 +1013,8 @@ class Actions:
         self,
         *,
         target: str,
+        fresh: Optional[bool] = None,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Identify a target, run the discoverers that suit it, draft what follows
@@ -977,7 +1023,15 @@ class Actions:
 
         The engine action is ``scout.run``.
         """
-        return self._action("scout.run", {"target": target}, idempotency_key)
+        return self._action(
+            "scout.run",
+            {
+                "target": target,
+                "fresh": fresh,
+                "wait_seconds": wait_seconds,
+            },
+            idempotency_key,
+        )
 
     def screen_snapshot(
         self,
@@ -1181,6 +1235,8 @@ class Actions:
         self,
         *,
         target: str,
+        surface: Optional[str] = None,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The platform, framework, support tier, and surfaces at an address or in
@@ -1188,7 +1244,15 @@ class Actions:
 
         The engine action is ``target.probe``.
         """
-        return self._action("target.probe", {"target": target}, idempotency_key)
+        return self._action(
+            "target.probe",
+            {
+                "target": target,
+                "surface": surface,
+                "wait_seconds": wait_seconds,
+            },
+            idempotency_key,
+        )
 
     def target_status(
         self,
@@ -1497,6 +1561,7 @@ class Actions:
         self,
         *,
         target: str,
+        plan_hash: Optional[str] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -1509,6 +1574,7 @@ class Actions:
             "version.publish",
             {
                 "target": target,
+                "plan_hash": plan_hash,
                 "version": version,
             },
             idempotency_key,

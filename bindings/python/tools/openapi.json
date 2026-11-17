@@ -1000,6 +1000,11 @@
          },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -1196,6 +1201,9 @@
          "mode": {
           "type": "string"
          },
+         "run_id": {
+          "type": "string"
+         },
          "target": {
           "type": "string"
          },
@@ -1236,38 +1244,134 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
-              },
-              "args": {
+              "evidence": {
                "additionalProperties": {},
                "properties": {},
                "required": [],
                "type": "object"
               },
-              "tool": {
+              "file": {
                "type": "string"
               },
-              "when": {
+              "mode": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "promoted": {
+               "type": "boolean"
+              },
+              "status": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
                "type": "string"
               }
              },
              "required": [
-              "action",
+              "target",
               "tool",
-              "args",
-              "when"
+              "mode",
+              "file",
+              "promoted",
+              "status",
+              "evidence"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -1308,38 +1412,134 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
-              },
-              "args": {
+              "evidence": {
                "additionalProperties": {},
                "properties": {},
                "required": [],
                "type": "object"
               },
-              "tool": {
+              "file": {
                "type": "string"
               },
-              "when": {
+              "mode": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "promoted": {
+               "type": "boolean"
+              },
+              "status": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
                "type": "string"
               }
              },
              "required": [
-              "action",
+              "target",
               "tool",
-              "args",
-              "when"
+              "mode",
+              "file",
+              "promoted",
+              "status",
+              "evidence"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -1370,7 +1570,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Promote a shadow binding to verified. A person's act.",
+    "summary": "Make the first binding of a drafted operation verified, on the evidence of its offline tests and a trial. For an operation that writes, a person's act.",
     "x-action": "binding.promote"
    }
   },
@@ -2407,38 +2607,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -2479,38 +2743,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -2915,38 +3243,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -2987,38 +3379,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -4113,6 +4569,267 @@
     },
     "summary": "Check the settings, the store, the key store, the providers, and the clock, and give a fix for each problem. Makes no outside connection.",
     "x-action": "doctor.run"
+   }
+  },
+  "/api/v1/actions/draft.delete": {
+   "post": {
+    "operationId": "draft_delete",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "file": {
+          "type": "string"
+         },
+         "target": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target",
+         "file"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "digest": {
+             "type": "string"
+            },
+            "file": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "ok": {
+             "type": "boolean"
+            },
+            "problems": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "removed": {
+             "type": "boolean"
+            },
+            "target": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "file",
+            "removed",
+            "digest",
+            "ok",
+            "problems"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "digest": {
+             "type": "string"
+            },
+            "file": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "ok": {
+             "type": "boolean"
+            },
+            "problems": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "removed": {
+             "type": "boolean"
+            },
+            "target": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "file",
+            "removed",
+            "digest",
+            "ok",
+            "problems"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Remove one draft file of a target from the project; a published version keeps its own copy.",
+    "x-action": "draft.delete"
    }
   },
   "/api/v1/actions/draft.lint": {
@@ -5998,10 +6715,14 @@
         "properties": {
          "finding": {
           "type": "string"
+         },
+         "target": {
+          "type": "string"
          }
         },
         "required": [
-         "finding"
+         "finding",
+         "target"
         ],
         "type": "object"
        }
@@ -7239,51 +7960,115 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": false,
-           "properties": {
-            "epoch": {
-             "type": "integer"
-            },
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "epoch": {
+               "type": "integer"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
+              "on": {
+               "type": "boolean"
               },
-              "when": {
+              "scope": {
                "type": "string"
               }
              },
              "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
+              "scope",
+              "on",
+              "epoch"
              ],
              "type": "object"
             },
-            "on": {
-             "type": "boolean"
-            },
-            "scope": {
-             "type": "string"
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
             }
-           },
-           "required": [
-            "scope",
-            "on",
-            "epoch"
-           ],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -7324,51 +8109,115 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": false,
-           "properties": {
-            "epoch": {
-             "type": "integer"
-            },
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "epoch": {
+               "type": "integer"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
+              "on": {
+               "type": "boolean"
               },
-              "when": {
+              "scope": {
                "type": "string"
               }
              },
              "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
+              "scope",
+              "on",
+              "epoch"
              ],
              "type": "object"
             },
-            "on": {
-             "type": "boolean"
-            },
-            "scope": {
-             "type": "string"
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
             }
-           },
-           "required": [
-            "scope",
-            "on",
-            "epoch"
-           ],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -9231,38 +10080,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -9303,38 +10216,102 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
              "additionalProperties": false,
              "properties": {
+              "act": {
+               "type": "string"
+              },
               "action": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "person": {
                "type": "string"
               },
-              "when": {
-               "type": "string"
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
               }
              },
              "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -9676,6 +10653,9 @@
         "properties": {
          "target": {
           "type": "string"
+         },
+         "version": {
+          "type": "string"
          }
         },
         "required": [
@@ -9709,38 +10689,126 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "current": {
+               "type": "boolean"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "plan_hash": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "tools": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "target",
+              "version",
+              "plan_hash",
+              "tools",
+              "current"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -9781,38 +10849,126 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "current": {
+               "type": "boolean"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "plan_hash": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "tools": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "target",
+              "version",
+              "plan_hash",
+              "tools",
+              "current"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -10110,6 +11266,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -10151,6 +11310,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -10233,6 +11395,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -10274,6 +11439,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -10764,6 +11932,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -10805,6 +11976,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -10887,6 +12061,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -10928,6 +12105,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -12374,8 +13554,16 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "fresh": {
+          "type": "boolean"
+         },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -15026,8 +16214,16 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "surface": {
+          "type": "string"
+         },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -15686,6 +16882,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -15727,6 +16926,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -15809,6 +17011,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -15850,6 +17055,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -19236,6 +20444,9 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "plan_hash": {
+          "type": "string"
+         },
          "target": {
           "type": "string"
          },
@@ -19274,62 +20485,126 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": false,
-           "properties": {
-            "current": {
-             "type": "boolean"
-            },
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "current": {
+               "type": "boolean"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "plan_hash": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "tools": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
+              "target",
+              "version",
+              "plan_hash",
+              "tools",
+              "current"
              ],
              "type": "object"
             },
-            "plan_hash": {
-             "type": "string"
-            },
-            "target": {
-             "type": "string"
-            },
-            "tools": {
-             "items": {
-              "type": "string"
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
              },
-             "type": "array"
-            },
-            "version": {
-             "type": "string"
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
             }
-           },
-           "required": [
-            "target",
-            "version",
-            "plan_hash",
-            "tools",
-            "current"
-           ],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -19370,62 +20645,126 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": false,
-           "properties": {
-            "current": {
-             "type": "boolean"
-            },
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
-               "type": "string"
+              "current": {
+               "type": "boolean"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "plan_hash": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "tools": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
+              "target",
+              "version",
+              "plan_hash",
+              "tools",
+              "current"
              ],
              "type": "object"
             },
-            "plan_hash": {
-             "type": "string"
-            },
-            "target": {
-             "type": "string"
-            },
-            "tools": {
-             "items": {
-              "type": "string"
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
              },
-             "type": "array"
-            },
-            "version": {
-             "type": "string"
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
             }
-           },
-           "required": [
-            "target",
-            "version",
-            "plan_hash",
-            "tools",
-            "current"
-           ],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -20085,6 +21424,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -20126,6 +21468,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -20208,6 +21553,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -20249,6 +21597,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -20755,6 +22106,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -20796,6 +22150,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"
@@ -20878,6 +22235,9 @@
              "required": [],
              "type": "object"
             },
+            "earlier_run": {
+             "type": "boolean"
+            },
             "events": {
              "type": "integer"
             },
@@ -20919,6 +22279,9 @@
               "when"
              ],
              "type": "object"
+            },
+            "not_read_back": {
+             "type": "integer"
             },
             "person": {
              "type": "string"

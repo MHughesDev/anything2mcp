@@ -42,6 +42,7 @@ export interface AuditQueryInput {
 export interface AuthDetectInput {
   target: string;
   surface?: string;
+  wait_seconds?: number;
 }
 
 /**
@@ -51,6 +52,7 @@ export interface BindingPromoteInput {
   mode: string;
   target: string;
   tool: string;
+  run_id?: string;
 }
 
 /**
@@ -141,6 +143,14 @@ export interface DocsGetInput {
 export type DoctorRunInput = Record<string, never>;
 
 /**
+ * The input of `draft.delete`.
+ */
+export interface DraftDeleteInput {
+  file: string;
+  target: string;
+}
+
+/**
  * The input of `draft.lint`.
  */
 export interface DraftLintInput {
@@ -207,6 +217,7 @@ export type EngineStopInput = Record<string, never>;
  */
 export interface FindingDescribeInput {
   finding: string;
+  target: string;
 }
 
 /**
@@ -330,6 +341,7 @@ export type ProviderListInput = Record<string, never>;
  */
 export interface PublishRequestInput {
   target: string;
+  version?: string;
 }
 
 /**
@@ -418,6 +430,8 @@ export interface ScoutReportInput {
  */
 export interface ScoutRunInput {
   target: string;
+  fresh?: boolean;
+  wait_seconds?: number;
 }
 
 /**
@@ -513,6 +527,8 @@ export type TargetListInput = Record<string, never>;
  */
 export interface TargetProbeInput {
   target: string;
+  surface?: string;
+  wait_seconds?: number;
 }
 
 /**
@@ -663,6 +679,7 @@ export interface VersionMigrateInput {
  */
 export interface VersionPublishInput {
   target: string;
+  plan_hash?: string;
   version?: string;
 }
 
@@ -713,8 +730,9 @@ export declare abstract class Actions {
   authDetect(input: AuthDetectInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Promote a shadow binding to verified. A person's act. The engine action is
-   * `binding.promote`.
+   * Make the first binding of a drafted operation verified, on the evidence of its
+   * offline tests and a trial. For an operation that writes, a person's act. The engine
+   * action is `binding.promote`.
    */
   bindingPromote(input: BindingPromoteInput, options?: CallOptions): Promise<Response>;
 
@@ -792,6 +810,12 @@ export declare abstract class Actions {
    * `doctor.run`.
    */
   doctorRun(input?: DoctorRunInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Remove one draft file of a target from the project; a published version keeps its
+   * own copy. The engine action is `draft.delete`.
+   */
+  draftDelete(input: DraftDeleteInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Lint and compile a target's draft files and report every problem with its file and

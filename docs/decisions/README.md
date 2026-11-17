@@ -193,3 +193,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0185 | [A record with no key is never proved absent by one look](0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md) | Accepted (design decision) |
 | 0190 | [The `page_http` mode reads from inside the page, in an observing tab](0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md) | Accepted (design decision) |
 | 0192 | [A served engine hands no root of the project that started it, and its clients start it and compare its settings](0192-a-served-engine-hands-no-root-of-the-project-that-started-it-and-clients-start-and-compare.md) | Accepted (design decision) |
+| 0189 | [A developer's first hour runs without hand steps](0189-a-developers-first-hour-runs-without-hand-steps.md) | Accepted (design decision) |
+| 0193 | [The core, the contract, the compiler, and the scheduler after the kernel's second pass](0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md) | Accepted (design decision) |

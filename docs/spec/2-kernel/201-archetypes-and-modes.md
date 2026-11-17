@@ -174,7 +174,9 @@ Each binding has a status.
 | `verified` | May be chosen at call time |
 | `retired` | Never chosen, in the sandbox or out of it |
 
-A new binding starts in `shadow`. After a set number of exact matches with the verified binding, a person may promote it to `verified` with `binding.promote`; `shadow.report` shows how often it matched and where it differed. This is how an operation that began as interface steps gains a direct request binding safely. Shadow arrives in Phase 4. Runs in the sandbox are recorded as tries, so they change no binding's health or shadow count.
+A binding added beside a verified one starts in `shadow`. After a set number of exact matches with the verified binding, a person may promote it to `verified` with `binding.promote`; `shadow.report` shows how often it matched and where it differed. This is how an operation that began as interface steps gains a direct request binding safely. Shadow arrives in Phase 4. Runs in the sandbox are recorded as tries, so they change no binding's health or shadow count.
+
+The first binding of an operation has no verified binding to be compared with. It is written, or drafted, as `draft`, and `binding.promote` makes it `verified` on its own evidence: every offline test of the operation passes at the time of the call, and, for a read, a trial in the project proved it at `executed`. For an operation that writes, the promote is a person's act, and the publish page names every binding that acts for the first time in the version ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)).
 
 ## Why archetypes and not just modes
 

@@ -198,7 +198,9 @@ impl Desk {
         // The page names the binding that acts for the first time in this
         // version, by operation and mode.
         assert!(
-            text.contains(&format!("First to act in this version: {READ} (read), through the mode http.")),
+            text.contains(&format!(
+                "First to act in this version: {READ} (read), through the mode http."
+            )),
             "{text}"
         );
         let marker = "name=\"once\" value=\"";
@@ -430,7 +432,9 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         if KEPT.contains(&file) {
             continue;
         }
-        let removed = desk.ok(&["draft", "delete", "example", "--file", file]).await;
+        let removed = desk
+            .ok(&["draft", "delete", "example", "--file", file])
+            .await;
         assert_eq!(removed["result"]["removed"], true, "{removed}");
         assert!(
             !desk

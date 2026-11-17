@@ -27,6 +27,7 @@ const ACTIONS = Object.freeze([
   "discover.run",
   "docs.get",
   "doctor.run",
+  "draft.delete",
   "draft.lint",
   "draft.read",
   "draft.try",
@@ -145,8 +146,9 @@ class Actions {
   }
 
   /**
-   * Promote a shadow binding to verified. A person's act. The engine action is
-   * `binding.promote`.
+   * Make the first binding of a drafted operation verified, on the evidence of its
+   * offline tests and a trial. For an operation that writes, a person's act. The engine
+   * action is `binding.promote`.
    */
   bindingPromote(input, options = {}) {
     return this.call("binding.promote", input, options);
@@ -251,6 +253,14 @@ class Actions {
    */
   doctorRun(input = {}, options = {}) {
     return this.call("doctor.run", input, options);
+  }
+
+  /**
+   * Remove one draft file of a target from the project; a published version keeps its
+   * own copy. The engine action is `draft.delete`.
+   */
+  draftDelete(input, options = {}) {
+    return this.call("draft.delete", input, options);
   }
 
   /**
