@@ -1,6 +1,7 @@
 //! How the `device` mode lowers its verbs into steps.
 //!
-//! A step is one of four kinds: `open` identifies the device, `write_frame`
+//! A step is one of five kinds: `open` identifies the device, `build_frame`
+//! builds and records the frame of a write and sends nothing, `write_frame`
 //! sends one frame, `read_frame` reads its reply, and `expect` reads the
 //! reply in the form the map declares. What each step does is in its
 //! payload, which only this pack reads.
@@ -43,8 +44,21 @@ pub(crate) enum StepPayload {
         /// The register, by its name in the map.
         register: String,
     },
-    /// `write_frame`: send the request that writes one argument to a
-    /// register, after the range checks.
+    /// `build_frame`: check one argument against its register's range,
+    /// build the frame that writes it, and give its bytes out to be
+    /// recorded. Nothing is sent. The step before the one that commits.
+    Build {
+        /// The register, by its name in the map.
+        register: String,
+        /// The step argument that holds the value.
+        arg: String,
+        /// How many frames the binding's read-back sends after the write.
+        /// The frame is not built when the run's frames would not cover
+        /// the write and these.
+        reads_after: u32,
+    },
+    /// `write_frame`: send the frame the step before built for this
+    /// register and this value, and no other.
     Write {
         /// The register, by its name in the map.
         register: String,
@@ -76,6 +90,12 @@ pub(crate) fn before_name(register: &str) -> String {
     format!("before_{register}")
 }
 
+/// The name the frame of a write is kept under, for reconcile and for the
+/// record of what was sent.
+pub(crate) fn frame_name(register: &str) -> String {
+    format!("frame_{register}")
+}
+
 /// The lowering of the `device` mode.
 pub(crate) struct DeviceLowering {
     names: Arc<Names>,
@@ -94,6 +114,7 @@ impl DeviceLowering {
             ],
             step_kinds: vec![
                 names.open.clone(),
+                names.build_frame.clone(),
                 names.write_frame.clone(),
                 names.read_frame.clone(),
                 names.expect.clone(),
@@ -435,13 +456,17 @@ impl DeviceLowering {
         Some(hazard)
     }
 
-    fn write_step(
+    /// The two steps of a write: the frame is built from the value and
+    /// given out to be recorded, and then that frame is sent by the one
+    /// step that commits. Both are given the same value.
+    fn write_steps(
         scene: &mut Scene<'_>,
         cx: &LowerContext<'_>,
         name: &str,
         register: &RegisterPlan,
         value: &Located<Doc>,
-    ) -> Option<Step> {
+        reads_after: u32,
+    ) -> Option<[Step; 2]> {
         let expected = value_type(register.kind);
         let expr = match cx.expr(value, expected.as_ref()) {
             Ok(expr) => expr,
@@ -450,20 +475,36 @@ impl DeviceLowering {
                 return None;
             }
         };
+        let arg = || {
+            vec![StepArg {
+                name: name.to_owned(),
+                value: expr,
+            }]
+        };
+        let kind = scene.names.build_frame.clone();
+        let build = scene.step(
+            &kind,
+            &StepPayload::Build {
+                register: name.to_owned(),
+                arg: name.to_owned(),
+                reads_after,
+            },
+            (FailureClass::Input, codes::VALUE_OUT_OF_RANGE),
+            arg(),
+            &value.at,
+        )?;
         let kind = scene.names.write_frame.clone();
-        scene.step(
+        let write = scene.step(
             &kind,
             &StepPayload::Write {
                 register: name.to_owned(),
                 arg: name.to_owned(),
             },
             (FailureClass::PossibleCommit, codes::NO_CONFIRMATION),
-            vec![StepArg {
-                name: name.to_owned(),
-                value: expr,
-            }],
+            arg(),
             &value.at,
-        )
+        )?;
+        Some([build, write])
     }
 
     fn absent(scene: &mut Scene<'_>, binding: &ResolvedBinding<'_>, keys: &[&str]) {
@@ -544,8 +585,27 @@ impl Lowering for DeviceLowering {
             }
         } else if let Some((name, register, value)) = Self::written(&mut scene, binding) {
             Self::absent(&mut scene, binding, &["read"]);
+            // A map proven on one unit must not write to another: the
+            // surface names the unit. The driver compares it, and refuses
+            // a write in an environment that has none.
+            let names_a_unit = cx
+                .target()
+                .surface(&scene.map.surface)
+                .and_then(|surface| surface.doc.get("serials"))
+                .is_some_and(|serials| !serials.entries().is_empty());
+            if !names_a_unit {
+                let surface = scene.map.surface.clone();
+                scene.problem(
+                    "write_without_serial",
+                    at,
+                    format!("The binding writes to a device, and the surface `{surface}` declares the serial of no device."),
+                    "Add `serials:` to the surface, with the serial of the unit that answers in each environment.",
+                );
+            }
             let hazard = Self::hazard(&mut scene, binding, &name, &register);
             let updating = *binding.verb == self.names.update;
+            // How many frames the read-back sends after the write.
+            let mut reads_after = 0;
             if updating {
                 if !register.access.readable() || register.read_effect != ReadEffect::None {
                     scene.problem(
@@ -565,6 +625,7 @@ impl Lowering for DeviceLowering {
                         read_back.extend(scene.open(&pairs.at));
                         let (steps, registers) = scene.read_all(pairs, &outputs);
                         read_back.extend(steps);
+                        reads_after = u32::try_from(registers.len()).unwrap_or(u32::MAX);
                         if !registers.contains(&name) {
                             scene.problem(
                                 "read_back_elsewhere",
@@ -594,7 +655,11 @@ impl Lowering for DeviceLowering {
                     );
                 }
             }
-            act.extend(Self::write_step(&mut scene, cx, &name, &register, value));
+            act.extend(
+                Self::write_steps(&mut scene, cx, &name, &register, value, reads_after)
+                    .into_iter()
+                    .flatten(),
+            );
             confirm.extend(scene.reply(at));
             confirm.extend(scene.expect(&StepPayload::Acknowledged, at));
         }

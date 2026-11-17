@@ -16,7 +16,7 @@ use a2m_engine::{
     Conditions, Directive, Engine, EngineDeps, EngineSettings, JobKind, JobOutcome, JobSpec,
     KernelHealth, LeaseClock, Parallelism, RecordSnapshot, RunSnapshot, ToolRef, decode_values,
 };
-use a2m_ledger::{BlobRef, Durability, Owner, RecordRef, RunRow, SqlValue, Tx};
+use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RecordRef, RunRow, SqlValue, Tx};
 use a2m_policy::{ActingFor, GroupName, PrincipalKind, PrincipalRef, ToolsetName};
 use a2m_sched::{BudgetKey, JobEnd, JobLease, RunnerOffer, RunnerTerms, Slots};
 use a2m_telemetry::CaptureLevel;
@@ -469,9 +469,14 @@ impl Kernel {
         self.inner.signals.watch()
     }
 
-    /// Whether this is the first time the budget is seen in this process.
-    pub(crate) fn note_budget(&self, key: &BudgetKey) -> bool {
-        lock(&self.inner.runner.budgets).insert(key.as_str().to_owned())
+    /// Whether the budget was set in this process already.
+    pub(crate) fn budget_noted(&self, key: &BudgetKey) -> bool {
+        lock(&self.inner.runner.budgets).contains(key.as_str())
+    }
+
+    /// Notes that the budget is set.
+    pub(crate) fn note_budget(&self, key: &BudgetKey) {
+        lock(&self.inner.runner.budgets).insert(key.as_str().to_owned());
     }
 
     /// Carries out one claimed job: fills it from the ledger, runs it
@@ -706,7 +711,40 @@ impl Kernel {
         }
         let store = self.store()?;
         let run = row.id;
-        let rows = store.read(move |tx| tx.ledger().records(run)).await?;
+        // The values recorded before a commit point are the evidence of a
+        // `need` event of the run. They are read from the ledger, so a
+        // run resumed after a restart has them as well.
+        let (rows, recorded) = store
+            .read(move |tx| {
+                let mut ledger = tx.ledger();
+                let rows = ledger.records(run)?;
+                let mut recorded: BTreeMap<(u32, u32), BlobRef> = BTreeMap::new();
+                for event in ledger.events(run, 0, u32::MAX)? {
+                    if event.kind != EventKind::Need {
+                        continue;
+                    }
+                    let (Some(blob), Ok(payload)) =
+                        (event.evidence, serde_json::from_str::<Json>(&event.payload))
+                    else {
+                        continue;
+                    };
+                    if payload["before_commit"] != true {
+                        continue;
+                    }
+                    let place = |name: &str| {
+                        payload[name]
+                            .as_u64()
+                            .and_then(|number| u32::try_from(number).ok())
+                    };
+                    if let (Some(step), Some(record)) = (place("step"), place("record")) {
+                        // A later event of the same record replaces an
+                        // earlier one.
+                        recorded.insert((step, record), blob);
+                    }
+                }
+                Ok((rows, recorded))
+            })
+            .await?;
         let modes = lock(&self.inner.runner.modes)
             .get(&run)
             .cloned()
@@ -715,6 +753,13 @@ impl Kernel {
         for record in rows {
             let before = self.stored_values(record.before).await?;
             let outputs = self.stored_values(record.outputs).await?;
+            let before_commit = self
+                .stored_values(
+                    recorded
+                        .get(&(record.record.step_seq, record.record.record_seq))
+                        .copied(),
+                )
+                .await?;
             records.push(RecordSnapshot {
                 record: record.record,
                 key: record.key,
@@ -726,7 +771,7 @@ impl Kernel {
                 idempotency_token: record.idempotency_token,
                 assigned_key: record.assigned_key,
                 outputs,
-                before_commit: None,
+                before_commit,
                 mode: modes
                     .iter()
                     .rev()

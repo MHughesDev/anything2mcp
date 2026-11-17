@@ -147,6 +147,9 @@ pub(super) struct World {
     pub(super) surface: Arc<Surface>,
     pub(super) caller: Caller,
     pub(super) folder: Folder,
+    /// What the test pack's driver saw, and the faults it can be told to
+    /// make.
+    pub(super) hooks: Arc<engine::Hooks>,
 }
 
 struct Options {
@@ -188,8 +191,9 @@ async fn world(options: Options) -> World {
     .await;
     let host = prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
     let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
+    let hooks = Arc::new(engine::Hooks::default());
     builder.add_pack(&AppPack {
-        hooks: Arc::new(engine::Hooks::default()),
+        hooks: Arc::clone(&hooks),
         discoverer: Arc::new(engine::WritingDiscoverer {
             results: Mutex::new(Vec::new()),
             hangs: std::sync::atomic::AtomicBool::new(false),
@@ -227,6 +231,7 @@ async fn world(options: Options) -> World {
         surface,
         caller,
         folder,
+        hooks,
     }
 }
 

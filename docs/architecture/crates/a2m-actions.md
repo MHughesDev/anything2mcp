@@ -267,6 +267,8 @@ Slots are a count given to `start_runner_loop`, offered for every registered mod
 
 The list is the spine's, in its order. The engine opens nothing itself: no store, no policy engine, no compiler.
 
+The engine gives up a `Control` call that does not answer in time and drops its future. Every call below is one transaction of the store, which commits or not as a whole whoever still waits for it. What follows a commit is a notice in memory, given by a guard as the call ends, however it ends. `Moved` to the state the run is already in is no move. The runner fills a job for a run that was worked on before from the ledger alone: its records, their stored values, and, from the run's `need` events, what was recorded before each commit point.
+
 | `Control` asks for | In process, answered by |
 | --- | --- |
 | The plan by its hash | `a2m-ledger`; the hash is checked with the check in `a2m-core` before the plan is handed over |
@@ -391,6 +393,10 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 | A write refused for want of approval is a recorded decision | `a_write_refused_for_want_of_approval_is_recorded_as_a_decision` |
 | A kill switch is one refusal wherever it is met | `a_kill_switch_is_one_refusal_wherever_it_is_met` |
 | A result that carries `next` fits its action's output schema | `a_result_shows_exact_numbers_as_text_and_carries_its_next_step` |
+| A pipeline over a source runs from a file of the project to verified records | `a_sheet_is_entered_row_by_row_from_a_file_of_the_project` |
+| What was recorded before a commit point is handed back on resume | `a_key_assigned_before_the_commit_point_is_handed_back_when_the_run_is_resumed`: after a lost answer the record is read by the assigned code, not looked up again |
+| A record still `planned` can be recorded as failed | `lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_is_settled` |
+| A `Control` call dropped at a wait leaves nothing half-done | By construction: one transaction a call, and a guard for the notice. Not tested with a dropped call |
 
 ## Build order
 
@@ -415,3 +421,5 @@ A surface that needs a sign-in is reported as `needs_login`; the others carry on
 - That a run was approved and not yet resumed is known to a reader only while the engine that recorded the approval runs. After a restart `run.get` shows the run as waiting, and a resume completes it all the same.
 - `Kernel::events` shows a run only to the caller that started it. A console that follows other people's runs needs a decision of its own.
 - A response to a call refused by a kill switch carries the decision about the action, an allow, and not the policy engine's recorded refusal of the work.
+- The mode each intent was stored for is kept in memory for a later claim's snapshot, and a restart loses it. What was recorded before a commit point is read from the ledger and survives one.
+- A record that reconcile verified has no outputs and no assigned key in the ledger; the engine reads it once more on resume ([decision 0132](../../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md), point 18).

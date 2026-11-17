@@ -260,6 +260,7 @@ Not proven: a pipeline over a sheet; a write through any mode but `http`; the we
 ## Open points
 
 - Start on demand. Until `a2m-local` builds it, a command with no engine runs one inside itself, and the bridge needs `serve` to have been started ([decision 0131](../../decisions/0131-the-front-doors-joined-serve-the-thin-client-and-the-bridge.md)).
+- A person's act, such as `version publish`, cannot be done while an engine runs: the served engine asks its presence prompt, this build has none, and `--in-process` is refused. Today a person stops the engine, publishes in one process at a terminal, and starts it again. The operating system's prompt, package 3.6, ends this.
 - The engine lock is released when the channel stops serving, a moment before the kernel has closed. `Channel::serve` would have to hand the lock back for the product to hold it to the end.
 - A call that arrives over MCP carries no project folder, so the build toolset's actions on a project's files answer `path_not_allowed` through the bridge. The folder needs a place that both `a2m-api` and `a2m-mcp` can read, which is `a2m-actions`.
 - A run that nobody waits for on a connection does not hold an idle engine open: the kernel offers no count of the runs in hand.
@@ -272,4 +273,4 @@ Not proven: a pipeline over a sheet; a write through any mode but `http`; the we
 - Whether `--idempotency-key` stays a global flag or becomes a field of the write actions' schemas. Today it is a global flag that fills the request's key.
 - A secret given to `secret set` is an argument of the command, which other programs on the machine can see while it runs. A form that reads it from standard input is needed, and the action's input has no way to say so.
 - A new engine started within the lease of one that was killed sees that engine's run as `running` until the lease ends, about 100 seconds. The scheduler has no way to be told that a runner's process is gone.
-- A decimal in a tool's result is printed as `{"decimal": "12.5"}`, the form values are stored in. Whether a caller should see the number as text instead is a question for the result's shape in `a2m-actions`.
+- Settled in `a2m-actions`: a decimal in a tool's result is its exact decimal text, `"12.5"`, and the command line prints it as it prints any text. `a_device_is_read_through_the_device_pack` reads one.

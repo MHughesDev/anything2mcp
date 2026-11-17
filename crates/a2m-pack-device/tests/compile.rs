@@ -49,6 +49,9 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
 
     let plan = first.plan;
     assert_eq!(plan.surfaces[0].kind.as_str(), "device_link");
+    // The surface carries the serial of the unit of each environment.
+    let fields: serde_json::Value = plan.surfaces[0].payload.decode().unwrap();
+    assert_eq!(fields["serials"]["test"], "100123");
     assert_eq!(plan.packs.len(), 1);
     assert_eq!(
         (plan.packs[0].pack.as_str(), plan.packs[0].kind.as_str()),
@@ -81,8 +84,9 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     );
     assert!(read.act.iter().all(|step| !step.commits));
 
-    // An update: identify, read the value as it is, write; the
-    // acknowledgement confirms; the register is read again.
+    // An update: identify, read the value as it is, build the frame and
+    // give it out to be recorded, send it; the acknowledgement confirms;
+    // the register is read again.
     let update = operation("example_dosing_rate_set");
     assert_eq!(
         (update.effect, update.commit_points),
@@ -91,7 +95,14 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     let binding = &update.bindings[0];
     assert_eq!(
         kinds(&binding.act),
-        ["open", "write_frame", "read_frame", "expect", "write_frame"]
+        [
+            "open",
+            "write_frame",
+            "read_frame",
+            "expect",
+            "build_frame",
+            "write_frame"
+        ]
     );
     assert_eq!(kinds(&binding.confirm), ["read_frame", "expect"]);
     assert_eq!(
@@ -99,7 +110,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         ["open", "write_frame", "read_frame", "expect"]
     );
     let commits: Vec<bool> = binding.act.iter().map(|step| step.commits).collect();
-    assert_eq!(commits, [false, false, false, false, true]);
+    assert_eq!(commits, [false, false, false, false, false, true]);
 
     // A command: nothing to read before, and nothing to read back.
     let submit = operation("example_fault_reset");
@@ -107,7 +118,10 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         (submit.effect, submit.hazard),
         (EffectClass::Irreversible, Hazard::DeviceFunction)
     );
-    assert_eq!(kinds(&submit.bindings[0].act), ["open", "write_frame"]);
+    assert_eq!(
+        kinds(&submit.bindings[0].act),
+        ["open", "build_frame", "write_frame"]
+    );
     assert!(submit.bindings[0].read_back.is_empty());
 
     // No step of this mode may be sent twice by itself.
@@ -141,6 +155,16 @@ fn an_unknown_key_or_word_in_a_map_or_a_surface_is_refused() {
         &edited(MAP, "table: input, offset: 30", "table: memory, offset: 30"),
         "kernel.unknown_value",
         MAP,
+    );
+    // A serial is text, as the device reports it.
+    refused(
+        &edited(
+            "target.yaml",
+            "serials: {test: \"100123\"}",
+            "serials: {test: 100123}",
+        ),
+        "kernel.wrong_type",
+        "target.yaml",
     );
     // A serial link is not built: the surface's protocol is a closed list.
     refused(
@@ -233,6 +257,13 @@ fn a_binding_names_registers_of_its_map_and_declares_what_it_could_harm() {
             "device_map: controller.other",
         ),
         "device.unknown_map",
+        DOSING,
+    );
+    // A write through a surface that names no unit: the driver would
+    // refuse it at run time, and the compiler says so first.
+    refused(
+        &edited("target.yaml", "    serials: {test: \"100123\"}\n", ""),
+        "device.write_without_serial",
         DOSING,
     );
     // A write to a read-only register.

@@ -23,6 +23,9 @@ a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger" }
 a2m-vault = { path = "../a2m-vault" }
 example-device = { path = "../../targets/example-device" }
+# `test-util` gives the tests a clock they control: the pace is proven
+# without waiting.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

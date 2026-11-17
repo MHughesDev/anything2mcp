@@ -10,6 +10,10 @@ surfaces:
     address: "127.0.0.1:502"
     protocol: modbus_tcp
     unit: 1
+    # The unit that answers in each environment. A device that reports
+    # another serial is another device, and nothing is written where no
+    # serial is declared.
+    serials: {test: "100123"}
 environments:
   test:
     kind: test

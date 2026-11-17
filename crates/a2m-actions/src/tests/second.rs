@@ -12,7 +12,11 @@ use a2m_core::{FailureClass, RunId, RunState};
 use serde_json::{Value as Json, json};
 
 use super::kernel::World;
-use super::kernel::engine::{self, ITEM_UPSERT, ORDER_FILL, ORDER_GET, sheet};
+use std::sync::atomic::Ordering;
+
+use super::kernel::engine::{
+    self, ITEM_UPSERT, KIT_ENTER, ORDER_FILL, ORDER_GET, SHEET_ENTER, SLOT_ADD, sheet,
+};
 use super::runs::{item, status};
 
 fn error_of(response: &Response) -> (FailureClass, String) {
@@ -532,5 +536,177 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
             run.steps.len() < shortcut.steps.len()
         );
     }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+impl World {
+    /// A project folder under the test's own folder, holding one sheet.
+    fn project_with_sheet(&self, rows: &[(&str, &str, &str, &str)]) -> std::path::PathBuf {
+        let project = self.folder.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("sheet.csv"), sheet(rows)).unwrap();
+        project
+    }
+
+    /// The codes the test application holds for the order, in order.
+    async fn stored_codes(&self, order: &str) -> Vec<String> {
+        let mut codes: Vec<String> = self
+            .app
+            .writes()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|write| write.order_id == order)
+            .map(|write| write.item_code)
+            .collect();
+        codes.sort();
+        codes
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sheet_is_entered_row_by_row_from_a_file_of_the_project() {
+    let world = World::ready().await;
+    let project = world.project_with_sheet(&[
+        ("L-601", "Rail one", "2", "10.5"),
+        ("L-602", "Rail two", "4", "20"),
+    ]);
+    let rested = world
+        .kernel
+        .dispatch(
+            Request::new(
+                "tool.call",
+                json!({
+                    "tool": SHEET_ENTER,
+                    "input": {"order_id": "A-102"},
+                    "source_file": "sheet.csv",
+                }),
+                world.caller.clone(),
+            )
+            .in_project(project),
+        )
+        .await;
+    assert_eq!(status(&rested), "needs_approval", "{rested:?}");
+    let (run, id) = run_of(&rested);
+    // One record for each row of the file, with the row's own values.
+    let preview = world.surface.desk().preview(id, 0).await.unwrap();
+    let keys: Vec<&str> = preview
+        .records
+        .iter()
+        .map(|record| record.key.as_str())
+        .collect();
+    assert_eq!(keys, ["A-102 / L-601", "A-102 / L-602"], "{preview:?}");
+    let length = preview.records[1]
+        .fields
+        .iter()
+        .find(|field| field.name == "length_in")
+        .unwrap();
+    assert_eq!(length.proposed, "20");
+
+    world.approve(id).await;
+    let done = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&done), "completed", "{done:?}");
+    // The test application holds each row, written once.
+    for (code, description, quantity) in [("L-601", "Rail one", 2), ("L-602", "Rail two", 4)] {
+        assert_eq!(world.app.write_count("A-102", code).await.unwrap(), 1);
+        let stored = world.app.stored_item("A-102", code).await.unwrap().unwrap();
+        assert_eq!(stored.description, description);
+        assert_eq!(stored.quantity, quantity);
+    }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_assigned_before_the_commit_point_is_handed_back_when_the_run_is_resumed() {
+    let world = World::ready().await;
+    let rested = world
+        .call(
+            "tool.call",
+            json!({
+                "tool": SLOT_ADD,
+                "input": {"order_id": "A-102", "quantity": 4, "length_in": "12"},
+            }),
+        )
+        .await;
+    assert_eq!(status(&rested), "needs_approval", "{rested:?}");
+    let (run, id) = run_of(&rested);
+    world.approve(id).await;
+
+    // The save is sent and its answer is lost. The run stops in doubt, and
+    // the reconcile the scheduler queues settles it before the call
+    // returns.
+    world.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let lost = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&lost), "stopped", "{lost:?}");
+    assert_eq!(error_of(&lost).0, FailureClass::PossibleCommit, "{lost:?}");
+    assert_eq!(world.hooks.count("reserve_code"), 1);
+    let lookups = world.hooks.count("find_item");
+
+    // Resumed: the code the system assigned before the save was recorded
+    // in the ledger and is handed back, so the record is read by that code.
+    // It is not looked up again, no second code is reserved, and nothing
+    // is saved twice.
+    let done = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&done), "completed", "{done:?}");
+    assert_eq!(world.hooks.count("reserve_code"), 1);
+    assert_eq!(world.hooks.count("add_item"), 1);
+    assert_eq!(world.hooks.count("find_item"), lookups);
+    assert_eq!(world.stored_codes("A-102").await, ["N-001"]);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_is_settled() {
+    let world = World::ready().await;
+    let project =
+        world.project_with_sheet(&[("A", "Left leg", "2", "30"), ("B", "Right leg", "2", "30")]);
+    let rested = world
+        .kernel
+        .dispatch(
+            Request::new(
+                "tool.call",
+                json!({
+                    "tool": KIT_ENTER,
+                    "input": {"order_id": "A-102", "title": "Table kit"},
+                    "source_file": "sheet.csv",
+                }),
+                world.caller.clone(),
+            )
+            .in_project(project),
+        )
+        .await;
+    assert_eq!(status(&rested), "needs_approval", "{rested:?}");
+    let (run, id) = run_of(&rested);
+    world.approve(id).await;
+
+    // The header's save loses its answer: the header is in doubt, and the
+    // two lines under it, still planned, are recorded as blocked by it.
+    world.hooks.lose_answer.store(true, Ordering::SeqCst);
+    let lost = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&lost), "stopped", "{lost:?}");
+    let trace = world.ok("trace.show", json!({"run_id": run})).await;
+    let failed: Vec<&str> = trace["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "failed")
+        .map(|event| event["detail"]["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        failed,
+        ["no_confirmation", "blocked_by_parent", "blocked_by_parent"],
+        "{trace}"
+    );
+    assert_eq!(world.hooks.count("put_item"), 0);
+
+    // Resumed: the header is not created again, and the lines are written
+    // under the code the system gave it.
+    let done = world.call("run.resume", json!({"run_id": run})).await;
+    assert_eq!(status(&done), "completed", "{done:?}");
+    assert_eq!(world.hooks.count("add_item"), 1);
+    assert_eq!(
+        world.stored_codes("A-102").await,
+        ["N-001", "N-001-A", "N-001-B"]
+    );
     world.kernel.close(CloseReason::Asked).await;
 }

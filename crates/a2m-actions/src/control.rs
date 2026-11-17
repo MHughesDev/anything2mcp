@@ -5,6 +5,16 @@
 //! One `InProcessControl` is built for one claimed job. It attaches the run
 //! and the lease number to every call itself, so the engine can neither
 //! forge nor forget them.
+//!
+//! The engine gives up a call that does not answer in time and drops its
+//! future, so every call here stands or falls as one transaction of the
+//! store. A transaction that was handed to the store commits or not as a
+//! whole, whether or not anyone still waits for it. What follows a commit
+//! in a call is only a notice in memory, that a lock may be free or that a
+//! run changed, and it is given by a guard as the call ends, however it
+//! ends. Two calls keep a blob before they record it, a result and a
+//! trace: dropped in between, they leave a blob nothing names, and the call
+//! made again stores the same blob under the same name.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -101,12 +111,33 @@ impl InProcessControl {
         ))
     }
 
-    /// Tells the scheduler that a commit may have released the record's
-    /// lock, so that the run that waited first asks the ledger again.
-    async fn freed(&self, record: RecordRef) {
-        if let (Ok(key), Ok(sched)) = (self.lock_key(record).await, self.kernel.sched()) {
-            sched.lock_freed(&key);
+    /// A guard that, when it is dropped, tells the scheduler that the
+    /// record's lock may be free, so that the run that waited first asks
+    /// the ledger again, and tells whoever follows a run that one changed.
+    /// The key is read before the write the guard is made for, so that the
+    /// notice needs no further wait and is given even when the call's
+    /// future is dropped while its transaction commits. A notice for a
+    /// lock that was not released costs a waiter one more look.
+    async fn notice(&self, record: RecordRef) -> Notice {
+        Notice {
+            kernel: self.kernel.clone(),
+            key: self.lock_key(record).await.ok(),
         }
+    }
+}
+
+/// See [`InProcessControl::notice`].
+struct Notice {
+    kernel: Kernel,
+    key: Option<ResourceKey>,
+}
+
+impl Drop for Notice {
+    fn drop(&mut self) {
+        if let (Some(key), Ok(sched)) = (&self.key, self.kernel.sched()) {
+            sched.lock_freed(key);
+        }
+        self.kernel.run_changed();
     }
 }
 
@@ -272,7 +303,7 @@ impl Control for InProcessControl {
                 .surface_index(surface)
                 .and_then(|index| self.plan.surface(index))
                 .and_then(|surface| surface.rate)
-                && self.kernel.note_budget(&key)
+                && !self.kernel.budget_noted(&key)
             {
                 sched
                     .set_budget(
@@ -284,6 +315,9 @@ impl Control for InProcessControl {
                         },
                     )
                     .await?;
+                // Noted only once it is set: a call dropped before that
+                // sets it the next time.
+                self.kernel.note_budget(&key);
             }
             sched
                 .rate(&self.lease, &[key], want.max(1))
@@ -475,20 +509,15 @@ impl Control for InProcessControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
-            let record = token.record();
-            let marked = self
-                .kernel
+            // The ledger releases the record's lock in the transaction
+            // that marks it verified; a run waiting for it is told as this
+            // call ends.
+            let _notice = self.notice(token.record()).await;
+            self.kernel
                 .store()?
                 .store_verified(token, read_back)
                 .await
-                .map_err(|failure| self.redacted(failure));
-            // The ledger released the record's lock in the same
-            // transaction; a run waiting for it is told.
-            if marked.is_ok() {
-                self.freed(record).await;
-                self.kernel.run_changed();
-            }
-            marked
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -501,19 +530,17 @@ impl Control for InProcessControl {
         Box::pin(async move {
             let fence = self.fence;
             let why = self.redacted(why.clone());
-            let key = self.lock_key(record).await;
+            // A record fails from `planned` as well, when the record it
+            // depends on failed: it holds no lock then, and the notice
+            // costs nothing.
+            let _notice = self.notice(record).await;
             self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().mark_failed(&fence, record, &why, evidence)
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))?;
-            if let (Ok(key), Ok(sched)) = (key, self.kernel.sched()) {
-                sched.lock_freed(&key);
-            }
-            self.kernel.run_changed();
-            Ok(())
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -524,19 +551,14 @@ impl Control for InProcessControl {
     ) -> BoxFuture<'a, Result<Settled, Failure>> {
         Box::pin(async move {
             let fence = self.fence;
-            let settled = self
-                .kernel
+            let _notice = self.notice(record).await;
+            self.kernel
                 .store()?
                 .write(Durability::Synced, move |tx| {
                     tx.ledger().settle(&fence, record, seen)
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))?;
-            if settled != Settled::Planned {
-                self.freed(record).await;
-            }
-            self.kernel.run_changed();
-            Ok(settled)
+                .map_err(|failure| self.redacted(failure))
         })
     }
 
@@ -549,7 +571,14 @@ impl Control for InProcessControl {
                 EngineEvent::Moved(to) => {
                     store
                         .write(Durability::Synced, move |tx| {
-                            tx.ledger().set_state(&fence, to, None)
+                            let mut ledger = tx.ledger();
+                            // The engine says `validating` before it has
+                            // the plan, and may say a state the run is
+                            // already in: that is no move.
+                            if ledger.run(run)?.state == to {
+                                return Ok(());
+                            }
+                            ledger.set_state(&fence, to, None)
                         })
                         .await
                 }

@@ -743,6 +743,9 @@ impl Driver for AppDriver {
 }
 
 /// A discoverer that tries to write through its port, and then reads.
+/// Crates above the engine share this helper by path: they make one with
+/// `default()`, so a field added here does not break them.
+#[derive(Default)]
 pub struct WritingDiscoverer {
     pub results: Mutex<Vec<Result<StepOutcome, StepFailure>>>,
     /// The discoverer never ends.

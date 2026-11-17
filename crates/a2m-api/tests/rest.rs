@@ -124,9 +124,7 @@ impl World {
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
         builder.add_pack(&AppPack {
             hooks: Arc::new(engine::Hooks::default()),
-            discoverer: Arc::new(engine::WritingDiscoverer {
-                results: Mutex::new(Vec::new()),
-            }),
+            discoverer: Arc::new(engine::WritingDiscoverer::default()),
         });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");

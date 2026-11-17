@@ -1,0 +1,19 @@
+{
+  "name": "{{name}}",
+  "version": "{{version}}",
+  "description": "The anything2mcp program for {{key}}. Install the package anything2mcp, which picks this one for you.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MHughesDev/anything2mcp.git"
+  },
+  "homepage": "https://github.com/MHughesDev/anything2mcp",
+  "files": [
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ],
+  "os": ["{{os}}"],
+  "cpu": ["{{cpu}}"]{{libc}},
+  "preferUnplugged": true
+}

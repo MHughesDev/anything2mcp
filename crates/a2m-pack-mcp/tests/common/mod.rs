@@ -60,6 +60,12 @@ impl Drop for Folder {
 
 /// A registry that holds only the MCP pack, with the redactor given.
 pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
+    registry_set(folder, redact, Values::new())
+}
+
+/// A registry that holds only the MCP pack, with the redactor and the
+/// pack's own settings given.
+pub fn registry_set(folder: &Folder, redact: Arc<dyn Redact>, settings: Values) -> Registry {
     let logs = folder.path().join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let host = HostServices {
@@ -68,7 +74,12 @@ pub fn registry_with(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         redact: Arc::clone(&redact),
         telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
     };
-    let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
+    let mut provider_settings = ProviderSettings::default();
+    provider_settings.packs.insert(
+        a2m_provider::ProviderName::new(a2m_pack_mcp::PACK).unwrap(),
+        settings,
+    );
+    let mut builder = RegistryBuilder::new(provider_settings, host);
     builder.add_pack(&a2m_pack_mcp::pack());
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
@@ -220,7 +231,32 @@ pub fn fence_of(run: u8) -> Fence {
     }
 }
 
-/// Prepares the driver for a surface through the handle.
+/// The plan with one mapped tool's entry changed, as a plan compiled by
+/// something other than this build's compiler could hold it. The driver is
+/// the second line behind the compiler, so it is tested with plans the
+/// compiler would refuse.
+pub fn remapped(
+    plan: &Plan,
+    surface: &str,
+    tool: &str,
+    change: impl FnOnce(&mut serde_json::Value),
+) -> Plan {
+    let mut plan = plan.clone();
+    let section = plan
+        .packs
+        .iter_mut()
+        .find(|section| section.pack == a2m_pack_mcp::PACK)
+        .expect("the plan has the pack's section");
+    let mut body: serde_json::Value = section.payload.decode().unwrap();
+    let entry = &mut body["surfaces"][surface]["tools"][tool];
+    assert!(entry.is_object(), "the mapping names the tool `{tool}`");
+    change(entry);
+    section.payload = a2m_core::PackPayload::encode(&body).unwrap();
+    plan
+}
+
+/// Prepares the driver for a surface through the handle. The run may
+/// reach the surface's own address.
 pub async fn prepare(
     registry: &Registry,
     plan: &Plan,
@@ -228,6 +264,21 @@ pub async fn prepare(
     fence: Fence,
     posture: Posture,
     lease: Option<&a2m_auth::SessionLease>,
+) -> Result<(DriverHandle, Prepared), StepFailure> {
+    let destinations = Destinations::new([surface.surface.address.clone()]);
+    prepare_reaching(registry, plan, surface, fence, posture, lease, &destinations).await
+}
+
+/// Prepares the driver for a surface through the handle, for a run that
+/// may reach `destinations` and nothing else.
+pub async fn prepare_reaching(
+    registry: &Registry,
+    plan: &Plan,
+    surface: &SurfaceRef,
+    fence: Fence,
+    posture: Posture,
+    lease: Option<&a2m_auth::SessionLease>,
+    destinations: &Destinations,
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     let mode = a2m_pack_mcp::Names::new().unwrap().mode;
     let handle = registry.driver(&mode).unwrap();
@@ -238,7 +289,6 @@ pub async fn prepare(
         .map(ProgramRef::from)
         .collect();
     let supervisor = handle.supervisor(programs);
-    let destinations = Destinations::new([surface.surface.address.clone()]);
     let cx = PrepareContext {
         run: fence.run,
         epoch: fence.epoch,
@@ -247,7 +297,7 @@ pub async fn prepare(
         posture,
         deadline: Deadline::after(Duration::from_secs(30)),
         redact: &NoSecrets,
-        destinations: &destinations,
+        destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
     };

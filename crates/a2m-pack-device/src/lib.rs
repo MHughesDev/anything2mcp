@@ -4,8 +4,10 @@
 //! The pack brings one surface kind, `device_link`; one file kind,
 //! `registers/`, a map of every address it may touch; the `device` mode,
 //! with the verbs `read`, `update`, and `submit`; a driver that sends one
-//! frame at a time and checks every write against its register's range
-//! before a frame is built; and a discoverer that asks a device to identify
+//! frame at a time, compares the device's model, firmware, and serial with
+//! what the target declares, checks every write against its register's
+//! range before a frame is built, and gives the frame out to be recorded
+//! before it is sent; and a discoverer that asks a device to identify
 //! itself and nothing else.
 //!
 //! The first protocol is a subset of the Modbus application protocol over
@@ -52,14 +54,16 @@ pub fn add_to(builder: &mut RegistryBuilder) {
     builder.add_pack(&DevicePack);
 }
 
-fn setting_ms(cx: &PackContext, key: &str, default: u64) -> Duration {
-    let millis = cx
-        .settings()
+/// A whole number the pack's settings hold, when they hold one.
+fn setting(cx: &PackContext, key: &str) -> Option<u64> {
+    cx.settings()
         .get(key)
         .and_then(Value::as_int)
-        .and_then(|millis| u64::try_from(millis).ok())
-        .unwrap_or(default);
-    Duration::from_millis(millis)
+        .and_then(|number| u64::try_from(number).ok())
+}
+
+fn setting_ms(cx: &PackContext, key: &str, default: u64) -> Duration {
+    Duration::from_millis(setting(cx, key).unwrap_or(default))
 }
 
 impl Pack for DevicePack {
@@ -69,9 +73,13 @@ impl Pack for DevicePack {
 
     fn register(&self, cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         let names = Arc::new(names::Names::new()?);
-        let defaults = driver::PaceDefaults {
-            reply_within: setting_ms(cx, "reply_within_ms", 1000),
-            min_gap: setting_ms(cx, "min_gap_ms", 50),
+        let defaults = driver::Limits {
+            reply_within: setting_ms(cx, "reply_within_ms", driver::DEFAULT_REPLY_WITHIN_MS),
+            min_gap: setting_ms(cx, "min_gap_ms", driver::DEFAULT_MIN_GAP_MS),
+            max_frames: setting(cx, "max_frames_per_run")
+                .unwrap_or(driver::DEFAULT_MAX_FRAMES)
+                .try_into()
+                .unwrap_or(u32::MAX),
         };
         to.driver(
             names.mode.clone(),
@@ -88,7 +96,10 @@ impl Pack for DevicePack {
                 JsonSchema::object()
                     .required("address", JsonSchema::text())
                     .required("protocol", JsonSchema::words(link::PROTOCOLS))
-                    .required("unit", JsonSchema::int_between(0, 255)),
+                    .required("unit", JsonSchema::int_between(0, 255))
+                    // The serial of the unit that answers in each
+                    // environment, by the environment's name.
+                    .optional("serials", JsonSchema::map_of(JsonSchema::text())),
             ))
             .file_kind(Arc::new(map::RegisterKind::new(Arc::clone(&names))))
             .lowering(Arc::new(lower::DeviceLowering::new(Arc::clone(&names))))

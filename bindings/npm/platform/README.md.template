@@ -1,0 +1,7 @@
+# {{name}}
+
+The `anything2mcp` program, built for {{key}}. It holds only the binary.
+
+Do not install this package by itself: install `anything2mcp`, which lists it as an optional dependency and starts it. See <https://github.com/MHughesDev/anything2mcp>.
+
+Licensed under the MIT licence.

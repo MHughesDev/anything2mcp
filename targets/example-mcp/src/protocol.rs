@@ -302,6 +302,9 @@ fn call_tool(
         Some(FaultKind::ResultOffSchema) => {
             run.result["structuredContent"] = json!({"unexpected": true});
         }
+        Some(FaultKind::ResultStructured { content }) => {
+            run.result["structuredContent"] = content.clone();
+        }
         _ => {}
     }
     Ok(Executed {

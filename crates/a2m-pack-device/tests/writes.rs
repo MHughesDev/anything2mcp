@@ -393,21 +393,40 @@ async fn a_write_frame_needs_the_ledgers_token_and_a_posture_that_may_write() {
     handle.release(prepared, true).await;
     scene.links_closed().await;
 
-    // Discovery: refused with a token too.
+    // Discovery: refused with a token too. The driver refuses to build
+    // the frame, and the handle refuses the step that would send it.
     let (fence, record, token) = write_run(&store, 1, "discovery").await;
     let (handle, mut prepared) = scene.prepare(Some(fence), Posture::Discovery).await;
     let writing = Writing {
         token: &token,
         record,
     };
-    let failure = scene
-        .run(&handle, &mut prepared, act, &inputs, Some(&writing))
+    let (build, send) = (&act[act.len() - 2], &act[act.len() - 1]);
+    scene
+        .run(&handle, &mut prepared, &act[..1], &inputs, Some(&writing))
         .await
-        .unwrap_err();
-    assert_eq!(
-        class_and_code(&failure),
-        (FailureClass::Policy, contract::READ_ONLY_POSTURE.as_str())
-    );
+        .unwrap();
+    for step in [build, send] {
+        let failure = scene
+            .run(
+                &handle,
+                &mut prepared,
+                std::slice::from_ref(step),
+                &inputs,
+                Some(&writing),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (class_and_code(&failure), failure.sent),
+            (
+                (FailureClass::Policy, contract::READ_ONLY_POSTURE.as_str()),
+                Sent::NotSent
+            ),
+            "{}",
+            step.kind
+        );
+    }
     handle.release(prepared, true).await;
 
     assert_eq!(write_frames(&scene), 0);

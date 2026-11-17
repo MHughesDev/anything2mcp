@@ -86,6 +86,20 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
     own.sort_by_key(|(_, code)| *code);
     listed.sort_by_key(|(_, code)| *code);
     assert_eq!(own, listed);
+    // The defaults a person gets without setting anything: four frames a
+    // second at most where a map states no pace, and one hundred frames a
+    // run on a link.
+    let default = |key: &str| {
+        manifest
+            .settings
+            .iter()
+            .find(|setting| setting.key == key)
+            .unwrap_or_else(|| panic!("no setting `{key}`"))
+            .default
+            .as_int()
+    };
+    assert_eq!(default("min_gap_ms"), Some(250));
+    assert_eq!(default("max_frames_per_run"), Some(100));
     // The pack reaches a network and hardware, holds a session for its
     // links, and starts no program.
     assert!(manifest.effects.devices);

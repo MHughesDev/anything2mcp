@@ -1,0 +1,35 @@
+{
+  "name": "anything2mcp",
+  "version": "0.0.1",
+  "description": "Turn existing software and systems into deterministic, verified MCP tools. This package starts the anything2mcp program for your platform.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MHughesDev/anything2mcp.git"
+  },
+  "homepage": "https://github.com/MHughesDev/anything2mcp",
+  "bugs": "https://github.com/MHughesDev/anything2mcp/issues",
+  "bin": {
+    "anything2mcp": "bin/anything2mcp.js",
+    "a2m": "bin/anything2mcp.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@anything2mcp/darwin-arm64": "0.0.1",
+    "@anything2mcp/darwin-x64": "0.0.1",
+    "@anything2mcp/linux-arm64": "0.0.1",
+    "@anything2mcp/linux-arm64-musl": "0.0.1",
+    "@anything2mcp/linux-x64": "0.0.1",
+    "@anything2mcp/linux-x64-musl": "0.0.1",
+    "@anything2mcp/win32-arm64": "0.0.1",
+    "@anything2mcp/win32-x64": "0.0.1"
+  }
+}
