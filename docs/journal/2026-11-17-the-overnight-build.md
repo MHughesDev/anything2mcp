@@ -47,7 +47,7 @@ Pull request 11 carries everything above. It merged green on Windows, macOS, and
 - `a2m-api`: every served action at one route, five resource aliases, and a generated OpenAPI document (0116). `a2m-local`: the engine lock, the local channel with its peer check, the connector, and the loopback approval surface (0117).
 - `anything2mcp`: the product crate joins the kernel and every pack in one process behind the generated command line. Its tests prove the first four milestones on Linux against the test stands: a read; a read behind a sign-in; one verified write that rests, is approved, and is written once; and one read through every pack, the browser included (0119).
 
-Pull request 12 carries waves 5 and 6.
+Pull request 12 carries waves 5 and 6. It merged green on the three operating systems after six runs.
 
 ## Learned
 
