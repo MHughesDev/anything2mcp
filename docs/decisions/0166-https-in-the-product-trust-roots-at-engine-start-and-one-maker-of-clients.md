@@ -33,4 +33,5 @@ When all four hold, the flip is one line in `crates/anything2mcp/Cargo.toml`, `d
 
 - A build with the feature off is unchanged: no trust root is named by default, so `trust::install` installs nothing.
 - Revocation is still not checked for a certificate under a named root.
-- What the stripped release binary weighs with and without the feature is in the report of this package; the wheel's target is 25 MB (hypothesis H-28).
+- The stripped release binary on Linux (x86_64), measured 2026-11-17: 31,362,392 bytes without the feature and 33,250,136 bytes with it, 1.9 MB more. Both are over the wheel's 25 MB target (hypothesis H-28) already without TLS; TLS is not what decides it.
+- Proven on Linux through the real program, with the feature on (`tests/trust_roots.rs`): a read over HTTPS from a test-only authority is refused `certificate_untrusted` until the installation names the authority's file inside the project folder, and then is made; a file outside the allowed folders, and one with no certificate, stop the engine opening by name.
