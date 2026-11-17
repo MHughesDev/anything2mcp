@@ -2161,6 +2161,127 @@ async fn a_project_document_is_read_from_the_project_folder_of_the_run() {
     );
 }
 
+// ---- a root of each request's project (decision 0193) ----
+
+#[tokio::test]
+async fn a_root_of_each_requests_project_resolves_in_that_project_and_never_another() {
+    // One registry, whose root `files` stands for the project folder of
+    // each request, as a served engine holds it. Project A is the scene's
+    // stand; project B a second stand, whose stock file says another
+    // quantity.
+    let mut scene = Scene::with_project_files();
+    let store = store().await;
+    let other = example_files::harness::FileStand::start().unwrap();
+    let stock = other.path(seed::STOCK_CSV).unwrap();
+    let bytes = std::fs::read(&stock).unwrap();
+    let changed = String::from_utf8(bytes)
+        .unwrap()
+        .replacen(",40,", ",41,", 1);
+    std::fs::write(&stock, &changed).unwrap();
+    let in_a = scene.paths.clone();
+    let in_b = common::project_paths(other.root());
+
+    // Each read resolves in the project of its own run, whichever ran
+    // first.
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let mut seen = Vec::new();
+    for paths in [&in_b, &in_a, &in_b] {
+        let (binding, surface) = scene.binding("example_stock_get");
+        let (handle, mut prepared) = scene
+            .prepared_in(&surface, None, Posture::Live, paths)
+            .await
+            .unwrap();
+        let found = scene
+            .read(&handle, &mut prepared, &binding.act, &item)
+            .await
+            .unwrap();
+        seen.push(last_values(&found).get("on_hand").cloned());
+        handle.release(prepared, false).await;
+    }
+    assert_eq!(
+        seen,
+        [
+            Some(Value::Int(41)),
+            Some(Value::Int(40)),
+            Some(Value::Int(41))
+        ]
+    );
+
+    // A write in B changes B's file, as B's stand reads it, and nothing in
+    // A.
+    scene.paths = in_b.clone();
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let written = write(&scene, &store, 1, "example_stock_set", &values, || {})
+        .await
+        .unwrap();
+    assert_eq!(
+        last_values(&written.read_back).get("on_hand"),
+        Some(&Value::Int(38))
+    );
+    assert_eq!(
+        other
+            .stored_cells(seed::STOCK_CSV, ',', "item_code", "EX-1002", "on_hand")
+            .unwrap(),
+        ["38"]
+    );
+    assert!(scene.stand.observe().unwrap().is_empty());
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+
+    // A run whose request came with no project folder stops by name, unsent,
+    // and never falls back to another project.
+    let surface = scene.binding("example_stock_get").1;
+    let stopped = scene
+        .prepared_in(
+            &surface,
+            None,
+            Posture::Live,
+            &a2m_provider::CheckedPaths::none(),
+        )
+        .await
+        .expect_err("a run with no project folder");
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Input, "project_folder_missing")
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+
+    // B's surface folder becomes a link into A's: a run in B is refused by
+    // name and never reads A's file.
+    #[cfg(unix)]
+    {
+        let prices = other.path("prices").unwrap();
+        std::fs::remove_dir_all(&prices).unwrap();
+        std::os::unix::fs::symlink(scene.stand.path("prices").unwrap(), &prices).unwrap();
+        let binding = scene.binding("example_stock_get").0;
+        let failure = match scene
+            .prepared_in(&surface, None, Posture::Live, &in_b)
+            .await
+        {
+            Err(failure) => failure,
+            Ok((handle, mut prepared)) => {
+                let read = scene
+                    .read(&handle, &mut prepared, &binding.act, &item)
+                    .await;
+                handle.release(prepared, read.is_err()).await;
+                read.expect_err("a read through a link into another project")
+            }
+        };
+        assert_eq!(
+            class_and_code(&failure),
+            (FailureClass::Input, "path_not_allowed")
+        );
+        assert_eq!(failure.sent, Sent::NotSent);
+    }
+    assert!(scene.stand.observe().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn five_reads_say_the_same_of_how_each_step_was_done() {
     let scene = Scene::new();

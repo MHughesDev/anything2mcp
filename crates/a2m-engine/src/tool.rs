@@ -2513,6 +2513,23 @@ async fn commit_point(
             "Declare the operation `irreversible`, or give the binding a read-back, and publish the target again.",
         )));
     }
+    // A record found by its key and read back by the binding is verified by
+    // that read, never ended on the answer alone (decision 0193). The plan
+    // check refuses such a binding; a plan that reached the engine some
+    // other way is held to it here, before anything is sent.
+    if binding.evidence == WriteEvidence::Acknowledged
+        && !a2m_core::acknowledgement_may_stand(found.identity.strategy, &binding.read_back)
+    {
+        return Err(Stop::Fail(codes::fail(
+            FailureClass::UnknownVariant,
+            codes::NO_READ_BACK,
+            format!(
+                "The binding of `{}` reads its record back by its key and offers the system's acknowledgement as its evidence; the read-back is what verifies it.",
+                found.name
+            ),
+            "Make the binding's evidence its read-back, or drop the read-back, and publish the target again.",
+        )));
+    }
     // Whether the lease leaves time for the record's steps, each counted at
     // its real time limit. Asked before the waits, so that a job that
     // cannot finish the record does not queue for it.

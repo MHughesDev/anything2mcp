@@ -835,7 +835,10 @@ fn draft_into(
 ) -> Result<DraftReport, Failure> {
     let set = kernel.providers().compiler_set();
     let root = TargetRoot::new(folder);
-    Drafter::new(set, &root).draft(findings)
+    let redact = kernel.redact();
+    Drafter::new(set, &root)
+        .with_redact(redact.as_ref())
+        .draft(findings)
 }
 
 fn paths(list: &[a2m_files::RelPath]) -> Vec<String> {
@@ -915,7 +918,9 @@ async fn draft(
             .iter()
             .map(|open| {
                 (
-                    open.question.clone(),
+                    // The product's sentence and the system's words, kept
+                    // apart in what is stored (decision 0193).
+                    open.stored(),
                     open.file.as_str().to_owned(),
                     format!("The draft `{}` does not compile until it is answered.", open.file),
                     "A person states the value; the system did not.".to_owned(),

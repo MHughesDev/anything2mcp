@@ -1181,6 +1181,27 @@ pub(crate) fn said_json(failure: &Failure) -> Option<Json> {
     })
 }
 
+/// An event's detail with every `said`, what the system itself said, made
+/// neutral for the door (`a2m_core::said_neutral`, decision 0193): nothing
+/// in it can reorder, hide, or restyle what a reader is later shown.
+fn neutral_said(value: Json) -> Json {
+    match value {
+        Json::Object(map) => Json::Object(
+            map.into_iter()
+                .map(|(key, value)| match (key.as_str(), value) {
+                    ("said", Json::String(text)) => {
+                        let shown = a2m_core::said_neutral(&text).into_owned();
+                        (key, Json::String(shown))
+                    }
+                    (_, value) => (key, neutral_said(value)),
+                })
+                .collect(),
+        ),
+        Json::Array(items) => Json::Array(items.into_iter().map(neutral_said).collect()),
+        other => other,
+    }
+}
+
 /// Who `said` is the words of.
 pub(crate) const SAID_BY: &str = "system";
 
@@ -1583,7 +1604,9 @@ handler!(
                     "seq": event.seq,
                     "lease": event.epoch.get(),
                     "kind": event.kind.as_str(),
-                    "detail": serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null),
+                    "detail": neutral_said(
+                        serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null)
+                    ),
                     "evidence": event.evidence.map(|blob| format!("blob:{blob}")),
                 })
             })
@@ -2130,10 +2153,16 @@ handler!(
                 json!({
                     "id": row.id.to_string(),
                     // A question a pack drafted may quote the system's own
-                    // words, and the stored question does not tell them
-                    // apart from the pack's: the whole text is the
-                    // system's, kept under the mark (decisions 0171, 0180).
-                    "question": {"untrusted": row.question},
+                    // words. Stored with the two apart, the pack's sentence
+                    // is shown as the product's and only the quoted words
+                    // under the mark; stored whole, all of it is the
+                    // system's (decisions 0171, 0180, 0193).
+                    "question": match a2m_files::StoredQuestion::read(&row.question) {
+                        a2m_files::StoredQuestion::Quoting { sentence, words } => {
+                            json!({"text": sentence, "quoting": {"untrusted": words}})
+                        }
+                        a2m_files::StoredQuestion::Whole(text) => json!({"untrusted": text}),
+                    },
                     "scope": row.scope,
                     "why_it_matters": row.why_it_matters,
                     "settled_by_what": row.settled_by_what,

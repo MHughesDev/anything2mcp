@@ -126,7 +126,15 @@ pub(crate) fn assemble(
             json!({
                 // The whole question is kept as the system's words: a
                 // pack's question may quote them (decisions 0171, 0180).
-                "question": {"untrusted": row.question},
+                // The product's sentence as the product's, and only the
+                // system's words it quotes under the mark (decision 0193);
+                // a question stored whole is the system's words all of it.
+                "question": match a2m_files::StoredQuestion::read(&row.question) {
+                    a2m_files::StoredQuestion::Quoting { sentence, words } => {
+                        json!({"text": sentence, "quoting": {"untrusted": words}})
+                    }
+                    a2m_files::StoredQuestion::Whole(text) => json!({"untrusted": text}),
+                },
                 "scope": row.scope,
                 "why_it_matters": row.why_it_matters,
                 "settled_by_what": row.settled_by_what,

@@ -614,19 +614,8 @@ pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "bridge"];
 /// [`a2m_core::SAID_LONGEST`] characters, never inside a redaction mark.
 #[must_use]
 pub fn said_line(said: &str) -> String {
-    let (said, cut) = a2m_core::said_cut(said, a2m_core::SAID_LONGEST);
-    let mut shown = String::with_capacity(said.len() + 24);
-    shown.push_str("The system said: \"");
-    for c in said.chars() {
-        if c.is_control() || c == '"' || c == '\\' {
-            shown.extend(c.escape_default());
-        } else {
-            shown.push(c);
-        }
-    }
-    if cut {
-        shown.push('…');
-    }
-    shown.push('"');
-    shown
+    format!(
+        "The system said: \"{}\"",
+        a2m_core::said_quoted(said, a2m_core::SAID_LONGEST)
+    )
 }

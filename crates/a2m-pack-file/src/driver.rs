@@ -360,11 +360,15 @@ impl FileDriver {
             };
             return Ok(Folder::reading(folder, project));
         }
+        // A root may stand for the project folder of each request (decision
+        // 0193): it is resolved in this run's project folder, with every
+        // refusal of a root, and never in the folder the engine was started
+        // in. A run with no project folder stops by name.
         let under = |access| {
             if address == "." {
-                self.roots.folder(&root, access)
+                self.roots.folder_in(&root, access, paths)
             } else {
-                self.roots.check(&root, address, access)
+                self.roots.check_in(&root, address, access, paths)
             }
         };
         // A root the pack may write gives a folder it may write; a root it
@@ -374,7 +378,7 @@ impl FileDriver {
             .map_err(StepFailure::not_sent)?;
         let root = self
             .roots
-            .folder(&root, Access::Read)
+            .folder_in(&root, Access::Read, paths)
             .map_err(StepFailure::not_sent)?;
         Ok(Folder::new(folder, &root))
     }

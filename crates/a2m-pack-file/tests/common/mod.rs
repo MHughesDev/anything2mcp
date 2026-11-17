@@ -142,6 +142,30 @@ impl Scene {
         }
     }
 
+    /// The surfaces in the root `files`, which here stands for the project
+    /// folder of each request (`Roots::add_project`), as a served engine
+    /// holds it: the run's project folder is the stand's root, and a run
+    /// given another project's paths resolves in that project.
+    pub fn with_project_files() -> Self {
+        let stand = FileStand::start().unwrap();
+        let mut roots = Roots::none();
+        roots
+            .add_project(RootName::new("files").unwrap(), Access::Write)
+            .unwrap();
+        let registry = registry(roots);
+        let plan = compile(&fixtures(), registry.compiler_set())
+            .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
+            .plan;
+        let paths = project_paths(stand.root());
+        Self {
+            stand,
+            registry,
+            plan,
+            root: None,
+            paths,
+        }
+    }
+
     pub fn surface(&self, name: &str) -> SurfaceRef {
         let mut surface = self
             .plan

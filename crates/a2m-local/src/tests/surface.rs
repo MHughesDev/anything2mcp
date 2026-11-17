@@ -311,15 +311,26 @@ async fn a_write_is_approved_only_through_its_page_with_the_one_time_value_and_t
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// The upsert ended on the system's acknowledgement, as
+/// `acknowledged_upsert` makes it, and found by no key. An acknowledgement
+/// stands only where nothing could read the record back by its key
+/// (decision 0193): a keyed binding with no read-back could not be looked
+/// up for its preview either, so the record here is one that cannot be
+/// found again, and its preview is a `create`.
+fn acknowledged_keyless(plan: &mut a2m_core::Plan) {
+    super::world::engine::acknowledged_upsert(plan);
+    for operation in &mut plan.operations {
+        if operation.name.as_str() == ITEM_UPSERT {
+            operation.identity.strategy = a2m_core::IdentityStrategy::None;
+            operation.identity.key.clear();
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_write_that_will_not_be_read_back_says_so_on_its_page_before_it_is_approved() {
     let prompt = TestPrompt::answering(PromptAnswer::Dismissed);
-    let world = World::ready_with(
-        Arc::clone(&prompt) as _,
-        LONG,
-        super::world::engine::acknowledged_upsert,
-    )
-    .await;
+    let world = World::ready_with(Arc::clone(&prompt) as _, LONG, acknowledged_keyless).await;
     let http = http();
     let rested = rest(&world).await;
     let (text, _) = open(&http, &rested.link).await;
