@@ -33,6 +33,13 @@ mod secret;
 mod state;
 mod value;
 
+/// What [`checked_name!`] expands to. Not part of the interface.
+#[doc(hidden)]
+pub mod __name {
+    pub use crate::name::{check_dotted_name, check_name, is_dotted_name, is_name};
+    pub use serde;
+}
+
 pub use canonical::{CanonicalJson, PackPayload};
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, InvalidDigest};

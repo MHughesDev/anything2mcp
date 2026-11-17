@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use crate::failure::{Failure, FailureClass, FailureCode};
 use crate::finding::Timestamp;
-use crate::name::{check_dotted_name, checked_name};
+use crate::checked_name;
 
 checked_name! {
     /// The name of a target: one system a developer builds tools over. It is
@@ -96,7 +96,7 @@ checked_name! {
     /// The stable code of a lint rule: its owner and the rule, each a name,
     /// joined by one dot, such as `kernel.no_fixed_wait`. The owner is
     /// `kernel` or the provider that registers the rule.
-    pub struct LintCode: "lint code", 64, check_dotted_name;
+    pub struct LintCode: "lint code", 64, dotted;
 }
 
 impl LintCode {

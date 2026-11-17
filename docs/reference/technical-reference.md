@@ -119,7 +119,7 @@ Both are the web pack's knowledge and live in its section: [widget drivers](../s
 
 ## Auth provider interface
 
-Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider.
+Each provider implements five operations: `sign_in`, `is_signed_in`, `detect_expiry`, `refresh`, `sign_out`, plus `inject`, which places credentials into a driver's context without returning them. Only the session keeper calls a provider. A provider also states what it needs and can do (a person, a silent renewal, a light prompt, state that can move, and whether a successful exchange confirms the credential) and checks an `auth.yaml` entry without signing in. The traits as built are in the [crate design](../architecture/crates/a2m-auth.md).
 
 A provider lives in `a2m-auth` when it only holds or exchanges a credential. It lives in a pack when it needs a surface of the system. A provider that needs a person's consent in a browser, and is not in the web pack, gives the person a link to open in their own browser; nothing drives that browser.
 
@@ -135,7 +135,7 @@ A provider lives in `a2m-auth` when it only holds or exchanges a credential. It 
 | `api_key`, `bearer_static` | Interfaces with fixed keys | `a2m-auth` |
 | `oauth_client_credentials`, `oauth_authorization_code` | Interfaces with OAuth | `a2m-auth` |
 | `upstream_mcp` | Authorization to a system's own MCP server | `a2m-pack-mcp` |
-| `totp` | One-time codes for dedicated accounts, where IT allows | `a2m-auth` |
+| `totp` | One-time codes for dedicated accounts, where IT allows. A function another provider calls, not a provider of sessions | `a2m-auth` |
 
 Further packs bring their own where a credential is bound to their kind of connection: the data pack brings a database password provider.
 

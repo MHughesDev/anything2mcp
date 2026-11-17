@@ -42,7 +42,7 @@ CREATE TABLE jobs (
     end_code TEXT,
     created_at INTEGER NOT NULL,
     finished_at INTEGER,
-    CHECK ((state = 'leased') = (runner_id IS NOT NULL AND lease_until IS NOT NULL))
+    CHECK (state IS NOT 'leased' OR (runner_id IS NOT NULL AND lease_until IS NOT NULL))
 ) STRICT;
 
 CREATE INDEX jobs_pending ON jobs (priority, seq) WHERE state = 'pending';

@@ -415,3 +415,43 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
     texts.extend(world.telemetry.log_lines());
     assert_clean(&texts, &["PLANTED"]);
 }
+
+/// An `https` token endpoint: a build without TLS says so by name and sends
+/// nothing; a build with TLS tries the handshake, which a listener that
+/// speaks no TLS cannot complete.
+#[test]
+fn an_https_endpoint_is_named_when_tls_is_off_and_tried_when_it_is_on() {
+    let world = block(World::new(STORED_HELD));
+    let key = account_key("robot");
+    let failure = logged(&world.telemetry, async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // Accept and hang up, as something that is not a TLS server.
+            while let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+        let entry = Arc::new(
+            AuthEntry::new(ProviderName::new("oauth_client_credentials").unwrap())
+                .setting("token_endpoint", &format!("https://localhost:{port}/token"))
+                .setting("client_id", "client-1")
+                .credential("client_secret", reference("client/secret")),
+        );
+        world
+            .store_credential(&key, "client/secret", CLIENT_SECRET)
+            .await;
+        world
+            .keeper
+            .lease(request(&key, &entry, Wait::DEFAULT))
+            .await
+            .unwrap_err()
+    });
+    if cfg!(feature = "tls") {
+        assert_eq!(failure.code(), &codes::UPSTREAM_UNAVAILABLE);
+    } else {
+        assert_eq!(failure.class(), FailureClass::Input);
+        assert_eq!(failure.code(), &codes::TLS_NOT_ENABLED);
+    }
+    assert_clean(&[format!("{failure:?}")], &["PLANTED"]);
+}

@@ -58,7 +58,8 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |
-| `credentials` | For `custom`: vault references only, such as `vault://example/service/password` |
+| `settings` | The provider's own settings, as a map of names to plain values, such as `token_endpoint` or `header`. Each provider's names are in the [crate design](../architecture/crates/a2m-auth.md); a name the provider does not know does not compile. Never a credential |
+| `credentials` | For `custom`: a map from the role the provider names, such as `password` or `client_secret`, to a vault reference such as `vault://example/service/password`. References only |
 | `attempt_limit` | Automatic sign-in attempts with stored credentials; default 1 |
 | `movable` | `auto` or `false`; `false` pins the session to its runner |
 

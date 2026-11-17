@@ -95,8 +95,12 @@ impl std::error::Error for InvalidName {}
 
 /// Whether `text` has the shape of a registered name: `[a-z][a-z0-9_]*`, at
 /// most `longest` characters.
-pub(crate) const fn is_name(text: &str, longest: usize) -> bool {
-    let bytes = text.as_bytes();
+#[must_use]
+pub const fn is_name(text: &str, longest: usize) -> bool {
+    is_name_bytes(text.as_bytes(), longest)
+}
+
+const fn is_name_bytes(bytes: &[u8], longest: usize) -> bool {
     if bytes.is_empty() || bytes.len() > longest || !bytes[0].is_ascii_lowercase() {
         return false;
     }
@@ -111,8 +115,38 @@ pub(crate) const fn is_name(text: &str, longest: usize) -> bool {
     true
 }
 
+/// Whether `text` is two names joined by one dot, such as
+/// `kernel.no_fixed_wait`: each part a name, the whole at most `longest`
+/// characters.
+#[must_use]
+pub const fn is_dotted_name(text: &str, longest: usize) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() > longest {
+        return false;
+    }
+    let mut dot = bytes.len();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'.' {
+            dot = i;
+            break;
+        }
+        i += 1;
+    }
+    if dot == bytes.len() {
+        return false;
+    }
+    let (owner, rest) = bytes.split_at(dot);
+    let (_, rule) = rest.split_at(1);
+    is_name_bytes(owner, longest) && is_name_bytes(rule, longest)
+}
+
 /// Checks a name's shape, and says what is wrong when it is not a name.
-pub(crate) fn check_name(
+///
+/// # Errors
+///
+/// [`InvalidName`] when `text` is not a name of at most `longest` characters.
+pub fn check_name(
     kind: &'static str,
     text: &str,
     longest: usize,
@@ -132,16 +166,16 @@ pub(crate) fn check_name(
 /// Checks the shape of two names joined by one dot, such as
 /// `kernel.no_fixed_wait`: each part a name, the whole at most `longest`
 /// characters.
-pub(crate) fn check_dotted_name(
+///
+/// # Errors
+///
+/// [`InvalidName`] when `text` is not two names joined by one dot.
+pub fn check_dotted_name(
     kind: &'static str,
     text: &str,
     longest: usize,
 ) -> Result<(), InvalidName> {
-    let well_formed = text.len() <= longest
-        && text
-            .split_once('.')
-            .is_some_and(|(owner, rule)| is_name(owner, longest) && is_name(rule, longest));
-    if well_formed {
+    if is_dotted_name(text, longest) {
         Ok(())
     } else {
         Err(InvalidName {
@@ -154,29 +188,59 @@ pub(crate) fn check_dotted_name(
 }
 
 /// Defines a checked name: a word whose values arrive with packs, crates, or
-/// target files, and whose shape alone is checked here (decisions 0060 and
-/// 0062).
+/// target files, and whose shape alone is checked (decisions 0060 and 0062).
 ///
-/// The type gets `LONGEST`, `new`, `as_str`, `Display`, `FromStr`, and serde
-/// support that refuses a badly formed name. Whether anyone registered the
-/// name is never this type's question.
+/// ```
+/// a2m_core::checked_name! {
+///     /// The name of a queue.
+///     pub struct QueueName: "queue", 32;
+/// }
+/// const DEFAULT: QueueName = QueueName::fixed("default");
+/// assert_eq!(QueueName::new("default").unwrap(), DEFAULT);
+/// assert!(QueueName::new("Not a name").is_err());
+/// ```
+///
+/// The type gets `LONGEST`, `new`, `fixed`, `as_str`, `Display`, `FromStr`,
+/// and serde support that refuses a badly formed name. A name is lowercase
+/// letters, digits, and underscores, starting with a letter; with `dotted`
+/// after the length, it is two such names joined by one dot. `fixed` is for
+/// a name written in the source: used in a `const`, a badly formed name is an
+/// error when the crate is built. Whether anyone registered the name is
+/// never this type's question.
+///
+/// A crate that uses the macro needs no dependency beyond this one.
+#[macro_export]
 macro_rules! checked_name {
     (
         $(#[$meta:meta])*
         $vis:vis struct $name:ident: $kind:literal, $longest:literal;
     ) => {
-        $crate::name::checked_name! {
+        $crate::checked_name! {
+            @define
             $(#[$meta])*
-            $vis struct $name: $kind, $longest, $crate::name::check_name;
+            $vis struct $name: $kind, $longest,
+            $crate::__name::check_name, $crate::__name::is_name;
         }
     };
     (
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident: $kind:literal, $longest:literal, $check:path;
+        $vis:vis struct $name:ident: $kind:literal, $longest:literal, dotted;
+    ) => {
+        $crate::checked_name! {
+            @define
+            $(#[$meta])*
+            $vis struct $name: $kind, $longest,
+            $crate::__name::check_dotted_name, $crate::__name::is_dotted_name;
+        }
+    };
+    (
+        @define
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident: $kind:literal, $longest:literal, $check:path, $is:path;
     ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        $vis struct $name(::std::string::String);
+        $vis struct $name(::std::borrow::Cow<'static, str>);
 
         impl $name {
             /// The longest the name may be.
@@ -186,12 +250,27 @@ macro_rules! checked_name {
             ///
             /// # Errors
             ///
-            /// [`InvalidName`](crate::InvalidName) when the name does not
-            /// have the shape described on the type, or is longer than
-            /// `LONGEST`.
+            /// `InvalidName` when the name does not have the shape described
+            /// on the type, or is longer than `LONGEST`.
             pub fn new(name: &str) -> ::std::result::Result<Self, $crate::InvalidName> {
                 $check($kind, name, Self::LONGEST)?;
-                Ok(Self(name.to_owned()))
+                Ok(Self(::std::borrow::Cow::Owned(name.to_owned())))
+            }
+
+            /// Makes the name from text written in the source.
+            ///
+            /// # Panics
+            ///
+            /// When the text does not have the shape described on the type.
+            /// Used in a `const`, as it is meant to be, that is an error when
+            /// the crate is built and never at run time.
+            #[must_use]
+            pub const fn fixed(name: &'static str) -> Self {
+                assert!(
+                    $is(name, Self::LONGEST),
+                    "a name written in the source does not have the shape its type requires"
+                );
+                Self(::std::borrow::Cow::Borrowed(name))
             }
 
             /// The name, as it is written in files and messages.
@@ -215,8 +294,8 @@ macro_rules! checked_name {
             }
         }
 
-        impl ::serde::Serialize for $name {
-            fn serialize<S: ::serde::Serializer>(
+        impl $crate::__name::serde::Serialize for $name {
+            fn serialize<S: $crate::__name::serde::Serializer>(
                 &self,
                 serializer: S,
             ) -> ::std::result::Result<S::Ok, S::Error> {
@@ -224,18 +303,18 @@ macro_rules! checked_name {
             }
         }
 
-        impl<'de> ::serde::Deserialize<'de> for $name {
-            fn deserialize<D: ::serde::Deserializer<'de>>(
+        impl<'de> $crate::__name::serde::Deserialize<'de> for $name {
+            fn deserialize<D: $crate::__name::serde::Deserializer<'de>>(
                 deserializer: D,
             ) -> ::std::result::Result<Self, D::Error> {
-                let text = <::std::string::String as ::serde::Deserialize>::deserialize(deserializer)?;
-                Self::new(&text).map_err(::serde::de::Error::custom)
+                let text = <::std::string::String as $crate::__name::serde::Deserialize>::deserialize(
+                    deserializer,
+                )?;
+                Self::new(&text).map_err($crate::__name::serde::de::Error::custom)
             }
         }
     };
 }
-
-pub(crate) use checked_name;
 
 /// At most `SHOWN` characters of `text`, with a mark when it was cut.
 fn shorten(text: &str) -> String {

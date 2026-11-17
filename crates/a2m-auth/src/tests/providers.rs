@@ -226,3 +226,44 @@ fn an_entry_a_provider_cannot_use_is_refused_before_anything_is_opened() {
     });
     assert_eq!(failure.code(), &codes::AUTH_PROVIDER_UNKNOWN);
 }
+
+/// The source check: a provider's `sign_in`, `refresh`, and `sign_out` are
+/// called in the worker and nowhere else in this crate, and `inject` and
+/// `detect_expiry` only by a lease. The layering keeps every other crate
+/// from holding a provider to call.
+#[test]
+fn a_provider_is_called_only_by_the_keepers_two_halves() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut seen = Vec::new();
+    for entry in std::fs::read_dir(&src).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for call in [
+            "provider.sign_in(",
+            "provider.refresh(",
+            "provider.sign_out(",
+            "provider.is_signed_in(",
+            "provider.inject(",
+            "provider.detect_expiry(",
+        ] {
+            if text.contains(call) {
+                seen.push((name.clone(), call));
+            }
+        }
+    }
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            ("lease.rs".to_owned(), "provider.detect_expiry("),
+            ("lease.rs".to_owned(), "provider.inject("),
+            ("work.rs".to_owned(), "provider.refresh("),
+            ("work.rs".to_owned(), "provider.sign_in("),
+            ("work.rs".to_owned(), "provider.sign_out("),
+        ]
+    );
+}

@@ -149,6 +149,8 @@ Indexes: on `(state, priority, available_at)` where the state is `pending`; on `
 | `epoch` | bigint | Increases when the session moves or is replaced |
 | `expires_at`, `checked_at` | ts | Health |
 
+As built by migration `0006`, which `a2m-auth` owns: the table also has `workspace_id`, `provider`, `profile`, `state_since`, `signed_in_at`, `stored_attempts`, and `wants`; saved state is a row of `session_state` and not a `vault_ref` column; `survives_restart`, `exclusive`, and `learned` are not columns yet. The same migration makes `session_events` (the timeline), `session_state` (sealed saved state), and `session_credentials` (stored credentials, sealed).
+
 ## blobs
 
 | Column | Type | Notes |

@@ -95,3 +95,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0083 | [The policy engine's interface, as building it settled it](0083-the-policy-engines-interface-as-building-it-settled-it.md) | Accepted (design decision) |
 | 0086 | [The source readers are our own, over one outside crate that inflates](0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md) | Accepted (design decision) |
 | 0087 | [The source readers' interface, as building it settled it](0087-the-source-readers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
+| 0084 | [The session keeper's outside crates, and TLS for identity services](0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md) | Accepted (design decision) |
+| 0085 | [The session keeper's interface, as building it settled it](0085-the-session-keepers-interface-as-building-it-settled-it.md) | Accepted (design decision) |
