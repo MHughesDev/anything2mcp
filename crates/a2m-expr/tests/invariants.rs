@@ -1090,6 +1090,7 @@ fn a_failure_never_carries_a_bound_value() {
         "as_date(any, \"YYYY-MM-DD\")",
         "as_choice(text, {\"A\": \"Active\"})",
         "any + 1",
+        "decimal(any)",
         "any.name",
         "any[5]",
         "trim(any)",
@@ -1162,6 +1163,20 @@ fn a_plan_expression_loads_only_when_it_is_what_the_compiler_wrote() {
     // A name the program reads must be bound.
     let failure = program.evaluate(&Bindings::new()).unwrap_err();
     assert_eq!(failure.code(), &PLAN_EXPRESSION_UNLOADABLE);
+    // Text from a value never becomes a decimal through `decimal`, even when
+    // the checker could not see its type.
+    let mut open = TypeEnv::new(LibraryVersion::CURRENT);
+    open.declare_unknown("any").unwrap();
+    let sneaky = compile("decimal(any)", &open, None)
+        .unwrap()
+        .to_plan_expr()
+        .unwrap();
+    let text = Value::from("1.5");
+    let failure = Program::load(&sneaky)
+        .unwrap()
+        .evaluate(&Bindings::new().with("any", &text))
+        .unwrap_err();
+    assert_eq!(failure.code(), &VALUE_UNPARSABLE);
     // A value of another kind than the name declared stops; it is not reinterpreted.
     let wrong = Value::Record(Values::new().with("name", 7i64));
     let failure = program

@@ -462,6 +462,14 @@ fn call<'e>(name: &str, args: &'e [Node], env: &Env<'e>) -> Result<Cow<'e, Value
         values.push(eval(arg, env)?);
     }
     let borrowed: Vec<&Value> = values.iter().map(|value| &**value).collect();
+    // `decimal` reads text only when it is a literal of the expression: text
+    // from a value becomes a decimal only through `parse_decimal`.
+    if function.id == FnId::Decimal
+        && matches!(borrowed.first(), Some(Value::Text(_)))
+        && !matches!(args.first().map(|arg| &arg.kind), Some(Kind::Text(_)))
+    {
+        return stop(WRONG_KIND, place);
+    }
     env.tick(functions::extra_cost(&borrowed))?;
     functions::call(function.id, &borrowed)
         .map(Cow::Owned)

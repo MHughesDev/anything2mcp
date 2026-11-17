@@ -82,3 +82,6 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0072 | [Expressions are a CEL subset, on the engine's own parser, checker, and evaluator](0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md) | Accepted (design decision) |
 | 0076 | [One trace record per step, and a signature chained over record digests](0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md) | Accepted (design decision) |
 | 0077 | [Logs through the `tracing` crate with our own subscriber, and spans through a handle](0077-logs-through-the-tracing-crate-with-our-own-subscriber-and-spans-through-a-handle.md) | Accepted (design decision) |
+| 0071 | [The MCP server stands on the official SDK behind a seam, and serves two revisions](0071-the-mcp-server-stands-on-the-official-sdk-behind-a-seam-and-serves-two-revisions.md) | Accepted (design decision) |
+| 0074 | [The vault's cipher, key stores, and other outside crates](0074-the-vaults-cipher-key-stores-and-other-outside-crates.md) | Accepted (design decision) |
+| 0075 | [The vault's interface, as building it settled it](0075-the-vaults-interface-as-building-it-settled-it.md) | Accepted (design decision) |
