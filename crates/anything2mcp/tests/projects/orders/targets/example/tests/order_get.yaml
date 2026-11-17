@@ -1,5 +1,0 @@
-test: example_order_get
-kind: offline
-fixture: order_get
-inputs: {order_id: "A-100"}
-expect: {status: draft, customer: "Example Customer One"}

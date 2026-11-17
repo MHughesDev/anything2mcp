@@ -1,8 +1,0 @@
-# The application shows and takes a length as a plain number of inches, in
-# whole sixteenths: `12.5`, never feet and inches.
-types:
-  length_inches:
-    base: measurement
-    unit: in
-    display_unit: in
-    step: "0.0625"
