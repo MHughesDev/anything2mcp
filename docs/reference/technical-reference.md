@@ -48,19 +48,34 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `Source` | Five; each has the strongest level a finding from it can have | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 | `LimitationCode` | Eight | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
 | `UnknownReason` | Four | [Spec section 218](../spec/2-kernel/218-discovery-and-findings.md) |
+| `Availability` | Eight; the default is `unknown`, which is never `ready` | [Spec section 203](../spec/2-kernel/203-the-provider-contract.md) |
+| `SubsystemState`, `SubsystemMove` | Four and three | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
+| `DoctorState` | Seven; the default is `unknown` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
+| `IdentityStrategy` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
+| `FieldBase`, `Sensitivity`, `EnvironmentKind`, `TestKind`, `Checkpoint` | Ten, three in order, two, two, two | [File formats](file-formats.md) |
+| `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
+| `DigestPurpose` | Three: `blob_name`, `restricted_value`, `record_key` | [Decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) |
 
-Two words are checked names and not enums, because their values arrive with packs and crates ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)):
+Some words are checked names and not enums, because their values arrive with packs, crates, and target files ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md), [decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)):
 
 | Type | Shape | Who supplies the values |
 | --- | --- | --- |
 | `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its archetype |
 | `FailureCode` | The same shape; at most 64 characters | Each crate names the codes it can produce; a code never changes once released |
+| `SurfaceKind`, `StepKind`, `Verb`, `FileKindName`, `FindingKind`, `ControlName` | The same shape; at most 32 characters | A provider registers each one it brings. A step kind is a name within its mode |
+| `LintCode` | An owner and a rule, each of that shape, joined by one dot; at most 64 characters | `kernel`, or the provider that registers the rule |
+| `TargetName`, `SurfaceName`, `Environment` | The same shape; at most 32 characters | The target's files |
+| `OperationName`, `AccountName` | The same shape; at most 64 characters | The target's files, and the settings. The compiler checks the parts of a tool name |
 
-Three more complete the crate:
+These complete the crate ([decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), [decision 0069](../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md)); the [crate's design](../architecture/crates/a2m-core.md) has every signature:
 
 - **`Failure`** is a class, a code, a plain sentence, and a next step. The sentence and the next step are shown to callers and must never contain a secret. A name that is not one of a vocabulary's values, or is badly formed, becomes a failure of class `input` with the code `schema_invalid`, and its next step lists the values that would have been accepted.
 - **`Finding`** is what discovery returns. It is made only through its builder, which refuses a level above `discovered`, above what the source supports, or above the weakest finding it was derived from. What is not stated takes the weakest value. Its identifier is a `Digest` of its content, so the same observation has the same identifier everywhere, and a stored finding is checked against its identifier when it is read. Its `Subject` is one of six kinds; an address subject carries no credentials, query, or fragment.
 - **`Secret`** wraps a value that must never be shown. Printing it gives `[redacted]`. It cannot be serialized or copied, and the build fails if it ever can. The value is reached only through a method named `expose`, so that every use can be found.
+- **`Value`** is what a field holds: nothing, true or false, a whole number, text, a decimal, a moment, a date, a length of time, a list, or a record. It is never a float and never a secret, and kinds are never converted. **`Values`** holds named values sorted by name, so the same values have the same bytes and the same digest whoever built them. **`ValueType`** describes a value's type, for the expression checker and the plan alike. **`Decimal`** is exact to 28 significant digits: a result that does not fit is refused, never rounded, and a division takes places and a rounding mode. **`RecordKey`** is one or more plain values in declared order.
+- **Identifiers** are 16 bytes, ordered by the moment they were made, written as a one-letter prefix, an underscore, and 32 hexadecimal characters: `RunId` (`r_`), `JobId`, `SessionId`, `ApprovalId`, `DecisionId`, `WorkspaceId`, `PrincipalId`, `RunnerId`. The crate reads no clock and no random source; whoever makes one brings both. **`Identity`** is a person or a named account, never a credential.
+- **`Plan`** is the compiled plan as data, with `encode`, `decode`, `check`, and `show`. It is encoded as canonical JSON after one line that names the format; the hash is the digest of all the bytes, and `decode` checks it before it reads anything. A pack's own data is a `PackPayload`, held as canonical JSON text that the kernel never parses.
+- **`Redact`** and **`KeyedDigest`** are the two interfaces the vault implements. `Redact` turns text into text with every registered secret removed, and redacts a whole failure or a set of values in one call. A keyed digest is separate for each workspace and each purpose, and has one construction, HMAC-SHA-256.
 
 ## Driver interface
 

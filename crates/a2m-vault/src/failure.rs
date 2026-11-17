@@ -109,9 +109,7 @@ pub(crate) fn bad_name(what: &'static str) -> Failure {
     Failure::new(
         FailureClass::Input,
         FailureCode::SCHEMA_INVALID,
-        format!(
-            "A {what} is 1 to 255 bytes of text with no control characters; this one is not."
-        ),
+        format!("A {what} is 1 to 255 bytes of text with no control characters; this one is not."),
         "Give a name of that shape.",
     )
 }

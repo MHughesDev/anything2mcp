@@ -91,9 +91,11 @@ impl KeyStore for MemoryKeyStore {
         bound_to: &'a Binding,
     ) -> BoxFuture<'a, Result<KeyMaterial, Failure>> {
         Box::pin(async move {
-            self.root()
-                .ok_or_else(failure::entry_missing)?
-                .unwrap(wrapped, bound_to, failure::entry_missing)
+            self.root().ok_or_else(failure::entry_missing)?.unwrap(
+                wrapped,
+                bound_to,
+                failure::entry_missing,
+            )
         })
     }
 

@@ -228,7 +228,9 @@ fn forms(value: &[u8]) -> Vec<Pattern> {
         widen: false,
     }];
     if value.contains(&b' ') {
-        let plus = value.iter().map(|&byte| if byte == b' ' { b'+' } else { byte });
+        let plus = value
+            .iter()
+            .map(|&byte| if byte == b' ' { b'+' } else { byte });
         forms.push(Pattern {
             bytes: Zeroizing::new(plus.collect()),
             widen: false,
@@ -595,6 +597,76 @@ fn json_escape(after: &[u8]) -> Option<(char, usize)> {
 
 /// The number four hexadecimal characters spell.
 fn code_unit(four: &[u8]) -> Option<u32> {
-    four.iter()
-        .try_fold(0u32, |sum, &digit| Some((sum << 4) | u32::from(nibble(digit)?)))
+    four.iter().try_fold(0u32, |sum, &digit| {
+        Some((sum << 4) | u32::from(nibble(digit)?))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patterns(secrets: &[&str]) -> Vec<Arc<Pattern>> {
+        secrets
+            .iter()
+            .flat_map(|secret| forms(secret.as_bytes()))
+            .map(Arc::new)
+            .collect()
+    }
+
+    #[test]
+    fn the_search_without_the_automaton_finds_the_same_places() {
+        let secrets = ["abcd-1234", "1234-wxyz", "p w\"d", "k"];
+        let with = Matcher::new(patterns(&secrets));
+        assert!(with.automaton.is_some());
+        let without = Matcher {
+            patterns: patterns(&secrets),
+            automaton: None,
+        };
+        for text in [
+            "<abcd-1234-wxyz> k",
+            "p+w%22d and p w\\\"d and cCB3ImQ=",
+            "YWJjZC0xMjM0 xYWJjZC0xMjM0 xxYWJjZC0xMjM0",
+            "nothing here",
+        ] {
+            let mut expected = with.spans(text, false);
+            let mut found = without.spans(text, false);
+            expected.sort_unstable();
+            found.sort_unstable();
+            assert_eq!(found, expected, "{text}");
+            assert_eq!(mask(text, found), mask(text, expected));
+        }
+        assert!(!with.spans("<abcd-1234>", true).is_empty());
+    }
+
+    #[test]
+    fn a_base64_form_is_only_searched_for_when_it_is_long_enough() {
+        let count = |secret: &str| forms(secret.as_bytes()).len();
+        // One or two bytes: the secret alone. Three: its aligned encoding
+        // too. Four or more: all three alignments.
+        assert_eq!(count("k"), 1);
+        assert_eq!(count("kk"), 1);
+        assert_eq!(count("abc"), 2);
+        assert_eq!(count("abcd"), 4);
+        // A space adds the form-submission spelling; bytes that encode to a
+        // plus or a slash add the URL-safe spellings.
+        assert_eq!(count("ab d"), 5);
+        assert!(count("\u{3ff}\u{3ff}\u{3ff}\u{3ff}") > 4);
+    }
+
+    #[test]
+    fn an_escape_is_masked_whole() {
+        let text = "x=%41%42%43&y";
+        let view = View::of(text).percent_decoded();
+        assert_eq!(view.bytes.as_ref(), b"x=ABC&y");
+        assert_eq!(view.span(2, 5), (2, 11));
+        assert_eq!(view.span(3, 4), (5, 8));
+
+        let text = "\\ud83d\\ude00!";
+        let view = View::of(text).json_unescaped();
+        assert_eq!(view.bytes.as_ref(), "😀!".as_bytes());
+        assert_eq!(view.span(0, 4), (0, 12));
+        assert_eq!(view.span(1, 2), (0, 12));
+        assert_eq!(view.span(4, 5), (12, 13));
+    }
 }

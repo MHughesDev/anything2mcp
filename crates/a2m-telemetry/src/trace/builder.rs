@@ -42,6 +42,18 @@ pub struct TraceBuilder {
     limitations: Vec<Limitation>,
 }
 
+impl fmt::Debug for TraceBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TraceBuilder")
+            .field("run", &self.identity.run)
+            .field("level", &self.level)
+            .field("records", &self.chain.records())
+            .field("kept", &self.kept)
+            .field("cut", &self.cut)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A finished trace: redacted, checked bytes for the store, and the
 /// signature for the store to record on the run.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -182,19 +182,37 @@ mod tests {
         assert_eq!(again.class(), a2m_core::FailureClass::Busy);
 
         let first = Generation::FIRST;
-        assert_eq!(records.get(&main, first).await.unwrap(), Some(record(main, 1, 1)));
-        assert_eq!(records.newest(&main).await.unwrap(), Some(record(main, 2, 2)));
-        assert_eq!(records.newest(&other).await.unwrap(), Some(record(other, 1, 3)));
+        assert_eq!(
+            records.get(&main, first).await.unwrap(),
+            Some(record(main, 1, 1))
+        );
+        assert_eq!(
+            records.newest(&main).await.unwrap(),
+            Some(record(main, 2, 2))
+        );
+        assert_eq!(
+            records.newest(&other).await.unwrap(),
+            Some(record(other, 1, 3))
+        );
         assert_eq!(records.get(&other, Generation::new(2)).await.unwrap(), None);
 
         let stale = Wrapped::from_bytes(vec![7; 4]);
-        let lost = records.replace(record(main, 1, 5), &stale).await.unwrap_err();
+        let lost = records
+            .replace(record(main, 1, 5), &stale)
+            .await
+            .unwrap_err();
         assert_eq!(lost.code(), &failure::KEY_RECORD_CONFLICT);
-        assert_eq!(records.get(&main, first).await.unwrap(), Some(record(main, 1, 1)));
+        assert_eq!(
+            records.get(&main, first).await.unwrap(),
+            Some(record(main, 1, 1))
+        );
 
         let current = Wrapped::from_bytes(vec![1; 4]);
         records.replace(record(main, 1, 5), &current).await.unwrap();
-        assert_eq!(records.get(&main, first).await.unwrap(), Some(record(main, 1, 5)));
+        assert_eq!(
+            records.get(&main, first).await.unwrap(),
+            Some(record(main, 1, 5))
+        );
         assert_eq!(records.all().len(), 3);
     }
 }

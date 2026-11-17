@@ -118,6 +118,8 @@ impl Listener for StandListener {
                     kill,
                 );
             }
+            // Let other tasks run before trying again.
+            tokio::task::yield_now().await;
         }
     }
 

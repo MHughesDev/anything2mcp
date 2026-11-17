@@ -18,8 +18,7 @@ const CIPHER: u8 = 1;
 /// The length of a data key wrapped by an owner's key.
 const DATA_KEY_LENGTH: usize = NONCE_LENGTH + KeyMaterial::LENGTH + TAG_LENGTH;
 /// Everything before the ciphertext.
-const HEADER_LENGTH: usize =
-    MAGIC.len() + 2 + Digest::LENGTH + 4 + DATA_KEY_LENGTH + NONCE_LENGTH;
+const HEADER_LENGTH: usize = MAGIC.len() + 2 + Digest::LENGTH + 4 + DATA_KEY_LENGTH + NONCE_LENGTH;
 
 /// A sealed item: the format, the cipher, the owner's key and its generation,
 /// the wrapped data key, the nonce, and the ciphertext with its tag.

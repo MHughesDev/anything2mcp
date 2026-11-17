@@ -322,8 +322,7 @@ impl KeyId {
     #[must_use]
     pub fn workspace(workspace: &WorkspaceId) -> Self {
         Self::of(
-            BoundTo::new("a2m-vault/key-id/workspace")
-                .field("workspace", workspace.as_bytes()),
+            BoundTo::new("a2m-vault/key-id/workspace").field("workspace", workspace.as_bytes()),
         )
     }
 
@@ -444,7 +443,11 @@ mod tests {
             KeyId::owner(&other, &ana),
         ];
         for (index, id) in ids.iter().enumerate() {
-            assert_eq!(ids.iter().filter(|other| *other == id).count(), 1, "{index}");
+            assert_eq!(
+                ids.iter().filter(|other| *other == id).count(),
+                1,
+                "{index}"
+            );
             assert_eq!(id.to_string().parse::<KeyId>().unwrap(), *id);
         }
         assert_eq!(KeyId::workspace(&main), KeyId::workspace(&main));

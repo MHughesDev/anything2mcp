@@ -7,25 +7,4 @@ no session: Unable to create WebDriver session:
         session not created: This version of ChromeDriver only supports Chrome version 147
         Current browser version is 153.0.8010.12 with binary path /opt/pw-browsers/chromium
         Error: session not created
-        Stacktrace:
-            #0 0x55ce01a0738a <unknown>
-            #1 0x55ce014093a5 <unknown>
-            #2 0x55ce0144c82f <unknown>
-            #3 0x55ce0144b5e0 <unknown>
-            #4 0x55ce01446ade <unknown>
-            #5 0x55ce01440d59 <unknown>
-            #6 0x55ce01490fbe <unknown>
-            #7 0x55ce014906ac <unknown>
-            #8 0x55ce0144f6ef <unknown>
-            #9 0x55ce014504b1 <unknown>
-            #10 0x55ce019cacfb <unknown>
-            #11 0x55ce019cdcad <unknown>
-            #12 0x55ce019b7408 <unknown>
-            #13 0x55ce019ce840 <unknown>
-            #14 0x55ce0199de50 <unknown>
-            #15 0x55ce019f4188 <unknown>
-            #16 0x55ce019f4358 <unknown>
-            #17 0x55ce01a05dce <unknown>
-            #18 0x7fde7ac9cb84 <unknown>
-            #19 0x7fde7ad29ecc <unknown>
             

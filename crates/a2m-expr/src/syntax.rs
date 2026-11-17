@@ -449,10 +449,6 @@ impl Parser {
         matches!(self.tokens.get(self.at), Some((Tok::Sym(found), _)) if *found == symbol)
     }
 
-    fn peek_word(&self, word: &str) -> bool {
-        matches!(self.tokens.get(self.at), Some((Tok::Ident(found), _)) if found == word)
-    }
-
     fn here(&self) -> Span {
         self.tokens.get(self.at).map_or(self.end, |(_, span)| *span)
     }

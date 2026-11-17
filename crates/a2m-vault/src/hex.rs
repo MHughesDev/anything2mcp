@@ -14,7 +14,7 @@ pub(crate) fn encode(bytes: &[u8]) -> String {
 /// The bytes that `text` spells, or `None` when it is not hexadecimal.
 pub(crate) fn decode(text: &str) -> Option<Vec<u8>> {
     let bytes = text.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
     let (pairs, _) = bytes.as_chunks::<2>();

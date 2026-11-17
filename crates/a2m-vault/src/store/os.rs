@@ -80,9 +80,11 @@ impl OsKeyStore {
         let entry = Arc::clone(&self.entry);
         let read = blocking(move || entry.get_secret().map(Zeroizing::new)).await?;
         match read {
-            Ok(bytes) => LocalRoot::from_entry(&bytes)
-                .map(Some)
-                .ok_or_else(|| failure::unreachable("its entry for this installation is not a root this engine can read")),
+            Ok(bytes) => LocalRoot::from_entry(&bytes).map(Some).ok_or_else(|| {
+                failure::unreachable(
+                    "its entry for this installation is not a root this engine can read",
+                )
+            }),
             Err(Error::NoEntry) => Ok(None),
             Err(error) => Err(store_failure(&error)),
         }
@@ -184,10 +186,10 @@ async fn blocking<T: Send + 'static>(
 fn store_failure(error: &Error) -> Failure {
     match error {
         Error::NoEntry => failure::entry_missing(),
-        Error::NoStorageAccess(_) => {
-            failure::unreachable("it is locked or refused access")
+        Error::NoStorageAccess(_) => failure::unreachable("it is locked or refused access"),
+        Error::PlatformFailure(_) => {
+            failure::unreachable("the operating system reported a failure")
         }
-        Error::PlatformFailure(_) => failure::unreachable("the operating system reported a failure"),
         _ => failure::unreachable("it refused the request"),
     }
 }
@@ -257,8 +259,13 @@ mod tests {
 
         let first = over(&store, "example-installation").await;
         assert_eq!(first.health().await, StoreHealth::EntryMissing);
-        let missing = first.unwrap(&Wrapped::from_bytes(vec![1; 90]), &binding()).await;
-        assert_eq!(missing.unwrap_err().code(), &failure::KEY_STORE_ENTRY_MISSING);
+        let missing = first
+            .unwrap(&Wrapped::from_bytes(vec![1; 90]), &binding())
+            .await;
+        assert_eq!(
+            missing.unwrap_err().code(),
+            &failure::KEY_STORE_ENTRY_MISSING
+        );
         let wrapped = first.wrap(&key, &binding()).await.unwrap();
         assert_eq!(first.health().await, StoreHealth::Ok);
         assert_eq!(first.describe().strength, StoreStrength::OsStore);

@@ -77,3 +77,8 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0065 | [The specification is rebuilt in parts, and the first design is archived](0065-the-specification-is-rebuilt-in-parts-and-the-first-design-is-archived.md) | Accepted (design decision) |
 | 0066 | [Configuration in layers that may only tighten, and a bar that is measured](0066-configuration-in-layers-that-may-only-tighten-and-a-bar-that-is-measured.md) | Accepted (design decision) |
 | 0067 | [The kernel is built layer by layer, in parallel, and the first driver through the loop is the HTTP pack's](0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md) | Accepted (design decision) |
+| 0068 | [Values, names, and identifiers, as the core crate settles them](0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) | Accepted (design decision) |
+| 0069 | [The plan is canonical JSON, hashed whole, and keyed digests are per workspace](0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md) | Accepted (design decision) |
+| 0072 | [Expressions are a CEL subset, on the engine's own parser, checker, and evaluator](0072-expressions-are-a-cel-subset-on-the-engines-own-parser-and-evaluator.md) | Accepted (design decision) |
+| 0076 | [One trace record per step, and a signature chained over record digests](0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md) | Accepted (design decision) |
+| 0077 | [Logs through the `tracing` crate with our own subscriber, and spans through a handle](0077-logs-through-the-tracing-crate-with-our-own-subscriber-and-spans-through-a-handle.md) | Accepted (design decision) |

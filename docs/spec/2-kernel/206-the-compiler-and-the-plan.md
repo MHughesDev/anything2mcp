@@ -55,7 +55,7 @@ The plan's types live in `a2m-core`, with the check of a plan's hash; the compil
 
 **What packs register.** A pack registers its file kinds, the lowering for each mode and verb it serves, its lint rules, and its drafting rules ([section 202](202-kernel-and-packs.md)). A file kind has one owning pack, and registration is keyed by the file kind and the surface kind, so two packs can each register `screens/` for their own surfaces. Another pack may declare that it reads a kind; the compiler then hands that pack's lowering the validated entries as data, never the owning pack's code. If the owning pack is not enabled, a binding that needs its kind does not compile ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
 
-**Encoding.** A compact binary encoding through Rust's standard serialization framework, inside a small versioned envelope. A zero-copy format is considered only if plan loading misses its budget. `anything2mcp plan show` prints any plan as readable text for review and comparison.
+**Encoding.** Canonical JSON, with no spaces, every object's keys sorted, and whole numbers only, after one first line that names the plan format ([decision 0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md)). The plan's hash is the digest of all its bytes. A binary format is considered only if plan loading misses its budget, and would be the next format number. `anything2mcp plan show` prints any plan as readable text for review and comparison.
 
 ## Lint rules
 
@@ -100,8 +100,8 @@ Compiling a target with 500 operations: under 2 seconds. Loading its plan: under
 
 ## Open points
 
-- The exact encoding crate, chosen in Phase 1 by measuring load time and size.
+- Whether loading a plan as canonical JSON meets the budget below, measured in Phase 1 on a plan of real size.
 - How a plug-in registers file kinds and lint rules across a process boundary: as data at start, most likely, with its lowerings answered over the plug-in protocol.
 - Whether a lint rule may be silenced, and where the reason is written.
-- Whether `Verb` stays a closed list; either way, a verb that no lowering registers does not compile.
+- `Verb` is a checked name ([decision 0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md)); a verb that no lowering registers does not compile.
 - How much of the description lint can be automatic before the agent-usability gate has to judge it.

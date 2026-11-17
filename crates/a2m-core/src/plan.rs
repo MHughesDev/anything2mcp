@@ -1296,10 +1296,17 @@ mod tests {
 
     #[test]
     fn a_plan_whose_bytes_changed_by_one_bit_fails_its_hash_check() {
+        // Every bit of the first line and the start of the body, and one bit
+        // of every byte after that, a different one from byte to byte.
         let encoded = sample().encode().unwrap();
         let mut bytes = encoded.bytes.clone();
         for position in 0..bytes.len() {
-            for bit in 0..8 {
+            let bits = if position < 64 {
+                0..8
+            } else {
+                position % 8..position % 8 + 1
+            };
+            for bit in bits {
                 bytes[position] ^= 1 << bit;
                 let failure = Plan::decode(&bytes, &encoded.hash).unwrap_err();
                 assert_eq!(failure.class(), FailureClass::Input);

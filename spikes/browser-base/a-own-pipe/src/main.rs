@@ -251,6 +251,18 @@ async fn main() {
     );
     report.writes_stored_after_blocked_save = app.writes().await.expect("the control interface answers").len();
 
+    // A second tab on the warm browser, opened on the form and read.
+    let t = Instant::now();
+    let second = open_tab(&cdp).await.expect("tab");
+    let opened = common::ms(t.elapsed());
+    goto_form(&second, &url).await.expect("page");
+    let again = locate(&second, common::FIELD_NAME).await.expect("locate");
+    read_value(&second, &again).await.expect("read");
+    report.notes.push(format!(
+        "a second tab on the warm browser: ready in {opened} ms; opened, navigated, waited, and read in {} ms",
+        common::ms(t.elapsed())
+    ));
+
     // Close, and check that nothing is left.
     let _ = cdp.call(None, "Browser.close", json!({}), DEADLINE).await;
     let exited = tokio::time::timeout(DEADLINE, child.wait()).await;

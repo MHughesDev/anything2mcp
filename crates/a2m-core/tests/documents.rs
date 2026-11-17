@@ -225,7 +225,7 @@ fn health_rule() -> String {
     table(section, "| Rule | Detail |")
         .into_iter()
         .find(|row| row[0] == "A health state, with what to do")
-        .expect("the health state row")
+        .unwrap_or_else(|| panic!("no health state row"))
         .swap_remove(1)
 }
 

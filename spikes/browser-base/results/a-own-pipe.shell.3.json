@@ -2,39 +2,40 @@
   "candidate": "a: own client",
   "transport": "pipe, ShellExec",
   "browser_version": "Chrome/153.0.8010.12",
-  "cold_start_to_first_read_ms": 387.433,
-  "launch_to_connected_ms": 108.076,
+  "cold_start_to_first_read_ms": 464.211,
+  "launch_to_connected_ms": 220.39,
   "wait_kind": "protocol event, then an in-page observer in an isolated world",
   "field_value": "Left rail",
   "warm_reads": {
     "count": 200,
-    "median_ms": 0.175,
-    "p95_ms": 2.396,
-    "max_ms": 9.805
+    "median_ms": 0.285,
+    "p95_ms": 2.372,
+    "max_ms": 15.506
   },
   "snapshot_kind": "accessibility tree",
   "snapshot_nodes": 61,
-  "snapshot_ms": 2.41,
+  "snapshot_ms": 2.766,
   "intercepted": "PUT /api/orders/A-100/items/L-101 failed before sending",
   "writes_stored_after_blocked_save": 0,
   "clean_close": {
     "checked": true,
     "remaining": 0,
-    "after_ms": 0.555
+    "after_ms": 0.623
   },
   "kill_mid_call": {
     "outcome": "Err(Disconnected { sent: true })",
-    "after_kill_ms": 32.969,
+    "after_kill_ms": 13.539,
     "leftover": {
       "checked": true,
       "remaining": 0,
-      "after_ms": 0.623
+      "after_ms": 21.924
     }
   },
   "notes": [
-    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.65 ms, p95 17.131 ms",
-    "locate by label with an in-page helper and read, one round trip: median 0.193 ms, p95 0.244 ms",
-    "a late element, 20 times: an in-page observer notices it 0 ms after it appears (median; max 0.1), a 50 ms poll 36 ms (median; max 37.6)",
+    "locate by role and name with Accessibility.queryAXTree, then read (4 round trips): median 16.671 ms, p95 19.185 ms",
+    "locate by label with an in-page helper and read, one round trip: median 0.142 ms, p95 0.175 ms",
+    "a late element, 20 times: an in-page observer notices it 0 ms after it appears (median; max 0.1), a 50 ms poll 35.5 ms (median; max 42.8)",
+    "a second tab on the warm browser: ready in 31.701 ms; opened, navigated, waited, and read in 82.304 ms",
     "exit after Browser.close: Ok(Ok(ExitStatus(unix_wait_status(0))))",
     "a call after the kill: Err(Disconnected { sent: false })"
   ]

@@ -83,15 +83,15 @@ fn json_ascii(text: &str) -> String {
 
 /// The forms of [`SECRET`] that text commonly carries.
 fn encoded_forms() -> Vec<(&'static str, String)> {
-    let json = serde_json::to_string(SECRET).unwrap();
+    let json = serde_json::json!(SECRET).to_string();
     let json = json.trim_matches('"').to_owned();
-    let twice = serde_json::to_string(&json).unwrap();
+    let twice = serde_json::json!(json).to_string();
     let every_character: String = SECRET
         .encode_utf16()
         .map(|unit| format!("\\u{unit:04X}"))
         .collect();
-    let form: String = percent(SECRET, |byte| unreserved(byte) || byte == b' ', true)
-        .replace(' ', "+");
+    let form: String =
+        percent(SECRET, |byte| unreserved(byte) || byte == b' ', true).replace(' ', "+");
     vec![
         ("exact", SECRET.to_owned()),
         ("percent, upper case", percent(SECRET, unreserved, true)),
@@ -99,7 +99,11 @@ fn encoded_forms() -> Vec<(&'static str, String)> {
         ("percent, every byte", percent(SECRET, |_| false, true)),
         (
             "percent, as a script encodes a component",
-            percent(SECRET, |byte| unreserved(byte) || b"!*'()".contains(&byte), true),
+            percent(
+                SECRET,
+                |byte| unreserved(byte) || b"!*'()".contains(&byte),
+                true,
+            ),
         ),
         ("form submission", form),
         (
@@ -112,7 +116,10 @@ fn encoded_forms() -> Vec<(&'static str, String)> {
         ("json, twice", twice.trim_matches('"').to_owned()),
         ("json inside percent", percent(&json, unreserved, true)),
         ("base64", base64(SECRET.as_bytes(), false, true)),
-        ("base64, url-safe, no padding", base64(SECRET.as_bytes(), true, false)),
+        (
+            "base64, url-safe, no padding",
+            base64(SECRET.as_bytes(), true, false),
+        ),
         (
             "base64 inside percent",
             percent(&base64(SECRET.as_bytes(), false, true), unreserved, true),
@@ -159,7 +166,10 @@ fn a_secret_inside_a_larger_base64_value_is_masked_at_every_alignment() {
                 assert!(encoded.ends_with(kept_after), "{case}");
                 assert!(kept_before.len() <= first, "{case}");
                 let unpadded = encoded.trim_end_matches('=').len();
-                assert!(kept_after.trim_end_matches('=').len() <= unpadded - last, "{case}");
+                assert!(
+                    kept_after.trim_end_matches('=').len() <= unpadded - last,
+                    "{case}"
+                );
                 assert!(redactor.contains_secret(&text), "{case}");
                 assert!(!redactor.contains_secret(&redacted), "{case}");
             }
@@ -200,7 +210,8 @@ fn text_with_no_secret_comes_back_unchanged() {
     assert!(!none.contains_secret("anything at all"));
 
     let redactor = redactor(&[SECRET]);
-    let text = "{\"path\":\"C:\\\\data\\\\file\",\"rate\":\"50%\",\"note\":\"caf\\u00e9 \\ud83d\\ude00\"}";
+    let text =
+        "{\"path\":\"C:\\\\data\\\\file\",\"rate\":\"50%\",\"note\":\"caf\\u00e9 \\ud83d\\ude00\"}";
     assert_eq!(redactor.redact(text), text);
     assert!(!redactor.contains_secret(text));
 }
@@ -227,7 +238,10 @@ fn a_short_secret_is_registered_and_masked_and_an_empty_one_is_ignored() {
 #[test]
 fn secrets_that_overlap_or_touch_are_masked_whole() {
     let redactor = redactor(&["abcd-1234", "1234-wxyz", "wxyz!"]);
-    assert_eq!(redactor.redact("<abcd-1234-wxyz!>"), format!("<{REDACTED}>"));
+    assert_eq!(
+        redactor.redact("<abcd-1234-wxyz!>"),
+        format!("<{REDACTED}>")
+    );
     assert_eq!(
         redactor.redact("abcd-1234 and 1234-wxyz"),
         format!("{REDACTED} and {REDACTED}")
@@ -248,7 +262,10 @@ fn the_mask_itself_never_hides_or_uncovers_a_secret() {
         assert!(!redactor.contains_secret(&redacted), "{text} -> {redacted}");
         assert!(!redacted.contains("long-secret-value"), "{redacted}");
         assert!(!redacted.contains("d]tail"), "{redacted}");
-        assert!(!redacted.replace(REDACTED, "").contains("red"), "{redacted}");
+        assert!(
+            !redacted.replace(REDACTED, "").contains("red"),
+            "{redacted}"
+        );
     }
     assert_eq!(redactor.redact("[redacted]"), "[redacted]");
 }

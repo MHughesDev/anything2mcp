@@ -277,7 +277,10 @@ impl Vault {
                 generation: Generation::FIRST,
             };
             let material = KeyMaterial::generate(self.random.as_ref())?;
-            let wrapped = self.store.wrap(&material, &root_binding(key, layer)).await?;
+            let wrapped = self
+                .store
+                .wrap(&material, &root_binding(key, layer))
+                .await?;
             let record = KeyRecord {
                 id,
                 layer,

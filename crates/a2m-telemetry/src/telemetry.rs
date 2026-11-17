@@ -1,5 +1,6 @@
 //! The handle every crate above this one holds: logs, spans, and metrics.
 
+use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -318,6 +319,15 @@ impl Telemetry {
     }
 }
 
+impl fmt::Debug for Telemetry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Telemetry")
+            .field("log_destination", &self.log_destination())
+            .field("receives_process_logs", &self.inner.receives_process_logs)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A span that is running. Dropping the guard ends it.
 #[must_use = "a span ends when its guard is dropped"]
 pub struct SpanGuard {
@@ -329,6 +339,16 @@ pub struct SpanGuard {
     attrs: Vec<Attr>,
     started: Timestamp,
     started_elapsed: Duration,
+}
+
+impl fmt::Debug for SpanGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpanGuard")
+            .field("name", &self.name)
+            .field("context", &self.context())
+            .field("attrs", &self.attrs)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SpanGuard {

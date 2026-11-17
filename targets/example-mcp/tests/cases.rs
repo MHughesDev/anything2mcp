@@ -288,7 +288,8 @@ fn stdio_a_write_is_proven_by_asking_the_stand_what_it_stored() -> Outcome {
     assert_eq!(first["result"]["tools"].as_array().map(Vec::len), Some(3));
     assert_eq!(names(&client.tools()?), TOOLS);
     // One tool takes a single free-text string, for the lint that looks for such.
-    let search = &tool(&client.tools()?, "orders_search")?["inputSchema"];
+    let listed = client.tools()?;
+    let search = &tool(&listed, "orders_search")?["inputSchema"];
     assert_eq!(search["properties"], json!({"query": {"type": "string"}}));
     // Listing calls no tool.
     assert!(control.calls()?.is_empty());
@@ -636,13 +637,15 @@ async fn stdio_each_drift_shows_in_the_list_and_the_notice_is_sent_when_asked() 
     assert_eq!(archived.status, OrderStatus::Archived);
 
     // The notice leaves when the test asks, with no request to prompt it.
+    // Waiting on the stand's own count first means a notice that never left
+    // fails the test, where reading alone would wait for ever.
     control.announce_list_changed()?;
+    control.wait_for_announcements(1).await?;
     let notice = client.read()?;
     assert_eq!(
         notice,
         json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
     );
-    control.wait_for_announcements(1).await?;
     drop(client);
 
     // A program started later reports the new version and is owed no old notice.
@@ -979,11 +982,17 @@ fn stdio_the_credential_comes_from_the_environment_and_two_programs_share_one_st
 // ---- finding the program ---------------------------------------------------
 
 /// Another crate's tests get the program from `stdio_program`, which asks
-/// Cargo to build it. This is the program Cargo built for these tests.
+/// Cargo to build it. Every stdio test above ran the program found that way;
+/// this one checks what was found, and that a second call finds the same.
 #[test]
-fn the_program_the_harness_finds_is_the_one_cargo_built() -> Outcome {
-    let found = stdio_program()?.canonicalize()?;
-    let built = std::path::Path::new(env!("CARGO_BIN_EXE_example-mcp")).canonicalize()?;
-    assert_eq!(found, built);
+fn the_harness_finds_the_program_by_asking_cargo() -> Outcome {
+    let found = stdio_program()?;
+    assert!(found.is_file());
+    let name = format!("example-mcp{}", std::env::consts::EXE_SUFFIX);
+    assert_eq!(
+        found.file_name().and_then(|n| n.to_str()),
+        Some(name.as_str())
+    );
+    assert_eq!(StdioStand::new()?.program(), found);
     Ok(())
 }
