@@ -1730,7 +1730,11 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
             let list = result.get(header).and_then(Value::as_list).unwrap();
             let expected: Vec<Value> = rows
                 .iter()
-                .map(|row| normalizer.normalize(&text(&row[position])).unwrap().normalized)
+                .map(|row| match row[position].as_str() {
+                    // An empty field holds no value.
+                    "" => Value::Null,
+                    cell => normalizer.normalize(&text(cell)).unwrap().normalized,
+                })
                 .collect();
             assert_eq!(list, expected.as_slice(), "{file} {header}");
         }
@@ -1759,8 +1763,11 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     let write = "operation: example_stock_set
 effect: write
 key: item_code
+commit_points: 1
 inputs:
   item_code: {type: identifier}
+  on_hand: {type: integer}
+outputs:
   on_hand: {type: integer}
 bindings:
   - mode: file
