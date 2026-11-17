@@ -141,10 +141,20 @@ jobs:
         env:
           A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
         run: python -m unittest discover -s tests -v
-      - name: Test the npm packages
-        working-directory: bindings/npm
+      - name: Run the short name from the installed wheel on Windows
+        if: runner.os == 'Windows'
         run: |
-          node --test test/platform.test.js
+          cmd.exe //c "$(cygpath -w "$RUNNER_TEMP/try/Scripts/a2m.cmd") --version"
+      - name: Check the generated client methods are current
+        run: |
+          python bindings/python/tools/generate_actions.py --check
+          node bindings/npm/scripts/generate-actions.js --check
+      - name: Test the npm packages and the Node client, against a fake engine and the built one
+        working-directory: bindings/npm
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          node --test test/platform.test.js test/client.test.js
           node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"
 
   presence:

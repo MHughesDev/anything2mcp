@@ -125,7 +125,7 @@ The artifact archetype's steps are `open`, `locate`, `set`, `read`, and `save` (
 | `upsert` | Decided at the preview by reading ([section 209](../2-kernel/209-record-identity-and-dependent-records.md)), then as `create` or `update` | `save` |
 | `delete` | `open`, `locate` by key, `set` the row removed, `save`. Read-back expects absent | `save` |
 
-One save is one commit point. An operation whose input is a list of rows saves them in one `save`, and read-back compares each row by its key, as for one save that carries many records in section 209. A pipeline that repeats a single-row operation saves once per row: slower, and each row is its own resume point.
+`save` is the one step that saves, and it always does; the others never do. The manifest lists it as the mode's commit step. The driver carries it out only live, or in a sandbox with test records, and only when the plan marks it as the commit point. An operation whose input is a list of rows saves them in one `save`, and read-back compares each row by its key, as for one save that carries many records in section 209. A pipeline that repeats a single-row operation saves once per row: slower, and each row is its own resume point.
 
 ## The driver, part by part
 

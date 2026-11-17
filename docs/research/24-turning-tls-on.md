@@ -67,7 +67,7 @@ From a throwaway project outside the repository, resolved at exact versions and 
 | --- | --- | --- |
 | The session keeper, to identity services | Done behind `a2m-auth`'s feature | `reqwest` |
 | The HTTP pack, the MCP pack, the web probe | The same client, with the same feature | `reqwest` |
-| Mutual TLS (`client_certificate`, [section 216](../spec/2-kernel/216-sessions-and-the-session-keeper.md)) | A client identity in the client's configuration | reqwest's identity from PEM, or the preconfigured configuration. Not tried |
+| Mutual TLS (`client_certificate`, [section 215](../spec/2-kernel/215-sessions-and-the-session-keeper.md)) | A client identity in the client's configuration | reqwest's identity from PEM, or the preconfigured configuration. Not tried |
 | The server's listener (`server.tls.certificate` and `key`, from the vault) | An acceptor in front of axum's `serve`. Axum 0.8.9 has no TLS, and its `Listener` trait's `accept` returns a stream with no way to fail, so a handshake must be done on the connection and not inside `accept`, or one slow client stalls all | `tokio-rustls` 0.26.6 (MIT OR Apache-2.0; 80 releases; the latest 2026-09-28) |
 | PEM files for that listener | A parser for a certificate and a key | `rustls-pki-types` 1.16.0 has one (`PemObject`), and is already in the tree. `rustls-pemfile` is a thin older crate whose own README now points to `rustls-pki-types`; do not add it |
 | The database and stream packs | The connector of [note 23](23-server-database-clients.md) and the acceptor-free client side of `tokio-rustls` | `tokio-postgres-rustls`, `tokio-rustls` |

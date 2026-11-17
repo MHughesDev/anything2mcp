@@ -113,7 +113,7 @@ async fn order_detail(State(state): State<AppState>, Path(order_id): Path<String
 }
 
 /// The form for one line item. The address `.../items/new` gives an empty form.
-async fn item_form(
+pub(crate) async fn item_form(
     State(state): State<AppState>,
     Path((order_id, item_code)): Path<(String, String)>,
 ) -> Response {

@@ -294,6 +294,7 @@ In an observing tab:
 | A WebSocket | Refused at creation, and reported as a limitation |
 | A beacon, a form submitted with POST | Failed by the same interception |
 | A download, a window the page opens | Refused in the browser: no file is written, and the window is closed before it fetches anything. Each is reported as a limitation |
+| A permission, a file chooser | Every permission refused in the browser, for every origin, with no prompt; a file chooser opens nothing |
 | Navigation | Only to an address the caller passes, on an origin the tab was opened for, or a plain link as above. A move the page starts itself, with any method, is ended before its request leaves the browser |
 
 ### The watch tab and the explore tab

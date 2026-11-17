@@ -18,6 +18,7 @@ mod edges;
 mod escapes;
 pub mod faults;
 pub mod harness;
+mod leaving;
 mod openapi;
 mod pages;
 pub mod store;
@@ -85,6 +86,7 @@ pub fn router() -> Router {
         .merge(traps::routes())
         .merge(edges::routes())
         .merge(escapes::routes())
+        .merge(leaving::routes())
         .merge(auth::routes(&state))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

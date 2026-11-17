@@ -155,3 +155,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0152 | [The action registry and telemetry after their safety audit](0152-the-action-registry-and-telemetry-after-their-safety-audit.md) | Accepted (design decision) |
 | 0153 | [What the compiler, the plan, and the redactor hold by themselves, after the safety audit](0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md) | Accepted (design decision) |
 | 0154 | [The HTTP, command, and MCP packs state what saves, what writes, and which key is sent](0154-the-http-command-and-mcp-packs-state-what-saves-what-writes-and-which-key-is-sent.md) | Accepted (design decision) |
+| 0155 | [Four packs state what saves, what writes, and when their guard lifts](0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md) | Accepted (design decision) |
+| 0156 | [The clients are generated from the served document, and reach Windows by the pipe](0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md) | Accepted (design decision) |

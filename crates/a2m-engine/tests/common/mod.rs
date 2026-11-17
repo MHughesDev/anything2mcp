@@ -1790,6 +1790,9 @@ pub struct Faults {
 
 pub struct StoreControl {
     pub store: Store,
+    /// The key to the policy engine's tables, which this stand-in for the
+    /// policy engine takes from the store, as `Policy::open` does.
+    pub policy_key: Arc<a2m_ledger::PolicyKey>,
     pub plan: Arc<Plan>,
     pub fence: Mutex<Fence>,
     pub hooks: Arc<Hooks>,
@@ -1824,11 +1827,12 @@ impl StoreControl {
     }
 
     /// A person approves a diff. The policy engine's stand-in: one row in
-    /// its own table, reached through the ledger's `testing` feature, for
-    /// the run's tool version, with an expiry and a presence check, as the
-    /// policy engine writes it.
+    /// its own table, with the key it took from the store, for the run's
+    /// tool version, with an expiry and a presence check, as the policy
+    /// engine writes it.
     pub async fn approve(&self, diff: Digest) {
         let run = self.fence().run;
+        let key = Arc::clone(&self.policy_key);
         let id = self
             .store
             .write(Durability::Synced, move |tx| {
@@ -1838,7 +1842,7 @@ impl StoreControl {
                 let expires = a2m_core::Timestamp::from_unix_millis(
                     now.as_unix_millis().saturating_add(3_600_000),
                 );
-                tx.policy_tables_for_tests().execute(
+                tx.policy_tables(&key)?.execute(
                     "INSERT INTO approvals
                         (id, workspace_id, scope, run_id, diff_hash, tool_version_hash, approver_id,
                          channel, presence_check, granted_at, expires_at)
@@ -1940,11 +1944,12 @@ impl Control for StoreControl {
             };
             // Marking the approval used and moving the run happen in one
             // transaction; the ledger checks the approval is for this diff.
+            let key = Arc::clone(&self.policy_key);
             let cleared = self
                 .store
                 .write(Durability::Synced, move |tx| {
                     let now = tx.now();
-                    tx.policy_tables_for_tests().execute(
+                    tx.policy_tables(&key)?.execute(
                         "UPDATE approvals SET used_at = ?2
                          WHERE id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
                         &[approval.to_string().into(), now.into()],
@@ -2346,8 +2351,10 @@ impl Scene {
             clock: clock.clone(),
             settings: engine_settings,
         });
+        let policy_key = Arc::new(store.policy_key().unwrap());
         let control = Arc::new(StoreControl {
             store,
+            policy_key,
             plan,
             fence: Mutex::new(fence),
             hooks: Arc::clone(&hooks),

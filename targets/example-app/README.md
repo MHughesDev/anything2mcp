@@ -73,7 +73,7 @@ Each aims at `/traps/write/escapes/{what}`, so the same counts show that none ar
 | `/escapes/download/{name}` | The answer is a file to save under that name |
 | `/escapes/links` | A link that opens a new window, and a link to a download |
 | `/escapes/frame` | It embeds `/escapes/inner` from the other name, which opens a WebSocket and sends a `POST` in its first document and in a second one it moves itself to |
-| `/escapes/service-worker.js`, `/escapes/shared-worker.js` | Workers that, sent a message, send a `POST` and open a WebSocket, and answer with what became of each |
+| `/escapes/service-worker.js`, `/escapes/shared-worker.js` | Workers that, when reached, send a `POST` and open a WebSocket, and answer with what became of each: the service worker when sent a message, the shared worker when a page connects to it |
 
 ## The control interface
 

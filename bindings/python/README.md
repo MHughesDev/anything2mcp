@@ -11,10 +11,12 @@ Anything2MCP latches onto existing software and systems and exposes them to AI a
 import anything2mcp
 
 with anything2mcp.connect(project=".") as client:
-    status = client.call("engine.status")
+    status = client.engine_status()          # a typed method per action
     print(status.ok, status.exit_class, status.result)
+    run = client.tool_call(tool="example_order_get", input={"order_id": "A-100"})
+    other = client.call("engine.status")     # or any action by its name
 ```
 
-The client does not start the engine; start it with `anything2mcp serve`. It reaches the engine on macOS and Linux today. On Windows, use the command.
+The methods are generated from the OpenAPI document the engine serves, one per action, named as the action names it with the dot as an underscore. The client does not start the engine; start it with `anything2mcp serve`. It reaches the engine on macOS and Linux by its socket, and on Windows by its named pipe. On Windows it checks that the process serving the pipe runs as you before it sends anything, and a read has no timeout there.
 
 Licensed under the MIT licence.

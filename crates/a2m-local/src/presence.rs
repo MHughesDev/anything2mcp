@@ -7,7 +7,8 @@
 //! prompt can do is asked each time it matters, with
 //! [`PresencePrompt::available`], because it can change while the engine
 //! runs. The prompt of this machine is [`system_prompt`]: polkit on Linux,
-//! and [`NoPrompt`] on macOS and Windows, whose prompts are not built yet.
+//! LocalAuthentication on macOS, Windows Hello on Windows, and
+//! [`NoPrompt`] on any other system.
 //!
 //! What a passed prompt does not prove is in spec section 222: it stops
 //! an agent that acts through the engine or by synthetic input, not a
@@ -22,8 +23,15 @@ use std::sync::Arc;
 use a2m_actions::BoxFuture;
 use tokio::time::Instant;
 
+// The macOS and Windows prompts are compiled into the tests on every
+// system, so that their mapping is tested everywhere; their calls into the
+// system are compiled on their own system only.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod local_authentication;
 #[cfg(target_os = "linux")]
 pub(crate) mod polkit;
+#[cfg(any(windows, test))]
+pub(crate) mod windows_hello;
 
 /// Which kind of presence check a machine has. `doctor.run` reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +108,23 @@ pub enum PresenceReason {
     /// The operating system would answer yes without asking anybody, so
     /// its answer proves nobody.
     GrantedWithoutAsking,
+    /// The engine runs where nothing it shows reaches a screen: as a
+    /// service, or in a window station that is not the interactive one.
+    NoWindowStation,
+    /// The engine runs in a remote desktop session, so a prompt would be
+    /// answered somewhere other than at this machine.
+    SessionRemote,
+    /// The screen of this machine is locked.
+    SessionLocked,
+    /// Nothing the system could check is set up for this user: no
+    /// fingerprint, face, watch, or PIN, and no password it will ask for.
+    NotSetUp,
+    /// A policy of this machine turns the prompt off.
+    DisabledByPolicy,
+    /// The device that checks is busy with another check.
+    DeviceBusy,
+    /// Too many checks failed, and the system has locked them for now.
+    LockedOut,
     /// The check itself failed, in a way that has no name of its own.
     CheckFailed,
 }
@@ -117,6 +142,13 @@ impl PresenceReason {
             Self::SessionNotActive => "session_not_active",
             Self::NoAgent => "no_agent",
             Self::GrantedWithoutAsking => "granted_without_asking",
+            Self::NoWindowStation => "no_window_station",
+            Self::SessionRemote => "session_remote",
+            Self::SessionLocked => "session_locked",
+            Self::NotSetUp => "not_set_up",
+            Self::DisabledByPolicy => "disabled_by_policy",
+            Self::DeviceBusy => "device_busy",
+            Self::LockedOut => "locked_out",
             Self::CheckFailed => "check_failed",
         }
     }
@@ -258,8 +290,8 @@ impl PresencePrompt for NoPrompt {
 }
 
 /// The prompt this build has for this machine's operating system: polkit
-/// on Linux, and [`NoPrompt`] on macOS and Windows until theirs are built.
-/// Whether it can be raised on this machine is
+/// on Linux, LocalAuthentication on macOS, Windows Hello on Windows, and
+/// [`NoPrompt`] on any other. Whether it can be raised on this machine is
 /// [`PresencePrompt::available`]'s to say.
 #[must_use]
 pub fn system_prompt() -> Arc<dyn PresencePrompt> {
@@ -267,7 +299,15 @@ pub fn system_prompt() -> Arc<dyn PresencePrompt> {
     {
         Arc::new(polkit::PolkitPrompt::system())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(local_authentication::LocalAuthenticationPrompt::system())
+    }
+    #[cfg(windows)]
+    {
+        Arc::new(windows_hello::WindowsHelloPrompt::system())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         Arc::new(NoPrompt)
     }

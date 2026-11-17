@@ -20,8 +20,6 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-# The policy engine's stand-in in the tests (decision 0145).
-a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true

@@ -20,8 +20,9 @@
 //!   page opens a WebSocket and sends a `POST`, in its first document and again
 //!   in a second one it moves itself to, and tells its parent when it has tried.
 //! - `/escapes/service-worker.js` and `/escapes/shared-worker.js`: workers that,
-//!   when sent a message, send a `POST` and open a WebSocket, and answer with
-//!   what became of each.
+//!   when reached, send a `POST` and open a WebSocket, and answer with what
+//!   became of each: the service worker when sent a message, the shared worker
+//!   when a page connects to it.
 
 use axum::Router;
 use axum::extract::Path;

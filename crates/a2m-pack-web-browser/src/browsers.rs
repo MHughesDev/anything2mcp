@@ -441,12 +441,13 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
     client
         .call(
             None,
-            &GetVersion {},
+            &GrantPermissions {
+                permissions: Vec::new(),
+            },
             deadline,
         )
         .await
-        .map_err(|_| "it did not take the refusal of permissions".to_owned())
-        .ok();
+        .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
     client
         .call(
             None,

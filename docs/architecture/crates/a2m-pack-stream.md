@@ -195,6 +195,7 @@ What a step is given and gives:
 | A registry with only this pack builds, and its digest is stable | `tests/compile.rs` |
 | The manifest declares exactly the codes the driver returns | `tests/compile.rs` |
 | The example target compiles twice to the same bytes; an unknown key or word is refused with a file, a line, and a fix | `tests/compile.rs` |
+| A write never compiles as a read; a drafting rule that drafts a channel the runtime owns is refused | `tests/compile.rs`; `src/draft.rs` |
 | A wait above the channel's longest or the settings' ceiling does not compile; `take` compiles only on a queue the runtime owns; a publish must declare what its channel makes of it | `tests/compile.rs` |
 | Five reads of one retained key give one trace signature and one result, and the broker shows no delivery | `tests/driver.rs` |
 | A look is bounded and says its coverage; a queue that was looked at holds what it held | `tests/driver.rs` |
@@ -229,6 +230,7 @@ What a step is given and gives:
 5. Done: `publish` to a state channel as a `write` with read-back, with the lost-confirmation, duplicate, and changed-value tests.
 6. Done: `publish` as `irreversible`, with a scan of a log for the record's token.
 7. Done: `take` on a runtime-owned queue.
+8. Done: what the kernel holds the pack to after the safety audit ([decision 0155](../../decisions/0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md)). `Lowering::commits`: `publish` and `acknowledge` are `Always`; `subscribe`, `await`, `latest`, `browse`, `scan`, `channels`, and `describe` are `Never`. The manifest lists `commit_steps = ["publish", "acknowledge"]`. `Lowering::least_effect`: `take` is `irreversible`, `publish` is `write`, the rest `read`. `FileKind::writes`: a channel file describes a write when it states an `ownership` other than `shared`; a schema file never does. The driver's guard: in `Sandbox { test_records: true }` a step writes or takes only if it is marked `commits`, so a `take`'s `subscribe` is refused there (it is not marked), and a `take` runs only live. Test: `a_sandbox_with_test_records_lifts_the_guard_only_for_the_step_that_commits`.
 
 Not built:
 
