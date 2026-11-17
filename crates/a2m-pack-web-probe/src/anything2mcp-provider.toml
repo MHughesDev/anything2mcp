@@ -87,6 +87,10 @@ code = "focus_invalid"
 class = "unknown_variant"
 code = "page_unreadable"
 
+[[failure_codes]]
+class = "transient"
+code = "page_not_loaded"
+
 # The browser is started for a profile of the engine's own, under the root
 # `profiles`, and reaches only the target's declared surfaces.
 [effects]

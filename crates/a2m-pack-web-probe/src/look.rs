@@ -16,7 +16,7 @@ use a2m_core::{
 };
 use a2m_pack_web_browser::{
     Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, PageEnvironment, ProfileKey,
-    Query, RawValue, ReadWhat, SafeRequests, TextMatch,
+    Query, RawValue, ReadWhat, SafeRequests,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
 use a2m_telemetry::Clock;
@@ -270,6 +270,14 @@ pub(crate) async fn json_body(
     Ok(serde_json::from_str(text).ok())
 }
 
+/// How strong a finding is, why it is weaker than it looks, and what it
+/// was worked out from.
+pub(crate) struct Claim<'a> {
+    pub(crate) level: EvidenceLevel,
+    pub(crate) limitations: Vec<(LimitationCode, String)>,
+    pub(crate) parents: Vec<&'a Finding>,
+}
+
 /// What the discoverers share.
 pub(crate) struct Core {
     observer: Observer,
@@ -427,17 +435,19 @@ impl Core {
 
     /// Makes a finding from the live system. What was found passes the
     /// redactor as one text, names and all.
-    #[allow(clippy::too_many_arguments)] // one finding has these parts, and each call names them all
     pub(crate) fn finding(
         &self,
         scope: &DiscoveryScope<'_>,
         subject: Subject,
         kind: &FindingKind,
         found: &Json,
-        level: EvidenceLevel,
-        limitations: &[(LimitationCode, String)],
-        parents: &[&Finding],
+        claim: &Claim<'_>,
     ) -> Result<Finding, Failure> {
+        let Claim {
+            level,
+            limitations,
+            parents,
+        } = claim;
         let mut builder = Finding::about(
             subject,
             kind.clone(),
@@ -450,7 +460,7 @@ impl Core {
             },
             self.clock.now(),
         )
-        .level(level)
+        .level(*level)
         .coverage(Coverage::Partial);
         for (code, sentence) in limitations {
             builder = builder.limitation(*code, scope.redact.redact(sentence));
@@ -495,12 +505,4 @@ pub(crate) fn link_target(href: &str, page: &Place) -> Option<Address> {
     }
     let without_fragment = absolute.split('#').next().unwrap_or_default();
     Address::new(without_fragment).ok()
-}
-
-#[allow(dead_code)] // kept beside `link` for the wait a later step needs
-pub(crate) fn text_match(text: &str) -> TextMatch {
-    TextMatch {
-        text: text.to_owned(),
-        contains: true,
-    }
 }
