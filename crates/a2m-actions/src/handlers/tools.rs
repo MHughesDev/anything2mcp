@@ -739,6 +739,10 @@ async fn run_output(
                 // not resumed yet. Nobody is asked again; the next step is
                 // the caller's own.
                 out.insert("approved".to_owned(), json!(true));
+                out.insert(
+                    "person".to_owned(),
+                    json!("A person approved this write. It waits to be resumed."),
+                );
                 (
                     "A person approved the write. Nothing was written yet: resume the run to carry it out."
                         .to_owned(),

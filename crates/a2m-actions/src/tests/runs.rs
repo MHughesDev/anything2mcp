@@ -161,6 +161,7 @@ async fn reading_a_run_asks_nobody_and_an_approved_run_says_so() {
         assert_eq!(status(&read), "needs_approval");
         let result = read.result.as_ref().unwrap();
         assert_eq!(result["approved"], true, "{result}");
+        assert!(result["person"].as_str().unwrap().contains("approved"));
         assert!(result.get("link").is_none(), "{result}");
         assert_eq!(read.next.as_ref().unwrap().action, "run.resume");
         // An approved run needs no person: the caller's next step is its own.
