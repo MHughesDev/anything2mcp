@@ -22,9 +22,13 @@ docs = repo / "docs"
 LINK = re.compile(r"\[([^\]]+)\]\((<[^>]+>|[^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)")
 
 
+# Folders that hold what a build or an install produced, never a document of ours.
+NOT_OURS = (".git/", "target/", "node_modules/", ".venv/", "venv/", "site-packages/")
+
+
 def load():
     return {p.relative_to(repo).as_posix(): p.read_text(encoding="utf-8")
-            for p in sorted(repo.rglob("*.md")) if ".git/" not in p.as_posix() and "target/" not in p.as_posix()}
+            for p in sorted(repo.rglob("*.md")) if not any(part in p.as_posix() for part in NOT_OURS)}
 
 
 def links(text):
@@ -345,7 +349,7 @@ def main():
                "docs/references/sources.md",
                "CHANGELOG.md", "tools/docs_audit.py", "tools/test_docs_audit.py")
     kinds = {".md", ".rs", ".toml", ".lock", ".yml", ".yaml", ".py", ".json", ".txt", ".cfg", ".sh", ".ps1"}
-    skipped = {".git", "target", "__pycache__", "dist", ".venv", "node_modules"}
+    skipped = {".git", "target", "__pycache__", "dist", ".venv", "venv", "node_modules", "site-packages"}
     for path in sorted(repo.rglob("*")):
         rel = path.relative_to(repo).as_posix()
         if (not path.is_file() or skipped & set(rel.split("/")) or rel.startswith(history)

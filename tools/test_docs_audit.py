@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".anything2mcp", "dist", ".venv")
+SKIP = shutil.ignore_patterns(".git", "target", "__pycache__", ".anything2mcp", "dist", ".venv", "venv", "node_modules")
 
 
 class AuditCatches(unittest.TestCase):
