@@ -38,6 +38,10 @@ pub const START_LOCK_NAME: &str = "start.lock";
 /// started on demand writes its standard output and error to.
 pub const ENGINE_LOG_NAME: &str = "engine.log";
 
+/// How the line begins that a client appends to the engine's log when it
+/// has started an engine on demand; the process's number follows.
+pub const STARTED_LINE: &str = "anything2mcp: a client started the engine on demand as process";
+
 /// The pause between two looks at the channel while an engine starts.
 /// The client waits on the channel answering; the operating system offers
 /// no handle to wait on for a socket or a pipe that does not exist yet.
@@ -180,7 +184,7 @@ fn open_log(log: &Path) -> std::io::Result<File> {
 /// Starts the engine detached, with its standard streams set. A failure is
 /// the operating system's refusal to start a process.
 fn launch(start: &Launch) -> std::io::Result<Child> {
-    let log = open_log(&start.log)?;
+    let mut log = open_log(&start.log)?;
     let mut command = Command::new(&start.program);
     command
         .args(&start.args)
@@ -193,8 +197,15 @@ fn launch(start: &Launch) -> std::io::Result<Child> {
             Stdio::null()
         })
         .stdout(log.try_clone()?)
-        .stderr(log);
+        .stderr(log.try_clone()?);
     let mut child = os::spawn_detached(&mut command)?;
+    // One line, appended at once, so that a person who reads the log knows
+    // which process wrote what follows.
+    let _ = writeln!(
+        log,
+        "{STARTED_LINE} {}.",
+        child.id()
+    );
     if let Some(input) = &start.input
         && let Some(mut stdin) = child.stdin.take()
     {

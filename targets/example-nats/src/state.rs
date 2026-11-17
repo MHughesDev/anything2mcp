@@ -200,7 +200,9 @@ impl Stream {
         *count += 1;
         let dc = *count;
         if consumer_state.spec.ack == AckPolicy::Explicit {
-            consumer_state.pending.insert(seq, (consumer_state.dseq, dc));
+            consumer_state
+                .pending
+                .insert(seq, (consumer_state.dseq, dc));
         }
         let pending = self.messages.range(consumer_state.next..).count();
         Some(Handed {
@@ -243,7 +245,7 @@ impl State {
         status.store(
             "example.orders.status.A-100",
             BTreeMap::new(),
-            body(r#"{"order_id":"A-100","status":"created"}"#),
+            body(r#"{"order_id":"A-100","status":"submitted"}"#),
         );
         let mut events = Stream::new(StreamSpec::new(
             crate::SEED_EVENTS,
@@ -260,9 +262,8 @@ impl State {
                 body(&format!(r#"{{"order_id":"{key}","event":"{event}"}}"#)),
             );
         }
-        let mut work = Stream::new(
-            StreamSpec::new(crate::SEED_WORK, ["example.orders.work.*"]).work_queue(),
-        );
+        let mut work =
+            Stream::new(StreamSpec::new(crate::SEED_WORK, ["example.orders.work.*"]).work_queue());
         for (key, task) in [("A-100", "pick"), ("A-101", "pack")] {
             work.store(
                 &format!("example.orders.work.{key}"),
@@ -339,11 +340,7 @@ impl State {
                 .sum::<usize>();
         let refused = if let Some(Fault::RefusePublish { err_code }) = refusal {
             Some(ApiError::new(400, err_code, "refused by the stand's fault"))
-        } else if stream
-            .spec
-            .max_msg_size
-            .is_some_and(|limit| size > limit)
-        {
+        } else if stream.spec.max_msg_size.is_some_and(|limit| size > limit) {
             Some(ApiError::new(
                 400,
                 10054,
@@ -439,7 +436,10 @@ impl State {
             (None, true) => stream.last_seq + 1,
             (None, false) => 1,
         };
-        let spec = ConsumerSpec { name: name.clone(), ..spec };
+        let spec = ConsumerSpec {
+            name: name.clone(),
+            ..spec
+        };
         stream
             .consumers
             .insert(name.clone(), new_consumer(spec, true, next));

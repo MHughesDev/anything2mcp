@@ -1,0 +1,15 @@
+operation: example_lines_slowly
+title: List an order's lines (slowly)
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  item_code: {type: identifier, list: true}
+bindings:
+  - mode: sql
+    verb: list
+    statement: lines_slowly
+description: >
+  Lists the lines of an order after a long count that finds nothing.
+  Prefer example_order_lines_list, which answers at once.

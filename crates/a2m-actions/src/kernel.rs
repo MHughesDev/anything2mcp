@@ -214,6 +214,8 @@ pub(crate) struct Inner {
     /// The plans read from the store, by target and hash, the newest
     /// [`PLANS_KEPT`] of them.
     pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
+    /// The drafted plans of trials, newest last, the newest [`DRAFTS_KEPT`].
+    pub(crate) drafts: Mutex<Vec<((TargetName, Digest), Arc<Plan>)>>,
     pub(crate) runner: crate::runner::RunnerState,
     pub(crate) signals: Arc<RunSignals>,
     /// The person's acts that wait on a page, and what became of the last
@@ -507,6 +509,7 @@ impl Kernel {
                 not_in_force,
                 places: crate::project::Places::of_process(),
                 plans: Mutex::new(BTreeMap::new()),
+                drafts: Mutex::new(Vec::new()),
                 runner: crate::runner::RunnerState::default(),
                 signals,
                 acts: Arc::clone(&acts),
@@ -933,6 +936,9 @@ impl Kernel {
 
 /// How many plans read from the store are kept in memory.
 pub(crate) const PLANS_KEPT: usize = 64;
+/// How many drafted plans of trials are kept in memory. A trial whose plan
+/// was let go since cannot be resumed; it is tried again.
+pub(crate) const DRAFTS_KEPT: usize = 16;
 
 /// The shortest lease the in-process runner works under. The engine sends
 /// a save only when the lease leaves time for the whole binding, each step

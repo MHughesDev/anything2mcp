@@ -13,6 +13,7 @@ use a2m_actions::{PROGRAM, Paths};
 use a2m_core::{Failure, FailureClass, Secret};
 use a2m_local::{Launch, codes as local_codes};
 
+use super::Host;
 use crate::engine::{PASSPHRASE_VARIABLE, settings_of};
 
 /// The flag of `serve` that has it read the vault's passphrase from its
@@ -126,11 +127,32 @@ fn not_started(why: &str) -> Failure {
 /// passphrase that the caller was not given, or the program cannot name
 /// itself or its project.
 pub(crate) fn plan(
+    host: &Host,
     paths: &Paths,
-    environment: &BTreeMap<String, String>,
     project: Option<&Path>,
     asked: bool,
 ) -> Result<Launch, Failure> {
+    plan_for(
+        host.program.as_deref(),
+        &host.environment,
+        paths,
+        project,
+        asked,
+    )
+}
+
+/// The same, from the program and the environment alone: what the bridge
+/// keeps for as long as it runs.
+pub(crate) fn plan_for(
+    program: Option<&Path>,
+    environment: &BTreeMap<String, String>,
+    paths: &Paths,
+    project: Option<&Path>,
+    asked: bool,
+) -> Result<Launch, Failure> {
+    let program = program
+        .ok_or_else(|| not_started("this command line runs inside another program, which is not one to start"))?
+        .to_path_buf();
     let settings = settings_of(paths, project, environment)
         .map_err(|failure| not_started(&format!("the settings do not load ({})", failure.code())))?;
     if !asked && settings.flag("engine.in_process") == Some(true) {
@@ -154,8 +176,6 @@ pub(crate) fn plan(
     } else {
         None
     };
-    let program = std::env::current_exe()
-        .map_err(|_| not_started("this program cannot find its own file"))?;
     let mut args = Vec::new();
     if let Some(project) = project {
         let folder = project

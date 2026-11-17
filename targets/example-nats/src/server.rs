@@ -56,7 +56,13 @@ fn header_block(status: Option<&str>, headers: &BTreeMap<String, String>) -> Vec
 }
 
 /// A message line and its payload, with headers where there are any.
-fn frame(subject: &str, sid: &str, reply: Option<&str>, hdr: Option<&[u8]>, data: &[u8]) -> Vec<u8> {
+fn frame(
+    subject: &str,
+    sid: &str,
+    reply: Option<&str>,
+    hdr: Option<&[u8]>,
+    data: &[u8],
+) -> Vec<u8> {
     let reply = reply.map(|r| format!(" {r}")).unwrap_or_default();
     let mut out = match hdr {
         Some(hdr) => format!(
@@ -99,7 +105,11 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         for i in 0..4 {
             if i <= chunk.len() {
@@ -187,7 +197,10 @@ fn api_error(kind: &str, error: &ApiError) -> J {
 async fn read_control(reader: &mut BufReader<OwnedReadHalf>) -> Option<Result<String, ()>> {
     let mut line = Vec::new();
     let limit = u64::try_from(MAX_CONTROL_LINE + 2).unwrap_or(u64::MAX);
-    let read = (&mut *reader).take(limit).read_until(b'\n', &mut line).await;
+    let read = (&mut *reader)
+        .take(limit)
+        .read_until(b'\n', &mut line)
+        .await;
     match read {
         Ok(0) | Err(_) => None,
         Ok(_) if line.last() != Some(&b'\n') => Some(Err(())),
@@ -644,7 +657,9 @@ fn api_request(shared: &Arc<Shared>, id: u64, api: &str, reply: Option<&str>, da
                 if !m.headers.is_empty() {
                     message["hdrs"] = json!(base64(&header_block(None, &m.headers)));
                 }
-                Ok(json!({"type": "io.nats.jetstream.api.v1.stream_msg_get_response", "message": message}))
+                Ok(
+                    json!({"type": "io.nats.jetstream.api.v1.stream_msg_get_response", "message": message}),
+                )
             })();
             drop(state);
             answer(result, "stream_msg_get_response");
@@ -694,9 +709,8 @@ fn api_request(shared: &Arc<Shared>, id: u64, api: &str, reply: Option<&str>, da
             };
             let created =
                 shared.change(|s| s.create_consumer(stream, spec, start, policy == Some("new")));
-            let result = created.and_then(|name| {
-                consumer_info(shared, stream, &name, "consumer_create_response")
-            });
+            let result = created
+                .and_then(|name| consumer_info(shared, stream, &name, "consumer_create_response"));
             answer(result, "consumer_create_response");
         }
         ["CONSUMER", "DELETE", stream, name] => {

@@ -1,0 +1,20 @@
+
+# ---- appended in a build with the server store (feature `postgres`) ----
+# A store on a server: PostgreSQL. The role and its password come from the
+# session keeper's lease; the link is held to the loopback address.
+[[surface_kinds]]
+name = "database_server"
+archetype = "request"
+session = true
+
+[[failure_codes]]
+class = "policy"
+code = "link_not_encrypted"
+
+[[failure_codes]]
+class = "policy"
+code = "identity_too_powerful"
+
+[[failure_codes]]
+class = "input"
+code = "credential_not_carried"

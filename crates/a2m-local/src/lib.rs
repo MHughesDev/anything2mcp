@@ -39,7 +39,7 @@ pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
     PromptText, presence_available, system_prompt,
 };
-pub use start::{ENGINE_LOG_NAME, Launch, START_LOCK_NAME, Started};
+pub use start::{ENGINE_LOG_NAME, Launch, START_LOCK_NAME, STARTED_LINE, Started};
 pub use surface::{LocalSurface, SurfaceParts};
 
 #[cfg(test)]

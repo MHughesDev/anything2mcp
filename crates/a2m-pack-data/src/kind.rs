@@ -19,7 +19,7 @@ use a2m_files::{
 use crate::model::{
     Access, Column, Does, Isolation, Param, Returns, SECTION_FORMAT, Section, Statement, Stored,
 };
-use crate::names::{DATABASE, FOLDER, STATEMENT, lint};
+use crate::names::{FOLDER, STATEMENT, lint};
 use crate::shape;
 use crate::store::{Opener, STORES, opener};
 
@@ -72,7 +72,7 @@ impl StatementKind {
                 .optional("surface", JsonSchema::surface())
                 .required("records", JsonSchema::map_of(record))
                 .required("statements", JsonSchema::map_of(statement)),
-            kinds: vec![DATABASE],
+            kinds: crate::names::surface_kinds(),
             max_rows,
         }
     }
@@ -290,7 +290,7 @@ impl TableForm<'_> {
             predicate.push(format!(
                 "{} = {}",
                 self.quoted(&field.column, &self.body.at)?,
-                self.store.placeholder()
+                self.store.placeholder(params.len() + 1)
             ));
             params.push(Param {
                 name: field.name.clone(),
@@ -360,7 +360,7 @@ impl TableForm<'_> {
                 predicate.push(format!(
                     "{} = {}",
                     self.quoted(version, &self.body.at)?,
-                    self.store.placeholder()
+                    self.store.placeholder(params.len() + 1)
                 ));
                 params.push(Param {
                     name: GUARD_PARAM.to_owned(),
@@ -391,7 +391,6 @@ impl TableForm<'_> {
     /// guarded, and what it returns.
     fn write(&self) -> Result<Written, Diagnostic> {
         let table = self.quoted(&self.record.table, &self.body.at)?;
-        let placeholder = self.store.placeholder();
         let mut params = Vec::new();
         let as_param = |field: &Field| Param {
             name: field.name.clone(),
@@ -414,8 +413,9 @@ impl TableForm<'_> {
                 let mut assignments = Vec::new();
                 for field in set {
                     assignments.push(format!(
-                        "{} = {placeholder}",
-                        self.quoted(&field.column, &self.body.at)?
+                        "{} = {}",
+                        self.quoted(&field.column, &self.body.at)?,
+                        self.store.placeholder(params.len() + 1)
                     ));
                     params.push(as_param(field));
                 }
@@ -457,10 +457,13 @@ impl TableForm<'_> {
                     .filter_map(|name| self.record.field(name))
                     .filter(|field| !set.iter().any(|given| given.name == field.name))
                     .collect();
+                let placeholders: Vec<String> = (1..=columns.len())
+                    .map(|position| self.store.placeholder(position))
+                    .collect();
                 let mut text = format!(
                     "INSERT INTO {table} ({}) VALUES ({})",
                     columns.join(", "),
-                    vec![placeholder; columns.len()].join(", ")
+                    placeholders.join(", ")
                 );
                 if missing.is_empty() {
                     return Ok(Written {
@@ -512,13 +515,25 @@ impl TableForm<'_> {
 
 /// Refuses a statement whose words are not those of one plain read or one
 /// keyed write. The driver makes the same refusal before it runs one.
-fn held_to_its_form(text: &str, does: Does, at: &Place) -> Result<(), Diagnostic> {
-    shape::check(text, does).map_err(|wrong| {
+fn held_to_its_form(
+    text: &str,
+    does: Does,
+    at: &Place,
+    dialect: shape::Dialect,
+) -> Result<(), Diagnostic> {
+    shape::check_in(text, does, dialect).map_err(|wrong| {
         problem(
             &lint::STATEMENT_INVALID,
             at,
             wrong.message().to_owned(),
-            "Write a read as one `SELECT` with `?` for each parameter, and quote a table or a column whose name is one of the refused words.",
+            match dialect {
+                shape::Dialect::Embedded => {
+                    "Write a read as one `SELECT` with `?` for each parameter, and quote a table or a column whose name is one of the refused words."
+                }
+                shape::Dialect::Server => {
+                    "Write a read as one `SELECT` with `$1`, `$2`, ... for the parameters in order, and quote a table or a column whose name is one of the refused words."
+                }
+            },
         )
     })
 }
@@ -586,7 +601,7 @@ impl StatementKind {
                 store,
             };
             let written = form.read_by_key()?;
-            held_to_its_form(&written.text, written.does, &body.at)?;
+            held_to_its_form(&written.text, written.does, &body.at, store.dialect())?;
             return Ok(Statement {
                 surface: surface.to_owned(),
                 record: record_name.to_owned(),
@@ -630,6 +645,7 @@ impl StatementKind {
                 text,
                 Does::Read,
                 body.get("text").map_or(&body.at, |text| &text.at),
+                store.dialect(),
             )?;
             let mut declared: Vec<Param> = Vec::new();
             for param in params.items() {
@@ -718,7 +734,7 @@ impl StatementKind {
             returns,
             columns,
         } = form.write()?;
-        held_to_its_form(&text, does, &body.at)?;
+        held_to_its_form(&text, does, &body.at, store.dialect())?;
         Ok(Statement {
             surface: surface.to_owned(),
             record: record_name.to_owned(),
@@ -798,12 +814,12 @@ impl FileKind for StatementKind {
         for doc in docs {
             let surface = cx
                 .surface_of(doc)
-                .filter(|surface| *surface.kind == DATABASE);
+                .filter(|surface| crate::names::is_database(surface.kind));
             let Some(surface) = surface else {
                 problems.push(problem(
                     &lint::SURFACE_INVALID,
                     doc.get("surface").map_or(&doc.at, |surface| &surface.at),
-                    "A statements file lives on a surface of the kind `database`, and the target declares none that this file names.".to_owned(),
+                    "A statements file lives on a surface of the kind `database` or `database_server`, and the target declares none that this file names.".to_owned(),
                     "Add `surface:` with the name of a `database` surface of `target.yaml`.",
                 ));
                 continue;

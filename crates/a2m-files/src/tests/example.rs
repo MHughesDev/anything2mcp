@@ -388,6 +388,12 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Elsewhere("what_a_faulty_lowering_returns_is_refused"),
         ),
         (
+            "kernel.draft_under_release_version",
+            Case::Elsewhere(
+                "what_a_faulty_caller_asks_for_a_draft_under_a_release_version_is_refused",
+            ),
+        ),
+        (
             "kernel.file_too_large",
             Case::Elsewhere("the_loader_reads_a_file_of_bounded_size_and_a_folder_once"),
         ),
@@ -1992,7 +1998,7 @@ fn a_value_the_credential_lint_knows_is_reported_and_quoted_by_no_diagnostic() {
 /// release version it is refused, and under the draft version it has bytes
 /// no published plan has.
 #[test]
-fn a_draft_compiled_under_a_release_version_is_refused() {
+fn what_a_faulty_caller_asks_for_a_draft_under_a_release_version_is_refused() {
     let set = stand_set().unwrap();
     let sources = load_files(&TargetRoot::new("example"), &example_files(), &set).unwrap();
     let problems = compile(&sources, &set, CompileMode::Draft, VERSION).unwrap_err();
@@ -2104,4 +2110,136 @@ fn a_choice_whose_code_is_another_choices_label_is_refused_when_the_type_compile
             .iter()
             .any(|ty| ty.name == "order_status")
     );
+}
+
+/// What a binding offers as evidence (decision 0161): an acknowledgement
+/// alone only for an operation declared irreversible, which then needs no
+/// read-back; and a record that cannot be found again is never read back,
+/// because it has no key to be read by.
+#[test]
+fn an_acknowledgement_is_evidence_only_for_an_irreversible_operation() {
+    let set = stand_set().unwrap();
+    // A second operation beside the example's, so that no pipeline of the
+    // example changes with it.
+    let with = |from: &[(&str, &str)]| {
+        let mut files = example_files();
+        let upsert = files
+            .iter()
+            .find(|(path, _)| path.as_str() == UPSERT)
+            .map(|(_, bytes)| String::from_utf8(bytes.clone()).unwrap())
+            .unwrap();
+        let mut text = upsert
+            .replace("example_line_item_upsert", "example_line_item_send")
+            .replace(
+                "Creates or updates one line item on an order.",
+                "Sends one line item of an order to the stand.",
+            );
+        for (old, new) in from {
+            assert!(text.contains(old), "{old}");
+            text = text.replace(old, new);
+        }
+        files.push((
+            RelPath::new("operations/line_item_send.yaml").unwrap(),
+            text.into_bytes(),
+        ));
+        files
+    };
+    let plan_of = |files: &[(RelPath, Vec<u8>)]| {
+        let sources = load_files(&TargetRoot::new("example"), files, &set).unwrap();
+        compile(&sources, &set, CompileMode::Draft, DRAFT_VERSION)
+            .unwrap_or_else(|problems| panic!("{problems}"))
+            .plan
+    };
+    let binding_of = |plan: &a2m_core::Plan| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_line_item_send")
+            .unwrap()
+            .bindings[0]
+            .clone()
+    };
+    let read_back = "    read_back: {call: line_item_get}\n";
+    let acknowledged = "    evidence: acknowledged\n";
+    let irreversible = "effect: irreversible\nhazard: data_elsewhere";
+
+    let problems = problems_with(&with(&[(read_back, acknowledged)]), &set, CompileMode::Draft);
+    let problem = problems
+        .find("kernel.effect_lower_than_derived")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("irreversible"), "{problem}");
+
+    let binding = binding_of(&plan_of(&with(&[
+        (read_back, acknowledged),
+        ("effect: write", irreversible),
+    ])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Acknowledged);
+    assert!(binding.read_back.is_empty());
+
+    // The response stands where the lowering prefers it.
+    let binding = binding_of(&plan_of(&with(&[(
+        read_back,
+        "    read_back: {call: line_item_get, prefer: response}\n",
+    )])));
+    assert_eq!(binding.evidence, a2m_core::WriteEvidence::Response);
+
+    // A record that cannot be found again has no key to read it back by.
+    let unkeyed = with(&[
+        ("key: [order_id, item_code]\n", "identity: {strategy: none}\n"),
+        ("effect: write", irreversible),
+    ]);
+    let problems = problems_with(&unkeyed, &set, CompileMode::Draft);
+    let problem = problems
+        .iter()
+        .find(|problem| problem.code.as_str() == "kernel.identity_invalid")
+        .unwrap_or_else(|| panic!("{problems}"));
+    assert!(problem.message.contains("no key"), "{problem}");
+}
+
+/// A binding's steps may read what the last read of the record gave and the
+/// record's key in the system (decision 0161), and nothing else new.
+#[test]
+fn a_bindings_steps_may_read_the_current_record_and_its_key() {
+    let set = stand_set().unwrap();
+    let with_args = |args: &str| {
+        let mut files = example_files();
+        for (path, bytes) in &mut files {
+            if path.as_str() == UPSERT {
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                *bytes = text
+                    .replace("args: {length: input.length}", args)
+                    .into_bytes();
+            }
+        }
+        files
+    };
+    let reads = with_args("args: {length: input.length, seen: current.length, id: record.key}");
+    let problems = problems_with(&reads, &set, CompileMode::Draft);
+    assert!(!problems.has_errors(), "{problems}");
+    let unknown = with_args("args: {length: input.length, seen: row.length}");
+    let problems = problems_with(&unknown, &set, CompileMode::Draft);
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.code.as_str() == "kernel.expression_invalid"),
+        "{problems}"
+    );
+}
+
+/// A number a tool returns may reach the caller masked, as the text
+/// `[redacted]`; the output schema allows that text where it declares a
+/// number, so that a caller that checks the result never fails for it
+/// (decision 0161). An input's schema does not.
+#[test]
+fn a_tools_output_schema_allows_a_masked_number() {
+    let compiled = compiled();
+    let tool = compiled
+        .plan
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_line_item_upsert")
+        .unwrap();
+    let output = String::from_utf8(tool.output_schema.as_bytes().to_vec()).unwrap();
+    assert!(output.contains("[redacted]"), "{output}");
+    let input = String::from_utf8(tool.input_schema.as_bytes().to_vec()).unwrap();
+    assert!(!input.contains("[redacted]"), "{input}");
 }

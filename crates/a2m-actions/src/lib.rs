@@ -29,6 +29,7 @@ mod events;
 mod faces;
 mod handlers;
 mod health;
+pub mod init;
 mod keeper;
 mod kernel;
 mod paths;
@@ -84,6 +85,7 @@ extern crate self as a2m_actions;
 )]
 mod tests {
     mod audit;
+    mod authoring;
     mod kernel;
     mod keys;
     mod runs;

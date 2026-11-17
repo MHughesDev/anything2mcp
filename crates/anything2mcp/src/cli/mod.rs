@@ -61,6 +61,11 @@ pub struct Host {
     pub person: Option<Arc<dyn PersonSurface>>,
     /// Where the vault's root key is kept. `None` is this machine's own.
     pub key_store: Option<Arc<dyn KeyStore>>,
+    /// The program a client starts, as `serve`, when it finds no engine:
+    /// this program's own file. `None` starts nothing, and a command runs
+    /// the engine inside itself: a host that embeds the command line, and a
+    /// test, are no program to start (decision 0165).
+    pub program: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Host {
@@ -85,6 +90,7 @@ impl Host {
             person_at_terminal: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
             person: None,
             key_store: None,
+            program: std::env::current_exe().ok(),
         }
     }
 }
@@ -451,7 +457,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         !globals.in_process && !NO_START.contains(&action.as_str());
     let launch = || {
         wants_engine
-            .then(|| start::plan(&paths, &host.environment, project.as_deref(), false).ok())
+            .then(|| start::plan(host, &paths, project.as_deref(), false).ok())
             .flatten()
     };
     let (lock, refused) = match client::find(&paths, ClientLabel::CommandLine, launch).await {
@@ -555,7 +561,7 @@ async fn start_engine(
             Err(failure) if *failure.code() == a2m_local::codes::ENGINE_UNREACHABLE => {}
             Err(failure) => return Err(failure),
         }
-        let launch = start::plan(paths, &host.environment, project, true)?;
+        let launch = start::plan(host, paths, project, true)?;
         client::start(&connector, paths, &launch).await
     };
     match started.await {

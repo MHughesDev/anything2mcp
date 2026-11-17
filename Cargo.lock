@@ -238,6 +238,7 @@ dependencies = [
  "a2m-vault",
  "bytes",
  "example-db",
+ "futures-core",
  "rusqlite",
  "serde",
  "serde_json",
@@ -336,6 +337,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-broker",
+ "example-nats",
  "serde",
  "serde_json",
  "tokio",
@@ -419,6 +421,7 @@ dependencies = [
  "getrandom 0.4.3",
  "rustix",
  "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "toml",
@@ -1034,6 +1037,7 @@ name = "example-mcp"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "example-app",
  "reqwest",
  "serde",
  "serde_json",

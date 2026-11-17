@@ -233,3 +233,64 @@ fn no_setting_pack_setting_or_target_file_key_switches_certificate_checking_off(
     }
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// The same rule over every crate, test stand, and the benchmark harness
+/// (decision 0166), so that the whole workspace can be built and tested
+/// with TLS on: a client of the product or of a test that acts through
+/// the product is made by `a2m_auth::tls::client_builder`; a client that a
+/// test stand or a test uses as a plain user of a stand is made by the
+/// stand's `example_app::harness::client_builder`, which states its
+/// provider too. Nothing else makes one.
+#[test]
+fn every_http_client_of_the_workspace_is_made_by_one_of_the_two_helpers() {
+    let root = repository();
+    let mut sources = Vec::new();
+    for top in ["crates", "targets", "bench"] {
+        files(&root.join(top), &[".rs"], &mut sources);
+    }
+    assert!(sources.len() > 100, "the sources were not found");
+    let helpers = [
+        Path::new("a2m-auth").join("src").join("tls.rs"),
+        Path::new("example-app").join("src").join("harness.rs"),
+    ];
+    // Clients a crate still makes by hand, each in a crate whose owner
+    // changes it: listed so that the rule holds everywhere else today, and
+    // so that each entry is removed when its line is changed.
+    let owed = ["crates/a2m-engine/tests/common/mod.rs"];
+    let made_by_hand = [
+        concat!("Client", "::builder("),
+        concat!("Client", "::new("),
+        concat!("ClientBuilder", "::new("),
+    ];
+    let mut found = Vec::new();
+    let mut still_owed = Vec::new();
+    for source in &sources {
+        if helpers.iter().any(|helper| source.ends_with(helper)) || is_this_file(source) {
+            continue;
+        }
+        let text = fs::read_to_string(source).unwrap();
+        // Only `reqwest`'s client: another library's `Client::new` is no
+        // HTTP client of this kind.
+        let http = text.contains("reqwest");
+        for (number, line) in text.lines().enumerate() {
+            if http && made_by_hand.iter().any(|needle| names(line, needle)) {
+                let shown = shown(source);
+                if owed.contains(&shown.as_str()) {
+                    still_owed.push(shown);
+                } else {
+                    found.push(format!("{shown}:{}", number + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "an HTTP client made without `a2m_auth::tls::client_builder` or `example_app::harness::client_builder` stops the process in a build with TLS on: {found:?}"
+    );
+    for entry in owed {
+        assert!(
+            still_owed.iter().any(|shown| shown == entry),
+            "{entry} makes its clients through a helper now: remove it from the list of what is owed"
+        );
+    }
+}

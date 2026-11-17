@@ -1395,6 +1395,10 @@ impl PersonSurface for LocalSurface {
         })
     }
 
+    fn shows_person_acts(&self) -> bool {
+        self.inner.desk.get().is_some()
+    }
+
     fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
         Box::pin(async move {
             let inner = &self.inner;

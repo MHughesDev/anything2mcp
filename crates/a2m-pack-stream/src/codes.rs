@@ -31,6 +31,9 @@ codes! {
     PROTOCOL_UNKNOWN = Input, "protocol_unknown";
     /// The session holds a credential the wire protocol cannot present.
     CREDENTIAL_NOT_CARRIED = Input, "credential_not_carried";
+    /// The connection would carry the session in plain text to an address
+    /// that is not this machine's own, or to a server that asks for TLS.
+    TRANSPORT_REFUSED = Policy, "transport_refused";
     /// An acknowledgement was asked for on a queue the runtime does not own.
     ACK_NOT_OWNED = Policy, "ack_not_owned";
     /// The broker's address is not one the run may reach.

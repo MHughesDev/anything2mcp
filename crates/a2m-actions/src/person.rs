@@ -309,6 +309,13 @@ pub trait PersonSurface: Send + Sync {
     /// that press, given for this act ([`PresenceProof::for_act`]), carries
     /// it out, through [`ApprovalDesk::carry_out`]. A surface with no such
     /// page refuses by name, and the act is not done.
+    /// Whether this surface has a page for a person's act. The dispatcher
+    /// asks before it pins anything: a surface with none is answered
+    /// `person_required` at once, as before decision 0163.
+    fn shows_person_acts(&self) -> bool {
+        false
+    }
+
     fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
         Box::pin(async move {
             Err(codes::policy(

@@ -72,6 +72,19 @@ impl Kernel {
         {
             return Ok(Arc::clone(plan));
         }
+        // A drafted plan a trial runs is kept in memory only, and found
+        // here by the runner and its control; it is never a version.
+        if let Some(plan) = self
+            .inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(kept, _)| *kept == key)
+            .map(|(_, plan)| Arc::clone(plan))
+        {
+            return Ok(plan);
+        }
         let workspace = self.installation()?.workspace;
         let (target, wanted) = (target.clone(), *hash);
         let encoded = self
@@ -92,6 +105,22 @@ impl Kernel {
         plans.insert(key, Arc::clone(&plan));
         drop(plans);
         Ok(plan)
+    }
+
+    /// Keeps a drafted plan in memory for a trial's run, the newest
+    /// [`DRAFTS_KEPT`](crate::kernel::DRAFTS_KEPT) of them.
+    pub(crate) fn keep_draft(&self, target: &TargetName, hash: Digest, plan: Arc<Plan>) {
+        let mut drafts = self
+            .inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (target.clone(), hash);
+        drafts.retain(|(kept, _)| *kept != key);
+        if drafts.len() >= crate::kernel::DRAFTS_KEPT {
+            drafts.remove(0);
+        }
+        drafts.push((key, plan));
     }
 
     /// The current version of every published target, in order of target.

@@ -29,7 +29,10 @@ const LONG: Duration = Duration::from_secs(900);
 const FORM: &str = "application/x-www-form-urlencoded";
 
 fn http() -> Client {
-    Client::builder().no_proxy().build().unwrap()
+    a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap()
 }
 
 /// The description the write carries: text from a system, with markup in
@@ -844,7 +847,18 @@ async fn a_persons_act_an_agent_asks_for_is_carried_out_once_from_its_page() {
     assert_eq!(prompt.asked(), 1);
     assert!(read().await.ok, "the kill switch is released");
     // A second press does nothing: the page is gone and no prompt rises.
-    assert_eq!(press_act(&http, &asked, "confirm", &once).await.0, StatusCode::NOT_FOUND);
+    let second = http
+        .post(format!("{}/confirm", asked.link))
+        .header(ORIGIN, &asked.origin)
+        .header(CONTENT_TYPE, FORM)
+        .body(format!("once={once}"))
+        .send()
+        .await;
+    // The listener closed with the last page, or it answers that nothing
+    // waits there.
+    if let Ok(answer) = second {
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
     assert_eq!(prompt.asked(), 1);
     // The agent's same call gives back what was done, and does nothing more.
     let again = world.call(RELEASE, release()).await;

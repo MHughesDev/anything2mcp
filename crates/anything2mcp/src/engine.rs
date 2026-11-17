@@ -425,6 +425,9 @@ impl Engine {
         settings: Settings,
         lock: Option<EngineLock>,
     ) -> Result<Self, Failure> {
+        // What every HTTP client trusts is set before any pack registers
+        // and before anything makes a client (decision 0166).
+        crate::trust::install(&settings, options.project.as_deref())?;
         let key_store = match &options.key_store {
             Some(key_store) => Arc::clone(key_store),
             None => machine_key_store(&settings, &options).await,

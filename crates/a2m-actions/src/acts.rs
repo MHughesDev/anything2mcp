@@ -20,7 +20,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
-use a2m_core::{DecisionId, Digest, EffectClass, Failure, FieldHasher, Hazard, PrincipalId, Timestamp};
+use a2m_core::{
+    DecisionId, Digest, EffectClass, Failure, FieldHasher, Hazard, PrincipalId, Timestamp,
+};
 use a2m_files::CompileMode;
 use serde_json::{Map, Value as Json, json};
 
@@ -325,6 +327,16 @@ impl Kernel {
         input: Map<String, Json>,
         project: (Option<PathBuf>, Option<Failure>),
     ) -> Result<Output, Failure> {
+        if !self.person().shows_person_acts() {
+            return Err(codes::policy(
+                codes::PERSON_REQUIRED,
+                format!(
+                    "`{}` is a person's act, and this engine's person surface has no page on which a person can carry it out.",
+                    def.name
+                ),
+                "Ask the person to run it themselves, at a terminal, with no engine running.",
+            ));
+        }
         if !matches!(def.handler, Handler::Kernel(_) | Handler::Provider(_)) {
             return Err(codes::input(
                 codes::ACTION_NOT_BUILT,

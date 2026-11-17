@@ -1,0 +1,14 @@
+operation: example_order_submitted
+title: Read an order's submitted
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: sql
+    statement: order_submitted
+description: >
+  Reads when one order was submitted, a moment with its zone.
+  Prefer example_order_get for the whole order.

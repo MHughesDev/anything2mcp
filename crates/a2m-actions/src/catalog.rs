@@ -374,6 +374,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("finding.describe", "One finding in full, with its evidence references.", BUILDER, Build, "Stage E", Inspect)
             .pos("finding", TEXT, "The finding's identifier.")
+            .req("target", TEXT, TARGET)
             .done(),
         act("unknown.list", "The open questions about a target.", BUILDER, Build, "Stage E", List)
             .pos("target", TEXT, TARGET)

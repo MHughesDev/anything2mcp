@@ -497,6 +497,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
         person_at_terminal: false,
         person: None,
         key_store: None,
+        program: None,
     };
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let finished = run_with(&args, &host).await;
@@ -544,7 +545,10 @@ async fn a_write_through_the_served_engine_rests_is_approved_on_its_page_and_is_
     assert_eq!(prompt.0.load(Ordering::SeqCst), 0);
 
     // The page shows the change itself, and the prompt this machine has.
-    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let page = http.get(&link).send().await.unwrap();
     assert_eq!(page.status().as_u16(), 200);
     assert_eq!(page.headers()["referrer-policy"], "same-origin");
@@ -655,7 +659,10 @@ async fn with_no_presence_prompt_a_write_through_the_served_engine_rests_and_its
 
     // The page says plainly that no presence prompt is available on this
     // machine, and why, before anything is pressed.
-    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
     let text = http.get(&link).send().await.unwrap().text().await.unwrap();
     assert!(
         text.contains("No presence prompt is available on this machine"),
@@ -782,6 +789,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         person_at_terminal: true,
         person: None,
         key_store: None,
+        program: None,
     };
     let args: Vec<String> = ["version", "publish", "example"]
         .iter()

@@ -3,6 +3,7 @@
 
 mod admin;
 pub(crate) mod build;
+mod drafts;
 mod machine;
 mod meta;
 mod provider;
@@ -47,7 +48,16 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "trace.show" => tools::trace_show,
         "plan.show" => tools::plan_show,
         "target.add" => build::target_add,
-        "target.list" => build::target_list,
+        "target.list" => drafts::target_list,
+        "target.status" => drafts::target_status,
+        "draft.read" => drafts::draft_read,
+        "draft.try" => tools::draft_try,
+        "discover.run" => tools::discover_run,
+        "finding.list" => tools::finding_list,
+        "finding.describe" => tools::finding_describe,
+        "unknown.list" => tools::unknown_list,
+        "draft.write" => drafts::draft_write,
+        "test.run" => drafts::test_run,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,
         "publish.request" => build::publish_request,

@@ -14,6 +14,9 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+# The harness's one way to make an HTTP client, which works in a build
+# with TLS on (decision 0166).
+example-app = { path = "../example-app" }
 reqwest.workspace = true
 
 [lints]

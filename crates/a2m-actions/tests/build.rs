@@ -95,7 +95,9 @@ network = "surfaces"
 sessions = ["stand"]
 "#;
 
-struct StandPack;
+struct StandPack {
+    reached: Arc<Mutex<Vec<String>>>,
+}
 
 impl Pack for StandPack {
     fn manifest(&self) -> &'static str {
@@ -106,7 +108,7 @@ impl Pack for StandPack {
         to.driver(
             testing::mode(),
             Arc::new(StubDriver {
-                reached: Arc::new(Mutex::new(Vec::new())),
+                reached: Arc::clone(&self.reached),
                 behaviour: Arc::new(Mutex::new(Behaviour::Done)),
             }),
         )?;
@@ -142,6 +144,10 @@ impl Present {
 impl PersonSurface for Present {
     fn take_desk(&self, desk: ApprovalDesk) {
         *self.desk.lock().unwrap() = Some(Arc::new(desk));
+    }
+
+    fn shows_person_acts(&self) -> bool {
+        *self.pages.lock().unwrap()
     }
 
     fn ask_person_act(&self, ask: PersonActAsk) -> BoxFuture<'_, Result<SurfaceLink, Failure>> {
@@ -206,6 +212,8 @@ fn repository() -> PathBuf {
 }
 
 struct World {
+    /// Every step that reached the stand's driver.
+    reached: Arc<Mutex<Vec<String>>>,
     clock: Arc<ManualClock>,
     kernel: Kernel,
     surface: Arc<Present>,
@@ -265,7 +273,10 @@ impl World {
         let host =
             prepared.host_services(Supervisor::new(SupervisorLimits::default()), Roots::none());
         let mut builder = RegistryBuilder::new(prepared.settings().provider_settings(), host);
-        builder.add_pack(&StandPack);
+        let reached = Arc::new(Mutex::new(Vec::new()));
+        builder.add_pack(&StandPack {
+            reached: Arc::clone(&reached),
+        });
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
         // The pack was handed its own group, as the loader read it.
@@ -293,6 +304,7 @@ impl World {
                 .is_err()
         );
         Self {
+            reached,
             clock,
             kernel,
             surface,
@@ -647,5 +659,104 @@ async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_
         .call(&agent, "version.publish", json!({"target": "example", "version": "4.0.0"}))
         .await;
     assert_eq!(refused.error.unwrap().code, "person_required");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+
+    // The project's targets are listed, and the target's state.
+    let listed = world.call(&agent, "target.list", json!({})).await;
+    let listed = listed.result.unwrap();
+    assert_eq!(listed["targets"][0]["target"], "example", "{listed}");
+    assert_eq!(listed["targets"][0]["in_project"], true);
+    let status = world.call(&agent, "target.status", json!({"target": "example"})).await;
+    assert!(status.ok, "{:?}", status.error);
+    let status = status.result.unwrap();
+    assert_eq!((status["state"].as_str(), status["compiles"].as_bool()), (Some("drafted"), Some(true)), "{status}");
+
+    // A file is read as text, by its path in the target's folder.
+    let read = world.call(&agent, "draft.read", json!({"target": "example", "file": "target.yaml"})).await;
+    let read = read.result.unwrap();
+    assert!(read["content"].as_str().unwrap().contains("target: example"));
+    // No path leaves the target's folder, and a hidden name is not read.
+    for file in ["../../anything2mcp.toml", "/etc/hosts", ".hidden.yaml", "calls/../../x.yaml"] {
+        let refused = world.call(&agent, "draft.read", json!({"target": "example", "file": file})).await;
+        assert_eq!(refused.error.unwrap().code, "path_not_allowed", "{file}");
+    }
+    let missing = world.call(&agent, "draft.read", json!({"target": "example", "file": "calls/none.yaml"})).await;
+    assert_eq!(missing.error.unwrap().code, "not_found");
+
+    // A file that does not read as its kind is not written: the folder
+    // holds nothing new.
+    let broken = world
+        .call(&agent, "draft.write", json!({"target": "example", "file": "calls/broken.yaml", "content": "a: [\n"}))
+        .await;
+    let broken = broken.result.unwrap();
+    assert_eq!(broken["written"], false, "{broken}");
+    assert!(!target_dir.join("calls").join("broken.yaml").exists());
+    // One that reads is written, and the file system holds what was sent.
+    let text = std::fs::read_to_string(target_dir.join("target.yaml")).unwrap();
+    let changed = text.replacen("title: Example order entry", "title: Example orders", 1);
+    let written = world
+        .call(&agent, "draft.write", json!({"target": "example", "file": "target.yaml", "content": changed}))
+        .await;
+    let written = written.result.unwrap();
+    assert_eq!((written["written"].as_bool(), written["ok"].as_bool()), (Some(true), Some(true)), "{written}");
+    assert_eq!(std::fs::read_to_string(target_dir.join("target.yaml")).unwrap(), changed);
+    // A link in the target's folder that leads out of the project is never
+    // written through.
+    #[cfg(unix)]
+    {
+        let outside = Folder::new("actions-outside");
+        let victim = outside.path().join("victim.yaml");
+        std::fs::write(&victim, "kept\n").unwrap();
+        std::os::unix::fs::symlink(&victim, target_dir.join("calls").join("linked.yaml")).unwrap();
+        let through = world
+            .call(&agent, "draft.write", json!({"target": "example", "file": "calls/linked.yaml", "content": "calls: []\n"}))
+            .await;
+        assert!(!through.ok || through.result.as_ref().unwrap()["written"] == false, "{through:?}");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "kept\n");
+        std::fs::remove_file(target_dir.join("calls").join("linked.yaml")).unwrap();
+    }
+
+    // The gates: the lint gate runs, the offline tests wait for a replay,
+    // and the result is never a pass.
+    let tested = world.call(&agent, "test.run", json!({"target": "example"})).await;
+    assert!(tested.ok, "{:?}", tested.error);
+    let tested = tested.result.unwrap();
+    assert_eq!((tested["passed"].as_bool(), tested["complete"].as_bool()), (Some(false), Some(false)));
+    assert_eq!(tested["gates"][0]["state"], "passed", "{tested}");
+    let offline = tested["gates"][1]["tests"].as_array().unwrap();
+    assert_eq!(offline.len(), 3, "{tested}");
+    assert!(offline.iter().all(|test| test["state"] == "not_run"));
+
+    // A drafted read is tried in the sandbox as a run of its own, and
+    // nothing becomes a version.
+    let tried = world
+        .call(&agent, "draft.try", json!({"target": "example", "tool": "example_order_get", "input": {"order_id": "SO-1001"}}))
+        .await;
+    let result = tried.result.clone().unwrap_or_default();
+    assert!(result["run_id"].is_string(), "{tried:?}");
+    assert_eq!(result["tool"], "example_order_get");
+    let got = world.call(&agent, "run.get", json!({"run_id": result["run_id"]})).await;
+    assert!(got.result.is_some(), "{got:?}");
+    // The trial is a run the engine carried out: here it stops where the
+    // stand's sign-in is not registered, as a call of a published tool
+    // would, and nothing reached the stand's driver.
+    assert_eq!(result["mode"], "stand", "{result}");
+    assert_eq!(result["failure"]["code"], "auth_provider_unknown", "{result}");
+    assert!(world.reached.lock().unwrap().is_empty());
+    let nothing = world.call(&agent, "tool.search", json!({})).await;
+    assert_eq!(nothing.result.unwrap()["total"], 0, "a trial publishes nothing");
+    // A drafted write is not tried.
+    let write = world
+        .call(&agent, "draft.try", json!({"target": "example", "tool": "example_line_item_upsert", "input": {}}))
+        .await;
+    assert_eq!(write.error.unwrap().code, "action_not_built");
     world.kernel.close(CloseReason::Asked).await;
 }

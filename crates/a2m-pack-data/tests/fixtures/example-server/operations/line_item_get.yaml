@@ -1,0 +1,18 @@
+operation: example_line_item_get
+title: Get a line item
+effect: read
+key: [order_id, item_code]
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+outputs:
+  description: {type: note}
+  quantity: {type: integer}
+  length: {type: length_inches}
+  unit_price: {type: price}
+bindings:
+  - mode: sql
+    statement: line_item_by_key
+description: >
+  Reads one line item of an order from the store by its key.
+  Prefer example_order_lines_list to read every line of an order.

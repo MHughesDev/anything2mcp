@@ -15,15 +15,15 @@ use std::path::Path;
 use super::handler;
 use crate::codes;
 use crate::dispatch::{Call, Next, Output};
-use crate::kernel::{Kernel, note_published, published_targets};
+use crate::kernel::{Kernel, note_published};
 
 /// The folder of a project that holds one folder per target.
-const TARGETS_FOLDER: &str = "targets";
+pub(crate) const TARGETS_FOLDER: &str = "targets";
 
 /// The project folder of a call, as a checked path. The folder a local
 /// command was run in is the one root a project's files may be read from
 /// and written to. Looks at the disk.
-fn project(folder: &Path) -> Result<CheckedPath, Failure> {
+pub(crate) fn project(folder: &Path) -> Result<CheckedPath, Failure> {
     let name = RootName::new("project")?;
     let mut roots = Roots::none();
     roots.add(name.clone(), folder, Access::Write)?;
@@ -31,11 +31,11 @@ fn project(folder: &Path) -> Result<CheckedPath, Failure> {
 }
 
 /// The folder of one target of the project. Looks at the disk.
-fn target_folder(project_folder: &Path, target: &TargetName) -> Result<CheckedPath, Failure> {
+pub(crate) fn target_folder(project_folder: &Path, target: &TargetName) -> Result<CheckedPath, Failure> {
     project(project_folder)?.join(&format!("{TARGETS_FOLDER}/{target}"))
 }
 
-fn problems_json(problems: &Diagnostics) -> Vec<Json> {
+pub(crate) fn problems_json(problems: &Diagnostics) -> Vec<Json> {
     match problems.to_json() {
         Json::Array(items) => items,
         _ => Vec::new(),
@@ -57,7 +57,7 @@ fn compile_target(
 
 /// Runs work that waits on the disk, or that computes for long, on a
 /// thread that may wait: never on an async thread.
-async fn off_thread<T: Send + 'static>(
+pub(crate) async fn off_thread<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     tokio::task::spawn_blocking(work).await.map_err(|_| {
@@ -369,39 +369,5 @@ handler!(
         }
         let project = (call.project.clone(), call.project_refused.clone());
         kernel.ask_person(&def, &call.caller, input, project).await
-    }
-);
-
-handler!(
-    /// `target.list`: the targets with a published version, and the
-    /// versions of each.
-    target_list,
-    |kernel, call| {
-        let workspace = call.caller.principal.workspace;
-        let targets = kernel
-            .store()?
-            .read(move |tx| {
-                let mut out = Vec::new();
-                for target in published_targets(tx, &workspace)? {
-                    let versions = tx.versions().list(&workspace, &target)?;
-                    out.push((target, versions));
-                }
-                Ok(out)
-            })
-            .await?;
-        let listed: Vec<Json> = targets
-            .iter()
-            .map(|(target, versions)| {
-                json!({
-                    "target": target.as_str(),
-                    "versions": versions.iter().map(|row| json!({
-                        "version": row.version.to_string(),
-                        "plan_hash": row.plan_hash.to_string(),
-                        "current": row.current,
-                    })).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
-        Ok(Output::ok(json!({"targets": listed})))
     }
 );

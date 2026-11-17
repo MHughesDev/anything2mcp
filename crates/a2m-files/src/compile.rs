@@ -273,6 +273,33 @@ fn json_schema_of(ty: &ValueType, codes: &[a2m_core::CodeLabel]) -> serde_json::
     }
 }
 
+/// The JSON Schema of a value a tool returns. A number, a date, a moment,
+/// or a length of time that holds a registered secret reaches the caller as
+/// the text `[redacted]` (decision 0153), so where one is declared that text
+/// is allowed too, and a caller that checks a result against its schema
+/// never fails a run for it (decision 0161).
+fn output_schema_of(ty: &ValueType, codes: &[a2m_core::CodeLabel]) -> serde_json::Value {
+    use serde_json::json;
+    match ty {
+        ValueType::Int
+        | ValueType::Decimal
+        | ValueType::Instant
+        | ValueType::Date
+        | ValueType::Duration => json!({
+            "anyOf": [json_schema_of(ty, codes), {"const": a2m_core::REDACTED}]
+        }),
+        ValueType::List(item) => json!({"type": "array", "items": output_schema_of(item, &[])}),
+        ValueType::Record(fields) => {
+            let properties: serde_json::Map<String, serde_json::Value> = fields
+                .iter()
+                .map(|field| (field.name.clone(), output_schema_of(&field.ty, &[])))
+                .collect();
+            json!({"type": "object", "properties": properties})
+        }
+        _ => json_schema_of(ty, codes),
+    }
+}
+
 impl<'a> Compiler<'a> {
     fn error(
         &mut self,
@@ -3394,7 +3421,7 @@ impl<'a> Compiler<'a> {
                 .map(|output| {
                     (
                         output.name.clone(),
-                        self.schema_of_type(&output.ty, output.field_type),
+                        self.output_schema_of_type(&output.ty, output.field_type),
                     )
                 })
                 .collect();
@@ -3522,6 +3549,17 @@ impl<'a> Compiler<'a> {
             .and_then(|index| self.model.field_types.get(index.get()))
             .map_or(&[][..], |known| known.codes.as_slice());
         json_schema_of(ty, codes)
+    }
+
+    fn output_schema_of_type(
+        &self,
+        ty: &ValueType,
+        field_type: Option<FieldTypeIndex>,
+    ) -> serde_json::Value {
+        let codes = field_type
+            .and_then(|index| self.model.field_types.get(index.get()))
+            .map_or(&[][..], |known| known.codes.as_slice());
+        output_schema_of(ty, codes)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -331,6 +331,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
     // Where none may be started, one look now tells a person who starts the
     // bridge by hand at once; the client learns it with its first request.
     let starts = Arc::new(Starts {
+        program: host.program.clone(),
         paths: paths.clone(),
         environment: host.environment.clone(),
         project: folder.clone(),
@@ -391,6 +392,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
 
 /// What the bridge needs to start an engine on demand.
 struct Starts {
+    program: Option<std::path::PathBuf>,
     paths: Paths,
     environment: std::collections::BTreeMap<String, String>,
     project: Option<std::path::PathBuf>,
@@ -400,9 +402,10 @@ impl Starts {
     /// How an engine is started now, or why none may be. The settings
     /// are read each time, because they may change while the bridge runs.
     fn plan(&self) -> Result<a2m_local::Launch, Failure> {
-        start::plan(
-            &self.paths,
+        start::plan_for(
+            self.program.as_deref(),
             &self.environment,
+            &self.paths,
             self.project.as_deref(),
             false,
         )

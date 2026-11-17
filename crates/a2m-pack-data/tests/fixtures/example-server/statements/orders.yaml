@@ -1,0 +1,211 @@
+surface: orders_server
+records:
+  line_item:
+    table: order_lines
+    key: [order_id, item_code]
+    version: row_version
+    fields:
+      order_id: {column: order_id, type: identifier}
+      item_code: {column: item_code, type: identifier}
+      description: {column: description, type: note}
+      quantity: {column: quantity, type: integer}
+      length: {column: length_in, type: length_inches}
+      unit_price: {column: unit_price, type: price}
+  customer:
+    table: customers
+    key: [customer_id]
+    fields:
+      customer_id: {column: customer_id, type: identifier}
+      name: {column: name, type: note}
+      credit_limit_cents: {column: credit_limit_cents, type: integer}
+      notes: {column: notes, type: note}
+  # The same table under a key that does not identify one row: what a
+  # record declared with too small a key does.
+  order_line_loose:
+    table: order_lines
+    key: [order_id]
+    fields:
+      order_id: {column: order_id, type: identifier}
+      description: {column: description, type: note}
+  order:
+    table: orders
+    key: [order_id]
+    fields:
+      order_id: {column: order_id, type: identifier}
+      status: {column: status, type: note}
+      submitted_at: {column: submitted_at, type: datetime}
+      entered_at: {column: entered_at, type: datetime}
+      discount: {column: discount, type: integer}
+  shipment:
+    table: shipments
+    key: [shipment_id]
+    fields:
+      shipment_id: {column: shipment_id, type: integer}
+      order_id: {column: order_id, type: identifier}
+      carrier: {column: carrier, type: note}
+      external_ref: {column: external_ref, type: identifier}
+statements:
+  line_item_by_key:
+    effect: read
+    form: table
+    record: line_item
+    isolation: read_committed
+    time_limit: 2s
+  lines_of_order:
+    effect: read
+    record: line_item
+    text: |
+      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
+      FROM order_lines WHERE order_id = $1 ORDER BY item_code
+    params: [{name: order_id, type: identifier}]
+    returns: many
+    max_rows: 500
+    time_limit: 5s
+  first_lines_of_order:
+    effect: read
+    record: line_item
+    text: |
+      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
+      FROM order_lines WHERE order_id = $1 ORDER BY item_code
+    params: [{name: order_id, type: identifier}]
+    returns: many
+    max_rows: 2
+    time_limit: 5s
+  line_of_order:
+    effect: read
+    record: line_item
+    text: |
+      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
+      FROM order_lines WHERE order_id = $1
+    params: [{name: order_id, type: identifier}]
+    returns: one_or_none
+    time_limit: 2s
+  line_item_update:
+    effect: write
+    form: table
+    record: line_item
+    verb: update
+    set: [length, unit_price]
+    guard: version
+    hazard: data_elsewhere
+    isolation: read_committed
+    time_limit: 5s
+  line_item_describe:
+    effect: write
+    form: table
+    record: line_item
+    verb: update
+    set: [description]
+    guard: none
+    hazard: data_elsewhere
+    time_limit: 5s
+  line_item_insert:
+    effect: write
+    form: table
+    record: line_item
+    verb: insert
+    set: [order_id, item_code, description, quantity, length, unit_price]
+    hazard: data_elsewhere
+    time_limit: 5s
+  line_item_delete:
+    effect: write
+    form: table
+    record: line_item
+    verb: delete
+    guard: none
+    hazard: data_elsewhere
+    time_limit: 5s
+  customer_by_key:
+    effect: read
+    form: table
+    record: customer
+    time_limit: 2s
+  customer_credit_update:
+    effect: write
+    form: table
+    record: customer
+    verb: update
+    set: [credit_limit_cents]
+    guard: none
+    time_limit: 5s
+  shipment_by_key:
+    effect: read
+    record: shipment
+    text: |
+      SELECT shipment_id, order_id, carrier, external_ref
+      FROM shipments WHERE shipment_id = $1
+    params: [{name: shipment_id, type: integer}]
+    returns: one_or_none
+    time_limit: 2s
+  shipment_insert:
+    effect: write
+    form: table
+    record: shipment
+    verb: insert
+    set: [order_id, carrier, external_ref]
+    hazard: data_elsewhere
+    time_limit: 5s
+  order_line_loose_by_key:
+    effect: read
+    form: table
+    record: order_line_loose
+    time_limit: 2s
+  order_line_loose_describe:
+    effect: write
+    form: table
+    record: order_line_loose
+    verb: update
+    set: [description]
+    guard: none
+    hazard: data_elsewhere
+    time_limit: 5s
+  # The server's own reads and their refusals.
+  order_by_key:
+    effect: read
+    form: table
+    record: order
+    time_limit: 2s
+  order_submitted:
+    effect: read
+    record: order
+    text: SELECT order_id, status, submitted_at FROM orders WHERE order_id = $1
+    params: [{name: order_id, type: identifier}]
+    returns: one_or_none
+    time_limit: 2s
+  order_entered:
+    effect: read
+    record: order
+    text: SELECT order_id, entered_at FROM orders WHERE order_id = $1
+    params: [{name: order_id, type: identifier}]
+    returns: one_or_none
+    time_limit: 2s
+  order_discount:
+    effect: read
+    record: order
+    text: SELECT order_id, discount FROM orders WHERE order_id = $1
+    params: [{name: order_id, type: identifier}]
+    returns: one_or_none
+    time_limit: 2s
+  # Reads with no word that writes, which change data all the same: the
+  # read-only transaction refuses them.
+  lines_counted_on:
+    effect: read
+    record: line_item
+    text: |
+      SELECT order_id, item_code, description, quantity, length_in, unit_price, row_version
+      FROM order_lines WHERE order_id = $1 AND nextval('shipments_shipment_id_seq') > 0
+    params: [{name: order_id, type: identifier}]
+    returns: many
+    max_rows: 10
+    time_limit: 2s
+  lines_slowly:
+    effect: read
+    record: line_item
+    text: |
+      SELECT l.order_id, l.item_code, l.description, l.quantity, l.length_in, l.unit_price, l.row_version
+      FROM order_lines l CROSS JOIN generate_series(1, 200000000) AS g(n)
+      WHERE l.order_id = $1 AND g.n < 0
+    params: [{name: order_id, type: identifier}]
+    returns: many
+    max_rows: 10
+    time_limit: 500ms
