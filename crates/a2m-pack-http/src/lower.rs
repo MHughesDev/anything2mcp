@@ -38,6 +38,8 @@ pub const PROBE: StepKind = StepKind::fixed("probe");
 
 const READ_VERBS: &[&str] = &["read", "list", "search"];
 const WRITE_VERBS: &[&str] = &["create", "update", "upsert", "delete", "submit", "call"];
+/// The verbs whose writes cannot be taken back, whatever reads them back.
+const IRREVERSIBLE_VERBS: &[&str] = &["delete", "submit"];
 
 /// How long a step may take when the target states no `request` timeout.
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
@@ -587,8 +589,9 @@ impl Lowering for HttpLowering {
 
     /// A `request` sends a read and a write alike, and which it is is the
     /// `effect` of the endpoint it names: the lowering marks it as the
-    /// commit point exactly when the endpoint is marked `write`, and the
-    /// driver refuses a `request` whose mark and endpoint disagree. Every
+    /// commit point exactly for a verb that writes, which it binds only to
+    /// an endpoint marked `write`, and the driver refuses an endpoint that
+    /// writes from a `request` not so marked. Every
     /// other kind reads an answer already held, or is a discoverer's safe
     /// request, and never saves.
     fn commits(&self, kind: &StepKind) -> StepCommits {
@@ -599,12 +602,18 @@ impl Lowering for HttpLowering {
         }
     }
 
-    /// A verb that reads is a read. A verb that writes is a write when the
-    /// binding names how the record is read back, and `irreversible` when
-    /// it names nothing: what was written could then never be found again.
+    /// A verb that reads is a read: the lowering binds it only to an
+    /// endpoint marked `read`. `delete` and `submit` cannot be taken back,
+    /// and are `irreversible`. Any other verb that writes is a write when
+    /// the binding names how the record is read back, and `irreversible`
+    /// when it names nothing: what was written could then never be found
+    /// again.
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
-        if READ_VERBS.contains(&binding.verb.as_str()) {
+        let verb = binding.verb.as_str();
+        if READ_VERBS.contains(&verb) {
             EffectClass::Read
+        } else if IRREVERSIBLE_VERBS.contains(&verb) {
+            EffectClass::Irreversible
         } else if binding.field("read_back").is_some() {
             EffectClass::Write
         } else {

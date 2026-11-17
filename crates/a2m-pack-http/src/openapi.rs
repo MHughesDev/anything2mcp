@@ -654,7 +654,9 @@ impl DraftingRule for DescribedOperationRule {
             ("surface", surface),
             ("method", DraftValue::text(&operation.method)),
             ("path", path),
-            // A read only for a method the description marks safe.
+            // A read only for a method the description marks safe. Any
+            // other is drafted as the write it is, and the drafter refuses
+            // it: the file kind says it describes a write.
             (
                 "effect",
                 DraftValue::text(if operation.safe { "read" } else { "write" }),

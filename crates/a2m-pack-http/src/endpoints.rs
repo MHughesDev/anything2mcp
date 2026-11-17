@@ -778,7 +778,29 @@ impl LintRule for SignedEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_credential;
+    use a2m_files::{FileKind, RelPath, parse_yaml};
+
+    use super::{EndpointKind, looks_like_credential};
+
+    #[test]
+    fn an_entry_describes_a_write_unless_it_is_a_read_of_a_safe_method() {
+        let kind = EndpointKind::new();
+        let file = RelPath::new("endpoints/one.yaml").unwrap();
+        let writes = |method: &str, effect: &str| {
+            let text = format!("endpoint: one\nmethod: {method}\neffect: {effect}\n");
+            let docs = parse_yaml(&file, &text).unwrap();
+            kind.writes(&docs[0])
+        };
+        assert!(!writes("GET", "read"));
+        assert!(!writes("HEAD", "read"));
+        assert!(writes("DELETE", "write"));
+        assert!(writes("GET", "write"));
+        // A method that is not safe may change something whatever the entry says.
+        assert!(writes("POST", "read"));
+        // An effect that is an open question is not known to read.
+        assert!(writes("GET", "\"?? Is this a read\""));
+        assert!(writes("FETCH", "read"));
+    }
 
     #[test]
     fn a_literal_that_looks_like_a_credential_is_recognized() {

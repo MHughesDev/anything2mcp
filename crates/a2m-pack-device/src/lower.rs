@@ -15,7 +15,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage,
+    Possible, ResolvedBinding, Stage, StepCommits,
 };
 use serde::{Deserialize, Serialize};
 
@@ -537,6 +537,33 @@ impl Lowering for DeviceLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// `write_frame` is the one kind that can save, and it does both: the
+    /// same step sends the frame that writes a register, and the frame that
+    /// asks for a register's value. It saves only when it sends a write, and
+    /// the lowering marks exactly that step. Every other kind never saves:
+    /// `build_frame` builds the write's bytes and sends nothing.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == self.names.write_frame {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// By the verb: an `update` writes a register and reads it back; a
+    /// `submit` writes a command that cannot be read back, so it cannot be
+    /// verified and is `irreversible`. A register's hazard asks for more, by
+    /// the pack's own rule `device.hazard_not_declared`.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        if *binding.verb == self.names.submit {
+            EffectClass::Irreversible
+        } else if *binding.verb == self.names.update {
+            EffectClass::Write
+        } else {
+            EffectClass::Read
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

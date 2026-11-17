@@ -61,16 +61,16 @@ impl Scope {
 /// declared exception to "a crate's SQL names only its own tables".
 const READ_FOR_RULE_THREE: [&str; 2] = ["approvals", "decisions"];
 
-/// The table whose changed rows are remembered for the length of one
-/// transaction, so that rule 3 can tell an approval marked used in this
-/// transaction from one marked earlier.
-const WATCHED: &str = "approvals";
+/// The tables whose changed rows are remembered for the length of one
+/// transaction, so that rule 3 can tell an approval marked used, or a
+/// decision recorded, in this transaction from one of an earlier one.
+pub(crate) const WATCHED: [&str; 2] = ["approvals", "decisions"];
 
 /// One connection, with the scope its next statement is prepared under.
 pub(crate) struct Db {
     conn: Connection,
     scope: Arc<AtomicU32>,
-    watched: Arc<Mutex<Vec<i64>>>,
+    watched: Arc<Mutex<Vec<(usize, i64)>>>,
     synced: AtomicBool,
     in_memory: bool,
 }
@@ -108,10 +108,10 @@ impl Db {
         let watched = Arc::new(Mutex::new(Vec::new()));
         let rows = Arc::clone(&watched);
         conn.update_hook(Some(move |_action, _db: &str, table: &str, rowid: i64| {
-            if table == WATCHED {
+            if let Some(at) = WATCHED.iter().position(|watched| *watched == table) {
                 rows.lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .push(rowid);
+                    .push((at, rowid));
             }
         }))
         .map_err(map)?;
@@ -199,11 +199,14 @@ impl Db {
 
     /// Whether the row of the watched table with this row number was changed
     /// in the transaction that is open.
-    pub(crate) fn changed_in_this_transaction(&self, rowid: i64) -> bool {
+    pub(crate) fn changed_in_this_transaction(&self, table: &str, rowid: i64) -> bool {
+        let Some(at) = WATCHED.iter().position(|watched| *watched == table) else {
+            return false;
+        };
         self.watched
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .contains(&rowid)
+            .contains(&(at, rowid))
     }
 
     /// Runs one statement that returns no rows. Gives the number of rows it

@@ -295,8 +295,57 @@ impl<'a> Tx<'a> {
     /// The tables of `owner`. A crate passes its own name here and nothing
     /// else; the statements it then runs are refused when they name a table
     /// of another crate.
+    ///
+    /// The policy engine's tables are not reached this way: approvals and
+    /// the decisions that clear a run to write are what rule 3 trusts, so
+    /// they are reached only with the [`PolicyKey`] the store hands out
+    /// once, through [`Tx::policy_tables`]. `tables(Owner::Policy)` gives
+    /// tables whose every statement is refused (decision 0145).
     pub fn tables(&mut self, owner: Owner) -> Tables<'_, 'a> {
-        Tables { tx: self, owner }
+        Tables {
+            tx: self,
+            owner,
+            keyed: false,
+        }
+    }
+
+    /// The policy engine's tables, for the holder of the store's
+    /// [`PolicyKey`].
+    ///
+    /// # Errors
+    ///
+    /// `unknown_variant`/`table_not_owned` when the key was handed out by
+    /// another store.
+    pub fn policy_tables(&mut self, key: &PolicyKey) -> Result<Tables<'_, 'a>, Failure> {
+        if key.store != self.shared.id {
+            return Err(failure::not_owned(
+                "the policy engine's key was handed out by another store",
+            ));
+        }
+        Ok(Tables {
+            tx: self,
+            owner: Owner::Policy,
+            keyed: true,
+        })
+    }
+
+    /// A key to the policy engine's tables of this transaction's store, for
+    /// the stand-in of [`crate::testing`].
+    #[cfg(feature = "testing")]
+    pub(crate) fn shared_policy_key_for_tests(&self) -> PolicyKey {
+        PolicyKey::new(self.shared.id)
+    }
+
+    /// The policy engine's tables, for a test that stands in for the policy
+    /// engine. Only with the `testing` feature, which no normal build turns
+    /// on; [`crate::testing::approve`] writes a whole approval for one.
+    #[cfg(feature = "testing")]
+    pub fn policy_tables_for_tests(&mut self) -> Tables<'_, 'a> {
+        Tables {
+            tx: self,
+            owner: Owner::Policy,
+            keyed: true,
+        }
     }
 
     /// One of the ledger's own statements that returns no rows.
@@ -329,6 +378,41 @@ impl<'a> Tx<'a> {
 pub struct Tables<'t, 'a> {
     tx: &'t mut Tx<'a>,
     owner: Owner,
+    keyed: bool,
+}
+
+/// The right to write the policy engine's tables: approvals, decisions,
+/// declines, policy versions, kill switches, and quota counters.
+///
+/// A store hands out one, once, through [`Store::policy_key`]; the policy
+/// engine takes it when it is opened, so only the policy engine records an
+/// approval or a decision that rule 3 trusts. It cannot be cloned, made
+/// another way, or used on another store. What remains: code in this
+/// process that is handed the key, or opens the database file itself, can
+/// still write those tables; the kernel hands the key to the policy engine
+/// alone, and a test holds that no other crate's source names it.
+///
+/// [`Store::policy_key`]: crate::Store::policy_key
+///
+/// ```compile_fail
+/// fn forge(key: &a2m_ledger::PolicyKey) -> a2m_ledger::PolicyKey {
+///     key.clone()
+/// }
+/// ```
+pub struct PolicyKey {
+    store: u64,
+}
+
+impl PolicyKey {
+    pub(crate) const fn new(store: u64) -> Self {
+        Self { store }
+    }
+}
+
+impl std::fmt::Debug for PolicyKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PolicyKey")
+    }
 }
 
 impl Tables<'_, '_> {
@@ -375,6 +459,11 @@ impl Tables<'_, '_> {
     }
 
     fn scope(&self) -> Result<Scope, Failure> {
+        if self.owner == Owner::Policy && !self.keyed {
+            return Err(failure::not_owned(
+                "the policy engine's tables are reached only with its key",
+            ));
+        }
         if self.owner == Owner::Ledger {
             // The ledger's tables carry the nine rules; they are reached
             // through the ledger's own interface and no other way.

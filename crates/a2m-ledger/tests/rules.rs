@@ -141,7 +141,7 @@ async fn rule_2_a_record_is_verified_only_with_a_matching_read_back_and_evidence
                 evidence: nothing,
             };
             tx.ledger()
-                .settle(&fence, record(&fence, 0), Reconciled::Landed(read))
+                .settle(&fence, record(&fence, 0), Reconciled::Landed { read, acted: Acted::default() })
         })
         .await
         .unwrap_err();
@@ -156,7 +156,7 @@ async fn rule_2_a_record_is_verified_only_with_a_matching_read_back_and_evidence
                 evidence: proof,
             };
             tx.ledger()
-                .settle(&fence, record(&fence, 0), Reconciled::Landed(read))
+                .settle(&fence, record(&fence, 0), Reconciled::Landed { read, acted: Acted::default() })
         })
         .await
         .unwrap();
@@ -302,6 +302,103 @@ async fn rule_3_a_write_run_starts_only_with_a_clearance_for_its_diff() {
     assert!(run.decision.is_some());
 }
 
+/// Rule 3, whole: writes begin only on an approval that is unexpired,
+/// unused, for this run, this diff, this tool version, and this workspace,
+/// with a presence check that proves presence off the engine's own prompt;
+/// or on a decision to write without a person recorded in the same
+/// transaction (decision 0145).
+#[tokio::test]
+async fn rule_3_a_clearance_is_checked_whole_when_writes_begin() {
+    let store = memory().await;
+    let fence = previewed(&store, 1, &["a"]).await;
+    let begin_with = |row: ApprovalRow| {
+        let store = store.clone();
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    let approval = record_approval_as(tx, fence.run, &row)?;
+                    let clearance = consume(tx, approval)?;
+                    tx.ledger().begin_writes(&fence, clearance)
+                })
+                .await
+        }
+    };
+    let good = ApprovalRow::good;
+    let refusals = [
+        ("expired", ApprovalRow { expires_in: Some(-1), ..good() }, &codes::APPROVAL_MISSING),
+        ("no expiry", ApprovalRow { expires_in: None, ..good() }, &codes::APPROVAL_MISSING),
+        ("another tool version", ApprovalRow { tool_version: Some(a2m_core::Digest::of(b"another plan")), ..good() }, &codes::APPROVAL_STALE),
+        ("no tool version", ApprovalRow { tool_version: None, ..good() }, &codes::APPROVAL_STALE),
+        ("another workspace", ApprovalRow { workspace: a2m_core::WorkspaceId::from_bytes([7; 16]), ..good() }, &codes::APPROVAL_MISSING),
+        ("no presence off the own prompt", ApprovalRow { channel: "approval_page", presence: "not_available", ..good() }, &codes::APPROVAL_MISSING),
+        ("a presence word nobody wrote", ApprovalRow { presence: "confirmed", ..good() }, &codes::APPROVAL_MISSING),
+    ];
+    for (why, row, code) in refusals {
+        let refused = begin_with(row).await.unwrap_err();
+        assert_eq!(refused.class(), FailureClass::Policy, "{why}");
+        assert_eq!(refused.code(), code, "{why}");
+    }
+
+    // A decision recorded in an earlier transaction does not begin writes:
+    // a kill switch or a newer set may have come between.
+    let decided = store
+        .write(Durability::Synced, move |tx| {
+            record_decision(tx, fence.run, &diff_hash(), true)
+        })
+        .await
+        .unwrap();
+    let stale = store
+        .write(Durability::Synced, move |tx| {
+            tx.ledger()
+                .begin_writes(&fence, WriteClearance::PreApproved(decided))
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code(), &codes::APPROVAL_MISSING);
+    let run = store
+        .read(move |tx| tx.ledger().run(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::NeedsApproval);
+
+    // The engine's own prompt on a machine with no presence check is enough,
+    // and so is a check that proves presence on any channel.
+    begin_with(ApprovalRow { presence: "not_available", ..good() }).await.unwrap();
+    let page = previewed(&store, 2, &["b"]).await;
+    store
+        .write(Durability::Synced, move |tx| {
+            let row = ApprovalRow { channel: "approval_page", presence: "signed_in", ..good() };
+            let approval = record_approval_as(tx, page.run, &row)?;
+            let clearance = consume(tx, approval)?;
+            tx.ledger().begin_writes(&page, clearance)
+        })
+        .await
+        .unwrap();
+}
+
+/// Rule 3, held by the store itself: no statement moves a write run with
+/// records to write into `running` uncleared, or binds a clearance that is
+/// not the run's.
+#[tokio::test]
+async fn rule_3_the_store_refuses_an_uncleared_start_whoever_sends_it() {
+    let folder = Folder::new("rule3raw");
+    let store = on_disk(&folder).await;
+    let fence = previewed(&store, 1, &["a"]).await;
+    let raw = folder.raw();
+    let run = fence.run.to_string();
+    let refused = raw
+        .execute("UPDATE runs SET state = 'running' WHERE id = ?1", [&run])
+        .unwrap_err();
+    assert!(refused.to_string().contains("starts only with an approval"), "{refused}");
+    let refused = raw
+        .execute(
+            "UPDATE runs SET state = 'running', approval_id = 'a_forged' WHERE id = ?1",
+            [&run],
+        )
+        .unwrap_err();
+    assert!(refused.to_string().contains("cleared once"), "{refused}");
+}
+
 /// Rule 4. One writer per run.
 #[tokio::test]
 async fn rule_4_only_the_current_lease_may_change_a_run() {
@@ -318,6 +415,7 @@ async fn rule_4_only_the_current_lease_may_change_a_run() {
         assert_eq!(failure.class(), FailureClass::PossibleCommit);
         assert_eq!(failure.code(), &codes::RUNNER_LOST);
     };
+    let proof = evidence(&store, "read").await;
     lost(lock(&store, old, 1).await.unwrap_err());
     lost(intent(&store, old, 0, "a").await.unwrap_err());
     lost(
@@ -341,7 +439,7 @@ async fn rule_4_only_the_current_lease_may_change_a_run() {
         store
             .write(Durability::Synced, move |tx| {
                 tx.ledger()
-                    .settle(&old, record(&old, 0), Reconciled::NotLanded)
+                    .settle(&old, record(&old, 0), Reconciled::NotLanded { evidence: proof })
             })
             .await
             .unwrap_err(),
@@ -392,10 +490,11 @@ async fn rule_5_nothing_is_written_while_a_record_is_in_doubt_from_an_earlier_le
     assert_eq!(state_of(&store, new, 1).await, RecordState::Planned);
 
     // Settling asks for the lock under the new lease first.
+    let proof = evidence(&store, "read").await;
     let unlocked = store
         .write(Durability::Synced, move |tx| {
             tx.ledger()
-                .settle(&new, record(&new, 0), Reconciled::NotLanded)
+                .settle(&new, record(&new, 0), Reconciled::NotLanded { evidence: proof })
         })
         .await
         .unwrap_err();
@@ -404,7 +503,7 @@ async fn rule_5_nothing_is_written_while_a_record_is_in_doubt_from_an_earlier_le
     let settled = store
         .write(Durability::Synced, move |tx| {
             tx.ledger()
-                .settle(&new, record(&new, 0), Reconciled::NotLanded)
+                .settle(&new, record(&new, 0), Reconciled::NotLanded { evidence: proof })
         })
         .await
         .unwrap();
@@ -519,7 +618,7 @@ async fn rule_7_two_runs_cannot_both_hold_the_lock_on_one_record() {
                 evidence: proof,
             };
             tx.ledger()
-                .settle(&holder, record(&holder, 0), Reconciled::Landed(read))
+                .settle(&holder, record(&holder, 0), Reconciled::Landed { read, acted: Acted::default() })
         })
         .await
         .unwrap();

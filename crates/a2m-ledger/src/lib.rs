@@ -26,6 +26,8 @@ mod ledger;
 mod migrate;
 mod sqlite;
 mod store;
+#[cfg(feature = "testing")]
+pub mod testing;
 mod tx;
 mod version;
 
@@ -44,7 +46,7 @@ pub use migrate::{Migration, migrations, table_owner};
 pub use store::{
     BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, Store, StoreConfig, StoreHealth,
 };
-pub use tx::{Durability, Owner, Row, SqlValue, Tables, Tx};
+pub use tx::{Durability, Owner, PolicyKey, Row, SqlValue, Tables, Tx};
 pub use version::{PublishedVersion, VersionRow, Versions};
 
 /// The failure codes this crate produces. Each belongs to exactly one class.

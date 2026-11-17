@@ -288,6 +288,38 @@ pub struct RecordRow {
     pub failure: Option<(FailureClass, FailureCode)>,
     /// The evidence of its read-back or of its failure.
     pub evidence: Option<BlobRef>,
+    /// The mode of the binding its last intent was stored for: after a
+    /// restart, a record in doubt is read through the binding it was
+    /// written by.
+    pub mode: Option<Mode>,
+    /// When its write was sent, in its current attempt: a record that
+    /// reached `acted` stays in doubt, whatever it failed with, until it is
+    /// read back.
+    pub acted_at: Option<Timestamp>,
+    /// When it was last read back by reconcile.
+    pub reconciled_at: Option<Timestamp>,
+}
+
+impl RecordRow {
+    /// Whether the record must be read back before its run writes again
+    /// (rule 5): it is in `intent` or `acted`; or it `failed` and was not
+    /// read since, and either its write was sent or the failure's class
+    /// allows another try.
+    #[must_use]
+    pub fn in_doubt(&self) -> bool {
+        match self.state {
+            RecordState::Intent | RecordState::Acted => true,
+            RecordState::Failed => {
+                self.reconciled_at.is_none()
+                    && (self.acted_at.is_some()
+                        || self
+                            .failure
+                            .as_ref()
+                            .is_some_and(|(class, _)| !SETTLED_CLASSES.contains(class)))
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A record about to be written.
@@ -450,9 +482,21 @@ pub struct ReadBack {
 #[derive(Debug, Clone)]
 pub enum Reconciled {
     /// The record holds the intended values: the write landed.
-    Landed(ReadBack),
+    Landed {
+        /// What was read.
+        read: ReadBack,
+        /// What the read found the system assigned and the outputs a
+        /// dependent record needs, kept as `mark_acted` keeps them, so that
+        /// a resume need not read the record once more.
+        acted: Acted,
+    },
     /// The record holds the values seen before the write: it did not land.
-    NotLanded,
+    /// The evidence of the read is required: a record goes back to
+    /// `planned`, and may be written again, only on a read that was made.
+    NotLanded {
+        /// The evidence of the read.
+        evidence: BlobRef,
+    },
     /// The record holds neither.
     Neither {
         /// The evidence of the read.
@@ -613,6 +657,17 @@ fn may_move(from: RunState, to: RunState) -> bool {
 
 /// The failure classes after which nothing is in doubt: the record was read,
 /// or nothing was sent.
+/// The presence checks that show a person was present, as the policy engine
+/// writes them in `approvals.presence_check`. `not_available` is the one
+/// other word: a machine with no such check.
+const PRESENCE_PROVED: [&str; 5] = [
+    "os_prompt",
+    "polkit",
+    "local_authentication",
+    "windows_hello",
+    "signed_in",
+];
+
 const SETTLED_CLASSES: [FailureClass; 3] = [
     FailureClass::Policy,
     FailureClass::Stale,
@@ -690,7 +745,7 @@ macro_rules! select_records {
             "SELECT run_id, step_seq, record_seq, record_key, record_key_hash, operation, state,
                     intended_hash, before_ref, after_ref, idempotency_token, assigned_key,
                     outputs_ref, intent_epoch, attempts, failure_class, failure_code,
-                    evidence_ref, intent_seq
+                    evidence_ref, intent_seq, binding_mode, acted_at, reconciled_at
              FROM run_records ",
             $rest
         )
@@ -721,6 +776,9 @@ fn record_row(row: &Row) -> Result<(RecordRow, Option<u64>), Failure> {
             attempts: small(row.int(14)?)?,
             failure: failure_of(row.opt_text(15)?, row.opt_text(16)?)?,
             evidence: parse_opt(row.opt_text(17)?)?,
+            mode: parse_opt(row.opt_text(19)?)?,
+            acted_at: row.opt_int(20)?.map(moment),
+            reconciled_at: row.opt_int(21)?.map(moment),
         },
         row.opt_int(18)?.map(count).transpose()?,
     ))
@@ -884,8 +942,10 @@ impl Ledger<'_, '_> {
     }
 
     /// Rule 5's question: the records that must be read back before the run
-    /// writes again. Those in `intent` or `acted`, and those `failed` with a
-    /// class that allows another try, in key order.
+    /// writes again, in key order: those of which [`RecordRow::in_doubt`]
+    /// holds. A record that reached `acted` is among them whatever class it
+    /// failed with: the ledger does not take a failure's class as proof that
+    /// a write that was sent did not land.
     ///
     /// # Errors
     ///
@@ -895,7 +955,9 @@ impl Ledger<'_, '_> {
             select_records!(
                 "WHERE run_id = ?1
                    AND (state IN ('intent', 'acted')
-                        OR (state = 'failed' AND failure_class NOT IN ('policy', 'stale', 'input')))
+                        OR (state = 'failed' AND reconciled_at IS NULL
+                            AND (acted_at IS NOT NULL
+                                 OR failure_class NOT IN ('policy', 'stale', 'input'))))
                  ORDER BY record_key, step_seq, record_seq"
             ),
             &[run.to_string().into()],
@@ -1203,56 +1265,11 @@ impl Ledger<'_, '_> {
             .to_string();
         let payload = match clearance {
             WriteClearance::Approval(approval) => {
-                let row = self
-                    .tx
-                    .row(
-                        "SELECT rowid, scope, run_id, diff_hash, used_at, revoked_at
-                         FROM approvals WHERE id = ?1",
-                        &[approval.to_string().into()],
-                    )?
-                    .ok_or_else(|| failure::approval_missing("there is no such approval"))?;
-                if row.text(1)? != "run" || row.opt_text(2)? != Some(run.id.to_string().as_str()) {
-                    return Err(failure::approval_missing(
-                        "the approval is not for this run",
-                    ));
-                }
-                if row.opt_text(3)? != Some(diff_hash.as_str()) {
-                    return Err(failure::approval_stale());
-                }
-                if row.opt_int(5)?.is_some() {
-                    return Err(failure::approval_missing("the approval was revoked"));
-                }
-                if row.opt_int(4)?.is_none() {
-                    return Err(failure::approval_missing(
-                        "the policy engine has not marked the approval used",
-                    ));
-                }
-                if !self.tx.db.changed_in_this_transaction(row.int(0)?) {
-                    return Err(failure::approval_missing(
-                        "the approval was used before; an approval is used once, in the transaction that starts the writes",
-                    ));
-                }
+                self.check_approval(&run, approval, &diff_hash)?;
                 json!({ "approval": approval.to_string() })
             }
             WriteClearance::PreApproved(decision) => {
-                let row = self
-                    .tx
-                    .row(
-                        "SELECT run_id, question, allowed, diff_hash FROM decisions WHERE id = ?1",
-                        &[decision.to_string().into()],
-                    )?
-                    .ok_or_else(|| failure::approval_missing("there is no such decision"))?;
-                if row.opt_text(0)? != Some(run.id.to_string().as_str())
-                    || row.text(1)? != "write_without_person"
-                    || row.int(2)? != 1
-                {
-                    return Err(failure::approval_missing(
-                        "the decision did not allow this run to write without a person",
-                    ));
-                }
-                if row.opt_text(3)? != Some(diff_hash.as_str()) {
-                    return Err(failure::approval_stale());
-                }
+                self.check_pre_approval(&run, decision, &diff_hash)?;
                 json!({ "decision": decision.to_string() })
             }
         };
@@ -1592,7 +1609,8 @@ impl Ledger<'_, '_> {
                 "UPDATE run_records
                  SET state = 'intent', intent_epoch = ?4, intent_seq = ?5, intent_at = ?6,
                      binding_mode = ?7, attempts = attempts + 1,
-                     failure_class = NULL, failure_code = NULL
+                     failure_class = NULL, failure_code = NULL,
+                     acted_at = NULL, reconciled_at = NULL
                  WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
                 &params,
             )?;
@@ -1697,7 +1715,9 @@ impl Ledger<'_, '_> {
 
     /// Marks a record `failed` with the failure that stopped it. Its lock is
     /// quarantined when a write may have been sent and the failure leaves
-    /// that in doubt; otherwise it is released.
+    /// that in doubt; otherwise it is released. A record that reached
+    /// `acted` keeps its lock, quarantined, whatever the class: the class is
+    /// the caller's word, and a sent write is settled only by a read.
     ///
     /// # Errors
     ///
@@ -1749,7 +1769,10 @@ impl Ledger<'_, '_> {
              WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
             &params,
         )?;
-        let in_doubt = row.state != RecordState::Planned && !SETTLED_CLASSES.contains(&why.class());
+        // A write that was sent stays in doubt whatever the failure's class
+        // says: only a read settles it.
+        let in_doubt = row.state == RecordState::Acted
+            || (row.state != RecordState::Planned && !SETTLED_CLASSES.contains(&why.class()));
         self.end_lock(&run, &row, in_doubt)
     }
 
@@ -1771,15 +1794,7 @@ impl Ledger<'_, '_> {
     ) -> Result<Settled, Failure> {
         let run = self.fenced_for(fence, record)?;
         let row = self.record(record)?;
-        let doubtful = match row.state {
-            RecordState::Intent | RecordState::Acted => true,
-            RecordState::Failed => row
-                .failure
-                .as_ref()
-                .is_some_and(|(class, _)| !SETTLED_CLASSES.contains(class)),
-            _ => false,
-        };
-        if !doubtful {
+        if !row.in_doubt() {
             return Err(failure::unexpected(format!(
                 "only a record in doubt is settled, and this one is `{}`",
                 row.state
@@ -1788,30 +1803,43 @@ impl Ledger<'_, '_> {
         self.holds_lock(&run, &row, fence.epoch)?;
         let place = record_ref_params(&record);
         match seen {
-            Reconciled::Landed(read_back) => {
-                self.verify(
-                    &run,
-                    &row,
-                    fence.epoch,
-                    &read_back,
-                    EventKind::ReconcileRead,
+            Reconciled::Landed { read, acted } => {
+                // What the read found the system assigned, and the outputs a
+                // dependent record needs, are kept with the record, as
+                // `mark_acted` keeps them on the normal path.
+                let mut params = place.to_vec();
+                params.extend([
+                    SqlValue::from(acted.assigned_key),
+                    acted.outputs.into(),
+                    self.tx.now().into(),
+                ]);
+                self.tx.exec(
+                    "UPDATE run_records
+                     SET assigned_key = COALESCE(?4, assigned_key),
+                         outputs_ref = COALESCE(?5, outputs_ref), reconciled_at = ?6
+                     WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
+                    &params,
                 )?;
+                self.verify(&run, &row, fence.epoch, &read, EventKind::ReconcileRead)?;
                 Ok(Settled::Verified)
             }
-            Reconciled::NotLanded => {
+            Reconciled::NotLanded { evidence } => {
                 self.event(
                     run.id,
                     fence.epoch,
                     EventKind::ReconcileRead,
                     &json!({ "step": record.step_seq, "record": record.record_seq, "state": "planned" }),
-                    None,
+                    Some(evidence),
                 )?;
+                let mut params = place.to_vec();
+                params.extend([SqlValue::from(evidence), self.tx.now().into()]);
                 self.tx.exec(
                     "UPDATE run_records
                      SET state = 'planned', intent_epoch = NULL, intent_seq = NULL,
-                         failure_class = NULL, failure_code = NULL
+                         failure_class = NULL, failure_code = NULL, evidence_ref = ?4,
+                         reconciled_at = ?5
                      WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
-                    &place,
+                    &params,
                 )?;
                 Ok(Settled::Planned)
             }
@@ -1830,9 +1858,11 @@ impl Ledger<'_, '_> {
                     why.code().as_str().into(),
                     evidence.into(),
                 ]);
+                params.push(self.tx.now().into());
                 self.tx.exec(
                     "UPDATE run_records
-                     SET state = 'failed', failure_class = ?4, failure_code = ?5, evidence_ref = ?6
+                     SET state = 'failed', failure_class = ?4, failure_code = ?5, evidence_ref = ?6,
+                         reconciled_at = ?7
                      WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
                     &params,
                 )?;
@@ -1901,13 +1931,146 @@ impl Ledger<'_, '_> {
                 "SELECT COUNT(*) FROM run_records
                  WHERE run_id = ?1 AND intent_epoch < ?2
                    AND (state IN ('intent', 'acted')
-                        OR (state = 'failed' AND failure_class NOT IN ('policy', 'stale', 'input')))",
+                        OR (state = 'failed' AND reconciled_at IS NULL
+                            AND (acted_at IS NOT NULL
+                                 OR failure_class NOT IN ('policy', 'stale', 'input'))))",
                 &[run.id.to_string().into(), stored(run.epoch.get())?.into()],
             )?
             .ok_or_else(|| failure::corrupt("a count that gave no row"))?
             .int(0)?;
         if doubtful > 0 {
             return Err(failure::reconcile_required());
+        }
+        Ok(())
+    }
+
+    /// Rule 3 for an approval: it is this run's, for its diff and its tool
+    /// version, in its workspace, given by a principal, unexpired, not
+    /// revoked, marked used by the policy engine in this very transaction,
+    /// and backed by a presence check that proves presence wherever the
+    /// channel is not the engine's own prompt on one machine.
+    fn check_approval(
+        &mut self,
+        run: &RunRow,
+        approval: ApprovalId,
+        diff_hash: &str,
+    ) -> Result<(), Failure> {
+        let row = self
+            .tx
+            .row(
+                "SELECT rowid, scope, run_id, diff_hash, used_at, revoked_at, expires_at,
+                        tool_version_hash, workspace_id, approver_id, channel, presence_check
+                 FROM approvals WHERE id = ?1",
+                &[approval.to_string().into()],
+            )?
+            .ok_or_else(|| failure::approval_missing("there is no such approval"))?;
+        if row.text(1)? != "run" || row.opt_text(2)? != Some(run.id.to_string().as_str()) {
+            return Err(failure::approval_missing(
+                "the approval is not for this run",
+            ));
+        }
+        if row.text(8)? != run.workspace.to_string() {
+            return Err(failure::approval_missing(
+                "the approval is of another workspace",
+            ));
+        }
+        if row.opt_text(3)? != Some(diff_hash) {
+            return Err(failure::approval_stale());
+        }
+        if row.opt_text(7)? != Some(run.target_version.to_string().as_str()) {
+            return Err(failure::approval_stale());
+        }
+        if row.opt_int(5)?.is_some() {
+            return Err(failure::approval_missing("the approval was revoked"));
+        }
+        match row.opt_int(6)? {
+            Some(expires) if expires > self.tx.now().as_unix_millis() => {}
+            Some(_) => return Err(failure::approval_missing("the approval has expired")),
+            None => {
+                return Err(failure::approval_missing("the approval carries no expiry"));
+            }
+        }
+        if row.text(9)?.parse::<PrincipalId>().is_err() {
+            return Err(failure::approval_missing(
+                "the approval names no principal who gave it",
+            ));
+        }
+        let own_prompt = row.text(10)? == "local_prompt";
+        match row.text(11)? {
+            check if PRESENCE_PROVED.contains(&check) => {}
+            "not_available" if own_prompt => {}
+            "not_available" => {
+                return Err(failure::approval_missing(
+                    "an approval that did not come by the engine's own prompt must prove a person was present",
+                ));
+            }
+            _ => {
+                return Err(failure::approval_missing(
+                    "the approval names a presence check the ledger does not know",
+                ));
+            }
+        }
+        if row.opt_int(4)?.is_none() {
+            return Err(failure::approval_missing(
+                "the policy engine has not marked the approval used",
+            ));
+        }
+        if !self
+            .tx
+            .db
+            .changed_in_this_transaction("approvals", row.int(0)?)
+        {
+            return Err(failure::approval_missing(
+                "the approval was used before; an approval is used once, in the transaction that starts the writes",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rule 3 for a decision that lets a run write without a person: it is
+    /// this run's, in its workspace, for its diff, an allowed answer to
+    /// `write_without_person` made under a policy version, and recorded in
+    /// this very transaction, so that no kill switch or newer policy set
+    /// came between the decision and the writes.
+    fn check_pre_approval(
+        &mut self,
+        run: &RunRow,
+        decision: DecisionId,
+        diff_hash: &str,
+    ) -> Result<(), Failure> {
+        let row = self
+            .tx
+            .row(
+                "SELECT rowid, run_id, question, allowed, diff_hash, workspace_id, policy_version
+                 FROM decisions WHERE id = ?1",
+                &[decision.to_string().into()],
+            )?
+            .ok_or_else(|| failure::approval_missing("there is no such decision"))?;
+        if row.opt_text(1)? != Some(run.id.to_string().as_str())
+            || row.text(2)? != "write_without_person"
+            || row.int(3)? != 1
+            || row.text(5)? != run.workspace.to_string()
+        {
+            return Err(failure::approval_missing(
+                "the decision did not allow this run to write without a person",
+            ));
+        }
+        if row.opt_text(4)? != Some(diff_hash) {
+            return Err(failure::approval_stale());
+        }
+        if row.opt_text(6)?.is_none() {
+            return Err(failure::approval_missing(
+                "the decision was made with no policy set in force",
+            ));
+        }
+        if !self
+            .tx
+            .db
+            .changed_in_this_transaction("decisions", row.int(0)?)
+        {
+            return Err(failure::approval_missing(
+                "the decision was recorded in an earlier transaction; a write begins on a decision made in its own",
+            ));
         }
         Ok(())
     }
@@ -2036,8 +2199,9 @@ impl Ledger<'_, '_> {
                  SELECT record_key_hash FROM run_records
                  WHERE run_id = ?1
                    AND (state IN ('intent', 'acted')
-                        OR (state = 'failed' AND intent_epoch IS NOT NULL
-                            AND failure_class NOT IN ('policy', 'stale', 'input'))))",
+                        OR (state = 'failed' AND intent_epoch IS NOT NULL AND reconciled_at IS NULL
+                            AND (acted_at IS NOT NULL
+                                 OR failure_class NOT IN ('policy', 'stale', 'input')))))",
             &run,
         )?;
         self.tx.exec(

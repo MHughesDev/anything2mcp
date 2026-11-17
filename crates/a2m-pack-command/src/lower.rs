@@ -10,7 +10,7 @@ use a2m_core::{
 };
 use a2m_files::{
     Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage,
+    Possible, ResolvedBinding, Stage, StepCommits,
 };
 
 use crate::codes::{
@@ -261,6 +261,32 @@ impl Lowering for CliLowering {
 
     fn step_kinds(&self) -> &[StepKind] {
         &self.step_kinds
+    }
+
+    /// A `spawn` starts a command that reads and a command that writes
+    /// alike, and which it is is the `effect` its `commands/` file declares:
+    /// the lowering marks it `commits` exactly for a command that writes,
+    /// and the driver refuses a `spawn` whose mark and command disagree.
+    /// `expect` and `parse` read how the last start ended and what it
+    /// printed, and never save.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == SPAWN {
+            StepCommits::AsDeclared
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    /// `create` and `update` write; `delete` cannot be taken back and is
+    /// `irreversible`. A read verb, and `call`, claim nothing more than a
+    /// read: what a `call` does is its command's declared effect, which the
+    /// lowering marks and holds the operation to.
+    fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
+        match binding.verb.as_str() {
+            "create" | "update" => EffectClass::Write,
+            "delete" => EffectClass::Irreversible,
+            _ => EffectClass::Read,
+        }
     }
 
     fn binding_schema(&self) -> &JsonSchema {

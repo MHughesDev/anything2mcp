@@ -33,6 +33,8 @@ The pack's name is `http`. Its manifest is `src/anything2mcp-provider.toml`, and
 | Modes | `http`, archetype request, rank 20. `api` is not built |
 | Surface kinds | `http`, with the address key `base` |
 | Step kinds | `request`, `validate`, `extract`, and `probe`, which only a discoverer makes. `token` is not built |
+| What saves, for the compiler | `Lowering::commits`: `request` is `AsDeclared`, because the same kind sends a read and a write and which it is is the `effect` of the endpoint it names; the lowering marks it `commits` exactly for a write verb, which it binds only to an endpoint marked `write`. `validate`, `extract`, and `probe` are `Never`. No kind always saves, so the manifest lists no `commit_steps`. `Lowering::least_effect`: `read` for `read`, `list`, and `search`; `irreversible` for `delete` and `submit`, and for any other write whose binding names no `read_back`; `write` otherwise |
+| What can describe a write | `FileKind::writes` on an endpoint entry: yes unless the entry is marked `read` and its method is one HTTP marks safe (GET, HEAD, OPTIONS). An effect left as an open question is not known to read. The answer is the same for `http` and `web` surfaces, so it holds for the entries `page_http` reads too |
 | Drivers | The driver of `http` |
 | File kinds | `endpoint`, in `endpoints/` ([file formats](../../reference/file-formats.md#endpointsyaml)), for `http` surfaces and, for requests made from inside a page, `web` surfaces; `a2m-pack-web-ui` declares that it reads it, and is handed the validated entries as data |
 | Binding fields | `endpoint`, `path_params`, `query`, `body`, `extract`, and `read_back` with `endpoint`, `path_params`, `query`, `extract`, and `prefer` |
@@ -60,7 +62,7 @@ The file kind and the lowering refuse, as errors under the pack's own codes: `ht
 
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| An operation of a published description | One endpoint entry: its method, its path as a template, its shapes in the pack's own words, the statuses the description lists, and `effect: read` only for GET and HEAD | The surface, when the target declares none at the description's address; a response shape the description does not state; every operation and every write |
+| An operation of a published description | One endpoint entry: its method, its path as a template, its shapes in the pack's own words, the statuses the description lists, and `effect: read` only for GET and HEAD. An operation of any other method is drafted as `effect: write`, and the drafter refuses it and writes nothing, because the file kind says it describes a write | The surface, when the target declares none at the description's address; a response shape the description does not state; every operation and every write, its endpoint entry included |
 
 Not built: the read operation drafted for each safe method, the OData key, and the rule for an endpoint seen in capture.
 
@@ -204,7 +206,8 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 | Reading a description is bounded, and past the bounds it is refused by name | `a_description_that_grows_past_the_bounds_is_refused_by_name_and_not_expanded` |
 | A write reaches the system only with the ledger's token | `a_write_without_the_ledgers_token_never_reaches_the_application` |
 | No discovery sends a request that could write | `discovery_observes_and_cannot_write`, with the control interface counting writes |
-| A drafted read exists only for a method the description marks safe | `a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a_safe_method` |
+| A drafted read exists only for a method the description marks safe, and no drafted entry describes a write | `a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a_safe_method`, where the drafter refuses the DELETE; `an_entry_describes_a_write_unless_it_is_a_read_of_a_safe_method` |
+| A write never compiles as a read or as less than its verb does | `a_write_never_compiles_as_less_than_what_its_binding_does` |
 | A credential never appears in a value, a capture, or a failure, and reaches only an endpoint that takes it | `a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_else`, with the token planted in a response header and body |
 | A registered secret in a description reaches no finding, whether the description was fetched or given as a file | `a_description_given_as_a_file_passes_the_redactor_before_anything_is_made_of_it` |
 | A held answer prints no header and no body | `a_held_answer_prints_no_header_and_no_body` |
@@ -220,6 +223,8 @@ The edge's answers are not built: `challenge_page`, `rate_limited_by_edge`, and 
 5. Not built: the `api` mode; the read operation drafted for each safe method; GraphQL and OData; the drafting rule for endpoints seen in capture, package E4.
 6. Not built: uploads and downloads, pagers, long-running jobs, identity by a stamp or a search, the digest and integrated Windows exchanges, a client certificate, TLS.
 7. Done: the eight findings of the safety review, and three more found on the way ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)): a write that was sent is never settled by an answer that is not the application's verdict; the version precondition; the bounds on reading a description; the address checked where it is sent.
+
+8. Done: the declarations the compiler holds a lowering to ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)): which step kinds save, the least effect of a binding, and which endpoint entries describe a write. The driver has no read-only guard of its own to lift in a sandbox: it refuses a write endpoint from any step not marked `commits`, in every posture.
 
 ## Open points
 

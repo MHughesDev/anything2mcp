@@ -146,7 +146,7 @@ A description that says an endpoint exists is a claim, at `inferred` with source
 
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
-| A published description | Endpoint entries with field types from its schema; one read operation for each method the description marks safe: GET and HEAD in OpenAPI, a query in GraphQL, a read of an entity set in OData | Which become tools, and their names in the language of the work; every write |
+| A published description | Endpoint entries with field types from its schema, for the methods the description marks safe only: an entry for any other method describes a write, and the drafter refuses it; one read operation for each method the description marks safe: GET and HEAD in OpenAPI, a query in GraphQL, a read of an entity set in OData | Which become tools, and their names in the language of the work; every write, its endpoint entry included |
 | An entity set with a declared key, in OData | The key as the operation's `natural` identity | Nothing more about identity |
 | An endpoint seen in capture, with no description | An endpoint entry with its template tiers marked, at `inferred` | Confirming every template; all operations |
 

@@ -14,6 +14,10 @@ name = "http"
 archetype = "request"
 verbs = ["read", "list", "search", "create", "update", "upsert", "delete", "submit", "call"]
 steps = ["request", "validate", "extract", "probe"]
+# No `commit_steps`: no step kind of this mode always saves. A `request`
+# saves exactly when its endpoint is marked `write`, and the lowering marks
+# it `commits` then; the driver refuses an endpoint that writes from a step
+# not so marked.
 rank = 20
 session_reads = 8
 session_writes = 1

@@ -2,14 +2,17 @@
 //! here names only tables `a2m-policy` owns, and the store refuses any other.
 
 use a2m_core::{Digest, Failure, PrincipalId, Timestamp};
-use a2m_ledger::{Owner, Row, SqlValue, Tx};
+use a2m_ledger::{PolicyKey, Row, SqlValue, Tables, Tx};
 
 use crate::failure;
 use crate::model::Request;
 use crate::rules::{Answer, Verdict};
 use crate::set::CandidateSet;
 
-const OWNER: Owner = Owner::Policy;
+/// The policy engine's tables in `tx`, with the key the store handed it.
+fn tables<'t, 'a>(tx: &'t mut Tx<'a>, key: &PolicyKey) -> Result<Tables<'t, 'a>, Failure> {
+    tx.policy_tables(key)
+}
 
 /// A stored policy version, as text.
 pub(crate) struct StoredVersion {
@@ -20,16 +23,20 @@ pub(crate) struct StoredVersion {
 }
 
 /// The version of the newest policy set, if any is stored.
-pub(crate) fn newest_version(tx: &mut Tx<'_>) -> Result<Option<String>, Failure> {
-    let row = tx.tables(OWNER).query_first(
+pub(crate) fn newest_version(tx: &mut Tx<'_>, key: &PolicyKey) -> Result<Option<String>, Failure> {
+    let row = tables(tx, key)?.query_first(
         "SELECT version FROM policy_versions ORDER BY seq DESC LIMIT 1",
         &[],
     )?;
     row.map(|row| row.text(0).map(str::to_owned)).transpose()
 }
 
-pub(crate) fn version(tx: &mut Tx<'_>, version: &str) -> Result<Option<StoredVersion>, Failure> {
-    let row = tx.tables(OWNER).query_first(
+pub(crate) fn version(
+    tx: &mut Tx<'_>,
+    key: &PolicyKey,
+    version: &str,
+) -> Result<Option<StoredVersion>, Failure> {
+    let row = tables(tx, key)?.query_first(
         "SELECT version, layers, tests, published_by FROM policy_versions WHERE version = ?1
          ORDER BY seq DESC LIMIT 1",
         &[SqlValue::from(version)],
@@ -49,17 +56,18 @@ pub(crate) fn version(tx: &mut Tx<'_>, version: &str) -> Result<Option<StoredVer
 /// newest changes nothing.
 pub(crate) fn insert_version(
     tx: &mut Tx<'_>,
+    key: &PolicyKey,
     set: &CandidateSet,
     guardrails: Digest,
     published_by: Option<PrincipalId>,
     presence: Option<&'static str>,
 ) -> Result<(), Failure> {
     let version = set.version().to_string();
-    if newest_version(tx)?.as_deref() == Some(version.as_str()) {
+    if newest_version(tx, key)?.as_deref() == Some(version.as_str()) {
         return Ok(());
     }
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "INSERT INTO policy_versions
             (seq, version, format, guardrails, layers, tests, published_by, presence_check, published_at)
          VALUES ((SELECT COALESCE(MAX(seq), 0) + 1 FROM policy_versions),
@@ -81,6 +89,7 @@ pub(crate) fn insert_version(
 /// Records one decision.
 pub(crate) fn insert_decision(
     tx: &mut Tx<'_>,
+    key: &PolicyKey,
     id: &str,
     request: &Request,
     request_text: &str,
@@ -90,7 +99,7 @@ pub(crate) fn insert_decision(
     let reasons =
         serde_json::to_string(&verdict.rules).map_err(|_| failure::evaluation_failed())?;
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "INSERT INTO decisions
             (id, workspace_id, run_id, principal_id, question, allowed, diff_hash, reasons,
              policy_version, decided_at, resource, request, refusal_code)
@@ -131,8 +140,12 @@ pub(crate) struct StoredDecision {
     pub(crate) refusal_code: Option<String>,
 }
 
-pub(crate) fn decision(tx: &mut Tx<'_>, id: &str) -> Result<Option<StoredDecision>, Failure> {
-    let row = tx.tables(OWNER).query_first(
+pub(crate) fn decision(
+    tx: &mut Tx<'_>,
+    key: &PolicyKey,
+    id: &str,
+) -> Result<Option<StoredDecision>, Failure> {
+    let row = tables(tx, key)?.query_first(
         "SELECT principal_id, question, allowed, reasons, policy_version, decided_at, resource,
                 refusal_code
          FROM decisions WHERE id = ?1",
@@ -154,8 +167,11 @@ pub(crate) fn decision(tx: &mut Tx<'_>, id: &str) -> Result<Option<StoredDecisio
 }
 
 /// The kill switches that are on: scope and name.
-pub(crate) fn switches_on(tx: &mut Tx<'_>) -> Result<Vec<(String, String)>, Failure> {
-    tx.tables(OWNER)
+pub(crate) fn switches_on(
+    tx: &mut Tx<'_>,
+    key: &PolicyKey,
+) -> Result<Vec<(String, String)>, Failure> {
+    tables(tx, key)?
         .query(
             "SELECT scope, name FROM kill_switches WHERE is_on = 1 ORDER BY scope, name",
             &[],
@@ -165,25 +181,25 @@ pub(crate) fn switches_on(tx: &mut Tx<'_>) -> Result<Vec<(String, String)>, Fail
         .collect()
 }
 
-pub(crate) fn kill_epoch(tx: &mut Tx<'_>) -> Result<u64, Failure> {
-    let row = tx
-        .tables(OWNER)
-        .query_first("SELECT COALESCE(MAX(epoch), 0) FROM kill_switches", &[])?;
+pub(crate) fn kill_epoch(tx: &mut Tx<'_>, key: &PolicyKey) -> Result<u64, Failure> {
+    let row =
+        tables(tx, key)?.query_first("SELECT COALESCE(MAX(epoch), 0) FROM kill_switches", &[])?;
     let epoch = row.as_ref().map(|row| row.int(0)).transpose()?.unwrap_or(0);
     Ok(u64::try_from(epoch).unwrap_or(0))
 }
 
 pub(crate) fn set_switch(
     tx: &mut Tx<'_>,
+    key: &PolicyKey,
     scope: &'static str,
     name: String,
     on: bool,
     by: PrincipalId,
     presence: Option<&'static str>,
 ) -> Result<u64, Failure> {
-    let epoch = kill_epoch(tx)?.saturating_add(1);
+    let epoch = kill_epoch(tx, key)?.saturating_add(1);
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "INSERT INTO kill_switches (scope, name, is_on, epoch, set_by, presence_check, set_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (scope, name) DO UPDATE SET
@@ -207,6 +223,7 @@ pub(crate) fn set_switch(
 /// removed.
 pub(crate) fn count_call(
     tx: &mut Tx<'_>,
+    key: &PolicyKey,
     workspace: String,
     principal: String,
     period_minutes: u32,
@@ -214,31 +231,31 @@ pub(crate) fn count_call(
     let period_millis = i64::from(period_minutes).saturating_mul(60_000);
     let now = tx.now().as_unix_millis();
     let start = now - now.rem_euclid(period_millis);
-    let key = [
+    let counter = [
         SqlValue::from(workspace),
         SqlValue::from(principal),
         SqlValue::from(period_minutes),
         SqlValue::from(start),
     ];
-    let mut tables = tx.tables(OWNER);
+    let mut tables = tables(tx, key)?;
     tables.execute(
         "DELETE FROM quota_counters
          WHERE workspace_id = ?1 AND principal_id = ?2 AND period_minutes = ?3
            AND period_start < ?4",
-        &key,
+        &counter,
     )?;
     tables.execute(
         "INSERT INTO quota_counters (workspace_id, principal_id, period_minutes, period_start, calls)
          VALUES (?1, ?2, ?3, ?4, 1)
          ON CONFLICT (workspace_id, principal_id, period_minutes, period_start)
          DO UPDATE SET calls = calls + 1",
-        &key,
+        &counter,
     )?;
     let row = tables.query_first(
         "SELECT calls FROM quota_counters
          WHERE workspace_id = ?1 AND principal_id = ?2 AND period_minutes = ?3
            AND period_start = ?4",
-        &key,
+        &counter,
     )?;
     row.as_ref().map_or(Ok(0), |row| row.int(0))
 }
@@ -263,8 +280,12 @@ fn approval_of(row: &Row) -> Result<StoredApproval, Failure> {
 }
 
 /// The approvals recorded for a run, newest first.
-pub(crate) fn approvals_of(tx: &mut Tx<'_>, run: &str) -> Result<Vec<StoredApproval>, Failure> {
-    tx.tables(OWNER)
+pub(crate) fn approvals_of(
+    tx: &mut Tx<'_>,
+    key: &PolicyKey,
+    run: &str,
+) -> Result<Vec<StoredApproval>, Failure> {
+    tables(tx, key)?
         .query(
             "SELECT id, diff_hash, expires_at, used_at, revoked_at FROM approvals
              WHERE scope = 'run' AND run_id = ?1 ORDER BY granted_at DESC, id DESC",
@@ -288,9 +309,13 @@ pub(crate) struct NewApproval {
     pub(crate) expires_at: Timestamp,
 }
 
-pub(crate) fn insert_approval(tx: &mut Tx<'_>, new: NewApproval) -> Result<(), Failure> {
+pub(crate) fn insert_approval(
+    tx: &mut Tx<'_>,
+    key: &PolicyKey,
+    new: NewApproval,
+) -> Result<(), Failure> {
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "INSERT INTO approvals
             (id, workspace_id, scope, run_id, diff_hash, tool_version_hash, approver_id, channel,
              presence_check, granted_at, expires_at)
@@ -312,9 +337,9 @@ pub(crate) fn insert_approval(tx: &mut Tx<'_>, new: NewApproval) -> Result<(), F
 }
 
 /// Marks an approval used, if it is still unused. Gives whether it did.
-pub(crate) fn mark_used(tx: &mut Tx<'_>, id: &str) -> Result<bool, Failure> {
+pub(crate) fn mark_used(tx: &mut Tx<'_>, key: &PolicyKey, id: &str) -> Result<bool, Failure> {
     let now = tx.now();
-    let changed = tx.tables(OWNER).execute(
+    let changed = tables(tx, key)?.execute(
         "UPDATE approvals SET used_at = ?2 WHERE id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
         &[SqlValue::from(id), SqlValue::from(now)],
     )?;
@@ -323,6 +348,7 @@ pub(crate) fn mark_used(tx: &mut Tx<'_>, id: &str) -> Result<bool, Failure> {
 
 pub(crate) fn insert_decline(
     tx: &mut Tx<'_>,
+    key: &PolicyKey,
     id: String,
     workspace: String,
     run: String,
@@ -330,7 +356,7 @@ pub(crate) fn insert_decline(
     channel: &'static str,
 ) -> Result<(), Failure> {
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "INSERT INTO approval_declines (id, workspace_id, run_id, declined_by, channel, declined_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         &[
@@ -346,9 +372,9 @@ pub(crate) fn insert_decline(
 }
 
 /// Revokes every unused approval of a run. Gives how many it revoked.
-pub(crate) fn revoke_unused(tx: &mut Tx<'_>, run: &str) -> Result<u64, Failure> {
+pub(crate) fn revoke_unused(tx: &mut Tx<'_>, key: &PolicyKey, run: &str) -> Result<u64, Failure> {
     let now = tx.now();
-    tx.tables(OWNER).execute(
+    tables(tx, key)?.execute(
         "UPDATE approvals SET revoked_at = ?2
          WHERE scope = 'run' AND run_id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
         &[SqlValue::from(run), SqlValue::from(now)],
@@ -356,9 +382,8 @@ pub(crate) fn revoke_unused(tx: &mut Tx<'_>, run: &str) -> Result<u64, Failure> 
 }
 
 /// Whether a run's diff was declined.
-pub(crate) fn declined(tx: &mut Tx<'_>, run: &str) -> Result<bool, Failure> {
-    Ok(tx
-        .tables(OWNER)
+pub(crate) fn declined(tx: &mut Tx<'_>, key: &PolicyKey, run: &str) -> Result<bool, Failure> {
+    Ok(tables(tx, key)?
         .query_first(
             "SELECT 1 FROM approval_declines WHERE run_id = ?1 LIMIT 1",
             &[SqlValue::from(run)],

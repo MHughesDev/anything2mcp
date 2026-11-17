@@ -775,3 +775,68 @@ async fn a_write_is_not_started_when_the_frames_left_would_not_cover_its_read_ba
         }
     }
 }
+
+#[tokio::test]
+async fn a_write_frame_not_marked_as_the_commit_point_is_refused_where_test_records_may_be_written()
+{
+    // The posture the engine gives the one context that writes a declared
+    // test record. The driver lifts its guard there for the step marked
+    // `commits` alone.
+    const TEST_RECORDS: Posture = Posture::Sandbox { test_records: true };
+    let scene = Scene::start().await;
+    let store = store().await;
+    let control = scene.device.control();
+    let before = control.number("dosing_rate");
+    let inputs = rate("3.00");
+    let act = &scene.binding("example_dosing_rate_set").act;
+
+    // A hand-built step: the binding's own write frame, with the mark
+    // taken off. The handle passes it on, since a `write_frame` does not
+    // always save; the driver refuses it before anything is sent.
+    let mut unmarked = act.to_vec();
+    let send = unmarked.last_mut().unwrap();
+    assert!(send.commits);
+    send.commits = false;
+    let (fence, record, token) = write_run(&store, 1, "unmarked").await;
+    let (handle, mut prepared) = scene.prepare(Some(fence), TEST_RECORDS).await;
+    let writing = Writing {
+        token: &token,
+        record,
+    };
+    let failure = scene
+        .run(&handle, &mut prepared, &unmarked, &inputs, Some(&writing))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (class_and_code(&failure), failure.sent),
+        (
+            (FailureClass::Policy, contract::READ_ONLY_POSTURE.as_str()),
+            Sent::NotSent
+        )
+    );
+    handle.release(prepared, true).await;
+    scene.links_closed().await;
+
+    // The stand: no write frame arrived, and the register holds what it held.
+    assert_eq!(write_frames(&scene), 0);
+    assert_eq!(control.write_count("dosing_rate"), 0);
+    assert_eq!(control.number("dosing_rate"), before);
+
+    // The same steps, with the commit point marked, write once.
+    let (fence, record, token) = write_run(&store, 2, "marked").await;
+    let (handle, mut prepared) = scene.prepare(Some(fence), TEST_RECORDS).await;
+    let writing = Writing {
+        token: &token,
+        record,
+    };
+    let confirm = &scene.binding("example_dosing_rate_set").confirm;
+    for steps in [act, confirm] {
+        scene
+            .run(&handle, &mut prepared, steps, &inputs, Some(&writing))
+            .await
+            .unwrap();
+    }
+    handle.release(prepared, false).await;
+    assert_eq!(write_frames(&scene), 1);
+    assert_eq!(control.write_count("dosing_rate"), 1);
+}

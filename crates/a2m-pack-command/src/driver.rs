@@ -18,7 +18,7 @@ use a2m_core::{
 };
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPath, Cleanup, ConnFailure, Deadline, Driver, DriverHealth,
-    EnvAllowlist, Exit, Finished, LaunchSpec, Leftover, Observed, OneShot, Posture, PrepareContext,
+    EntryKind, EnvAllowlist, Exit, Finished, LaunchSpec, Leftover, Observed, OneShot, Posture, PrepareContext,
     Prepared, ProgramRef, Ran, RootName, Roots, ScopedSupervisor, StepFailure, StepInput,
     StepOutcome, SubsystemKind, SurfaceRef, current_platform,
 };
@@ -424,20 +424,22 @@ impl CliDriver {
             .roots
             .folder(&self.runs_root, Access::Write)
             .map_err(StepFailure::not_sent)?;
+        root.create_dir_all().map_err(StepFailure::not_sent)?;
         for _ in 0..FOLDER_TRIES {
             let number = self.next_folder.fetch_add(1, Ordering::Relaxed);
             let folder = root
                 .join(&format!("{run}-{}-{number}", std::process::id()))
                 .map_err(StepFailure::not_sent)?;
-            if folder.exists() {
-                continue;
-            }
-            folder.create_dir_all().map_err(StepFailure::not_sent)?;
-            let empty = folder
-                .list()
-                .is_ok_and(|(entries, left_out)| entries.is_empty() && left_out == 0);
-            if empty {
-                return Ok(folder);
+            // Made new, or not at all: a folder this call makes was empty
+            // and the run's own when it was made. Whatever already stands
+            // at the name is left as it is, and the next name is taken.
+            match folder.create_dir() {
+                Ok(()) => return Ok(folder),
+                Err(failure) => {
+                    if matches!(folder.entry_kind(), Ok(EntryKind::Absent) | Err(_)) {
+                        return Err(StepFailure::not_sent(failure));
+                    }
+                }
             }
         }
         Err(StepFailure::not_sent(Failure::new(
@@ -571,9 +573,17 @@ impl CliDriver {
             }
             StepPayload::Command { key_params, .. } => key_params,
         };
+        // In the sandbox a command runs only against a test environment.
+        // There the guard is lifted for one step only: the step marked
+        // `commits`, in the context the engine prepared to write a declared
+        // test record. Every other step there, and a step marked `commits`
+        // in any other sandbox context, keeps the guard: the engine cannot
+        // see what such a step does.
         let allowed = match session.posture {
             Posture::Live => true,
-            Posture::Sandbox { .. } => session.test_environment,
+            Posture::Sandbox { test_records } => {
+                session.test_environment && (!step.commits || test_records)
+            }
             Posture::Discovery => false,
         };
         if !allowed {

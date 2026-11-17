@@ -275,35 +275,47 @@ async fn a_download_writes_no_file_and_a_window_a_page_opens_is_closed_before_it
     assert!(matches!(file, Err(BrowserError::NotLoaded(_))), "{file:?}");
     let seen = refused(|| tab.blocked(), "DOWNLOAD").await;
     assert_eq!(seen.len(), 1, "{seen:?}");
+    // A page that has a person's gesture to open a window with, which a
+    // tab that only observes never gives. The window is closed while the
+    // browser holds it: it never asks for its page, and the script that
+    // opened it never goes on, so each window is opened from a timer. The
+    // engine's own reads of the page still answer.
     must(tab.goto(&at(&app.url("/escapes/quiet")), soon()).await);
-    let open = format!("window.open('{WRITE}/opened') ? 'opened' : 'not opened'");
+    let open = format!("setTimeout(() => window.open('{WRITE}/opened'), 0); 'asked'");
     must(tab.page.as_the_page_with_a_gesture(&open, soon()).await);
-    let asked = app.url(&format!("{WRITE}/opened"));
-    let seen = refused_at(|| tab.blocked(), "POPUP", &asked).await;
-    assert!(seen.iter().all(|one| one.method == "POPUP"), "{seen:?}");
-    // A window that asks for no page gives its opener no way out either:
-    // no socket through it, and no page it is sent to afterwards.
-    let through_a_window = format!(
-        "(() => {{ const opened = window.open(); if (!opened) return 'not opened'; \
-         let socket = 'made'; \
-         try {{ new opened.WebSocket('ws://' + location.host + '{WRITE}/window-socket'); }} \
-         catch (error) {{ socket = 'refused'; }} \
-         opened.location.href = '{WRITE}/sent-later'; return socket; }})()"
+    let seen = refused(|| tab.blocked(), "POPUP").await;
+    assert!(
+        seen.iter()
+            .all(|one| one.method == "POPUP" && one.address.is_empty()),
+        "{seen:?}"
     );
-    assert_eq!(
-        must(
-            tab.page
-                .as_the_page_with_a_gesture(&through_a_window, soon())
-                .await
-        ),
-        "refused"
-    );
-    let later = app.url(&format!("{WRITE}/sent-later"));
-    refused_at(|| tab.blocked(), "POPUP", &later).await;
     must(
         tab.locate(&Query::role("heading", "Order notes"), soon())
             .await,
     );
+    assert_eq!(stand.browsers.list()[0].tabs, 1);
+    drop(tab);
+    // A window that asks for no page gives its opener nothing to use: no
+    // socket through it, and no page it is sent to afterwards.
+    let tab = observing(&stand, &app, "clerk").await;
+    must(tab.goto(&at(&app.url("/escapes/quiet")), soon()).await);
+    let through_a_window = format!(
+        "setTimeout(() => {{ const opened = window.open(); if (!opened) return; \
+         try {{ new opened.WebSocket('ws://' + location.host + '{WRITE}/window-socket'); }} \
+         catch (error) {{}} \
+         opened.location.href = '{WRITE}/sent-later'; }}, 0); 'asked'"
+    );
+    must(
+        tab.page
+            .as_the_page_with_a_gesture(&through_a_window, soon())
+            .await,
+    );
+    refused(|| tab.blocked(), "POPUP").await;
+    must(
+        tab.locate(&Query::role("heading", "Order notes"), soon())
+            .await,
+    );
+    assert_eq!(stand.browsers.list()[0].tabs, 1);
     drop(tab);
 
     // Closing the browser lets it finish whatever it had begun to write.

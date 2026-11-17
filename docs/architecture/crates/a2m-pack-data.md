@@ -92,6 +92,16 @@ Reported with a file, a line, and a fix, under the pack's own codes. An unknown 
 
 The discoverer is given a `SandboxPort` and nothing else. It sends one step, of the kind `catalog`, which commits nothing; the driver carries it out on the connection the store holds read-only, inside a transaction it rolls back. In a posture that may not write, the driver refuses a transaction that may write before opening one, and the handle refuses `commit`. No row is read and none is counted.
 
+### What the kernel holds the pack to
+
+| Statement | The pack's answer |
+| --- | --- |
+| Which kinds save (`Lowering::commits`) | `commit`: `Always`. `begin`, `execute`, `fetch`, `expect_rows`, `catalog`: `Never`. A writing transaction changes nothing in the store until it is committed, and no read ends in a `commit` |
+| The least effect of a binding (`Lowering::least_effect`) | By the verb, which the lowering holds to what the statement does: `delete` is `irreversible`, `create` and `update` are `write`, the rest `read` |
+| The manifest's `commit_steps` | `["commit"]`: the handle refuses a `commit` sent without the mark |
+| Which file kinds describe a write (`FileKind::writes`) | `statement`, when any of its statements is not plainly `effect: read`; a missing or open effect counts as a write. The drafter therefore never writes a statements file that holds a write |
+| The driver's guard | A transaction that may write begins only in `Live` and in `Sandbox` with test records. In every posture, a `commit` step not marked `commits` is refused unsent, `policy`, `read_only_posture`, and its transaction is rolled back: in the context that writes a test record, the marked commit is the one step that can change the store |
+
 The `found` of a `table` finding is JSON: the surface, the store, the table's name, whether it is a view, its columns with declared type, nullability, and place in the key, its unique constraints, its foreign keys, its triggers, the tables its keys cascade to, and `checks_seen`, which is false for a store that does not report check constraints.
 
 | From a `table` finding | The drafter writes | Left to the developer |
@@ -279,6 +289,9 @@ What a reader can see is therefore the store's own schema and an empty temporary
 | Nothing is committed without its count checked, after a second statement, or for a count other than one | `src/tests/writes.rs` |
 | A guarded statement that takes a field named `version` does not compile | `src/tests/compile.rs` |
 | Nothing is written in a posture that may not write | `src/tests/writes.rs` |
+| A `commit` not marked `commits` is refused by the handle and by the driver, also in the posture that writes a test record, and the stand shows nothing changed | `src/tests/writes.rs` |
+| A write never compiles as a read, nor a delete as a plain write; `commit` is the one kind that saves, in the lowering and in the manifest | `src/tests/compile.rs`, `src/tests/registration.rs` |
+| A drafting rule that drafts a statement that writes is refused, and its file is not written | `src/tests/discovery.rs` |
 | A lost answer to `commit` is `possible_commit`, the session sends nothing more, and the stand shows one write | `src/tests/writes.rs`, with a fault placed at the store interface |
 | Discovery writes nothing, reads no row, and its findings match the stand's own account of the catalog | `src/tests/discovery.rs`, cases 4 and 9 |
 | A draft holds no write and no unit; a table with no key gets a question and no statement; the same findings give the same bytes | `src/tests/discovery.rs` |
@@ -294,6 +307,7 @@ The tests are inside the crate, under `src/tests/`, because the fault of a lost 
 3. Done: the driver for reads: prepare, `begin`, `execute`, `fetch`, release; the read-only proof; limits; drift.
 4. Done: writes: `form: table` update, delete, and insert; `guard: version` and `none`; `expect_rows`; an assigned key before `commit`; `possible_commit`.
 5. Done: the `catalog` discoverer and describer, and the drafting rule for statements files.
+5a. Done: what the kernel holds the pack to after the safety audit ([decision 0155](../../decisions/0155-four-packs-state-what-saves-what-writes-and-when-their-guard-lifts.md)): `commits`, `least_effect`, `commit_steps`, `writes`, and the commit guard.
 6. Not built: the server stand and a server store, with its password provider, network effect, encrypted link, read-only transactions, isolation levels the store must offer, a pool per identity, and the check that the identity is not administrative.
 7. Not built: `form: statement` writes, procedures and the verb `call`, `upsert`, `stamped` and `find` identity, the `before_values` guard, `returns: one` and `none` on a hand-written statement, a parent saved with its rows, writes on a surface that stands beneath an application.
 8. Not built: a drafted read operation beside the drafted statements file; the scout's five tries; the check of the store's version against the target's recorded identity; binding a moment.

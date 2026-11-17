@@ -8,6 +8,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::thread;
@@ -21,7 +22,7 @@ use crate::failure;
 use crate::keys::StoreKeyRecords;
 use crate::migrate;
 use crate::sqlite::{Db, Place};
-use crate::tx::{Durability, Owner, Tx};
+use crate::tx::{Durability, Owner, PolicyKey, Tx};
 
 /// The name of the database file in the data directory.
 pub const DATABASE_FILE_NAME: &str = "store.sqlite3";
@@ -98,6 +99,10 @@ pub(crate) struct Attached {
 
 /// What every transaction can reach.
 pub(crate) struct Shared {
+    /// This store's number in the process: what a [`PolicyKey`] is bound to.
+    pub(crate) id: u64,
+    /// Whether the policy engine's key was handed out.
+    policy_key_taken: AtomicBool,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) random: Arc<dyn RandomSource>,
     pub(crate) blob_dir: Option<PathBuf>,
@@ -264,7 +269,10 @@ impl Store {
             }
             None => (Place::Memory, None),
         };
+        static NEXT_STORE: AtomicU64 = AtomicU64::new(1);
         let shared = Arc::new(Shared {
+            id: NEXT_STORE.fetch_add(1, Ordering::Relaxed),
+            policy_key_taken: AtomicBool::new(false),
             clock: config.clock,
             random: config.random,
             blob_dir,
@@ -291,6 +299,36 @@ impl Store {
                 shared,
             }),
         })
+    }
+
+    /// The right to write the policy engine's tables, handed out once for
+    /// the life of this store. The policy engine takes it when it is
+    /// opened; nothing else asks for it (decision 0145).
+    ///
+    /// # Errors
+    ///
+    /// `unknown_variant`/`table_not_owned` when it was handed out before.
+    pub fn policy_key(&self) -> Result<PolicyKey, Failure> {
+        if self
+            .inner
+            .shared
+            .policy_key_taken
+            .swap(true, Ordering::SeqCst)
+        {
+            return Err(failure::not_owned(
+                "the policy engine's key is handed out once, and it was",
+            ));
+        }
+        Ok(PolicyKey::new(self.inner.shared.id))
+    }
+
+    /// A key to the policy engine's tables for a test that stands in for
+    /// the policy engine, however many were handed out. Only with the
+    /// `testing` feature, which no normal build turns on.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn policy_key_for_tests(&self) -> PolicyKey {
+        PolicyKey::new(self.inner.shared.id)
     }
 
     /// What the vault is opened with: where its wrapped keys are kept. It

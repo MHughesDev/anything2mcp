@@ -21,7 +21,7 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-a2m-ledger = { path = "../a2m-ledger" }
+a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-files = { path = "../../targets/example-files" }
 

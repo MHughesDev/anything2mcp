@@ -7,7 +7,7 @@ use a2m_core::{
     CanonicalJson, DecisionId, Digest, Failure, FailureClass, OperationName, PrincipalId, RunId,
     TargetName, Timestamp, WorkspaceId,
 };
-use a2m_ledger::{Durability, Store, Tx, WriteClearance};
+use a2m_ledger::{Durability, PolicyKey, Store, Tx, WriteClearance};
 
 use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
@@ -24,6 +24,8 @@ pub struct Policy {
 
 struct Inner {
     store: Store,
+    /// The key to this crate's tables, which the store hands out once.
+    key: PolicyKey,
     profile: Profile,
     /// The set in force as this process last saw it. `decide` asks the store
     /// for the newest version on every call and loads it when it differs, so
@@ -256,9 +258,14 @@ impl Policy {
         let profile = built_in.profile();
         let candidate = CandidateSet::compile(built_in.layers(), profile)?;
         tests_must_pass(&candidate.test())?;
+        // The key to this crate's tables comes from the store once: a
+        // second opening on the same store is refused, so there is one
+        // approval handle and one policy engine per store (decision 0145).
+        let key = store.policy_key()?;
         let policy = Self {
             inner: Arc::new(Inner {
                 store: store.clone(),
+                key,
                 profile,
                 current: Mutex::new(Current::None),
             }),
@@ -269,12 +276,19 @@ impl Policy {
                 // The built-in set is stored when the store holds none, and
                 // again when the newest one is an earlier built-in set: the
                 // binary's guardrails or the local user may have changed.
-                let newest = match store::newest_version(tx)? {
-                    Some(version) => store::version(tx, &version)?,
+                let newest = match store::newest_version(tx, opened.key())? {
+                    Some(version) => store::version(tx, opened.key(), &version)?,
                     None => None,
                 };
                 if newest.is_none_or(|row| row.built_in) {
-                    store::insert_version(tx, &candidate, rules::guardrails_digest(), None, None)?;
+                    store::insert_version(
+                        tx,
+                        opened.key(),
+                        &candidate,
+                        rules::guardrails_digest(),
+                        None,
+                        None,
+                    )?;
                 }
                 opened.current(tx);
                 Ok(())
@@ -288,6 +302,10 @@ impl Policy {
         &self.inner.store
     }
 
+    pub(crate) fn key(&self) -> &PolicyKey {
+        &self.inner.key
+    }
+
     fn cached(&self) -> Current {
         self.inner
             .current
@@ -299,7 +317,7 @@ impl Policy {
     /// The set in force, read through `tx`: the newest stored version,
     /// loaded once and kept until another is the newest.
     pub(crate) fn current(&self, tx: &mut Tx<'_>) -> Option<Arc<Compiled>> {
-        let found = match store::newest_version(tx) {
+        let found = match store::newest_version(tx, self.key()) {
             Ok(Some(newest)) => match self.cached() {
                 Current::Loaded(set) if set.version.to_string() == newest => Current::Loaded(set),
                 Current::Unreadable(version) if version == newest => Current::Unreadable(version),
@@ -323,10 +341,13 @@ impl Policy {
     }
 
     fn load(&self, tx: &mut Tx<'_>, version: &str) -> Current {
-        let loaded = store::version(tx, version).ok().flatten().and_then(|row| {
-            let digest: Digest = row.version.parse().ok()?;
-            set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()
-        });
+        let loaded = store::version(tx, self.key(), version)
+            .ok()
+            .flatten()
+            .and_then(|row| {
+                let digest: Digest = row.version.parse().ok()?;
+                set::load(digest, &row.layers, &row.tests, self.inner.profile).ok()
+            });
         loaded.map_or_else(
             || Current::Unreadable(version.to_owned()),
             |set| Current::Loaded(Arc::new(set)),
@@ -355,7 +376,15 @@ impl Policy {
         let recorded = (|| {
             let id = DecisionId::from_parts(tx.now(), tx.random()?)?;
             let text = set::text_of(&CanonicalJson::encode(request)?)?;
-            store::insert_decision(tx, &id.to_string(), request, &text, &verdict, version)?;
+            store::insert_decision(
+                tx,
+                self.key(),
+                &id.to_string(),
+                request,
+                &text,
+                &verdict,
+                version,
+            )?;
             Ok::<_, Failure>(id)
         })();
         let (id, verdict) = match recorded {
@@ -413,7 +442,7 @@ impl Policy {
     fn verdict(&self, tx: &mut Tx<'_>, request: &Request) -> (Verdict, Option<Digest>) {
         // Kill switches come first, before any rule.
         let stopped = if request.question.is_work() {
-            store::switches_on(tx).map(|on| covers(&on, request))
+            store::switches_on(tx, self.key()).map(|on| covers(&on, request))
         } else {
             Ok(false)
         };
@@ -472,6 +501,7 @@ impl Policy {
         }
         store::insert_version(
             tx,
+            self.key(),
             candidate,
             rules::guardrails_digest(),
             Some(by.id),
@@ -488,7 +518,7 @@ impl Policy {
     /// `input`/`decision_not_found` when no such decision is recorded; the
     /// store's failures.
     pub fn explain(&self, tx: &mut Tx<'_>, id: DecisionId) -> Result<Explanation, Failure> {
-        let Some(row) = store::decision(tx, &id.to_string())? else {
+        let Some(row) = store::decision(tx, self.key(), &id.to_string())? else {
             return Err(Failure::new(
                 FailureClass::Input,
                 DECISION_NOT_FOUND,
@@ -497,7 +527,7 @@ impl Policy {
             ));
         };
         let set = row.version.as_deref().and_then(|version| {
-            let stored = store::version(tx, version).ok().flatten()?;
+            let stored = store::version(tx, self.key(), version).ok().flatten()?;
             let digest: Digest = stored.version.parse().ok()?;
             set::load(digest, &stored.layers, &stored.tests, self.inner.profile).ok()
         });
@@ -570,6 +600,7 @@ impl Policy {
             }
             let calls = store::count_call(
                 tx,
+                self.key(),
                 check.workspace.to_string(),
                 check.principal.id.to_string(),
                 quota.period_minutes,
@@ -600,6 +631,7 @@ impl Policy {
         let (scope, name) = switch.scope.stored();
         store::set_switch(
             tx,
+            self.key(),
             scope,
             name,
             switch.on,
@@ -615,7 +647,7 @@ impl Policy {
     ///
     /// The store's failures.
     pub fn kill_epoch(&self, tx: &mut Tx<'_>) -> Result<u64, Failure> {
-        store::kill_epoch(tx)
+        store::kill_epoch(tx, self.key())
     }
 }
 

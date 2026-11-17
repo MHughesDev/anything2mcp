@@ -327,3 +327,28 @@ fn a_binding_names_registers_of_its_map_and_declares_what_it_could_harm() {
         "{clean}"
     );
 }
+
+#[test]
+fn a_write_never_compiles_as_a_read_and_a_command_never_as_a_plain_write() {
+    // What the pack says each verb does, whatever the operation's file
+    // says: an update writes.
+    let found = problems(&edited(DOSING, "effect: irreversible", "effect: read"));
+    assert!(
+        found.iter().any(
+            |found| found.code.as_str() == "kernel.effect_lower_than_derived"
+                && found.at.file.as_str() == DOSING
+        ),
+        "{found}"
+    );
+    // A command cannot be read back, so `write` is too little for it.
+    let command = "operations/fault_reset.yaml";
+    let found = problems(&edited(command, "effect: irreversible", "effect: write"));
+    let lower = found
+        .iter()
+        .find(|found| {
+            found.code.as_str() == "kernel.effect_lower_than_derived"
+                && found.at.file.as_str() == command
+        })
+        .unwrap_or_else(|| panic!("{found}"));
+    assert!(lower.fix.contains("irreversible"), "{lower}");
+}

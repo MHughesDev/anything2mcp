@@ -4,8 +4,15 @@
 //! What the driver never does: retry a step, pick the first of several
 //! matches, read a password, send the tab outside the surface, sign in, or
 //! renew a session. A page it has no rule for is a stop.
+//!
+//! The tab is opened for the origins of the run's destinations, and the
+//! browser engine holds it there: it goes to no other, and looks at and
+//! acts on no page of another (decision 0143). What the tab refused on the
+//! way, a move of the page, a window, or a download, is heard at the start
+//! and the end of every step and while a click's answer is awaited, and
+//! stops the run (decision 0144).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
@@ -13,8 +20,9 @@ use a2m_core::{
     AccountName, Digest, Failure, FailureClass, FailureCode, Identity, Secret, Step, Value,
 };
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Look,
-    PageEnvironment, Primitive, ProfileKey, RawValue, ReadWhat, Reason, SnapshotLimits, Visibility,
+    ActTab, Address, BrowserError, Browsers, Deadline, Dispatch, Element, Input, Look, Origins,
+    PageEnvironment, Primitive, ProfileKey, RawValue, ReadWhat, Reason, RequestShape,
+    SnapshotLimits, Visibility,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -29,6 +37,16 @@ use crate::model::{
     ScreenSection, Segment, SetStep, SurfaceFields, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND, unreserved};
+
+/// What the browser engine reports a move of the tab that it ended
+/// under. A window it closed, and a download it denied, have words of
+/// their own; anything the tab refused stops the run.
+const NAVIGATION: &str = "NAVIGATION";
+
+/// How long a wait for what the page shows after a click runs before the
+/// driver hears what the tab refused in the meantime. The wait goes on
+/// until the step's own deadline; only the hearing is this often.
+const HEAR_EVERY: Duration = Duration::from_millis(500);
 
 /// The driver of the `ui` mode.
 pub(crate) struct UiDriver {
@@ -58,8 +76,11 @@ struct Session {
     origin: String,
     sections: BTreeMap<usize, ScreenSection>,
     snapshots: SnapshotLimits,
-    /// Whether the run may act on the page at all.
-    may_act: bool,
+    /// What the run may do. Only a live run sets a field or clicks an
+    /// action that does not save; a run against a declared test record
+    /// sets fields and performs the one action marked as the commit point
+    /// (decision 0147).
+    posture: Posture,
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -235,6 +256,17 @@ fn browser_failure(error: &BrowserError, what: &str) -> StepFailure {
             format!("What {what} shows is longer than the limit of {limit} characters."),
             "Raise `packs.web.max_read_chars`, or read a smaller part of the page.",
         ),
+        // The base classes this one itself, above; kept here so that the
+        // match names every error.
+        BrowserError::ForeignOrigin(origin) => fail(
+            FailureClass::Policy,
+            codes::SURFACE_NOT_DECLARED,
+            format!(
+                "The page is on `{}`, which is not an origin this run may reach, at {what}. Nothing was read or sent there.",
+                shown(origin)
+            ),
+            "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.",
+        ),
         BrowserError::Unexpected(_)
         | BrowserError::PasswordField
         | BrowserError::LaunchFailed(_) => fail(
@@ -356,19 +388,109 @@ impl Session {
             .ok_or_else(|| codes::not_usable("the screen it names is not in the plan"))
     }
 
-    fn read_only(&self, step: &Step) -> Result<(), StepFailure> {
-        if self.may_act {
+    /// Whether the step may act on the page in this run's posture. A
+    /// field is set in a live run and in a run against a declared test
+    /// record: typing saves nothing until the committing action. A click
+    /// is made in a live run, and, against a test record, only for the
+    /// step marked as the commit point: an action that is not declared to
+    /// save is one whose effect nobody stated.
+    fn may_act(&self, step: &Step) -> Result<(), StepFailure> {
+        let allowed = match self.posture {
+            Posture::Live => true,
+            Posture::Sandbox { test_records: true } => step.kind == SET || step.commits,
+            Posture::Sandbox { test_records: false } | Posture::Discovery => false,
+        };
+        if allowed {
             return Ok(());
         }
         Err(StepFailure::not_sent(fail(
             FailureClass::Policy,
             a2m_provider::codes::READ_ONLY_POSTURE,
             format!(
-                "A `{}` step acts on the page, and this run may only look.",
+                "A `{}` step acts on the page, and this run may not act so.",
                 step.kind
             ),
-            "Run the operation live, or against a declared test record.",
+            "Run the operation live, or against a declared test record, where only the action marked as the commit point is performed.",
         )))
+    }
+
+    /// What the tab refused since it was last asked, as a failure: a move
+    /// of the page, which the browser ended, is `policy`,
+    /// `surface_not_declared`; a window the page opened, which was closed,
+    /// or a download, which was denied, is a state no screen declares.
+    /// `None` when it refused nothing.
+    fn refused(&self, what: &str) -> Option<Failure> {
+        Self::refusal(&self.tab.blocked(), what)
+    }
+
+    fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
+        let first = refused.first()?;
+        let place = Address::new(&first.address)
+            .map(|address| address.origin())
+            .unwrap_or_default();
+        let place = shown(&place);
+        Some(if first.method == NAVIGATION {
+            fail(
+                FailureClass::Policy,
+                codes::SURFACE_NOT_DECLARED,
+                format!(
+                    "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
+                ),
+                "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
+            )
+        } else {
+            fail(
+                FailureClass::UnknownVariant,
+                codes::UNEXPECTED_PAGE,
+                format!(
+                    "The page tried something no screen declares, at {what}: a new window or a download (`{}`) for `{place}`. The browser refused it.",
+                    shown(&first.method)
+                ),
+                "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
+            )
+        })
+    }
+
+    /// The variants of the screen the page shows now, by name.
+    async fn variants_now(
+        &self,
+        screen: &Screen,
+        deadline: Deadline,
+    ) -> Result<BTreeSet<String>, BrowserError> {
+        let mut shown = BTreeSet::new();
+        for (name, variant) in &screen.variants {
+            match self.tab.locate(&variant.when.query(), deadline).await {
+                Ok(_) | Err(BrowserError::Ambiguous { .. }) => {
+                    shown.insert(name.clone());
+                }
+                Err(BrowserError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(shown)
+    }
+
+    /// Waits until the condition holds or the deadline passes, and hears
+    /// what the tab refused every [`HEAR_EVERY`] meanwhile. `Ok(Some(_))`
+    /// is a refusal heard before the condition held.
+    async fn wait_hearing(
+        &self,
+        until: &Primitive,
+        deadline: Deadline,
+        what: &str,
+    ) -> Result<Option<Failure>, BrowserError> {
+        loop {
+            let slice = Deadline::after(HEAR_EVERY.min(deadline.remaining()));
+            match self.tab.wait(until, slice).await {
+                Ok(()) => return Ok(None),
+                Err(BrowserError::Timeout { .. }) if !deadline.passed() => {
+                    if let Some(failure) = self.refused(what) {
+                        return Ok(Some(failure));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// The one element a list of locators finds, and which of them found
@@ -672,7 +794,7 @@ impl Session {
     }
 
     async fn set(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
-        self.read_only(step)?;
+        self.may_act(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: SetStep = step
             .payload
@@ -777,7 +899,7 @@ impl Session {
     }
 
     async fn invoke(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
-        self.read_only(step)?;
+        self.may_act(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: InvokeStep = step
             .payload
@@ -797,6 +919,13 @@ impl Session {
         let (element, locator) = self
             .find(&what, &action.locate, action.fingerprint.as_ref(), deadline)
             .await?;
+        // What the page shows before the click is not its answer to it: a
+        // variant that is already there counts only if it is not, and a
+        // variant that stays cannot be told from the answer.
+        let before = self
+            .variants_now(screen, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, &what))?;
         self.tab
             .input(&element, &Input::Click, deadline)
             .await
@@ -804,7 +933,8 @@ impl Session {
 
         // From here the click has reached the page. What the application
         // made of it is known only when the page shows the action's
-        // confirmation, or a state the screen declares instead.
+        // confirmation, or a state the screen declares instead that was
+        // not there before the click.
         let no_confirmation = |why: String| {
             let (class, code) = if step.commits {
                 (
@@ -821,15 +951,33 @@ impl Session {
                 "Reconcile the record: read it back before anything is written again.",
             ))
         };
+        // A page that tried to leave, or did something no screen declares,
+        // after the click: a write in doubt for a click that saves, and a
+        // stop for one that does not.
+        let after_click = |failure: Failure| {
+            if step.commits {
+                no_confirmation(format!(
+                    "then the page did something no rule covers: {}",
+                    failure.message()
+                ))
+            } else {
+                StepFailure::unknown(failure)
+            }
+        };
         let mut any = vec![action.confirm.primitive()];
         any.extend(
             screen
                 .variants
-                .values()
-                .map(|variant| Primitive::Visible(variant.when.query())),
+                .iter()
+                .filter(|(name, _)| !before.contains(*name))
+                .map(|(_, variant)| Primitive::Visible(variant.when.query())),
         );
-        match self.tab.wait(&Primitive::Any(any), deadline).await {
-            Ok(()) => {}
+        match self
+            .wait_hearing(&Primitive::Any(any), deadline, &what)
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(refused)) => return Err(after_click(refused)),
             Err(BrowserError::Timeout { .. }) => {
                 return Err(no_confirmation(
                     "the page did not show its confirmation in the time the step allows".to_owned(),
@@ -846,35 +994,62 @@ impl Session {
                     .failure,
                 ));
             }
+            Err(error @ BrowserError::ForeignOrigin(_)) => {
+                return Err(after_click(browser_failure(&error, &what).failure));
+            }
             Err(_) => {
                 return Err(no_confirmation(
                     "the browser was lost before the page showed its confirmation".to_owned(),
                 ));
             }
         }
-        let variant = self.variant(screen, deadline).await.map_err(|_| {
+        let now = self.variants_now(screen, deadline).await.map_err(|_| {
             no_confirmation("the page could not be asked which state it is in".to_owned())
         })?;
-        if let Some((variant, handling)) = variant {
-            let (class, code, next) = match handling {
-                Handling::Stop => (
+        let new = screen
+            .variants
+            .iter()
+            .find(|(name, _)| now.contains(*name) && !before.contains(*name));
+        if let Some((variant, variant_of)) = new {
+            return Err(match (variant_of.handling, step.commits) {
+                // A refusal the page shows anew after the click is the
+                // application's answer to it.
+                (Handling::Stop, _) => StepFailure::answered(fail(
                     FailureClass::Rejected,
                     codes::APP_VALIDATION_ERROR,
+                    format!("After {what}, the page shows the variant `{variant}`."),
                     "Correct the values and run the tool again; the application refused them.",
-                ),
-                Handling::Absent => (
+                )),
+                // A record that is not where the save left it says nothing
+                // of whether the save landed.
+                (Handling::Absent, true) => no_confirmation(format!(
+                    "then the page showed the variant `{variant}`, which does not say whether the save landed"
+                )),
+                (Handling::Absent, false) => StepFailure::answered(fail(
                     FailureClass::UnknownVariant,
                     codes::UNEXPECTED_PAGE,
+                    format!("After {what}, the page shows the variant `{variant}`."),
                     "Look at the page; the record is not where the action left it.",
-                ),
-            };
-            // The application answered: what it did with the click is known.
-            return Err(StepFailure::answered(fail(
-                class,
-                code,
-                format!("After {what}, the page shows the variant `{variant}`."),
-                next,
-            )));
+                )),
+            });
+        }
+        // No new variant shows, so the confirmation held when the wait
+        // ended. It is asked again: one that showed for a moment and is
+        // gone is not an answer.
+        match self
+            .wait_hearing(&action.confirm.primitive(), deadline, &what)
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(refused)) => return Err(after_click(refused)),
+            Err(error @ BrowserError::ForeignOrigin(_)) => {
+                return Err(after_click(browser_failure(&error, &what).failure));
+            }
+            Err(_) => {
+                return Err(no_confirmation(
+                    "its confirmation did not stay on the page".to_owned(),
+                ));
+            }
         }
         let mut measured = Vec::new();
         let mut captures = Vec::new();
@@ -1038,8 +1213,15 @@ impl UiDriver {
             .open(&profile, Visibility::Background)
             .await
             .map_err(|error| browser_failure(&error, "the start of the browser"))?;
+        // The tab may be on the origins of the run's destinations and on no
+        // other; a destination that is no web address adds none.
+        let reachable: Vec<Address> = cx
+            .destinations
+            .iter()
+            .filter_map(|address| Address::new(address).ok())
+            .collect();
         let tab = browser
-            .acting_tab(&environment)
+            .acting_tab(&environment, &Origins::of(&reachable))
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
         Ok(Session {
@@ -1047,10 +1229,7 @@ impl UiDriver {
             origin,
             sections,
             snapshots: self.snapshots.clone(),
-            may_act: matches!(
-                cx.posture,
-                Posture::Live | Posture::Sandbox { test_records: true }
-            ),
+            posture: cx.posture,
         })
     }
 }
@@ -1074,7 +1253,14 @@ impl Driver for UiDriver {
             let session = prepared
                 .state::<Session>()
                 .ok_or_else(|| codes::not_usable("it was prepared by another driver"))?;
-            if step.kind == GOTO {
+            // What the tab refused since the last step stops this one
+            // before it acts: the page tried to leave, or did something
+            // no screen declares.
+            let what = format!("the start of a `{}` step", step.kind);
+            if let Some(failure) = session.refused(&what) {
+                return Err(StepFailure::not_sent(failure));
+            }
+            let done = if step.kind == GOTO {
                 session.goto(step, input).await
             } else if step.kind == WAIT {
                 session.wait(step, input).await
@@ -1085,11 +1271,33 @@ impl Driver for UiDriver {
             } else if step.kind == INVOKE {
                 session.invoke(step, input).await
             } else {
-                Err(codes::not_usable(format!(
+                return Err(codes::not_usable(format!(
                     "the interface driver has no step of the kind `{}`",
                     step.kind
-                )))
-            }
+                )));
+            };
+            // And what it refused during this step undoes the step's
+            // outcome: what was read may be of a page on its way out, and
+            // a save it followed is in doubt.
+            let what = format!("the end of a `{}` step", step.kind);
+            let Some(failure) = session.refused(&what) else {
+                return done;
+            };
+            Err(if step.commits {
+                StepFailure::unknown(fail(
+                    FailureClass::PossibleCommit,
+                    a2m_provider::codes::NO_CONFIRMATION,
+                    format!(
+                        "The action was performed, and then the page did something no rule covers: {}",
+                        failure.message()
+                    ),
+                    "Reconcile the record: read it back before anything is written again.",
+                ))
+            } else if step.kind == SET || step.kind == INVOKE {
+                StepFailure::unknown(failure)
+            } else {
+                StepFailure::not_sent(failure)
+            })
         })
     }
 

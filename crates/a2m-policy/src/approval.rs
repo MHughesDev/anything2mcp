@@ -144,6 +144,7 @@ impl ApprovalSurface {
             a2m_core::Timestamp::from_unix_millis(tx.now().as_unix_millis().saturating_add(window));
         store::insert_approval(
             tx,
+            self.policy.key(),
             store::NewApproval {
                 id: id.to_string(),
                 workspace: run.workspace.to_string(),
@@ -170,13 +171,14 @@ impl ApprovalSurface {
         let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
         store::insert_decline(
             tx,
+            self.policy.key(),
             id.to_string(),
             run.workspace.to_string(),
             run.id.to_string(),
             declined.by.as_ref().map(|by| by.id.to_string()),
             declined.channel.as_str(),
         )?;
-        store::revoke_unused(tx, &run.id.to_string())?;
+        store::revoke_unused(tx, self.policy.key(), &run.id.to_string())?;
         Ok(())
     }
 
@@ -232,7 +234,7 @@ impl Policy {
     ) -> Result<WriteClearance, Failure> {
         let now = tx.now().as_unix_millis();
         let wanted = diff_hash.to_string();
-        let approvals = store::approvals_of(tx, &run.to_string())?;
+        let approvals = store::approvals_of(tx, self.key(), &run.to_string())?;
         let Some(newest) = approvals.first() else {
             return Err(failure::approval_missing());
         };
@@ -254,7 +256,7 @@ impl Policy {
             };
             return Err(failure::approval_stale(why));
         };
-        if !store::mark_used(tx, &found.id)? {
+        if !store::mark_used(tx, self.key(), &found.id)? {
             return Err(failure::approval_stale(
                 "it was used already, and an approval is used once",
             ));
@@ -269,6 +271,6 @@ impl Policy {
     ///
     /// The store's failures.
     pub fn declined(&self, tx: &mut Tx<'_>, run: RunId) -> Result<bool, Failure> {
-        store::declined(tx, &run.to_string())
+        store::declined(tx, self.key(), &run.to_string())
     }
 }

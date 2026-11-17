@@ -11,6 +11,8 @@ publisher = "Anything2MCP"
 kind = "pack"
 
 # One request at a time on one link, and one run at a time on one device.
+# No `commit_steps`: `write_frame` saves only when it sends a write, and the
+# driver refuses a write frame that is not marked `commits`.
 [[modes]]
 name = "device"
 archetype = "device"

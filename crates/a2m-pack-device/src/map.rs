@@ -758,6 +758,18 @@ impl FileKind for RegisterKind {
         Vec::new()
     }
 
+    /// A map describes a write when any of its registers is not plainly
+    /// `access: read`: a writable register carries the safe range and the
+    /// hazard a person decides. An access that is missing, or an open
+    /// question, is not known to read.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        doc.get("registers")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .any(|entry| entry.value.text("access") != Some("read"))
+    }
+
     fn compile(
         &self,
         docs: &[Located<Doc>],
@@ -908,7 +920,115 @@ impl LintRule for WritableRegisterRule {
 
 #[cfg(test)]
 mod tests {
-    use a2m_core::Decimal;
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a helper that cannot do its work stops the test"
+    )]
+
+    use std::sync::Arc;
+
+    use a2m_core::{
+        Decimal, Failure, FileKindName, Finding, FindingKind, ProducedBy, Source, Subject,
+        Timestamp,
+    };
+    use a2m_files::{
+        CompilerSet, DraftContext, DraftDoc, DraftValue, Drafter, DraftingRule, RelPath, TargetRoot,
+    };
+
+    use crate::names::{Names, PACK};
+
+    /// A rule that drafts what the pack's own rule never does: a map with
+    /// a register that can be written.
+    struct DraftsAWrite(Arc<Names>);
+
+    impl DraftingRule for DraftsAWrite {
+        fn finding_kind(&self) -> FindingKind {
+            self.0.identity_finding.clone()
+        }
+
+        fn file_kind(&self) -> FileKindName {
+            self.0.register_kind.clone()
+        }
+
+        fn draft(
+            &self,
+            _finding: &Finding,
+            _cx: &DraftContext<'_>,
+        ) -> Result<Vec<DraftDoc>, Failure> {
+            let map = |file: &str, access: &str| -> Result<DraftDoc, Failure> {
+                let register = DraftValue::map(vec![
+                    ("table", DraftValue::text("holding")),
+                    ("address", DraftValue::text("0")),
+                    ("access", DraftValue::text(access)),
+                ]);
+                Ok(DraftDoc {
+                    path: RelPath::new(&format!("registers/{file}.yaml"))?,
+                    body: DraftValue::map(vec![
+                        ("device_map", DraftValue::text(file)),
+                        ("surface", DraftValue::text("controller")),
+                        (
+                            "registers",
+                            DraftValue::map(vec![("dosing_rate", register)]),
+                        ),
+                    ]),
+                })
+            };
+            Ok(vec![
+                map("tries_a_write", "read_write")?,
+                map("only_reads", "read")?,
+            ])
+        }
+    }
+
+    #[test]
+    fn a_drafting_rule_that_drafts_a_writable_register_is_refused() {
+        let names = Arc::new(Names::new().unwrap());
+        let mut builder = CompilerSet::builder();
+        builder
+            .file_kind(PACK, Arc::new(super::RegisterKind::new(Arc::clone(&names))))
+            .unwrap()
+            .drafting_rule(PACK, Arc::new(DraftsAWrite(Arc::clone(&names))))
+            .unwrap();
+        let set = builder.build();
+        let finding = Finding::about(
+            Subject::Device {
+                reported_id: String::new(),
+                model: "example-controller".to_owned(),
+                firmware: "2.4.0".to_owned(),
+            },
+            names.identity_finding.clone(),
+            "{}",
+            Source::LiveSystem,
+            ProducedBy {
+                provider: PACK.to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            Timestamp::from_unix_millis(0),
+        )
+        .build()
+        .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "a2m-pack-device-draft-write-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let report = Drafter::new(&set, &TargetRoot::new(&root))
+            .draft(std::slice::from_ref(&finding))
+            .unwrap();
+        let refused: Vec<&str> = report
+            .refused
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+        let exists = root.join("registers").join("tries_a_write.yaml").exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(refused, ["registers/tries_a_write.yaml"]);
+        assert_eq!(written, ["registers/only_reads.yaml"]);
+        assert!(!exists);
+    }
 
     use super::{duration_ms, per_second, raw_of};
 

@@ -290,7 +290,10 @@ impl a2m_files::DraftingRule for DraftsAWrite {
                 ]),
             })
         };
-        Ok(vec![doc("tries_a_write", "write")?, doc("only_reads", "read")?])
+        Ok(vec![
+            doc("tries_a_write", "write")?,
+            doc("only_reads", "read")?,
+        ])
     }
 }
 

@@ -435,6 +435,24 @@ impl FileKind for CommandKind {
                 ))
             })
     }
+
+    /// A file describes a write when any of its commands is declared
+    /// anything but `read`, or is missing its effect. An effect the drafter
+    /// left as an open question is not a write: it states nothing, and the
+    /// file does not compile until a person writes the effect in its place.
+    /// A command is a write only by a person's word.
+    fn writes(&self, doc: &Located<Doc>) -> bool {
+        let Some(commands) = doc.get("commands") else {
+            return false;
+        };
+        commands.entries().iter().any(|entry| {
+            let effect = entry.value.get("effect");
+            let open = effect.is_some_and(|effect| {
+                matches!(effect.entries(), [only] if only.key.value == a2m_files::OPEN_QUESTION)
+            });
+            !open && effect.and_then(Located::as_text) != Some("read")
+        })
+    }
 }
 
 /// The problems found so far.
@@ -1336,9 +1354,111 @@ fn compile_file(
 
 #[cfg(test)]
 mod tests {
+    use a2m_files::{FileKind, RelPath, parse_yaml};
+
     use super::{
-        is_shell_or_interpreter, looks_like_credential, names_a_credential, runs_its_value,
+        CommandKind, is_shell_or_interpreter, looks_like_credential, names_a_credential,
+        runs_its_value,
     };
+
+    #[test]
+    fn a_file_describes_a_write_when_a_command_is_declared_anything_but_read() {
+        let kind = CommandKind::new();
+        let file = RelPath::new("commands/one.yaml").unwrap();
+        let writes = |effects: &[&str]| {
+            let mut text = String::from("program: {path: /opt/example/bin/tool}\ncommands:\n");
+            for (n, effect) in effects.iter().enumerate() {
+                text.push_str(&format!("  c{n}:\n    effect: {effect}\n    args: []\n"));
+            }
+            let docs = parse_yaml(&file, &text).unwrap();
+            kind.writes(&docs[0])
+        };
+        assert!(!writes(&["read", "read"]));
+        assert!(writes(&["read", "write"]));
+        assert!(writes(&["irreversible"]));
+        assert!(writes(&["\"maybe\""]));
+        // What the drafter leaves for a person states no effect.
+        assert!(!writes(&["{open_question: \"Does it write?\"}"]));
+    }
+
+    /// A rule of this pack that drafts a command declared `write`.
+    struct DraftsAWrite;
+
+    impl a2m_files::DraftingRule for DraftsAWrite {
+        fn finding_kind(&self) -> a2m_core::FindingKind {
+            crate::codes::finding_kind()
+        }
+        fn file_kind(&self) -> a2m_core::FileKindName {
+            crate::codes::FILE_KIND
+        }
+        fn draft(
+            &self,
+            _finding: &a2m_core::Finding,
+            _cx: &a2m_files::DraftContext<'_>,
+        ) -> Result<Vec<a2m_files::DraftDoc>, a2m_core::Failure> {
+            use a2m_files::DraftValue;
+            let command = DraftValue::map(vec![
+                ("effect", DraftValue::text("write")),
+                ("args", DraftValue::List(Vec::new())),
+            ]);
+            Ok(vec![a2m_files::DraftDoc {
+                path: RelPath::new("commands/remove.yaml")?,
+                body: DraftValue::map(vec![
+                    (
+                        "program",
+                        DraftValue::map(vec![("path", DraftValue::text("/opt/example/bin/tool"))]),
+                    ),
+                    ("commands", DraftValue::map(vec![("remove", command)])),
+                ]),
+            }])
+        }
+    }
+
+    #[test]
+    fn a_drafting_rule_that_drafts_a_write_is_refused_and_nothing_is_written() {
+        use std::sync::Arc;
+
+        let mut builder = a2m_files::CompilerSet::builder();
+        builder
+            .file_kind(crate::codes::PACK, Arc::new(CommandKind::new()))
+            .unwrap();
+        builder
+            .drafting_rule(crate::codes::PACK, Arc::new(DraftsAWrite))
+            .unwrap();
+        let set = builder.build();
+        let folder = std::env::temp_dir().join(format!(
+            "a2m-pack-command-draft-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let finding = a2m_core::Finding::about(
+            a2m_core::Subject::File {
+                digest: a2m_core::Digest::of(b"tool"),
+                format: "program".to_owned(),
+                part: None,
+            },
+            crate::codes::finding_kind(),
+            "{}",
+            a2m_core::Source::LiveSystem,
+            a2m_core::ProducedBy {
+                provider: "command".to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            a2m_core::Timestamp::from_unix_millis(1_000),
+        )
+        .build()
+        .unwrap();
+        let root = a2m_files::TargetRoot::new(&folder);
+        let report = a2m_files::Drafter::new(&set, &root)
+            .draft(&[finding])
+            .unwrap();
+        assert!(report.written.is_empty(), "{report:?}");
+        assert_eq!(report.refused.len(), 1, "{report:?}");
+        assert!(!folder.join("commands").join("remove.yaml").exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 
     #[test]
     fn shells_interpreters_and_programs_that_start_another_are_known_by_name() {

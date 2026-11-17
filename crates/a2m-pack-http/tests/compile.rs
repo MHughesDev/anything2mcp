@@ -218,6 +218,26 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
 }
 
 #[test]
+fn a_write_never_compiles_as_less_than_what_its_binding_does() {
+    let items = "operations/line_items.yaml";
+    // The upsert declared a read, with no commit point.
+    refused(
+        items,
+        |text| {
+            text.replacen("effect: write\n", "effect: read\n", 1)
+                .replacen("commit_points: 1\n", "", 1)
+        },
+        "kernel.effect_lower_than_derived",
+    );
+    // A delete cannot be taken back, whatever reads it back.
+    refused(
+        items,
+        |text| text.replacen("verb: upsert", "verb: delete", 1),
+        "kernel.effect_lower_than_derived",
+    );
+}
+
+#[test]
 fn the_lint_rules_find_what_they_name() {
     let orders = "endpoints/orders.yaml";
 

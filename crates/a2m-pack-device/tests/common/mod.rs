@@ -16,15 +16,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    ApprovalId, BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName,
-    PackPayload, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
-    Timestamp, Value, Values, Version, WorkspaceId,
+    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName, PackPayload,
+    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
+    Values, Version, WorkspaceId,
 };
 use a2m_expr::{Bindings, Normalizer, Program};
 use a2m_files::{CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
-    Durability, Fence, IntentToken, NewRun, Opened, Owner, PlannedRecord, RecordIntent, RecordRef,
-    RetentionClass, Store, StoreConfig, ToolKind, WriteClearance,
+    Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
+    RetentionClass, Store, StoreConfig, ToolKind,
 };
 use a2m_provider::{
     Authority, Capture, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
@@ -168,7 +168,14 @@ pub fn compile_files(
 ) -> Result<Compiled, Diagnostics> {
     let root = TargetRoot::new("example");
     let sources = a2m_files::load_files(&root, files, set)?;
-    a2m_files::compile(&sources, set, mode, VERSION)
+    // A draft is compiled under the draft version: under a release version
+    // it would have a published plan's bytes.
+    let version = if matches!(mode, CompileMode::Draft) {
+        a2m_files::DRAFT_VERSION
+    } else {
+        VERSION
+    };
+    a2m_files::compile(&sources, set, mode, version)
 }
 
 /// The example target, compiled as a draft: publishing also asks for an
@@ -269,23 +276,8 @@ pub async fn write_run(store: &Store, caller: u8, name: &str) -> (Fence, RecordR
                 fence
             };
             // The policy engine's stand-in: an approval, used once.
-            let approval = ApprovalId::from_parts(tx.now(), tx.random()?)?;
-            let now = tx.now();
-            tx.tables(Owner::Policy).execute(
-                "INSERT INTO approvals
-                    (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at, used_at)
-                 VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6, ?6)",
-                &[
-                    approval.to_string().into(),
-                    workspace.to_string().into(),
-                    fence.run.to_string().into(),
-                    diff.to_string().into(),
-                    PrincipalId::from_bytes([9; 16]).to_string().into(),
-                    now.into(),
-                ],
-            )?;
-            tx.ledger()
-                .begin_writes(&fence, WriteClearance::Approval(approval))?;
+            let clearance = a2m_ledger::testing::approve(tx, &fence)?;
+            tx.ledger().begin_writes(&fence, clearance)?;
             Ok(fence)
         })
         .await

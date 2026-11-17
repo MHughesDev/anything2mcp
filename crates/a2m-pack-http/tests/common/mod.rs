@@ -21,7 +21,7 @@ use a2m_auth::{
 use a2m_core::{
     AccountName, ApprovalId, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch,
     Failure, Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId,
-    RunState, Secret, Step, TargetName, Timestamp, Value, Values, Version, WorkspaceId,
+    RunState, Secret, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
@@ -93,7 +93,7 @@ pub fn compile(registry: &Registry, name: &str) -> Compiled {
     let set = registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(fixture(name)), set)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
 }
 
@@ -139,7 +139,7 @@ pub fn compile_changed(
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
-    a2m_files::compile(&sources, set, CompileMode::Draft, Version::new(1, 0, 0))
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
 pub fn shown(problems: &Diagnostics) -> String {

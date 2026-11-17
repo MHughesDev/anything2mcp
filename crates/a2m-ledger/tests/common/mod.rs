@@ -17,7 +17,7 @@ use a2m_core::{
     RecordKey, RunId, RunState, TargetName, Timestamp, Value, WorkspaceId,
 };
 use a2m_ledger::{
-    DATABASE_FILE_NAME, Durability, Fence, NewRun, Opened, Owner, PlannedRecord, RecordRef,
+    DATABASE_FILE_NAME, Durability, Fence, NewRun, Opened, PlannedRecord, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind, Tx, WriteClearance,
 };
 use a2m_telemetry::ManualClock;
@@ -166,22 +166,68 @@ pub fn diff_hash() -> Digest {
     Digest::of(b"diff")
 }
 
-// ---- the policy engine's stand-in: its own tables, through `Tx::tables` ----
+// ---- the policy engine's stand-in: its own tables, with the test key ----
+
+/// An approval row as the policy engine writes it, with each field a test may
+/// change to break rule 3.
+#[derive(Clone)]
+pub struct ApprovalRow {
+    pub workspace: WorkspaceId,
+    pub diff: Digest,
+    pub tool_version: Option<Digest>,
+    pub channel: &'static str,
+    pub presence: &'static str,
+    /// Milliseconds after the transaction's moment; `None` for no expiry.
+    pub expires_in: Option<i64>,
+}
+
+impl ApprovalRow {
+    pub fn good() -> Self {
+        Self {
+            workspace: workspace(),
+            diff: diff_hash(),
+            tool_version: Some(Digest::of(b"plan")),
+            channel: "local_prompt",
+            presence: "os_prompt",
+            expires_in: Some(600_000),
+        }
+    }
+}
 
 pub fn record_approval(tx: &mut Tx<'_>, run: RunId, diff: &Digest) -> Result<ApprovalId, Failure> {
+    let row = ApprovalRow {
+        diff: *diff,
+        ..ApprovalRow::good()
+    };
+    record_approval_as(tx, run, &row)
+}
+
+pub fn record_approval_as(
+    tx: &mut Tx<'_>,
+    run: RunId,
+    row: &ApprovalRow,
+) -> Result<ApprovalId, Failure> {
     let id = ApprovalId::from_parts(tx.now(), tx.random()?)?;
     let now = tx.now();
-    tx.tables(Owner::Policy).execute(
+    let expires = row
+        .expires_in
+        .map(|after| Timestamp::from_unix_millis(now.as_unix_millis() + after));
+    tx.policy_tables_for_tests().execute(
         "INSERT INTO approvals
-            (id, workspace_id, scope, run_id, diff_hash, approver_id, channel, presence_check, granted_at)
-         VALUES (?1, ?2, 'run', ?3, ?4, ?5, 'local', 'confirmed', ?6)",
+            (id, workspace_id, scope, run_id, diff_hash, tool_version_hash, approver_id, channel,
+             presence_check, granted_at, expires_at)
+         VALUES (?1, ?2, 'run', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         &[
             id.to_string().into(),
-            workspace().to_string().into(),
+            row.workspace.to_string().into(),
             run.to_string().into(),
-            diff.to_string().into(),
+            row.diff.to_string().into(),
+            row.tool_version.map(|version| version.to_string()).into(),
             principal(9).to_string().into(),
+            row.channel.into(),
+            row.presence.into(),
             now.into(),
+            expires.into(),
         ],
     )?;
     Ok(id)
@@ -190,7 +236,7 @@ pub fn record_approval(tx: &mut Tx<'_>, run: RunId, diff: &Digest) -> Result<App
 /// Marks an approval used, once. What `consume` of the policy engine does.
 pub fn consume(tx: &mut Tx<'_>, approval: ApprovalId) -> Result<WriteClearance, Failure> {
     let now = tx.now();
-    let used = tx.tables(Owner::Policy).execute(
+    let used = tx.policy_tables_for_tests().execute(
         "UPDATE approvals SET used_at = ?2 WHERE id = ?1 AND used_at IS NULL AND revoked_at IS NULL",
         &[approval.to_string().into(), now.into()],
     )?;
@@ -206,10 +252,11 @@ pub fn record_decision(
 ) -> Result<DecisionId, Failure> {
     let id = DecisionId::from_parts(tx.now(), tx.random()?)?;
     let now = tx.now();
-    tx.tables(Owner::Policy).execute(
+    tx.policy_tables_for_tests().execute(
         "INSERT INTO decisions
-            (id, workspace_id, run_id, principal_id, question, allowed, diff_hash, reasons, decided_at)
-         VALUES (?1, ?2, ?3, ?4, 'write_without_person', ?5, ?6, '[]', ?7)",
+            (id, workspace_id, run_id, principal_id, question, allowed, diff_hash, reasons,
+             policy_version, decided_at)
+         VALUES (?1, ?2, ?3, ?4, 'write_without_person', ?5, ?6, '[]', 'v', ?7)",
         &[
             id.to_string().into(),
             workspace().to_string().into(),

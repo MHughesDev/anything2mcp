@@ -631,10 +631,7 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     let root = TargetRoot::new(folder.path());
     let set = scene.registry.compiler_set();
     let report = Drafter::new(set, &root).draft(&findings).unwrap();
-    assert!(
-        report.refused.is_empty() && report.conflicts.is_empty(),
-        "{report:?}"
-    );
+    assert!(report.conflicts.is_empty(), "{report:?}");
     let written: Vec<&str> = report
         .written
         .iter()
@@ -642,11 +639,7 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
         .collect();
     assert_eq!(
         written,
-        [
-            "endpoints/delete_order.yaml",
-            "endpoints/get_account.yaml",
-            "endpoints/get_order.yaml"
-        ]
+        ["endpoints/get_account.yaml", "endpoints/get_order.yaml"]
     );
     let draft =
         |name: &str| std::fs::read_to_string(folder.path().join("endpoints").join(name)).unwrap();
@@ -659,18 +652,21 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
         read.contains("/orders/{order_id}") && read.contains("absent"),
         "{read}"
     );
-    let delete = draft("delete_order.yaml");
+    // The rule drafts the DELETE as what it is, a write, and the file kind
+    // says so: the drafter refuses it and writes nothing for it. A write
+    // is written by the developer.
+    let refused: Vec<&str> = report
+        .refused
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(refused, ["endpoints/delete_order.yaml"], "{report:?}");
     assert!(
-        delete.contains("effect: \"write\"") && !delete.contains("effect: \"read\""),
-        "{delete}"
-    );
-    // What the description does not state is a question, not a guess.
-    assert!(
-        report
-            .open_questions
-            .iter()
-            .any(|question| question.file.as_str() == "endpoints/delete_order.yaml"),
-        "{report:?}"
+        !folder
+            .path()
+            .join("endpoints")
+            .join("delete_order.yaml")
+            .exists()
     );
     // Drafting the same findings again gives the same bytes.
     let again = Drafter::new(set, &root).draft(&findings).unwrap();

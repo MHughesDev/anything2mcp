@@ -15,8 +15,8 @@ use a2m_core::{
     Identity, LimitationCode, ProducedBy, Redact, Source, Subject, Value,
 };
 use a2m_pack_web_browser::{
-    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, PageEnvironment, ProfileKey,
-    Query, RawValue, ReadWhat, SafeRequests,
+    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
+    ProfileKey, Query, RawValue, ReadWhat, SafeRequests,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
 use a2m_telemetry::Clock;
@@ -304,8 +304,10 @@ impl Core {
 
     /// An observing tab in the discovery profile of the scope's target
     /// and environment. Nothing is marked safe: every request of the page
-    /// that is not a read is refused.
+    /// that is not a read is refused. The tab is opened for the origin of
+    /// the surface it observes, and the browser keeps it there.
     pub(crate) async fn tab(&self, scope: &DiscoveryScope<'_>) -> Result<ObserveTab, Failure> {
+        let (surface, _) = Self::start(scope)?;
         let profile = ProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
@@ -316,6 +318,7 @@ impl Core {
                 &profile,
                 &PageEnvironment::default(),
                 &SafeRequests::default(),
+                &Origins::of([&surface]),
             )
             .await
             .map_err(|error| failure(&error, scope))

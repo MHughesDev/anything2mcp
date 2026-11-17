@@ -134,7 +134,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .unwrap();
     let found = store
         .read(move |tx| {
-            tx.tables(Owner::Policy).query_first(
+            tx.policy_tables_for_tests().query_first(
                 "SELECT run_id, used_at FROM approvals WHERE id = ?1",
                 &[approval.to_string().into()],
             )
@@ -160,16 +160,18 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     ] {
         let refused = store
             .write(Durability::Synced, move |tx| {
-                tx.tables(Owner::Policy).execute(statement, &[])
+                tx.policy_tables_for_tests().execute(statement, &[])
             })
             .await
             .unwrap_err();
         assert_eq!(refused.code(), &codes::TABLE_NOT_OWNED, "{statement}");
         assert_eq!(refused.class(), FailureClass::UnknownVariant);
     }
-    // Another crate cannot reach the policy engine's table, and nobody
-    // reaches the ledger's tables by saying they are the ledger.
+    // Another crate cannot reach the policy engine's table, not even by
+    // saying it is the policy engine, and nobody reaches the ledger's tables
+    // by saying they are the ledger.
     for owner in [
+        Owner::Policy,
         Owner::Auth,
         Owner::Sched,
         Owner::Engine,
@@ -187,7 +189,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     // takes all of it back and leaves the store working.
     let read_only = store
         .read(move |tx| {
-            tx.tables(Owner::Policy)
+            tx.policy_tables_for_tests()
                 .execute("DELETE FROM approvals", &[])
         })
         .await
@@ -197,7 +199,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
         .write(
             Durability::Synced,
             move |tx| -> Result<(), a2m_core::Failure> {
-                tx.tables(Owner::Policy)
+                tx.policy_tables_for_tests()
                     .execute("DELETE FROM approvals", &[])?;
                 panic!("inside a transaction");
             },
@@ -207,7 +209,7 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     assert_eq!(panicked.code(), &codes::STORE_UNAVAILABLE);
     let still = store
         .read(move |tx| {
-            tx.tables(Owner::Policy)
+            tx.policy_tables_for_tests()
                 .query("SELECT id FROM approvals", &[])
         })
         .await
@@ -215,6 +217,69 @@ async fn a_crate_reaches_its_own_tables_and_no_others() {
     assert_eq!(still.len(), 1);
     let health = store.health().await;
     assert!(health.can_commit && health.vault_attached);
+}
+
+/// Decision 0145: the policy engine's tables are reached only with the key
+/// the store hands out once, and a key of one store opens no other.
+#[tokio::test]
+async fn the_policy_engines_tables_open_only_with_the_key_the_store_hands_out_once() {
+    let store = memory().await;
+    let other = memory().await;
+    let key = store.policy_key().unwrap();
+    let again = store.policy_key().unwrap_err();
+    assert_eq!(again.code(), &codes::TABLE_NOT_OWNED);
+    let theirs = other.policy_key().unwrap();
+
+    let counted = store
+        .read(move |tx| {
+            tx.policy_tables(&key)?
+                .query_first("SELECT COUNT(*) FROM approvals", &[])
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(counted.int(0).unwrap(), 0);
+    let refused = store
+        .read(move |tx| {
+            tx.policy_tables(&theirs)?
+                .query("SELECT id FROM approvals", &[])
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &codes::TABLE_NOT_OWNED);
+}
+
+/// Decision 0145: no crate but the policy engine names the key to its
+/// tables in its source. A crate's tests reach them through the `testing`
+/// feature instead.
+#[test]
+fn no_crate_but_the_policy_engine_names_the_policy_key() {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut named = Vec::new();
+    let mut stack = vec![crates];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                // Only the sources of a crate: not its tests, and not the
+                // two crates that make and take the key.
+                let skipped = matches!(name.as_str(), "tests" | "target" | "a2m-ledger" | "a2m-policy");
+                if !skipped {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                if text.contains("PolicyKey") || text.contains("policy_key(") {
+                    named.push(path.display().to_string());
+                }
+            }
+        }
+    }
+    assert!(named.is_empty(), "these name the policy engine's key: {named:?}");
 }
 
 // ---- a restart ----
@@ -376,7 +441,7 @@ async fn the_state_rebuilt_from_events_is_the_current_state() {
                 .set_state(&next, RunState::Stopped, Some(&why))?;
             tx.ledger().take_lock(&next, record(&next, 2))?;
             tx.ledger()
-                .settle(&next, record(&next, 2), a2m_ledger::Reconciled::NotLanded)?;
+                .settle(&next, record(&next, 2), a2m_ledger::Reconciled::NotLanded { evidence: proof })?;
             tx.ledger().late_evidence(next.run, proof)?;
             Ok(next)
         })
