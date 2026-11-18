@@ -25,7 +25,7 @@
 A binding is promotable when, for **every** environment its evidence must come from, the number of distinct inputs whose comparison matched, against the verified binding named, after the last mismatch, is at least the threshold (`engine.shadow.matches_to_promote.read`, 5).
 
 - **Distinct inputs.** An input is the call's inputs, by the workspace's keyed digest of their canonical bytes, under a label of their own. Two calls with equal inputs are one input. The threshold applies to this count, never to the count of matches.
-- **Per environment, and which environments.** The environments are the plan's environments of kind `production`; a plan with none needs every environment it has (the engine's `shadow_evidence_environments`). Each must meet the threshold on its own. Matches in a test environment never count toward production: its data may have been written by the caller whose calls are the evidence, and a binding that is promoted acts in every environment, so the evidence must be from the environment it will serve.
+- **Per environment, and which environments.** The environments are the plan's environments of kind `production`; a plan with none needs every environment it has (the engine's `shadow_evidence_environments`). Each must meet the threshold on its own. The compiler implies a `production` environment in every plan whose target does not declare one, so in practice the evidence must come from production, also for a target that declares only `test`: calls made in `test` show in the report and promote nothing. Matches in a test environment never count toward production: its data may have been written by the caller whose calls are the evidence, and a binding that is promoted acts in every environment, so the evidence must be from the environment it will serve.
 - **Against the verified binding that will act.** Only matches against the digest of the first `verified` binding of the operation, as the drafts hold it at promotion (the engine's `verified_binding`), count.
 - **A mismatch resets everywhere.** The last mismatch in any environment, against any verified binding, starts the count again in every environment. Evidence against a binding is never narrowed by where it came from.
 - **Not compared** neither counts nor resets, as before.
@@ -68,10 +68,15 @@ A shadow's context is prepared in `Sandbox { test_records: false }`, the posture
 
 No new failure code. A shadow refused its rate budget is `busy`/`no_rate_budget`; one whose surface's session the call does not hold is `busy`/`no_binding`: both say what they say elsewhere, and both are kept as not compared.
 
-## The registry's half (to apply in `a2m-actions`)
+## The registry's half (applied in `a2m-actions`)
 
 - `InProcessControl::shadow`: pass `input: compared.input` and `requests: compared.requests` into `ShadowComparison`.
 - `InProcessControl::shadow_rate`: the surface's budget key as `rate` makes it, then the scheduler's grant of all `want` at once, leaving `watch.reserve_percent`, without waiting.
 - `promote_from_shadow`: the presence prompt; the subject's `against` and `environments`; the evidence in the output and the audit line; `rewrite` rechecks the binding's digest from disk.
 - `shadow.report`: `against` by operation from the drafts when the call has a project; `distinct_inputs`, `environments`, `requests`, and `against_verified_now` in each binding's entry.
 - The settings schema: `engine.shadow.time_limit_ms` protected, `Safer::Lower`.
+- `shadow.report` and `binding.promote` without a project: where the evidence must come from is not known, so nothing is shown as promotable (`not_promotable: drafts_not_read`).
+
+A shadow's cost is counted in the rate budget's units, one per step: the product's test of an HTTP binding counts three per shadow read, of which one reached the application. The unit is the scheduler's, so the cost a report shows is what the shadow took from the budget, which is what a caller could have been refused.
+
+The tests that hold the registry's half: `a2m-actions/tests/build.rs` (five reads of one order are one distinct input, `too_few`; five orders in production promote, through the presence prompt), `a2m-sched/tests/sched.rs` (`rate_now` is whole, never waits, and leaves the caller's share), and `anything2mcp/tests/shadow.rs` (the threshold lowered to three from an installation file taken as an administrator's, decision 0241; two calls of one order are not promotable; three orders in production are, and a person promotes).

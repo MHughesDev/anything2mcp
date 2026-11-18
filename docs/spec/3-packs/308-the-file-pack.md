@@ -220,6 +220,9 @@ The pack declares two effects, both `enforced`: it reads files, and writes files
 | A column whose values are unique in this file, as a key candidate | `inferred`, with `sampled` and `single_variant` |
 | A key structure in a structured file, from the file itself | `inferred` |
 | A published schema for the format, such as a JSON Schema | `inferred`, source `published_description` |
+| A surface's folder: each entry's name, kind, and a file's size, to the bound's depth, never a content; read when the kernel hands no file, from the folder the target names, following no link | `discovered`; `partial`, with `truncated`, where a folder was cut at the depth ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)) |
+| An INI file's sections, a property list's root keys, and each value's path and shape; a value whose key names a secret, or that has the form of a credential, has even its shape withheld | `discovered`, with `redacted` where a value is withheld |
+| A growing file, by its name `.log`, and the one form its first complete lines share, where exactly one fits; no line is kept | `inferred`, with `not_exercised` and `sampled` |
 
 Shapes, not values, are stored ([section 218](../2-kernel/218-discovery-and-findings.md)).
 
@@ -227,6 +230,8 @@ Shapes, not values, are stored ([section 218](../2-kernel/218-discovery-and-find
 | --- | --- |
 | A `documents/` file on the surface its file was observed on, with the fingerprint, and a record kind for each defined table or plainly headed sheet, no key, and no unit. A cell of delimited text is drafted as the built-in `untrusted_text`: what the file holds, marked untrusted, and no guess. A workbook stores each cell's kind, which discovery records for each column of a table as a shape: a column of text is `untrusted_text`, of numbers `decimal`, of true or false `boolean`; a column that holds a formula is marked `formula: true` and read as the result the workbook kept, as the formula rule above says; a column of cells of more than one kind is left out, and its type asked in the read by key ([decision 0188](../../decisions/0188-credentials-over-plain-links-drafted-workbooks-and-published-device-maps.md)). A JSON value's type and a JSON record kind's key stay open questions | The key; the type of a number, a date, or a decimal; units; names; what the file is for |
 | A `list` read for each record kind of delimited text or a workbook, with the list limit, one list output per field and `truncated`; and a read by key that holds the questions of the key and its fields' types, which does not compile until they are answered | Which files are targets and which are sources. A file a pipeline takes as input is a source, and gets a source draft ([section 402](../4-building-tools/402-the-scout-and-who-does-what.md)) |
+| A settings file's `documents/` file, named by its whole file name, with a record kind for each section or dictionary that holds a value and a field for each value read as one: an INI value `untrusted_text`, a property list's string `untrusted_text`, number `decimal`, true or false `boolean`; a withheld, unread, list, date, or data value is never a field. One `read` of each record kind, with no input ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)) | The type of a value the file spells as text |
+| A `folders/` file for a surface's folder, with its depth and no `writes`, and beside it a `list` and a `read` of one entry by name; a `logs/` file for a growing file, and a `read` from a position | An entry's content in a read; a growing file the name does not show |
 | Nothing for writes | Every write, whether the file may be open, and whether it stands beneath an application |
 
 The scout tries each drafted read five times. Opening a file for reading is a read the engine enforces.
@@ -309,7 +314,7 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 1. **H1.** The stand and its control interface, with its own tests on three operating systems.
 2. **H2.** Reads from delimited text and JSON, then from workbooks through `a2m-sources`, with positions added to its parsed form; the proof is a value read from a named place in each. Then the discoverer, the drafting rules, and the scout's tries. Done, except the scout's tries.
 3. **H3.** Writes to delimited text and JSON: the patch editor, the untouched check, the replace, read-back, and reconcile by digest; the proof is case 3. Done for `update`, `create`, and `delete` of one record; `upsert` and a list of rows in one save wait for the engine. Then workbooks with the formula rule, then YAML and TOML, each when an editor passes the round-trip tests: not built, and YAML, TOML, XML, and text documents are not read yet either.
-4. **Decision 0246.** Folders, settings files, and growing files: built, with their stand cases 13 to 15. Discovering and drafting them is not built.
+4. **Decision 0246.** Folders, settings files, and growing files: built, with their stand cases 13 to 15. Discovering and drafting them, reads only: built ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)).
 5. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the artifact archetype without bending it, for H-29.
 
 ## Open points
