@@ -37,6 +37,13 @@ pub struct OsKeyStore {
 }
 
 impl OsKeyStore {
+    /// Whether this build has a back end for the operating system's key
+    /// store of the system it was built for: Windows and macOS. On every
+    /// other system [`OsKeyStore::open`] answers `busy`/`key_store_unreachable`
+    /// (decision 0123). It is the same `cfg` that chooses the back end, so
+    /// it is a fact of the build, never a guess made at run time.
+    pub const IN_THIS_BUILD: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+
     /// Connects to this machine's key store and names the installation's
     /// entry in it. Nothing is read or written yet.
     ///

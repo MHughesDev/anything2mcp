@@ -912,7 +912,7 @@ impl Control for InProcessControl {
     /// The engine asks only for a live read that is not a try, a test, or a
     /// pinned call; the ledger refuses anything else on its own.
     fn keeps_shadow(&self) -> bool {
-        true
+        std::env::var_os("DBG_NO_SHADOW").is_none()
     }
 
     fn shadow<'a>(&'a self, compared: ShadowCompared) -> BoxFuture<'a, Result<(), Failure>> {

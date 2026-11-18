@@ -60,6 +60,10 @@ async fn a_snapshot_is_the_windows_shape_and_changes_nothing() {
     assert!(!truth.acted(), "{:?}", truth.asked);
     assert_eq!(truth.secret_reads, 0);
     assert_eq!(truth.values_read(), 0, "{:?}", truth.asked);
+    // Drafting does not draft writes: no value was set into any field, and
+    // nothing was stored.
+    assert!(truth.sets.is_empty(), "{:?}", truth.sets);
+    assert_eq!(truth.stores, 0);
 
     let description = scene
         .registry
