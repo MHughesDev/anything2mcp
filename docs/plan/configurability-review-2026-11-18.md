@@ -17,7 +17,7 @@ Its records are [0236](../decisions/0236-a-declared-setting-whose-feature-is-not
 | 5 | On one machine nobody can write a policy set: `policy.publish`, `policy.test`, `grant.add`, and `toolset.create` are not built, and the built-in local set holds no pre-approval rule. Every approval choice the policy engine can evaluate (by tool, module, target, environment, toolset, records, effect, hazard, whether the caller is an agent) is out of a person's reach, and `policy.pre_approval = true` lets through nothing | `a2m-policy/src/set.rs` `BuiltIn::local`, `handlers/mod.rs` | High | Gap | Ranked 2 below |
 | 6 | Nothing is ever deleted. `evidence.trace_retention_days` and `evidence.audit_retention_days` are read by nothing, there is no sweep, and a comment in `control.rs` says a capture is kept "as long as traces are" | `a2m-actions/src/control.rs` `keep_capture` | High for privacy and disk | Contradiction | Record 0236; ranked 4 |
 | 7 | `config.set` is in the catalog and answers `action_not_built` after the presence prompt; the loader's refusal of a loosening tells the person to use it | `settings/load.rs` `apply`, `tests/audit.rs` | Medium | Contradiction in a fix message | Record 0236 consequences; ranked 3 |
-| 8 | The `ci` preset sets ten values; three of them (`logging.format`, `logging.to`, `authoring.capture.enabled`) are read by nothing, and `engine.person = "absent"` is read only for the wait for a sign-in. A job in continuous integration gets text logs in a file, not JSON on standard output | `schema.rs` `PRESETS`, `control.rs` | Medium | Contradiction | Record 0236 |
+| 8 | The `ci` preset sets eight values; three of them (`logging.format`, `logging.to`, `authoring.capture.enabled`) are read by nothing, and `engine.person = "absent"` is read only for the wait for a sign-in. A job in continuous integration gets text logs in a file, not JSON on standard output | `schema.rs` `PRESETS`, `control.rs` | Medium | Contradiction | Record 0236 |
 | 9 | Section 226 describes a web pack group (browser, headless, profile directory, page budget, viewport, locale, time zone, recycling) none of whose keys exists, and leaves out eleven pack keys that do | Section 226, pack manifests | Medium | Contradiction | Corrections below |
 | 10 | Nothing takes effect at once. The schema marks most keys "at once" and section 226 has a table of what takes effect at once; settings are loaded once, when the engine starts, and never again | `anything2mcp/src/engine.rs` `load_settings` | Medium | Contradiction | Corrections below |
 
@@ -262,7 +262,7 @@ Each gap is given a kind as SCOPE.md uses them (Rule, Choice, Not yet) and a siz
 
 ### 9. Presets and profiles
 
-**What they really change.** `cautious` sets eight values, all read: the agent's effect ceiling to `read`, pre-approval off, ten records a run, the scout on request and not trying reads, standard capture for reads, a keep-alive of one hour. `ci` sets ten: in-process, person absent, writes only to test records, the scout off, capture recording off, JSON logs to standard output, no wait for a sign-in. Of those, the recording switch and both logging keys are read by nothing, and "person absent" stops only the wait for a sign-in. The profile changes one value: off `solo` and `workstation`, the scout runs on request. A site may add its own preset as a file; one preset at a time.
+**What they really change.** `cautious` sets seven values, all read: the agent's effect ceiling to `read`, pre-approval off, ten records a run, the scout on request and not trying reads, standard capture for reads, a keep-alive of one hour. `ci` sets eight: in-process, person absent, writes only to test records, the scout off, capture recording off, JSON logs to standard output, no wait for a sign-in. Of those, the recording switch and both logging keys are read by nothing, and "person absent" stops only the wait for a sign-in. The profile changes one value: off `solo` and `workstation`, the scout runs on request. A site may add its own preset as a file; one preset at a time.
 
 **What is missing** (each Not yet, S, as a preset of keys that work):
 
@@ -334,23 +334,23 @@ Before any of them: make every declared key honest (record 0236). An addition bu
 
 ## Lines for SCOPE.md
 
-Not edited; for the lead. Add a section after "Building tools":
+Not edited; for the lead. The record numbers are written plain so that this page's links stay true; in SCOPE.md each is linked as the page links records. Add a section after "Building tools":
 
 ```markdown
 ## Configuration
 
 | It does | It does not, today | Kind |
 | --- | --- | --- |
-| Takes settings from eight layers, refuses an unknown or misspelt key by name, and shows every value and the layer that set it (`config show`) | Act on every key it declares: 55 of the 95 kernel keys are read by nothing, and a value for one is accepted without effect, except `network.proxy`, which is refused ([decision 0236](docs/decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md)) | Not yet |
-| Applies the project file of the folder the engine started in | Apply each project's own file to that project's requests ([decision 0237](docs/decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md)) | Not yet |
-| Lets a preset, the user's file, the project's file, a variable, or a flag tighten a protected setting | Let any of them loosen one, or reach a guardrail. Today an installation file under `A2M_HOME` is the person's own and can loosen ([decision 0237](docs/decisions/0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md)) | Choice in the design, resting on rule 2 |
+| Takes settings from eight layers, refuses an unknown or misspelt key by name, and shows every value and the layer that set it (`config show`) | Act on every key it declares: 55 of the 95 kernel keys are read by nothing, and a value for one is accepted without effect, except `network.proxy`, which is refused (decision 0236) | Not yet |
+| Applies the project file of the folder the engine started in | Apply each project's own file to that project's requests (decision 0237) | Not yet |
+| Lets a preset, the user's file, the project's file, a variable, or a flag tighten a protected setting | Let any of them loosen one, or reach a guardrail. Today an installation file under `A2M_HOME` is the person's own and can loosen (decision 0237) | Choice in the design, resting on rule 2 |
 | Evaluates policy rules by tool, module, target, environment, toolset, records, effect, hazard, and whether the caller is an agent | Let a person on one machine write a policy set: there is no pre-approval rule, quota, or grant of their own | Not yet |
 | Keeps traces, captures, runs, and the audit on the machine | Delete any of them after their retention | Not yet |
 | Changes a setting at the next start of the engine | Change one while it runs, or change one through `config set` | Not yet |
 | | Tell one client connection from another in settings or policy: one effect ceiling holds for every agent | Not yet. Knowing a client's make is barred by decision 0058; a connection the person names is not |
 | | Run a hook of the person's own before or after a run | Not yet |
-| | Let a person's own code take part in proving a write, as a field type's normalizer or comparison | Rules 3 and 6. Question open for the owner: [0238](docs/decisions/0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) |
-| Names itself in what it sends, as `anything2mcp` and its version | Let a person add to that name, or replace it | Not yet, for adding. Rule 5 for replacing; question open for the owner: [0239](docs/decisions/0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) |
+| | Let a person's own code take part in proving a write, as a field type's normalizer or comparison | Rules 3 and 6. Question open for the owner: 0238 |
+| Names itself in what it sends, as `anything2mcp` and its version | Let a person add to that name, or replace it | Not yet, for adding. Rule 5 for replacing; question open for the owner: 0239 |
 ```
 
 And add one row to "People and agents", directly after the row that begins "Holds a write until a person at the machine approves it":

@@ -233,3 +233,5 @@ Records 0001 to 0054 were written when the product was named Web2MCP, and keep t
 | 0234 | [A watch is a read repeated on a schedule a person confirmed, and a change is reported, never acted on](0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) | Proposed (design decision) |
 | 0236 | [A declared setting whose feature is not built is refused by name](0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md) | Accepted (design decision) |
 | 0237 | [One statement of what is said at which scope, by which means, and by whom](0237-one-statement-of-what-is-said-at-which-scope-by-which-means-and-by-whom.md) | Accepted (design decision) |
+| 0238 | [Whether a person's own code may take part in proving a write](0238-whether-a-persons-own-code-may-take-part-in-proving-a-write.md) | Proposed (owner decision) |
+| 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Proposed (owner decision) |

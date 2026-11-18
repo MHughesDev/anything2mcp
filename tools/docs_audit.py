@@ -224,8 +224,10 @@ def main():
             note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
     n_journal = len([k for k in md if re.match(r"docs/journal/\d{4}-", k)])
     n_designs = len([k for k in md if re.match(r"docs/architecture/crates/[a-z0-9-]+\.md$", k)])
+    n_plan = len([k for k in md if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md"])
     for label, n, pat in (("journal entries", n_journal, r"\| (\d+) entries \|"),
-                          ("crate designs", n_designs, r"\| (\d+) designs and")):
+                          ("crate designs", n_designs, r"\| (\d+) designs and"),
+                          ("plan documents", n_plan, r"sorts them by kind \| (\d+) \|")):
         m = re.search(pat, dr)
         if not m or int(m.group(1)) != n:
             note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
@@ -245,7 +247,7 @@ def main():
         if re.search(r"\b(three|five) identity modes\b", v):
             note("sets", f"{k}: an identity-mode count other than four")
 
-    # 12. Skills, journal, and hypotheses are well formed and indexed.
+    # 12. Skills, the journal, the plan folder, and the hypotheses are well formed and indexed.
     for k, v in md.items():
         if k.startswith(".claude/skills/") and k.endswith("SKILL.md"):
             head = v.split("---")
@@ -258,6 +260,10 @@ def main():
     for k in md:
         if re.match(r"docs/journal/\d{4}-", k) and Path(k).name not in journal:
             note("journal", f"{k} is not listed in docs/journal/README.md")
+    plan_index = md.get("docs/plan/README.md", "")
+    for k in md:
+        if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md" and f"({Path(k).name})" not in plan_index:
+            note("plans", f"{k} is not listed in docs/plan/README.md")
     register = md.get("docs/hypotheses/README.md", "")
     ids = re.findall(r"^\| (H-\d+) \|", register, re.M)
     if len(ids) != len(set(ids)):

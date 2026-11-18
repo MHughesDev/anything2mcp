@@ -179,6 +179,10 @@ class AuditCatches(unittest.TestCase):
         index.write_text(changed, encoding="utf-8")
         self.assert_finding("counts", "for journal entries")
 
+    def test_a_plan_document_missing_from_the_plan_index_is_refused(self):
+        (self.root / "docs" / "plan" / "a-new-plan.md").write_text("# A new plan\n", encoding="utf-8")
+        self.assert_finding("plans", "docs/plan/a-new-plan.md is not listed in docs/plan/README.md")
+
     def test_a_changed_copy_of_the_licence_is_refused(self):
         copy = self.root / "bindings" / "python" / "LICENSE"
         copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")
