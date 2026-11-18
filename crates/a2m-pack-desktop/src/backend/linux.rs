@@ -2,11 +2,19 @@
 //! calls of this module's own over the workspace's D-Bus crate (decision
 //! 0198).
 //!
-//! Every call goes through [`call`], which sends only the members of
+//! Every read goes through [`call`], which sends only the members of
 //! [`READ_MEMBERS`]: each one asks, and none changes the application. The
 //! module never asks the desktop's own tree for anything but the list of
 //! applications, and asks an application nothing until its process is
 //! proven to be the program the surface declares.
+//!
+//! The acting half is apart (decision 0218): [`Hands`], which only the
+//! driver's `set` and `invoke` make, sends through [`act_call`], the one
+//! function that sends a member of [`ACT_MEMBERS`]: set an element's text
+//! through its editable-text interface, and do a named action of its action
+//! interface. Nothing else in the module calls it, and a test holds both
+//! lists and the module's source. No member sends a key or a pointer
+//! event: there is none in either list.
 
 use std::num::NonZeroUsize;
 use std::os::unix::fs::MetadataExt;
@@ -28,6 +36,8 @@ const REGISTRY: &str = "org.a11y.atspi.Registry";
 const DESKTOP: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const TEXT: &str = "org.a11y.atspi.Text";
+const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
+const ACTION: &str = "org.a11y.atspi.Action";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// The events a wait listens for: every change an application signals
 /// about its objects.
@@ -46,10 +56,23 @@ pub(crate) const READ_MEMBERS: &[(&str, &str)] = &[
     (ACCESSIBLE, "GetRelationSet"),
     (ACCESSIBLE, "GetInterfaces"),
     (TEXT, "GetText"),
+    // The names of the actions an element offers, to find the one a
+    // screen names. Asking does nothing.
+    (ACTION, "GetActions"),
     // A client says which events it listens to, so that a toolkit that
     // sends events only to listeners sends them.
     ("org.a11y.atspi.Registry", "RegisterEvent"),
     ("org.a11y.atspi.Registry", "DeregisterEvent"),
+];
+
+/// Every member the acting half may send, as interface and member: set an
+/// element's text, and do one of its actions. Only [`act_call`] sends one,
+/// and only [`Hands`] calls it. A test holds that no member of
+/// [`READ_MEMBERS`] is here, and that each is one of AT-SPI's members that
+/// act.
+pub(crate) const ACT_MEMBERS: &[(&str, &str)] = &[
+    (EDITABLE_TEXT, "SetTextContents"),
+    (ACTION, "DoAction"),
 ];
 
 /// The properties [`PROPERTIES`]`.Get` may ask for.
@@ -105,6 +128,10 @@ fn role_word(role: u32) -> &'static str {
 
 /// The state bit that says an element is shown.
 const SHOWING: u64 = 1 << 25;
+/// The state bits that say an element's text may be changed, and that it
+/// may not.
+const EDITABLE: u64 = 1 << 7;
+const READ_ONLY: u64 = 1 << 43;
 /// The relation numbers of "labels" and "labelled by".
 const LABEL_FOR: u32 = 1;
 const LABELLED_BY: u32 = 2;
@@ -134,7 +161,7 @@ where
     B: serde::Serialize + zbus::DynamicType,
     R: for<'d> zbus::wire::DynamicDeserialize<'d>,
 {
-    if !READ_MEMBERS.contains(&(interface, member)) {
+    if !may_read(interface, member) {
         return Err(AxError::Lost("a member that is not a read".to_owned()));
     }
     let sent = conn.call_method(Some(to), path, Some(interface), member, body);
@@ -147,6 +174,57 @@ where
         .body()
         .deserialize::<R>()
         .map_err(|error| lost(&error))
+}
+
+/// Whether the reading path may send a member: only one of
+/// [`READ_MEMBERS`], never one of [`ACT_MEMBERS`].
+fn may_read(interface: &str, member: &str) -> bool {
+    READ_MEMBERS.contains(&(interface, member)) && !ACT_MEMBERS.contains(&(interface, member))
+}
+
+/// Sends one member of [`ACT_MEMBERS`] to one element and reads its
+/// answer, within [`CALL_LIMIT`]. The one function that changes an
+/// application; only [`Hands`] calls it. An error after the call was sent
+/// is [`Acted::Unknown`]: whether the application did it is not known.
+async fn act_call<B>(
+    conn: &Connection,
+    el: &El,
+    interface: &str,
+    member: &str,
+    body: &B,
+) -> Result<bool, Acted>
+where
+    B: serde::Serialize + zbus::DynamicType,
+{
+    if !ACT_MEMBERS.contains(&(interface, member)) {
+        return Err(Acted::NotSent(AxError::Lost(
+            "a member that does not act".to_owned(),
+        )));
+    }
+    let sent = conn.call_method(
+        Some(el.bus.as_str()),
+        el.path.as_str(),
+        Some(interface),
+        member,
+        body,
+    );
+    let reply = match tokio::time::timeout(CALL_LIMIT, sent).await {
+        Ok(Ok(reply)) => reply,
+        Ok(Err(error)) => return Err(Acted::Unknown(lost(&error))),
+        Err(_) => return Err(Acted::Unknown(AxError::Timeout)),
+    };
+    reply
+        .body()
+        .deserialize::<bool>()
+        .map_err(|error| Acted::Unknown(lost(&error)))
+}
+
+/// How an act failed: before anything was sent, or after it was sent,
+/// with its fate unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Acted {
+    NotSent(AxError),
+    Unknown(AxError),
 }
 
 /// Reads one property of [`READ_PROPERTIES`].
@@ -180,22 +258,190 @@ pub(crate) struct Look {
     a11y: Connection,
 }
 
-/// The application's signals, from the moment the watch began.
+/// The application's signals, and the bus's word that its connection
+/// ended, from the moment the watch began.
 pub(crate) struct Watch {
     stream: MessageStream,
+    gone: MessageStream,
+}
+
+/// What a watch heard first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Heard {
+    /// The application signalled a change.
+    Changed,
+    /// The application's connection to the bus ended: it exited.
+    Gone,
+    /// The deadline passed first.
+    Passed,
 }
 
 impl Watch {
     /// Waits for the application's next signal. `false` when the deadline
     /// passed first.
     pub(crate) async fn next(&mut self, deadline: Deadline) -> Result<bool, AxError> {
-        let stream = &mut self.stream;
-        let next = std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx));
-        match tokio::time::timeout_at(deadline.at(), next).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Err(AxError::Lost("the bus".to_owned())),
-            Err(_) => Ok(false),
+        match self.heard(deadline).await? {
+            Heard::Changed => Ok(true),
+            Heard::Passed => Ok(false),
+            Heard::Gone => Err(AxError::Lost("the application left the bus".to_owned())),
         }
+    }
+
+    /// Waits for the application's next signal, or the end of its
+    /// connection, or the deadline, whichever is first.
+    pub(crate) async fn heard(&mut self, deadline: Deadline) -> Result<Heard, AxError> {
+        let (stream, gone) = (&mut self.stream, &mut self.gone);
+        let next = std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(left) = Pin::new(&mut *gone).poll_next(cx) {
+                return std::task::Poll::Ready(left.map(|_| Heard::Gone));
+            }
+            Pin::new(&mut *stream)
+                .poll_next(cx)
+                .map(|signal| signal.map(|_| Heard::Changed))
+        });
+        match tokio::time::timeout_at(deadline.at(), next).await {
+            Ok(Some(heard)) => Ok(heard),
+            Ok(None) => Err(AxError::Lost("the bus".to_owned())),
+            Err(_) => Ok(Heard::Passed),
+        }
+    }
+}
+
+/// What the driver proved of the application's process when it was
+/// prepared, and proves again before every act: the process that owns the
+/// application's connection, its start time, the program it runs, and,
+/// when the surface states one, the program's digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Proof {
+    process: u32,
+    started: u64,
+    program: PathBuf,
+    digest: Option<String>,
+}
+
+/// The time a process started, in the system's clock ticks since boot, as
+/// the process table gives it: what tells a process from a later one with
+/// the same number.
+fn started(process: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(Path::new("/proc").join(process.to_string()).join("stat"))
+        .ok()?;
+    // The program's name, in parentheses, may hold spaces; the fields
+    // after it are numbered from the third, and the start time is the
+    // twenty-second.
+    let (_, after) = stat.rsplit_once(')')?;
+    after.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// Whether an element offers a text that may be set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Settable {
+    Yes,
+    /// It offers the interface, and its state says it takes no text today.
+    ReadOnly,
+    /// It offers no editable text at all.
+    NoInterface,
+}
+
+/// The acting half of the back end, over one look and the proof of its
+/// application. Made only by the driver's `set` and `invoke`; it is the
+/// only caller of [`act_call`].
+pub(crate) struct Hands<'a> {
+    look: &'a Look,
+    proof: &'a Proof,
+}
+
+impl Hands<'_> {
+    /// Proves again, before an act, that the element is the application's
+    /// and that the application is still the process proven when the run
+    /// was prepared. Only the bus daemon and the process table are asked.
+    pub(crate) async fn prove(&self, app: &App, node: &Node) -> Result<(), AxError> {
+        if node.el.bus != app.root.bus {
+            return Err(AxError::Replaced);
+        }
+        let process: u32 = call(
+            &self.look.a11y,
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "GetConnectionUnixProcessID",
+            &(app.root.bus.as_str(),),
+        )
+        .await?;
+        let me = std::fs::metadata("/proc/self")
+            .map_err(|_| AxError::Lost("the process table".to_owned()))?
+            .uid();
+        let same = process == self.proof.process
+            && started(process) == Some(self.proof.started)
+            && process_program(process, me).as_deref() == Some(self.proof.program.as_path());
+        if !same {
+            return Err(AxError::Replaced);
+        }
+        if let Some(stated) = &self.proof.digest
+            && running_digest(process).as_deref() != Some(stated.as_str())
+        {
+            return Err(AxError::Replaced);
+        }
+        Ok(())
+    }
+
+    /// Whether the element's text may be set now, from its interfaces and
+    /// its state: two reads.
+    pub(crate) async fn settable(&self, node: &Node) -> Result<Settable, AxError> {
+        let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
+        let interfaces: Vec<String> =
+            call(&self.look.a11y, bus, path, ACCESSIBLE, "GetInterfaces", &()).await?;
+        if !interfaces.iter().any(|known| known == EDITABLE_TEXT) {
+            return Ok(Settable::NoInterface);
+        }
+        let state: Vec<u32> = call(&self.look.a11y, bus, path, ACCESSIBLE, "GetState", &()).await?;
+        let bits = state.first().map_or(0, |low| u64::from(*low))
+            | state.get(1).map_or(0, |high| u64::from(*high) << 32);
+        Ok(if bits & EDITABLE != 0 && bits & READ_ONLY == 0 {
+            Settable::Yes
+        } else {
+            Settable::ReadOnly
+        })
+    }
+
+    /// Sets the element's whole text. A control that holds a secret is
+    /// never set. `false` when the application says it took nothing.
+    pub(crate) async fn set_text(&self, node: &Node, text: &str) -> Result<bool, Acted> {
+        if node.secret {
+            return Err(Acted::NotSent(AxError::Secret));
+        }
+        act_call(
+            &self.look.a11y,
+            &node.el,
+            EDITABLE_TEXT,
+            "SetTextContents",
+            &(text,),
+        )
+        .await
+    }
+
+    /// Does the element's action named `name`. `Ok(None)` when it offers
+    /// no action of that name, and nothing was sent; `Ok(Some(false))` when
+    /// the application says it did not do it.
+    pub(crate) async fn perform(&self, node: &Node, name: &str) -> Result<Option<bool>, Acted> {
+        let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
+        let offered: Vec<(String, String, String)> =
+            call(&self.look.a11y, bus, path, ACTION, "GetActions", &())
+                .await
+                .map_err(Acted::NotSent)?;
+        let named: Vec<usize> = offered
+            .iter()
+            .enumerate()
+            .filter(|(_, (offered, _, _))| offered == name)
+            .map(|(at, _)| at)
+            .collect();
+        let [index] = named.as_slice() else {
+            return Ok(None);
+        };
+        let index = i32::try_from(*index)
+            .map_err(|_| Acted::NotSent(AxError::Lost("an action out of range".to_owned())))?;
+        act_call(&self.look.a11y, &node.el, ACTION, "DoAction", &(index,))
+            .await
+            .map(Some)
     }
 }
 
@@ -552,7 +798,8 @@ impl Look {
         Ok(text)
     }
 
-    /// Begins listening to the application's signals.
+    /// Begins listening to the application's signals, and to the bus's
+    /// word that the application's connection ended.
     pub(crate) async fn watch(&self, app: &App) -> Result<Watch, AxError> {
         let rule = MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
@@ -562,7 +809,40 @@ impl Look {
         let stream = MessageStream::for_match_rule(rule, &self.a11y, NonZeroUsize::new(256))
             .await
             .map_err(|error| lost(&error))?;
-        Ok(Watch { stream })
+        let left = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .interface("org.freedesktop.DBus")
+            .member("NameOwnerChanged")
+            .arg(0, app.root.bus.as_str())
+            .build()
+            .map_err(|error| lost(&error))?;
+        let gone = MessageStream::for_match_rule(left, &self.a11y, NonZeroUsize::new(4))
+            .await
+            .map_err(|error| lost(&error))?;
+        Ok(Watch { stream, gone })
+    }
+
+    /// What proves the application's process now: for the driver to keep,
+    /// and to prove again before every act.
+    pub(crate) fn proof(&self, app: &App, digest: Option<&str>) -> Result<Proof, AxError> {
+        let me = std::fs::metadata("/proc/self")
+            .map_err(|_| AxError::Lost("the process table".to_owned()))?
+            .uid();
+        let program = process_program(app.process, me).ok_or(AxError::Replaced)?;
+        let started = started(app.process).ok_or(AxError::Replaced)?;
+        Ok(Proof {
+            process: app.process,
+            started,
+            program,
+            digest: digest.map(|stated| stated.strip_prefix("sha256:").unwrap_or(stated).to_owned()),
+        })
+    }
+
+    /// The acting half, over this look and the proof of its application.
+    /// Only the driver's `set` and `invoke` ask for it.
+    pub(crate) fn hands<'a>(&'a self, proof: &'a Proof) -> Hands<'a> {
+        Hands { look: self, proof }
     }
 
     /// Says the pack no longer listens, and closes both connections.

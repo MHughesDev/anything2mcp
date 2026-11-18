@@ -234,11 +234,7 @@ pub(crate) fn typed(text: &str, kind: Kind) -> Option<Json> {
 /// parameter, when it has one.
 fn media_type(header: &str) -> (String, Option<String>) {
     let mut parts = header.split(';');
-    let media = parts
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
+    let media = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
     let charset = parts.find_map(|part| {
         let (name, value) = part.split_once('=')?;
         name.trim()
@@ -265,7 +261,9 @@ impl AnswerSpec {
             return Ok(());
         }
         let Some(header) = header else {
-            return Err("the answer states no content type, and the endpoint declares one".to_owned());
+            return Err(
+                "the answer states no content type, and the endpoint declares one".to_owned(),
+            );
         };
         let (media, charset) = media_type(header);
         if !self
@@ -285,7 +283,9 @@ impl AnswerSpec {
         };
         if let (Some(expected), Some(charset)) = (decoded_by, charset) {
             let fits = match Charset::from_word(&charset) {
-                Some(said) => said == expected || (said == Charset::UsAscii && expected == Charset::Utf8),
+                Some(said) => {
+                    said == expected || (said == Charset::UsAscii && expected == Charset::Utf8)
+                }
                 None => false,
             };
             if !fits {
@@ -309,10 +309,7 @@ impl AnswerSpec {
             Form::Xml(form) => crate::xml::read(body, form),
             Form::Text(form) => read_text(body, form, redact),
             Form::Bytes => Ok(Json::Object(vec![
-                (
-                    LENGTH.to_owned(),
-                    Json::Number(body.len().to_string()),
-                ),
+                (LENGTH.to_owned(), Json::Number(body.len().to_string())),
                 (DIGEST.to_owned(), Json::Text(Digest::of(body).to_string())),
             ])),
         }
@@ -321,7 +318,9 @@ impl AnswerSpec {
 
 fn read_text(body: &[u8], form: &TextForm, redact: &dyn Redact) -> Result<Json, Unread> {
     let text = form.charset.decode(body).ok_or_else(|| {
-        Unread::Shape("the body does not decode by the character set the endpoint declares".to_owned())
+        Unread::Shape(
+            "the body does not decode by the character set the endpoint declares".to_owned(),
+        )
     })?;
     let text = redact.redact(&text);
     let mut record = vec![(WHOLE_TEXT.to_owned(), Json::Text(text.clone()))];
@@ -421,9 +420,7 @@ fn is_field_name(text: &str) -> bool {
 
 fn is_xml_name(text: &str) -> bool {
     let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_alphabetic() || c == '_')
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
         && chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
@@ -636,7 +633,14 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
         namespaces: BTreeMap::new(),
     };
     let allowed: &[&str] = match form_word {
-        "xml" => &["form", "content_type", "namespaces", "fields", "max_depth", "max_elements"],
+        "xml" => &[
+            "form",
+            "content_type",
+            "namespaces",
+            "fields",
+            "max_depth",
+            "max_elements",
+        ],
         "text" => &["form", "content_type", "charset", "pattern", "fields"],
         _ => &["form", "content_type"],
     };
@@ -652,19 +656,30 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
         }
     }
     let mut content_types = Vec::new();
-    for item in written.get("content_type").map(Located::items).unwrap_or_default() {
-        let text = item.as_text().unwrap_or_default().trim().to_ascii_lowercase();
+    for item in written
+        .get("content_type")
+        .map(Located::items)
+        .unwrap_or_default()
+    {
+        let text = item
+            .as_text()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
         let shaped = text.split_once('/').is_some_and(|(kind, sub)| {
             !kind.is_empty()
                 && !sub.is_empty()
-                && text
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'+' | b'.' | b'*'))
+                && text.bytes().all(|b| {
+                    b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'+' | b'.' | b'*')
+                })
         });
         if shaped {
             content_types.push(text);
         } else {
-            reading.refuse(&item.at, "A content type is a media type such as `application/xml`, with no parameters.");
+            reading.refuse(
+                &item.at,
+                "A content type is a media type such as `application/xml`, with no parameters.",
+            );
         }
     }
     let defaults: &[&str] = match form_word {
@@ -685,10 +700,17 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
 
     let form = match form_word {
         "xml" => {
-            for entry in written.get("namespaces").map(Located::entries).unwrap_or_default() {
+            for entry in written
+                .get("namespaces")
+                .map(Located::entries)
+                .unwrap_or_default()
+            {
                 let uri = entry.value.as_text().unwrap_or_default();
                 if !is_xml_name(&entry.key.value) || uri.is_empty() {
-                    reading.refuse(&entry.key.at, "A namespace is a prefix and the URI it stands for.");
+                    reading.refuse(
+                        &entry.key.at,
+                        "A namespace is a prefix and the URI it stands for.",
+                    );
                     continue;
                 }
                 reading
@@ -726,18 +748,30 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
             let declared = written.get("fields");
             match (&pattern, declared) {
                 (None, Some(declared)) => {
-                    reading.refuse(&declared.at, "A text answer's `fields` are the named groups of its `pattern`.");
+                    reading.refuse(
+                        &declared.at,
+                        "A text answer's `fields` are the named groups of its `pattern`.",
+                    );
                 }
                 (Some(text), _) => match whole_pattern(text) {
                     Err(_) => {
-                        let at = written.get("pattern").map_or(&written.at, |p| &p.at).clone();
+                        let at = written
+                            .get("pattern")
+                            .map_or(&written.at, |p| &p.at)
+                            .clone();
                         reading.refuse(&at, "The pattern does not compile.");
                     }
                     Ok(compiled) => {
                         let groups: Vec<&str> = compiled.capture_names().flatten().collect();
-                        let at = written.get("pattern").map_or(&written.at, |p| &p.at).clone();
+                        let at = written
+                            .get("pattern")
+                            .map_or(&written.at, |p| &p.at)
+                            .clone();
                         if groups.is_empty() {
-                            reading.refuse(&at, "A pattern names its groups, such as `(?P<count>[0-9]+)`.");
+                            reading.refuse(
+                                &at,
+                                "A pattern names its groups, such as `(?P<count>[0-9]+)`.",
+                            );
                         }
                         for group in &groups {
                             if !is_field_name(group) || *group == WHOLE_TEXT {
@@ -752,12 +786,16 @@ pub(crate) fn answer_of(doc: &Located<Doc>, problems: &mut Diagnostics) -> Optio
                         }
                         for entry in declared.map(Located::entries).unwrap_or_default() {
                             if !groups.contains(&entry.key.value.as_str()) {
-                                reading.refuse(&entry.key.at, "The pattern has no group of this name.");
+                                reading.refuse(
+                                    &entry.key.at,
+                                    "The pattern has no group of this name.",
+                                );
                             }
                         }
                         for group in groups {
                             let spec = declared.and_then(|fields| fields.get(group));
-                            let Some(kind) = kind_of(spec.and_then(|spec| spec.text("type"))) else {
+                            let Some(kind) = kind_of(spec.and_then(|spec| spec.text("type")))
+                            else {
                                 reading.refuse(
                                     spec.map_or(&at, |spec| &spec.at),
                                     "A field's `type` is `string`, `integer`, `number`, or `boolean`.",
@@ -806,12 +844,21 @@ mod tests {
 
     #[test]
     fn a_text_is_typed_exactly_or_not_at_all() {
-        assert_eq!(typed("007", Kind::Integer), Some(Json::Number("7".to_owned())));
-        assert_eq!(typed("-3", Kind::Integer), Some(Json::Number("-3".to_owned())));
+        assert_eq!(
+            typed("007", Kind::Integer),
+            Some(Json::Number("7".to_owned()))
+        );
+        assert_eq!(
+            typed("-3", Kind::Integer),
+            Some(Json::Number("-3".to_owned()))
+        );
         for wrong in ["", "1.5", "+1", "1e3", " 1", "99999999999999999999"] {
             assert_eq!(typed(wrong, Kind::Integer), None, "{wrong}");
         }
-        assert_eq!(typed("150.5", Kind::Number), Some(Json::Number("150.5".to_owned())));
+        assert_eq!(
+            typed("150.5", Kind::Number),
+            Some(Json::Number("150.5".to_owned()))
+        );
         assert_eq!(typed("1e3", Kind::Number), None);
         assert_eq!(typed("true", Kind::Boolean), Some(Json::Bool(true)));
         assert_eq!(typed("1", Kind::Boolean), None);
@@ -828,8 +875,14 @@ mod tests {
             content_types: vec!["text/plain".to_owned()],
         };
         assert!(text.check_content_type(Some("text/plain")).is_ok());
-        assert!(text.check_content_type(Some("Text/Plain; charset=UTF-8")).is_ok());
-        assert!(text.check_content_type(Some("text/plain; charset=iso-8859-1")).is_err());
+        assert!(
+            text.check_content_type(Some("Text/Plain; charset=UTF-8"))
+                .is_ok()
+        );
+        assert!(
+            text.check_content_type(Some("text/plain; charset=iso-8859-1"))
+                .is_err()
+        );
         assert!(text.check_content_type(Some("text/html")).is_err());
         assert!(text.check_content_type(None).is_err());
         let xml = AnswerSpec {

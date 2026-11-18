@@ -118,8 +118,7 @@ impl State<'_> {
             return Err(twice(name));
         }
         slot.value = Some(
-            typed(text, kind)
-                .ok_or_else(|| shape(format!("`{name}` is not a {}", kind.word())))?,
+            typed(text, kind).ok_or_else(|| shape(format!("`{name}` is not a {}", kind.word())))?,
         );
         Ok(())
     }
@@ -140,7 +139,9 @@ fn attribute(
             ResolveResult::Unbound => None,
             ResolveResult::Bound(uri) => Some(uri.into_inner().to_owned()),
             ResolveResult::Unknown(_) => {
-                return Err(shape("an attribute uses a prefix the document does not declare"));
+                return Err(shape(
+                    "an attribute uses a prefix the document does not declare",
+                ));
             }
         };
         if namespace == wanted.namespace && local.into_inner() == wanted.local {
@@ -163,8 +164,12 @@ fn is_space(text: &str) -> bool {
 /// Reads an XML answer into its record.
 pub(crate) fn read(body: &[u8], form: &XmlForm) -> Result<Json, Unread> {
     let body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(body);
-    let text = std::str::from_utf8(body)
-        .map_err(|error| shape(format!("the body is not UTF-8 at byte {}", error.valid_up_to())))?;
+    let text = std::str::from_utf8(body).map_err(|error| {
+        shape(format!(
+            "the body is not UTF-8 at byte {}",
+            error.valid_up_to()
+        ))
+    })?;
     let mut reader = NsReader::from_str(text);
     let mut version = XmlVersion::Implicit1_0;
     let mut state = State {
@@ -192,10 +197,7 @@ pub(crate) fn read(body: &[u8], form: &XmlForm) -> Result<Json, Unread> {
                 if let Some(encoding) = decl.encoding() {
                     let encoding =
                         encoding.map_err(|_| shape("the XML declaration is not well formed"))?;
-                    if !matches!(
-                        encoding.to_ascii_lowercase().as_str(),
-                        "utf-8" | "us-ascii"
-                    ) {
+                    if !matches!(encoding.to_ascii_lowercase().as_str(), "utf-8" | "us-ascii") {
                         return Err(shape("the document declares an encoding other than UTF-8"));
                     }
                 }
@@ -269,7 +271,9 @@ pub(crate) fn read(body: &[u8], form: &XmlForm) -> Result<Json, Unread> {
             ResolveResult::Unbound => None,
             ResolveResult::Bound(uri) => Some(uri.into_inner().to_owned()),
             ResolveResult::Unknown(_) => {
-                return Err(shape("an element uses a prefix the document does not declare"));
+                return Err(shape(
+                    "an element uses a prefix the document does not declare",
+                ));
             }
         };
         stack.push(Resolved {
@@ -408,7 +412,10 @@ fn close(
     root_closed: &mut bool,
 ) -> Result<(), Unread> {
     let depth = stack.len();
-    if let Some(gathering) = state.gathering.take_if(|gathering| gathering.depth == depth) {
+    if let Some(gathering) = state
+        .gathering
+        .take_if(|gathering| gathering.depth == depth)
+    {
         let text = gathering
             .text
             .trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\r'));
@@ -523,7 +530,10 @@ mod tests {
         };
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].get("code"), Some(&Json::Text("L-2".to_owned())));
-        assert_eq!(items[0].get("quantity"), Some(&Json::Number("2".to_owned())));
+        assert_eq!(
+            items[0].get("quantity"),
+            Some(&Json::Number("2".to_owned()))
+        );
     }
 
     #[test]
@@ -540,7 +550,12 @@ mod tests {
 
         let twice = super::read(
             ORDER.as_bytes(),
-            &form(vec![one("code", &["order", "items", "item"], Some("code"), Kind::String)]),
+            &form(vec![one(
+                "code",
+                &["order", "items", "item"],
+                Some("code"),
+                Kind::String,
+            )]),
         );
         assert!(matches!(twice, Err(Unread::Shape(why)) if why.contains("more than one")));
 
@@ -554,7 +569,12 @@ mod tests {
         assert!(matches!(
             super::read(
                 undeclared.as_bytes(),
-                &form(vec![one("customer", &["order", "customer"], None, Kind::String)])
+                &form(vec![one(
+                    "customer",
+                    &["order", "customer"],
+                    None,
+                    Kind::String
+                )])
             ),
             Err(Unread::Shape(_))
         ));
@@ -563,7 +583,12 @@ mod tests {
         assert!(matches!(
             super::read(
                 mixed.as_bytes(),
-                &form(vec![one("customer", &["order", "customer"], None, Kind::String)])
+                &form(vec![one(
+                    "customer",
+                    &["order", "customer"],
+                    None,
+                    Kind::String
+                )])
             ),
             Err(Unread::Shape(_))
         ));
@@ -585,7 +610,10 @@ mod tests {
         assert!(super::read(fits.as_bytes(), &form(Vec::new())).is_ok());
         for broken in ["", "<a>", "<a></b>", "<a/><b/>", "text<a/>"] {
             assert!(
-                matches!(super::read(broken.as_bytes(), &form(Vec::new())), Err(Unread::Shape(_))),
+                matches!(
+                    super::read(broken.as_bytes(), &form(Vec::new())),
+                    Err(Unread::Shape(_))
+                ),
                 "{broken:?}"
             );
         }

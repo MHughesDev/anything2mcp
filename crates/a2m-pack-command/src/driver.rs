@@ -1097,8 +1097,7 @@ const MOST_SCRIPT_BYTES: u64 = 1024 * 1024;
 /// checked, in a folder no other user may write, whatever happens to the
 /// target's own file after this.
 fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String, StepFailure> {
-    let (Some(project), Some(folder)) = (session.project.as_ref(), session.scripts.as_ref())
-    else {
+    let (Some(project), Some(folder)) = (session.project.as_ref(), session.scripts.as_ref()) else {
         return Err(StepFailure::not_sent(Failure::new(
             FailureClass::Input,
             a2m_provider::codes::PROJECT_FOLDER_MISSING,
@@ -1113,7 +1112,9 @@ fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String,
         not_sent(
             FailureClass::Drift,
             PROGRAM_MISSING,
-            format!("The script `{shown_path}` of the command `{name}` is not in the target's folder, or cannot be read."),
+            format!(
+                "The script `{shown_path}` of the command `{name}` is not in the target's folder, or cannot be read."
+            ),
             "Put the script back at the path its command names, inside the target's folder.",
         )
     };
@@ -1121,7 +1122,9 @@ fn script_copy(session: &Session, name: &str, script: &Script) -> Result<String,
         not_sent(
             FailureClass::Drift,
             PROGRAM_DIGEST_CHANGED,
-            format!("The script `{shown_path}` of the command `{name}` {place} is not the one its digest names."),
+            format!(
+                "The script `{shown_path}` of the command `{name}` {place} is not the one its digest names."
+            ),
             "Review the script, write the SHA-256 of its bytes under the command's `script.digest`, and publish.",
         )
     };

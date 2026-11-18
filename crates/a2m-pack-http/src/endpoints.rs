@@ -103,7 +103,10 @@ fn answer_schema() -> JsonSchema {
 fn answer_form_schema() -> JsonSchema {
     JsonSchema::object()
         .required("form", JsonSchema::words(forms::FORMS))
-        .optional("content_type", JsonSchema::non_empty_list(JsonSchema::text()))
+        .optional(
+            "content_type",
+            JsonSchema::non_empty_list(JsonSchema::text()),
+        )
         .optional("charset", JsonSchema::words(forms::CHARSETS))
         .optional("pattern", JsonSchema::text())
         .optional("namespaces", JsonSchema::map_of(JsonSchema::text()))

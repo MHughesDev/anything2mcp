@@ -885,7 +885,12 @@ fn interpreter(doc: &Located<Doc>, found: &mut Found) -> Option<Vec<String>> {
             "Give the interpreter the arguments that make it read a script file, such as `-File` or none at all.",
         );
     }
-    if !doc.get("help").map(Located::items).unwrap_or_default().is_empty() {
+    if !doc
+        .get("help")
+        .map(Located::items)
+        .unwrap_or_default()
+        .is_empty()
+    {
         found.bad(
             "script_malformed",
             &block.at,

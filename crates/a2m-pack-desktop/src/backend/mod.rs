@@ -15,7 +15,7 @@
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub(crate) use linux::Look;
+pub(crate) use linux::{Acted, Heard, Look, Proof, Settable};
 
 #[cfg(windows)]
 mod windows;
@@ -94,6 +94,11 @@ pub(crate) enum AxError {
     /// The program's digest is not the one stated.
     #[cfg(any(target_os = "linux", windows))]
     NotProven,
+    /// Before an act, the application's connection is no longer owned by
+    /// the process proven when the run was prepared, or the element is not
+    /// the application's.
+    #[cfg(target_os = "linux")]
+    Replaced,
     /// A control that holds a secret was asked for its value.
     #[cfg(any(target_os = "linux", windows))]
     Secret,
@@ -176,6 +181,15 @@ impl AxError {
                     "The running program `{program}` does not have the digest the surface states."
                 ),
                 "Review the program that is installed, then state its digest in the surface, or reinstall the reviewed one.",
+            ),
+            #[cfg(target_os = "linux")]
+            Self::Replaced => codes::failure(
+                FailureClass::UnknownVariant,
+                codes::APPLICATION_NOT_PROVEN,
+                format!(
+                    "Before acting, the application is no longer the process of the program `{program}` that was proven when the run began, or the element is not that application's. Nothing was sent."
+                ),
+                "Check which program shows the window, then run the tool again.",
             ),
             #[cfg(any(target_os = "linux", windows))]
             Self::Secret => codes::failure(
