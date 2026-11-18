@@ -89,6 +89,13 @@ jobs:
     name: Wheel and npm packages on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Waits for the sign-in window job, a Linux job of some minutes, so that
+    # the release check's two macOS wheels are given runners first: in the
+    # tenth run of one pull request every job here passed and both wheels
+    # were cancelled after fifteen minutes in the queue. Ordering only; it
+    # runs whatever that job found.
+    needs: web-window
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
