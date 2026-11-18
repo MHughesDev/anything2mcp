@@ -1,6 +1,6 @@
 # 0233. Whether being told by another machine is serving it
 
-**Status:** Proposed. Owner decision: it asks how far owner decision 0208 reaches, which only the owner changes. Written by the breadth review of 2026-11-18; the owner has not read it. Nothing here is in force, and decision 0208 stands as written until the owner answers. It does not ask to reopen 0208; it asks the owner to read two edges of it.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: in the first release the product receives no webhook, and the engine on a person's second machine is not reached; decision 0208 stands as it was. Only the owner changes it.
 
 **Date:** 2026-11-18
 

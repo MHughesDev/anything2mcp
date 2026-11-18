@@ -1,6 +1,6 @@
 # 0211. Whether the engine may ever act in a session the person already has
 
-**Status:** Proposed. Owner decision: it asks about rule five, which only the owner changes. Written by the coverage review of 2026-11-18; the owner has not read it. Nothing here is in force, and rule five stands as written until the owner answers.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: the engine does not act in the person's everyday browser, by an extension or otherwise, and does not start a browser-based desktop application with that application's own data: not in the first release; the rule stands as it was. A permission the person grants the engine in the system's own settings is within rule 5. Only the owner changes it.
 
 **Date:** 2026-11-18
 

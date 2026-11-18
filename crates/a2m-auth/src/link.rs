@@ -8,24 +8,88 @@
 //! address (`0.0.0.0`) are not one either. The address is judged as the
 //! HTTP client parses it, so `127.1` is `127.0.0.1` here as it is when it is
 //! sent: nothing judges one spelling and sends another.
+//!
+//! The judgment is `a2m_core::ScopedHost::may_leave_this_machine`, the one
+//! question every check of a plain link asks (decision 0240).
 
-use std::net::IpAddr;
+use a2m_core::ScopedHost;
 
 /// Whether `url`'s host is a loopback address written as an IP address.
 pub(crate) fn loopback(url: &reqwest::Url) -> bool {
-    let host = url.host_str().unwrap_or_default();
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-        .unwrap_or(host);
     // The parser writes an IP address in its one canonical form; a name
     // never parses as one.
-    bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    !ScopedHost::of_host(url.host_str().unwrap_or_default()).may_leave_this_machine()
 }
 
 #[cfg(test)]
 mod tests {
     use super::loopback;
+
+    /// The corpus of address spellings every check of where an address is
+    /// is pinned against (decision 0240).
+    const SPELLINGS: &str = include_str!("../../a2m-core/tests/address-spellings.txt");
+
+    /// Each spelling of the corpus, with the verdict of `column` now and
+    /// before decision 0240.
+    fn corpus(column: &str) -> Vec<(String, String, String)> {
+        let mut header: Vec<&str> = Vec::new();
+        let mut rows = Vec::new();
+        for line in SPELLINGS.lines() {
+            if let Some(names) = line.strip_prefix("#spelling") {
+                header = std::iter::once("spelling")
+                    .chain(names.split_whitespace())
+                    .collect();
+            }
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            let at = header.iter().position(|name| *name == column).unwrap();
+            let spelling = cells[0].replace("<empty>", "").replace("<sp>", " ");
+            let (now, before) = cells[at].split_once('<').unwrap_or((cells[at], cells[at]));
+            rows.push((spelling, now.to_owned(), before.to_owned()));
+        }
+        assert!(rows.len() > 50, "the corpus was not read");
+        rows
+    }
+
+    /// The verdict of `judge` for a spelling, given as `http://<spelling>/`.
+    fn verdict(spelling: &str, judge: impl Fn(&reqwest::Url) -> bool) -> &'static str {
+        match reqwest::Url::parse(&format!("http://{spelling}/")) {
+            Ok(url) if judge(&url) => "here",
+            Ok(_) => "away",
+            Err(_) => "-",
+        }
+    }
+
+    /// `loopback` as it was before decision 0240, kept to show that
+    /// nothing it refused is allowed now.
+    fn before(url: &reqwest::Url) -> bool {
+        let host = url.host_str().unwrap_or_default();
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host);
+        bare.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    }
+
+    #[test]
+    fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
+        for (spelling, now, before_then) in corpus("auth") {
+            assert_eq!(verdict(&spelling, loopback), now, "{spelling}");
+            assert_eq!(verdict(&spelling, before), before_then, "{spelling}");
+        }
+    }
+
+    #[test]
+    fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
+        for (spelling, _, _) in corpus("auth") {
+            if verdict(&spelling, before) != "here" {
+                assert_ne!(verdict(&spelling, loopback), "here", "{spelling}");
+            }
+        }
+    }
 
     #[test]
     fn only_an_ip_address_in_the_loopback_range_is_loopback_and_never_a_name() {

@@ -1,6 +1,6 @@
 # 0239. Whether a person may replace how the product names itself to a system
 
-**Status:** Proposed. Owner decision: it bears on rule five, operating openly, which forbids imitating another application's client and hiding that the engine is automation. Written by the [configurability review](../reviews/configurability-review-2026-11-18.md) of 2026-11-18; the owner has not read it. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: a person may add to the name the product gives itself, once that is built; replacing it is not allowed in the first release. Only the owner changes it.
 
 **Date:** 2026-11-18
 

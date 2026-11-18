@@ -1,6 +1,6 @@
 # 0215. Whether a person may pre-approve an action that leaves nothing to read back
 
-**Status:** Proposed. Owner decision: it trades safety for ease on the approval of `irreversible` operations, which rule two orders. Written by the coverage review of 2026-11-18; the owner has not read it. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: standing approval is allowed narrowly: only for an operation whose declared hazard is none and which is `irreversible` solely because nothing can be read back, only on one machine, and revocable; it is built after measuring how many actions it covers, and not built if that number is small. Only the owner changes it.
 
 **Date:** 2026-11-18
 

@@ -234,7 +234,7 @@ A big system with many modules, services, and origins is one target with many su
 - **Modules.** Files live under `targets/<target>/<module>/`, and tool names carry the module, such as `example_purchasing_order_create`. Agents find tools by module through search, so hundreds of operations stay usable.
 - **Shared pieces.** Field types, sign-in, and environment are defined once per target and shared by all modules.
 - **Several origins and services.** Micro-frontends, gateways, and separate services are separate surfaces with a declared relationship, such as sharing one sign-in.
-- **Pipelines across targets.** A pipeline can read from one target and write to another, with each target's session and policy applied separately.
+- **Pipelines across targets.** Not built yet. A pipeline's step names an operation by its place in its own target's plan, so a pipeline calls the operations of one target only. The design, when it is built, is that a pipeline reads from one target and writes to another, with each target's session and policy applied separately.
 - **Load on demand.** Only modules in use are loaded, so a large target does not slow the server.
 
 ## Sign-in in a browser

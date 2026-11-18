@@ -1,6 +1,6 @@
 # 0232. Whether a credential the machine holds for the person may be used through its holder
 
-**Status:** Proposed. Owner decision: it asks how far rule five reaches, which only the owner changes. Written by the breadth review of 2026-11-18; the owner has not read it. Nothing here is in force, and rule five stands as written until the owner answers.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: a credential the machine holds may be used through its holder, never read, in two cases: the system's integrated sign-in with the person's current logon, and a smart card or passkey with the person present; an SSH or signing agent is not used in the first release, and another program's credential store is never used. Only the owner changes it.
 
 **Date:** 2026-11-18
 

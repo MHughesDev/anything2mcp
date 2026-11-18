@@ -30,6 +30,7 @@ mod kind;
 mod notice;
 mod plan;
 mod redact;
+mod scope;
 mod secret;
 mod state;
 mod value;
@@ -77,6 +78,7 @@ pub use plan::{
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,
 };
+pub use scope::{AddressScope, ScopedHost};
 pub use secret::Secret;
 pub use state::{
     Availability, BindingStatus, DoctorState, RecordState, RunState, SessionState, SubsystemMove,

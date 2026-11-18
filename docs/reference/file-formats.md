@@ -323,6 +323,12 @@ A fixture folder holds a marker file stating that it was scrubbed, `fixture.yaml
 | `<name>.request.json` | For a committing step: the values the engine must send it, by argument name, an object or a list in the order the saves are sent. Compared field by field with what was sent; a save sent with no recorded request fails the test |
 | Any other file | A file a step or a source reads. A pipeline's source is named by the test's input `source`, a file of this folder, read through the checked paths |
 
+An answer file holds what the step observed, not the system's raw answer: for an HTTP read, the named values its extract step takes from the answer, which are the operation's outputs and any value the plan also asks for, such as a version. A list is a JSON list of values. A record is an object with one entry named `record`; a bare object is refused as a value. So an operation with the outputs `customer` and `lines`, where `lines` is a list of records, has this answer file:
+
+```json
+{"customer": "Example Customer One", "lines": [{"record": {"item_code": "L-300", "quantity": 2}}]}
+```
+
 A step with no answer left fails the test as `fixture_no_answer`, and nothing is sent. In `expect`, a field the result does not hold may name the run itself: `state` (its end state, `completed` unless given), `records_verified` (records read back and matched, or found unchanged), `failure` (the code it stopped with), and `sent` (how many saves were sent). A test of a write runs in a ledger of its own, thrown away when it ends.
 
 A write's fixture answers the look before the save and the read-back after it differently, so the step they share is answered by a list, in order: the record as it was (or `null`, absent), then as the save left it. One object would answer both, find the record unchanged, and send nothing. A write's test must have `<name>.request.json`, and passes only when what was sent equals it; without one it is `not_run`. A test that expects the record to hold the intended values already, and nothing to be sent, says `sent: 0`: it proves that path, and by itself does not pass the publish gate for the write ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).

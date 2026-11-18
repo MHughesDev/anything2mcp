@@ -1,6 +1,6 @@
 # 0224. Whether many-host or many-port looking exists in the first design
 
-**Status:** Proposed. **This question is the owner's**, because it touches rule 5 (operate openly; a scan is the line between an honest inventory tool and a stealth scanner). An agent does not build rung 4 until the owner decides. Written by the first network-awareness design wave of 2026-11-18. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: asking many hosts or many ports does not exist in the first design; the rule stands as it was. Only the owner changes it.
 
 **Date:** 2026-11-18
 

@@ -445,4 +445,49 @@ mod tests {
         let (ci, _) = carried(&user("[profile]\npreset = \"ci\"\n"), local());
         assert!(!ci.layers().settings.writes_outside_tests);
     }
+
+    /// The fault of decision 0241: `A2M_HOME` names a fresh folder of the
+    /// person's own, and an installation file there raises the most records
+    /// one run may write from 50 to 1000. Before the fix the policy engine
+    /// was opened with 1000; now the load refuses the loosening by name,
+    /// and the same file that tightens is applied.
+    #[test]
+    fn an_installation_file_the_persons_account_can_change_never_loosens_the_policy_engine() {
+        let home = std::env::temp_dir().join(format!("a2m-actions-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let env = crate::paths::Env::with(
+            crate::paths::OsFamily::current(),
+            &[("A2M_HOME", home.to_str().unwrap())],
+        );
+        let paths = crate::paths::Paths::resolve(&env).unwrap();
+        std::fs::create_dir_all(&paths.installation_config).unwrap();
+        // A test run as the superuser makes folders that are the
+        // administrator's: give the home to another account, as a person's
+        // own folder is.
+        #[cfg(unix)]
+        if rustix::process::geteuid().is_root() {
+            std::os::unix::fs::chown(&home, Some(65_534), Some(65_534)).unwrap();
+        }
+        let file = paths.installation_config.join("settings.toml");
+        let load = |text: &str| {
+            std::fs::write(&file, text).unwrap();
+            Settings::load(&Sources::read(&paths, None, env.vars.clone()).unwrap())
+        };
+        let loosened = load("[policy]\nmax_records_per_run = 1000\n");
+        let tightened = load("[policy]\nmax_records_per_run = 10\n");
+        let _ = std::fs::remove_dir_all(&home);
+        let failure = loosened.unwrap_err();
+        assert_eq!(failure.code(), &codes::SETTING_PROTECTED, "{failure:?}");
+        assert_eq!(failure.class(), FailureClass::Policy);
+        assert!(
+            failure.message().contains("policy.max_records_per_run")
+                && failure.message().contains("settings.toml")
+                && failure.message().contains("only when no account but an administrator"),
+            "{failure:?}"
+        );
+        assert!(failure.next_step().contains("A2M_HOME"), "{failure:?}");
+        let (carried, refused) = carried(&tightened.unwrap(), local());
+        assert!(refused.is_empty());
+        assert_eq!(carried.layers().settings.max_records_per_run, 10);
+    }
 }

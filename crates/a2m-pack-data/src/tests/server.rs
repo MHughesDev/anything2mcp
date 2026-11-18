@@ -843,6 +843,81 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
     }
 }
 
+/// The corpus of address spellings every check of where an address is
+/// is pinned against (decision 0240).
+const SPELLINGS: &str = include_str!("../../../a2m-core/tests/address-spellings.txt");
+
+/// Each spelling of the corpus, with the verdict of `column` now and
+/// before decision 0240.
+fn corpus(column: &str) -> Vec<(String, String, String)> {
+    let mut header: Vec<&str> = Vec::new();
+    let mut rows = Vec::new();
+    for line in SPELLINGS.lines() {
+        if let Some(names) = line.strip_prefix("#spelling") {
+            header = std::iter::once("spelling")
+                .chain(names.split_whitespace())
+                .collect();
+        }
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        let cells: Vec<&str> = line.split_whitespace().collect();
+        let at = header.iter().position(|name| *name == column).unwrap();
+        let spelling = cells[0].replace("<empty>", "").replace("<sp>", " ");
+        let (now, before) = cells[at].split_once('<').unwrap_or((cells[at], cells[at]));
+        rows.push((spelling, now.to_owned(), before.to_owned()));
+    }
+    assert!(rows.len() > 50, "the corpus was not read");
+    rows
+}
+
+/// The verdict of `server_of` for a surface at `address`: `here` when the
+/// address passes and only the missing session stops it, `away` when the
+/// link is refused.
+fn server_verdict(plan: &Plan, address: &str) -> &'static str {
+    let surface = surface_at(plan, address, 5432, "example");
+    let fields: crate::model::SurfaceFields = surface.surface.payload.decode().unwrap();
+    match crate::postgres::server_of(&surface.surface, &fields, None) {
+        Err(refused) if refused.failure.code() == &codes::LINK_NOT_ENCRYPTED => "away",
+        Err(refused) if refused.failure.code() == &codes::CREDENTIAL_NOT_CARRIED => "here",
+        other => panic!("{address}: {:?}", other.map(|_| ())),
+    }
+}
+
+#[test]
+fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
+    let folder = Folder::new("server-spellings");
+    let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
+    let plan = compiled(&registry);
+    for (spelling, now, before_then) in corpus("postgres") {
+        assert_eq!(server_verdict(&plan, &spelling), now, "{spelling}");
+        assert_eq!(before(&spelling), before_then, "{spelling}");
+    }
+}
+
+/// `server_of`'s test of the address as it was before decision 0240, kept to
+/// show that nothing it refused is allowed now.
+fn before(address: &str) -> &'static str {
+    let host: Option<std::net::IpAddr> = address.parse().ok();
+    if host.filter(std::net::IpAddr::is_loopback).is_some() {
+        "here"
+    } else {
+        "away"
+    }
+}
+
+#[test]
+fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
+    let folder = Folder::new("server-tightening");
+    let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
+    let plan = compiled(&registry);
+    for (spelling, _, _) in corpus("postgres") {
+        if before(&spelling) == "away" {
+            assert_eq!(server_verdict(&plan, &spelling), "away", "{spelling}");
+        }
+    }
+}
+
 /// Waits until the server counts `count` connections of the app role: a
 /// connection closed by the client ends on the server a moment later.
 async fn connections_become(scene: &ServerScene, count: u64) {

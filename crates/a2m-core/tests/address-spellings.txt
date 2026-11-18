@@ -1,0 +1,128 @@
+# Address spellings, and what each check of where an address is says of each
+# (decision 0240). One corpus, read by a test in each crate that asks whether
+# a plain link stays on this machine:
+#
+#   auth      a2m-auth `link::loopback`, given `http://<spelling>/`
+#   http      a2m-pack-http `link::plain_to_another_machine`, given `http://<spelling>/`
+#   mcp       a2m-pack-mcp `mapping::plain_to_another_machine`, given `http://<spelling>/`
+#   stream    a2m-pack-stream `wire::plain_tcp_address`, given the spelling
+#   postgres  a2m-pack-data `postgres::server_of`, given the spelling as the surface's address
+#   scope     a2m-core `ScopedHost::of_destination`, given the spelling
+#
+# A verdict is `here` (the address is this machine's loopback address, so a
+# plain link to it may carry a credential), `away` (it may not), or `-` (the
+# crate's own parser refuses the spelling, so the check is never asked).
+# `away<here` is a tightening: the check said `here` before decision 0240 and
+# says `away` now. Nothing may go the other way.
+#
+# A scope is the name of an `AddressScope`, with `+mapped` when the address
+# was written as an IPv4 address inside IPv6 and `+zone` when it carried a
+# zone.
+#
+# `<empty>` stands for the empty text and `<sp>` for a space. Columns are
+# separated by spaces; a line that starts with `#` is a comment.
+#
+#spelling                                  auth  http  mcp   stream     postgres  scope
+127.0.0.1                                  here  here  here  away       here      this_machine
+127.0.0.1:8080                             here  here  here  here       away      this_machine
+127.0.0.1:5432                             here  here  here  here       away      this_machine
+127.1                                      here  here  here  away       away      unreadable
+127.1:8080                                 here  here  here  away       away      unreadable
+127.0.1                                    here  here  here  away       away      unreadable
+127.9.0.1                                  here  here  here  away       here      this_machine
+127.255.255.255                            here  here  here  away       here      this_machine
+127.0.0.1.                                 here  here  here  away       away      unreadable
+127.000.000.001                            here  here  here  away       away      unreadable
+127.0.0.01                                 here  here  here  away       away      unreadable
+0127.0.0.1                                 away  away  away  away       away      unreadable
+0x7f.0.0.1                                 here  here  here  away       away      unreadable
+0X7F.0.0.1                                 here  here  here  away       away      unreadable
+0x7f000001                                 here  here  here  away       away      unreadable
+2130706433                                 here  here  here  away       away      unreadable
+2130706433:8080                            here  here  here  away       away      unreadable
+017700000001                               here  here  here  away       away      unreadable
+127.0.0.256                                -     -     away  away       away      unreadable
+127.0.0.1.1                                -     -     away  away       away      unreadable
+%31%32%37.0.0.1                            here  here  here  away       away      unreadable
+１２７.０.０.１                            here  here  here  away       away      unreadable
+127。0。0。1                               here  here  here  away       away      unreadable
+user@127.0.0.1                             here  here  here  away       away      unreadable
+[::1]                                      here  here  here  away       away      this_machine
+[::1]:8080                                 here  here  here  here       away      this_machine
+::1                                        -     -     away  away       here      this_machine
+::1:8080                                   -     -     away  away       away      reserved
+[0:0:0:0:0:0:0:1]                          here  here  here  away       away      this_machine
+[0000:0000:0000:0000:0000:0000:0000:0001]  here  here  here  away       away      this_machine
+[::0:1]                                    here  here  here  away       away      this_machine
+[::ffff:127.0.0.1]                         away  away  away  away       away      this_machine+mapped
+[::FFFF:127.0.0.1]                         away  away  away  away       away      this_machine+mapped
+[::ffff:7f00:1]                            away  away  away  away       away      this_machine+mapped
+[::ffff:127.0.0.1]:8080                    away  away  away  away       away      this_machine+mapped
+::ffff:127.0.0.1                           -     -     away  away       away      this_machine+mapped
+[::127.0.0.1]                              away  away  away  away       away      reserved
+[64:ff9b::7f00:1]                          away  away  away  away       away      public
+[::1%1]                                    -     -     away  away       away      this_machine+zone
+[::1%1]:8080                               -     -     away  away<here  away      this_machine+zone
+[::1%25lo]                                 -     -     away  away       away      this_machine+zone
+[::1%lo]:8080                              -     -     away  away       away      this_machine+zone
+::1%1                                      -     -     away  away       away      this_machine+zone
+[fe80::1%1]:8080                           -     -     away  away       away      link_local+zone
+0.0.0.0                                    away  away  away  away       away      unspecified
+0.0.0.0:8080                               away  away  away  away       away      unspecified
+0                                          away  away  away  away       away      unreadable
+[::]                                       away  away  away  away       away      unspecified
+[::]:8080                                  away  away  away  away       away      unspecified
+::                                         -     -     away  away       away      unspecified
+10.0.0.1                                   away  away  away  away       away      private_use
+172.16.0.1                                 away  away  away  away       away      private_use
+172.31.255.255                             away  away  away  away       away      private_use
+192.168.1.1                                away  away  away  away       away      private_use
+192.168.1.1:8080                           away  away  away  away       away      private_use
+169.254.1.1                                away  away  away  away       away      link_local
+[fe80::1]                                  away  away  away  away       away      link_local
+100.64.0.1                                 away  away  away  away       away      carrier_grade_nat
+100.127.255.255                            away  away  away  away       away      carrier_grade_nat
+[fc00::1]                                  away  away  away  away       away      unique_local
+[fd12:3456::1]                             away  away  away  away       away      unique_local
+224.0.0.1                                  away  away  away  away       away      multicast
+239.255.255.250                            away  away  away  away       away      multicast
+[ff02::1]                                  away  away  away  away       away      multicast
+[ff05::2]                                  away  away  away  away       away      multicast
+192.0.2.10                                 away  away  away  away       away      documentation
+198.51.100.7                               away  away  away  away       away      documentation
+203.0.113.9                                away  away  away  away       away      documentation
+[2001:db8::1]                              away  away  away  away       away      documentation
+[3fff::1]                                  away  away  away  away       away      documentation
+198.18.0.1                                 away  away  away  away       away      reserved
+240.0.0.1                                  away  away  away  away       away      reserved
+255.255.255.255                            away  away  away  away       away      reserved
+0.1.2.3                                    away  away  away  away       away      reserved
+192.0.0.8                                  away  away  away  away       away      reserved
+[100::1]                                   away  away  away  away       away      reserved
+[2002::1]                                  away  away  away  away       away      reserved
+[::ffff:192.0.2.10]                        away  away  away  away       away      documentation+mapped
+172.32.0.1                                 away  away  away  away       away      public
+100.128.0.1                                away  away  away  away       away      public
+[2a00::1]                                  away  away  away  away       away      public
+localhost                                  away  away  away  away       away      name
+localhost:8080                             away  away  away  away       away      name
+localhost.                                 away  away  away  away       away      name
+LOCALHOST                                  away  away  away  away       away      name
+LocalHost                                  away  away  away  away       away      name
+app.localhost                              away  away  away  away       away      name
+127.0.0.1.example.test                     away  away  away  away       away      name
+app.example.test                           away  away  away  away       away      name
+app.example.test:8080                      away  away  away  away       away      name
+example                                    away  away  away  away       away      name
+xn--bcher-kva.example.test                 away  away  away  away       away      name
+under_score.example.test                   away  away  away  away       away      name
+<empty>                                    -     -     away  away       away      unreadable
+:8080                                      -     -     away  away       away      unreadable
+[::1                                       -     -     away  away       away      unreadable
+::1]                                       -     -     away  away       away      unreadable
+[]                                         -     -     away  away       away      unreadable
+[127.0.0.1]                                -     -     away  away       away      unreadable
+999.0.0.1                                  -     -     away  away       away      unreadable
+127.0.0.1:99999                            -     -     away  away       away      unreadable
+127.0.0.1:port                             -     -     away  away       away      unreadable
+ex<sp>ample                                -     -     away  away       away      unreadable

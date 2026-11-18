@@ -8,7 +8,7 @@ You do not wait for anyone. Plan, decide, build, and merge, and write down what 
 
 A toolkit that latches onto existing software and systems and exposes them to AI agents as deterministic, verified MCP tools. A developer, human or agent, installs it, points it at a system they are entitled to use, and builds tools over it. Any agent that speaks the protocol can use the result; no make of agent is preferred.
 
-Rust core, one binary, installed through pip, crates.io, or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware.
+Rust core, one binary, installed through pip or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware.
 
 The first release is for one person's machine, on Windows, macOS, or Linux. That machine is the measure of what the product reaches and the boundary of where it serves: it can be set around anything the machine can reach, it knows the networks the machine is on, and it offers its tools on that machine only. A shared server comes after the first release.
 

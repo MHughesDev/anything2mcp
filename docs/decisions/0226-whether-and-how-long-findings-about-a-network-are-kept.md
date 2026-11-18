@@ -1,6 +1,6 @@
 # 0226. Whether and how long findings about a network are kept
 
-**Status:** Proposed. **This question is the owner's**, because a list of what is on a network is personal data, often about devices that are not the person's own (a café's other guests, a client's hosts), and keeping it touches more than a retention setting. An agent does not persist network findings past a run until the owner decides. Written by the first network-awareness design wave of 2026-11-18. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: findings about a network are kept for the life of the run, and longer only for a network the person saved, under the ordinary retention of traces. Only the owner changes it.
 
 **Date:** 2026-11-18
 

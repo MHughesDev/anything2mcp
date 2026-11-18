@@ -1,6 +1,6 @@
 # 0213. Whether a target someone else wrote may be loaded, and found
 
-**Status:** Proposed. Owner decision: it asks about rule nine and [decision 0058](0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md), both the owner's. Written by the coverage review of 2026-11-18; the owner has not read it. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: a target someone else wrote may be loaded, under the rules of section 502; the project still keeps no list of places where targets are published. Only the owner changes it.
 
 **Date:** 2026-11-18
 

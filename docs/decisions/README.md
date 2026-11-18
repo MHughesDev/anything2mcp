@@ -239,3 +239,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0239 | [Whether a person may replace how the product names itself to a system](0239-whether-a-person-may-replace-how-the-product-names-itself-to-a-system.md) | Proposed (owner decision) |
 | 0219 | [Shadow bindings reach the product, and what a first run by hand found is mended](0219-shadow-bindings-reach-the-product-and-the-first-hour-is-mended.md) | Accepted (design decision) |
 | 0221 | [The repository is cleaned, and its names say what each thing holds](0221-the-repository-is-cleaned-and-its-names-say-what-each-thing-holds.md) | Accepted (design decision) |
+| 0242 | [The owner takes the recommended answer to every open question](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) | Accepted (owner decision) |

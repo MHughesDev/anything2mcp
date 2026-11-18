@@ -1,8 +1,11 @@
 //! The settings: one schema, eight layers, and for every value the layer it
 //! came from (spec section 226, decision 0066).
 
+mod keeper;
 mod load;
 mod schema;
+
+pub use keeper::{InstallationKeeper, system_installation_folder};
 
 pub use load::{
     Entry, Layer, Overridden, PROJECT_FILE_NAME, PresetInfo, Settings, SourceFile, Sources,

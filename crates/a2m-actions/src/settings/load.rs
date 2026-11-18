@@ -17,6 +17,7 @@ use a2m_provider::{Manifest, ProviderName, ProviderSettings, SettingScope, Setti
 use serde_json::{Value as Json, json};
 use toml::de::{DeTable, DeValue};
 
+use super::keeper::{InstallationKeeper, system_installation_folder};
 use super::schema::{self, Effective, Kind, PRESETS, SCHEMA, Safer, Scope};
 use crate::codes;
 use crate::paths::Paths;
@@ -151,6 +152,12 @@ impl SourceFile {
 pub struct Sources {
     /// The installation's settings file, when there is one.
     pub installation: Option<SourceFile>,
+    /// Who may change the installation's settings file. Only a file no
+    /// account but an administrator can change may loosen a protected
+    /// setting or lock a key; any other is held to the rule of the
+    /// person's own layers. [`Sources::read`] checks the file on disk; the
+    /// default is not checked, which is held to the person's rule.
+    pub installation_keeper: InstallationKeeper,
     /// A site's own presets; each file's stem is the preset's name.
     pub presets: Vec<SourceFile>,
     /// The user's settings file.
@@ -190,7 +197,16 @@ impl Sources {
         project: Option<&Path>,
         environment: BTreeMap<String, String>,
     ) -> Result<Self, Failure> {
-        let installation = read_file(&paths.installation_config.join(SETTINGS_FILE_NAME))?;
+        let installation_path = paths.installation_config.join(SETTINGS_FILE_NAME);
+        let installation = read_file(&installation_path)?;
+        // Checked after the read: the check walks the folders, and a file
+        // whose folders are the administrator's alone cannot be changed
+        // between the two by anyone else.
+        let installation_keeper = if installation.is_some() {
+            InstallationKeeper::of_file(&installation_path)
+        } else {
+            InstallationKeeper::default()
+        };
         let user = read_file(&paths.config.join(SETTINGS_FILE_NAME))?;
         let project = match project {
             Some(folder) => read_file(&folder.join(PROJECT_FILE_NAME))?,
@@ -213,6 +229,7 @@ impl Sources {
         }
         Ok(Self {
             installation,
+            installation_keeper,
             presets,
             user,
             project,
@@ -621,6 +638,8 @@ struct Loader {
     problems: Vec<Failure>,
     packs: Vec<Arc<Manifest>>,
     serve: bool,
+    /// Why the installation's file may not loosen, when it may not.
+    installation_held: Option<String>,
 }
 
 impl Loader {
@@ -667,6 +686,10 @@ impl Loader {
             problems: Vec::new(),
             packs: sources.packs.clone(),
             serve: sources.serve,
+            installation_held: sources
+                .installation
+                .as_ref()
+                .and_then(|_| sources.installation_keeper.why_not()),
         }
     }
 
@@ -877,7 +900,20 @@ impl Loader {
                 match value.get_ref() {
                     DeValue::Table(inner) => stack.push((key, inner)),
                     _ if key == "locks.keys" => {
-                        if !installation {
+                        if installation && let Some(why) = self.installation_held.clone() {
+                            self.problems.push(Failure::new(
+                                a2m_core::FailureClass::Policy,
+                                codes::SETTING_PROTECTED,
+                                format!(
+                                    "{origin}: the installation's settings file may lock keys only when no account but an administrator can change it, and {why}."
+                                ),
+                                format!(
+                                    "Remove `[locks]` from this file. An administrator locks keys in the installation's settings file in {}, which no other account can change; under `{}` the installation's folder is the person's own, and no lock is taken from it.",
+                                    system_installation_folder(),
+                                    crate::paths::HOME_VARIABLE
+                                ),
+                            ));
+                        } else if !installation {
                             self.problems.push(Failure::new(
                                 a2m_core::FailureClass::Policy,
                                 codes::SETTING_PROTECTED,
@@ -1041,6 +1077,29 @@ impl Loader {
             ));
             return;
         }
+        let held = (layer == Layer::Installation)
+            .then(|| self.installation_held.clone())
+            .flatten();
+        if let Some(why) = &held
+            && let Some(safer) = rule.protected
+            && let Some(current) = &current
+            && safer.loosens(current, &value)
+        {
+            self.problems.push(Failure::new(
+                a2m_core::FailureClass::Policy,
+                codes::SETTING_PROTECTED,
+                format!(
+                    "{}: `{}` is a protected setting, and the installation's settings file may loosen it only when no account but an administrator can change the file, and {why}.",
+                    raw.origin, raw.key
+                ),
+                format!(
+                    "Remove the key from this file, or set it to a value that tightens it. To loosen it, an administrator writes it in the installation's settings file in {}, which no other account can change; under `{}` the installation's folder is the person's own, and no loosening is taken from it.",
+                    system_installation_folder(),
+                    crate::paths::HOME_VARIABLE
+                ),
+            ));
+            return;
+        }
         if layer.only_tightens()
             && let Some(safer) = rule.protected
             && let Some(current) = &current
@@ -1055,7 +1114,10 @@ impl Loader {
                     raw.key,
                     layer.as_str()
                 ),
-                "A person loosens it with `anything2mcp config set`, which asks for proof of presence; on a server, in the installation's settings file.",
+                format!(
+                    "Remove the key from this layer, or set it to a value that tightens it. A loosening is taken only from the installation's settings file in {}, which an administrator writes and no other account can change; `anything2mcp config set`, which would let a person loosen it with proof of presence, is not built yet.",
+                    system_installation_folder()
+                ),
             ));
             return;
         }

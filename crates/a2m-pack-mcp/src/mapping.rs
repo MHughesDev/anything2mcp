@@ -144,24 +144,18 @@ pub(crate) struct SurfaceFields {
 
 /// Whether an address is plain `http` to an address that is not a loopback
 /// address written as an IP address. A name, `localhost` included, is not
-/// one: the machine's resolver decides where a name leads. The same rule as
-/// `plain_to_another_machine` in `a2m-pack-http` (`src/link.rs`), which this
-/// pack cannot share code with.
+/// one: the machine's resolver decides where a name leads. The host is
+/// judged by `a2m_core::ScopedHost::may_leave_this_machine`, the one
+/// question every check of a plain link asks (decision 0240), as the URL
+/// parser wrote it. An address the parser cannot read counts as plain to
+/// another machine, whatever it starts with: nothing can be told of it.
 pub(crate) fn plain_to_another_machine(address: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(address) else {
-        return address.starts_with("http://");
+        return true;
     };
-    if url.scheme() != "http" {
-        return false;
-    }
-    let host = url.host_str().unwrap_or_default();
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-        .unwrap_or(host);
-    !bare
-        .parse::<std::net::IpAddr>()
-        .is_ok_and(|ip| ip.is_loopback())
+    url.scheme() == "http"
+        && a2m_core::ScopedHost::of_host(url.host_str().unwrap_or_default())
+            .may_leave_this_machine()
 }
 
 impl SurfaceFields {
@@ -602,5 +596,92 @@ mod tests {
         assert_eq!(report.refused.len(), 1, "{report:?}");
         assert!(!folder.join("mappings").join("orders.yaml").exists());
         std::fs::remove_dir_all(&folder).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::plain_to_another_machine;
+
+    /// The corpus of address spellings every check of where an address is
+    /// is pinned against (decision 0240).
+    const SPELLINGS: &str = include_str!("../../a2m-core/tests/address-spellings.txt");
+
+    /// Each spelling of the corpus, with the verdict of `column` now and
+    /// before decision 0240.
+    fn corpus(column: &str) -> Vec<(String, String, String)> {
+        let mut header: Vec<&str> = Vec::new();
+        let mut rows = Vec::new();
+        for line in SPELLINGS.lines() {
+            if let Some(names) = line.strip_prefix("#spelling") {
+                header = std::iter::once("spelling")
+                    .chain(names.split_whitespace())
+                    .collect();
+            }
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            let at = header.iter().position(|name| *name == column).unwrap();
+            let spelling = cells[0].replace("<empty>", "").replace("<sp>", " ");
+            let (now, before) = cells[at].split_once('<').unwrap_or((cells[at], cells[at]));
+            rows.push((spelling, now.to_owned(), before.to_owned()));
+        }
+        assert!(rows.len() > 50, "the corpus was not read");
+        rows
+    }
+
+    /// `plain_to_another_machine` as it was before decision 0240, kept to
+    /// show that nothing it refused is allowed now.
+    fn before(address: &str) -> bool {
+        let Ok(url) = reqwest::Url::parse(address) else {
+            return address.starts_with("http://");
+        };
+        if url.scheme() != "http" {
+            return false;
+        }
+        let host = url.host_str().unwrap_or_default();
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host);
+        !bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    }
+
+    fn verdict(judge: impl Fn(&str) -> bool, address: &str) -> &'static str {
+        if judge(address) { "away" } else { "here" }
+    }
+
+    #[test]
+    fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
+        for (spelling, now, before_then) in corpus("mcp") {
+            let address = format!("http://{spelling}/");
+            assert_eq!(
+                verdict(plain_to_another_machine, &address),
+                now,
+                "{spelling}"
+            );
+            assert_eq!(verdict(before, &address), before_then, "{spelling}");
+        }
+    }
+
+    #[test]
+    fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
+        // Every scheme, and an address the parser cannot read that does not
+        // start with `http://`, which was allowed before and is refused now.
+        for (spelling, _, _) in corpus("mcp") {
+            for scheme in ["http://", "https://", "HTTP://", ""] {
+                let address = format!("{scheme}{spelling}");
+                if before(&address) {
+                    assert!(plain_to_another_machine(&address), "{address}");
+                }
+            }
+        }
+        for unreadable in ["HTTP://[::1", "http:/[::1", ""] {
+            assert!(!before(unreadable), "{unreadable}");
+            assert!(plain_to_another_machine(unreadable), "{unreadable}");
+        }
     }
 }

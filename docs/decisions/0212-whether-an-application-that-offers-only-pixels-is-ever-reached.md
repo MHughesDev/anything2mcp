@@ -1,6 +1,6 @@
 # 0212. Whether an application that offers only pixels is ever reached
 
-**Status:** Proposed. Owner decision: it asks about rules one and seven, which only the owner changes. Written by the coverage review of 2026-11-18; the owner has not read it. Nothing here is in force; [section 106](../spec/1-product/106-what-it-latches-onto.md) still refuses clicking by pixel or image.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: an application that offers only pixels is not reached at run time; the scout may keep a screenshot as build-time evidence only. Only the owner changes it.
 
 **Date:** 2026-11-18
 

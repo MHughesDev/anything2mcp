@@ -1,6 +1,6 @@
 # 0225. Whether anything is ever sent on a network the person has not named
 
-**Status:** Proposed. **This question is the owner's**, because it touches rule 5, the entitlement point of [decision 0222](0222-the-product-is-aware-of-the-network-its-machine-is-on.md), and [decision 0208](0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md). An agent builds no rung above 0 on an unnamed network until the owner decides. Written by the first network-awareness design wave of 2026-11-18. Nothing here is in force.
+**Status:** Accepted in the form its recommendation gave, by owner decision [0242](0242-the-owner-takes-the-recommended-answer-to-every-open-question.md) of 2026-11-18: nothing is sent on a network the person has not named beyond the addresses the person named in a target; there the product reads only what the machine already knows. Only the owner changes it.
 
 **Date:** 2026-11-18
 
