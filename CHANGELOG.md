@@ -161,6 +161,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - A source file given with two rows of one key is now refused as `source_key_not_unique` (it was `key_not_unique`, which the data and file packs use for a different failure).
 - When a command's request may have reached the engine and its answer was lost, or the connection ended before the request was sent, the failure now also says what the client saw, in one of six fixed phrases.
 - Sixteen more crates declare their failure codes in the one table form, each code with what it means, what to do about it, and, for a `busy` code, whether calling again unchanged may pass. The technical reference's table of failure codes shows both for them, and the scheduler's busy refusals carry their wait as data.
+- A watch's check refused because its share of a surface's budget is spent now waits only until the share refills, never past its next due time, so it no longer becomes a gap.
 
 ### Safety fixes
 
