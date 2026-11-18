@@ -404,13 +404,31 @@ impl TestApp {
         Ok(self.ask::<TrapWrites>("/__control/traps").await?.writes)
     }
 
-    /// The method and path of every request the application received since the
-    /// last reset, outside the control interface, oldest first, as `GET /orders`.
+    /// Every request the application received outside the control
+    /// interface, as `"GET /orders"`, in the order they came, **but for a
+    /// browser's own request for the site's icon**. A browser asks for
+    /// `/favicon.ico` by itself, some time after a page it loaded, and no
+    /// page, script, or driver makes it; a test that takes the list before
+    /// an act and again after it, to show the act sent nothing, must not
+    /// fail because the browser chose that moment. [`TestApp::seen_all`]
+    /// leaves nothing out.
     ///
     /// # Errors
     ///
     /// Returns an error if the control interface could not be asked.
     pub async fn seen(&self) -> Result<Vec<String>, HarnessError> {
+        let mut seen = self.seen_all().await?;
+        seen.retain(|line| line != "GET /favicon.ico");
+        Ok(seen)
+    }
+
+    /// Every request the application received outside the control
+    /// interface, the browser's own request for the site's icon included.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn seen_all(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<Seen>("/__control/seen").await?.seen)
     }
 
