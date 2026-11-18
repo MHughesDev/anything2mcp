@@ -27,5 +27,9 @@ tokio.workspace = true
 # engine does, and need no feature.
 testing = []
 
+[dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
+
 [lints]
 workspace = true

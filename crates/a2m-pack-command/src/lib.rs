@@ -137,9 +137,7 @@ fn admin_groups(settings: &a2m_core::Values) -> Result<safety::Trust, Failure> {
 }
 
 fn groups_invalid() -> Failure {
-    Failure::new(
-        a2m_core::FailureClass::Input,
-        a2m_provider::codes::PACK_SETTINGS_INVALID,
+    a2m_provider::codes::row::PACK_SETTINGS_INVALID.failure(
         "`packs.command.admin_groups` holds an entry that is not a group's numeric id.",
         "Name each group by its numeric id, such as \"80\"; a group's name is never looked up.",
     )

@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, LimitationCode,
-    PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
+    Coverage, Digest, EvidenceLevel, FailsAs, Failure, Finding, LimitationCode, PackPayload,
+    ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
@@ -26,7 +26,7 @@ use a2m_provider::{
 use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
-use crate::codes::{self, DISCOVERER, PACK, SPAWN, SURFACE_KIND, TIMEOUT};
+use crate::codes::{self, DISCOVERER, PACK, SPAWN, SURFACE_KIND};
 use crate::maml::HelpRead;
 use crate::metadata::{
     COMPLETIONS, FileRead, Handed, MANUAL, MODULE_MANIFEST, OptionFound, POWERSHELL_HELP, Takes,
@@ -134,9 +134,7 @@ impl CommandFound {
     /// `input`/`finding_invalid` when the finding is not one of this pack's.
     pub fn read(finding: &Finding) -> Result<Self, Failure> {
         written::from_text(finding.found()).ok_or_else(|| {
-            Failure::new(
-                FailureClass::Input,
-                a2m_core::FailureCode::FINDING_INVALID,
+            a2m_core::codes::row::FINDING_INVALID.failure(
                 "A `command` finding does not hold what the command pack's discoverer writes.",
                 "Run the discovery again with the version of the pack that is enabled.",
             )
@@ -313,10 +311,7 @@ fn probe_step(program: u32, probe: Probe) -> Result<Step, Failure> {
         refers_to: None,
         args: Vec::new(),
         timeout_ms: 10_000,
-        fails_as: FailsAs {
-            class: FailureClass::Transient,
-            code: TIMEOUT,
-        },
+        fails_as: FailsAs::from(&a2m_provider::codes::row::TIMEOUT),
         commits: false,
         // A form the target does not declare is reported absent.
         lookup: true,
@@ -369,8 +364,7 @@ fn program_name(address: &str) -> String {
 
 fn powershell_unreadable(name: &str, why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::POWERSHELL_FILE_UNREADABLE,
+        &codes::row::POWERSHELL_FILE_UNREADABLE,
         format!("The file handed to the scout as `{name}` cannot be read: {why}."),
         "Hand the module's XML help file, `<module>-help.xml`, or its manifest, `<module>.psd1`, as it ships; a help file that declares a document type is never read.",
     )
@@ -378,8 +372,7 @@ fn powershell_unreadable(name: &str, why: &str) -> Failure {
 
 fn file_unreadable(name: &str, why: &str) -> Failure {
     codes::failure(
-        FailureClass::Input,
-        codes::COMMAND_FILE_UNREADABLE,
+        &codes::row::COMMAND_FILE_UNREADABLE,
         format!("The file handed to the scout as `{name}` cannot be read: {why}."),
         "Hand the file as plain UTF-8 text, or a manual page compressed with gzip; uncompress a page compressed any other way first.",
     )
@@ -394,9 +387,7 @@ fn produced_by() -> ProducedBy {
 }
 
 fn finding_failed(_: a2m_core::InvalidFinding) -> Failure {
-    Failure::new(
-        FailureClass::Input,
-        a2m_core::FailureCode::FINDING_INVALID,
+    a2m_core::codes::row::FINDING_INVALID.failure(
         "A finding about a listed command could not be made.",
         "Report this to the command pack's author.",
     )

@@ -10,7 +10,9 @@
 //! This crate holds types and the rules that make a value well formed. It
 //! does nothing: it reads no clock, no random source, no file, and no
 //! network. An identifier is made from a moment and random bytes the caller
-//! supplies.
+//! supplies. The one exception is the hidden module `testing`, built only
+//! for tests and under the feature `testing`, which reads a crate's sources
+//! for one test other crates keep.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: none.
@@ -36,6 +38,12 @@ mod scope;
 mod secret;
 mod state;
 mod value;
+
+/// What the test `every_failure_takes_its_class_from_a_table` of other
+/// crates reads their sources with. Not part of the interface.
+#[cfg(any(test, feature = "testing"))]
+#[doc(hidden)]
+pub mod testing;
 
 /// What [`checked_name!`] expands to. Not part of the interface.
 #[doc(hidden)]

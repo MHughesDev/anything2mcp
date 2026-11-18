@@ -43,6 +43,8 @@ objc2-core-foundation = { workspace = true, features = ["CFArray", "CFNumber", "
 sha2.workspace = true
 
 [dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 # For a write's tests: the field type's own comparison, and real intent
 # tokens from a real store, as the engine holds them at a commit point.
 a2m-expr = { path = "../a2m-expr" }

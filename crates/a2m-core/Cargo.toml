@@ -14,5 +14,12 @@ serde_json.workspace = true
 sha2.workspace = true
 zeroize.workspace = true
 
+[features]
+# The hidden module `testing`: what the test
+# `every_failure_takes_its_class_from_a_table` of other crates reads their
+# sources with (decision 0289). Turned on only as a feature of a
+# dev-dependency, as `a2m-ledger`'s is (decision 0145).
+testing = []
+
 [lints]
 workspace = true

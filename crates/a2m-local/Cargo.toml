@@ -40,6 +40,8 @@ windows-future.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_RemoteDesktop", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 # The engine's shared test helper, included by path, stops and starts the
 # test's clock; that needs this feature even when this crate is built alone.
 tokio = { workspace = true, features = ["test-util"] }

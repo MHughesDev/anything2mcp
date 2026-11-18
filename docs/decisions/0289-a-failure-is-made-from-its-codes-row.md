@@ -24,3 +24,11 @@ After every crate moved to the table form of decision 0258, a failure was still 
 - **Look the class up in the crate's `TABLE` at run time, as the file and stream packs did.** No change to the macro. A code the table lacks still needs a class from somewhere, which is the fallback this record removes; only a test could catch it, and only for the codes the test thinks of.
 - **A procedural macro, or one constant per row named by joining names.** Either needs a crate the workspace does not have. A module named `row` gives the same name twice in two namespaces with `macro_rules!` alone.
 - **Convert every crate's `Failure::new` now.** Several hundred call sites across the remaining crates, each run with a stated class that matches its table today. Left for later, crate by crate; the generator could then refuse a stated class everywhere.
+
+## Added since
+
+Added 2026-11-18, after the record was written.
+
+- **The command pack moved to the form too,** with its own `every_failure_takes_its_class_from_a_table`. 47 places that stated a class were compared with their rows: none differed, and no message or next step changed.
+- **The test reads sources in one place.** All eleven copies now call `classes_of_their_own` in the module `testing` of `a2m-core`, a hidden module built only under the feature `testing`, which each crate turns on only as a feature of a dev-dependency, as `a2m-ledger`'s feature `testing` is. It is the one place `a2m-core` reads a file, and no build of the product holds it. Weighed and not taken: a crate of its own for tests, which needs a row in the layering table for one function; and a copy of the folder walk in each test, which is what let ten copies share two faults.
+- **The two faults it had are gone.** It skips only what `#[cfg(test)]` marks and reads the code after it; and it holds `tool.rs` of the engine (2), `ledger.rs` of the ledger (1) and `start.rs` of the local engine (2) to an exact count of failures remade in their own class. Each test was seen to fail on a line added where the old scan did not look: twenty cases, twenty failures.

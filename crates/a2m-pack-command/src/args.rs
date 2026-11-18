@@ -10,17 +10,16 @@
 //! cannot begin with `/`, which programs there read as an option. A value
 //! joined to its flag is one element that begins with the flag.
 
-use a2m_core::{FailureClass, RecordKey, Value, Values};
+use a2m_core::{RecordKey, Value, Values};
 use a2m_provider::StepFailure;
 
-use crate::codes::{self, ARGUMENT_UNSAFE, SCHEMA_INVALID};
+use crate::codes;
 use crate::model::{Arg, Command, Param, ParamKind};
 use crate::pattern;
 
 fn invalid(param: &str, why: &str) -> StepFailure {
     codes::not_sent(
-        FailureClass::Input,
-        SCHEMA_INVALID,
+        &codes::row::SCHEMA_INVALID,
         format!("The value of `{param}` cannot be given to the program: {why}."),
         "Correct the value and call again.",
     )
@@ -28,8 +27,7 @@ fn invalid(param: &str, why: &str) -> StepFailure {
 
 fn unsafe_value(param: &str, why: &str) -> StepFailure {
     codes::not_sent(
-        FailureClass::Input,
-        ARGUMENT_UNSAFE,
+        &codes::row::ARGUMENT_UNSAFE,
         format!("The value of `{param}` was refused: {why}."),
         "Give a value that is plain data for this param.",
     )

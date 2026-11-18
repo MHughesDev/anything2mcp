@@ -18,6 +18,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-pack-web-browser = { path = "../a2m-pack-web-browser", features = ["test-support"] }

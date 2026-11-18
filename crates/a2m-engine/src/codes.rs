@@ -169,36 +169,19 @@ mod tests {
     /// No source of this crate gives a failure a class of its own: each is
     /// made from a row of a table, which gives it its class, or from what
     /// a step's plan says it fails as. `tool.rs` remakes a recorded
-    /// failure, or one it adds to, in the class it already has.
+    /// failure, or one it adds to, in the class it already has, in two
+    /// places: a failed record that settles the run, and a failure that
+    /// shows what was recorded. A third place fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
-        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        walk(&path, found);
-                    }
-                } else if name.ends_with(".rs") && name != "tests.rs" && name != "tool.rs" {
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    let text = text.split("#[cfg(test)]").next().unwrap();
-                    for made in ["Failure::new(", "class: FailureClass::"] {
-                        if text.contains(made) {
-                            found.push(format!("{}: {made}", path.display()));
-                        }
-                    }
-                }
-            }
-        }
-        let mut found = Vec::new();
-        walk(
+        let found = a2m_core::testing::classes_of_their_own(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut found,
-        );
+            &[("tool.rs", 2)],
+        )
+        .unwrap();
         assert!(
             found.is_empty(),
-            "made with a class of their own: {found:?}"
+            "made with a class of their own: {found:#?}"
         );
         for row in TABLE {
             let made = fail(row, "A case.", row.next);

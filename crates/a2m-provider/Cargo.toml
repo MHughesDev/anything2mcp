@@ -29,6 +29,8 @@ rustix = { workspace = true, features = ["fs"] }
 windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 # The ledger's way for a test to stand in for the policy engine.
 a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-files = { path = "../a2m-files", features = ["testing"] }

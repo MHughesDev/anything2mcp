@@ -19,6 +19,8 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
+# The reading of the test `every_failure_takes_its_class_from_a_table`.
+a2m-core = { path = "../a2m-core", features = ["testing"] }
 a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
