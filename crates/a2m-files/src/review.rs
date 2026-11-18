@@ -60,12 +60,28 @@ pub struct BindingStatement {
     pub runs: Vec<ProgramRun>,
     /// Each variable it sets or passes to a program it starts.
     pub environment: Vec<EnvironmentVariable>,
-    /// Whether it sends requests to its surface's address, in each
-    /// environment of the target.
-    pub sends_to_surface: bool,
-    /// The other addresses it sends requests to, as the target's files name
-    /// them: a URL, a host and port, or a host.
-    pub sends_to: Vec<String>,
+    /// Where it sends requests. The default is that it does not say, which
+    /// is the honest answer for a program the pack starts: what a program
+    /// reaches is the program's.
+    pub sends: Sends,
+}
+
+/// Where a binding sends requests.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(tag = "sends", rename_all = "snake_case")]
+pub enum Sends {
+    /// The pack cannot say: what the binding starts may reach any address.
+    #[default]
+    NotStated,
+    /// Only to these, and to no other address.
+    Only {
+        /// Whether to its surface's address, in each environment of the
+        /// target.
+        surface: bool,
+        /// The other addresses, as the target's files name them: a URL, a
+        /// host and port, or a host.
+        addresses: Vec<String>,
+    },
 }
 
 /// A program a binding starts.
@@ -497,10 +513,18 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                         BindingStates::NotStated { says: NOT_STATED }
                     }
                     Statement::Stated(stated) => {
-                        if stated.sends_to_surface {
-                            addresses.extend(surface_addresses(*surface));
+                        match &stated.sends {
+                            Sends::NotStated => partly = true,
+                            Sends::Only {
+                                surface: to_surface,
+                                addresses: others,
+                            } => {
+                                if *to_surface {
+                                    addresses.extend(surface_addresses(*surface));
+                                }
+                                addresses.extend(others.iter().cloned());
+                            }
                         }
-                        addresses.extend(stated.sends_to.iter().cloned());
                         BindingStates::Stated {
                             runs: stated
                                 .runs

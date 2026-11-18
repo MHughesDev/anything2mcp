@@ -60,6 +60,10 @@ The setting's safer direction is lower: a longer budget holds every call longer 
 
 `shadow.report` for the binding: in each environment, how many distinct inputs matched the verified binding that will act, since the last mismatch, beside the threshold; how many reads were made and what they cost; and the last mismatch, with the outputs that differed. `binding.promote` then asks for the machine's presence prompt, refuses unless every environment the evidence must come from meets the threshold, records the verified binding and each environment's counts in the promotion row and the audit line, and rewrites the file only while the binding still has the digest it was promoted as.
 
+## A shadow and a driver's read-only guard
+
+A shadow's context is prepared in `Sandbox { test_records: false }`, the posture of a try, and a driver cannot tell the two apart. No contract change is proposed, because the shadow needs no more than a try is given: the HTTP driver's guard (decision 0249) refuses, unsent, any request that may change the system outside a live run, and lets an endpoint marked `read_asserted` through only against an environment of kind `test`. So a shadow of a binding whose read is such a request is refused in production with `policy`/`read_only_posture` and kept as not compared, and in a test environment it is sent exactly as a try of it would be, on the developer's own declaration that it only reads. The engine adds no refusal of its own: knowing which endpoint may write is the pack's, and the pack's guard already answers it (Choice, this record).
+
 ## Codes
 
 No new failure code. A shadow refused its rate budget is `busy`/`no_rate_budget`; one whose surface's session the call does not hold is `busy`/`no_binding`: both say what they say elsewhere, and both are kept as not compared.

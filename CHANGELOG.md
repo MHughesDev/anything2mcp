@@ -188,6 +188,7 @@ A safety review read each crate against its design and the ten rules, and every 
 - The engine makes its data, configuration, and cache folders its user's alone; `doctor` names one that others can enter.
 - An answer to a page write that quotes the page's anti-forgery token is withheld whole, and the write is treated as in doubt. A page's refusal of the values of a write is no longer settled as not written. The tab that writes passes the page's service worker by (decision 0245).
 - The HTTP pack reads a hostile XML or JSON answer within bounded work and never on the engine's async threads. Outside a live run it sends no request that may write, unless it is a declared test record's commit or a read the endpoint asserts, against a test environment. An endpoint marked `read` with a method that is not safe now needs `read_asserted: true`. A bytes answer that holds a registered secret gives neither its length nor its digest (decision 0249).
+- A shadow binding is promotable only on matches over distinct inputs, in each environment its evidence must come from, against the verified binding that acts. `shadow report` shows the distinct inputs, the environments, and what the shadow's reads cost in requests, and promoting from shadow asks for presence. All of a call's shadows share one budget of time, and a shadow never asks for a sign-in or takes a caller's share of a rate budget (decision 0251).
 
 ## [0.0.1]
 

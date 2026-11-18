@@ -588,8 +588,13 @@ impl Sessions {
             )
             .await
             .unwrap();
-        let entry =
-            Arc::new(AuthEntry::new(a2m_pack_mcp::auth_provider()).credential("token", reference));
+        // As the entry of a published version's plan: only such an entry
+        // signs in without its person (decision 0248).
+        let entry = Arc::new(
+            AuthEntry::new(a2m_pack_mcp::auth_provider())
+                .credential("token", reference)
+                .published(),
+        );
         self.keeper
             .sign_in(&key, Arc::clone(&entry), None)
             .await

@@ -186,6 +186,64 @@ struct SurfaceFields {
     root: Option<String>,
 }
 
+/// The folder a `file` surface names, from the roots the pack was handed:
+/// the place the target states, never one an input gives. With `write`, a
+/// root the pack may write gives a folder it may write, and a root it may
+/// only read one it may only read; without it, the folder is for reading
+/// alone, as discovery reads it.
+pub(crate) fn surface_folder(
+    roots: &Roots,
+    surface: &SurfaceRef,
+    paths: &CheckedPaths,
+    write: bool,
+) -> Result<Folder, StepFailure> {
+    let payload = &surface.surface.payload;
+    let fields: SurfaceFields = if payload.is_none() {
+        SurfaceFields::default()
+    } else {
+        payload
+            .decode()
+            .map_err(|_| plan_unreadable("the surface's fields do not decode"))?
+    };
+    let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
+        .map_err(StepFailure::not_sent)?;
+    let address = surface.surface.address.as_str();
+    if root.as_str() == PROJECT_ROOT {
+        let project = paths.project_folder().map_err(StepFailure::not_sent)?;
+        let folder = if address == "." {
+            project.clone()
+        } else {
+            project.join(address).map_err(StepFailure::not_sent)?
+        };
+        return Ok(Folder::reading(folder, project));
+    }
+    // A root may stand for the project folder of each request (decision
+    // 0193): it is resolved in this run's project folder, with every
+    // refusal of a root, and never in the folder the engine was started
+    // in. A run with no project folder stops by name.
+    let under = |access| {
+        if address == "." {
+            roots.folder_in(&root, access, paths)
+        } else {
+            roots.check_in(&root, address, access, paths)
+        }
+    };
+    let folder = if write {
+        under(Access::Write).or_else(|_| under(Access::Read))
+    } else {
+        under(Access::Read)
+    }
+    .map_err(StepFailure::not_sent)?;
+    let root = roots
+        .folder_in(&root, Access::Read, paths)
+        .map_err(StepFailure::not_sent)?;
+    Ok(if write {
+        Folder::new(folder, &root)
+    } else {
+        Folder::reading(folder, &root)
+    })
+}
+
 fn timed_out() -> StepFailure {
     StepFailure::not_sent(Failure::new(
         FailureClass::Transient,
@@ -355,47 +413,7 @@ impl FileDriver {
     /// reads the project and does not write it, so such a folder is for
     /// reading alone.
     fn folder(&self, surface: &SurfaceRef, paths: &CheckedPaths) -> Result<Folder, StepFailure> {
-        let payload = &surface.surface.payload;
-        let fields: SurfaceFields = if payload.is_none() {
-            SurfaceFields::default()
-        } else {
-            payload
-                .decode()
-                .map_err(|_| plan_unreadable("the surface's fields do not decode"))?
-        };
-        let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
-            .map_err(StepFailure::not_sent)?;
-        let address = surface.surface.address.as_str();
-        if root.as_str() == PROJECT_ROOT {
-            let project = paths.project_folder().map_err(StepFailure::not_sent)?;
-            let folder = if address == "." {
-                project.clone()
-            } else {
-                project.join(address).map_err(StepFailure::not_sent)?
-            };
-            return Ok(Folder::reading(folder, project));
-        }
-        // A root may stand for the project folder of each request (decision
-        // 0193): it is resolved in this run's project folder, with every
-        // refusal of a root, and never in the folder the engine was started
-        // in. A run with no project folder stops by name.
-        let under = |access| {
-            if address == "." {
-                self.roots.folder_in(&root, access, paths)
-            } else {
-                self.roots.check_in(&root, address, access, paths)
-            }
-        };
-        // A root the pack may write gives a folder it may write; a root it
-        // may only read gives one it may only read.
-        let folder = under(Access::Write)
-            .or_else(|_| under(Access::Read))
-            .map_err(StepFailure::not_sent)?;
-        let root = self
-            .roots
-            .folder_in(&root, Access::Read, paths)
-            .map_err(StepFailure::not_sent)?;
-        Ok(Folder::new(folder, &root))
+        surface_folder(&self.roots, surface, paths, true)
     }
 
     async fn open(

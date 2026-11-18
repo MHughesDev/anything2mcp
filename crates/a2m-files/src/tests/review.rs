@@ -10,7 +10,7 @@ use crate::{
     Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, Lowered, Lowering, NOT_STATED,
     PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
     REACH_NOT_STATED, Reach, ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE,
-    SENT_TO_NOT_STATED, SentAddress, SentTo, Statement, StepCommits, TargetRoot, VariableValue,
+    SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot, VariableValue,
     compile, lint_one, load_files,
 };
 use a2m_core::{
@@ -273,14 +273,33 @@ impl Lowering for Stating {
                         value: VariableValue::Passed,
                     },
                 ],
-                sends_to_surface: true,
-                sends_to: vec!["http://127.0.0.1:8080".to_owned()],
+                sends: Sends::Only {
+                    surface: true,
+                    addresses: vec!["http://127.0.0.1:8080".to_owned()],
+                },
             }),
             "example_order_get" => Statement::Stated(BindingStatement {
-                sends_to_surface: true,
+                sends: Sends::Only {
+                    surface: true,
+                    addresses: Vec::new(),
+                },
                 ..BindingStatement::default()
             }),
-            "example_order_check" => Statement::Stated(BindingStatement::default()),
+            "example_order_check" => Statement::Stated(BindingStatement {
+                sends: Sends::Only {
+                    surface: false,
+                    addresses: Vec::new(),
+                },
+                ..BindingStatement::default()
+            }),
+            // Starts a program, and cannot say where that program sends.
+            "example_settings_set" => Statement::Stated(BindingStatement {
+                runs: vec![ProgramRun::Program {
+                    path: "/opt/example/bin/settings".to_owned(),
+                    digests: vec![digest(3)],
+                }],
+                ..BindingStatement::default()
+            }),
             _ => Statement::NotStated,
         }
     }

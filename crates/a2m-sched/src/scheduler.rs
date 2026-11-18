@@ -783,6 +783,41 @@ impl Scheduler {
         }
     }
 
+    /// Grants all of `want` requests against every one of `budgets` at
+    /// once, or nothing, without waiting, and never brings a budget below
+    /// `reserve_percent` of its capacity: what a binding in shadow takes
+    /// beside a caller's read (decision 0251), held to the same idea as a
+    /// watch's check (decision 0247). `None` when it is not granted now.
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`lease_superseded`; `input`/`schema_invalid` for no budget.
+    pub async fn rate_now(
+        &self,
+        lease: &LeaseRef,
+        budgets: &[BudgetKey],
+        want: u32,
+        reserve_percent: u32,
+    ) -> Result<Option<RateGrant>, Failure> {
+        if budgets.is_empty() {
+            return Err(failure::invalid("a grant against no budget"));
+        }
+        let default = self.inner.settings.default_rate;
+        let (lease, keys) = (*lease, budgets.to_vec());
+        let take = self
+            .inner
+            .store
+            .write(Durability::Relaxed, move |tx| {
+                tables::lease_until(tx, &lease)?;
+                budget::take(tx, &default, &keys, want.max(1), true, reserve_percent)
+            })
+            .await?;
+        Ok(match take {
+            Take::Granted { requests, over } => Some(RateGrant { requests, over }),
+            Take::Wait { .. } => None,
+        })
+    }
+
     // ---- holds -----------------------------------------------------------
 
     /// Puts a scope on hold: no job it covers is handed out, a submission it

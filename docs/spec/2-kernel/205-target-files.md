@@ -70,6 +70,10 @@ description: >
   Creates or updates one line item on an order. Prefer example_order_sheet_enter for whole sheets.
 ```
 
+An operation whose record is one place the target's files fix, such as a value of a settings file, takes no key input: it declares `identity: {strategy: natural, place: fixed}`, and compiles only where its pack's file kind declares that place fixed ([section 209](209-record-identity-and-dependent-records.md), [decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)).
+
+**Sign-in before a read.** `auth.yaml` names a probe, the read that shows a session is alive. A system that answers no read before a sign-in leaves nothing to draft that read from, so in a draft the probe may name a read nothing defines yet: the lint result warns `kernel.probe_pending`, the review marks the sign-in as not confirmed, and a session it makes is not confirmed until the read exists and passes. A publish compile refuses such a probe, and so does the plan's own check ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)).
+
 **Screen model** (the web pack's `ui` driver and the desktop pack's driver) holds ordered locators and a fingerprint per field. **Endpoint** (the HTTP pack's drivers, and the web pack's `page_http`) holds the method, path template, headers the session keeper supplies, and request and response schemas.
 
 ```yaml

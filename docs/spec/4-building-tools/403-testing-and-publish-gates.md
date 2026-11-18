@@ -15,7 +15,7 @@ A version is published only when every gate passes, and the evidence is stored w
 | Fault injection | Expired session, slow network, blocked surface, bad input, stale approval, and edge block each stop with the right class | All |
 | Performance | Each operation meets its budget; no regression over 10% against the last version. Not built | All |
 | Agent usability | A test agent with no prior knowledge completes scripted tasks using only the generated names, descriptions, and results | Each toolset |
-| Human review | A person reads the generated description, schema, effect class, and permissions | All |
+| Human review | A person reads the generated description, schema, effect class, and permissions; and, from the review summary, what each tool starts (a program's path and digest, a kept script with the fixed sentence that its digest does not make it safe), every variable it sets or passes, every address it can send a request to by the kind of place, and for each sign-in the provider, the credentials by name, and every address a credential or token goes to; a pack that states none of this is shown as stating nothing ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) | All |
 
 **Where writes are tested.** In order of preference: the system owner's sandbox or a test environment; a dedicated test record in production that the tests restore after use; otherwise the write operation stays unpublished. Anything2MCP never proves a write by performing it on live business data.
 

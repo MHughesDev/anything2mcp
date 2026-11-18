@@ -627,5 +627,26 @@ async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_
     assert_eq!(stopped.failure.class(), FailureClass::UnknownVariant);
     assert_eq!(stopped.failure.code().as_str(), "unexpected_status");
     undeclared.stand.end().await;
+
+    // A sign of a form the pack does not know, a redirect among them, or a
+    // status that is not a client error, stops the run before anything is
+    // sent.
+    for sign in ["{redirect: sign_in}", "{status: 302}"] {
+        let stand = Stand::new(
+            "signin-page-http-unknown",
+            world.vault.redactor() as Arc<dyn Redact>,
+        );
+        let mut plan = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
+            text.replace("{status: 401}", sign)
+        })
+        .unwrap()
+        .plan;
+        plan.surfaces[0].address.clone_from(&origin);
+        let unknown = Scene::over(stand, plan, &origin);
+        let refused = totals(&unknown, &third).await.unwrap_err();
+        assert_eq!(refused.failure.code().as_str(), "step_not_usable", "{sign}");
+        assert_eq!(refused.sent, Sent::NotSent);
+        unknown.stand.end().await;
+    }
     world.end().await;
 }

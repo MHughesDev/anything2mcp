@@ -219,6 +219,75 @@ pub(crate) fn list(folder: &Folder, depth: u8, ceiling: usize) -> Result<Listing
     Ok(listing)
 }
 
+/// What discovery sees of a folder: its entries to a depth, the folders at
+/// that depth whose entries were not read, and whether a bound cut it.
+#[derive(Debug, Clone)]
+pub(crate) struct Survey {
+    /// At most the bound's number of entries, in the order of their names'
+    /// bytes.
+    pub entries: Vec<Entry>,
+    /// The folders at the depth looked to, whose own entries were not read.
+    pub cut: Vec<String>,
+    /// Names the pack cannot use, as in a list.
+    pub skipped: u64,
+    /// Whether more entries were there than the bound.
+    pub truncated: bool,
+}
+
+/// The folder's entries, and those of the folders below it to `depth`, one
+/// level after another, at most `most` of them. No link is followed and no
+/// content is read: a link is an entry of the kind `link`, whatever it
+/// points at. A folder with more names than `ceiling` is `file_too_large`,
+/// as in a list.
+pub(crate) fn survey(
+    folder: &Folder,
+    depth: u8,
+    most: usize,
+    ceiling: usize,
+) -> Result<Survey, StepFailure> {
+    let mut survey = Survey {
+        entries: Vec::new(),
+        cut: Vec::new(),
+        skipped: 0,
+        truncated: false,
+    };
+    let mut level: Vec<(PathBuf, String)> = vec![(folder.listed_path()?, String::new())];
+    for at in 0..=depth {
+        let mut next = Vec::new();
+        for (path, prefix) in level {
+            let (found, skipped) = names(&path, ceiling)?;
+            survey.skipped += skipped;
+            for name in found {
+                if survey.entries.len() >= most {
+                    survey.truncated = true;
+                    break;
+                }
+                let relative = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                let entry = look(&path.join(&name), relative.clone())?;
+                if entry.kind == Kind::Folder {
+                    if at < depth {
+                        next.push((path.join(&name), relative));
+                    } else {
+                        survey.cut.push(relative);
+                    }
+                }
+                survey.entries.push(entry);
+            }
+        }
+        level = next;
+        if survey.truncated {
+            break;
+        }
+    }
+    survey.entries.sort_by(|a, b| a.name.cmp(&b.name));
+    survey.cut.sort();
+    Ok(survey)
+}
+
 /// The folder an entry is in, and its own last name. A name with folders
 /// in it is read only a declared depth down; a write names an entry
 /// directly in the folder.

@@ -362,6 +362,8 @@ async fn write_loop<W: AsyncWrite + Unpin>(
 
 /// Hands one message to whoever waits for it. `Err` closes the link.
 fn deliver(shared: &Shared, frame: &[u8]) -> Result<(), Why> {
+    #[cfg(test)]
+    witness::saw(frame);
     match protocol::decode(frame).ok_or(Why::Malformed)? {
         Incoming::Ignored => {}
         Incoming::Reply { id, outcome } => {
@@ -448,6 +450,61 @@ async fn read_loop<R: AsyncRead + Unpin>(
     };
     // A broken stream is not repaired.
     shared.close(why);
+}
+
+/// This crate's tests' witness of what crosses from the browser into the
+/// engine's process: every message, whole, while a test holds it armed.
+#[cfg(test)]
+pub(crate) mod witness {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, PoisonError};
+
+    static ARMED: AtomicUsize = AtomicUsize::new(0);
+    static SEEN: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+    /// Messages are kept while one of these is alive.
+    pub(crate) struct Armed(());
+
+    pub(crate) fn arm() -> Armed {
+        ARMED.fetch_add(1, Ordering::SeqCst);
+        Armed(())
+    }
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if ARMED.fetch_sub(1, Ordering::SeqCst) == 1 {
+                SEEN.lock().unwrap_or_else(PoisonError::into_inner).clear();
+            }
+        }
+    }
+
+    pub(crate) fn saw(frame: &[u8]) {
+        if ARMED.load(Ordering::SeqCst) > 0 {
+            SEEN.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(frame.to_vec());
+        }
+    }
+
+    /// The method of every message kept that holds `needle`, or `reply`
+    /// for an answer to a request.
+    pub(crate) fn holding(needle: &str) -> Vec<String> {
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|frame| {
+                frame
+                    .windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+            })
+            .map(|frame| {
+                serde_json::from_slice::<serde_json::Value>(frame)
+                    .ok()
+                    .and_then(|message| message.get("method")?.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "reply".to_owned())
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
