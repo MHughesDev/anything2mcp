@@ -325,7 +325,7 @@ A promotion (`shadow_promotions`) is one row per workspace, target, operation, a
 
 ## watches, watch_checks, watch_changes, watch_baseline
 
-A watch: one published read with a fixed input, repeated on a schedule its person confirmed, and what changed between its checks. As built by migration `0021-ledger-watches-checks-and-changes.sql`, which `a2m-ledger` owns ([decision 0247](../decisions/0247-watches-the-ledgers-and-the-schedulers-halves.md)). No value of what a check read is kept in any of the four tables: only keyed digests, counts, names of outputs, and times. The values stay in the result of each check's run.
+A watch: one published read with a fixed input, repeated on a schedule its person confirmed, and what changed between its checks. As built by migration `0021-ledger-watches-checks-and-changes.sql`, which `a2m-ledger` owns ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)). No value of what a check read is kept in any of the four tables: only keyed digests, counts, names of outputs, and times. The values stay in the result of each check's run.
 
 | Column of `watches` | Type | Notes |
 | --- | --- | --- |

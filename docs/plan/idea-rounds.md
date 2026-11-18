@@ -22,6 +22,8 @@ A round is small on purpose: one idea, one test that can be finished in minutes,
 
 **Next.** A small package: one enumerable table of codes per crate (five crates have none), a generator for the reference's section, an audit check, and the `explain` action.
 
+**What came of it (the same day).** The generator (`tools/failure_codes.py`), the generated table in the technical reference, and the audit check are built. Reading every crate, and not only the sixteen files of the first count, the generator finds 356 codes, not 136: the round's count was low, as it warned. No code is declared with two classes. Fourteen crates still have no table a program can read (their classes are taken from comments and from the calls that build a failure), and no code states its way out as data, so `explain` waits on that: one more package.
+
 ## Rounds 2 to 13, run together (2026-11-18)
 
 The owner asked for the ideas the first rounds would most likely reach to be tested at once, so that work on the good ones could start. Each was tested against a scratch engine started from a copy of the built program, with the built-in test application as the system. Nothing here was run on Windows or macOS, and each test is as small as a round allows.
