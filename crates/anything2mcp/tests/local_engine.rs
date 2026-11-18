@@ -75,7 +75,7 @@ fn settled(mut response: Json) -> Json {
 async fn an_engine_whose_data_directory_is_removed_refuses_the_next_request_by_name_and_stops() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
-    let served = Served::start(&machine);
+    let mut served = Served::start(&machine);
     let without_key = |args: &[&str]| {
         let mut command = machine.program(args);
         command.env_remove(PASSPHRASE_VARIABLE);
@@ -88,11 +88,19 @@ async fn an_engine_whose_data_directory_is_removed_refuses_the_next_request_by_n
     let paths = Paths::under(machine.home.path());
     std::fs::remove_dir_all(&paths.data).unwrap();
     let refused = output(without_key(&read)).await;
-    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    // A failure says what the engine did, as well as what the command saw.
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "{refused:?}; {}",
+        served.so_far()
+    );
     let response = object(&refused);
     assert_eq!(
-        response["error"]["code"], "data_directory_gone",
-        "{response}"
+        response["error"]["code"],
+        "data_directory_gone",
+        "{response}; {}",
+        served.so_far()
     );
     assert_eq!(response["error"]["class"], "busy", "{response}");
     assert!(

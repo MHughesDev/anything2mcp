@@ -103,6 +103,26 @@ impl Served {
         ended(self.child.take().unwrap())
     }
 
+    /// What can be seen of the engine now, without waiting, for the message
+    /// of a test that failed: whether its process has ended, and how, and
+    /// every line it has written on its standard error so far. The lines
+    /// read here are kept, so [`Served::ended_saying`] still gives them.
+    pub fn so_far(&mut self) -> String {
+        let process = match self.child.as_mut().map(Child::try_wait) {
+            Some(Ok(Some(status))) => format!("ended, {status}"),
+            Some(Ok(None)) => "still running".to_owned(),
+            Some(Err(error)) => format!("not known: {error}"),
+            None => "already waited for".to_owned(),
+        };
+        while let Ok(line) = self.said.try_recv() {
+            self.heard.push(line);
+        }
+        format!(
+            "the engine's process is {process}; it said {:?}",
+            self.heard
+        )
+    }
+
     /// The same, and every line it wrote on its standard error.
     pub fn ended_saying(mut self) -> (Option<i32>, String, Vec<String>) {
         let (code, printed) = ended(self.child.take().unwrap());
