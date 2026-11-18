@@ -44,6 +44,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Finding | Something learned about a target, with an evidence level, its subject, and its limitations. Never an operation |
 | First binding | The first binding of an operation, drafted as `draft`; `binding.promote` makes it able to act once the operation's offline tests pass and a scout proved it, and for a write a person does it ([decision 0189](../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)) |
 | Fixture | Scrubbed recorded evidence used for offline tests |
+| Fixture record | The action `fixture.record`: it runs a read once in the sandbox and writes an offline test and its fixture, with every observed value replaced by a made-up one of the same kind; with no rule for a value it stops and writes nothing ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)) |
 | Gate evidence | What each publish gate returned when a version was published, stored with the version, with the gates that did not run named as such ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
 | Generation | Which version of a key: 1 for the first, one more after each rotation |
 | Grant | A rule giving a principal access to a scope up to an effect class |
@@ -130,4 +131,5 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Trace signature | A hash of the parts of a step trace that should not vary between identical runs |
 | Vault | Encrypted storage for sessions, credentials, and evidence |
 | Version | An immutable, tested, published snapshot of a target |
+| Window | The finding kind of the desktop pack: the shape of one window of a running application (roles, structure, and the names of controls, tables, and headings, never a cell or a value), from which a screen and reads are drafted ([decision 0198](../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) |
 | Workspace | An isolation boundary inside one installation |

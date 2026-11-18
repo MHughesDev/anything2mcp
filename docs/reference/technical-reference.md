@@ -97,6 +97,7 @@ The driver interface, the manifest, the registry, and the supervisor are built i
 - A root bound to no folder, which stands for each request's project folder, is **`Roots::add_project`**; **`Roots::check_in`** and **`Roots::folder_in`** resolve it in the run's project folder ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - **`Prepared::recorded_elsewhere`** asks the engine whether another record holds a value, and answers `Held`, `NotHeld`, or `CannotTell`, never the value ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 - **`SurfaceNotice`** (in `a2m-core`) is a closed list of the notices a door must show with a surface, such as unencrypted credentials; a kind registers one with `SurfaceKindSpec::with_notice`, and `CompilerSet::surface_notices` computes them ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
+- **`ActionContext::paths`** is the call's own checked project folder, handed to a provider action; `DiscoveryScope::paths` is the run's ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 - **`DraftContext::open_question_quoting`** makes an open question whose sentence is the product's and whose quoted words are the system's, kept apart ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
 
 - **`Replay`** is a driver of recorded answers that every pack gets from the contract, so that an offline test runs the tool's steps against a fixture; `Registry::replay_driver` hands it out and keeps the pack's own step kinds, commit kinds, and codes ([decision 0177](../decisions/0177-a-targets-offline-tests-run-against-a-replay-of-their-fixtures.md)). `Replay::sent` gives what the engine sent to each committing step, for a test to compare with the request a fixture states, and `RecordedAnswer::repeats` says that one answer serves every step of its name ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)).
@@ -203,6 +204,7 @@ The design of [`a2m-files`](../architecture/crates/a2m-files.md) gives the inter
 
 - **`CompilerSetBuilder`** takes what each pack registers, under the pack's own name, and ends as a **`CompilerSet`**, which `compile` and `lint_one` are given.
 - **`FileKind`**, **`Lowering`**, **`LintRule`**, and **`DraftingRule`** are the four traits a pack implements. A surface kind, as a **`SurfaceKindSpec`**, and a control name are registered as data. A lowering states, for each kind of step, whether it saves, as a **`StepCommits`** (`Never`, `Always`, `AsDeclared`), and the least effect a binding has by what it does; a file kind states whether a document describes a write, which the drafter never writes ([decision 0153](../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)).
+- **`CompilerSet::address_key`** gives the key under which a surface kind states its address, so that `target.add` can write a surface without a pack's knowledge in the registry ([decision 0199](../decisions/0199-the-halves-left-for-each-other-are-joined.md)).
 - **`Compiled`** is a plan with its encoded bytes and its hash. **`Diagnostics`** is every problem found, each a **`Diagnostic`** with its place and a fix.
 
 ## Store interface
@@ -244,6 +246,7 @@ The design of [`a2m-sources`](../architecture/crates/a2m-sources.md) gives the i
 The design of [`a2m-sched`](../architecture/crates/a2m-sched.md) gives the interface in full ([decision 0093](../decisions/0093-the-schedulers-interface-as-building-it-settled-it.md)). The main types:
 
 - **`Scheduler`** admits a **`Submission`** and queues its job, hands a runner a **`JobLease`**, grants exclusive resources by **`ResourceKey`** and rate budgets by **`BudgetKey`**, and keeps holds by **`HoldScope`**.
+- **`Scheduler::resume`** finds a run's one job and acts in the same transaction that would queue its own, and answers `Resumed::Queued` or `Resumed::Reconciling`; the second says how it is held and, for a door, is `busy`, `run_reconciling` through `Reconciling::failure()` ([decision 0201](../decisions/0201-a-resume-is-never-lost-the-browser-takes-no-proxy-and-no-product-build-speaks-a-stands-protocol.md)).
 - **`LockTicket`** is taken before the ledger is asked for a record lock, so that a wait cannot miss a release.
 - **`SchedSettings`** holds the limits and their defaults. Nothing in the crate sleeps: `sweep` ends every wait whose moment has come.
 
@@ -253,7 +256,7 @@ The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the int
 
 - **`Engine`**, made from **`EngineDeps`**, carries out a job through `run_job`, and a discovery through `discover`, for the runner that holds the job's lease.
 - **`JobSpec`** names the plan, the tool, the input, and the job's **`JobKind`**: a preview, an execute, a try, a reconcile, a check after a loss, a canary, or a discovery. The job ends as a **`JobOutcome`**.
-- **`Control`** is everything the engine asks of the kernel around it: the plan, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`.
+- **`Control`** is everything the engine asks of the kernel around it: the plan, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 
 ## Action registry interface
 
