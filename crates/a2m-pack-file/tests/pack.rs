@@ -399,6 +399,7 @@ fn a_drafting_rule_that_drafts_a_document_that_writes_is_refused() {
     let report = a2m_files::Drafter::new(&set, &a2m_files::TargetRoot::new(&root))
         .draft(std::slice::from_ref(&finding))
         .unwrap();
+    eprintln!("REFUSED {:?}", report.refused);
     let refused: Vec<&str> = report
         .refused
         .iter()

@@ -152,16 +152,16 @@ def scan(root=repo):
         home = {}
         for p, text in texts.items():
             rel = p.relative_to(root).as_posix()
-            for cls, code in TABLE_ROW.findall(text):
+            for cls, code in (TABLE_ROW.findall(text) if "FailureClass::" in text else []):
                 if snake(cls) not in CLASSES:
                     f.faults.append(f"{rel}: `{code}` is given the class `{cls}`, which is not a failure class")
                     continue
                 f.add(crate, code, snake(cls), "table")
-            for doc, cls, code in MACRO_ROW.findall(text):
+            for doc, cls, code in (MACRO_ROW.findall(text) if "codes!" in text else []):
                 if snake(cls) in CLASSES:
                     _, meaning = split_doc(tidy(doc))
                     f.add(crate, code, snake(cls), "table", meaning or None)
-            for doc, name, code in CONST.findall(text):
+            for doc, name, code in (CONST.findall(text) if "::fixed(" in text else []):
                 dcls, meaning = split_doc(tidy(doc))
                 consts[name] = (code, dcls, meaning)
                 home[name] = p
@@ -206,6 +206,8 @@ def classes_of_uses(texts, name, helper_of):
     found = set()
     token = re.compile(rf"(?<![\w:])(?:\w+::)*{re.escape(name)}\b")
     for text in texts.values():
+        if name not in text:
+            continue
         for m in token.finditer(text):
             line_start = text.rfind("\n", 0, m.start()) + 1
             if re.match(r"\s*(pub(\([a-z]+\))?\s+)?const\s", text[line_start:m.end()]):

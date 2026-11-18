@@ -247,8 +247,16 @@ impl Settings {
     pub fn provider_settings(&self) -> ProviderSettings;                 // for RegistryBuilder::new
     pub fn show(&self, key: Option<&str>) -> Result<serde_json::Value, Failure>;
     pub fn digest(&self) -> Digest;
+    pub fn project_file(&self) -> Option<&Path>;                          // layer 6's file: the start's
+    pub fn project_values(&self) -> BTreeMap<String, Value>;              // what layer 6 wrote
 }
-pub struct Sources { /* installation, presets, user, project, environment, flags, serve, packs */ }
+pub struct Sources { /* installation, installation_keeper, presets, user, project, environment, flags, serve, packs */ }
+// Who may change the installation's file: only Administrator may loosen or lock (decision 0241).
+pub enum InstallationKeeper { Administrator, Open { path, why }, NotChecked(&'static str) }
+impl InstallationKeeper { pub fn of_file(file: &Path) -> Self; pub fn may_loosen(&self) -> bool; }
+// Each SettingDef says whether its part is built; a value for one not built is refused by name.
+pub enum Built { Yes, No { instead: &'static str, arrives_with: &'static str } }
+pub const PROJECT_SETTINGS_DIFFER: &str;                                  // the warning's code
 impl Sources {
     pub fn read(paths: &Paths, project: Option<&Path>, environment: BTreeMap<String, String>)
         -> Result<Sources, Failure>;

@@ -81,6 +81,9 @@ pub struct LockPlace; impl LockPlace { pub fn holds(&self) -> bool; }
 // it is the user's primary group; NotChecked on Windows. The product's project walk.
 pub enum Kept { Private, Open(&'static str), NotChecked }
 pub fn kept_by(path: &Path) -> std::io::Result<Kept>;
+// One of the engine's own folders made this user's alone, as the runtime folder is:
+// 0700 on Unix, an access list naming only this user on Windows (decision 0241).
+pub fn keep_folder_private(dir: &Path) -> std::io::Result<()>;
 
 // The client end. Used by commands, the stdio proxy, and the SDK bridge.
 pub struct Connector { /* the channel's place, this program's version, the client label */ }

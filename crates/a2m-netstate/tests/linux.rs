@@ -26,10 +26,10 @@ fn fib_trie_local() -> BTreeSet<Ipv4Addr> {
         let line = line.trim();
         if let Some(address) = line.strip_prefix("|-- ") {
             last = address.parse::<Ipv4Addr>().ok();
-        } else if line == "/32 host LOCAL" {
-            if let Some(address) = last {
-                found.insert(address);
-            }
+        } else if line == "/32 host LOCAL"
+            && let Some(address) = last
+        {
+            found.insert(address);
         }
     }
     found
