@@ -109,6 +109,22 @@ pub(crate) fn decode_order(text: &str) -> Option<Order> {
     })
 }
 
+/// A resolved path in the form a person writes it: on Windows, where the
+/// system resolves a path to its verbatim form, a path on a drive loses the
+/// verbatim prefix (`\\?\C:\x` is `C:\x`). Any other path is kept as it is.
+/// A target names its program as a person would, and a verbatim path reads
+/// to the compiler as one on a network share.
+fn as_written(path: PathBuf) -> PathBuf {
+    let written = path.to_str().and_then(|text| {
+        let rest = text.strip_prefix(r"\\?\")?;
+        match rest.as_bytes() {
+            [drive, b':', b'\\', ..] if drive.is_ascii_alphabetic() => Some(PathBuf::from(rest)),
+            _ => None,
+        }
+    });
+    written.unwrap_or(path)
+}
+
 /// The stand's answer in one line of its output, after its mark wherever
 /// the mark is, or `None` for a line of the test harness's own.
 fn answer_in(line: &str) -> Option<&str> {
@@ -214,7 +230,10 @@ impl Session {
         std::fs::copy(&own, &program).map_err(made("copying the test's program"))?;
         let program =
             std::fs::canonicalize(&program).map_err(made("resolving the program's copy"))?;
-        Ok(Some(Self { held, program }))
+        Ok(Some(Self {
+            held,
+            program: as_written(program),
+        }))
     }
 
     /// No bus: UI Automation, and macOS's accessibility interface, read
@@ -462,5 +481,23 @@ mod tests {
         assert_eq!(answer_in(&format!("{PREFIX}late")), Some("late"));
         assert_eq!(answer_in("running 1 test"), None);
         assert_eq!(answer_in(&format!("test tests::{CHILD_TEST} ... ok")), None);
+    }
+
+    #[test]
+    fn a_program_on_a_drive_is_named_as_a_person_writes_it() {
+        let named = |text: &str| as_written(PathBuf::from(text));
+        assert_eq!(
+            named(r"\\?\C:\example\example-desk.exe"),
+            PathBuf::from(r"C:\example\example-desk.exe")
+        );
+        // A share, a device, and a path already written are kept.
+        for kept in [
+            r"\\?\UNC\server\share\example-desk.exe",
+            r"\\.\pipe\example",
+            r"C:\example\example-desk.exe",
+            "/private/var/example/example-desk",
+        ] {
+            assert_eq!(named(kept), PathBuf::from(kept));
+        }
     }
 }

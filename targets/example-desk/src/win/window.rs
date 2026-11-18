@@ -26,7 +26,10 @@
 //! control (the proxies run in the client), and anything the client does
 //! with the answers. That the client never asks for the password's text
 //! is proven by the desktop pack's own list of the members it may call;
-//! the stand's count is the second witness.
+//! the stand's count is the second witness. The system is a third: it
+//! refuses another process's `WM_GETTEXT` to the password edit (`Access is
+//! denied`) before the edit sees it, as the runner showed and the stand's
+//! own test asserts.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;

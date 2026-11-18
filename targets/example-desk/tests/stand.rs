@@ -310,14 +310,26 @@ mod on_windows {
     use std::time::{Duration, Instant};
 
     use example_desk::{Desk, LATE, Order, Session};
-    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HWND, LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        BM_CLICK, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETTEXT,
+        BM_CLICK, GetDlgItem, GetParent, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETTEXT,
     };
+    use windows::core::HRESULT;
 
-    /// Sends one message to a control of the stand, as another process.
+    /// The identifier of the edit labelled `Order number`, in the stand's
+    /// table of its controls.
+    const ORDER_NUMBER_EDIT: i32 = 102;
+
+    /// Sends one message to a control of the stand, as another process,
+    /// and gives the control's answer, or what the system said when the
+    /// message was refused.
     #[allow(unsafe_code)] // one call into the system, explained below
-    fn send(control: isize, message: u32, wparam: usize, lparam: isize) {
+    fn sent(
+        control: isize,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> Result<usize, windows::core::Error> {
         let mut result = 0_usize;
         // SAFETY: the handle is a window of the stand's; for `WM_GETTEXT`
         // the system copies the text into the test's buffer, whose length
@@ -333,15 +345,36 @@ mod on_windows {
                 Some(&raw mut result),
             )
         };
-        // What the system said, read at once, before any other call.
-        let why = windows::core::Error::from_thread();
-        assert_ne!(
-            sent.0,
-            0,
-            "the stand's control {control:#x} did not take message {message:#x}: {} ({})",
-            why.message(),
-            why.code()
-        );
+        if sent.0 == 0 {
+            // What the system said, read at once, before any other call.
+            return Err(windows::core::Error::from_thread());
+        }
+        Ok(result)
+    }
+
+    /// The same, for a message the control must take.
+    fn send(control: isize, message: u32, wparam: usize, lparam: isize) -> usize {
+        sent(control, message, wparam, lparam).unwrap_or_else(|why| {
+            panic!(
+                "the stand's control {control:#x} did not take message {message:#x}: {} ({})",
+                why.message(),
+                why.code()
+            )
+        })
+    }
+
+    /// The edit labelled `Order number`, beside the password edit in the
+    /// stand's window.
+    #[allow(unsafe_code)] // two calls into the system, explained below
+    fn order_number_edit(password: isize) -> isize {
+        // SAFETY: the handle is a control of the stand's window; both calls
+        // only look the window and its control up.
+        let edit = unsafe {
+            GetParent(HWND(password as *mut _))
+                .and_then(|window| GetDlgItem(Some(window), ORDER_NUMBER_EDIT))
+        }
+        .unwrap();
+        edit.0 as isize
     }
 
     #[tokio::test]
@@ -356,17 +389,52 @@ mod on_windows {
         assert!(!truth.acted(), "{:?}", truth.asked);
         assert_eq!(truth.tracking, "");
 
-        // A client that asks the password edit for its text is counted.
+        // The system itself refuses another process's request for the text
+        // of a password edit, before the edit sees it (the runner's first
+        // runs showed `Access is denied`): no such read reaches the stand,
+        // and it counts none.
         let handles = desk.handles();
         let mut buffer = vec![0_u16; 256];
-        send(
+        let refused = sent(
             handles.password,
             WM_GETTEXT,
             buffer.len(),
             buffer.as_mut_ptr() as isize,
         );
+        assert_eq!(
+            refused.map_err(|why| why.code()),
+            Err(HRESULT::from_win32(ERROR_ACCESS_DENIED.0)),
+            "another process read the password edit's text"
+        );
+        assert!(buffer.iter().all(|unit| *unit == 0));
         let truth = desk.truth();
-        assert_eq!(truth.secret_reads, 1, "{:?}", truth.asked);
+        assert_eq!(truth.secret_reads, 0, "{:?}", truth.asked);
+
+        // What reaches a control the stand counts: another process's
+        // request for an edit's text is answered and counted, through the
+        // same witness that counts every request for the password edit's
+        // text or length.
+        let number = order_number_edit(handles.password);
+        let mut buffer = vec![0_u16; 256];
+        let length = send(
+            number,
+            WM_GETTEXT,
+            buffer.len(),
+            buffer.as_mut_ptr() as isize,
+        );
+        assert_eq!(
+            String::from_utf16_lossy(&buffer[..length]),
+            Order::example().number
+        );
+        let truth = desk.truth();
+        assert_eq!(
+            truth.asked.get("edit:order_number.WM_GETTEXT"),
+            Some(&1),
+            "{:?}",
+            truth.asked
+        );
+        assert_eq!(truth.secret_reads, 0, "{:?}", truth.asked);
+        assert!(!truth.acted(), "{:?}", truth.asked);
 
         // A click of Save is counted as an act. Whether the button then
         // tells its window, which the stand counts as a write, can depend

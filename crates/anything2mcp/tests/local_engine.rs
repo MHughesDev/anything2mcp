@@ -55,6 +55,12 @@ async fn published(app: &TestApp) -> Machine {
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);
     world.close().await;
+    // The engine has let its lock go, but a child that another test of this
+    // process forked while the lock was held keeps a copy of it until that
+    // child execs: an engine started on demand is forked, to give it a
+    // session of its own. The next engine here takes the lock without
+    // waiting, so the test waits until no copy is left.
+    lock_comes_free(&machine).await;
     machine
 }
 
