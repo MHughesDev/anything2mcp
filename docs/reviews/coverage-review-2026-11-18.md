@@ -1,6 +1,6 @@
 # Coverage review, 2026-11-18
 
-One design review round, by [lens 15](design-review-lenses.md), coverage, which the owner asked for: for every way software on a personal computer can be read or changed from outside itself, does this design have a place for it, and is that place the right one? The owner's direction is [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md): "literally anything their machine can read", on Windows, macOS, and Linux, served on that machine only.
+One design review round, by [lens 15](../plan/design-review-lenses.md), coverage, which the owner asked for: for every way software on a personal computer can be read or changed from outside itself, does this design have a place for it, and is that place the right one? The owner's direction is [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md): "literally anything their machine can read", on Windows, macOS, and Linux, served on that machine only.
 
 The result is the [coverage map](coverage-map.md), one row per mechanism, and the findings below, most important first. The round wrote documents only. It was run beside the landscape survey of [research note 27](../research/27-the-public-landscape-of-agent-tools.md), and says at the end where the two agree and where they do not.
 
@@ -76,12 +76,12 @@ Where this round differs:
 - [Section 301](../spec/3-packs/301-the-web-pack.md): an application built on a browser runtime starts with a data directory the engine owns, by rule five.
 - [Section 102](../spec/1-product/102-requirements-and-guarantees.md) and [section 704](../spec/7-project/704-readiness.md): pixels and the extension point at the Proposed records.
 - [Section 306](../spec/3-packs/306-the-command-pack.md): two open points; the [command pack's design](../architecture/crates/a2m-pack-command.md): its path check passes everything on Windows.
-- The [hypothesis register](../hypotheses/README.md): H-41, H-42, and a note on H-29. [Open research](../research/11-open-research.md): brief 35. The [lenses](design-review-lenses.md): lens 15. The [documentation index](../README.md): this file and the map.
+- The [hypothesis register](../hypotheses/README.md): H-41, H-42, and a note on H-29. [Open research](../research/11-open-research.md): brief 35. The [lenses](../plan/design-review-lenses.md): lens 15. The [documentation index](../README.md): this file and the map.
 
 ## Deferred, and why
 
 - The kernel contract of finding 1: it needs the evidence of H-41 before a record.
-- Every addition in the table above: each is a package for the [roadmap](roadmap.md), which the lead orders. The round adds no row to it.
+- Every addition in the table above: each is a package for the [roadmap](../plan/roadmap.md), which the lead orders. The round adds no row to it.
 - Every claim marked "believed" in the map: research brief 35.
 
 ## Honest return

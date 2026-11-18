@@ -117,7 +117,7 @@ Each line carries its kind, as [SCOPE.md](../../../SCOPE.md) does: a rule (one o
 | A catalog of definitions for real products | [Record 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md). A target is a folder the developer keeps | Rule 9 and owner decision 0058 |
 | Getting past a sign-in, a licence check, a bot defence, or a device's protection | Principle 9. A block is a named stop | Rule 5 |
 | A free-form shell, and clicking by position on a picture of the screen | Neither can be verified ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) | Choice, for the shell. Rules 1 and 7, for clicking by position; a read-only form is a question open for the owner ([decision 0212](../../decisions/0212-whether-an-application-that-offers-only-pixels-is-ever-reached.md)) |
-| Hosting | The product runs where the developer runs it | Owner decision 0058 |
+| A hosted place to share target files | The product runs where the developer runs it | Owner decision 0058 |
 | Guessing | Principle 11. Unknown means stop | Rule 7 |
 
 ## Settings

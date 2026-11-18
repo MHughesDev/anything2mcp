@@ -216,7 +216,18 @@ handler!(
         if toolset != "use" {
             args.extend([json!("--toolset"), json!(toolset)]);
         }
-        let entry = json!({"command": program.display().to_string(), "args": args});
+        let mut entry = json!({"command": program.display().to_string(), "args": args});
+        // An engine whose folders are all under one home was given it by
+        // `A2M_HOME`: the client is given it too, or the bridge it starts
+        // would look for another engine. Never the passphrase.
+        let paths = kernel.paths();
+        if let Some(home) = paths
+            .data
+            .parent()
+            .filter(|home| crate::paths::Paths::under(home) == *paths)
+        {
+            entry["env"] = json!({crate::paths::HOME_VARIABLE: home.display().to_string()});
+        }
         let block = json!({ entry_name.clone(): entry.clone() });
         let print = call.flag("print") == Some(true);
         if client == GENERIC || print {

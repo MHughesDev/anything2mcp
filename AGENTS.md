@@ -144,7 +144,8 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 | `docs/reference/` | Interfaces, data model, action catalog, file formats, steps and diffs, ledger schema, glossary, the walkthrough, and the generated list of every source URL cited |
 | `docs/decisions/` | Decision records |
 | `docs/research/` | Research notes and open research briefs |
-| `docs/plan/` | The roadmap; plans for work outside the build; the working method and the design review lenses; the test application plan and publishing setup; review results. Its README sorts them by kind |
+| `docs/plan/` | The roadmap; plans for work outside the build; the working method and the design review lenses; the test application plan and publishing setup. Its README sorts them by kind |
+| `docs/reviews/` | The results of design review rounds: what each looked at, what it found, and where each finding went |
 | `docs/archive/` | The first design's consolidated sections and its plans, kept as history, with the key from old section numbers to new |
 | `docs/hypotheses/` | The register of design bets and the results of testing them |
 | `docs/journal/` | One entry per session; read the newest first |

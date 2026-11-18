@@ -225,9 +225,11 @@ def main():
     n_journal = len([k for k in md if re.match(r"docs/journal/\d{4}-", k)])
     n_designs = len([k for k in md if re.match(r"docs/architecture/crates/[a-z0-9-]+\.md$", k)])
     n_plan = len([k for k in md if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md"])
+    n_reviews = len([k for k in md if re.match(r"docs/reviews/[a-z0-9-]+\.md$", k) and k != "docs/reviews/README.md"])
     for label, n, pat in (("journal entries", n_journal, r"\| (\d+) entries \|"),
                           ("crate designs", n_designs, r"\| (\d+) designs and"),
-                          ("plan documents", n_plan, r"sorts them by kind \| (\d+) \|")):
+                          ("plan documents", n_plan, r"sorts them by kind \| (\d+) \|"),
+                          ("review documents", n_reviews, r"lists them \| (\d+) \|")):
         m = re.search(pat, dr)
         if not m or int(m.group(1)) != n:
             note("counts", f"docs/README.md gives {m.group(1) if m else 'no number'} for {label}; there are {n}")
@@ -264,6 +266,10 @@ def main():
     for k in md:
         if re.match(r"docs/plan/[a-z0-9-]+\.md$", k) and k != "docs/plan/README.md" and f"({Path(k).name})" not in plan_index:
             note("plans", f"{k} is not listed in docs/plan/README.md")
+    reviews_index = md.get("docs/reviews/README.md", "")
+    for k in md:
+        if re.match(r"docs/reviews/[a-z0-9-]+\.md$", k) and k != "docs/reviews/README.md" and f"({Path(k).name})" not in reviews_index:
+            note("reviews", f"{k} is not listed in docs/reviews/README.md")
     register = md.get("docs/hypotheses/README.md", "")
     ids = re.findall(r"^\| (H-\d+) \|", register, re.M)
     if len(ids) != len(set(ids)):

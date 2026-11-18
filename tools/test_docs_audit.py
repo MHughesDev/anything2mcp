@@ -183,6 +183,18 @@ class AuditCatches(unittest.TestCase):
         (self.root / "docs" / "plan" / "a-new-plan.md").write_text("# A new plan\n", encoding="utf-8")
         self.assert_finding("plans", "docs/plan/a-new-plan.md is not listed in docs/plan/README.md")
 
+    def test_a_review_document_missing_from_the_reviews_index_is_refused(self):
+        (self.root / "docs" / "reviews" / "a-new-review.md").write_text("# A new review\n", encoding="utf-8")
+        self.assert_finding("reviews", "docs/reviews/a-new-review.md is not listed in docs/reviews/README.md")
+
+    def test_a_wrong_count_of_review_documents_is_refused(self):
+        index = self.root / "docs" / "README.md"
+        text = index.read_text(encoding="utf-8")
+        changed = text.replace("lists them | 4 |", "lists them | 40 |", 1)
+        self.assertNotEqual(text, changed)
+        index.write_text(changed, encoding="utf-8")
+        self.assert_finding("counts", "for review documents")
+
     def test_a_changed_copy_of_the_licence_is_refused(self):
         copy = self.root / "bindings" / "python" / "LICENSE"
         copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")

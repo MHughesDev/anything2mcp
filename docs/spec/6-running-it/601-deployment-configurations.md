@@ -1,6 +1,6 @@
 # 601. Deployment configurations
 
-One binary covers every setup, from a single laptop to a company-wide service. Roles are switched on by configuration, and target files are identical in all of them. This section designs the setups and their roles. Built today: the single-machine profiles; the server profiles come after the first release ([section 704](../7-project/704-readiness.md)).
+One binary covers every setup, from a single laptop to a company-wide service. Roles are switched on by configuration, and target files are identical in all of them. This section designs the setups and their roles. Built today: the `solo` profile; the workstation profile's local HTTP is not built, and the server profiles come after the first release ([section 704](../7-project/704-readiness.md)).
 
 | Profile | Shape | Who connects | Stores | Typical identity modes |
 | --- | --- | --- | --- | --- |

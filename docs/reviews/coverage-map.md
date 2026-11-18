@@ -2,7 +2,7 @@
 
 Every way a program on a person's own computer can read or change another piece of software, or the system itself, and where each falls in this design today. It answers the owner's direction of [decision 0208](../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md): "literally anything their machine can read", on Windows, macOS, and Linux, with the MCP served on that machine only.
 
-It is a map, not a design. A row says where a mechanism would go and what closing its gap takes; the design of each is written when it is built, by the [working method](working-method.md). The findings drawn from it, and the records it raised, are in the [coverage review of 2026-11-18](coverage-review-2026-11-18.md). What other projects already reach, and how popular each is, is in [research note 27](../research/27-the-public-landscape-of-agent-tools.md); the review says where this map and that note differ (on the scripting interfaces' archetype and on the size of gRPC). Update a row in the pull request that changes its place.
+It is a map, not a design. A row says where a mechanism would go and what closing its gap takes; the design of each is written when it is built, by the [working method](../plan/working-method.md). The findings drawn from it, and the records it raised, are in the [coverage review of 2026-11-18](coverage-review-2026-11-18.md). What other projects already reach, and how popular each is, is in [research note 27](../research/27-the-public-landscape-of-agent-tools.md); the review says where this map and that note differ (on the scripting interfaces' archetype and on the size of gRPC). Update a row in the pull request that changes its place.
 
 ## How to read it
 

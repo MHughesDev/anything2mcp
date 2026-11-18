@@ -3275,6 +3275,13 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     assert_eq!(args[1], world.project.path().display().to_string());
     assert_eq!(args[2], "bridge");
     assert!(printed["block"]["anything2mcp"]["command"].is_string());
+    // The engine's home is given by `A2M_HOME`, and the client is told it;
+    // no passphrase is in the block.
+    assert_eq!(
+        printed["block"]["anything2mcp"]["env"]["A2M_HOME"],
+        world.kernel.paths().data.parent().unwrap().display().to_string()
+    );
+    assert!(!printed.to_string().contains("PASSPHRASE"));
 
     // The imaginary `example` client keeps its servers under `servers`.
     let clients = world.kernel.paths().config.join("clients");
